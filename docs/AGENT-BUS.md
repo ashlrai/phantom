@@ -1199,19 +1199,23 @@ passes a refused or degraded section through untouched.
 
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
-<15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3]` is the claim half of the loop `work
+<15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
+<name>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
-leaves this surface. `--contains`, `--since`, `--before` and `--priority`
+leaves this surface. `--contains`, `--since`, `--before`, `--priority`,
+`--channel`, `--from` and `--exclude-from`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
-`[since, before)` window and the
-exact P0..P3 band — so "claim the next work about X" or "claim the next
+`[since, before)` window, the
+exact P0..P3 band, the `group:<name>:*` room prefix, and the sender
+identity-label match —
+so "claim the next work about X" or "claim the next
 urgent one" is one atomic step rather than a filtered list followed by a
 claim-by-id, a claim can never pick work newer than the window the
 claimant reviewed, and `empty`'s `{candidates, held}` totals count only the
@@ -1620,13 +1624,19 @@ reads apply, through the same identity registry the message filters use; a
 keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--contains <text>`, `--since
-<15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>` and `--priority <P0|P1|P2|P3>`
+<15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
+`--channel <name>`, `--from <agent>` and `--exclude-from <agent>`
 read filters, applied inside
 the claim scan under the identical rules the reads use (the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the exact
-priority band), so the claimable set is exactly what the matching read
+priority band, the `group:<name>:*` room prefix decided on the raw `to`
+label, and the sender identity-label match `agentRefAddressMatcher`
+shares — a sender ref resolving through the registry matches every label
+of that identity while an unresolvable ref or unreadable registry keeps
+exact-label matching, so unknown identity state never widens a claim),
+so the claimable set is exactly what the matching read
 would list and a filtered claim can never pick work the read would hide —
 including work newer than the window it reviewed.
 When nothing is acquirable the

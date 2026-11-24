@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendBusInbox, BUS_INBOX_MAX_READ } from '../src/core/fleet/bus-inbox.js';
@@ -339,6 +339,89 @@ it('applies the exclusive before bound to the claimable scan and its empty total
     .toEqual({ status: 'empty', candidates: 1, held: 0 });
   // Unbounded, the one remaining live receipt still claims.
   expect(take()).toBe('post-work');
+});
+
+it('applies the channel and sender filters to the claimable scan and its empty totals', () => {
+  expect(registerAgentIdentity({ handle: 'worker-a' }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'coord', aliases: ['coordinator'] }, { root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'noisy' }, { root }).status).toBe('created');
+  // eng: worker-a alone; the room prefix needs no sender membership.
+  expect(createAgentChannel({ name: 'eng', createdBy: 'worker-a' }, { root }).status).toBe('created');
+  post('eng-coord', { to: 'group:eng:general', from: 'agent:coord', priority: 'P0' });
+  post('eng-noisy', { to: 'group:eng:alerts', from: 'noisy', priority: 'P1' });
+  post('direct-coord', { to: 'worker-a', from: 'coordinator', priority: 'P2' });
+  post('direct-other', { to: 'worker-a', from: 'fake-sender', priority: 'P3' });
+  const take = (filters: Partial<BusNextRequest>) => {
+    const result = claimNextBusWork({ ...request(), ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+
+  // --channel keeps only the room's whole traffic under every topic: the
+  // P0 group:eng:* receipt claims ahead of the direct mail.
+  expect(take({ channel: 'eng' })).toBe('eng-coord');
+  // --from resolves the ref through the registry: 'coord' names the identity
+  // behind both 'agent:coord' and alias 'coordinator' senders, so the
+  // coord-posted direct receipt claims while eng-noisy and direct-other
+  // stay out; the completed eng-coord still counts as a filtered candidate.
+  expect(take({ from: 'coord' })).toBe('direct-coord');
+  expect(claimNextBusWork({ ...request(), from: 'coord' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
+  // --exclude-from drops every registered spelling of one sender: coord's
+  // two posts leave the noisy and unregistered-sender receipts, and a
+  // sender both included and excluded matches nothing.
+  expect(take({ excludeFrom: 'coord' })).toBe('eng-noisy');
+  expect(take({ excludeFrom: 'coord' })).toBe('direct-other');
+  expect(claimNextBusWork({ ...request(), from: 'coord', excludeFrom: 'coord' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  // The filters compose with each other and the existing ones: channel eng
+  // plus sender coord leaves exactly the completed eng-coord candidate, and
+  // channel eng minus noisy leaves it too.
+  expect(claimNextBusWork({ ...request(), channel: 'eng', from: 'coord' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  expect(claimNextBusWork({ ...request(), channel: 'eng', excludeFrom: 'noisy' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // Unfiltered, all four receipts are candidates; the channel filter keeps
+  // only the two room posts.
+  expect(claimNextBusWork(request())).toEqual({ status: 'empty', candidates: 4, held: 0 });
+  expect(claimNextBusWork({ ...request(), channel: 'eng' }))
+    .toEqual({ status: 'empty', candidates: 2, held: 0 });
+});
+
+it('keeps sender filters on exact-label matching when the registry is unreadable', () => {
+  post('alias-sent', { from: 'coordinator', priority: 'P0' });
+  post('literal-sent', { from: 'coord', priority: 'P1' });
+  mkdirSync(join(root, 'agent-identities'), { mode: 0o700 });
+  writeFileSync(join(root, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+  const take = (filters: Partial<BusNextRequest>) => {
+    const result = claimNextBusWork({ ...request(), ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+  // 'coord' resolves to no identity under an unreadable registry, so --from
+  // matches only the literal 'coord' sender — never the 'coordinator' alias
+  // spelling — and --exclude-from 'coord' drops only that literal row.
+  expect(take({ from: 'coord' })).toBe('literal-sent');
+  expect(take({ excludeFrom: 'coord' })).toBe('alias-sent');
+});
+
+it('rejects malformed channel, from and exclude-from filters before scanning', () => {
+  post('work');
+  const bad: Partial<BusNextRequest>[] = [
+    { channel: 'Bad Channel' },
+    { channel: 'x'.repeat(33) },
+    { channel: '' },
+    { from: 'has space' },
+    { from: '' },
+    { from: 'x'.repeat(129) },
+    { excludeFrom: 'has space' },
+    { excludeFrom: '' },
+  ];
+  for (const filters of bad) {
+    expect(claimNextBusWork({ ...request(), ...filters })).toEqual({ status: 'invalid' });
+  }
 });
 
 it('rejects malformed contains, since and priority filters before scanning', () => {

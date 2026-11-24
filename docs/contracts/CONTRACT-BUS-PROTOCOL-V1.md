@@ -70,7 +70,8 @@ new state:
 
 - `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
   [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
-  [--priority <P0|P1|P2|P3>]`
+  [--priority <P0|P1|P2|P3>] [--channel <name>] [--from <agent>]
+  [--exclude-from <agent>]`
   claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
   resolves to a registered agent identity, work addressed under any routing
@@ -78,12 +79,16 @@ new state:
   to a `group:<channel>:<topic>` address of a registry channel the identity
   belongs to, minus the identity's own channel posts — is eligible; a `--to`
   that names no identity, membership in no channel, or an unreadable registry,
-  keeps exact-label matching. `--contains`, `--since`, `--before` and
-  `--priority` apply
+  keeps exact-label matching. `--contains`, `--since`, `--before`,
+  `--priority`, `--channel`, `--from` and `--exclude-from` apply
   the same rules every bus read's filters do — the scrubbed one-line summary
   substring, the inclusive `receivedAt` cutoff, the exclusive `receivedAt`
-  ceiling composing with `--since` into one `[since, before)` window and the
-  exact P0..P3 band —
+  ceiling composing with `--since` into one `[since, before)` window, the
+  exact P0..P3 band, the `group:<name>:*` room prefix on the raw `to` label,
+  and the sender identity-label match `agentRefAddressMatcher` shares
+  (a sender ref resolving through the registry matches every label of that
+  identity; an unresolvable ref or unreadable registry keeps exact-label
+  matching) —
   inside the claim scan, so the claimable set is exactly what the matching
   read would list; a malformed value is `invalid`, never a widened claim. It
   returns
