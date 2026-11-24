@@ -12,6 +12,8 @@ export interface FleetMapNode {
   startedAt?: string | null; processLive?: 'yes' | 'no' | 'unknown';
   /** Jobs only. The publish record has a RESULT line, so the job is done, not running. */
   published?: boolean;
+  /** Jobs only. Verified session PR URL; older maps may omit it. */
+  prUrl?: string | null;
   /** Jobs only. Dispatch tier (frontier, work, ...) and the task title as one line; null when no source reported them. */
   tier?: string | null; goal?: string | null;
 }
@@ -70,14 +72,14 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   snapshot?.lanes.forEach(lane => addLane(lane.lane));
   const jobs = new Set<string>();
   interface JobFacts { jobId: string; lane: string | null; model: string | null; repo: string | null; status: string; seconds: number | null;
-    startedAt: string | null; processLive?: FleetMapNode['processLive']; title?: string | null; tier?: string | null; published?: boolean }
-  const addJob = ({ jobId, lane, model, repo, status, seconds, startedAt, processLive = 'unknown', title, tier = null, published = false }: JobFacts) => {
+    startedAt: string | null; processLive?: FleetMapNode['processLive']; title?: string | null; tier?: string | null; published?: boolean; prUrl?: string | null }
+  const addJob = ({ jobId, lane, model, repo, status, seconds, startedAt, processLive = 'unknown', title, tier = null, published = false, prUrl = null }: JobFacts) => {
     if (jobs.has(jobId)) return;
     jobs.add(jobId);
     const parent = addLane(lane), id = `job:${jobId}`, goal = oneLine(title, jobId);
     const node: FleetMapNode = { id, kind: 'job', label: goal ?? jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
       provider: providerFor(model, lane).name, status, ageSeconds: age(seconds),
-      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive, tier: tier?.trim() || null, goal, ...(published ? { published } : {}) };
+      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive, tier: tier?.trim() || null, goal, prUrl, ...(published ? { published } : {}) };
     nodes.push(node); reportsTo(node, parent);
   };
   // A session row never carries its prompt; the engine snapshot's task title is the goal when both name the job.
@@ -85,7 +87,7 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   for (const run of snapshot?.runs ?? []) for (const key of [run.id, run.taskId]) if (key) titles.set(key, run.title);
   // Session evidence wins over the older engine-only snapshot; stale claims never become running jobs.
   const fromSession = (row: FleetSessionV1): JobFacts => ({ jobId: row.job, lane: row.lane, model: row.model, repo: row.repo, status: row.status,
-    seconds: row.elapsedSeconds, startedAt: row.startedAt, processLive: row.live, title: titles.get(row.job) ?? null, tier: row.tier, published: row.published === true });
+    seconds: row.elapsedSeconds, startedAt: row.startedAt, processLive: row.live, title: titles.get(row.job) ?? null, tier: row.tier, published: row.published === true, prUrl: row.prUrl ?? null });
   const sessionIds = new Set([...(sessions?.sessions ?? []), ...(sessions?.recent ?? [])].map(row => row.job));
   for (const row of sessions?.sessions ?? []) {
     if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(fromSession(row));

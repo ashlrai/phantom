@@ -336,7 +336,7 @@ export async function writeDropJob(
 ): Promise<DropJobWritten> {
   const validation = validateDropJob(input);
   if (!validation.ok) throw new DropJobValidationError(validation.reasons);
-  if (/(?:LAND|RECUT|RED(?:TYPE|TEST)?FIX)/.test(input.id)
+  if (/(?:LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN)/.test(input.id)
     && pausedFamily(await readLaunchFamilies(root, now().getTime()), `${DROP_JOB_FILE_PREFIX}${input.id}`)) {
     throw new DropJobValidationError(['family paused: recent workers found no source or made no changes']);
   }

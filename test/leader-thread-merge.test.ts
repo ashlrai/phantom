@@ -1,10 +1,14 @@
-/** One Leader thread from the inbox, outbox and plan log, with or without --since. */
+/** One Leader thread from the inbox, outbox and plan log, with or without --since/--before. */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLeaderCli } from '../src/cli/leader.js';
 import { mergeLeaderThread, parseThreadWindow, prRefs, readLeaderThread } from '../src/core/fleet/leader-thread-merge.js';
+import { handleLeaderThreadMerged, VERSE_LEADER_THREAD_MERGED_PATH } from '../src/core/verse/leader-thread-merged-api.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 const none = { inbox: '', outbox: '', planLog: '' };
 const HEADING = '## 2026-11-17 09:40 ET (Mason, Phantom desktop) PRIORITY P0\nShip the billing fix\n';
@@ -61,6 +65,27 @@ describe('mergeLeaderThread', () => {
     expect(thread.map(e => e.text)).toEqual(['Ship the billing fix', 'No date']);
   });
 
+  it('--before drops entries at or after the ceiling but never an undated one', () => {
+    const inbox = '## nope (Mason, phone)\nNo date\n\n'
+      + '2026-11-17T10:00:00.000Z [src:phone] Early\n'
+      + '2026-11-17T12:00:00.000Z [src:phone] On the bound\n'
+      + '2026-11-17T14:00:00.000Z [src:phone] Late\n';
+    const thread = mergeLeaderThread({ ...none, inbox }, { beforeAt: '2026-11-17T12:00:00.000Z' });
+    expect(thread.map(e => e.text)).toEqual(['Early', 'No date']);
+  });
+
+  it('--before hours is a relative ceiling and composes with --since as [since, before)', () => {
+    const now = Date.parse('2026-11-17T15:00:00Z');
+    const inbox = '## nope (Mason, phone)\nNo date\n\n'
+      + '2026-11-17T10:00:00.000Z [src:phone] Too old\n'
+      + '2026-11-17T13:00:00.000Z [src:phone] Inside\n'
+      + '2026-11-17T14:30:00.000Z [src:phone] Too new\n';
+    const windowed = mergeLeaderThread({ ...none, inbox }, { nowMs: now, sinceHours: 3, beforeHours: 1 });
+    expect(windowed.map(e => e.text)).toEqual(['Inside', 'No date']);
+    const bounded = mergeLeaderThread({ ...none, inbox }, { nowMs: now, beforeHours: 1 });
+    expect(bounded.map(e => e.text)).toEqual(['Too old', 'Inside', 'No date']);
+  });
+
   it('parses PR numbers from the text, once each, ascending', () => {
     const thread = mergeLeaderThread({ ...none, outbox: '## 2026-11-17 10:00 ET\nMerged #7873 and PR 7871, then #7873 again; see github.com/x/y/pull/12\n' });
     expect(thread[0]!.refs).toEqual([12, 7871, 7873]);
@@ -89,6 +114,13 @@ describe('parseThreadWindow', () => {
     expect(parseThreadWindow('2026-11-17', undefined)).toEqual({ sinceAt: '2026-11-17T00:00:00.000Z' });
     expect(parseThreadWindow(undefined, undefined)).toEqual({});
     for (const bad of [['abc', undefined], ['0', undefined], [undefined, '0'], [undefined, 'x'], ['99999', undefined]] as const) expect(parseThreadWindow(bad[0], bad[1])).toBeNull();
+  });
+
+  it('reads --before as hours or a date on the same grammar and refuses nonsense', () => {
+    expect(parseThreadWindow(undefined, undefined, '2')).toEqual({ beforeHours: 2 });
+    expect(parseThreadWindow('1', '5', '2026-11-17')).toEqual({ sinceHours: 1, limit: 5, beforeAt: '2026-11-17T00:00:00.000Z' });
+    expect(parseThreadWindow(undefined, undefined, '2026-11-17T12:30:00Z')).toEqual({ beforeAt: '2026-11-17T12:30:00.000Z' });
+    for (const bad of ['abc', '0', '99999', '-1', ''] as const) expect(parseThreadWindow(undefined, undefined, bad)).toBeNull();
   });
 });
 
@@ -184,5 +216,70 @@ describe('phm leader thread', () => {
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')); });
     expect(await runLeaderCli(['thread', '--since', 'abc'])).toBe(2);
     expect(err.join('\n')).toContain('Usage');
+  });
+
+  it('applies --before as an exclusive ceiling and composes with --since', async () => {
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-17T10:00:00.000Z [src:phone] Early\n'
+      + '2026-11-17T14:00:00.000Z [src:phone] On the bound\n'
+      + '2026-11-17T16:00:00.000Z [src:phone] Late\n');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runLeaderCli(['thread', '--before', '2026-11-17T14:00:00Z', '--json'])).toBe(0);
+    const read = JSON.parse(String(log.mock.calls.at(-1)![0])) as Awaited<ReturnType<typeof readLeaderThread>>;
+    expect(read.thread.map(e => e.text)).toEqual(['Early']);
+    log.mockClear();
+    expect(await runLeaderCli(['thread', '--since', '2026-11-17T15:00:00Z', '--before', '2026-11-17T17:00:00Z', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)![0])).thread.map((e: { text: string }) => e.text)).toEqual(['Late']);
+    log.mockClear();
+    expect(await runLeaderCli(['thread', '--before', '2026-11-17T09:00:00Z'])).toBe(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith('No messages before 2026-11-17T09:00:00Z.');
+  });
+
+  it('rejects a bad --before value', async () => {
+    const err: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { err.push(a.join(' ')); });
+    expect(await runLeaderCli(['thread', '--before', 'abc'])).toBe(2);
+    expect(err.join('\n')).toContain('Usage');
+  });
+});
+
+describe('GET /api/verse/leader/thread/merged', () => {
+  let runsDir: string;
+  beforeEach(() => {
+    runsDir = mkdtempSync(join(tmpdir(), 'leader-thread-api-'));
+    mkdirSync(join(runsDir, 'leader'));
+    vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
+    vi.stubEnv('PHANTOM_PLAN_LOG', '');
+  });
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(runsDir, { recursive: true, force: true }); });
+
+  async function call(query = '', token: string | null = 'test-token') {
+    let status = 0;
+    let text = '';
+    const req = Object.assign(new PassThrough(), {
+      url: VERSE_LEADER_THREAD_MERGED_PATH + query,
+      method: 'GET',
+      headers: token === null ? {} : { 'x-ashlr-token': token },
+    }) as IncomingMessage;
+    const res = {
+      writeHead(code: number) { status = code; return this; },
+      end(body: string) { text = body; },
+    } as unknown as ServerResponse;
+    const handled = await handleLeaderThreadMerged(
+      { cfg: {}, token: 'test-token', allowDispatch: true } as VerseApiContext, req, res, 'GET',
+    );
+    return { handled, status, body: text ? JSON.parse(text) : null };
+  }
+
+  it('applies before as the exclusive ceiling, 400s a bad value and 401s a bad token', async () => {
+    writeFileSync(join(runsDir, 'leader', 'MASON-INBOX.md'),
+      '2026-11-17T10:00:00.000Z [src:phone] Early\n'
+      + '2026-11-17T16:00:00.000Z [src:phone] Late\n');
+    const ok = await call('?before=2026-11-17T14:00:00Z');
+    expect(ok.handled).toBe(true);
+    expect(ok.status).toBe(200);
+    expect(ok.body.thread.map((e: { text: string }) => e.text)).toEqual(['Early']);
+    expect((await call('?before=abc')).status).toBe(400);
+    expect((await call('?before=2026-11-17', null)).status).toBe(401);
   });
 });

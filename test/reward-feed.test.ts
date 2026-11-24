@@ -109,6 +109,52 @@ describe('foldJobsLedgerRewards', () => {
     expect(inputs.find((i) => i.jobId === 'RQ-F')).toMatchObject({ merged: true, mergedAt: '2026-10-28T18:00:00.000Z' });
   });
 
+  it('discounts a held merge the standing revert set proves did not hold', () => {
+    const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
+    const merge = (job: string, n: number) =>
+      line({ event: 'outcome', job, state: 'MERGED', url: pr(n), mergedAt: '2026-10-28T15:30:00.000Z', ts: '2026-10-28T15:31:00.000Z' });
+    const text = [launch('RQ-R1'), merge('RQ-R1', 101), launch('RQ-R2'), merge('RQ-R2', 102)].join('\n');
+    const keys = new Set(['ashlrai/phantom#101']);
+    const inputs = foldJobsLedgerRewards(text, NOW_MS, undefined, keys);
+    expect(inputs).toHaveLength(2);
+    expect(inputs.find((i) => i.jobId === 'RQ-R1')).toMatchObject({ merged: false, mergedAt: null, dispatchedAt: DISPATCH_ISO });
+    expect(inputs.find((i) => i.jobId === 'RQ-R2')).toMatchObject({ merged: true, mergedAt: MERGED_ISO });
+    // Absent, empty or unmatched keys change nothing.
+    for (const none of [undefined, null, new Set<string>(), new Set(['ashlrai/phantom#999'])]) {
+      const held = foldJobsLedgerRewards(text, NOW_MS, undefined, none);
+      expect(held.find((i) => i.jobId === 'RQ-R1')).toMatchObject({ merged: true });
+    }
+  });
+
+  it('keeps a held merge when the standing revert claim is contested or foreign', () => {
+    const pr = 'https://github.com/ashlrai/phantom/pull/101';
+    const merge = (job: string) =>
+      line({ event: 'outcome', job, state: 'MERGED', url: pr, mergedAt: '2026-10-28T15:30:00.000Z', ts: '2026-10-28T15:31:00.000Z' });
+    // Two jobs claim the same PR URL: the revert cannot be attributed.
+    const contested = [launch('RQ-R1'), merge('RQ-R1'), launch('RQ-R2'), merge('RQ-R2')].join('\n');
+    const keys = new Set(['ashlrai/phantom#101']);
+    const inputs = foldJobsLedgerRewards(contested, NOW_MS, undefined, keys);
+    expect(inputs.find((i) => i.jobId === 'RQ-R1')).toMatchObject({ merged: true });
+    expect(inputs.find((i) => i.jobId === 'RQ-R2')).toMatchObject({ merged: true });
+    // A node-pool row carrying the same URL is a different dialect and never claims.
+    const nodePool = line({ schema: 'phm-node-runner.v1', job: 'ready:RQ-X:1', state: 'MERGED', url: pr, ts: '2026-10-28T15:32:00.000Z' });
+    const single = [launch('RQ-R1'), merge('RQ-R1'), nodePool].join('\n');
+    const discounted = foldJobsLedgerRewards(single, NOW_MS, undefined, keys);
+    expect(discounted.find((i) => i.jobId === 'RQ-R1')).toMatchObject({ merged: false });
+  });
+
+  it('lets a later fresh merge supersede a standing-reverted one', () => {
+    const pr = (n: number) => `https://github.com/ashlrai/phantom/pull/${n}`;
+    const text = [
+      launch('RQ-R1'),
+      line({ event: 'outcome', job: 'RQ-R1', state: 'MERGED', url: pr(101), mergedAt: '2026-10-28T15:30:00.000Z', ts: '2026-10-28T15:31:00.000Z' }),
+      line({ event: 'outcome', job: 'RQ-R1', state: 'MERGED', url: pr(105), mergedAt: '2026-10-28T18:00:00.000Z', ts: '2026-10-28T18:01:00.000Z' }),
+    ].join('\n');
+    const inputs = foldJobsLedgerRewards(text, NOW_MS, undefined, new Set(['ashlrai/phantom#101']));
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ merged: true, mergedAt: '2026-10-28T18:00:00.000Z' });
+  });
+
   it('ignores rows stamped after now and derives repo from the PR URL', () => {
     const text = [
       line({ event: 'launch', job: 'RQ-G', repo: 'ashlrai/phantom', lane: 'codex-cmp', ts: '2026-10-28T10:00:00-0400' }),
@@ -276,6 +322,18 @@ describe('syncRewardSignalsFromJobsLedger', () => {
     expect(second.skippedRecorded).toBe(2);
     expect(second.recorded).toBe(0);
     expect(rewardRows()).toHaveLength(2);
+  });
+
+  it('folds a standing-reverted merge as merged:false when the caller supplies the revert set', async () => {
+    // merged('RQ-A') claims https://github.com/ashlrai/phantom/pull/4.
+    writeJobs([launch('RQ-A'), merged('RQ-A'), claim('RQ-C'), closed('RQ-C')].join('\n'));
+    const out = await syncRewardSignalsFromJobsLedger({
+      runsDir, home, now: NOW, revertedPrKeys: new Set(['ashlrai/phantom#4']),
+    });
+    expect(out.recorded).toBe(2);
+    const rows = rewardRows();
+    expect(rows.find((r) => r.jobId === 'RQ-A')).toMatchObject({ merged: false, mergedAt: null });
+    expect(rows.find((r) => r.jobId === 'RQ-C')).toMatchObject({ merged: false, mergedAt: null });
   });
 
   it('writes measured ciWallMs into the reward row and leaves it null without boundaries', async () => {

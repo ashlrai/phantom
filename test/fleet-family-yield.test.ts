@@ -164,7 +164,7 @@ describe('phm fleet yield --json', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetYield(['--hours', '24', '--json', '--metrics', path], undefined, now)).toBe(0);
     const json = JSON.parse(String(log.mock.calls[0]![0])) as Record<string, unknown>;
-    expect(Object.keys(json).sort()).toEqual(['families', 'known', 'lanes', 'launch_families', 'launches', 'merged', 'reverted', 'schema', 'single', 'stops', 'tiers',
+    expect(Object.keys(json).sort()).toEqual(['empty_recommendations', 'families', 'known', 'lanes', 'launch_families', 'launches', 'merged', 'reverted', 'schema', 'single', 'stops', 'tiers',
       'version', 'wasted_tokens', 'wasted_tokens_partial', 'window_hours']);
     const rows = json.families as Record<string, unknown>[];
     expect(Object.keys(rows[0]!).sort()).toEqual(['empty', 'family', 'finished', 'jobs', 'last_seen', 'launches', 'merged', 'merged_per_launch',
@@ -178,6 +178,74 @@ describe('phm fleet yield --json', () => {
     expect(await cmdFleetYield(['--json', '--metrics', join(tmpdir(), 'family-yield-missing', 'jobs.jsonl')], undefined, now)).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]![0]))).toMatchObject({ known: false, launches: null, merged: null, wasted_tokens: null, families: [] });
   });
+});
+
+describe('repeated empty family recommendations', () => {
+  const url = (n: number) => `https://github.com/example/fixture/pull/${n}`;
+  const empties = () => [1, 2, 3].flatMap(n => [launch(`RQ-REVIEWN${n}AQ8`, 10),
+    finish(`RQ-REVIEWN${n}AQ8`, 9, { empty: true })]);
+  const fixture = () => [...empties(),
+    // Older launch merged later. Repeated observations must not inflate the count.
+    launch('RQ-REVIEWN4AQ8', 8), finish('RQ-REVIEWN4AQ8', 7.5, { empty: true }),
+    row({ jobId: 'RQ-REVIEWN4AQ8', outcome: 'MERGED', mergedAt: at(1), prUrl: url(4) }),
+    row({ jobId: 'RQ-REVIEWN4AQ8', outcome: 'MERGED', mergedAt: at(1), prUrl: url(4) }),
+    launch('RQ-REVIEWN5AQ8', 7), row({ job: 'RQ-REVIEWN5AQ8', event: 'merged', ts: at(2), pr: url(5) }),
+    launch('RQ-REVIEWN6AQ8', 6), finish('RQ-REVIEWN6AQ8', 5, {}), // missing outcome
+    launch('RQ-REVIEWN7AQ8', 4), // still running
+    launch('RQ-REVIEWN8AQ8', 3), pr('RQ-REVIEWN8AQ8', 8), // open is not success
+    launch('RQ-REVIEWN9AQ8', 2), merged('RQ-REVIEWN9AQ8', 1.5),
+    row({ job: 'RQ-REVIEWN9AQ8', event: 'revert', ts: at(1) }),
+  ];
+
+  it('groups recurring queue ids and reports explicit counts and the latest held merge', () => {
+    const report = familyYield(fixture(), now, 24);
+    expect(report.empty_recommendations).toEqual([{
+      family: 'RQ-REVIEW', action: 'review_family', launches: 9, empty: 3, merged: 2, missing_outcomes: 2,
+      last_successful_pr: { job: 'RQ-REVIEWN4AQ8', url: url(4), merged_at: at(1) },
+      reason: 'Review this family before selecting it again: 3 of 9 launches were empty; 2 merged; 2 outcomes missing.',
+    }]);
+    expect(familyYieldLines(report).join('\n')).toContain(`Last successful PR in this window: ${url(4)}`);
+  });
+
+  it('requires three explicit empties and ranks recommendations deterministically', () => {
+    expect(familyYield(empties().slice(0, 4), now, 24).empty_recommendations).toEqual([]);
+    expect(familyYield(fixture().slice(6), now, 24).empty_recommendations).toEqual([]);
+    const more = [1, 2, 3, 4].flatMap(n => [launch(`RQ-OTHER${n}`, 4), finish(`RQ-OTHER${n}`, 3, { empty: true })]);
+    expect(familyYield([...empties(), ...more], now, 24).empty_recommendations.map(r => [r.family, r.empty]))
+      .toEqual([['RQ-OTHER', 4], ['RQ-REVIEW', 3]]);
+    expect(familyYield([], now, 24).empty_recommendations).toEqual([]);
+  });
+
+  it('keeps absent success and unreadable evidence unknown', async () => {
+    expect(familyYield(empties(), now, 24).empty_recommendations[0]).toMatchObject({ empty: 3, merged: 0, last_successful_pr: null });
+    expect(await readFamilyYield('/fixture/missing', 24, now, async () => false)).toMatchObject({ known: false, empty_recommendations: [] });
+  });
+
+  it('exposes the recommendations through the existing JSON command', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const read = async (_path: string, add: (line: string) => void) => { fixture().forEach(add); return true; };
+      expect(await cmdFleetYield(['--json'], read, now)).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]![0])).empty_recommendations).toEqual(familyYield(fixture(), now, 24).empty_recommendations);
+    } finally { log.mockRestore(); }
+  });
+
+  it('does not fabricate a last PR when its URL or merge ordering is missing', () => {
+    const lines = [...empties(), launch('RQ-REVIEWN4AQ8', 8), merged('RQ-REVIEWN4AQ8', 1)];
+    expect(familyYield(lines, now, 24).empty_recommendations[0]!.last_successful_pr).toEqual({ job: 'RQ-REVIEWN4AQ8', url: null, merged_at: at(1) });
+    expect(familyYield([...lines, pr('RQ-REVIEWN4AQ8', 4)], now, 24).empty_recommendations[0]!.last_successful_pr?.url)
+      .toBe('https://example.invalid/pr/4');
+    lines.push(launch('RQ-REVIEWN5AQ8', 7), row({ event: 'merged', job: 'RQ-REVIEWN5AQ8' }));
+    expect(familyYield(lines, now, 24).empty_recommendations[0]!.last_successful_pr).toBeNull();
+  });
+
+  it('uses published PR evidence when a stale empty mark was superseded by success', () => {
+    const lines = [...empties(), launch('RQ-REVIEWN4AQ8', 8), finish('RQ-REVIEWN4AQ8', 7, { empty: true }), pr('RQ-REVIEWN4AQ8', 4), merged('RQ-REVIEWN4AQ8', 1)];
+    expect(familyYield(lines, now, 24).empty_recommendations[0]).toMatchObject({ empty: 3, merged: 1,
+      last_successful_pr: { url: 'https://example.invalid/pr/4' } });
+    expect(familyYield([...lines, launch('RQ-OTHER1', 1)], now, 24).empty_recommendations).toHaveLength(1);
+  });
+
 });
 
 
@@ -228,7 +296,7 @@ describe('EMPTY reason pause', () => {
   }).flat();
   it('groups letter siblings and pauses only the last N proven empty finished launches', () => {
     const lines = history(), stats = familyYield(lines, now, 24).launch_families[0]!;
-    expect(stats).toMatchObject({ family: 'RQ-PHX-CONSOLELAND', paused: true, empty_reasons: { no_diff: 2, no_eligible_source: 2, unknown: 0 } });
+    expect(stats).toMatchObject({ family: 'RQ-PHX-CONSOLELAND', paused: true, pausedReason: '4 of last 4 empty, workers found no source or made no changes', empty_reasons: { no_diff: 2, no_eligible_source: 2, unknown: 0 } });
     expect(shouldPauseFamily(stats, 5)).toBe(false);
     expect(shouldPauseFamily(undefined)).toBe(false);
     expect(shouldPauseFamily(stats, 0)).toBe(false);
@@ -243,15 +311,30 @@ describe('EMPTY reason pause', () => {
     const dir = mkdtempSync(join(tmpdir(), 'family-pause-'));
     try {
       mkdirSync(join(dir, 'metrics'));
-      const lines = ['CONSOLELAND', 'RECUT', 'REDFIX'].flatMap(name => history(name));
+      const names = ['CONSOLELAND', 'FLEETCORELAND', 'CONSOLEBACKLOG', 'REDRECUT', 'LAUNCHRETRYGREEN', 'RECUT', 'REDFIX'];
+      const lines = names.flatMap(name => history(name));
       lines.push(launch('RQ-LOG1', 2), finish('RQ-LOG1', 1, { empty: true }));
       writeFileSync(join(dir, 'metrics/jobs.jsonl'), lines.join('\n'));
       writeFileSync(join(dir, 'RQ-LOG1.log'), 'No eligible PR');
       const report = await readFamilyYield(join(dir, 'metrics/jobs.jsonl'), 24, now);
       expect(report.launch_families.find(r => r.family === 'RQ-LOG')?.empty_reasons.no_eligible_source).toBe(1);
-      for (const id of ['CONSOLELAND800', 'RECUT800', 'REDFIX800']) {
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdFleetYield(['--json', '--metrics', join(dir, 'metrics/jobs.jsonl')], undefined, now)).toBe(0);
+      expect(JSON.parse(String(output.mock.calls[0]![0])).launch_families).toContainEqual(expect.objectContaining({
+        family: 'RQ-PHX-CONSOLELAND', paused: true, pausedReason: '4 of last 4 empty, workers found no source or made no changes',
+      }));
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (const id of names.flatMap(name => [`${name}800`, `${name}800B`])) {
         await expect(writeDropJob(dir, { id, lane: 'codex-personal', tier: 'work', body: 'Find a source PR and finish it.' }, () => new Date(now))).rejects.toThrow('family paused');
       }
+      expect(log).toHaveBeenCalledWith('skip CONSOLELAND: 4 of last 4 empty, workers found no source or made no changes');
+      const input = { id: 'HEALTHYLAND800', lane: 'codex-personal', tier: 'work', body: 'Finish the eligible source PR.' };
+      expect((await writeDropJob(dir, input, () => new Date(now))).file).toContain('HEALTHYLAND800.md');
+      lines.push(launch('RQ-PHX-CONSOLELAND799B', 1), merged('RQ-PHX-CONSOLELAND799B', 0.25));
+      writeFileSync(join(dir, 'metrics/jobs.jsonl'), lines.join('\n'));
+      expect((await readFamilyYield(join(dir, 'metrics/jobs.jsonl'), 24, now)).launch_families.find(r => r.family === 'RQ-PHX-CONSOLELAND'))
+        .toMatchObject({ paused: false, pausedReason: null });
+      expect((await writeDropJob(dir, { ...input, id: 'CONSOLELAND800B' }, () => new Date(now))).file).toContain('CONSOLELAND800B.md');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

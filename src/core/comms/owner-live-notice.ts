@@ -38,7 +38,10 @@ export interface OwnerLiveNoticePlan {
  * Pure plan over the recorded thread and adapter status. A channel earns one
  * notice when its adapter is enabled, the owner has written at least once on
  * it, and no outbound has landed there yet (an existing outbound means the
- * channel already proved itself live). Desktop is never planned.
+ * channel already proved itself live). "Landed" is the send paths' own
+ * evidence — the message's declared `fanout` destinations — so a local-only
+ * record filed under a channel without one never counts as proof the channel
+ * carried an outbound. Desktop is never planned.
  */
 export function planOwnerLiveNotices(
   messages: readonly OwnerThreadMessage[],
@@ -50,7 +53,7 @@ export function planOwnerLiveNotices(
     if (channel === 'desktop' || adapter.enabled !== true) continue;
     const inbound = messages.find(message => message.direction === 'inbound' && message.channel === channel);
     if (!inbound) continue;
-    if (messages.some(message => message.direction === 'outbound' && message.channel === channel)) continue;
+    if (messages.some(message => message.direction === 'outbound' && message.fanout?.includes(channel))) continue;
     plans.push({ channel, replyTo: inbound.idempotencyKey, idempotencyKey: `leader-live-${channel}` });
   }
   return plans;

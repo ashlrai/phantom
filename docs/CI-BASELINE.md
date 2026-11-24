@@ -7,18 +7,35 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-A job proves its checkout either by echoing `git log -1 --format=%H` followed
-by the head SHA, or by the `Bound candidate <sha> to event tree|merge ...`
-receipt `.github/scripts/ci-source-binding.mjs` prints after verifying
-`git rev-parse HEAD` equals the candidate revision; the bound revision must
-equal the analyzed head exactly. Jobs that never check out the workspace
-(aggregators such as Merge Gate) cannot emit either receipt; their logs are
-dropped from evidence only when they carry no parseable failure or per-test
-pass output. The default reporter's green-module pass lines are expected
-from checkout jobs that never bound a receipt, so they neither verify nor
-poison a run; any other consumable evidence in an unverifiable log keeps the
-run unknown. Unreadable, incomplete, capped, or unverified logs are unknown,
-never clean.
+A job proves its checkout one of three ways: echoing `git log -1
+--format=%H` followed by the head SHA; printing the `Bound candidate <sha>
+to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`
+emits after verifying `git rev-parse HEAD` equals the candidate revision;
+or, for gate jobs that never run the binding script (secret-shape, quick,
+clean-tree, authority-drift, fast-gate, secret-scan and the whole
+dependency-audit job), recording `actions/checkout` steps whose resolved
+`with: ref:` input is the analyzed head in every checkout group of the log.
+The bound revision or checkout ref must equal the analyzed head exactly; an
+unpinned checkout (which falls back to the event's merge commit on pull
+requests), a non-SHA ref or a second checkout of anything else leaves the
+job unverifiable. Jobs that never check out the workspace (aggregators such
+as Merge Gate) cannot emit any proof; their logs are dropped from evidence
+only when they carry no parseable failure or per-test pass output. The
+default reporter's green-module pass lines are expected from checkout jobs
+that never bound a receipt, so they neither verify nor poison a run; any
+other consumable evidence in an unverifiable log keeps the run unknown.
+Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
+`action_required`, `startup_failure` or `stale` — is incomplete evidence
+even when its log is absent or empty: the run cannot prove the ref's
+checks, so the PR reads `unknown` rather than `fresh` — freshness reason
+`incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
+and master's known state drops while the run's verified job logs still
+feed failure parsing. `skipped` and `neutral` conclusions are
+deliberate non-verdicts, not incomplete checks. A completed run that
+instantiated no jobs at all reads the same way when its own conclusion is
+not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
+no job list to mark incomplete, so the run's conclusion carries it.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
