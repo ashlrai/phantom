@@ -82,12 +82,16 @@ describe('fleet_agent_conversations argument parsing', () => {
     const parsed = parseFleetAgentConversationsArgs({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-      before: '1800000001000', contains: '  Build   OK ', limit: 25,
+      before: '1800000001000', contains: '  Build   OK ',
+      inReplyTo: 'env-7', channel: 'dev', priority: 'P0', from: 'agent:bot',
+      excludeFrom: 'agent:spam', limit: 25,
     });
     expect(parsed).toEqual({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      before: 1800000001000, contains: 'build ok', limit: 25,
+      before: 1800000001000, contains: 'build ok',
+      inReplyTo: 'env-7', channel: 'dev', priority: 'P0', from: 'agent:bot',
+      excludeFrom: 'agent:spam', limit: 25,
     });
   });
 
@@ -138,6 +142,11 @@ describe('fleet_agent_conversations argument parsing', () => {
       { since: 'never' }, { since: 5 }, { since: '' }, { since: '9999999d' },
       { before: 'never' }, { before: 5 }, { before: '' }, { before: '9999999d' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
+      { inReplyTo: 'has space' }, { inReplyTo: '' }, { inReplyTo: 5 }, { inReplyTo: 'x'.repeat(129) },
+      { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'a'.repeat(65) },
+      { priority: 'P4' }, { priority: 'p0' }, { priority: 0 }, { priority: null },
+      { from: 'has space' }, { from: '' }, { from: 5 },
+      { excludeFrom: 'has space' }, { excludeFrom: '' }, { excludeFrom: 5 },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentConversationsArgs(bad)).toBeNull();
   });
