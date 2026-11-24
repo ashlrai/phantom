@@ -5,6 +5,7 @@ import { githubJson, rateLimitDelay, readReleasePrep } from '../.github/scripts/
 const path = 'repos/ashlrai/phantom/commits/master';
 const limited = (headers = '') => `HTTP/2 429\r\n${headers}\r\n\r\n{"message":"rate limit exceeded"}`;
 const ok = 'HTTP/2 200\r\ncontent-type: application/json\r\n\r\n{"sha":"ok"}';
+const successfulPush = { path: '.github/workflows/ci.yml', event: 'push', status: 'completed', conclusion: 'success' };
 
 test('honors reset and retry-after headers', () => {
   assert.equal(rateLimitDelay(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '110' }, 'rate limit exceeded', 1, 100000), 11000);
@@ -54,7 +55,11 @@ test('checks the selected master sha for existing in-flight runs', () => {
   const paths = [];
   const decision = readReleasePrep('ashlrai/phantom', sha, (p) => {
     paths.push(p);
-    return p.includes('check-runs') ? { check_runs: [] } : { workflow_runs: [{ path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued', created_at: new Date().toISOString() }] };
+    if (p.includes('check-runs')) return { check_runs: [] };
+    if (p.includes('event=workflow_dispatch&branch=master')) {
+      return { workflow_runs: [{ path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued', created_at: new Date().toISOString() }] };
+    }
+    return { workflow_runs: [successfulPush] };
   });
   assert.equal(decision.reason, 'release-run-in-flight');
   // Per-sha inventories stay pinned to the selected sha; only the
@@ -70,7 +75,7 @@ test('a release-gate run outstanding on another master sha suppresses a duplicat
   const decision = readReleasePrep('ashlrai/phantom', sha, (p) => {
     if (p.includes('check-runs')) return { check_runs: [] };
     if (p.includes('event=workflow_dispatch&branch=master')) return { workflow_runs: [other] };
-    return { workflow_runs: [] };
+    return { workflow_runs: [successfulPush] };
   });
   assert.equal(decision.reason, 'release-run-in-flight');
 });

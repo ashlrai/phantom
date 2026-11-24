@@ -1,7 +1,7 @@
-# Starts the existing release-gate CI run, which is the only place Desktop
-# release smoke and Release suites run. One run per master sha: a push starts
-# it, and the five-minute schedule retries the current master sha if that
-# push did not. Signing and notarization stay in the sanctioned Mac wrapper.
+# Release prep runs when master push CI completes, with push and the
+# five-minute schedule as fallbacks. It starts the existing release-gate CI
+# run, the only place Desktop release smoke and Release suites run. Signing
+# and notarization stay in the sanctioned Mac wrapper.
 name: Release prep
 
 on:
@@ -9,6 +9,10 @@ on:
     branches: [master]
   schedule:
     - cron: '*/5 * * * *'
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
 
 permissions: {}
 
@@ -18,7 +22,7 @@ concurrency:
 
 jobs:
   decide:
-    if: github.repository == 'ashlrai/phantom'
+    if: github.repository == 'ashlrai/phantom' && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

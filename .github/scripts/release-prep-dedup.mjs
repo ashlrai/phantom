@@ -1,9 +1,9 @@
-// Release prep: start one release-gate CI run per master sha.
+// Release prep: start one release-gate CI run per master sha after push CI.
 // Desktop release smoke and Release suites live in ci.yml and run only when
-// release_gate is set. A master push does not set it, and the half-hour
-// schedule rarely fires, so Auto-tag waits. This decides whether to dispatch
-// ci.yml with release_gate=true. It reads check runs and workflow runs for
-// one exact sha. It does not sign, publish, or create tags.
+// release_gate is set. Dispatch waits for completed successful push CI on the
+// exact sha because release-fast-smoke refuses anything else. This decides
+// whether to dispatch ci.yml with release_gate=true. It reads check runs and
+// workflow runs for one exact sha. It does not sign, publish, or create tags.
 // A sha whose package.json version is already tagged AND published owes no
 // release-gate run — Auto-tag's own nothing-to-do proof — so the decide job
 // skips the dispatch instead of spending a macOS smoke per merge.
@@ -40,6 +40,9 @@ export function releasePrepDecision({ checks, runs, dispatchRuns = [], now = Dat
   const suites = named(SUITES);
   if (success(smoke) && success(suites)) return { dispatch: false, reason: 'already-green' };
   if (active(smoke) || active(suites)) return { dispatch: false, reason: 'checks-in-progress' };
+  const push = runs.filter((row) => row?.path === '.github/workflows/ci.yml' && row.event === 'push');
+  if (push.length === 0 || push.some((row) => row.status !== 'completed')) return { dispatch: false, reason: 'push-ci-pending' };
+  if (!push.some((row) => row.conclusion === 'success')) return { dispatch: false, reason: 'push-ci-red' };
   const inflight = runs.filter((row) => row?.path === '.github/workflows/ci.yml'
     && (row.event === 'workflow_dispatch' || row.event === 'schedule')
     && row.status !== 'completed');
@@ -158,7 +161,7 @@ export function readReleasePrep(repo, sha, read = githubJson, now = Date.now()) 
       name: row.name, status: row.status, conclusion: row.conclusion ?? null, appId: row.app?.id,
     })),
     runs: runs.workflow_runs.map((row) => ({
-      path: row.path, event: row.event, status: row.status,
+      path: row.path, event: row.event, status: row.status, conclusion: row.conclusion ?? null,
     })),
     dispatchRuns: dispatches.workflow_runs.map((row) => ({
       path: row.path, event: row.event, status: row.status, createdAt: Date.parse(row.created_at),
