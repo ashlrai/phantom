@@ -439,6 +439,30 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--body-kind', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters wakes by --body-kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // Real sends queue bus.send hints whose referents carry these kinds.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'note dm', '--priority', 'P0', '--id', 'wk-note'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'ctx dm', '--kind', 'context', '--priority', 'P0', '--id', 'wk-ctx'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['handoff', '--from', 'atlas', '--to', 'nova', '--task', 'RQ-WK-1', '--prompt', 'take over', '--id', 'wk-ho'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    const ids = (json: { wakes: { id: string }[] }) => json.wakes.map(w => w.id);
+    expect((await run(['wakes', 'nova', '--body-kind', 'note'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'note'])).json)).toEqual(['wk-note']);
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'context'])).json)).toEqual(['wk-ctx']);
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'worker-handoff'])).json)).toEqual(['wk-ho']);
+    // A kind no referent carries is an honest empty page.
+    expect((await run(['wakes', 'nova', '--body-kind', 'work.post'])).json).toMatchObject({ matched: 0, wakes: [] });
+    // The fleet-wide read resolves the same referent kinds.
+    expect((await run(['wakes', '--all', '--body-kind', 'note'])).json).toMatchObject({ matched: 1 });
+    // A body kind must be a printable label; anything else fails closed.
+    expect(await run(['wakes', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--body-kind='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters inbox and channel reads by --priority', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

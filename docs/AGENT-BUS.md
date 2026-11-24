@@ -593,7 +593,7 @@ the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>]` lists wake
+[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
 applies — and its
@@ -683,7 +683,19 @@ bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply,
 never the `replyTo` alias or a substring — so "did the reply to
 envelope X trigger a wake" is one filtered read; claim-holder hints
 never match for the same reason, the unreadable-store and `matched`
-rules are `--thread`'s, and a malformed id answers `invalid`. `--id`
+rules are `--thread`'s, and a malformed id answers `invalid`. `--body-kind`
+keeps only the hints whose resolved referent body carries that exact
+kind discriminator — the same `busBodyKind` match `inbox --body-kind`
+and `channel read --body-kind` apply, decided on the resolved
+referent: the v2 `kind` field, a `worker-handoff` assignment, a
+bus-transport v1 `protocol.kind`, or a `type`/`schema` notice
+discriminator, matched exactly and case-sensitively — so "which wakes
+cite `work.post` announcements" or "which wakes were caused by
+`work.status` receipts" is one filtered read; a claim-holder `wh-…`
+hint's citing receipt provably carries `work.status`, so those hints
+match only that kind, an `unresolved`/`unknown` referent names no
+provable kind and never matches, the unreadable-store and `matched`
+rules are `--thread`'s, and a malformed value answers `invalid`. `--id`
 keeps only the hint whose own id is strictly equal to the value — the
 triggering envelope's wire id on a `bus.send` hint, the `wh-…`
 claim-holder id on those — the same exact-id match `inbox --id` and
@@ -707,7 +719,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

@@ -3139,6 +3139,118 @@ describe('wake hint thread and reply-citation filters', () => {
   });
 });
 
+describe('wake hint body-kind filter', () => {
+  it('keeps only hints whose resolved referent carries the body kind', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    const hint = (id: string) =>
+      enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' }, { root: options.runsRoot });
+    // One referent per discriminator branch busBodyKind reads, plus a
+    // kindless body and a hand-enqueued hint with no live envelope.
+    post('bk-wk-note', { kind: 'note', text: 'a note' }); hint('bk-wk-note');
+    post('bk-wk-work', { kind: 'work.post', jobId: 'RQ-BK-1', title: 't', repo: 'o/n' }); hint('bk-wk-work');
+    post('bk-wk-status', { kind: 'work.status', jobId: 'RQ-BK-1', status: 'running' }); hint('bk-wk-status');
+    post('bk-wk-proto', { protocol: { version: 1, kind: 'task' } }); hint('bk-wk-proto');
+    post('bk-wk-type', { type: 'guardian.notice', text: 'n' }); hint('bk-wk-type');
+    post('bk-wk-plain', { inReplyTo: 'x', text: 'kindless' }); hint('bk-wk-plain');
+    enqueueBusWake({ kind: 'bus.send', id: 'bk-wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    const kinds = (kind: string) => {
+      const page = readAgentWakes('nova', undefined, options, { bodyKind: kind });
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.wakes.map(row => row.id);
+    };
+    expect(kinds('note')).toEqual(['bk-wk-note']);
+    expect(kinds('work.post')).toEqual(['bk-wk-work']);
+    expect(kinds('work.status')).toEqual(['bk-wk-status']);
+    // protocol.kind and the type/schema notices surface under their own literal.
+    expect(kinds('task')).toEqual(['bk-wk-proto']);
+    expect(kinds('guardian.notice')).toEqual(['bk-wk-type']);
+    // A kindless body and an unresolvable referent name no provable kind.
+    expect(kinds('nonexistent')).toEqual([]);
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 7 });
+    // matched counts the proven matches on the resolved page.
+    expect(readAgentWakes('nova', undefined, options, { bodyKind: 'note' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // The verdict composes with the queue-tail filters like every other
+    // referent-body filter.
+    expect(readAgentWakes('nova', undefined, options, { bodyKind: 'note', from: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    const fleet = readAllWakes(undefined, options, { bodyKind: 'work.post' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['bk-wk-work']);
+    // A kind must be a printable label; anything else refuses closed.
+    for (const bad of ['has space', '', 'x'.repeat(129)]) {
+      expect(readAgentWakes('nova', undefined, options, { bodyKind: bad }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { bodyKind: bad }))
+        .toMatchObject({ status: 'invalid' });
+    }
+  });
+
+  it('matches resolved claim-holder hints only under work.status', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // An ordinary hint citing a note shares the page with the wh-… hint.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'note',
+      id: 'wk-bk-note', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    // The claim-holder hint's citing work.status receipt provably carries
+    // that body kind, so it matches only 'work.status'.
+    const statuses = readAgentWakes('nova', undefined, options, { bodyKind: 'work.status' });
+    expect(statuses).toMatchObject({ status: 'ok', matched: 1 });
+    if (statuses.status !== 'ok') throw new Error('unreachable');
+    expect(statuses.wakes).toHaveLength(1);
+    expect(typeof statuses.wakes[0]!.claimHolder).toBe('object');
+    const notes = readAgentWakes('nova', undefined, options, { bodyKind: 'note' });
+    expect(notes).toMatchObject({ status: 'ok', matched: 1 });
+    if (notes.status !== 'ok') throw new Error('unreachable');
+    expect(notes.wakes.map(row => row.id)).toEqual(['wk-bk-note']);
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 2 });
+    const fleet = readAllWakes(undefined, options, { bodyKind: 'work.status' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(typeof fleet.wakes[0]!.claimHolder).toBe('object');
+  });
+
+  it('never matches unresolved referents and fails closed on an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A hint whose envelope is gone resolves unresolved — it names no provable kind.
+    enqueueBusWake({ kind: 'bus.send', id: 'bk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'note',
+      id: 'bk-live', wake: true }, options)).toMatchObject({ status: 'posted' });
+    const page = readAgentWakes('nova', undefined, options, { bodyKind: 'note' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['bk-live']);
+    // An unreadable bus store makes every referent's body unknown, so the
+    // filtered reads are unavailable — never an empty page passed off as
+    // "no wakes about this kind".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { bodyKind: 'note' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAllWakes(undefined, options, { bodyKind: 'work.post' }))
+      .toMatchObject({ status: 'unavailable' });
+    // The unfiltered read still answers with per-row unknown referents.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('fleet-wide wakes read', () => {
   it('lists every hint across identities and bare labels with the shared filters', async () => {
     const options = setup();

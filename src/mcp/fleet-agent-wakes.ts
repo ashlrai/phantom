@@ -19,7 +19,7 @@
  * 'label'` — the same fallback the CLI read reports — so hints queued
  * under a bare coordination label stay readable by their addressee.
  * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
- * `contains`, `thread`, `inReplyTo` and `id` apply
+ * `contains`, `thread`, `inReplyTo`, `bodyKind` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
  * the bounded queue tail accepted before its row cap) and `truncated`
@@ -44,8 +44,8 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo']);
-const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo'] as const;
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo', 'bodyKind']);
+const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo', 'bodyKind'] as const;
 
 export interface FleetAgentWakesArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. Omit for the fleet-wide read: every hint in the bounded queue tail, each row's own `to` naming its addressee. */
@@ -72,6 +72,8 @@ export interface FleetAgentWakesArgs {
   thread?: string;
   /** Keep only hints whose resolved referent body cites this envelope id through its own inReplyTo field — the same own-property exact match `phm agents bus wakes --in-reply-to` applies. */
   inReplyTo?: string;
+  /** Keep only hints whose resolved referent body carries this exact kind discriminator — the same `busBodyKind` match `phm agents bus wakes --body-kind` applies; a resolved claim-holder hint's citing work.status receipt matches only `work.status`. */
+  bodyKind?: string;
 }
 
 /**
@@ -80,7 +82,7 @@ export interface FleetAgentWakesArgs {
  * is required — the addressed read has no meaningful default — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
  * the other bus reads share: `job`/`from`/`excludeFrom`/`id`/`thread`/
- * `inReplyTo` printable
+ * `inReplyTo`/`bodyKind` printable
  * routing labels (`id` the exact hint-id match), `channel` the strict
  * channel-name grammar, the P0–P3 priority enum, `since` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
@@ -175,6 +177,7 @@ export async function readFleetAgentWakes(
     ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.thread === undefined ? {} : { thread: args.thread }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
   };
   const page: WakePage | AllWakesPage = args.agent === undefined
     ? (deps.readAll ?? readAllWakes)(args.since, {}, filter)
