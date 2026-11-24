@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -291,6 +291,22 @@
  *     mode — so a failure class the fleet's own incident response kept
  *     catching, or a gate that kept failing to protect it, never became
  *     work;
+ *   - the queue generation journal's recurring candidate refusals: the
+ *     (src, reason) cells planAutofill's trace and the autofill runner
+ *     record on every applied pass, folded across distinct UTC days
+ *     inside the 7-day window (generatorYieldBacklogItems below). Until
+ *     now the journal only ever reached `phm queue yield`'s
+ *     queue.generator-yield.v1 report and per-pass candidate rankings,
+ *     so intake whose sources keep minting refused work never became
+ *     work;
+ *   - the Jev decision ledger's recurring fallback-dominant kinds: the
+ *     DecisionRecords decide() appends to jev/decisions/*.jsonl for
+ *     every wired call site, folded per kind across distinct UTC days
+ *     inside the 7-day window (jevBacklogItems below). Until now the
+ *     ledger's only readers were `phm jev status [--day]` and the Verse
+ *     Jev card — day-scoped reports someone had to run — so a kind
+ *     whose Jev path kept losing, or a provider-side fallback reason
+ *     recurring across kinds, never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -352,6 +368,7 @@ import { usageGapBacklogItems } from './usage-gap-backlog.js';
 import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
 import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
 import { incidentGateBacklogItems } from './incident-gate-backlog.js';
+import { jevBacklogItems } from './jev-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -814,6 +831,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repo-scoped rows match the discovery target's owner/repo exactly,
   // and a missing or unreadable ledger yields nothing.
   items.push(...await incidentGateBacklogItems({ repo }));
+
+  // Jev decision ledger: the decide() layer's own per-decision records —
+  // decision kinds whose recorded fallbacks keep dominating inside the
+  // window (provider failures, spent budgets, answers missing the gate,
+  // escalate-only refusals) — become backlog items too. Until now the
+  // ledger only ever reached `phm jev status [--day]` and the Verse Jev
+  // card, day-scoped reports someone had to run and read, so a kind
+  // that kept losing across a week or a provider reason recurring
+  // across kinds never became work. Same bounded per-day tail reads and
+  // the writer's own record contract — deliberate-off fallbacks are
+  // never recorded, so every fallback row is a decision Jev was
+  // eligible for and lost; a kind emits only at the recurring bars of
+  // decisions, fallbacks and distinct UTC days inside the window, a
+  // missing day file means no decisions were recorded, an unreadable
+  // one yields nothing, truncated tails are stated as lower bounds,
+  // estimated cost stays unknown rather than zero when calls were
+  // unpriced, and only the fleet's own repository inherits the items
+  // since every decide() call site is this install's own code.
+  items.push(...await jevBacklogItems({ repo }));
   return { items, errors };
 }
 
