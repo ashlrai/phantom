@@ -831,7 +831,34 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   degraded or invalid sample file degrades only its own coverage,
   malformed rows drop like the writer's contract, and rows emit only
   for the fleet's own repository since the samples describe this
-  install's host.
+  install's host,
+  and the Devin autoland decision journal's recurring adverse
+  outcomes, the per-decision DevinAutolandDecision rows
+  `runDevinAutoland` in `src/core/devin/autoland.ts` appends to
+  `devin/autoland.jsonl` under the Ashlr home on every apply pass —
+  the resident daemon's ten-minute autoland timer and manual
+  `phm devin autoland --apply` runs (otherwise only visible through
+  the pass's own idempotency checks — already-landed, backoff,
+  gave-up, supersede retries — and `phm devin autoland --json`,
+  which prints just the current pass, so a landing path that kept
+  failing bundles, a superseded-PR close that kept erroring, or
+  sessions that kept finishing without the required attachments
+  never became work). A failure class becomes an item only while its
+  distinct units — session ids for per-session decisions, pass ids
+  for pass-scoped ones — reach the recurring bars of three across
+  two distinct UTC days inside the 7-day window, covering
+  land-failed/gave-up landings, pending-supersede/supersede-gave-up
+  closes, archive-failed cleanup, missing-attachments sessions,
+  session-failed throws, pass-failed passes and no-identity stalls;
+  gave-up rows fold into their path's cell as terminal tallies,
+  killed/paused/scanned and the success and pacing decisions never
+  emit since they are deliberate state or the pipeline working, a
+  missing journal is a clean empty source while an unreadable read
+  yields nothing rather than folding partial evidence, truncated
+  tails are stated as lower bounds, malformed lines and off-contract
+  rows drop like the writer's own contract, and rows emit only for
+  the fleet's own repository since the journal carries no repository
+  column — every pass scans this install's connected Devin org.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -839,7 +866,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop, judge-verdicts and disk-pressure items carry priority 3;
+  recut-loop, judge-verdicts, disk-pressure and devin-autoland items
+  carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1019,7 +1047,16 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   retired engine, a rolled-forward window or healthy judge-health
   evidence, and emit only for the fleet's own repository since the
   ledger records this install's merge-path verdicts and carries no
-  repository column. They
+  repository column. Devin-autoland items name the decision journal,
+  `phm devin autoland`, the landings ledger and the Devin land path in
+  src/core/devin/, keep the find-which-side-is-failing framing per
+  class — the fork-only publish path, merge-base or bundle handling
+  versus gh close/auth versus terminate/archive versus the attachment
+  contract versus Devin API or identity state — with the same
+  owner-side no-change escape for transient outages, deliberate pause
+  or key scope only Mason can change, and emit only for the fleet's
+  own repository since the journal records this install's passes and
+  carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

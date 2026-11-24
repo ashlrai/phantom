@@ -365,6 +365,22 @@
  *     `phm fleet judge-health` — reports someone had to run — plus the
  *     build-only counterfactual replay nothing schedules, so a judge
  *     engine whose approvals kept not holding never became work;
+ *   - the Devin autoland decision journal's recurring adverse
+ *     outcomes: the per-decision DevinAutolandDecision rows
+ *     runDevinAutoland appends to devin/autoland.jsonl under the
+ *     Ashlr home on every apply pass — the resident daemon's
+ *     ten-minute timer and manual `phm devin autoland --apply`
+ *     passes — covering land-failed/gave-up bundle landings,
+ *     pending-supersede/supersede-gave-up superseded-PR closes,
+ *     archive-failed cleanup, missing-attachments finished
+ *     sessions, session-failed per-session throws, pass-failed
+ *     whole-pass failures and no-identity stalls
+ *     (autolandBacklogItems below). Until now the journal's only
+ *     reader was the pass itself — its idempotency checks and
+ *     `phm devin autoland --json`, which prints just the current
+ *     pass — so a landing path that kept failing bundles, a close
+ *     that kept erroring, or sessions that kept finishing
+ *     unlandable never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -432,6 +448,7 @@ import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
 import { recutLoopBacklogItems } from './recut-loop-backlog.js';
 import { judgeBacklogItems } from './judge-backlog.js';
+import { autolandBacklogItems } from './autoland-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1005,6 +1022,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since every
   // judgeProposal call site is this install's merge path.
   items.push(...await judgeBacklogItems({ repo }));
+  // The Devin autoland journal (devin/autoland.jsonl under the Ashlr
+  // home) is the only record of what the resident daemon's
+  // ten-minute autoland timer and manual apply passes decided per
+  // session: land-failed/gave-up bundle landings, superseded-PR
+  // close retries, archive cleanup, missing attachments, per-session
+  // and whole-pass failures and principal-identity stalls. Until now
+  // its only reader was the pass itself — the idempotency checks and
+  // `phm devin autoland --json`, a report of the current pass, not a
+  // trend. Same bounded no-follow tail read every sibling feed
+  // shares; rows count only under the writer's own contract, a cell
+  // emits only at the recurring bars of distinct units across
+  // distinct UTC days (session ids for per-session decisions, pass
+  // ids for pass-scoped ones), gave-up/supersede-gave-up fold into
+  // their path's cell as terminal tallies, killed/paused/scanned and
+  // the success/pacing decisions never emit since they are deliberate
+  // state or the pipeline working, an unreadable read yields nothing
+  // rather than folding partial evidence while a truncated tail folds
+  // lower-bound flagged, and only the fleet's own repository inherits
+  // the items since the journal carries no repository column — every
+  // pass scans this install's connected Devin org.
+  items.push(...await autolandBacklogItems({ repo }));
   return { items, errors };
 }
 
