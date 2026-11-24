@@ -487,7 +487,6 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'teammates': () => import('./fleet-teammates.js'),
   'telegram-pulse': () => import('./fleet-telegram-pulse.js'),
   'thread-run': () => import('./fleet-thread-run.js'),
-  'tick-cost': () => import('./fleet-tick-cost.js'),
   'tick-gaps': () => import('./fleet-tick-gaps.js'),
   'tick-profile': () => import('./fleet-tick-profile.js'),
   'tick-wall': () => import('./fleet-tick-wall.js'),

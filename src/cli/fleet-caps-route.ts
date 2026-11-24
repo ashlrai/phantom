@@ -3,6 +3,8 @@ import { resolveRegistryPath } from '../core/caps/service.js';
 import { routeSurfaceModel } from '../core/caps/dispatch.js';
 
 /** Inspect registry metadata only; this command never launches a provider. */
+const usage = 'Usage: phm fleet caps-route --surface <id> --model <id> [--registry <path>] --json';
+
 export async function cmdFleetCapsRoute(args: string[]): Promise<number> {
   const options: Record<string, string> = {};
   let json = false;
@@ -10,7 +12,7 @@ export async function cmdFleetCapsRoute(args: string[]): Promise<number> {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--help' && args.length === 1) {
-      console.log('Usage: phm fleet caps-route --surface <id> --model <id> [--registry <path>] --json');
+      console.log(usage);
       return 0;
     }
     if (arg === '--json' && !json) { json = true; continue; }
