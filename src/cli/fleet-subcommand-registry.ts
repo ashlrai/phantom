@@ -239,6 +239,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'job-shape': () => import('./fleet-job-shape.js'),
   'kept': () => import('./fleet-kept.js'),
   'kept-age': () => import('./fleet-kept-age.js'),
+  'kept-landed': () => import('./fleet-kept-landed.js'),
   'kept-worktrees': () => import('./fleet-kept-worktrees.js'),
   'landed': () => import('./fleet-landed.js'),
   'landed-close': () => import('./fleet-landed-close.js'),

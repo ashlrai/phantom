@@ -1,6 +1,6 @@
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { dirname } from 'node:path';
-import { readJobsEmptyWhy } from './jobs-empty-why.js';
+import { readJobsEmptyWhy, type EmptyWhyOptions } from './jobs-empty-why.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { unknownJobYield, yieldTally, type JobYieldParts, type JobYieldReport } from './slot-yield.js';
@@ -111,13 +111,13 @@ export async function readJobYield(path: string, hours = 24, now = Date.now(), r
 }
 
 /** The same read plus job identities; optional explanation shares that ledger read. */
-export async function readJobYieldParts(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines, explain = false): Promise<JobYieldParts> {
+export async function readJobYieldParts(path: string, hours = 24, now = Date.now(), read: YieldLineReader = readLedgerLines, explain = false, emptyOptions: EmptyWhyOptions = {}): Promise<JobYieldParts> {
   const tally = yieldTally(now, hours);
   const lines: string[] = [];
   try {
     if (await read(path, line => { tally.add(line); if (explain) lines.push(line); })) {
       const parts = tally.jobYieldParts();
-      if (explain) parts.report.empty_why = await readJobsEmptyWhy(lines.join('\n'), dirname(dirname(path)), hours, now);
+      if (explain) parts.report.empty_why = await readJobsEmptyWhy(lines.join('\n'), dirname(dirname(path)), hours, now, undefined, emptyOptions);
       return parts;
     }
   } catch { /* unknown below */ }

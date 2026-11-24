@@ -54,8 +54,8 @@ export function jobYieldLines(report: JobYieldReport): string[] {
 }
 
 export async function cmdJobsYield(args: string[], read?: YieldLineReader, now = Date.now(), emptyWhy = false): Promise<number> {
-  const usage = emptyWhy ? 'Usage: phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json]' : yieldUsage;
-  if (emptyWhy && args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${usage}\nExplain EMPTY finishes and rank families by recorded wasted tokens. JSON: jobs.empty-why.v1. Unknown tokens remain null.`); return 0; }
+  const usage = emptyWhy ? 'Usage: phm jobs empty-why [--lane <lane>] [--last N] [--since 24h] [--metrics <jobs.jsonl>] [--json]' : yieldUsage;
+  if (emptyWhy && args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(`${usage}\nExplain EMPTY finishes by cause and inferred generator. --last samples lane finishes within --since (default 24h). JSON: jobs.empty-why.v1. Unknown tokens remain null.`); return 0; }
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     console.log(`${usage}
 Which kinds of jobs are worth launching. Reads the job metrics file
@@ -81,11 +81,19 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
     return 0;
   }
   let hours = 24, json = false, stopList = false, seenSince = false, metrics: string | null = null;
+  let lane: string | undefined, last: number | undefined;
   let by: YieldBy | 'family' | null = null, stopFile = false, dryRun = false, out: string | null = null, ttl: number | null = null;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
-    else if (arg === '--by' && by === null && !emptyWhy) {
+    else if (arg === '--lane' && lane === undefined && emptyWhy) {
+      lane = args[++i];
+      if (!lane || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(lane)) { console.error(usage); return 2; }
+    } else if (arg === '--last' && last === undefined && emptyWhy) {
+      const value = args[++i] ?? '';
+      last = /^\d+$/.test(value) ? Number(value) : NaN;
+      if (!Number.isSafeInteger(last) || last <= 0) { console.error(usage); return 2; }
+    } else if (arg === '--by' && by === null && !emptyWhy) {
       const value = args[++i];
       if (value !== 'source' && value !== 'lane' && value !== 'family') { console.error(usage); return 2; }
       by = value;
@@ -118,12 +126,12 @@ JSON is jobs.yield.v1 with version 1. An unreadable file prints unknown, never z
     else console.log(yieldByLines(scoreboard).join('\n'));
     return scoreboard.known ? 0 : 1;
   }
-  const parts = await readJobYieldParts(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read, emptyWhy || json);
+  const parts = await readJobYieldParts(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, now, read, emptyWhy || json, { lane, last });
   if (stopFile) return writeStops(parts, { ttl: ttl ?? STOP_TTL_HOURS, out, dryRun, json, now });
   const report = parts.report;
 
   if (emptyWhy) {
-    const why = report.empty_why ?? await readJobsEmptyWhy(null, '', hours, now);
+    const why = report.empty_why ?? await readJobsEmptyWhy(null, '', hours, now, undefined, { lane, last });
     console.log(json ? JSON.stringify(sanitizePublicJson(why)) : emptyWhyLines(why).join('\n'));
     return why.known ? 0 : 1;
   }

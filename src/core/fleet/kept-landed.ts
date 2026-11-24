@@ -13,19 +13,20 @@ export interface KeptLandedReport {
 }
 
 /** Reuse the audit's direct-directory lister; never recurse to discover worktrees. */
-export async function readKeptLanded(options: { wtRoot?: string; runsRoot?: string; olderThanHours?: number; now?: number; scanBudgetMs?: number } = {}): Promise<KeptLandedReport> {
+export async function readKeptLanded(options: { wtRoot?: string; runsRoot?: string; olderThanHours?: number; now?: number; scanBudgetMs?: number; fs?: typeof defaultFs; git?: (dir: string, args: string[], input?: string) => string; measure?: typeof measureWorktreeBytes } = {}): Promise<KeptLandedReport> {
   const root = options.wtRoot ?? join(homedir(), 'Projects/ashlrai/wt');
   const runs = options.runsRoot ?? join(homedir(), '.ashlr-runs'), now = options.now ?? Date.now();
   const deadline = Date.now() + Math.max(0, Math.min(options.scanBudgetMs ?? 15_000, 15_000));
-  const names = await defaultFs.dirs(root);
+  const fs = options.fs ?? defaultFs;
+  const names = await fs.dirs(root);
   if (!names) throw new Error('Worktree root unavailable');
   const candidates: { job: string; ageHours: number | null }[] = [];
   let inspected = 0;
   for (const job of names.slice(0, 600)) {
     if (Date.now() >= deadline) break;
     inspected++;
-    if (await defaultFs.mtime(join(root, job, '.git')) === null) continue;
-    const times = [await defaultFs.mtime(join(root, job)), await defaultFs.mtime(join(runs, `${job}.log`))];
+    if (await fs.mtime(join(root, job, '.git')) === null) continue;
+    const times = [await fs.mtime(join(root, job)), await fs.mtime(join(runs, `${job}.log`))];
     const newest = Math.max(...times.filter((value): value is number => value !== null));
     candidates.push({ job, ageHours: Number.isFinite(newest) ? Math.max(0, (now - newest) / 3_600_000) : null });
   }
@@ -36,6 +37,7 @@ export async function readKeptLanded(options: { wtRoot?: string; runsRoot?: stri
     const dir = join(root, candidate.job), jobDeadline = Math.min(deadline, Date.now() + 2_000);
     const git = (args: string[], input?: string): string => {
       if (Date.now() >= jobDeadline) throw new Error('Deadline');
+      if (options.git) return options.git(dir, args, input);
       return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'diff.external=', ...args], {
         cwd: dir, encoding: 'utf8', input, timeout: Math.max(1, jobDeadline - Date.now()), killSignal: 'SIGKILL',
         maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
@@ -45,11 +47,13 @@ export async function readKeptLanded(options: { wtRoot?: string; runsRoot?: stri
     const row: KeptLandedRow = { ...candidate, base: null, filesChanged: null, linesChanged: null, landed: 'unknown', evidence: 'unknown', bytes: 0, sizeComplete: false };
     try {
       const master = git(['rev-parse', '--verify', 'origin/master^{commit}']).trim();
-      const marker = await defaultFs.text(join(runs, `${row.job}.base`));
-      if (marker === null && await defaultFs.mtime(join(runs, `${row.job}.base`)) !== null) throw new Error('Base unavailable');
+      if (!/^[a-f0-9]{40,64}$/.test(master)) throw new Error('Invalid master');
+      const marker = await fs.text(join(runs, `${row.job}.base`));
+      if (marker === null && await fs.mtime(join(runs, `${row.job}.base`)) !== null) throw new Error('Base unavailable');
       const recorded = marker?.trim().split(/\s+/)[0];
       if (marker !== null && !/^[a-f0-9]{40,64}$/.test(recorded ?? '')) throw new Error('Invalid base');
       row.base = recorded ?? git(['merge-base', 'HEAD', master]).trim();
+      if (!/^[a-f0-9]{40,64}$/.test(row.base)) throw new Error('Invalid base');
       const diff = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--ignore-submodules=none'];
       const files = git([...diff, '--name-only', '-z', row.base, '--']).split('\0').filter(Boolean);
       row.filesChanged = files.length;
@@ -66,7 +70,7 @@ export async function readKeptLanded(options: { wtRoot?: string; runsRoot?: stri
         if (id && git(['patch-id', '--stable'], history).split('\n').some(line => line.split(' ')[0] === id)) { row.landed = 'yes'; row.evidence = 'patch-id'; }
       }
     } catch { row.landed = 'unknown'; row.evidence = 'unknown'; }
-    const size = measureWorktreeBytes(dir, { deadlineMs: jobDeadline });
+    const size = (options.measure ?? measureWorktreeBytes)(dir, { deadlineMs: jobDeadline });
     row.bytes = size.bytes; row.sizeComplete = size.complete;
     worktrees.push(row);
   }
