@@ -93,8 +93,10 @@ afterEach(async () => {
 });
 
 describe('fleet_agent_roster argument parsing', () => {
-  it('accepts only an empty argument object — every probe target and store root stays server-owned', async () => {
+  it('accepts only view selectors while every probe target and store root stays server-owned', async () => {
     expect(parseFleetAgentRosterArgs({})).toEqual({});
+    expect(parseFleetAgentRosterArgs({ allOwners: true })).toEqual({ allOwners: true });
+    expect(parseFleetAgentRosterArgs({ principal: 'local' })).toEqual({ principal: 'local' });
     for (const bad of [
       { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { home: '/tmp' },
       { provider: 'claude' }, { limit: 1 }, { extra: 1 }, { agent: 'x' }, { timeoutMs: 1 },
@@ -168,7 +170,7 @@ describe('fleet_agent_roster reader', () => {
 });
 
 describe('fleet_agent_roster MCP tool', () => {
-  it('is advertised read-only beside the agent reads with an empty argument schema', async () => {
+  it('is advertised read-only beside the agent reads with view selectors', async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map(tool => tool.name)).toEqual([...FLEET_MCP_TOOL_NAMES]);
@@ -178,7 +180,9 @@ describe('fleet_agent_roster MCP tool', () => {
     });
     expect(tool?.description).toContain('no caller root, path or cwd is accepted');
     expect(tool?.description).toContain('collectAgentRoster');
-    expect(tool?.inputSchema).toMatchObject({ type: 'object', properties: {}, additionalProperties: false });
+    expect(tool?.inputSchema).toEqual({ type: 'object', properties: {
+      principal: { type: 'string', pattern: '^(local|own_[a-f0-9]{32})$' }, allOwners: { type: 'boolean' },
+    }, additionalProperties: false });
   });
 
   it.each([
@@ -213,6 +217,16 @@ describe('fleet_agent_roster MCP tool', () => {
     const { parsed } = await callAgentRoster(client);
     expect(agentRoster).toHaveBeenCalledWith();
     expect(parsed).toEqual({ ok: true });
+  });
+
+  it('M2-4 allOwners applies the four-field projection after the injected reader', async () => {
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), agentRoster: async () => rosterFixture() });
+    const { parsed } = await callAgentRoster(client, { allOwners: true });
+    const rows = parsed as unknown as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(Object.keys(row).sort()).toEqual(['kind', 'lastSeen', 'qualifiedHandle', 'status']);
+    expect(JSON.stringify(rows)).not.toContain('job-1');
+    expect(JSON.stringify(rows)).not.toContain('Fix the gate');
   });
 
   it('keeps a throwing injected reader behind the sanitized fleet error', async () => {

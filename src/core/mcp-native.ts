@@ -27,7 +27,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { AshlrConfig, NativeToolDef, NativeToolSafety, ProposalStatus } from './types.js';
 import { loadConfig } from './config.js';
-import { collectAgentRoster } from './fleet/agent-roster.js';
+import { collectAgentRoster, parseRosterViewOptions, selectAgentRoster } from './fleet/agent-roster.js';
 import { PROACTIVE_PROFILE_INPUT_SCHEMA, PROACTIVE_PROFILE_PATCH_SCHEMA } from './proactive/schema.js';
 import { listChannelRegistry } from './agents/channel-registry.js';
 import { coordinationSummary } from './agents/claim-store.js';
@@ -568,9 +568,12 @@ const TOOLS: NativeToolImpl[] = [
   {
     name: 'phm_agent_roster',
     description: 'Read the unified live session roster across Phantom jobs, Devin cloud, Devin Desktop, Codex, Claude, Cursor, Grok, Ollama and oMLX. Unknown sources stay unknown. Read-only; prints no secrets.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    inputSchema: { type: 'object', properties: {
+      principal: { type: 'string', pattern: '^(local|own_[a-f0-9]{32})$' },
+      allOwners: { type: 'boolean' },
+    }, additionalProperties: false },
     safety: 'read',
-    handler: async () => collectAgentRoster(),
+    handler: async args => selectAgentRoster(await collectAgentRoster(), parseRosterViewOptions(args) ?? {}),
   },
   {
     name: 'phm_context_brief',
@@ -1939,7 +1942,7 @@ export async function callNativeTool(name: string, rawArgs: unknown): Promise<Na
       ? 'invalid orders arguments' : null;
   } else if (name === 'phm_agent_roster') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
-    invalid = !object || Object.keys(args).length > 0 ? 'invalid roster arguments' : null;
+    invalid = !object || !parseRosterViewOptions(args) ? 'invalid roster arguments' : null;
   } else if (name === 'phantom_fleet_verbs') {
     const object = rawArgs !== null && typeof rawArgs === 'object' && !Array.isArray(rawArgs);
     invalid = !object || Object.keys(args).some(key => key !== 'grep') ||

@@ -45,13 +45,19 @@ export type BusCli = typeof BUS_CLIS[number];
 export type BusProvider = typeof PROVIDERS[number];
 
 const credentialFree = (value: string): boolean => scrubSecrets(value) === value;
+// Owner qualification is structured data only, never a routing-label shortcut.
+const unqualified = (value: string): boolean => !value.includes('@') && !/^own_/i.test(value);
 /** Same shape as the agentnet callsign: lowercase, starts with a letter, 1-32 chars. */
 export const agentHandleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}(?![\s\S])/, 'handle: a-z, 0-9, -; 1-32 chars')
-  .refine(credentialFree, 'credential-shaped handle');
+  .refine(credentialFree, 'credential-shaped handle').refine(unqualified, 'qualified handle refused');
+export const qualifiedAgentSchema = z.object({
+  handle: agentHandleSchema, owner: z.string().regex(/^own_[a-f0-9]{32}(?![\s\S])/),
+}).strict();
 /** Channel names reuse the bus-group room rule so `group:<name>:<topic>` stays valid. */
 export const agentChannelNameSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}(?![\s\S])/, 'channel: a-z, 0-9, _ -; 1-32 chars');
 const aliasSchema = z.string().regex(/^[\x21-\x7e]{1,128}(?![\s\S])/, 'printable ASCII label, 1-128 chars')
   .refine(credentialFree, 'credential-shaped alias')
+  .refine(unqualified, 'qualified alias refused')
   .refine(value => !RESERVED_PREFIXES.some(prefix => value.toLowerCase().startsWith(prefix)), 'reserved alias prefix');
 const modelSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}(?![\s\S])/, 'model label')
   .refine(credentialFree, 'credential-shaped model');
@@ -123,9 +129,14 @@ export function agentAddress(handle: string): string {
 export function resolveAgent(registry: AgentRegistry, ref: string): AgentIdentity | undefined {
   if (typeof ref !== 'string' || ref.length === 0 || ref.length > 128) return undefined;
   const handle = ref.startsWith(AGENT_ADDRESS_PREFIX) ? ref.slice(AGENT_ADDRESS_PREFIX.length) : ref;
-  return registry.identities.find(identity => identity.handle === handle) ??
-    registry.identities.find(identity => identity.id === ref) ??
-    registry.identities.find(identity => identity.aliases.includes(ref));
+  // Check before every fallback, including callers' lowercase retries, so old
+  // registry aliases cannot turn a qualified display label into a local agent.
+  if (!unqualified(ref) || !unqualified(handle)) return undefined;
+  const validHandle = (identity: AgentIdentity) => agentHandleSchema.safeParse(identity.handle).success;
+  const validAlias = aliasSchema.safeParse(ref).success;
+  return registry.identities.find(identity => identity.handle === handle && validHandle(identity)) ??
+    registry.identities.find(identity => identity.id === ref && validHandle(identity)) ??
+    registry.identities.find(identity => validAlias && identity.aliases.includes(ref) && validHandle(identity));
 }
 
 export function findAgentChannel(registry: AgentRegistry, name: string): AgentChannel | undefined {
@@ -137,7 +148,9 @@ export function findAgentChannel(registry: AgentRegistry, name: string): AgentCh
  * aliases. Inbox and wake matching key on this set, so a foreign producer that
  * addresses the bare handle or `agt_` id still reaches the same agent. */
 export function agentLabels(identity: AgentIdentity): string[] {
-  return [`${AGENT_ADDRESS_PREFIX}${identity.handle}`, identity.handle, identity.id, ...identity.aliases];
+  if (!agentHandleSchema.safeParse(identity.handle).success) return [];
+  return [`${AGENT_ADDRESS_PREFIX}${identity.handle}`, identity.handle, identity.id,
+    ...identity.aliases.filter(alias => aliasSchema.safeParse(alias).success)];
 }
 
 function emptyRegistry(): AgentRegistry {
