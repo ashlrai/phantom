@@ -665,6 +665,26 @@
  *     days inside the 7-day window, truncated tails are stated as lower
  *     bounds, and items emit only for the fleet's own repository since
  *     the journal carries no repo column;
+ *   - the work market's posture journal's recurring adverse posture
+ *     reasons: the per-tick `posture` events dispatchd's market_metric
+ *     appends to metrics/work-market.jsonl whenever any lane carries a
+ *     budget override or the devin target is live — each row's lanes
+ *     map recording every lane's posture, posture_reason,
+ *     cost_class_reason and spend-down projection, computed by
+ *     work_market.py lane_view()/devin_cost()/spend_down() from the
+ *     budget-overrides.json allowance map and the devin
+ *     weekly-capacity reading (marketPostureBacklogItems below). Until
+ *     now the journal's posture_reason had exactly one reader —
+ *     `phm route explain`'s latest-row lookup, a point-in-time report
+ *     someone had to run — so a lane whose allowance evidence kept
+ *     failing its freshness checks (spend_down_unknown, the devin_*
+ *     evidence codes) and included lanes the host's use-it-all
+ *     projection kept flagging for burn overrides (use_it_all_*)
+ *     never became work. A (lane, reason) cell emits only at the
+ *     recurring bars of distinct in-window rows across distinct UTC
+ *     days, designed posture reasons never emit, truncated tails are
+ *     stated as lower bounds, and items emit only for the fleet's own
+ *     repository since the market view describes this install's lanes;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -754,6 +774,7 @@ import { custodyBacklogItems } from './custody-backlog.js';
 import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
+import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1082,6 +1103,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // journal describes this install's dispatcher and lanes.
   items.push(...await unfedBacklogItems({ repo }));
+
+  // Work-market posture journal: the same journal's per-tick `posture`
+  // events — each lane's posture_reason/cost_class_reason verdicts —
+  // folded per (lane, reason) cell for the adverse vocabulary only:
+  // evidence-gap codes (spend_down_unknown, the devin_* freshness and
+  // shape failures) where the lane's measured allowance evidence keeps
+  // being unusable, and the use-it-all override codes where included
+  // lanes keep projecting waste or behind-pace often enough to force
+  // burn posture tick after tick. Until now posture_reason's only
+  // reader was `phm route explain`'s latest-row lookup, a report
+  // someone had to run, so chronically broken allowance evidence and
+  // recurring burn overrides never became work. Same bounded tail read
+  // the unfed feed uses; a cell emits only at the recurring bars of
+  // in-window rows across distinct UTC days, designed posture reasons
+  // never emit, truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items since the market
+  // view describes this install's dispatcher and lanes.
+  items.push(...await marketPostureBacklogItems({ repo }));
 
   // Pre-launch dupcheck gate precision: the queue.dupcheck-event.v1
   // ledger's recurring missed duplicates — let-through jobs that still
