@@ -113,13 +113,13 @@ describe('the diff checks reuse the merge gates', () => {
     expect(checks.find((c) => c.id === 'tamper')).toEqual({ id: 'tamper', ok: false, text: 'Test tampering' });
   });
 
-  it('G2: over the compiled file ceiling without a grant', () => {
+  it('G2: size is a file cap, not a risk class, and path rules stay high', () => {
     const files: Record<string, string[]> = {};
     for (let i = 0; i < 11; i += 1) files[`docs/page-${i}.md`] = ['text'];
-    const scope = cloudPrDiffChecks({ repo: 'ashlrai/other', diff: diffOf(files), selfRepo: false, report: DONE, policy: null }).find((c) => c.id === 'scope')!;
-    expect(scope.ok).toBe(false);
-    // classifyRisk calls >10 files high risk before the file cap is reached.
-    expect(scope.text).toBe('High risk');
+    const wide = cloudPrDiffChecks({ repo: 'ashlrai/other', diff: diffOf(files), selfRepo: false, report: DONE, policy: null }).find((c) => c.id === 'scope')!;
+    expect(wide).toEqual({ id: 'scope', ok: false, text: '11 files (cap 10)' });
+    const secret = cloudPrDiffChecks({ repo: 'ashlrai/other', diff: diffOf({ 'src/auth.ts': ['export const x = 1'] }), selfRepo: false, report: DONE, policy: null }).find((c) => c.id === 'scope')!;
+    expect(secret).toEqual({ id: 'scope', ok: false, text: 'High risk' });
   });
 
   it('G2: a grant tighter than the ceilings is the cap that applies', () => {

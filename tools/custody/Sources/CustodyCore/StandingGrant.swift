@@ -107,6 +107,10 @@ public struct GrantValidationContext: Sendable {
 }
 
 public enum StandingGrantValidator {
+  /// Medium is the merge ceiling for ordinary changes of any size.
+  /// File and line limits live on maxFiles and maxLines. Path rules stay
+  /// outside this rank: auth, secrets, signing, CI and shell are high
+  /// and cannot be signed.
   static let riskRank: [String: Int] = ["low": 0, "medium": 1]
   static let stageRank: [String: Int] = ["propose": 0, "merge": 1]
 
@@ -279,6 +283,9 @@ public enum StandingGrantValidator {
         throw GrantRefusal(path: "\(p).engines[\(j)]", reason: "\(engine) is not one of the grant's engines")
       }
       let stageRisk = try oneOf(obj["maxRisk"], path: "\(p).maxRisk", allowed: GrantContract.mergeRisks)
+      if let rank = Self.riskRank[stageRisk], let ceiling = Self.riskRank[GrantContract.maxRisk], rank > ceiling {
+        throw GrantRefusal(path: "\(p).maxRisk", reason: "above the medium ceiling")
+      }
       let stageFiles = try integer(obj["maxFiles"], path: "\(p).maxFiles", range: 0...maxFiles)
       let stageLines = try integer(obj["maxLines"], path: "\(p).maxLines", range: 0...maxLines)
       let stageMerges = try integer(obj["maxMergesPerRepoPerDay"], path: "\(p).maxMergesPerRepoPerDay", range: 0...(operatorVolumes ? GrantContract.maxMergesPerRepoPerDay : GrantContract.legacyMaxMergesPerRepoPerDay))

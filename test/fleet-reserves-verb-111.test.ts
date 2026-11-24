@@ -44,11 +44,11 @@ describe('cmdFleetReserves', () => {
     expect(code).toBe(0);
     const text = lines.join('\n');
     for (const seatId of ['claude-a', 'codex-a', 'local:qwen-fake', 'devin']) expect(text).toContain(seatId);
-    expect(text).toContain('claude-a  claude  reserve 40%  session ceiling 70%  source mode-default(balanced)  enabled');
-    expect(text).toContain('codex-a  codex  reserve 40%  session ceiling 70%  source mode-default(balanced)  enabled');
+    expect(text).toContain('claude-a  claude  reserve 0%  session ceiling 100%  source mode-default(balanced)  enabled');
+    expect(text).toContain('codex-a  codex  reserve 0%  session ceiling 100%  source mode-default(balanced)  enabled');
     expect(text).toContain('local:qwen-fake  local  reserve 0%  session ceiling none  source mode-default(balanced)  enabled');
     expect(text).toContain('devin  devin  reserve 0%');
-    expect(text.split('\n').at(-1)).toBe('2 seats keep usage back automatically');
+    expect(text.split('\n').at(-1)).toBe('0 seats keep usage back automatically');
   });
 
   it('--json emits the fleet.reserves.v1 schema', async () => {
@@ -61,12 +61,12 @@ describe('cmdFleetReserves', () => {
     const body = JSON.parse(lines[0]!);
     expect(body.schema).toBe('fleet.reserves.v1');
     expect(body.mode).toBe('balanced');
-    expect(body.automatic).toBe(2);
+    expect(body.automatic).toBe(0);
     expect(body.seats).toHaveLength(4);
     const claude = body.seats.find((s: { seatId: string }) => s.seatId === 'claude-a');
     expect(claude).toEqual({
       seatId: 'claude-a', engine: 'claude', enabled: true,
-      reservePercent: 40, maxSessionWindowPercent: 70, source: 'mode-default',
+      reservePercent: 0, maxSessionWindowPercent: 100, source: 'mode-default',
     });
     const local = body.seats.find((s: { seatId: string }) => s.seatId === 'local:qwen-fake');
     expect(local).toMatchObject({ engine: 'local', reservePercent: 0, maxSessionWindowPercent: null, source: 'mode-default' });
@@ -75,19 +75,18 @@ describe('cmdFleetReserves', () => {
   it('--clear stores reservePercent 0 with no session ceiling, then reports none automatic', async () => {
     const dir = root();
     const policyFile = join(dir, 'budget.json');
+    writeFileSync(policyFile, `${JSON.stringify({ mode: 'reserve', seats: {}, updatedAt: '2026-11-09T00:00:00.000Z' })}\n`);
     const capacityFile = writeSnapshot(dir, FAKE_SEATS);
     const first = capture();
     expect(await cmdFleetReserves(['--clear'], { policyFile, capacityFile, now: NOW, out: first.out })).toBe(0);
     expect(first.lines.join('\n')).toContain('cleared claude-a');
-    expect(first.lines.join('\n')).toContain('cleared codex-a');
+    expect(first.lines.join('\n')).not.toContain('cleared codex-a');
     expect(first.lines.join('\n')).not.toContain('local:qwen-fake');
     expect(first.lines.join('\n')).not.toContain('cleared devin');
     const stored = JSON.parse(readFileSync(policyFile, 'utf8'));
-    for (const seatId of ['claude-a', 'codex-a']) {
-      expect(stored.seats[seatId].reservePercent).toBe(0);
-      expect(stored.seats[seatId].enabled).toBe(true);
-      expect('maxSessionWindowPercent' in stored.seats[seatId]).toBe(false);
-    }
+    expect(stored.seats['claude-a'].reservePercent).toBe(0);
+    expect(stored.seats['claude-a'].enabled).toBe(true);
+    expect('maxSessionWindowPercent' in stored.seats['claude-a']).toBe(false);
     const second = capture();
     expect(await cmdFleetReserves([], { policyFile, capacityFile, now: NOW, out: second.out })).toBe(0);
     expect(second.lines.join('\n').split('\n').at(-1)).toBe('0 seats keep usage back automatically');
@@ -116,14 +115,14 @@ describe('cmdFleetReserves', () => {
   it('--clear --dry-run prints the plan and writes nothing', async () => {
     const dir = root();
     const policyFile = join(dir, 'budget.json');
-    const before = `${JSON.stringify({ mode: 'balanced', seats: {}, updatedAt: '2026-11-09T00:00:00.000Z' })}\n`;
+    const before = `${JSON.stringify({ mode: 'reserve', seats: {}, updatedAt: '2026-11-09T00:00:00.000Z' })}\n`;
     writeFileSync(policyFile, before);
     const capacityFile = writeSnapshot(dir, FAKE_SEATS);
     const { lines, out } = capture();
     expect(await cmdFleetReserves(['--clear', '--dry-run'], { policyFile, capacityFile, now: NOW, out })).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('would clear claude-a');
-    expect(text).toContain('would clear codex-a');
+    expect(text).not.toContain('would clear codex-a');
     expect(readFileSync(policyFile, 'utf8')).toBe(before);
     expect(readdirSync(dir).filter((f) => f.includes('unreadable'))).toEqual([]);
   });

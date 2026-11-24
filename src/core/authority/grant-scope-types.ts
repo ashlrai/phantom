@@ -33,6 +33,13 @@ export interface GrantScopeEdit {
   maxFiles?: number;
   maxLines?: number;
   repoMaxMergesPerDay?: Record<string, number>;
+  /**
+   * Apply to every non-local seat already in the draft.
+   * 0 uses included allowance and does not authorize paid overage.
+   */
+  reserveFloorPercent?: number;
+  /** null removes the session ceiling. 1..100 sets it. 100 uses the included window. */
+  maxSessionWindowPercent?: number | null;
 }
 
 /** What the draft route adds for the editor (AuthorityDraftResponse, 3.15). */
