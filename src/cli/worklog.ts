@@ -1,9 +1,12 @@
+import { worklogPrs, worklogPrsText } from '../core/fleet/worklog-prs.js';
 import { filterWorklog, readWorklog, worklogHours, WORKLOG_DEFAULT_HOURS, WORKLOG_KINDS, type WorklogKind, type WorklogReport } from '../core/fleet/worklog.js';
 
-const usage = `Usage: phm worklog [--hours ${WORKLOG_DEFAULT_HOURS}] [--kind ${WORKLOG_KINDS.join('|')}] [--repo <repo>] [--lane <lane>] [--json]
+const usage = `Usage: phm worklog [--hours ${WORKLOG_DEFAULT_HOURS}] [--kind ${WORKLOG_KINDS.join('|')}] [--repo <repo>] [--lane <lane>] [--prs] [--json]
 One feed of what the fleet did, newest first: merges, launches, finishes, jobs that ended with no change,
 leader replies and incidents. Read-only. A source that cannot be read is listed as unknown with the reason.
---since <n>h is the older spelling of --hours <n>.`;
+--since <n>h is the older spelling of --hours <n>.
+--prs lists only the merged PRs (fleet.worklog-prs.v1), newest first and grouped by hour with each lane, model and
+minutes to merge, and counts the jobs that ended with no PR per hour.`;
 const SOURCE_NAMES: Record<keyof WorklogReport['sources'], string> = { jobs: 'job results', events: 'dispatch events', leader: 'leader replies' };
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -25,13 +28,14 @@ export function worklogText(report: WorklogReport, filtered: boolean): string[] 
 }
 
 export async function cmdWorklog(args: string[], read: (hours: number) => Promise<WorklogReport> = readWorklog): Promise<number> {
-  let hours = WORKLOG_DEFAULT_HOURS, json = false;
+  let hours = WORKLOG_DEFAULT_HOURS, json = false, prs = false;
   const filters: { kind?: string; repo?: string; lane?: string } = {};
   const fail = () => { console.error(usage); return 2; };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--help' || arg === '-h') { console.log(usage); return 0; }
     if (arg === '--json') { json = true; continue; }
+    if (arg === '--prs') { prs = true; continue; }
     const value = args[++i];
     if (!value?.trim() || value.startsWith('-')) return fail();
     if (arg === '--hours' || arg === '--since') { try { hours = worklogHours(value); } catch { return fail(); } }
@@ -41,6 +45,12 @@ export async function cmdWorklog(args: string[], read: (hours: number) => Promis
   }
   try {
     const report = await read(hours);
+    if (prs) {
+      if (filters.kind || filters.lane) return fail();
+      const shipped = worklogPrs(report, filters.repo);
+      console.log(json ? JSON.stringify(shipped) : worklogPrsText(shipped).join('\n'));
+      return 0;
+    }
     report.rows = filterWorklog(report.rows, filters.repo, filters.lane, filters.kind);
     report.entries = filterWorklog(report.entries, filters.repo, filters.lane);
     console.log(json ? JSON.stringify(report) : worklogText(report, Boolean(filters.kind || filters.repo || filters.lane)).join('\n'));

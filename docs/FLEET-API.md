@@ -1103,3 +1103,14 @@ Nonces are consumed for dry runs and failed attempts as well as successful
 applies, and survive server restarts. Use a fresh nonce to apply a reviewed dry
 run. `~/.ashlr/wb/audit.jsonl` records timestamps, fixed action names and outcomes;
 request values, capabilities, job IDs, paths and nonces are never recorded.
+
+## Work log of merged PRs
+
+`GET /api/verse/fleet/worklog[?hours=24][&repo=<name>]` returns `fleet.worklog-prs.v1`:
+one entry per merged PR, newest first, with its merge time, repo, PR number and
+title, lane, model and minutes from publish to merge, plus an hourly list with a
+merged count and the number of jobs that ended with no PR (counted, not listed).
+Fields the ledger did not record are `null`. It reads the same jobs ledger
+projection as `phm worklog`, and `phm worklog --prs --json` prints the same report.
+`hours` runs from 1 to 168 (default 24); any other parameter is a 400. The
+numbers-only report stays at `/api/fleet/worklog` (`fleet.worklog.v1`).
