@@ -1026,7 +1026,32 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   newest report files with older files past the read bound stated, and
   items emitted only for the fleet's own repository since the reports
   describe this install's router catalog and carry no repository
-  column.
+  column,
+  and the MCP gateway activity journal's recurring policy blocks, the
+  per-call {ts, session, caller, tool, verdict, args} rows the
+  gateway's audit() in `src/core/mcp-gateway.ts` appends to
+  `<account home>/gateway/activity.jsonl` through
+  recordGatewayActivity on every CallToolRequest — 'deny' and
+  'approval_required' verdicts where checkGatewayPolicy in
+  `src/core/mcp-gateway-policy.ts` refused the call, and 'revoked'
+  verdicts where the call arrived on a session whose record is revoked
+  or unreadable (otherwise only visible through the writer's own
+  14-day/8 MiB rotation and tests — the log was write-only evidence,
+  so a (caller, tool) pair the policy kept denying, a tool whose
+  approval gate kept stalling calls and calls that kept arriving on
+  dead session records never became work). A cell — one (caller, tool,
+  verdict) group — becomes an item only while its in-window records
+  reach the recurring bars of three across two distinct UTC days
+  inside the 7-day window; 'allow' rows, the call running, never
+  emit, rows count only under the writer's contract (gs_ session ids,
+  the caller/tool length bounds, the closed verdict vocabulary, args
+  as at most 20 '[redacted]'-valued keys), malformed lines and
+  off-contract rows drop like the writer's contract, a bounded
+  no-follow tail read at a bound above the writer's own 8 MiB
+  self-trim is stated as a lower bound when it truncates, argument
+  signatures quote key names only, and rows emit only for the fleet's
+  own repository since the journal describes this install's gateway
+  and carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1035,8 +1060,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
-  audit-trail, desktop-console, fleet-self-tick, repair-handoff and
-  catalog-refresh items carry priority 3;
+  audit-trail, desktop-console, fleet-self-tick, repair-handoff,
+  catalog-refresh and mcp-gateway items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1272,7 +1297,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   for a missing login, billing or host state only the owner can fix,
   pinned ops machinery or a rolled-forward window, and emit only for
   the fleet's own repository since the reports record this install's
-  router catalog and carry no repository column. They
+  router catalog and carry no repository column. MCP-gateway items
+  name the activity journal, `src/core/gateway-sessions.ts`,
+  `src/core/mcp-gateway.ts`, `src/core/mcp-gateway-policy.ts` and the
+  policy file the verdict does not record, keep the
+  stale-policy-versus-caller-behavior framing per verdict — a rule
+  left refusing work the fleet now needs, ask_before_every_change
+  broader than the read-tool list intends, approval gates nobody
+  clears, or revoked sessions still serving calls — with the same
+  owner-side no-change escape for owner-pinned policy, foreign
+  callers, pinned ops machinery or a rolled-forward window, and emit
+  only for the fleet's own repository since the journal records this
+  install's gateway and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
