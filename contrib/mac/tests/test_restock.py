@@ -13,10 +13,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
@@ -89,6 +92,61 @@ def line(job, text='routine fix', **attrs):
     p = attrs.pop('P', None)
     toks = ([f'P{p}'] if p is not None else []) + [f'{k}={v}' for k, v in attrs.items()]
     return f'- READY {job} ({", ".join(toks)}): {text}'
+
+
+class FamilyPauseTests(unittest.TestCase):
+    def test_real_yield_suppresses_siblings_keeps_healthy_and_resumes_after_merge(self):
+        jobs = ['CONSOLELAND800', 'CONSOLELAND800B', 'FLEETCORELAND800']
+        tmp = build('\n'.join(line('RQ-PHX-' + j, repo='phantom', tier='work') for j in jobs))
+        self.addCleanup(tmp.cleanup)
+        home, root = Path(tmp.name), SCRIPT.parents[2]
+        tools = home / 'bin'
+        tools.mkdir()
+        cli = [shutil.which('node'), str(root / 'node_modules/tsx/dist/cli.mjs'), str(root / 'src/cli/index.ts')]
+        (tools / 'phm').write_text('#!/bin/sh\nexec ' + shlex.join(cli) + ' "$@"\n')
+        (tools / 'phm').chmod(0o700)
+        now, history = datetime.now(timezone.utc), []
+        def event(job, hours, **fields):
+            return json.dumps(dict(job='RQ-PHX-' + job, ts=(now - timedelta(hours=hours)).isoformat(), **fields))
+        for i, job in enumerate(['CONSOLELAND794', 'CONSOLELAND794B', 'CONSOLELAND795', 'CONSOLELAND795B']):
+            history.extend([event(job, 10-i, event='launch'),
+                            event(job, 9.5-i, event='finish', empty=True, summary='source PR already merged')])
+        history.extend([event('FLEETCORELAND795', 5, event='launch'),
+                        event('FLEETCORELAND795', 4, event='finish', empty=False),
+                        event('FLEETCORELAND795', 3, event='outcome', state='MERGED')])
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.write_text('\n'.join(history))
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
+            result = restock(home, '--dry-run')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(dry_ids(result.stdout), ['RQ-PHX-FLEETCORELAND800'])
+            self.assertEqual(result.stderr.count('skip CONSOLELAND: 4 of last 4 empty'), 1)
+            q, parked_rows = home / '.ashlr-runs/queue', []
+            for kind, job in zip(['DEP', 'MERGERATE'], jobs[:2]):
+                prompt = q / 'prompts' / f'RQ-PHX-{job}.md'
+                prompt.write_text('DEPENDENCY GATE: RQ-PHX-DEP\nKeep the merge checks.\n')
+                parked_rows.append(f'PARKED-{kind}.devin\tRQ-PHX-{job}\tdevin\twork\tphantom\t{prompt}\n')
+            ready_before = ''.join(parked_rows)
+            (q / 'ready.tsv').write_text(ready_before)
+            metrics.write_text('\n'.join(history + [event('DEP', 1, event='outcome', state='MERGED')]))
+            (home / '.ashlr-runs/phantom-open-prs').write_text(f'{now.timestamp()} 0\n')
+            parked = restock(home, '--per-lane', '0', '--json')
+            self.assertEqual(parked.returncode, 0, parked.stderr)
+            self.assertEqual(json.loads(parked.stdout)['unpark'], [])
+            self.assertEqual((q / 'ready.tsv').read_text(), ready_before)
+            (q / 'ready.tsv').write_text('')
+            history.extend([event('CONSOLELAND799B', 2, event='launch'),
+                            event('CONSOLELAND799B', 1, event='outcome', state='MERGED')])
+            metrics.write_text('\n'.join(history))
+            resumed = restock(home, '--dry-run')
+            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+            self.assertEqual(set(dry_ids(resumed.stdout)), {'RQ-PHX-' + j for j in jobs})
+            self.assertNotIn('skip CONSOLELAND:', resumed.stderr)
+            metrics.write_text('\n'.join(history[:-2]))
+            (tools / 'phm').write_text('#!/bin/sh\nexit 1\n')
+            unavailable = restock(home, '--dry-run')
+            self.assertEqual(unavailable.returncode, 0, unavailable.stderr)
+            self.assertEqual(set(dry_ids(unavailable.stdout)), {'RQ-PHX-' + j for j in jobs})
 
 
 class MuseLightTests(unittest.TestCase):
@@ -663,6 +721,26 @@ class NoopCutTests(unittest.TestCase):
         self.assertEqual(sorted(dry_ids(r.stdout)), ['RQ-A', 'RQ-C', 'RQ-D'], r.stdout)
         self.assertEqual(skips(r.stdout).get('dup-pr'), 1)
 
+    def test_rebase_siblings_may_share_a_target_file(self):
+        # RQ-SWE3-REBASEORDER-1: RQ-REBASE jobs naming the same file= are cluster
+        # siblings meant for one batch; both claim. Current restock also permits
+        # distinct non-rebase PRs to share a file.
+        home = self.make([
+            line('RQ-REBASE-phantom-41-aaaaaaa', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#41 file=src/a.ts conflicts="src/a.ts" fix'),
+            line('RQ-REBASE-phantom-42-bbbbbbb', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#42 file=src/a.ts conflicts="src/a.ts" fix'),
+            line('RQ-REBASE-phantom-43-ccccccc', P=1, pool='devin', repo='phantom',
+                 text='REBASE phantom#43 file=src/b.ts conflicts="src/b.ts" fix'),
+            line('RQ-X-9', P=1, pool='devin', repo='phantom',
+                 text='FIXUP phantom#99 file=src/a.ts fix'),
+        ])
+        r = restock(home, '--dry-run')
+        self.assertEqual(sorted(dry_ids(r.stdout)),
+                         ['RQ-REBASE-phantom-41-aaaaaaa', 'RQ-REBASE-phantom-42-bbbbbbb',
+                          'RQ-REBASE-phantom-43-ccccccc', 'RQ-X-9'], r.stdout)
+        self.assertIsNone(skips(r.stdout).get('dup-file'))
+
     def test_two_noops_park_the_line_for_24h(self):
         row = line('RQ-N', P=1, pool='devin', repo='phantom', text='stale work')
         home = self.make([row], precheck_code=10)
@@ -1049,6 +1127,31 @@ class QueueDepthGateTests(unittest.TestCase):
                     tmp.cleanup()
 
 class QueueQualityTests(unittest.TestCase):
+    def test_semantic_incident_admission_and_repeated_pass(self):
+        fixture = (SCRIPT.parents[2] / 'test/fixtures/queue-semantic-nov16.md').read_text()
+        tmp = build(fixture)
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        q = home / '.ashlr-runs/queue'
+        preview = restock(home, '--dry-run', '--per-lane', '20', '--json')
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        report = json.loads(preview.stdout)
+        self.assertEqual(report['queued'], 2)
+        self.assertEqual(len(report['dedupe']['repeats']), 12)
+        self.assertEqual(report['dedupe']['unknown'], [])
+        self.assertTrue(all(r['reason'] == 'semantic-goal-overlap' and r['jaccard'] >= .5 for r in report['dedupe']['repeats']))
+        self.assertEqual((q / 'router-queue.md').read_text(), fixture)
+        applied = restock(home, '--per-lane', '20', '--json')
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(len((q / 'ready.tsv').read_text().splitlines()), 2)
+        self.assertEqual((q / 'router-queue.md').read_text().count('- DUPLICATE-OF-'), 12)
+        self.assertEqual(json.loads(restock(home, '--per-lane', '20', '--json').stdout)['queued'], 0)
+        new = fixture.splitlines()[1].replace('RQ-GUARDIANROUTINGQ8', 'RQ-LATE')
+        with (q / 'router-queue.md').open('a') as f: f.write(new + '\n')
+        late = json.loads(restock(home, '--per-lane', '20', '--json').stdout)
+        self.assertEqual(late['queued'], 0)
+        self.assertEqual(late['dedupe']['repeats'][0]['repeatOf'], 'RQ-GUARDIANROUTINGQ8')
+
     def test_identical_filler_grouped_at_any_rate_and_distinct_work_kept(self):
         rows = [
             line('RQ-TEST1A123456Q8', pool='codex-personal', tier='work', repo='phantom', text='Add one test case in test/example.test.ts'),

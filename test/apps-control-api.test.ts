@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAppsControlApi, APPS_CONTROL_PATH } from '../src/core/verse/apps-control-api.js';
+import { createAppsControlApi, APPS_CONTROL_PATH, APPS_MAC_PATH } from '../src/core/verse/apps-control-api.js';
 import type { AppsControlDeps } from '../src/core/apps-control.js';
 import { listNeedsMason, resolveNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
@@ -20,6 +20,7 @@ beforeEach(() => {
   writeFileSync(allowFile, JSON.stringify({ apps: [
     { name: 'Cursor', bundleId: 'com.example.cursor', actions: ['open', 'focus', 'quit', 'status'] },
     { name: 'Phantom', bundleId: 'ai.ashlr.desktop' }, { name: 'Messages', actions: ['status'] },
+    { name: 'Notes', bundleId: 'com.example.notes', actions: ['quit'] },
   ] }));
   oldRuns = process.env.ASHLR_RUNS_DIR; process.env.ASHLR_RUNS_DIR = root;
 });
@@ -27,8 +28,10 @@ afterEach(() => {
   if (oldRuns === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = oldRuns;
   rmSync(root, { recursive: true, force: true });
 });
-const transport = (dirty = false) => vi.fn(async (name: string) => {
-  if (name === 'computer_list_apps') return ok('- Cursor (com.example.cursor): up to click only');
+const transport = (dirty = false, quit = false) => vi.fn(async (name: string) => {
+  // A pressed Quit closes Notes: it leaves the running list.
+  if (name === 'computer_ax_press') quit = true;
+  if (name === 'computer_list_apps') return ok(`- Cursor (com.example.cursor): up to click only${quit ? '' : '\n- Notes (com.example.notes): up to full control'}`);
   if (name === 'computer_ax_tree') return ok([
     { ref: 'e1', role: 'AXWindow', title: dirty ? 'Draft - Edited' : 'Project' },
     { ref: 'e2', role: 'AXMenuItem', title: 'Quit Cursor' },
@@ -46,6 +49,29 @@ async function request(body?: unknown, options: { method?: string; token?: strin
   return { status, body: JSON.parse(response) };
 }
 
+async function requestMac(options: { method?: string; address?: string; channel?: string; deps?: AppsControlDeps } = {}) {
+  const req = Object.assign(new PassThrough(), { headers: { 'x-ashlr-channel': options.channel ?? '' }, socket: { remoteAddress: options.address ?? '127.0.0.1' } }) as unknown as IncomingMessage;
+  let status = 0, response = '';
+  const res = { writeHead(code: number) { status = code; return this; }, end(text: string) { response = text; } } as unknown as ServerResponse;
+  const handler = createAppsControlApi({ allowFile, feed: () => true, launcher: null, ...options.deps });
+  const pending = handler({ token: 'fixture', allowDispatch: true } as VerseApiContext, req, res, APPS_MAC_PATH, options.method ?? 'GET');
+  (req as unknown as PassThrough).end('');
+  await pending;
+  return { status, body: JSON.parse(response) };
+}
+
+describe('known Mac apps API', () => {
+  it('serves the same report as `phm apps --json` on GET only, local only', async () => {
+    const res = await requestMac({ deps: { probe: null } });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ schema: 'phm.apps/2', version: 2, probe: 'missing' });
+    expect(res.body.apps.map((a: { id: string }) => a.id)).toEqual(['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'devin', 'safari']);
+    expect((await requestMac({ method: 'POST', deps: { probe: null } })).status).toBe(405);
+    expect((await requestMac({ address: '192.0.2.1', deps: { probe: null } })).status).toBe(403);
+    expect((await requestMac({ channel: 'mobile', deps: { probe: null } })).status).toBe(403);
+  });
+});
+
 describe('allowlisted console API', () => {
   it('lists the same typed app policy and unknown state as the CLI, including self request mode', async () => {
     const res = await request();
@@ -54,6 +80,7 @@ describe('allowlisted console API', () => {
       expect.objectContaining({ name: 'Cursor', running: true, actions: ['open', 'focus', 'quit', 'status'], mode: 'direct' }),
       expect.objectContaining({ name: 'Phantom', running: false, mode: 'request' }),
       expect.objectContaining({ name: 'Messages', actions: ['status'] }),
+      expect.objectContaining({ name: 'Notes', running: true, actions: ['quit'] }),
     ]);
     expect((await request(undefined, { deps: { call: async () => ({ ...ok('unavailable'), isError: true }) } })).body.apps[0].running).toBeNull();
   });
@@ -97,20 +124,36 @@ describe('allowlisted console API', () => {
 
   it('quits only a readable clean app; unsaved work is persisted to the console needs-you ledger', async () => {
     const clean = transport();
-    expect((await request({ action: 'quit', app: 'Cursor' }, { deps: { call: clean } })).body).toMatchObject({ outcome: 'done', logged: true });
+    expect((await request({ action: 'quit', app: 'Notes' }, { deps: { call: clean } })).body).toMatchObject({ outcome: 'done', logged: true });
     expect(clean.mock.calls.map(c => c[0])).toContain('computer_ax_press');
     const dirty = transport(true);
-    const res = await request({ action: 'quit', app: 'Cursor' }, { deps: { call: dirty } });
+    const res = await request({ action: 'quit', app: 'Notes' }, { deps: { call: dirty } });
     expect(res).toMatchObject({ status: 202, body: { outcome: 'needs-you', code: 'unsaved-state' } });
     expect(dirty.mock.calls.map(c => c[0])).not.toContain('computer_ax_press');
     expect(readFileSync(join(root, 'NEEDS-MASON.md'), 'utf8')).toContain('unsaved work');
   });
 
+  it('dry-runs a restart over the API: the steps come back, nothing is pressed', async () => {
+    writeFileSync(allowFile, JSON.stringify({ apps: [{ name: 'Notes', bundleId: 'com.example.notes' }] }));
+    const call = transport();
+    const launcher = { open: vi.fn(async () => ({ ok: true as const })), activate: vi.fn(async () => ({ ok: true as const })) };
+    const res = await request({ action: 'restart', app: 'Notes', dryRun: true }, { deps: { call, launcher } });
+    expect(res).toMatchObject({ status: 200, body: { schema: 'phm.apps.action/1', version: 1, outcome: 'dry-run', logged: false } });
+    expect(res.body.commands.at(-1)).toBe('/usr/bin/open -b com.example.notes');
+    expect(call.mock.calls.map(c => c[0])).toEqual(['computer_list_apps']);
+    expect(launcher.open).not.toHaveBeenCalled();
+    expect((await request({ action: 'open', app: 'Notes', dryRun: 'yes' })).status).toBe(400);
+  });
+
   it('self actions and fleet job requests reach needs-you; resolution never executes them', async () => {
     const call = transport();
     const launcher = { open: vi.fn(), activate: vi.fn() };
-    for (const body of [{ action: 'quit', app: 'Phantom' }, { action: 'focus', app: 'Cursor', request: true }]) {
+    for (const body of [{ action: 'focus', app: 'Phantom' }, { action: 'focus', app: 'Cursor', request: true }]) {
       expect((await request(body, { deps: { call, launcher } })).status).toBe(202);
+    }
+    // The owner's apps are never quit, even when allowlisted for quit: refused, nothing queued.
+    for (const app of ['Phantom', 'Cursor']) {
+      expect(await request({ action: 'quit', app }, { deps: { call, launcher } })).toMatchObject({ status: 422, body: { code: 'protected' } });
     }
     const listed = listNeedsMason({ runsDir: root });
     expect(listed).toHaveLength(2);

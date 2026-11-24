@@ -498,6 +498,21 @@ function trustedNpmCliPath(execPath, platform) {
     : join(executableDirectory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
 }
 
+/**
+ * Looks for the npm that ships beside the running Node, found at run time from
+ * `execPath` (never a cached install path). Returns the npm CLI path, or null
+ * when this Node has no npm beside it (for example a Homebrew Node that moved
+ * to a new Cellar version or no longer bundles npm).
+ */
+export function findToolchainNpmCli(execPath = process.execPath, platform = process.platform) {
+  try {
+    const cli = trustedNpmCliPath(execPath, platform);
+    return existsSync(cli) ? cli : null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveNpmCliLaunch(environment = process.env, runtime = {}) {
   const command = runtime.command ?? process.execPath;
   const platform = runtime.platform ?? process.platform;
@@ -720,7 +735,11 @@ export function buildReleaseDependencyInventory() {
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
 if (invokedPath === import.meta.url) {
   try {
-    buildReleaseDependencyInventory();
+    if (findToolchainNpmCli() === null) {
+      process.stderr.write('Skipping the release dependency inventory: this Node has no npm beside it.\n');
+    } else {
+      buildReleaseDependencyInventory();
+    }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

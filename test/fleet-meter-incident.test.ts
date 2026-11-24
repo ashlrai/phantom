@@ -65,7 +65,7 @@ describe('buildMeterIncidentEnvelope', () => {
 });
 
 describe('planMeterIncidents', () => {
-  it('plans only flat_with_work providers', async () => {
+  it('plans only flat providers', async () => {
     const report: MeterDropReport = await readMeterDrop({
       lanes: async () => [
         lane('codex-personal', 3), lane('claude-max', 0), lane('grok-ultra', 4), lane('terra', 5),
@@ -78,7 +78,7 @@ describe('planMeterIncidents', () => {
       ],
     }, base);
     expect(report.providers.map(row => [row.provider, row.verdict])).toEqual([
-      ['codex-personal', 'flat_with_work'], ['terra', 'unknown'], ['claude-max', 'flat_idle'], ['grok-ultra', 'moving'],
+      ['codex-personal', 'flat'], ['terra', 'stale'], ['claude-max', 'idle'], ['grok-ultra', 'moving'],
     ]);
     expect(planMeterIncidents(report).map(row => row.provider)).toEqual(['codex-personal']);
   });
@@ -98,7 +98,7 @@ describe('cmdFleetMeterIncident', () => {
   const logSpy = () => vi.spyOn(console, 'log').mockImplementation(() => {});
   const lastLog = (): string => String(vi.mocked(console.log).mock.calls.at(-1)![0]);
 
-  it('posts exactly one meter-flat P1 envelope for a flat_with_work provider', async () => {
+  it('posts exactly one meter-flat P1 envelope for a flat provider', async () => {
     const post = vi.fn((_envelope: unknown) => ({ status: 'posted' as const, id: 'x', cursor: 1 }));
     const code = await cmdFleetMeterIncident(['--apply'], { readers: flatReaders(base), now: () => base, post });
     expect(code).toBe(0);
@@ -109,7 +109,7 @@ describe('cmdFleetMeterIncident', () => {
     expect((envelope.body as Record<string, unknown>)['kind']).toBe('meter-flat');
   });
 
-  it('posts nothing for moving, flat_idle or unknown verdicts', async () => {
+  it('posts nothing for moving, idle, watching or stale verdicts', async () => {
     for (const readers of [
       flatReaders(base, { lastPercent: 70 }),
       flatReaders(base, { running: 0 }),

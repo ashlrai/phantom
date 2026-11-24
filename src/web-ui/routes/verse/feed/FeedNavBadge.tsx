@@ -15,7 +15,7 @@ import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { useActivity } from '../shell/useActivity.js';
 import styles from '../shell/CompactNavStrip.module.css';
 import { useFeedDismissals } from './feed-dismiss-store.js';
-import { buildFeed } from './feed-model.js';
+import { buildFeed, isSharedFeedReport } from './feed-model.js';
 import { useFeedSeen } from './feed-seen-store.js';
 import { unseenCount } from './feed-unseen-count.js';
 import { releaseFeedItems } from './release-feed-items.js';
@@ -43,6 +43,7 @@ export function FeedNavBadge() {
   const { seenAt } = useFeedSeen();
   const { map } = useFeedDismissals();
   const count = useMemo(() => {
+    if (isSharedFeedReport(shared.data)) return unseenCount(buildFeed({ shared: shared.data }), seenAt, {});
     const raw = teammate.data;
     const view = readUnifiedInboxView(raw);
     const data = raw && typeof raw === 'object' ? raw as { generatedAt?: unknown; items?: unknown } : null;

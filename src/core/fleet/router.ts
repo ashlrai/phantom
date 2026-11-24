@@ -1,3 +1,4 @@
+import { isLocalModel, localModelFit } from '../resources/local-memory-fit.js';
 /**
  * router.ts — M46 + M115 + M128: capability-tiered backend router for the
  * autonomous fleet, now with model-granular routing.
@@ -451,7 +452,16 @@ function decide(backend: EngineId, reason: string, cfg?: AshlrConfig): Omit<Rout
  *  4. Neither → builtin (0-diff, better than nothing).
  */
 export function routeBackend(item: WorkItem, cfg: AshlrConfig): RouteDecision {
-  return enforceLocalOnlyRouteDecision(routeBackendUnenforced(item, cfg), cfg);
+  let decision = enforceLocalOnlyRouteDecision(routeBackendUnenforced(item, cfg), cfg);
+  if (isLocalModel(decision.backend)) {
+    const fit = localModelFit(cfg.foundry?.models?.[decision.backend] ?? decision.model ?? null, 65536);
+    if (fit.verdict !== 'fits') {
+      const allowedBackends = (cfg.foundry?.allowedBackends ?? []).filter(e => !isLocalModel(e));
+      decision = enforceLocalOnlyRouteDecision(routeBackendUnenforced(item, { ...cfg, foundry: { ...cfg.foundry, allowedBackends } }), cfg);
+      decision.reason = `${fit.reason}; ${decision.backend === 'builtin' ? 'no eligible cloud resource' : 'routing to cloud'}. ${decision.reason}`;
+    }
+  }
+  return decision;
 }
 
 /**

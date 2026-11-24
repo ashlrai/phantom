@@ -3,15 +3,14 @@
  *
  * #5266 (RECUTDESKS0C206) wired /api/ui-settings through the real handleApi
  * dispatcher and added dispatcher-level coverage, but its
- * test/fixtures/authority/tier1-closure.json snapshot predated the ui-settings
- * Tier-1 roots, so test/authority-tier1-closure-310b.test.ts failed inside the
- * "Quick typecheck" check while tsc itself stayed green.
+ * test/fixtures/authority/tier1-closure.json snapshot predated the corrected
+ * Tier-1 root set, so test/authority-tier1-closure-310b.test.ts failed inside
+ * the "Quick typecheck" check while tsc itself stayed green.
  *
  * This pins both halves of the corrected state through the real code path:
  *   1. src/core/web/api.ts keeps a runtime (not type-only) import of
  *      ./ui-settings-api.js — parsed with the TypeScript compiler.
- *   2. The Tier-1 closure snapshot names every ui-settings module the route
- *      pulls in.
+ *   2. The UI-settings modules stay outside the current Tier-1 closure.
  *   3. writeUiSettings/readUiSettings merge a patch around a wrong-type group
  *      and keep the file's existing values for the rest — the behavior the
  *      re-landed route depends on.
@@ -74,11 +73,11 @@ describe('RQ-PHX-REDDESKFIXC212 (#5266 closure fix)', () => {
     expect(importsAtRuntime(join(ROOT, API), './ui-settings-api.js')).toBe(true);
   });
 
-  it('the Tier-1 closure snapshot names every ui-settings module', () => {
+  it('keeps UI-settings modules outside the Tier-1 closure', () => {
     const snapshot = JSON.parse(
       readFileSync(join(ROOT, 'test', 'fixtures', 'authority', 'tier1-closure.json'), 'utf8'),
     ) as { closure: string[] };
-    for (const file of CLOSURE_FILES) expect(snapshot.closure).toContain(file);
+    for (const file of CLOSURE_FILES) expect(snapshot.closure).not.toContain(file);
   });
 
   it('writeUiSettings merges around a wrong-type group and keeps file values', () => {

@@ -27,7 +27,7 @@ describe('GoalsPane metrics', () => {
     render(<GoalsPane />);
     expect(await screen.findByText('5/h')).toBeInTheDocument();
     expect(screen.getByText('stale')).toBeInTheDocument();
-    expect(screen.getByText('Δ24h unknown')).toBeInTheDocument();
+    expect(screen.getByText('24h change unknown')).toBeInTheDocument();
   });
 
   it('renders live for a fresh reading', async () => {

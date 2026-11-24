@@ -17,6 +17,12 @@ export interface LaneResourceSnapshot {
   routes: Partial<Record<BudgetPool, RouteDecision>>;
   /** Optional pass^k evidence per pool; advisory only, never creates capacity. */
   evalScores?: LaneEvalScores;
+  /** Lane -> plain reason, for lanes whose own wrapper holds every launch (lane-held.ts). Skipped until it clears. */
+  selfHeld?: Readonly<Record<string, string>>;
+}
+/** The self-held lanes rankLanes skips, as `{pool, reason}`. */
+export function selfHeldSkips(selfHeld: LaneResourceSnapshot['selfHeld']): Array<{ pool: BudgetPool; reason: string }> {
+  return BUDGET_POOLS.flatMap(pool => selfHeld?.[pool] ? [{ pool, reason: selfHeld[pool]! }] : []);
 }
 export interface RankedLane { pool: BudgetPool; backend: EngineId; availableSlots: number; resetAt: string | null;
   projectedExhaustion: string | null; spillRecommended: boolean;
@@ -34,6 +40,7 @@ export function rankLanes(tier: EngineTier, resourceSnapshot: LaneResourceSnapsh
   if (!['local', 'mid', 'frontier'].includes(tier) || budgets.sourceState !== 'healthy' || !Number.isFinite(now)) return [];
   const ranked: RankedLane[] = [];
   for (const pool of BUDGET_POOLS) {
+    if (resourceSnapshot.selfHeld?.[pool]) continue;
     const slots = laneSlots[pool];
     const route = routes[pool];
     const view = budgets.pools[pool];

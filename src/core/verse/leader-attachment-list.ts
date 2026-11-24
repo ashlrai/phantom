@@ -5,8 +5,8 @@ import { LEADER_ATTACHMENT_NAME_RE, MIME_BY_EXT, leaderAttachmentDir } from './l
 export interface LeaderAttachment { name: string; bytes: number; type: string; modifiedAt: string }
 export interface LeaderAttachmentList { state: 'ok' | 'absent' | 'unavailable'; items: LeaderAttachment[] }
 
-export async function listLeaderAttachments({ limit = 24 }: { limit?: number } = {}): Promise<LeaderAttachmentList> {
-  const dir = leaderAttachmentDir();
+export async function listLeaderAttachments({ limit = 24, runsDir }: { limit?: number; runsDir?: string } = {}): Promise<LeaderAttachmentList> {
+  const dir = runsDir === undefined ? leaderAttachmentDir() : join(runsDir, 'inbox-attachments');
   try {
     const dirStat = await lstat(dir);
     if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) return { state: 'unavailable', items: [] };

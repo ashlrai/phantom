@@ -5,7 +5,7 @@
  * ~/.local, /Applications or launchd, and no command is executed: the fake io records calls.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -29,6 +29,7 @@ import {
   stamp,
   tarballName,
 } from '../scripts/ship-local.mjs';
+import { buildLocal } from '../desktop/scripts/build-local.mjs';
 
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 const NOW = new Date(2026, 8, 25, 3, 15, 2);
@@ -39,6 +40,8 @@ type Entry = { name: string; mtimeMs: number };
 type Step = { links?: {current: string; dest: string}; app?: { steps: Step[]; dest: string; source: string; sourceProof: {path: string} }; id: string; title: string; argv?: string[]; wait?: { kind: string }; versions?: unknown; identity?: string; sign?: { identity: string | null; entitlements: string } };
 const HASH = 'F6674FDA4EDE6D75028DA2165382E629553DD6D6';
 const INVENTORY = 'a'.repeat(64);
+const canonicalLauncher = readFileSync(new URL('../bin/ashlr', import.meta.url));
+const historicalLauncher = readFileSync(new URL('./fixtures/ashlr-3.30.24', import.meta.url));
 
 function ctx(overrides: Record<string, unknown> = {}) {
   return {
@@ -136,7 +139,7 @@ describe('planShip step list', () => {
     const steps = planShip(ctx()) as Step[];
     expect(ids(steps)).toEqual(expect.arrayContaining([
       'native-quiescence', 'native-transaction', 'backup-ashlr', 'install-ashlr', 'backup-public', 'install-public',
-      'plist-mic', 'plist-local-network', 'codesign', 'codesign-verify',
+      'plist-mic', 'plist-local-network',
     ]));
     expect(step(steps, 'backup-ashlr')?.argv).toEqual([
       'mv', `${APP_PATH}/Contents/MacOS/ashlr`, `${APP_PATH}/Contents/MacOS/ashlr.prev-01234567`,
@@ -145,23 +148,20 @@ describe('planShip step list', () => {
       'mv', `${APP_PATH}/Contents/Resources/public`, `${APP_PATH}/Contents/Resources/public.prev-01234567`,
     ]);
     expect(step(steps, 'install-ashlr')?.argv).toEqual(['cp', '-R', `${REPO}/dist-bin/ashlr`, `${APP_PATH}/Contents/MacOS/ashlr`]);
-    expect(step(steps, 'codesign')?.argv).toEqual([
-      'codesign', '--force', '--deep', '--sign', HASH, '--entitlements', `${REPO}/${ENTITLEMENTS}`, APP_PATH,
-    ]);
+    // The transaction signs once after all preparation, including its display-name edits.
+    expect(ids(steps)).not.toContain('codesign');
+    expect(step(steps, 'native-transaction')?.app).toMatchObject({signer: HASH, entitlements: `${REPO}/${ENTITLEMENTS}`});
     expect(step(steps, 'plist-mic')?.argv).toEqual([
       'plutil', '-replace', 'NSMicrophoneUsageDescription', '-string', MIC_USAGE, `${APP_PATH}/Contents/Info.plist`,
     ]);
     expect(step(steps, 'plist-local-network')?.argv).toEqual([
       'plutil', '-replace', 'NSAppTransportSecurity', '-json', LOCAL_NETWORK_ATS, `${APP_PATH}/Contents/Info.plist`,
     ]);
-    // Quit before touching the bundle; sign after the last copy; relaunch last.
+    // Require quiescence before touching the bundle; prepare before the transaction signs.
     const order = ids(steps);
     expect(order.indexOf('entitlements-preflight')).toBeLessThan(order.indexOf('clean-dist'));
     expect(order.indexOf('native-quiescence')).toBeLessThan(order.indexOf('backup-ashlr'));
-    expect(order.indexOf('install-public')).toBeLessThan(order.indexOf('codesign'));
-    // The plist is part of what gets signed.
-    expect(order.indexOf('plist-mic')).toBeLessThan(order.indexOf('codesign'));
-    expect(order.indexOf('plist-local-network')).toBeLessThan(order.indexOf('codesign'));
+    expect(order.indexOf('install-public')).toBeLessThan(order.indexOf('plist-mic'));
     expect(ids(steps)).not.toContain('signing-identity');
     expect(step(steps, 'native-transaction')?.app?.dest).toBe(`${HOME}/.local/share/ashlr/releases/${SHA}`);
     expect(order).not.toContain('current'); // pointer commit occurs only inside the verified transaction
@@ -197,7 +197,7 @@ describe('planShip step list', () => {
     const order = ids(newer);
     expect(order.indexOf('install-ashlr-desktop')).toBeLessThan(order.indexOf('plist-short-version'));
     expect(order.indexOf('plist-short-version')).toBeLessThan(order.indexOf('plist-bundle-version'));
-    expect(order.indexOf('plist-bundle-version')).toBeLessThan(order.indexOf('codesign'));
+    expect(order.indexOf('plist-bundle-version')).toBeLessThan(order.indexOf('plist-mic'));
     const older = planShip(ctx({ native: true, nativeBuildMtime: 5 })) as Step[];
     expect(ids(older)).not.toContain('install-ashlr-desktop');
     expect(ids(older)).not.toContain('plist-short-version');
@@ -270,7 +270,7 @@ describe('backup naming and rotation', () => {
     expect(step(steps, 'trash-dir')?.argv).toEqual(['mkdir', '-p', trash]);
     expect(step(steps, 'rotate-backups')?.argv).toEqual(['mv', `${APP_PATH}/Contents/MacOS/ashlr.prev-old1`, trash]);
     const order = ids(steps);
-    expect(order.indexOf('rotate-backups')).toBeLessThan(order.indexOf('codesign'));
+    expect(order.indexOf('rotate-backups')).toBeLessThan(order.indexOf('plist-mic'));
   });
 
   it('plans no trash step when there is nothing to rotate', () => {
@@ -438,7 +438,8 @@ describe('the app icon (3.11.3)', () => {
     const steps = planShip(ctx({ native: true, iconBuildMtime: 99 })) as Step[];
     expect(ids(steps)).toEqual(expect.arrayContaining(['backup-icon.icns', 'install-icon.icns', 'touch-app']));
     expect(step(steps, 'install-icon.icns')!.argv).toEqual(['cp', '-R', `${REPO}/desktop/src-tauri/icons/icon.icns`, `${APP_PATH}/Contents/Resources/icon.icns`]);
-    expect(ids(steps).indexOf('touch-app')).toBeGreaterThan(ids(steps).indexOf('codesign'));
+    expect(ids(steps).indexOf('touch-app')).toBeGreaterThan(ids(steps).indexOf('install-icon.icns'));
+    expect(ids(steps)).not.toContain('codesign'); // touching precedes the transaction's final sign
   });
 
   it('leaves the icon alone without --native or when it is not newer', () => {
@@ -461,9 +462,11 @@ describe('stable local code signing (dictation keeps its microphone grant)', () 
     expect(parseIdentities('0 identities found')).toEqual([]);
   });
 
-  it('signs with the identity and the entitlements; ad-hoc only as the named fallback', () => {
+  it('signs with the identity and the entitlements; refuses an absent or ad-hoc identity', () => {
     expect(codesignArgv(HASH, '/e.plist')).toEqual(['codesign', '--force', '--deep', '--sign', HASH, '--entitlements', '/e.plist', APP_PATH]);
-    expect(codesignArgv(null, '/e.plist')).toEqual(['codesign', '--force', '--deep', '--sign', '-', '--entitlements', '/e.plist', APP_PATH]);
+    for (const identity of [null, '', '-', 'Ashlr Local']) {
+      expect(() => codesignArgv(identity, '/e.plist')).toThrow(/existing valid Ashlr Local/);
+    }
   });
 
   it('refuses native updates without the existing valid signer instead of changing code identity', () => {
@@ -553,7 +556,95 @@ describe('stable local code signing (dictation keeps its microphone grant)', () 
     const {io, calls} = fakeIo();
     expect(await runSteps(planShip(ctx()), io, {dryRun: false}), calls.map(c => c.join(' ')).join('\n')).toBe(0);
     expect(calls.some((c) => c[0] === 'security' && c[1] === 'add-trusted-cert')).toBe(false);
+    const signs = calls.filter(c => c.includes('--sign'));
+    expect(signs).toHaveLength(1);
+    const signedAt = calls.indexOf(signs[0]!);
+    expect(calls.slice(signedAt + 1).some(c => c.includes('-replace') || c[0] === 'cp' || c[0] === 'touch')).toBe(false);
+    const beforeSign = calls.slice(0, signedAt);
+    for (const key of ['NSMicrophoneUsageDescription', 'NSAppTransportSecurity', 'CFBundleName', 'CFBundleDisplayName']) {
+      expect(beforeSign.some(c => c.includes('-replace') && c.includes(key)), key).toBe(true);
+    }
+    expect(beforeSign.some(c => c[0] === 'cp' && c.some(arg => arg.endsWith('/Contents/Resources/public')))).toBe(true);
+    expect(calls.slice(signedAt + 1).some(c => c.includes('--verify') && c.includes('--strict') && c.some(arg => arg.includes(HASH)))).toBe(true);
     for (const c of calls.filter((c) => c.includes('--sign'))) expect(c[c.indexOf('--sign') + 1]).toBe(HASH);
+  });
+});
+
+describe('verified local Tauri producer (stub security/codesign, no Mac required)', () => {
+  function fixture(run: (root: string, app: string, exec: ReturnType<typeof vi.fn>) => void, options: {debug?: boolean; failure?: string; seal?: boolean} = {}) {
+    const root = mkdtempSync(join(tmpdir(), 'desksign-'));
+    const app = join(root, `desktop/src-tauri/target/${options.debug ? 'debug' : 'release'}/bundle/macos/Phantom.app`);
+    const exec = vi.fn((bin: string, args: string[], _options?: unknown) => {
+      if (bin === '/usr/bin/security') return {status: 0, stdout: `  1) ${'A'.repeat(40)} "Other signer"\n  2) ${HASH} "Ashlr Local"\n`};
+      if (bin === 'cargo') {
+        for (const dir of ['Contents/MacOS', 'Contents/Resources/public']) mkdirSync(join(app, dir), {recursive: true});
+        for (const file of ['Contents/Info.plist', 'Contents/MacOS/ashlr-desktop', 'Contents/MacOS/ashlr', 'Contents/Resources/public/app.js', 'Contents/Resources/icon.icns']) writeFileSync(join(app, file), file);
+      }
+      if (bin === '/usr/bin/plutil') return {status: 0, stdout: args[1] === 'CFBundleIdentifier' ? 'ai.ashlr.desktop' : 'ashlr-desktop'};
+      if (bin === '/usr/bin/codesign' && args.includes('--sign')) {
+        // The actual runner must wait until Tauri copies resources and nested code.
+        for (const file of ['Contents/Resources/public/app.js', 'Contents/Resources/icon.icns', 'Contents/MacOS/ashlr']) expect(readFileSync(join(app, file), 'utf8')).toBe(file);
+        if (options.seal !== false) {
+          mkdirSync(join(app, 'Contents/_CodeSignature'));
+          writeFileSync(join(app, 'Contents/_CodeSignature/CodeResources'), 'stub seal');
+        }
+      }
+      return {status: options.failure === bin || (options.failure === 'verify' && args.includes('--verify')) ? 1 : 0, stdout: ''};
+    });
+    try { run(root, app, exec); } finally { rmSync(root, {recursive: true, force: true}); }
+  }
+
+  it.each([false, true])('signs the final bundle once, pins verification and skips DMG (debug=%s)', debug => {
+    fixture((root, app, exec) => {
+      expect(buildLocal({root, platform: 'darwin', debug, exec, env: {CARGO_TARGET_DIR: '/foreign', CARGO_BUILD_TARGET: 'foreign', TAURI_CONFIG: '{}'}})).toBe(app);
+      const calls = exec.mock.calls;
+      expect(calls[0]).toEqual(['/usr/bin/security', ['find-identity', '-p', 'codesigning'], expect.anything()]);
+      expect(calls[1]).toEqual(['cargo', ['tauri', 'build', ...(debug ? ['--debug'] : []), '--no-sign', '--bundles', 'app', '--config', '{"bundle":{"createUpdaterArtifacts":false}}'], expect.objectContaining({env: {CARGO_TARGET_DIR: join(root, 'desktop/src-tauri/target')}})]);
+      expect(calls.filter(([, args]) => args.includes('--sign'))).toEqual([
+        ['/usr/bin/codesign', ['--force', '--deep', '--sign', HASH, '--entitlements', join(root, ENTITLEMENTS), app], expect.anything()],
+      ]);
+      expect(calls.at(-1)).toEqual(['/usr/bin/codesign', ['--verify', '--deep', '--strict', `-R=identifier "ai.ashlr.desktop" and certificate leaf = H"${HASH}"`, app], expect.anything()]);
+    }, {debug});
+  });
+
+  it.each([
+    {status: 1, stdout: ''}, {status: 0, stdout: '0 identities found'},
+    {status: 0, stdout: `1) ${HASH} "Ashlr Local" (CSSMERR_TP_NOT_TRUSTED)`},
+    {status: 0, stdout: `1) ${HASH} "Ashlr Local" (CSSMERR_TP_CERT_EXPIRED)`},
+  ])('refuses an absent, unreadable, expired or untrusted identity before building: %j', result => {
+    const exec = vi.fn(() => result);
+    expect(() => buildLocal({platform: 'darwin', exec})).toThrow(/existing valid Ashlr Local.*No ad-hoc fallback/);
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
+  it.each(['cargo', '/usr/bin/codesign', 'verify'])('fails closed on %s failure', failure => {
+    fixture((root, _app, exec) => {
+      expect(() => buildLocal({root, platform: 'darwin', exec})).toThrow(/failed; no verified local app/);
+      if (failure === 'cargo') expect(exec.mock.calls.some(([bin]) => bin === '/usr/bin/codesign')).toBe(false);
+      if (failure === '/usr/bin/codesign') expect(exec.mock.calls.some(([, args]) => args.includes('--verify'))).toBe(false);
+    }, {failure});
+  });
+  it('refuses a missing resource seal even if codesign reports success', () => {
+    fixture((root, _app, exec) => {
+      expect(() => buildLocal({root, platform: 'darwin', exec})).toThrow(/missing final bundle entry.*CodeResources/);
+    }, {seal: false});
+  });
+  it.each(['missing-public', 'wrong-identifier'])('refuses an incomplete or foreign bundle before signing: %s', problem => {
+    fixture((root, app, exec) => {
+      const invoke = (bin: string, args: string[], options: unknown) => {
+        const result = exec(bin, args, options);
+        if (bin === 'cargo' && problem === 'missing-public') rmSync(join(app, 'Contents/Resources/public'), {recursive: true});
+        if (bin === '/usr/bin/plutil' && problem === 'wrong-identifier') return {status: 0, stdout: 'foreign.app'};
+        return result;
+      };
+      expect(() => buildLocal({root, platform: 'darwin', exec: invoke})).toThrow(/missing final bundle entry|unsupported CFBundleIdentifier/);
+      expect(exec.mock.calls.some(([bin]) => bin === '/usr/bin/codesign')).toBe(false);
+    });
+  });
+  it('refuses other platforms before touching the keychain', () => {
+    const exec = vi.fn();
+    expect(() => buildLocal({platform: 'linux', exec})).toThrow(/requires macOS/);
+    expect(exec).not.toHaveBeenCalled();
   });
 });
 
@@ -871,7 +962,7 @@ describe('local Workbench alias admission', () => {
 
 describe('exact installer orchestration', () => {
   it('holds the entire transaction when a renamed current pointer cannot be verified', async () => {
-    for (const failure of ['read', 'missing', 'cleanup'] as const) {
+    for (const failure of ['read', 'missing', 'cleanup', 'launcher'] as const) {
       const f = appIo(); const selected = selectLocalApp(HASH, f.io);
       const previous = {target: `${HOME}/.local/share/ashlr/releases/${SHA}`, dev: 1, ino: 85};
       const dest = `${HOME}/.local/share/ashlr/releases/${'f'.repeat(40)}`;
@@ -879,6 +970,8 @@ describe('exact installer orchestration', () => {
       let renamed = false; let restored = false; let temporary = false;
       const io = {...f.io, readCurrentPointer: () => previous,
         switchCurrentPointer: (path: string, before: unknown, target: string) => switchLocalCurrentPointer(path, before, target, `${path}.temporary`, {
+          repoRoot: REPO,
+          readLauncher: () => Buffer.from(renamed && failure === 'launcher' ? 'changed launcher' : 'canonical launcher'),
           readCurrentPointer: () => {if (!renamed) return previous; if (failure === 'missing') return null; if (failure === 'cleanup') return {...previous, target}; throw new Error('ownership read failed');},
           createLink: () => {temporary = true;}, rename: () => {renamed = true; temporary = false;}, exists: () => {if (renamed && failure === 'cleanup') throw new Error('cleanup read failed'); return temporary;}, unlink: () => {temporary = false;}}),
         restoreCurrentPointer: () => {restored = true;}, writeInstallJournal: (_dir: string, record: typeof records[number]) => {records.push(record);}};
@@ -968,9 +1061,11 @@ describe('current release pointer observation', () => {
     const path = `${HOME}/.local/share/ashlr/current`; const target = `${HOME}/.local/share/ashlr/releases/${SHA}`;
     const stat = {dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1, isSymbolicLink: true};
     const io = {home: HOME, repoRoot: REPO, validateLocalPath: () => {}, lstat: () => stat as typeof stat | null,
-      readLink: () => target, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name: '@ashlr/hub', version: '3.25.0'}) : 'canonical launcher'};
+      readLink: () => target, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name: '@ashlr/hub', version: '3.25.0'}) : canonicalLauncher};
     expect(inspectCurrentPointer(path, {...io, lstat: () => null})).toBeNull();
     expect(inspectCurrentPointer(path, io)).toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
+    expect(inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? historicalLauncher : io.readBoundedFile(file)}))
+      .toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
     for (const name of ['@ashlr/hub', '@ashlr/phantom']) expect(inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name, version: '3.25.0'}) : io.readBoundedFile(file)})).toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
     for (const name of ['@other/phantom', '@ashlr/phantom-beta', 'ashlr']) expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name, version: '3.25.0'}) : io.readBoundedFile(file)})).toThrow(/present current release/);
     for (const suffix of ['package.json', '/bin/ashlr']) {
@@ -982,7 +1077,7 @@ describe('current release pointer observation', () => {
     let reads = 0;
     expect(() => inspectCurrentPointer(path, {...io, lstat: () => ++reads === 1 ? stat : null})).toThrow(/present current release/);
     expect(() => inspectCurrentPointer(path, {...io, readLink: () => {throw Object.assign(new Error('missing'), {code: 'ENOENT'});}})).toThrow(/present current release/);
-    expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? 'foreign launcher' : io.readBoundedFile(file)})).toThrow(/present current release/);
+    expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? Buffer.from('arbitrary modified launcher') : io.readBoundedFile(file)})).toThrow(/present current release/);
     expect(() => inspectCurrentPointer(path, {...io, lstat: () => ({...stat, isSymbolicLink: false})})).toThrow(/present current release/);
   });
 });

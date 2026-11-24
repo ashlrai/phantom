@@ -119,8 +119,18 @@ export type { VerifiedCompletionReport } from '../../core/fleet/agent-activity.j
 import type { FleetLaneSnapshot as CoreFleetLaneSnapshot, FleetLaneView as CoreFleetLaneView } from '../../core/fleet/lane-console.js';
 export type { FleetLaneCreditView } from '../../core/fleet/lane-console.js';
 /** `slotTarget` is optional here so a response from an older server still type-checks. */
-export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget'> & { slotTarget?: number | null };
-export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes'> & { lanes: FleetLaneView[] };
+export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget' | 'health' | 'startsInWindow'> & {
+  slotTarget?: number | null;
+  /** Absent from an older server. */
+  health?: CoreFleetLaneView['health'];
+  startsInWindow?: number | null;
+  /** Lane capability table row (phm lanes caps); absent until the server reports it. */
+  caps?: import('../components/fleet/lane-caps.js').LaneCaps | null;
+};
+export type { LaneHealth, LaneHealthState } from '../../core/fleet/lane-badge.js';
+export type { StarvedLane } from '../../core/fleet/lane-starved.js';
+/** `starved` is optional here so a response from an older server still type-checks. */
+export type FleetLaneSnapshot = Omit<CoreFleetLaneSnapshot, 'lanes' | 'starved'> & { lanes: FleetLaneView[]; starved?: CoreFleetLaneSnapshot['starved'] };
 /** fleet.sessions.v1 — unified dispatchd session list behind GET /api/fleet/sessions. */
 export type {
   FleetSessionsV1,

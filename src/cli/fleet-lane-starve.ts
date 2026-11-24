@@ -1,24 +1,11 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { findStarvedLanes, type StarvedLane } from '../core/fleet/lane-starve.js';
+
+export { FILLER_ID, findStarvedLanes, type StarvedLane } from '../core/fleet/lane-starve.js';
 
 export const FLEET_LANE_STARVE_SCHEMA = 'fleet.lane-starve.v1';
-
-/** Filler ids end in A, six or more digits, then Q8. */
-export const FILLER_ID = /A\d{6,}Q8$/;
-
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
-
-export interface StarvedLane {
-  lane: string;
-  running: number;
-  target: number;
-  queued: number;
-  /** Rows in queue/ready.tsv for this lane. */
-  ready: number;
-  filler: number;
-  real: number;
-}
 
 export interface LaneStarveReport {
   schema: typeof FLEET_LANE_STARVE_SCHEMA;
@@ -28,45 +15,16 @@ export interface LaneStarveReport {
 }
 
 const USAGE = `Usage: ashlr fleet lane-starve [--json]
-List lanes running below target with work queued, and split each lane's queue/ready.tsv rows into filler and real. Says when queue/FILLER_HOLD exists. Read-only.
+List lanes running below their launch target (the configured target tightened by the controller's effective_target shed) with work queued, and split each lane's queue/ready.tsv rows into filler and real. Says when queue/FILLER_HOLD exists. Read-only.
+Parked rows are not runnable work and are not counted.
 Reads ~/.ashlr-runs (override with ASHLR_RUNS_DIR). Exit 1 when any lane is starved.`;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const count = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-
-/** Pure: starved lanes from status.json text and ready.tsv text ('' when absent). */
-export function findStarvedLanes(statusJson: string, readyTsv: string): StarvedLane[] {
-  const data: unknown = JSON.parse(statusJson);
-  if (!isRecord(data) || !isRecord(data.lanes)) throw new Error('invalid status');
-  const split = new Map<string, { filler: number; real: number }>();
-  for (const line of readyTsv.split('\n')) {
-    const cols = line.split('\t');
-    const id = cols[0]?.trim() ?? '';
-    const lane = cols[2]?.trim();
-    if (!id || !lane) continue;
-    const entry = split.get(lane) ?? { filler: 0, real: 0 };
-    entry[FILLER_ID.test(id) ? 'filler' : 'real']++;
-    split.set(lane, entry);
-  }
-  const out: StarvedLane[] = [];
-  for (const [lane, value] of Object.entries(data.lanes)) {
-    if (!isRecord(value) || !count(value.running) || !count(value.target) || !count(value.queued)) {
-      throw new Error('invalid lane');
-    }
-    if (value.running >= value.target || value.queued === 0) continue;
-    const { filler, real } = split.get(lane) ?? { filler: 0, real: 0 };
-    out.push({ lane, running: value.running, target: value.target, queued: value.queued, ready: filler + real, filler, real });
-  }
-  return out.sort((a, b) => a.lane.localeCompare(b.lane));
-}
 
 export interface LaneStarveIo {
   /** Returns file text, or null when the file does not exist. */
   read: (path: string) => Promise<string | null>;
 }
+
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 const defaultIo: LaneStarveIo = {
   async read(path) {

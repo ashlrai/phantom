@@ -69,6 +69,21 @@ it('keeps the selected agent and its recorded detail through orbit and zoom', as
   expect(token).toHaveAttribute('aria-pressed', 'true');
 });
 
+it('opens a side panel with the live log when a node is chosen, and closes it again', async () => {
+  const { payloads } = serve();
+  payloads['/api/fleet/job/tail?id=RQ-A&lines=200'] = { schema: 'fleet.job.tail.v1', job: 'RQ-A', status: 'live', message: null, truncated: false,
+    detail: { lane: 'codex-personal', model: 'test-model', launchedAt: null, repo: null, tokens: null }, controls: { available: true, reason: null }, events: [{ ts: null, source: 'log', text: 'writing tests' }] };
+  render(<ComputeMap visible />);
+  fireEvent.click((await screen.findByText('RQ-A')).closest('button')!);
+  const panel = within(screen.getByRole('region', { name: 'Agent detail' }));
+  expect(await panel.findByRole('log', { name: 'Live log for RQ-A' })).toHaveTextContent('writing tests');
+  expect(panel.getByText((_, el) => el?.tagName === 'DIV' && el.textContent === 'Repoashlrai/phantom')).toBeInTheDocument(); // from the session list
+  expect(panel.getByRole('button', { name: 'Pause this job' })).toBeEnabled();
+  expect(screen.getByRole('region', { name: 'Fleet compute map' })).toHaveAttribute('data-panel', 'open');
+  fireEvent.click(panel.getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('region', { name: 'Agent detail' })).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Fleet compute map' })).not.toHaveAttribute('data-panel');
+});
 it('stops every read while hidden and retains explicitly stale data when refresh fails', async () => {
   vi.useFakeTimers(); const { fetch, payloads } = serve();
   const view = render(<ComputeMap visible={false} />);
@@ -124,4 +139,19 @@ it('renders empty and malformed session telemetry without inventing agents', asy
   payloads['/api/verse/fleet/control/sessions'] = { ...sessions, computeAt: at(), mapRecent: [], mapSessions: [{ ...mapped(), mapState: 'invented' }] };
   render(<ComputeMap visible />);
   expect(await screen.findByText('Sessions refresh failed. No data available.')).toBeInTheDocument();
+});
+it('renders node-pool hosts with oversubscription, caps and unknown slots', async () => {
+  const { payloads } = serve();
+  const host = { id: 'muse', nodeIds: ['muse', 'muse-w2'], inferred: true, ramTotal: 8 * 1024 ** 3, cores: 8, observedAt: NOW, caps: ['codex'], liveWorkers: 2, liveSlots: 2 + 4, heldWorkers: 0, claims: 1, ramSlots: 4, oversubscribed: true };
+  const unknown = { ...host, id: 'air-w1', nodeIds: ['air-w1'], inferred: false, liveSlots: null, oversubscribed: null, caps: [] };
+  payloads['/api/verse/fleet/control/compute'] = { ...compute, hosts: [unknown, host],
+    pool: { hosts: 2, liveWorkers: 4, liveSlots: null, ramSlots: 8, claims: 2, unplacedNodes: 1, oversubscribedHosts: 1 } };
+  render(<ComputeMap visible />);
+  const region = await screen.findByRole('region', { name: 'Node pool hosts' });
+  expect(within(region).getAllByText(/live slots unknown/).length).toBe(2);
+  expect(within(region).getByText(/1 nodes without host telemetry/)).toBeInTheDocument();
+  expect(within(region).getByText('OVERSUBSCRIBED · 6 advertised vs 4 RAM-budget')).toBeInTheDocument();
+  expect(within(region).getByText('Oversubscription unknown')).toBeInTheDocument();
+  expect(within(region).getByText('muse + muse-w2')).toBeInTheDocument();
+  expect(within(region).getByText(/Caps: none reported/)).toBeInTheDocument();
 });

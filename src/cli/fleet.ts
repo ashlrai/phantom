@@ -50,6 +50,7 @@ import type { FleetLaneSnapshot, FleetLaneView } from '../core/fleet/lane-consol
 import type { UsageMotionAuditView, UsageMotionClassification, UsageMotionLaneView } from '../core/fleet/usage-motion-audit.js';
 import { formatFleetMetrics } from '../core/fleet/metrics-feed.js';
 import type { FleetStatus } from '../core/fleet/status.js';
+import { formatFleetDiskAttribution } from '../core/fleet/disk-attribution.js';
 import type { ResourceStrategyReport } from '../core/autonomy/resource-strategy.js';
 import { makeColors, isTty } from './ui.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
@@ -114,6 +115,14 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.guardian) {
+    const { age, service, log } = s.guardian;
+    lines.push(`Guardian: ${age.status}; age: ${age.ageSeconds === null ? 'unknown' : `${Math.floor(age.ageSeconds)} seconds`}; limit: ${age.maxAgeSeconds} seconds.`);
+    lines.push(`  Launch service: ${service.state}; last exit code: ${service.lastExitCode ?? 'unknown'}.`);
+    lines.push(`  Log: ${log.source}; errors in last 24 hours (tail only): ${log.recentErrors ?? 'unknown'}; errors without usable time: ${log.unparseableErrors ?? 'unknown'}.`);
+    lines.push(`  ${s.guardian.reason} Next: ${s.guardian.nextStep}`);
+  } else lines.push('Guardian: unavailable. Next: phm fleet health-age --diagnose --json');
+  if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
     const memory = s.memory;
@@ -840,6 +849,17 @@ export function formatFleetStatus(s: FleetStatus): string {
       } else if (skillObservation.sampleState === 'none') {
         lines.push('  skill observations: none');
       }
+    }
+    const skillOutcomes = trajectoryLearning.skillOutcomes;
+    const topSkillOutcome = skillOutcomes?.perSkill?.[0];
+    if (skillOutcomes && topSkillOutcome) {
+      const outcomeText = Object.entries(topSkillOutcome.outcomes)
+        .map(([outcome, count]) => `${outcome} ${count}`)
+        .join(', ');
+      lines.push(
+        `  skill outcomes: ${skillOutcomes.skills} skill(s), ${skillOutcomes.selections} selection(s); ` +
+          `top ${topSkillOutcome.skillId} r${topSkillOutcome.skillRevision}: ${topSkillOutcome.selections} (${outcomeText})`,
+      );
     }
     const gap = trajectoryLearning.gaps[0];
     if (gap) lines.push(`  top gap:      ${gap.kind} missing on ${gap.count} trajector${gap.count === 1 ? 'y' : 'ies'}`);
@@ -1699,6 +1719,8 @@ async function cmdFleetStatus(jsonMode: boolean): Promise<number> {
   try {
     const { buildFleetStatus } = await import('../core/fleet/status.js');
     status = await buildFleetStatus(cfg);
+    const { readFleetDiskAttribution } = await import('../core/fleet/disk-attribution.js');
+    status.disk = await readFleetDiskAttribution();
   } catch (err) {
     process.stderr.write(
       red('error: ') + 'failed to build fleet status: ' +
@@ -1872,6 +1894,11 @@ export function formatFleetLanes(snapshot: FleetLaneSnapshot): string {
       padLane(laneNumber(lane.liveJobs), COL_LIVE),
       lane.mergesPerHour === null ? '—' : String(lane.mergesPerHour),
     ].join(' '));
+  }
+  const unhealthy = snapshot.lanes.filter(lane => lane.health && lane.health.state !== 'ok');
+  if (unhealthy.length > 0) {
+    lines.push('');
+    for (const lane of unhealthy) lines.push(`  ${lane.lane} ${lane.health.reason}`);
   }
   lines.push('');
   const src = snapshot.sources;
@@ -2235,10 +2262,12 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   const { fleetReadiness } = await import('../core/fleet/engine-readiness.js');
   const results = fleetReadiness(cfg ?? undefined);
+  const { readGuardianDoctorCheck } = await import('../core/fleet/guardian-doctor.js');
+  const guardian = await readGuardianDoctorCheck();
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(results) + '\n');
-    return 0;
+    process.stdout.write(JSON.stringify([...results, guardian]) + '\n');
+    return guardian.level === 'red' ? 1 : 0;
   }
 
   const readyCount = results.filter((r) => r.ready).length;
@@ -2307,7 +2336,7 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
   // Summary line
   const notReadyEngines = results.filter((r) => !r.ready).map((r) => r.engine);
   if (readyCount === total) {
-    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(' All systems go.'));
+    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(guardian.level === 'ok' ? ' All systems go.' : ''));
   } else {
     const needsAction = notReadyEngines.join(', ');
     console.log(
@@ -2322,7 +2351,8 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   // Exit 1 when any engine is definitively not ready (authed:false + installed)
   const hardBlocked = results.some((r) => !r.ready && r.installed && r.authed === false);
-  return hardBlocked ? 1 : 0;
+  console.log(`${guardian.level} guardian: ${guardian.reason} Next: ${guardian.nextStep}`);
+  return hardBlocked || guardian.level === 'red' ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2726,6 +2756,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
+  console.log(`    phm fleet spend [--json]   ${cyan('# same as phm spend: on-pace, behind, exhausted or unknown per pool')}`);
+  console.log(`    phm fleet pulse [--json]   ${cyan('# is the fleet doing well: five numbers with a 24 hour trend each')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);
@@ -2746,6 +2778,7 @@ function printFleetHelp(): void {
   console.log(`    phm fleet journal [--json]    ${cyan('# leader journal and ingest decisions')}`);
   console.log(`    phm fleet deploy-plan --since <sha> [--json]  ${cyan('# find fleet scripts awaiting deployment; read-only')}`);
   console.log(`    phm fleet supply --lane <lane> --n <N> [--json]  ${cyan('# suggest queue work from open sources')}`);
+  console.log(`    phm fleet board --leader [--json]      ${cyan('# last Leader tick board: lanes, tier depth, merges, conflicts, needs-Mason')}`);
   console.log(`    phm fleet parked [--json]     ${cyan('# ready/parked host work; unmetDeps lists PARKED-DEP gates')}`);
   console.log(`    ashlr fleet direction [--json] ${cyan('# read-only autonomous direction report')}`);
   console.log(`    ashlr fleet init [--write]    ${cyan('# print/merge a starter cfg.foundry')}`);
@@ -2753,9 +2786,9 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet pause             ${cyan('# engage kill switch (pause fleet)')}`);
   console.log(`    ashlr fleet resume            ${cyan('# release kill switch (resume fleet)')}`);
   console.log(`    ashlr fleet doctor [--json]   ${cyan('# engine readiness preflight (M81)')}`);
-  console.log(`    ashlr fleet queue merged|read|complete <job-id> [--json]`);
+  console.log(`    ashlr fleet queue merged|conflicted|ask|read|stats|complete <job-id> [--json]`);
+  console.log(`                          ${cyan('# merged-PR follow-ups + conflicted-PR recuts; stdin metadata in, model prompts out')}`);
   console.log(`    phm fleet outcomes [--events <file>] [--json] ${cyan('# learned merge, usage, breakage, and the next assignment')}`);
-  console.log(`                          ${cyan('# merged-PR follow-ups; stdin metadata in, model prompts out')}`);
   console.log(`    ashlr fleet automerge-canary status|prepare-shadow|activate-shadow|halt|reconcile`);
   console.log(`                          ${cyan('# bounded observation-only canary controller')}`);
   console.log(`    phm fleet canary-ladder [--json] ${cyan('# per-repo auto-merge rung report (read-only)')}`);

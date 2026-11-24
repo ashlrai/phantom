@@ -1,0 +1,4 @@
+codex
+ran the checks
+tokens used
+12,345

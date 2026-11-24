@@ -1,10 +1,10 @@
 {
   "artifacts": [
     {
-      "bytes": 919,
+      "bytes": 1044,
       "format": "claude-code",
       "path": "claude-code/claude-code.mcp.json",
-      "sha256": "b98e38561e5b231811ef32802420501e38ad9e3694c6e93bde4efb8d9025416b",
+      "sha256": "bb15973ae7d7f79bfda4b31497e74ef70eff4d315ee1f3f83a58edbe609eaa2c",
       "surface": "claude-code"
     },
     {
@@ -15,10 +15,10 @@
       "surface": "claude-code"
     },
     {
-      "bytes": 392,
+      "bytes": 517,
       "format": "claude-code",
       "path": "claude-code/claude-desktop.mcp.json",
-      "sha256": "cfe71368759e4cab631119e2ff25a9b5ea602e7fec6eb2938161248db1be01b2",
+      "sha256": "b9e53853c1c76019240e92e777b5711991ac62c829017498aa8122de5e9dac89",
       "surface": "claude-desktop"
     },
     {
@@ -29,17 +29,17 @@
       "surface": "claude-desktop"
     },
     {
-      "bytes": 676,
+      "bytes": 763,
       "format": "codex",
       "path": "codex/codex-cli.config.toml",
-      "sha256": "c78767d816824b566f5f8952c730568b039e3dd99255853feddbb8134f1f00f7",
+      "sha256": "18d6e69f9f626a07d4b24768ec4b91e7d25546b2ab3a7098147f9eddf746cfcb",
       "surface": "codex-cli"
     },
     {
-      "bytes": 327,
+      "bytes": 414,
       "format": "codex",
       "path": "codex/codex-desktop.config.toml",
-      "sha256": "eed7c92fdcccc999bf01a0e59ecccc81e191a3e0fd3b1857f12c9aea4e3b1f94",
+      "sha256": "b06fd65518a5e5de1911952e00763021d88278c0af6fc92e41e9dd919cf79c3a",
       "surface": "codex-desktop"
     },
     {
@@ -64,24 +64,24 @@
       "surface": "cursor-cloud"
     },
     {
-      "bytes": 522,
+      "bytes": 647,
       "format": "cursor",
       "path": "cursor/cursor-desktop.mcp.json",
-      "sha256": "fd6ada02baab9aa132af64ac695aac8ed7ff244e72236559ebc3f0a0a3e28a33",
+      "sha256": "5886a7cb0ddbc09a29b5c6e24fc45611ff323467e3aeecd47db3ff5a838b99e4",
       "surface": "cursor-desktop"
     },
     {
-      "bytes": 4136,
+      "bytes": 4462,
       "format": "devin",
       "path": "devin/devin-cli.json",
-      "sha256": "173ee8849161e165c699d00b69e7a63d7e2e6c43413c77363eb10bd6961248b2",
+      "sha256": "87daa7fd414e592b059ff93042a751c213628f415970e71c3fe493d85e011204",
       "surface": "devin-cli"
     },
     {
-      "bytes": 4164,
+      "bytes": 4490,
       "format": "devin",
       "path": "devin/devin-desktop.json",
-      "sha256": "e4795ddbf38c76b26acaf51bd420a7c09a891f0d750b85afa7c7af0023416c4c",
+      "sha256": "4bfdd440804f2c8d29fef7fedef5f61f9d123243f842f87e836863123e76c890",
       "surface": "devin-desktop"
     },
     {
@@ -123,11 +123,11 @@
       "bytes": 1642,
       "format": "checksums",
       "path": "SHA256SUMS",
-      "sha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+      "sha256": "4e9236dd0b8a377d954ee36c0e1d5e54466ee9f20d988c0befec186871410190",
       "surface": null
     }
   ],
-  "bundleSha256": "0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+  "bundleSha256": "4e9236dd0b8a377d954ee36c0e1d5e54466ee9f20d988c0befec186871410190",
   "gated": [
     {
       "capability": "devin-acu-topup",
@@ -197,12 +197,12 @@
   "pinStage": {
     "lib": "pin_stage_lib",
     "libRev": "fe77a6a8",
-    "stagedDir": "~/.ashlr-runs/staged/caps/0671ff548ec6b914a5128939c925d59673e66c94081b945dc23e63c6a9285910",
+    "stagedDir": "~/.ashlr-runs/staged/caps/4e9236dd0b8a377d954ee36c0e1d5e54466ee9f20d988c0befec186871410190",
     "stagedRoot": "~/.ashlr-runs/staged/caps",
     "tool": "SEC-PIN-STAGE-TOOL-2"
   },
   "registrySchema": "caps.registry.v1",
-  "registrySha256": "5405f88df6b4cb2535f45ddc678beb5c3af074f71414e38c2eb89fb37fcfcfd0",
+  "registrySha256": "03c63065d9689cb2bfb4c73de515a865402b5e631b6172e31810b1067b92ecff",
   "schema": "caps.adapters.v1",
   "surfaces": {
     "claude-code": {
@@ -219,6 +219,7 @@
         ],
         "mcp": [
           "ashlr",
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway",
@@ -243,6 +244,7 @@
           "shortcuts-run"
         ],
         "mcp": [
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway"
@@ -261,6 +263,7 @@
         ],
         "mcp": [
           "ashlr",
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway",
@@ -280,6 +283,7 @@
       "adapter": "codex",
       "capabilities": {
         "mcp": [
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway"
@@ -328,6 +332,7 @@
       "adapter": "cursor",
       "capabilities": {
         "mcp": [
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway",
@@ -344,6 +349,7 @@
         ],
         "mcp": [
           "ashlr",
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway",
@@ -361,6 +367,7 @@
         ],
         "mcp": [
           "ashlr",
+          "context7",
           "lexicon",
           "locus",
           "phantom-gateway",

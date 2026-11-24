@@ -81,6 +81,22 @@ export function reportThemeToShell(preference: ThemePreference): void {
   }
 }
 
+/**
+ * Report the painted theme now and, while the preference is 'system', again
+ * every time the OS flips light/dark. The CSS already follows the OS live
+ * through its prefers-color-scheme block; without this the native window kept
+ * pre-painting the colour the OS had when the preference was last changed.
+ * Returns the unsubscribe, so an effect can register it directly.
+ */
+export function trackThemeForShell(preference: ThemePreference): () => void {
+  reportThemeToShell(preference);
+  if (preference !== 'system' || typeof window.matchMedia !== 'function') return () => {};
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  const onChange = () => reportThemeToShell('system');
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
 function isDesktopCommand(value: unknown): value is DesktopCommand {
   return typeof value === 'string' && (COMMANDS as readonly string[]).includes(value);
 }

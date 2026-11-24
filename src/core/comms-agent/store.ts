@@ -15,13 +15,15 @@ import { parseInboxDocument, type InboxMessage } from './triage.js';
 
 export interface CommsDraft {
   id: string;
-  status: 'pending';
+  status: 'pending' | 'sent';
   transport: CommsTransport;
   recipient: string;
   subject: string;
   body: string;
   messageId: string;
   createdAt: string;
+  /** ISO time the reply was delivered; set only on a 'sent' record. */
+  resolvedAt?: string;
 }
 
 export interface SendLogEntry {
@@ -195,7 +197,7 @@ export async function appendArchive(runsDir: string, message: Record<string, unk
 function isDraft(value: unknown): value is CommsDraft {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const draft = value as Record<string, unknown>;
-  return draft.status === 'pending'
+  return (draft.status === 'pending' || (draft.status === 'sent' && typeof draft.resolvedAt === 'string'))
     && typeof draft.id === 'string'
     && typeof draft.transport === 'string' && isCommsTransport(draft.transport)
     && typeof draft.recipient === 'string'
@@ -203,6 +205,7 @@ function isDraft(value: unknown): value is CommsDraft {
     && typeof draft.body === 'string'
     && typeof draft.messageId === 'string'
     && typeof draft.createdAt === 'string'
+    && (draft.resolvedAt === undefined || typeof draft.resolvedAt === 'string')
     && scrubSecrets(JSON.stringify({ recipient: draft.recipient, subject: draft.subject, body: draft.body })) === JSON.stringify({ recipient: draft.recipient, subject: draft.subject, body: draft.body });
 }
 
@@ -214,15 +217,17 @@ export async function appendDraft(runsDir: string, draft: CommsDraft): Promise<v
 export async function listDrafts(runsDir: string): Promise<CommsDraft[]> {
   const text = await readPrivate(runsDir, 'drafts.jsonl');
   if (text === null) return [];
-  const drafts: CommsDraft[] = [];
+  // Append-only store: the last record per id wins, so a 'sent' resolution
+  // supersedes its 'pending' line and repeated passes cannot duplicate one.
+  const byId = new Map<string, CommsDraft>();
   for (const line of text.split('\n')) {
     if (!line) continue;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (isDraft(parsed)) drafts.push(parsed);
+      if (isDraft(parsed)) byId.set(parsed.id, parsed);
     } catch { /* skip a bad line */ }
   }
-  return drafts;
+  return [...byId.values()];
 }
 
 export async function appendSendLog(runsDir: string, entry: SendLogEntry): Promise<void> {

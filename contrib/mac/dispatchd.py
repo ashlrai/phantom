@@ -12,6 +12,7 @@
 # usage_source and a usage_missing reason when nothing was recorded.
 import sys, os, re, json, time, fcntl, subprocess, glob, math, datetime, sqlite3, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from typing import TypedDict
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; RUN = Q + "/run"
 WTROOT = H + "/Projects/ashlrai/wt"; EV = R + "/dispatch-events.log"
 # A kernel-held claim serializes the complete tick, including liveness sampling and
@@ -40,9 +41,9 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher, batch_sessions, work_market, postrun_pr
+import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -61,6 +62,7 @@ def gate_limit(name, default):
     except ValueError: return default
 GATE_LOAD_PER_CPU = gate_limit("GATE_LOAD_PER_CPU", 2.0)
 GATE_PROCS_MAX = gate_limit("GATE_PROCS_MAX", 2500); GATE_WORKTREES_MAX = gate_limit("GATE_WORKTREES_MAX", 40)
+GATE_WORKTREES_PER_CPU = gate_limit("GATE_WORKTREES_PER_CPU", 4)   # live-worktree warning: max(floor, per-cpu x ncpu)
 GATE_PRESSURE_MIN = gate_limit("GATE_PRESSURE_MIN", 2); GATE_SWAP_GROWTH_GB = gate_limit("GATE_SWAP_GROWTH_GB", 2)
 GATE_SWAP_WINDOW_S = gate_limit("GATE_SWAP_WINDOW_S", 300); GATE_TICK_MAX_S = gate_limit("GATE_TICK_MAX_S", 900)
 GATE_STATUS_TIMEOUT = gate_limit("GATE_STATUS_TIMEOUT", 30)
@@ -181,6 +183,7 @@ MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
 # at the parse point, metric() also mirrors this tick's own rows in memory exactly
 # as a file re-read would see them.
 JOBS_RAW, JOBS = [], []
+ACTIVE_LAUNCHES = set()
 _JOBS_LIVE = False
 def metric(d):
     # launch.sh owns the pick; carry its exact tag without treating it as a new pool.
@@ -196,8 +199,9 @@ def metric(d):
             if a: d["ab"] = a.group(1)
             if b: d["arm"] = b.group(1)
         except Exception: pass
-    if _JOBS_LIVE: JOBS_RAW.append(d); JOBS.append(d)
     with open(MD + "/jobs.jsonl", "a") as f: f.write(json.dumps(d, sort_keys=True) + "\n")
+    if _JOBS_LIVE:
+        JOBS_RAW.append(d); JOBS.append(d); update_launch_state(ACTIVE_LAUNCHES, d)
 CLS = [("credits_exhausted", re.compile(r"(?i)(credits? (are |have been )?(exhausted|depleted)|out of credits|insufficient credits|no credits remaining)")),
        ("usage_limit", re.compile(r"(?i)(usage limit|you've hit your|weekly limit)")),
        ("model_capacity", re.compile(r"(?i)(at capacity|over capacity|overloaded|\b529\b)")),
@@ -396,7 +400,7 @@ def tgt(l):   # the target a lane may launch against: the controller's effective
 # with no work). Only held_by == "autobackoff" entries are ever auto-unheld or extended; manual holds are never touched.
 # Nothing from the log is stored or logged: only a fixed pattern id, lane, job, until and src.
 AB_BY = "autobackoff"; AB_TAIL = 16384; AB_CAP = 86400   # rev5: 7d max removed (Security: log merges model stdout, any line is forgeable)
-AB_MAX = AB_CAP; AB_DEF = 6 * 3600
+AB_DEF = 6 * 3600
 _Q = r"(?:'|\u2019)"; _CX = r"^(?:\[[0-9T:.\-]+Z?\]\s*)?ERROR: "
 AB_RX = {"codex": [("codex_usage_limit", re.compile(r"(?im)" + _CX + r"you" + _Q + r"ve hit your usage limit\b.*$")),
                    ("codex_credits_exhausted", re.compile(r"(?im)" + _CX + r"(?:credits? (?:are |have been )?(?:exhausted|depleted)|out of credits|insufficient credits)\b.*$")),
@@ -650,7 +654,7 @@ def _eval_report():
         result = _run(cmd, timeout=8)
         return json.loads(result.stdout) if result.returncode == 0 else None
     except Exception: return None
-from process_snapshot import capture as capture_process_snapshot
+from process_snapshot import capture as capture_process_snapshot, read_start_time as read_process_start_time
 # RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
 # sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
 # each result at its original decision point. Probe behavior is unchanged.
@@ -675,7 +679,7 @@ if isinstance(_disk_growth, dict) and _disk_growth:
 DISK_GATE = (AP or {}).get("lane_disk_gate") or "yellow"
 if DISK_GATE not in ("green", "freeze", "halve"): DISK_GATE = "yellow"
 PREV_DISK_GATE = rd(R + "/.autopilot-disk-gate").strip() if os.path.exists(R + "/.autopilot-disk-gate") else ""
-if AP:   # devin limits: 10/3/16 by default (DEVIN-LEVERAGE-20261026); a devin block in budget-overrides.json overrides floor and ceiling
+if AP:   # devin limits: target 6, floor 3, ceiling 10 by default (DEFAULT above, DEVIN-LEVERAGE-20261026); a devin block in budget-overrides.json overrides floor and ceiling
     lim = AP.get("devin", {}).get("limits") or {}
     for a in ("floor", "ceiling"):
         if isinstance(lim.get(a), int): slots["devin"][a] = lim[a]
@@ -765,7 +769,7 @@ pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
 pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
-job_leaders = {}   # job -> pids of its launch wrapper (RQ-JOB-MAX-RUNTIME-1 watchdog)
+job_leaders = {}   # job -> (pid, start time) identities of its launch wrapper
 ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
@@ -774,12 +778,15 @@ if ps_result.returncode:
     log("PROCESS_SNAPSHOT unknown; preserving every worker and queue claim")
     raise SystemExit(0)  # Unknown ownership is never permission to reap or launch.
 ps = ps_result.stdout
+process_start_times = ps_result.start_times
 for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
     if m: publishing.add(m.group(1)); continue
     m = pat_lj.search(line); f_ = line.split(None, 1)[0] if line.strip() else ""
-    if m and f_.isdigit(): job_leaders.setdefault(m.group(1), set()).add(int(f_))
+    if m and f_.isdigit():
+        pid = int(f_)
+        job_leaders.setdefault(m.group(1), set()).add((pid, process_start_times.get(pid)))
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
@@ -822,13 +829,168 @@ def _max_runtime(lane):
         if v != v or v < 0: continue
         return 0 if v == 0 else max(JOB_MAX_RUNTIME_MIN_S, v)
     return JOB_MAX_RUNTIME_S
-def _kill_leaders(pids, sig):
-    for pid in pids:   # only a real session leader's own group: never pid 1, ourselves, or a shared group
+def _kill_leaders(leaders, sig, job, expected=None):
+    signalled = []
+    for pid, start_time in sorted(leaders, key=lambda identity: identity[0]):
+        if not isinstance(start_time, str) or not start_time:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
+        if expected is not None and (pid, start_time) not in expected:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
         try:
-            if pid > 1 and pid != os.getpid() and os.getpgid(pid) == pid and pid != os.getpgrp(): os.killpg(pid, sig)
+            if pid <= 1 or pid == os.getpid() or os.getpgid(pid) != pid or pid == os.getpgrp(): continue
+            try: current_start = read_process_start_time(pid)
+            except Exception: current_start = None
+            if not current_start or current_start != start_time:
+                ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+                continue
+            # PID reuse can still occur in the sub-millisecond gap before killpg.
+            os.killpg(pid, sig)
+            signalled.append((pid, start_time))
         except OSError: pass
+    return signalled
+
+def _maxruntime_identity_alive(identity):
+    pid, start_time = identity
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        # The leader PID is gone, but its group may still hold workers; only
+        # an empty group (non-signalling probe) counts as gone.
+        return not _maxruntime_group_absent(pid)
+    except OSError:
+        return True
+    try: current_start = read_process_start_time(pid)
+    except Exception: current_start = None
+    return not current_start or current_start == start_time
+
+def _maxruntime_group_absent(pgid):
+    """Non-signalling group-existence check: True only when no process
+    remains in the group (signal 0 probes without delivering a signal)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+def _maxruntime_pid_absent(pid):
+    """Affirmative absence: the pid is gone AND its process group is empty.
+    An exited leader with surviving workers is not absent; a missed snapshot
+    or failed start-time probe never counts as absence either."""
+    try:
+        os.getpgid(pid)
+        return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    return _maxruntime_group_absent(pid)
+
+def _maxruntime_identities(marker):
+    identities = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return identities
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        if row.get("pending") is True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            identities.add((pid, start_time))
+    return identities
+def _maxruntime_escalated(marker):
+    try:
+        with open(marker) as f: return "KILL" in {line.strip() for line in f}
+    except OSError: return True
+def _maxruntime_unresolved(j):
+    """True while a timed-out job's watchdog escalation is unfinished: slot
+    accounting and the reaper must treat the job as live until group absence
+    is verified. Fails closed: an existing but unreadable marker is unresolved,
+    never escalated."""
+    mk = RUN + "/" + j + ".maxruntime"
+    try:
+        with open(mk) as f: escalated = "KILL" in {line.strip() for line in f}
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return not escalated
+def _maxruntime_done_identities(marker):
+    done = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return done
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("done") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            done.add((pid, start_time))
+    return done
+def _maxruntime_killsent_identities(marker):
+    """Identities already sent SIGKILL. Escalation must not re-signal them,
+    and they stay unresolved until group absence is confirmed."""
+    killsent = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return killsent
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("killsent") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            killsent.add((pid, start_time))
+    return killsent
+
+def _maxruntime_pending_identities(marker):
+    """TERM candidates the first pass could not verify; a later non-pending
+    row for the same identity -- or the same pid for an unknown-start
+    candidate -- supersedes them."""
+    pending, termed = set(), set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return pending
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1):
+            continue
+        identity = (pid, start_time if isinstance(start_time, str) and start_time else None)
+        if row.get("pending") is True: pending.add(identity)
+        elif row.get("done") is not True: termed.add(identity)
+    return {(pid, start) for pid, start in pending
+            if not any(tpid == pid and (start is None or start == tstart) for tpid, tstart in termed)}
+
+def _maxruntime_pending_identity_alive(identity, leaders):
+    pid, start_time = identity
+    if isinstance(start_time, str) and start_time:
+        return _maxruntime_identity_alive(identity)
+    # Unknown-start candidate: alive while its pid still leads the job; absent
+    # only on affirmative proof (no process group), never on a failed probe.
+    if any(leader_pid == pid for leader_pid, _ in leaders): return True
+    return not _maxruntime_pid_absent(pid)
+def _write_maxruntime_identities(marker, identities, pending=()):
+    with open(marker, "w") as f:
+        for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+        for pid, start_time in sorted(pending, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time, "pending": True}, separators=(",", ":")) + "\n")
 def job_watchdog():
-    for j, pids in sorted(job_leaders.items()):
+    jobs = set(job_leaders)
+    jobs.update(os.path.basename(path)[:-len(".maxruntime")] for path in glob.glob(RUN + "/*.maxruntime"))
+    for j in sorted(jobs):
+        leaders = job_leaders.get(j, set())
         if not JID.match(j) or j in reaping or j in publishing: continue
         try:
             ln = rd(RUN + "/" + j + ".line").strip().split("\t")
@@ -838,16 +1000,70 @@ def job_watchdog():
             src = RUN + "/" + j + (".dispatched" if os.path.exists(RUN + "/" + j + ".dispatched") else ".line")
             age = NOW - os.path.getmtime(src)
             mk = RUN + "/" + j + ".maxruntime"
-            if os.path.exists(mk):   # already terminated once: escalate if the group is still there
-                if NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S and os.path.getsize(mk) == 0:
-                    _kill_leaders(pids, signal.SIGKILL); open(mk, "w").write("KILL\n"); ev("REAP TIMEOUT %s SIGKILL" % j)
+            if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
+                if not _maxruntime_escalated(mk):
+                    # Candidates the first TERM could not verify stay pending
+                    # in the marker; retry them each tick so a recovered
+                    # identity is TERM'd and recorded before escalation ends.
+                    pending_ids = sorted(_maxruntime_pending_identities(mk), key=lambda identity: (identity[0], identity[1] or ""))
+                    retry_known = [identity for identity in pending_ids if isinstance(identity[1], str) and identity[1]]
+                    retry_unknown = [identity for identity in pending_ids if identity[1] is None]
+                    termed_now = _kill_leaders(retry_known, signal.SIGTERM, j) if retry_known else []
+                    leader_pids = {pid for pid, _ in leaders}
+                    if retry_unknown:
+                        wanted = {pid for pid, _ in retry_unknown}
+                        current = [identity for identity in leaders
+                                   if identity[0] in wanted and isinstance(identity[1], str) and identity[1]]
+                        termed_now += _kill_leaders(current, signal.SIGTERM, j)
+                        gone_unknown = []
+                        for pid, _start in retry_unknown:
+                            if pid in leader_pids: continue
+                            if _maxruntime_pid_absent(pid): gone_unknown.append(pid)
+                        if gone_unknown:
+                            with open(mk, "a") as f:
+                                for pid in gone_unknown:
+                                    f.write(json.dumps({"pid": pid, "start": None}, separators=(",", ":")) + "\n")
+                    if termed_now:
+                        with open(mk, "a") as f:
+                            for pid, start_time in sorted(termed_now):
+                                f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+                        ev("REAP TIMEOUT %s SIGTERM retry" % j)
+                if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
+                    expected = _maxruntime_identities(mk)
+                    done = _maxruntime_done_identities(mk)
+                    killsent = _maxruntime_killsent_identities(mk)
+                    # SIGKILL delivery is asynchronous: a successful killpg only
+                    # means the signal was sent, not that the group is gone.
+                    # Record killsent (never done) so the unresolved check
+                    # below keeps the slot until group absence is confirmed.
+                    pending = [identity for identity in sorted(expected) if identity not in done and identity not in killsent]
+                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
+                    if signalled:
+                        with open(mk, "a") as f:
+                            for pid, start_time in signalled:
+                                f.write(json.dumps({"pid": pid, "start": start_time, "killsent": True}, separators=(",", ":")) + "\n")
+                        ev("REAP TIMEOUT %s SIGKILL" % j)
+                    unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
+                    unresolved += [identity for identity in _maxruntime_pending_identities(mk)
+                                   if _maxruntime_pending_identity_alive(identity, leaders)]
+                    if not unresolved:
+                        with open(mk, "a") as f: f.write("KILL\n")
+                        if not signalled:
+                            ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                    else:
+                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
                 continue
             if age < limit: continue
-            open(mk, "w").close()
             if not os.path.exists(RUN + "/" + j + ".rc"):
                 t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
-            _kill_leaders(pids, signal.SIGTERM)
+            term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
+            if term_identities:
+                termed_set = set(term_identities)
+                pending = [identity for identity in leaders if identity not in termed_set]
+                _write_maxruntime_identities(mk, term_identities, pending)
+            else:
+                ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
 job_watchdog()
 
@@ -858,6 +1074,15 @@ def result(j):
 def base(j):
     b = rd("%s/%s.base" % (R, j)).split()
     return b if len(b) >= 4 else None
+def published_current_attempt(j):
+    """Only a valid completion receipt for this launch releases its slot."""
+    if not re.match(r"RESULT (PR https://[^\s/]+/\S+|EMPTY)(\s|$)", result(j) or ""): return False
+    try:
+        boundary = os.path.getmtime(R + "/" + j + ".base")
+        dispatched = RUN + "/" + j + ".dispatched"
+        if os.path.exists(dispatched): boundary = max(boundary, os.path.getmtime(dispatched))
+        return os.path.getmtime(R + "/" + j + ".publish") >= boundary
+    except OSError: return False   # an unreadable receipt is not terminal evidence
 
 # ---- batching (RQ-QUEUE-BATCH-1, per-line since RQ-BATCH-SESSIONS-2): up to 10 related ready lines share one session,
 # each with its own lease (<job>.batched, O_EXCL), worktree (batch-launch.sh) and PR (the normal per-job reap).
@@ -1018,6 +1243,28 @@ def retire_bundle_worktree(j, wt):
 
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []; fork_seen = []; rl_seen = []
+# RQ-QUEUERECOVERYQ8: bounded launch retries (launch_precheck.launch_failure); one ledger file, keyed per job.
+from launch_precheck import (classify_launch_failure, classify_empty_failure, launch_hold, launch_failure, launch_ok,
+                             park_key as _launch_key)
+LAUNCH_RETRY_PATH = Q + "/launch-retries.json"
+launch_state = jload(LAUNCH_RETRY_PATH, {})
+if not isinstance(launch_state, dict): launch_state = {}
+def launch_retry_key(job, pf):   # job + prompt only: a lane move or reroute must not reset the attempt count
+    return _launch_key(job, rd(pf))
+def launch_failed(j, ln, out, why_ev):
+    """Classify, bound and receipt one failed solo launch. Requeues only while the budget lasts."""
+    reason, retryable = classify_launch_failure(out, _rc(j))
+    if not ln:   # no line to retry: nothing to bound, but the reason is still recorded
+        metric({"event": "launch_failed", "job": j, "reason": reason, "action": "give_up", "attempt": 1}); return
+    receipt = launch_failure(launch_state, j, launch_retry_key(j, ln.split("\t")[4] if ln.count("\t") > 3 else ""), NOW, reason, retryable)
+    jsave(LAUNCH_RETRY_PATH, launch_state)
+    metric(dict(receipt, event="launch_failed", lane=ln.split("\t")[2] if ln.count("\t") > 1 else None))
+    if receipt["action"] == "retry":
+        requeue.append(ln); ev("%s %s reason=%s attempt=%d/%d (requeued, retry in %ds)" % (
+            why_ev, j, reason, receipt["attempt"], receipt["max_attempts"], max(0, receipt["retry_at"] - NOW)))
+    else:
+        ev("LAUNCH_GAVE_UP %s reason=%s class=%s attempts=%d (not requeued; see %s.launch)" % (
+            j, reason, receipt["class"], receipt["attempt"], j))
 # Lines a bundle reap requeued after ready.tsv was already written (the reap phase runs after launch), carried over
 # when the lock was busy at the end of the previous tick.
 _REQUEUE_PENDING = Q + "/requeue-pending.tsv"
@@ -1030,7 +1277,9 @@ for p in glob.glob(RUN + "/*.dispatched"):
     if (ps_result.returncode and j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j)
             and not re.search(r"^(PAUSED|HELD|SKIPPED):", out, re.M)):
         alive.add(j); continue   # unknown liveness during a long fetch, even before .base exists
-    if "launched " in out: os.remove(p); continue
+    if "launched " in out:
+        if launch_ok(launch_state, j): jsave(LAUNCH_RETRY_PATH, launch_state)
+        os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
         if batch_manifest(j): release_batch(j, "launch held")   # members go back alone; the bundle id never requeues
@@ -1041,13 +1290,15 @@ for p in glob.glob(RUN + "/*.dispatched"):
         release_batch(j, "launch skipped")
     elif not out.strip() and not base(j):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if batch_manifest(j): release_batch(j, "launch interrupted")
-        elif ln: requeue.append(ln)
-        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        if batch_manifest(j): release_batch(j, "launch interrupted"); ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        else: launch_failed(j, ln, out, "LAUNCH_INTERRUPTED")
     else:
+        ln = rd(RUN + "/" + j + ".line").strip()
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
-        release_batch(j, "launch failed")
+        if batch_manifest(j): release_batch(j, "launch failed")
+        else: launch_failed(j, ln, out, "LAUNCH_RETRY")
+    metric(dict(event="launch_terminal", job=j, reason="launcher-exited"))
     os.remove(p)
 
 # ---- (a) reap
@@ -1057,6 +1308,7 @@ running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
 _attempts = {}; _merged_urls = set()
 _raw_rows = batcher.parse_rows(MD + "/jobs.jsonl")
 JOBS_RAW.extend(_raw_rows); JOBS.extend(batcher.project_rows(_raw_rows))
+for row in JOBS_RAW: update_launch_state(ACTIVE_LAUNCHES, row)
 _JOBS_LIVE = True
 for row in JOBS:
     if not isinstance(row, dict): continue
@@ -1161,7 +1413,12 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
-    if j in alive:
+    # Completion wins over launch grace, lingering processes and fresh artifacts —
+    # but not over an unfinished watchdog escalation: a current-attempt receipt
+    # keeps the slot until group absence is verified (KILL), like any live job.
+    # Keep the worktree/receipts for the existing publisher and reconciliation.
+    if published_current_attempt(j) and not _maxruntime_unresolved(j): continue
+    if j in alive or _maxruntime_unresolved(j):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
@@ -1170,7 +1427,7 @@ for bp in glob.glob(R + "/*.base"):
     if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
     try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
     except Exception: recent = NOW
-    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+    if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # no completion evidence: retain cloud jobs without a local log
         if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
         if _rc(j) is None and not result(j):
             target = drain_target(j, _job_repo(j))
@@ -1206,14 +1463,16 @@ def reap_worktrees():
         j = os.path.basename(bp)[:-5]; b = base(j)
         if not b or not JID.match(j): continue
         wt, pool = b[2], b[3]
-        if j in alive or bundle_member_of(j):
+        if j in alive or _maxruntime_unresolved(j) or bundle_member_of(j):
             continue
         if not os.path.isdir(wt) or j in reaping or j in publishing: continue
         attempt = _attempts.get(j, {})
         if attempt.get("merged") or attempt.get("urls", set()) & _merged_urls: continue
         try: recent = max(os.path.getmtime(bp), os.path.getmtime("%s/%s.log" % (R, j)) if os.path.exists("%s/%s.log" % (R, j)) else 0)
         except Exception: recent = NOW
-        if NOW - recent < 180 or not os.path.exists("%s/%s.log" % (R, j)):   # fresh launch by anyone (routine or us): not finished
+        # A RESULT PR/EMPTY publish record means done even with no local log (Devin cloud jobs never have one); mirrors src/core/fleet/job-state.ts.
+        published = published_current_attempt(j)
+        if NOW - recent < 180 or (not os.path.exists("%s/%s.log" % (R, j)) and not published):   # fresh launch by anyone (routine or us): not finished
             if j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j): fix_main_repos.add(_job_repo(j))
             if _rc(j) is None and not result(j):
                 target = drain_target(j, _job_repo(j))
@@ -1266,6 +1525,7 @@ def reap_worktrees():
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "empty_class": classify_empty(empty, _rc(j), perr),
+                    "failure_reason": classify_empty_failure(empty, _rc(j), perr),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
@@ -1315,6 +1575,7 @@ def admission_gate():
     growth = max(0, swap_gb - min(v[1] for v in samples)) if samples and swap_gb is not None else 0
     if swap_gb is not None: samples.append([NOW, swap_gb])
     load_max = GATE_LOAD_PER_CPU * ncpu
+    wts_max = int(max(GATE_WORKTREES_MAX, GATE_WORKTREES_PER_CPU * ncpu))
     if load1 > load_max: g["reasons"].append("loadavg %.1f > %.1f (%g x ncpu)" % (load1, load_max, GATE_LOAD_PER_CPU))
     if g["off_switch_ignored"]: g["warnings"].append("LOADGATE_OFF present and ignored")
     if procs > GATE_PROCS_MAX: g["warnings"].append("procs %d > %d" % (procs, GATE_PROCS_MAX))
@@ -1326,8 +1587,8 @@ def admission_gate():
     g.update(memory_pressure=pressure, pressure_min=GATE_PRESSURE_MIN, swap_gb=swap_gb, swap_growth_gb=growth,
              swap_growth_max_gb=GATE_SWAP_GROWTH_GB, swap_window_s=GATE_SWAP_WINDOW_S, swap_samples=samples,
              disk_free_gb=disk_free_gb, disk_hard_stop_gb=DISK_HARD_STOP_GB, claim_limit=MAX_LAUNCH_PER_TICK,
-             procs_max=GATE_PROCS_MAX, worktrees_max=GATE_WORKTREES_MAX, tick_max_s=GATE_TICK_MAX_S)
-    if wts > GATE_WORKTREES_MAX: g["warnings"].append("worktrees %d > %d" % (wts, GATE_WORKTREES_MAX))
+             procs_max=GATE_PROCS_MAX, worktrees_max=wts_max, tick_max_s=GATE_TICK_MAX_S)
+    if wts > wts_max: g["warnings"].append("worktrees %d > %d" % (wts, wts_max))
     if age is None: g["warnings"].append("daemon_status_unavailable (%s)" % why)
     elif age > GATE_TICK_MAX_S: g["warnings"].append("daemon_tick_stale %ds > %ds (Phantom daemon last tick: %s)" % (age, GATE_TICK_MAX_S, last_tick))
     g.update(load5=_l5, load15=_l15)
@@ -1411,7 +1672,7 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
+from launch_precheck import (precheck as shared_precheck, dupcheck as shared_dupcheck, add_check_line, DUPCHECK_CODE, park_key, parked, park,
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
@@ -1419,6 +1680,9 @@ if not isinstance(park_state, dict): park_state = {}
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
+
+def dupcheck_gate(j, repo, pf):
+    return shared_dupcheck(j, repo, pf, H, R, _run)
 
 def market_metric(decision):
     # Separate event stream keeps existing lifecycle consumers compatible.
@@ -1447,11 +1711,31 @@ def waste_risk(projection, lane):
     risk = projection.get("waste_risk")
     return risk if risk in ("medium", "high") else None
 
-def waste_boost(projection, lane, tier):
+class TierUpgrade(TypedDict):
+    job: str
+    lane: str
+    from_tier: str
+    to_tier: str
+    reason: str
+
+def pace_behind(projection):
+    if (not isinstance(projection, dict) or projection.get("known") is not True
+            or projection.get("stale") is not False or type(projection.get("behind")) is not bool): return None
+    return projection["behind"]
+
+def waste_boost(projection, lane, tier, executor, ceiling=None):
+    # A tier change never grants paid usage or bypasses the selected executor's contract.
+    # A job's max_tier is binding: spare capacity never lifts it past its declared ceiling.
+    if ceiling and tier == ceiling: return None
+    if (executor.get("cost_class") != "included" or executor.get("held")
+            or executor.get("auth_failed") or executor.get("backoff") or executor.get("quota") == 0): return None
+    boosted = {"mid": "work", "work": "frontier"}.get(tier)
+    if not boosted or boosted not in executor.get("tiers", []): return None
+    if tier == "work" and pace_behind(projection) is True:
+        return boosted, "use-it-all behind pace: work -> frontier (yield policy)"
     risk = waste_risk(projection, lane)
     if not risk: return None
-    boosted = {"mid": "work", "work": "frontier"}.get(tier)
-    return (boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)) if boosted else None
+    return boosted, "use-it-all %s waste risk: %s -> %s" % (risk, tier, boosted)
 
 # The host-owned projection is advisory and expires after two minutes.
 UIA = {}
@@ -1552,8 +1836,7 @@ for line in _raw + requeue:
         else:
             routed.append("\t".join(f)); continue
     current = slots.get(previous["pool"], {}) if previous else {}
-    hard_down = (current.get("auth_failed") is True or (type(current.get("quota")) in (int, float) and current["quota"] == 0)
-                 or (current.get("held") and current.get("held_reason") == "auth_failure"))
+    hard_down = work_market.hard_down(current, previous["pool"] in hold) if previous else False   # one definition shared with the work market (RQ-CONSTRAINT-AUDIT-1)
     record, reason = route_decision(previous, proposed, NOW, hard_down, launched)
     if previous is None and not launched: record["assigned"] = False
     route_state[job] = record
@@ -1604,7 +1887,7 @@ _FC_PREV = FC_STATE["level"]
 BUS = fc.build_readings(NOW, load=(GATE["load1"], GATE.get("load5"), GATE.get("load15")), ncpu=GATE["ncpu"], mem_free_pct=free,
     memory_pressure=GATE["memory_pressure"], swap_gb=GATE["swap_gb"], swap_growth_gb=GATE["swap_growth_gb"] if GATE["swap_gb"] is not None else None,
     swap_window_s=GATE_SWAP_WINDOW_S, procs=GATE["procs"], worktrees=GATE["worktrees"], disk_free_gb=disk_free_gb, disk_gate=DISK_GATE,
-    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE_WORKTREES_MAX},
+    limits={"swap_growth_gb": GATE_SWAP_GROWTH_GB, "procs": GATE_PROCS_MAX, "worktrees": GATE["worktrees_max"]},
     queue_by_lane=qdepth, queue_by_tier=fc.tier_depth([l for l in lines if not parked_row(l)], TIERS),
     quota=fc.lane_quota(_BUDGET_OV, LANES), merge=fc.merge_stats(JOBS_RAW, NOW), holds=sorted(hold))
 FC_WOULD_LEVEL, FC_STATE, FC_WHY = fc.shed_level(BUS, FC_STATE, NOW)
@@ -1722,6 +2005,7 @@ conc_adjusted(concurrency.decide(CONC, fc.concurrency_signals(BUS, GATE_LOAD_PER
 tick_phase("launch", 30)
 # ---- (b) fill
 launched = []; rest = []; bad = 0; batches = []
+tier_upgrades: list[TierUpgrade] = []
 GCAP = global_cap()
 
 # Weekly quota pacing (RQ-PACE-TO-RESET): routine claims defer when a lane's
@@ -1790,15 +2074,27 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
     cand.sort(key=lambda f: (*work_market.priority(market_specs[f[0]]), -admission[f[0]]["score"], not bool(waste_risk(UIA.get(f[2]), f[2])), _bucket(f[0]),
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
+    completed = merged_jobs(JOBS)
+    recuts = RecutAdmission(batcher.parse_rows(Q + '/recut-loop.jsonl'), completed, alive)
+    for recut_job in recuts.identities:
+        if bundle_member_of(recut_job) in alive: recuts.launched(recut_job, 'phantom')
     for f in cand:
-        reason = terminal_target(f[0], f[1], rd(f[4]), pr_states)
+        reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
+                  else terminal_target(f[0], f[1], rd(f[4]), pr_states))
         if reason:
             admission[f[0]].update(reason=reason, outcome="DONE-NOOP")
-            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason))
+            metric(dict(event="outcome", state="DONE-NOOP", job=f[0], repo=f[1], lane=f[2], reason=reason, launched=False))
             ev("DONE-NOOP %s [%s]" % (f[0], reason))
     jsave(Q + "/ranking.json", {"at": NOW, "decisions": list(admission[f[0]] for f in cand)})
     cand = [f for f in cand if admission[f[0]]["outcome"] != "DONE-NOOP"]
-    seen = set(); pc_n = 0; local_ok = None
+    seen = set(); pc_n = 0; local_ok = None; market_rejects = {}
+    claimed_requests = {}
+    active_claims = {row['job']: row for row in JOBS if isinstance(row, dict)
+                     and row.get('event') == 'claim' and isinstance(row.get('job'), str) and row['job'] in alive}
+    for owner, row in active_claims.items():
+        hashes = row.get('request_hashes', [])
+        if isinstance(hashes, list):
+            claimed_requests.update((h, owner) for h in hashes if isinstance(h, str))
     empty_attempts = read_attempts(R); base_identities = {}
     def _local_healthy():   # one GET per tick; any error, timeout or non-200 -> unhealthy. Env proxies ignored.
         import urllib.request
@@ -1840,12 +2136,14 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+        return (m not in recuts.identities and launch_hold(launch_state, m, launch_retry_key(m, f[4]), NOW) is None
+                and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
+                and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
-                and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
+                and m not in ACTIVE_LAUNCHES and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
                 and batch_attempts(m) < batcher.MAX_ATTEMPTS)
     _tasks = {}
@@ -1856,25 +2154,69 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                             "chars": len(text), "f": f, "prompt": text}
         return _tasks[f[0]]
     def form_batch(f):   # -> (members, lane, size target) or None to launch f on its own
-        if not (BATCHING and member_ok(f, lead=True)) or waste_risk(UIA.get(f[2]), f[2]): return None
-        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not waste_risk(UIA.get(c[2]), c[2])]
+        def solo(c):
+            if c[2] == "devin":
+                selected = market_models.get("devin." + c[3]) or market_models.get("devin")
+                # A batch must not replace a free selected model with a differently priced model.
+                if selected and batch_sessions.model_for("devin", c[3], rd(c[4]), BS_CFG)[0] != selected: return True
+            return waste_risk(UIA.get(c[2]), c[2]) or waste_boost(UIA.get(c[2]), c[2], c[3], market_view.get(c[2], {}), market_specs[c[0]].get("max_tier"))
+        if not (BATCHING and member_ok(f, lead=True)) or solo(f): return None
+        pool = [task_info(c) for c in cand if c[1] == f[1] and c[2] == f[2] and c[0] != f[0] and member_ok(c) and not solo(c)]
+        unique = []; hashes = {request_hash(f[0], f[1], rd(f[4]))}
+        for c in pool:
+            digest = request_hash(c['job'], c['repo'], c['prompt'])
+            if digest and (digest in hashes or digest in claimed_requests): continue
+            hashes.add(digest); unique.append(c)
+        pool = unique
+        rebase_order.assign_areas([task_info(f)] + pool)
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
-        has_capacity = lambda l: not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+        has_capacity = lambda l: (not (slots[l].get("held") or l in hold) and running[l] < tgt(l)
+                                  and work_market.serves_repo(market_view.get(l, {}), f[1]))
         lane_ = batcher.choose_lane({c["lane"] for c in picked} & set(BS_CFG["lanes"]), batcher.lane_scores(batch_stats()), has_capacity, f[2])
         return (picked, lane_, size) if lane_ else None
+    market_allowance = dict(_BUDGET_OV)
+    market_allowance["devin"] = dict(weekly_acu=work_market.read_devin_allowance(H, os.environ.get("ASHLR_HOME")))
     market_view = work_market.lane_view(LANES, slots, running, {l: tgt(l) for l in LANES},
                                         hold, market_models, BUS["quota"], JOBS_RAW,
-                                        jload(Q + "/adaptive.json", {}), NOW)
+                                        jload(Q + "/adaptive.json", {}), NOW, allowance=market_allowance)
+    # Fresh use-it-all evidence that a window is going to waste outranks a preserve default this tick.
+    for _l in LANES:
+        _waste = waste_risk(UIA.get(_l), _l)
+        if market_view[_l]["cost_class"] == "included" and (_waste or pace_behind(UIA.get(_l)) is True):
+            market_view[_l].pop("provenance", None)
+            market_view[_l].update(posture="burn", posture_reason="use_it_all_waste_risk" if _waste else "use_it_all_behind")
+    if any(isinstance(_BUDGET_OV.get(l), dict) for l in LANES) or market_view["devin"]["target"] > 0:
+        market_metric({"schema": "work-market.v1", "event": "posture", "lanes": {
+            l: dict(lane=l, **v.get("provenance", {}), posture=v["posture"], posture_reason=v["posture_reason"],
+                    projected_unused_pct=v["spend_down"]["projected_unused_pct"],
+                    hours_to_reset=v["spend_down"]["hours_to_reset"], cost_class=v["cost_class"],
+                    **{k: v[k] for k in ("cost_class_reason", "zero_cost", "allowance") if k in v}) for l, v in market_view.items()}})
     for f in cand:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
         if j in seen: continue  # duplicate line
+        if j in ACTIVE_LAUNCHES:
+            rest.append(line); seen.add(j); continue
         why = retired(j)
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
+        recut = recuts.decide(j, repo)
+        if recut:
+            metric(dict(event="recut_admission", job=j, repo=repo, **recut))
+            if recut['action'] != 'ready':
+                if recut['action'] == 'defer': rest.append(line)
+                else:
+                    metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                                reason=recut['reason'], repeatOf=recut['repeatOf'], launched=False))
+                seen.add(j); continue
+        digest = request_hash(j, repo, rd(pf))
+        owner = claimed_requests.get(digest)
+        if owner and owner != j:
+            metric(dict(event="dispatch_deferred", job=j, repo=repo, reason="duplicate-request", repeatOf=owner))
+            rest.append(line); seen.add(j); continue
         if res and res.startswith("RESULT PR"):
             ev("SKIP_DONE %s already has a PR" % j); seen.add(j); continue
         target = drain_target(j, repo)
@@ -1892,6 +2234,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue
         spec = market_specs[j]
         view = {dest: dict(v, running=running[dest]) for dest, v in market_view.items()}
+        # Cost is model/tier-specific and every claim reserves another session cap.
+        view.update(work_market.lane_view(["devin"], slots, running, {"devin": tgt("devin")}, hold,
+                                         market_models, BUS["quota"], JOBS_RAW, now=NOW,
+                                         allowance=market_allowance, tier=tier))
         for dest in LANES:
             if dest == "devin":
                 size = _size_hint(j, pf)
@@ -1906,8 +2252,10 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 elif _size_hint(j, pf) > 60 or (tier == "mid" and local_mid >= LOCAL_MID_CAP):
                     view[dest]["unavailable"] = "local_scope_unavailable"
         decision, receipt = work_market.choose(j, spec, tier, view, route_state.get(j), NOW, route_decision)
+        market_rejects[j] = {} if decision["chosen_lane"] else {r["lane"]: r["reason_codes"] for r in decision["rejected_lanes"]}
         if len(launched) >= GATE["claim_limit"] or sum(running.values()) >= GCAP:
             decision["chosen_lane"] = None; decision["reason_codes"].append("global_admission")
+            market_rejects[j] = dict.fromkeys(view, ["global_admission"])
         market_metric(decision)
         if view.get(f[2], {}).get("quota") == 0:
             advice = handoff_advice(j, f[2], "quota-exhausted", decision["chosen_lane"])
@@ -1921,7 +2269,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if why: ev("DEVIN_ROUTE %s %s -> %s" % (j, why, lane))
         if lane != f[2] and f[2] in LANES:
             FC_MOVES.append((j, f[2], lane))
-            ev("FLEET_REBALANCE %s %s->%s (shared market)" % (j, f[2], lane))
+            ev("FLEET_REBALANCE %s %s->%s (shared market: %s)" % (j, f[2], lane, (decision["override"] or {}).get("reason", "placement_moved")))
         f[2] = lane; line = "\t".join(f); s = slots[lane]
         # Persist at actual claim below, after prechecks and batch formation.
         if (len(launched) >= GATE["claim_limit"] or s.get("held") or lane in hold
@@ -1945,12 +2293,25 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
         key = park_key(line, rd(pf))
+        held = launch_hold(launch_state, j, launch_retry_key(j, pf), NOW)
+        if held == "wait": rest.append(line); continue
+        if held == "gave_up": continue   # budget spent on this exact line; a changed line or prompt resets it
         if parked(park_state, j, key, NOW):
             rest.append(line); continue
         # A due parked job must be checked even when optional prechecks ran out.
         # Defer it instead of accidentally launching unverified work.
         if j in park_state and (pc_n >= PC_MAX or over_budget()):
             rest.append(line); continue
+        if repair_target(j, repo):
+            # Repairs must cross the freshness boundary before claiming or batching.
+            if pc_n >= PC_MAX or over_budget():
+                rest.append(line); continue
+            pc_n += 1
+            reason = repair_freshness(j, repo, rd(pf), H, _run)
+            if reason:
+                metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                            reason=reason, launched=False))
+                ev("DONE-NOOP %s [%s]" % (j, reason)); continue
         if empty_gate(j, repo, pf, lane): continue
         batch = form_batch(f)
         if batch:   # leases first: a line another bundle already holds is dropped; too few left launches solo
@@ -1967,6 +2328,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             else:
                 picked = held; lane = blane
         if batch:
+            if bid in ACTIVE_LAUNCHES:
+                for c in picked: batch_sessions.release_lease(RUN, c["job"], bid)
+                rest.append(line); continue
             tier = "work" if lane == "claude" else tier   # Sonnet orchestrates; hard lines get Opus subagents
             members = []
             for c in picked:
@@ -1981,7 +2345,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 seen.add(c["job"])
                 open(RUN + "/" + c["job"] + ".batch-attempts", "w").write(str(batch_attempts(c["job"]) + 1))
                 metric({"event": "batch_claim", "job": c["job"], "batch": bid, "repo": repo, "lane": lane, "tier": c["tier"],
-                        "area": area, "model": c["model"]})
+                        "area": area, "model": c["model"],
+                        **({"lane_hint": c["lane"], "lane_override": "batch_session"} if c["lane"] != lane else {})})
             ev("BATCH %s %d tasks repo=%s area=%s lane=%s size_target=%d" % (bid, len(members), repo, area, lane, size))
             j = bid; s = slots[lane]; line = "\t".join([bid, repo, lane, tier, pf]); batches.append({"job": bid, "tasks": len(members)})
             batch = (members, lane, size)
@@ -1998,6 +2363,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 rest.append(line); continue
             if j in park_state:
                 park_state.pop(j); jsave(PARK_PATH, park_state)
+            if not pc:   # pre-launch dupcheck (phm queue dupcheck --gate): skip a row that is already on master, warn on a likely one
+                dc = dupcheck_gate(j, repo, pf)
+                if dc and dc[0] == "skip":
+                    pc = (DUPCHECK_CODE, dc[1])
+                    metric({"event": "dupcheck_skip", "job": j, "repo": repo, "lane": lane, "reason": dc[1], "evidence": dc[2]})
+                elif dc: add_check_line(pf, dc[1])
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
                 metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
@@ -2011,13 +2382,16 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             except FileNotFoundError: pass
         identity = claim_identity(j, repo, pf)
         risk = waste_risk(UIA.get(lane), lane) if not batch else None
-        boost = waste_boost(UIA.get(lane), lane, tier) if risk else None
+        boost = waste_boost(UIA.get(lane), lane, tier, view[lane], spec.get("max_tier")) if not batch else None
+        if boost and lane == "devin" and (market_models.get("devin." + boost[0]) or market_models.get("devin")) != (market_models.get("devin." + tier) or market_models.get("devin")):
+            boost = None   # The cost receipt binds the selected model, not a differently priced tier.
         reason = boost[1] if boost else ("use-it-all %s waste risk: pool preferred" % risk if risk else None)
+        requested_tier = tier
         if boost: tier = boost[0]
         for route_job in ([c["job"] for c in batch[0]] if batch else [j]):
             prior = route_state.get(route_job)
             if prior and not prior.get("assigned", True): prior = None
-            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {})) if prior else False)
+            rec, why = route_decision(prior, lane, NOW, work_market.hard_down(slots.get(prior["pool"], {}), prior["pool"] in hold) if prior else False)
             if why and rec["pool"] != lane: raise RuntimeError("batch route violated hysteresis")
             rec.update(assigned=True, launched=True)
             route_state[route_job] = rec
@@ -2030,7 +2404,15 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         open(RUN + "/" + j + ".line", "w").write(line + "\n")
         open("%s/%s.launch" % (R, j), "w").close()  # discard the previous attempt before claiming
         open(RUN + "/" + j + ".dispatched", "w").write(str(int(NOW)))
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier))
+        hashes = [request_hash(c['job'], repo, c['prompt']) for c in batch[0]] if batch else [digest]
+        hashes = [h for h in hashes if h]
+        # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
+        override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
+        # Tick flock covers ledger replay, reservation and spawn: even a later
+        # tick with no process/base evidence cannot launch this attempt twice.
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes, launch_dedupe=True,
+                    **({"lane_hint": override["from"], "lane_override": override["reason"],
+                        "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
         launch_cmd = (["/usr/bin/python3", "-I", R + "/bin/local_job.py"] if lane in ("codex-local", "omlx")
                       else ["/bin/bash", BATCH_LAUNCH] if batch else ["/bin/bash", R + "/bin/launch.sh"])
@@ -2039,16 +2421,21 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                              stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                              env=env, start_new_session=True, cwd=H)
         except OSError as e:   # EAGAIN/ENOMEM: the host is past its process or memory limit. Back off now, retry later.
+            metric(dict(event="launch_terminal", job=j, reason="spawn-failed"))
             os.remove(RUN + "/" + j + ".dispatched")
             if batch: release_batch(j, "spawn failed", into=rest)   # members go back alone; the bundle id never queues
             else: rest.append(line)
             CONC["fork_failures"].append(NOW); ev("FORK_FAILED %s %s (concurrency backoff)" % (j, type(e).__name__))
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
+        claimed_requests.update((h, j) for h in hashes)
+        recuts.launched(j, repo)
         if reason and "waste_reason" not in route_state[j]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)
             ev("ROUTE_BOOST %s %s %s" % (j, lane, reason))
+        if boost:
+            tier_upgrades.append({"job": j, "lane": lane, "from_tier": requested_tier, "to_tier": tier, "reason": reason})
         if j.startswith("RQ-FIX-MAIN-"): fix_main_repos.add(repo)
         if target: drain_targets.add(target)
         fam = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
@@ -2056,8 +2443,19 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         metric({"event": "launch", "job": j, "repo": repo, "lane": lane, "tier": tier, "model": model, "mem_free_pct": free, "swap_gb": swap,
                 "batch_size": len(batch[0]) if batch else None})
         running[lane] += 1; local_mid += lane == "codex-local" and tier == "mid"; launched.append(j); ev("LAUNCH %s %s %s %s" % (j, repo, lane, tier))
+    _waiting = [(market_specs[f[0]].get("preferred_lane"), market_rejects.get(f[0]))
+                for f in (l.split("\t") for l in rest if not parked_row(l)) if f[0] in market_specs]
+    _stopped = None
 else:
     rest = lines
+    _waiting = [(f[2] or None, None) for f in (l.split("\t") for l in rest if not parked_row(l))
+                if len(f) >= 5 and JID.fullmatch(f[0]) and f[3] in TIERS]
+    _stopped = "admission_stopped"
+# Unfed capacity: executors left with free slots while runnable rows waited under another lane's hint.
+# Counts and reason codes only. One audit row per tick, and only when some lane was unfed.
+UNFED = work_market.unfed_capacity({l: {"running": running[l], "target": tgt(l), "held": bool(slots[l].get("held") or l in hold)}
+                                    for l in LANES}, _waiting, _stopped)
+if UNFED["unfed_lanes"]: market_metric(UNFED)
 FC_MODE = "enforce" if FC_ENFORCE else "shadow"
 FC_LEDGER = fc.ledger_record(NOW, BUS, PLAN, FC_MODE, W.mutations, FC_MOVES, fc.ambiguous_holds(slots, LANES),
                              shadow=PLAN_WOULD if PLAN_WOULD is not PLAN else None)
@@ -2403,6 +2801,12 @@ for p in glob.glob(R + "/*.publish"):
     m = re.search(r"RESULT PR (https://github.com/\S+/pull/\d+)", rd(p))
     if m: pubs.append((os.path.getmtime(p), os.path.basename(p)[:-8], m.group(1)))
 pubs.sort(reverse=True)
+# A legacy mkdir marker proves a claim, not an active reaper. Preserve it until
+# all writers support fenced recovery; make that unknown ownership visible.
+reap_markers = {os.path.basename(p)[:-8] for p in glob.glob(RUN + "/*.reaping")}
+active_reaping = publish_processes | {j for j in reap_markers if _reap_starting(j)}
+reap_blocked = [{"job": j, "reason": "ownership-unknown"} for j in sorted(reap_markers - active_reaping) if JID.fullmatch(j)]
+for item in reap_blocked: ev("REAP_SKIP %s %s" % (item["reason"], item["job"]))
 evs = logtail(EV, 65536).splitlines()[-25:]   # tail read: the events log grows unbounded
 st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "paused": pause or None,
       "mem_free_pct": free, "swap_gb": round(swap, 2) if swap is not None else None,
@@ -2414,7 +2818,10 @@ st = {"schema": "dispatchd.status.v1", "last_tick": time.strftime("%Y-%m-%dT%H:%
                     "effective_target": tgt(l), "ceiling": slots[l]["ceiling"], "hard_cap": slots[l]["hard_cap"], "held": bool(slots[l].get("held") or l in hold),
                     "queued": qdepth[l], **({"healthy": OMLX_OK} if l == "omlx" else {})} for l in LANES},
       "queue_depth": len(rest), "invalid_queue_lines": bad, "launched_this_tick": launched,
-      "reaping": sorted(set(reaping) | publishing), "kept_worktrees": sorted(kept),
+      "tier_upgrades_this_tick": tier_upgrades,
+      "unfed_capacity": UNFED,
+      "use_it_all_behind": {l: pace_behind(UIA.get(l)) for l in LANES},
+      "reaping": sorted(active_reaping), "reap_blocked": reap_blocked, "kept_worktrees": sorted(kept),
       "publishes_24h": len(pubs), "recent_publishes": [{"job": j, "url": u} for _, j, u in pubs[:20]],
       "recent_events": evs,
       "concurrency": {"cap": CONC["cap"], "floor": CONC_FLOOR, "ceiling": CONC_CEILING, "zones": CONC.get("zones"),

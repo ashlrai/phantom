@@ -6,31 +6,35 @@
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { listWorkBoard } from '../core/comms/work-board.js';
+import { WORK_ITEM_STATES, type WorkItemState } from '../core/comms/work-item-state.js';
 
-const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--limit <1..100>] [--json]\n'
+const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--state <RECEIVED|ASSIGNED|RUNNING|BLOCKED|VERIFIED>] [--limit <1..100>] [--json]\n'
   + 'Prints one line per request: ID STATE as-of=... source=... owner-missing=... owner=... claim=... channel=... ref=...,\n'
   + 'then a footer: items=N truncated=yes|no inbox=ok|unavailable as-of=<now>, plus claims=missing|unavailable\n'
   + 'when the claims table is absent or unreadable (a validated table, even an empty one, prints no claims token).\n'
-  + 'Read-only.';
+  + '--state keeps only items the shared classifier placed in that state; the footer then also prints\n'
+  + 'state=<S> matched=<n>, the true filtered total across the whole settled scan, so items may be a\n'
+  + 'newest-first slice of it. Read-only.';
 
 export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
-  let root: string | undefined, thread: string | undefined, limit: number | undefined, json = false;
+  let root: string | undefined, thread: string | undefined, limit: number | undefined, state: WorkItemState | undefined, json = false;
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
     if (key === '--json' && !json) { json = true; continue; }
-    if (key !== '--root' && key !== '--thread' && key !== '--limit') { console.error(usage); return 2; }
+    if (key !== '--root' && key !== '--thread' && key !== '--limit' && key !== '--state') { console.error(usage); return 2; }
     const value = args[++i];
     if (!value || value.startsWith('--')) { console.error(usage); return 2; }
     if (key === '--root' && root === undefined) root = value;
     else if (key === '--thread' && thread === undefined) thread = value;
+    else if (key === '--state' && state === undefined && (WORK_ITEM_STATES as readonly string[]).includes(value)) state = value as WorkItemState;
     else if (key === '--limit' && limit === undefined && /^\d+(?![\s\S])/.test(value)
       && Number(value) >= 1 && Number(value) <= 100) limit = Number(value);
     else { console.error(usage); return 2; }
   }
   if (root !== undefined && (!isAbsolute(root) || root.includes('\0'))) { console.error(usage); return 2; }
   const now = Date.now();
-  const board = listWorkBoard({ root: root ?? join(ashlrHome(), 'fleet'), now, limit, channelRef: thread });
+  const board = listWorkBoard({ root: root ?? join(ashlrHome(), 'fleet'), now, limit, channelRef: thread, state });
   const asOf = new Date(now).toISOString();
   if (json) { console.log(JSON.stringify({ ...board, asOf })); return 0; }
   for (const item of board.items) {
@@ -43,6 +47,7 @@ export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
   // readable state, so a missing or unreadable table can never pass as
   // verified absence of ownership; 'available' keeps the legacy footer.
   const claimsNote = board.claims !== undefined && board.claims !== 'available' ? ` claims=${board.claims}` : '';
-  console.log(`items=${board.items.length} truncated=${board.truncated ? 'yes' : 'no'} inbox=${board.inbox} as-of=${asOf}${claimsNote}`);
+  const stateNote = board.state === undefined ? '' : ` state=${board.state} matched=${board.matched ?? 'unknown'}`;
+  console.log(`items=${board.items.length}${stateNote} truncated=${board.truncated ? 'yes' : 'no'} inbox=${board.inbox} as-of=${asOf}${claimsNote}`);
   return 0;
 }

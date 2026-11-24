@@ -1,3 +1,4 @@
+/** Say why jobs finished empty: one reason per job (lint-env, interrupted, blocked, limit or other) with counts per lane. Read-only. */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

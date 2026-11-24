@@ -27,7 +27,11 @@ function seed(dir) {
     'src/a.ts': 'export const a = 1;\n',
     'test/a.test.ts': 'export {};\n',
     'scripts/generate-docs-llms.mjs': 'export {};\n',
+    'scripts/canonical-launcher-digests.mjs': 'export {};\n',
+    'scripts/canonical-launcher-digests.json': '[]\n',
     'scripts/lib/docs-pages.mjs': 'export {};\n',
+    '.github/tests/canonical-launcher-digests.test.mjs': 'export {};\n',
+    'bin/ashlr': '#!/usr/bin/env node\n',
     'docs/guide.md': '# guide\n',
   };
   for (const [path, text] of Object.entries(files)) {
@@ -70,6 +74,30 @@ test('every receipt hash includes the checker, lockfile, package, vitest and tsc
   assert.notEqual(before.tests, after.tests);
   assert.notEqual(before.authority, after.authority);
   assert.notEqual(before.clean, after.clean);
+});
+
+test('clean-tree receipts include canonical launcher digest inputs', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-launcher-hash-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  sh(dir, 'init', '-q', '-b', 'main');
+  sh(dir, 'config', 'user.email', 'ci@example.invalid');
+  sh(dir, 'config', 'user.name', 'ci');
+  sh(dir, 'config', 'commit.gpgsign', 'false');
+  seed(dir);
+  let previous = cleanTreeHash(dir);
+  for (const path of [
+    'bin/ashlr',
+    'scripts/canonical-launcher-digests.json',
+    'scripts/canonical-launcher-digests.mjs',
+    '.github/tests/canonical-launcher-digests.test.mjs',
+  ]) {
+    writeFileSync(join(dir, path), `${path} changed\n`);
+    sh(dir, 'add', '-A');
+    sh(dir, 'commit', '-q', '-m', `change ${path}`);
+    const next = cleanTreeHash(dir);
+    assert.notEqual(next, previous, path);
+    previous = next;
+  }
 });
 
 test('authority and clean-tree hashes run from a .github-only sparse tree', (t) => {

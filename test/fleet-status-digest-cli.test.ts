@@ -9,23 +9,30 @@ const sources: StatusDigestSources = {
   runsState: async () => { throw new Error('unavailable'); },
   needs: () => ({ status: 'missing', items: [] }),
   inbox: async () => ({ sourceState: 'healthy', entries: [] }),
-  // The sixth claims line postdates this suite's five-line counts; the
-  // undefined override keeps both assertions exactly as written.
+  // This suite pins the original five digest lines, not the later claims line.
   workClaims: undefined,
-  // Node runs line postdates these counts too; this suite stays on the original lines.
+  // This suite pins the original five digest lines, not the later node-runs line.
   nodeRuns: undefined,
+  // This suite pins the original five digest lines, not the later time-to-merge line.
+  mergeLatency: undefined,
 };
 const now = () => new Date('2026-11-11T12:00:00Z');
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('fleet status-digest', () => {
-  it('prints the owner reply with five digest lines', async () => {
+  it('prints five digest lines followed by the work-board summary', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFleetStatusDigest(['--runs-dir', '/test'], { sources, now })).toBe(0);
+    expect(await cmdFleetStatusDigest(['--runs-dir', '/test'], {
+      sources,
+      now,
+      board: () => ({ items: [], inbox: 'ok', truncated: false }),
+    })).toBe(0);
     const lines = String(log.mock.calls[0]![0]).split('\n');
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(7);
     expect(lines[0]).toMatch(/^Phantom status,/);
+    expect(lines.slice(1, 6)).toHaveLength(5);
+    expect(lines[6]).toBe('Work items as of 07:00 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED');
   });
 
   it('preserves unknown facts in JSON', async () => {

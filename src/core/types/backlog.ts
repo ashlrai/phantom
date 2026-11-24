@@ -74,6 +74,8 @@ export type ScannerObservationReason =
   | 'source-confirmed-empty'
   | 'legacy-empty-result'
   | 'scanner-failed'
+  | 'scanner-deadline'
+  | 'phase-cancelled'
   | 'source-unavailable'
   | 'source-unreadable'
   | 'source-malformed'
@@ -168,6 +170,7 @@ export interface ScannerObservation {
  * buildBacklog(). Covers only ENROLLED repos (DEFAULT EMPTY => empty items).
  */
 export interface Backlog {
+  skippedScanners?: Array<{ repo: string; scannerId: string; reason: 'scanner-deadline' | 'phase-cancelled'; durationMs: number }>;
   /** ISO timestamp the backlog was generated. */
   generatedAt: string;
   /** Random identity for this exact persisted generation; absent on legacy snapshots. */

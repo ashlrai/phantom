@@ -55,6 +55,18 @@ describe('trimFleet', () => {
     expect(trimFleet(status({ lanes, running: 9 })).flagged).toHaveLength(1);
   });
 
+  it('does not flag a lane shed to a zero launch target, but still retunes the configured target', () => {
+    const report = trimFleet(status({
+      lanes: {
+        shed: { ...lane(0, 2, 3), effective_target: 0 },
+        wasteful: { ...lane(1, 3, 0), effective_target: 1 },
+      },
+      by_lane: { wasteful: stats(12, 1, 0.08, 0.7) },
+    }));
+    expect(report.flagged.map(row => [row.lane, row.flag])).toEqual([['wasteful', 'wastes']]);
+    expect(report.suggestions).toEqual([{ lane: 'wasteful', from: 3, to: 2, line: 'SLOTS wasteful 3 -> 2' }]);
+  });
+
   it('flags waste at 10 jobs with merge rate under 0.3 or empty rate over 0.5', () => {
     const report = trimFleet(status({
       running: 0,

@@ -1,4 +1,5 @@
 import { loadConfig } from '../core/config.js';
+import { devinWeeklyLine, publishDevinWeeklyCapacity } from '../core/devin/weekly-capacity.js';
 import { createDaemonCapacityPublisher, defaultDaemonCapacityPublisherDeps } from '../core/daemon/capacity-publisher.js';
 
 const HELP = 'Usage: phm capacity publish [--json]';
@@ -19,7 +20,8 @@ export async function cmdCapacity(args: string[]): Promise<number> {
     });
     try {
       const status = await publisher.cycle();
-      console.log(json ? JSON.stringify(status) : `${status.state}: ${status.reason}`);
+      const devin = await publishDevinWeeklyCapacity();
+      console.log(json ? JSON.stringify({ ...status, devin }) : `${status.state}: ${status.reason}\n${devinWeeklyLine(devin)}`);
       return ['published', 'published-shared', 'fresh', 'dormant'].includes(status.state) ? 0 : 1;
     } finally {
       publisher.stop();

@@ -1,0 +1,15 @@
+<!-- Reconstructed incident shape, not recovered historical goals. Rebase IDs are synthetic. -->
+- READY RQ-GUARDIANROUTINGQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job.
+- READY RQ-GUARDIANROUTEQ8 (repo=phantom, pool=devin, tier=work): Prevent duplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job.
+- READY RQ-GUARDIANRETRYQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery attempt.
+- READY RQ-GUARDIANESCALATEQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before escalating another CI recovery job.
+- READY RQ-GUARDIANLOOPQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another looping CI recovery job.
+- READY RQ-GUARDIANDEDUPEQ8 (repo=phantom, pool=devin, tier=work): Deduplicate repeated guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job.
+- READY RQ-CIDEDUPQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian CI repair retries in src/core/fleet/guardian-repeat.ts before routing another recovery job.
+- READY RQ-GUARDDIAGQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job; record diagnostics.
+- READY RQ-CIRECOVERYQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job; preserve evidence.
+- READY RQ-CIFIXRECOVERYQ8 (repo=phantom, pool=devin, tier=work): Deduplicate guardian repair retries in src/core/fleet/guardian-repeat.ts before routing another CI recovery job; fix repeated launches.
+- READY RQ-REBASE-FIXTURE-1 (repo=phantom, pool=devin, tier=work): Collapse repeated rebase requests for conflicting branches in contrib/mac/recut-feed.py using stable branch identity.
+- READY RQ-REBASE-FIXTURE-2 (repo=phantom, pool=devin, tier=work): Collapse duplicate rebase requests for conflicting branches in contrib/mac/recut-feed.py using stable branch identity.
+- READY RQ-REBASE-FIXTURE-3 (repo=phantom, pool=devin, tier=work): Collapse repeated rebase requests for conflicting branches in contrib/mac/recut-feed.py using stable branch identity; retain oldest request.
+- READY RQ-REBASE-FIXTURE-4 (repo=phantom, pool=devin, tier=work): Collapse repeated rebase requests for conflicting branches in contrib/mac/recut-feed.py using stable branch identity; expose duplicates.

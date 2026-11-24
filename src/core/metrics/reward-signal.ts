@@ -3,7 +3,10 @@
  * signal writer and reader.
  *
  * When a dispatched job reaches a terminal state the supervising bridge calls
- * `writeRewardSignal` once. It appends exactly one scrubbed row to the
+ * `writeRewardSignal` once (or `writeRewardSignals` for a batch); the fleet
+ * feed in metrics/reward-feed.ts is the local producer that folds the jobs
+ * ledger into these rows on resident daemon ticks. It appends exactly one
+ * scrubbed row to the
  * append-only ledger at `$ASHLR_HOME/metrics/reward-signals.jsonl`:
  *
  *   {"v":1,"jobId":...,"pool":...,"repo":...,"merged":bool,
@@ -101,6 +104,17 @@ export interface RewardSignalV1 {
 export type RewardSignalWriteResult =
   | { status: 'recorded'; row: RewardSignalV1 }
   | { status: 'duplicate'; row: RewardSignalV1 };
+
+export interface RewardSignalBatchWriteResult {
+  /** Rows appended by this call, in input order. */
+  recorded: RewardSignalV1[];
+  /** Inputs whose outcome was already recorded identically; the existing row is returned. */
+  duplicates: RewardSignalV1[];
+  /** jobIds whose outcome conflicts with an already-recorded row — skipped, never overwritten. */
+  conflicts: string[];
+  /** Inputs rejected by validation before any write; labels are jobIds or `#<index>`. */
+  invalid: string[];
+}
 
 export interface RewardSignalWriteOptions {
   /** Ledger path; default `$ASHLR_HOME/metrics/reward-signals.jsonl`. */
@@ -258,15 +272,19 @@ function sameOutcome(a: RewardSignalV1, b: RewardSignalV1): boolean {
     a.ciWallMs === b.ciWallMs && a.cost.pool === b.cost.pool && a.cost.costUsd === b.cost.costUsd;
 }
 
+function resolveUsageReadings(options: RewardSignalWriteOptions): readonly UsageReading[] {
+  return options.usageReadings ?? (options.usageLogPath ? readUsageLog(options.usageLogPath) : []);
+}
+
 /**
- * Record one job's terminal reward row. Validates input, derives timeToMergeMs
- * and pool cost, refuses secrets, then appends under the local-store lock.
- * Returns `duplicate` without appending when the same outcome was replayed.
+ * Validate one input and build its ledger row: canonical timestamps, secret
+ * refusal, derived timeToMergeMs and pool cost. Throws on any invalid input —
+ * callers that batch must catch per input.
  */
-export function writeRewardSignal(
-  input: RewardSignalInput, options: RewardSignalWriteOptions = {},
-): RewardSignalWriteResult {
-  const now = (options.now ?? (() => new Date()))().toISOString();
+function prepareRewardRow(
+  input: RewardSignalInput, options: RewardSignalWriteOptions,
+  nowIso: string, readings: readonly UsageReading[],
+): RewardSignalV1 {
   const { jobId, merged } = input;
   const pool = input.pool ?? null;
   const repo = input.repo ?? null;
@@ -277,11 +295,11 @@ export function writeRewardSignal(
     ? null : canonicalTimestamp(input.mergedAt);
   if (typeof jobId !== 'string' || !JOB_ID.test(jobId) ||
     (pool !== null && !POOL.test(pool)) || (repo !== null && !REPO.test(repo)) ||
-    dispatchedAt === null || Date.parse(dispatchedAt) > Date.parse(now) + FUTURE_SKEW_MS ||
+    dispatchedAt === null || Date.parse(dispatchedAt) > Date.parse(nowIso) + FUTURE_SKEW_MS ||
     (input.mergedAt !== undefined && input.mergedAt !== null && mergedAt === null) ||
     merged !== (mergedAt !== null) ||
     (mergedAt !== null && (Date.parse(mergedAt) < Date.parse(dispatchedAt) ||
-      Date.parse(mergedAt) > Date.parse(now) + FUTURE_SKEW_MS)) ||
+      Date.parse(mergedAt) > Date.parse(nowIso) + FUTURE_SKEW_MS)) ||
     (ciWallMs !== null && !isNonnegative(ciWallMs)) || (costUsd !== null && !isNonnegative(costUsd))) {
     throw new Error('Invalid reward signal');
   }
@@ -290,55 +308,132 @@ export function writeRewardSignal(
   }
   const meterPool = options.usagePool === undefined ? pool : options.usagePool;
   if (meterPool !== null && !POOL.test(meterPool)) throw new Error('Invalid reward signal');
-  const readings = options.usageReadings ?? (options.usageLogPath ? readUsageLog(options.usageLogPath) : []);
   const cost = meterPool !== null && readings.length
-    ? usageCostFromReadings(readings, meterPool, Date.parse(dispatchedAt), Date.parse(now), costUsd)
+    ? usageCostFromReadings(readings, meterPool, Date.parse(dispatchedAt), Date.parse(nowIso), costUsd)
     : { pool: meterPool, pctUsedStart: null, pctUsedEnd: null, pctUsedDelta: null, costUsd };
   const row: RewardSignalV1 = {
     v: REWARD_SIGNAL_SCHEMA, jobId, pool, repo, merged,
     dispatchedAt, mergedAt,
     timeToMergeMs: mergedAt === null ? null : Date.parse(mergedAt) - Date.parse(dispatchedAt),
-    ciWallMs, cost, recordedAt: now,
+    ciWallMs, cost, recordedAt: nowIso,
   };
   if (!isRewardSignalV1(row)) throw new Error('Invalid reward signal');
+  return row;
+}
+
+function rewardLedgerPath(options: RewardSignalWriteOptions): string {
   const path = options.path ?? rewardSignalPath();
   if (!isAbsolute(path)) throw new Error('Invalid reward signal path');
+  return path;
+}
+
+/**
+ * Dedupe then append already-validated rows under one local-store lock: one
+ * strict ledger read, one fd, one fsync for the whole batch. A jobId already
+ * recorded with the same outcome is a duplicate; a different outcome is a
+ * conflict and is skipped (fail closed per row, never overwritten).
+ */
+function appendRewardRows(
+  prepared: readonly RewardSignalV1[], path: string,
+): { recorded: RewardSignalV1[]; duplicates: RewardSignalV1[]; conflicts: string[] } {
   const directory = dirname(path);
   ensurePrivateDirectory(directory);
   const lock = acquireLocalStoreLock(join(directory, '.reward-signals.lock'), 2_000,
     { anchorPath: directory, exactPrivateStorage: true });
   if (!lock) throw new Error('Reward signal ledger is busy');
   try {
-    for (const existing of readLedgerStrict(path)) {
-      if (existing.jobId !== jobId) continue;
-      if (sameOutcome(existing, row)) return { status: 'duplicate', row: existing };
-      throw new Error('Conflicting reward signal for a recorded job');
+    const seen = new Map<string, RewardSignalV1>();
+    for (const existing of readLedgerStrict(path)) seen.set(existing.jobId, existing);
+    const recorded: RewardSignalV1[] = [];
+    const duplicates: RewardSignalV1[] = [];
+    const conflicts: string[] = [];
+    const fresh: RewardSignalV1[] = [];
+    for (const row of prepared) {
+      const existing = seen.get(row.jobId);
+      if (existing) {
+        if (sameOutcome(existing, row)) duplicates.push(existing);
+        else conflicts.push(row.jobId);
+        continue;
+      }
+      seen.set(row.jobId, row);
+      fresh.push(row);
+      recorded.push(row);
     }
-    if (!ownsLocalStoreLock(lock)) throw new Error('Reward signal lock lost');
-    const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT |
-      constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1 ||
-        (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
-        throw new Error('Reward signal ledger is unsafe');
-      }
-      fchmodSync(fd, 0o600);
-      const bytes = Buffer.from(`${JSON.stringify(row)}\n`);
-      if (stat.size + bytes.length > REWARD_SIGNAL_MAX_BYTES) {
-        throw new Error('Reward signal ledger capacity reached');
-      }
-      let offset = 0;
-      while (offset < bytes.length) {
-        const written = writeSync(fd, bytes, offset, bytes.length - offset);
-        if (written <= 0) throw new Error('Reward signal write failed');
-        offset += written;
-      }
-      fsyncSync(fd);
-    } finally { closeSync(fd); }
-    fsyncDirectory(directory);
-    return { status: 'recorded', row };
+    if (fresh.length) {
+      if (!ownsLocalStoreLock(lock)) throw new Error('Reward signal lock lost');
+      const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT |
+        constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+      try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1 ||
+          (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+          throw new Error('Reward signal ledger is unsafe');
+        }
+        fchmodSync(fd, 0o600);
+        const pending = Buffer.concat(fresh.map((row) => Buffer.from(`${JSON.stringify(row)}\n`)));
+        if (stat.size + pending.length > REWARD_SIGNAL_MAX_BYTES) {
+          throw new Error('Reward signal ledger capacity reached');
+        }
+        let offset = 0;
+        while (offset < pending.length) {
+          const written = writeSync(fd, pending, offset, pending.length - offset);
+          if (written <= 0) throw new Error('Reward signal write failed');
+          offset += written;
+        }
+        fsyncSync(fd);
+      } finally { closeSync(fd); }
+      fsyncDirectory(directory);
+    }
+    return { recorded, duplicates, conflicts };
   } finally { releaseLocalStoreLock(lock); }
+}
+
+/**
+ * Record one job's terminal reward row. Validates input, derives timeToMergeMs
+ * and pool cost, refuses secrets, then appends under the local-store lock.
+ * Returns `duplicate` without appending when the same outcome was replayed.
+ */
+export function writeRewardSignal(
+  input: RewardSignalInput, options: RewardSignalWriteOptions = {},
+): RewardSignalWriteResult {
+  const nowIso = (options.now ?? (() => new Date()))().toISOString();
+  const row = prepareRewardRow(input, options, nowIso, resolveUsageReadings(options));
+  const path = rewardLedgerPath(options);
+  const out = appendRewardRows([row], path);
+  const duplicate = out.duplicates[0];
+  if (duplicate) return { status: 'duplicate', row: duplicate };
+  if (out.conflicts.length) throw new Error('Conflicting reward signal for a recorded job');
+  return { status: 'recorded', row: out.recorded[0]! };
+}
+
+/**
+ * Record a batch of terminal reward rows under one lock: one strict ledger
+ * read and one fsync for the whole batch instead of one per job. Inputs that
+ * fail validation land in `invalid`; outcomes conflicting with recorded rows
+ * land in `conflicts` and are skipped — the rest of the batch still writes.
+ */
+export function writeRewardSignals(
+  inputs: readonly RewardSignalInput[], options: RewardSignalWriteOptions = {},
+): RewardSignalBatchWriteResult {
+  const result: RewardSignalBatchWriteResult = { recorded: [], duplicates: [], conflicts: [], invalid: [] };
+  if (!inputs.length) return result;
+  const nowIso = (options.now ?? (() => new Date()))().toISOString();
+  const readings = resolveUsageReadings(options);
+  const prepared: RewardSignalV1[] = [];
+  inputs.forEach((input, index) => {
+    try {
+      prepared.push(prepareRewardRow(input, options, nowIso, readings));
+    } catch {
+      const jobId = input && typeof input.jobId === 'string' && input.jobId ? input.jobId : `#${index}`;
+      result.invalid.push(jobId);
+    }
+  });
+  if (!prepared.length) return result;
+  const out = appendRewardRows(prepared, rewardLedgerPath(options));
+  result.recorded = out.recorded;
+  result.duplicates = out.duplicates;
+  result.conflicts = out.conflicts;
+  return result;
 }
 
 /** Minimal tolerant read of a usage-readings.log journal for cost metering. */

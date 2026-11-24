@@ -43,6 +43,7 @@ columns. Every event carries attribution:
 | `session.ended` | `outcome` (success/failure/abandoned), `wallMs` |
 | `usage` | `inputTokens, outputTokens, cachedTokens?, costUsd?, wallMs?` |
 | `tool.called` | `tool, ok, ms?` |
+| `decision` | `choice` (one of the caller's options, or `unknown`), `options` (how many), `confidence` 0..1, `ms`, `attempts`; written by `decide` / `phm decide`, never the question or context |
 | `pr.opened / pr.merged / pr.reverted` | `pr: {repo, number, additions, deletions, files, areas[], userFacing, risk, ciPassedFirstTry, reviewFindings, followUpFixes, coverageDelta, deployedToProduction}` |
 | `pr.rated` | `pr, rater: human/llm-judge, rating 1..5, rubric?` |
 

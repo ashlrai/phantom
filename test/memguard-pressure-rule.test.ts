@@ -5,7 +5,8 @@ import { createMacMemguard, parsePressureLevel, parseSwapUsedBytes } from '../co
 const healthy: Sample = {
   nowMs: 600_000, freePercent: 50, diskPause: false, pressureLevel: 1, swapUsedBytes: 8_000_000_000,
 };
-const point = (nowMs: number, swapUsedBytes: number): Sample => ({ ...healthy, nowMs, swapUsedBytes });
+// Swapouts above 0 are real pressure, so growth alone is not what these cases exercise.
+const point = (nowMs: number, swapUsedBytes: number): Sample => ({ ...healthy, nowMs, swapUsedBytes, swapoutsPerMin: 1 });
 
 const fixtures = [
   { name: 'pressure level 2', patch: { pressureLevel: 2 }, reasons: ['pressure'] },
@@ -57,6 +58,20 @@ describe('Mac memguard pressure policy', () => {
     expect(rules.evaluate(point(0, 1_000_000_000)).pause).toBe(false);
     const decision = rules.evaluate(point(elapsed, bytes));
     expect(decision.pause).toBe(pause);
+    expect(decision.reasons).toEqual(pause ? ['swap-growth'] : []);
+  });
+
+  it.each([
+    { name: 'swap growing with 75% free and no swapouts: false alarm', patch: { freePercent: 75, swapoutsPerMin: 0 }, pause: false },
+    { name: 'swap growing with free memory and unknown swapouts', patch: { freePercent: 75, swapoutsPerMin: null }, pause: false },
+    { name: 'swap growing with swapouts', patch: { freePercent: 75, swapoutsPerMin: 3 }, pause: true },
+    { name: 'swap growing with low free and no swapouts', patch: { freePercent: 30, swapoutsPerMin: 0 }, pause: true },
+    { name: 'swap growing at exactly 35% free and no swapouts', patch: { freePercent: 35, swapoutsPerMin: 0 }, pause: false },
+  ])('swap growth needs real pressure: $name', ({ patch, pause }) => {
+    const rules = new MemguardRules({ pressureRuleEnabled: true });
+    rules.evaluate({ ...point(0, 1_000_000_000), ...patch });
+    const decision = rules.evaluate({ ...point(60_000, 6_000_000_000), ...patch });
+    expect(decision.swapGrowthBytes).toBe(5_000_000_000);
     expect(decision.reasons).toEqual(pause ? ['swap-growth'] : []);
   });
 

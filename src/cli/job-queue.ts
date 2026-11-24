@@ -11,7 +11,9 @@ const HELP = `Usage: phm queue <command> [--dir <queue-directory>] [--json]
   add <id> --priority P0 --tier <tier> --repo <repo>
       --scope <text> --acceptance <text> [--deps <id,id>] [--pool <hint>]
       [--preferred-lane <hint>] [--needs git,gh,node] [--min-tier <tier>]
-      [--max-cost-class local|included|metered] [--exclusive] [--impact <score>]
+      [--max-tier <tier>] [--max-cost-class local|included|metered]
+      [--data-class public|internal|confidential|restricted]
+      [--work-class bulk|standard|judgment] [--exclusive] [--impact <score>]
   claim <id> --owner <worker>
   done <id> --owner <worker> [--pr-url <https-url>] [--result <text>]
   block <id> --owner <worker> --reason <text>
@@ -43,14 +45,14 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
   try {
     const { values: parsedValues, positionals } = parseArgs({ args, allowPositionals: true, strict: true, options: {
       exclusive: { type: 'boolean' }, failed: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, json: { type: 'boolean' }, md: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
-      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason', 'result', 'preferred-lane', 'needs', 'min-tier', 'max-cost-class', 'impact', 'port', 'token-file'].map(key => [key, { type: 'string' as const }])),
+      ...Object.fromEntries(['since', 'query', 'mode', 'dir', 'priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'owner', 'pr-url', 'reason', 'result', 'preferred-lane', 'needs', 'min-tier', 'max-tier', 'max-cost-class', 'data-class', 'work-class', 'impact', 'port', 'token-file'].map(key => [key, { type: 'string' as const }])),
     } });
     const values: Record<string, string | boolean | undefined> = parsedValues;
     json = values.json === true;
     if (values.help || !positionals.length) { console.log(HELP); return 0; }
     const [command, operand] = positionals;
     const allowed: Record<string, string[]> = {
-      add: ['priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'preferred-lane', 'needs', 'min-tier', 'max-cost-class', 'exclusive', 'impact'], claim: ['owner'],
+      add: ['priority', 'pool', 'tier', 'repo', 'scope', 'acceptance', 'deps', 'preferred-lane', 'needs', 'min-tier', 'max-tier', 'max-cost-class', 'data-class', 'work-class', 'exclusive', 'impact'], claim: ['owner'],
       replay: ['failed', 'since', 'query', 'mode', 'dry-run'], done: ['owner', 'pr-url', 'result'], block: ['owner', 'reason'], list: [], import: [], export: ['md'],
       spawn: [], serve: ['port', 'token-file'], promote: [],
     };
@@ -75,6 +77,9 @@ export async function cmdJobQueue(args: string[]): Promise<number> {
         ...(values['preferred-lane'] !== undefined ? { preferred_lane: required('preferred-lane') } : {}),
         ...(values.needs !== undefined ? { needs: required('needs').split(',') } : {}),
         ...(values['min-tier'] !== undefined ? { min_tier: required('min-tier') as import('../core/queue/schema.js').QueueJob['min_tier'] } : {}),
+        ...(values['max-tier'] !== undefined ? { max_tier: required('max-tier') as import('../core/queue/schema.js').QueueJob['max_tier'] } : {}),
+        ...(values['data-class'] !== undefined ? { data_class: required('data-class') as import('../core/queue/schema.js').QueueJob['data_class'] } : {}),
+        ...(values['work-class'] !== undefined ? { work_class: required('work-class') as import('../core/queue/schema.js').QueueJob['work_class'] } : {}),
         ...(values['max-cost-class'] !== undefined ? { max_cost_class: required('max-cost-class') as import('../core/queue/schema.js').QueueJob['max_cost_class'] } : {}),
         ...(values.exclusive !== undefined ? { exclusive: values.exclusive === true } : {}),
         ...(values.impact !== undefined ? { impact: Number(required('impact')) } : {}),
