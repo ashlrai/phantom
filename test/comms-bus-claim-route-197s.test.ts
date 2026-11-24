@@ -84,10 +84,16 @@ it('filters next by contains, since and priority', async () => {
   expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--since', future], options)).toBe(0);
   expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
 
+  // --before is the exclusive receivedAt ceiling: a cutoff before every
+  // receipt's arrival empties the same filtered scan.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--before', '1'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+
   // Malformed filters are invalid, never a widened claim.
   for (const args of [
     ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--priority', 'P9'],
     ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--since', 'bogus'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--before', 'bogus'],
     ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--contains', '   '],
   ]) {
     expect(await cmdCommsBus(args, options), args.join(' ')).toBe(2);

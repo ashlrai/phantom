@@ -96,6 +96,29 @@ merge of a different PR stays held exactly like the in-ledger era rule,
 and a contested or foreign claim never discounts. Absent, empty or
 unmatched keys change nothing.
 
+A third evidence source joins the same way when the caller supplies the
+per-PR merge-queue map `foldMergeEvents` produces from
+`metrics/merge-events.jsonl` — `learnFleetOutcomes`'s optional fifth
+argument (`mergeQueue`, `owner/repo#n` → evidence). Each verdict's own
+unambiguously claimed PR contributes its recorded friction to the
+attempt: conflicts, recuts or a conflict `blocked` reason set the attempt's
+`mergeDirty` flag, and required-check failures or failed retries set
+`mergeFixup`. The flags are additive like `breakage` — the attempt keeps
+its merged/closed/reverted state and still counts its merge — and the
+fold adds them to the cell's `dirty`/`fixups` totals, so those rates and
+the dirty/fixup improvement patterns finally see fleet evidence instead of
+only the dispatch log's exclusive `dirty`/`fixup` outcome states.
+Non-required check observations, plain retry requests, pending checks and
+PRs no verdict claims unambiguously contribute nothing, and absent, empty
+or unmatched evidence changes nothing. `phm fleet outcomes` reads the
+ledger's bounded tail by default (`--merge-events <file>` overrides) and
+passes the fold; `phm improve discover`'s fleet-learning backlog items read
+the same bounded tail (`mergeEventsPath` overrides the
+`<runsDir>/metrics/merge-events.jsonl` default) so the dirty/fixup
+improvement patterns reach the self-improvement backlog. `phm select` and
+the fleet context pack do not consume the friction fields and pass
+nothing.
+
 ## How it routes
 
 `routeLearnedJob` draws a Thompson sample from a Beta success posterior and a
@@ -112,14 +135,42 @@ can take it now, it is sent there; if nothing can, the action is `nowhere`.
 The plain-language reason names the constraint that decided the assignment,
 for example `Sent to Devin because CMP Codex resets in 40 min with 5% left.`
 
-`learnedSeatPenalty` turns the same posterior means into seat-router penalties.
-Omitting the penalty leaves `routeSeat` unchanged.
+`learnedSeatPenalty` turns the same posterior means into seat-router penalties
+for one (job type, repo) cell. `learnedFleetSeatPenalty` pools every recorded
+cell per resource instead — attempts, good merges and usage summed across
+models, job types and repos — because a seat-router request carries no fleet
+job type or repo, so the resource's whole dispatch record is the honest prior.
+Both normalize the same way: the best resource's penalty is 0 and every other
+resource's stays inside [0, 1].
+
+`learned-seat-evidence.ts` is the production join that was missing: it reads
+the same bounded evidence `phm fleet outcomes` folds — the dispatch event
+log (first readable canonical candidate, whole file capped at 8 MiB) and the
+jobs-ledger tail (`ROUTER_OUTCOME_LEDGER_LIMIT`), plus the standing revert
+keys and the router censor config — through synchronous bounded readers, and
+hands `routeSeat` the pooled penalty and a one-line provenance note via
+`LeaderSeatDeps.route` (`loadDefaultLeaderSeatDeps`). The result is cached
+for `LEARNED_SEAT_EVIDENCE_TTL_MS` (15 minutes) because planning calls
+`route` once per seat variant; a changed `ASHLR_RUNS_DIR` invalidates
+immediately. Every read failure degrades to `{ learnedPenalty: {} }` —
+missing, unreadable, oversized or non-regular files contribute nothing, so
+with no usable evidence the seat ranking is byte-identical to the weights
+alone and no note is appended. Penalty keys are fleet resource names; a seat
+whose id does not match a recorded resource simply takes no penalty.
 
 ## Improvement jobs
 
 A failure pattern becomes an improvement job when it has happened at least
-three times and, for a low merge rate, good merges are the minority. The jobs
-are data. This module does not enqueue them, spend, or merge.
+three times and, for a low merge rate, good merges are the minority. The
+`revert` pattern counts the cell's `reverted` attempts — merges the fleet's
+own evidence proved did not hold — so recurring undone merges surface as
+improvement work even when the cell's held-merge rate looks healthy; its
+rate is the share of the cell's attempts that resolved `reverted`. The
+`dirty` and `fixup` patterns count both the dispatch log's exclusive
+outcome states and the merge-queue friction flags above, so recurring
+merge conflicts and required-check failures surface as improvement work
+even though every affected attempt still merged. The jobs are data. This
+module does not enqueue them, spend, or merge.
 
 ## Surfaces
 
@@ -130,4 +181,18 @@ is the same object the desktop imports from
 `learnFleetOutcomes` for its `finished` count — the dispatch log alone
 carries no stamped outcome lines, so the jobs-ledger tail is what makes the
 count real; a missing or unreadable ledger degrades to dispatch-log
-evidence and `sources.metrics` reports the ledger's health.
+evidence and `sources.metrics` reports the ledger's health. Its `merges`
+section reads the same ledger tail for MERGED verdicts (reconciler terminal
+rows and the merged/outcome dialects, newest first, one row per job with
+job, PR, repo, lane and stamp) ahead of any stamped merge lines still
+present in the events log; without the ledger the section keeps only those
+stamped lines. A verdict whose recorded revert evidence proves the merge
+did not hold carries `reverted: true` — the same two sources and era rule
+the outcome folds apply: in-ledger revert evidence (`hasRevertEvidence`)
+stamped at or after the verdict's own stamp, or a standing
+`owner/repo#n` key from `improve/revert-outcomes.jsonl` claimed by exactly
+that job through the verdict row's own PR URL. Revert evidence older than
+the verdict belongs to an earlier merge era and leaves the merge a fresh
+held merge, absent or unmatched keys change nothing, a contested or
+foreign claim never resolves, and a verdict with no job id stays unmarked
+rather than guessed.

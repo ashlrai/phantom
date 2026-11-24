@@ -4,7 +4,7 @@
  * empty temp home. No real home, no network, no real bridge.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -197,6 +197,19 @@ describe('buildChannelsOverview', () => {
     expect(by['telegram']).toMatchObject({ state: 'connected', lastInboundAt: 'unknown', messages24h: 'unknown' });
   });
 
+  it('keeps verified senders unknown when the pairing stores cannot be read', () => {
+    const facts = connectedFacts();
+    facts.status.channels[0] = statusRow('email', { credential: 'file', paired: 'unknown', lastSeenAt: inboxAt(2) });
+    facts.status.channels[1] = statusRow('telegram', { credential: 'environment', paired: 'unknown', lastSeenAt: inboxAt(1) });
+    facts.verified.email = 'unknown';
+    const by = byChannel(buildChannelsOverview(facts).channels);
+    expect(by['email']!.verifiedSenders).toBe('unknown');
+    expect(by['telegram']!.verifiedSenders).toBe('unknown');
+    // The channels themselves stay connected — only the sender count is unmeasurable.
+    expect(by['email']!.state).toBe('connected');
+    expect(by['telegram']!.state).toBe('connected');
+  });
+
   it('maps an UNKNOWN health row to unknown with its reason', () => {
     const facts = connectedFacts();
     facts.health!.channels[1] = health('imessage', { state: 'UNKNOWN', processAlive: 'unknown', missing: ['imessage bridge process liveness unverifiable'] });
@@ -273,5 +286,29 @@ describe('default reader', () => {
     expect(by['telegram']).toMatchObject({ state: 'not-set-up', address: null });
     expect(by['mobile']).toMatchObject({ state: 'not-set-up', verifiedSenders: 0 });
     expect(view.channels).toHaveLength(8);
+  });
+
+  it('propagates an unreadable pairing store as unknown verified senders', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'channels-overview-'));
+    roots.push(root);
+    const runsDir = join(root, '.ashlr-runs');
+    mkdirSync(join(runsDir, 'queue'), { recursive: true });
+    writeFileSync(join(runsDir, 'queue', 'telegram-pair.json'), '{broken');
+    writeFileSync(join(runsDir, 'queue', 'email-paired.json'), '{broken');
+    const source = (name: string): ChannelSource => ({
+      configMissing: () => [`${name} config`],
+      processAlive: () => false,
+      inbound: () => [],
+      replies: () => [],
+    });
+    const reader = createDefaultChannelsReader({
+      cfg: {} as never, homeDir: root, runsDir, env: {}, now: () => NOW,
+      sources: { slack: source('slack'), imessage: source('imessage') },
+      mobileDevices: () => 0,
+    });
+    const view = buildChannelsOverview(await reader());
+    const by = byChannel(view.channels);
+    expect(by['telegram']!.verifiedSenders).toBe('unknown');
+    expect(by['email']!.verifiedSenders).toBe('unknown');
   });
 });
