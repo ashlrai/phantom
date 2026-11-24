@@ -914,7 +914,32 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   than folded, a truncated tail is stated as a lower bound, and rows
   emit only for the fleet's own repository since the journal
   describes this install's machinery and carries no repository
-  column.
+  column,
+  and the fleet spawn-custody ledger's recurring unwrapped evidence,
+  the value-free `{schema:1, at, wrapped, engine, preflight_exit,
+  reason?}` records appendCustodyRecord in
+  src/core/run/custody-ledger.ts appends to
+  ~/.ashlr/custody/spawns.jsonl on EVERY engine spawn — including
+  the needs-secrets holds the custodyRequiresWrap rule refuses —
+  carrying whether the spawn ran under `phantom exec` and, when it
+  did not, which closed-list UNWRAPPED_REASONS code
+  decidePhantomCustody in src/core/run/phantom-custody.ts returned
+  (otherwise only visible through `phm status`'s 24-hour custody
+  tally, `phm receipt timeline`'s per-run window and the automerge
+  canary's since-first-seen sum — point-in-time surfaces, never a
+  recurrence fold — so a custody coverage gap persisting day after
+  day never became work). A cell — one adverse unwrapped reason —
+  becomes an item only while its in-window records reach the
+  recurring bars of three across two distinct UTC days inside the
+  7-day window; wrapped rows and the two deliberate reasons
+  ('phantom-disabled', the operator's off switch, and
+  'self-authenticating-engine', claude/codex's by-design path)
+  never emit, malformed lines and off-contract rows drop like the
+  writer's contract, the bounded tail reads the writer's one
+  rotated predecessor so a rotation never hides recurrence, a
+  truncated tail is stated as a lower bound, and rows emit only for
+  the fleet's own repository since the ledger describes this
+  install's spawns and carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -922,8 +947,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load
-  and fleet-self-tick items carry priority 3;
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
+  fleet-self-tick and spawn-custody items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name

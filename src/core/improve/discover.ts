@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -416,6 +416,21 @@
  *     intake hook that kept throwing or silently stopped being
  *     recorded, and an empty producer family that kept re-earning its
  *     12-hour auto-stop each expiry never became work;
+ *   - the fleet spawn-custody ledger's recurring unwrapped evidence:
+ *     the value-free `{schema:1, at, wrapped, engine,
+ *     preflight_exit, reason?}` records appendCustodyRecord appends to
+ *     ~/.ashlr/custody/spawns.jsonl on EVERY engine spawn
+ *     (custodyBacklogItems below), including the ones the
+ *     needs-secrets hold refuses — carrying whether the spawn ran
+ *     under `phantom exec` and, when it did not, which closed-list
+ *     UNWRAPPED_REASONS code decidePhantomCustody returned. Until now
+ *     the ledger's only readers were point-in-time surfaces —
+ *     `phm status`'s 24-hour tally, `phm receipt timeline`'s per-run
+ *     window and the automerge canary's since-first-seen sum — so a
+ *     custody coverage gap persisting day after day (preflight
+ *     blocking every wrap, worktree spawns never reaching the vault
+ *     namespace, phantom missing or uninitialized across the fleet's
+ *     checkouts) never became a recurrence, never work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -487,6 +502,7 @@ import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { selfTickBacklogItems } from './self-tick-backlog.js';
+import { custodyBacklogItems } from './custody-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1136,6 +1152,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's machinery and carries no repository column.
   items.push(...await selfTickBacklogItems({ repo }));
+  // The fleet spawn-custody ledger — one value-free record per engine
+  // spawn appended by appendCustodyRecord on every spawnEngine call,
+  // wrapped or not, including the needs-secrets holds. Until now its
+  // only readers were `phm status`'s 24-hour tally, `phm receipt
+  // timeline`'s per-run window and the automerge canary's
+  // since-first-seen sum — point-in-time surfaces, never a recurrence
+  // fold — so a custody coverage gap persisting day after day (the
+  // strict preflight blocking every wrap, worktree spawns never
+  // reaching the vault namespace, phantom missing or uninitialized
+  // across the fleet's checkouts) never became work. Same bounded
+  // tail read across the writer's one-generation rotation and the
+  // writer's own record contract; wrapped rows and the two deliberate
+  // unwrapped reasons ('phantom-disabled', 'self-authenticating-engine')
+  // never emit, a reason emits only at the recurring bars of records
+  // across distinct UTC days inside the window, an unreadable read
+  // yields nothing while a truncated tail folds lower-bound flagged,
+  // and only the fleet's own repository inherits the items since the
+  // journal describes this install's spawns and carries no repository
+  // column.
+  items.push(...await custodyBacklogItems({ repo }));
   return { items, errors };
 }
 
