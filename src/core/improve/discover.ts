@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-nine sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -331,6 +331,16 @@
  *     keep finishing without the work holding, and which the narrow
  *     dedupe windows let through again on later ticks, never became
  *     work;
+ *   - the desktop console's render-crash ledger: the fingerprint-keyed
+ *     crash records every caught render error appends to
+ *     desktop/errors.jsonl (and its single errors.1.jsonl rotation)
+ *     under the runs directory through POST /api/verse/desktop-errors —
+ *     fingerprints whose recorded rows span distinct UTC days inside the
+ *     window (desktopErrorBacklogItems below). Until now the ledger's
+ *     only readers were the writer's own 10-minute dedupe scan and
+ *     `phm fleet desktop-errors`, a grouped report someone had to run
+ *     and read — so a pane, route or dock helper that kept crashing
+ *     day after day never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -395,6 +405,7 @@ import { incidentGateBacklogItems } from './incident-gate-backlog.js';
 import { jevBacklogItems } from './jev-backlog.js';
 import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
+import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -912,6 +923,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // only the fleet's own repository inherits the items since the
   // proposer and its dedupe are this install's machinery.
   items.push(...await gapProposalBacklogItems({ repo }));
+
+  // Desktop render-crash ledger: the caught render errors every desktop
+  // error boundary POSTs to /api/verse/desktop-errors, recorded as
+  // fingerprint-keyed rows in desktop/errors.jsonl (plus the single
+  // errors.1.jsonl rotation) under the runs directory — recurring
+  // fingerprints spanning distinct UTC days inside the 7-day window —
+  // become backlog items too. Until now the ledger's only readers were
+  // the writer's own 10-minute dedupe scan and `phm fleet
+  // desktop-errors`, a grouped report someone had to run and read, so a
+  // pane, route or dock helper that kept crashing day after day never
+  // became work. Same bounded per-generation tail reads and the
+  // writer's own row contract; a fingerprint emits only at the
+  // recurring bars of recorded rows across distinct UTC days, the
+  // writer's dedupe already collapses same-episode repeats so what
+  // remains is crashes on separate days, missing or unreadable
+  // generations under-count rather than poison the fold, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the console is this repo's
+  // own UI.
+  items.push(...await desktopErrorBacklogItems({ repo }));
   return { items, errors };
 }
 
