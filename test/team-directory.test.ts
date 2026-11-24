@@ -98,3 +98,42 @@ describe('team directory', () => {
     expect(teamState(team).members.map(member => member.id)).toEqual(['human:owner']);
   });
 });
+
+describe('phm team add --dry-run, pools and running jobs', () => {
+  const asOwner = () => { for (const marker of AGENT_ENV_MARKERS) vi.stubEnv(marker, ''); mkdirSync(dirname(ownerConfigPath()), { recursive: true }); writeFileSync(ownerConfigPath(), JSON.stringify({ human: 'owner' })); join1(); };
+  const run = async (args: string[]) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {}), error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try { const code = await cmdTeam([...args, '--team', team, '--json']); return { code, out: String(log.mock.calls.at(-1)?.[0] ?? ''), err: String(error.mock.calls.at(-1)?.[0] ?? '') }; }
+    finally { log.mockRestore(); error.mockRestore(); }
+  };
+  it('--dry-run writes nothing and --apply saves one member with pools and seat', async () => {
+    asOwner();
+    const dry = await run(['add', 'Sam', '--pools', 'claude,devin', '--seats', 'sam-agent', '--dry-run']);
+    expect(dry.code).toBe(0); expect(JSON.parse(dry.out)).toMatchObject({ schema: 'phantom.team.v1', dry_run: true, written: false, member: { pools: ['claude', 'devin'], seats: ['sam-agent'] } });
+    expect(teamDirectory(team).people.map(p => p.displayName)).toEqual(['owner']);
+    expect((await run(['add', 'Sam', '--pools', 'claude', '--dry-run', '--apply'])).code).toBe(1);
+    const saved = await run(['add', 'Sam', '--pools', 'claude,devin', '--seats', 'sam-agent', '--apply']);
+    expect(JSON.parse(saved.out)).toMatchObject({ dry_run: false, written: true });
+    expect(teamDirectory(team).people.find(p => p.displayName === 'Sam')).toMatchObject({ lanes: ['claude', 'devin'], seats: ['sam-agent'] });
+  });
+  it('refuses a duplicate name and unknown pools, saving nothing', async () => {
+    asOwner();
+    expect((await run(['add', 'Sam', '--pools', 'claude'])).code).toBe(0);
+    const dup = await run(['add', 'sam', '--pools', 'claude']); expect(dup.code).toBe(1); expect(JSON.parse(dup.err).error).toMatch(/already exists/);
+    const bad = await run(['add', 'Lee', '--pools', 'nowhere']); expect(bad.code).toBe(1); expect(JSON.parse(bad.err).error).toMatch(/Unknown pool nowhere/);
+    expect(teamDirectory(team).people.map(p => p.displayName).sort()).toEqual(['Sam', 'owner']);
+  });
+  it('lists members with pools, and running jobs as unknown when the fleet cannot be read', async () => {
+    asOwner(); await run(['add', 'Sam', '--pools', 'claude']);
+    const listed = JSON.parse((await run(['list'])).out);
+    const sam = listed.members.find((m: { display_name: string }) => m.display_name === 'Sam');
+    expect(sam.pools).toEqual(['claude']); expect(sam.running_jobs).toHaveProperty('running');
+  });
+  it('counts only running jobs in the pools a member brings', async () => {
+    const { memberRunningJobs } = await import('../src/core/teams/running-jobs.js');
+    const sessions = [{ job: 'RQ-A', lane: 'claude', status: 'running' }, { job: 'RQ-B', lane: 'claude', status: 'queued' }, { job: 'RQ-C', lane: 'devin', status: 'running' }];
+    const people = [{ ...ownerRow, id: 'p1', lanes: ['claude'] }, { ...ownerRow, id: 'p2', lanes: [] }] as never;
+    expect(await memberRunningJobs(people, async () => ({ sessions }) as never)).toEqual({ p1: { running: 1, jobs: ['RQ-A'] }, p2: { running: 0, jobs: [] } });
+    expect(await memberRunningJobs(people, async () => { throw new Error('x'); })).toEqual({ p1: { running: null, jobs: [] }, p2: { running: null, jobs: [] } });
+  });
+});

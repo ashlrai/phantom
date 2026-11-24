@@ -35,9 +35,14 @@ phm fleet metrics weekly --jobs fixture.jsonl --json
 ```
 
 `src/cli/fleet-metrics.ts` exports `cmdFleetMetrics(args, deps?)`, with injected
-`read(path): Promise<string | null>` and `now(): number`. Default source:
-`~/.ashlr-runs/metrics/jobs.jsonl`. Reads refuse non-files and files over
-16 MiB; no partial-tail extrapolation. JSONL invalid rows mark evidence degraded.
+`read(path): Promise<string | { text: string; truncated: boolean } | null>`
+and `now(): number`. Default source:
+`~/.ashlr-runs/metrics/jobs.jsonl`. The ledger is append-only, so the default
+read keeps its newest bounded tail — the same 16 MiB window
+`readLedgerTail` gives every other jobs-ledger reader — rather than refusing
+an oversized file; a cut tail marks the evidence degraded because retained
+rows cannot prove complete window coverage. Non-files and unreadable paths
+still read as missing. JSONL invalid rows also mark evidence degraded.
 Exit 0 healthy, 1 missing/degraded, 2 usage. Flags are strictly parsed; no apply
 verb. Weekly defaults to 168 hours; `--hours` can override it. JSON weekly output
 contains `metrics`, `suggestions`, `markdown`; report emits metrics, suggest
@@ -52,10 +57,24 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   Finishes/publications join the preceding launch; orphan rows never invent
   launches. Future events are excluded. Job IDs must not represent concurrent
   attempts; delayed events must retain their original event timestamps.
+  Batch sessions count per member, not per session: a `batch_claim` row opens
+  the member's attempt exactly like `launch` (members never get `launch` rows —
+  the session id does), and the member's `task_outcome` row is its finish
+  boundary whatever the outcome word (done/skipped/failed/deferred/unreported);
+  success still comes only from PR and empty evidence, and member-level cost
+  stays unknown. `claim` rows pair with their `launch` (`launch_dedupe`) and
+  never open attempts. `RQ-BATCH-*` session ids are dispatch infrastructure:
+  their launch/finish rows never form attempts, matching the agent-activity
+  verified-completion convention. Node-pool producer rows
+  (`fleet.session-pool.v1`, `phm-node-runner.v1`) are a different jobs-ledger
+  dialect — `job` is a per-attempt/claim id and `jobId` the logical `ready:*`
+  queue id, with no attempt fields — so they never form attempts either; the
+  router outcome fold consumes them keyed on `jobId`.
 - `byLane` and `byModelTier` contain `{jobs, finished, finishRate, prRate,
   emptyRate, medianDuration, estCost, samples, evidenceRefs}`. Model-tier names
   are JSON tuples; absent metadata stays null (lane bucket `unknown`).
-  `finishRate` is observed finishes / launched attempts. PR rate is published
+  `finishRate` is observed finishes (`finish` rows, `task_outcome` for batch
+  members) / launched attempts. PR rate is published
   attempts / attempts with explicit PR evidence (valid GitHub publication URL,
   `hasPr` boolean, or `empty: true`). Nonempty alone does not prove a PR.
   Empty rate uses only finishes with an explicit `empty` boolean.
@@ -171,19 +190,34 @@ with neither, the path is unknown and only `--dry-run` runs.
 as "Stopped families" on the Job yield card.
 
 `src/core/fleet/slot-yield.ts` exports the pure `jobYield(lines, now, hours)`,
-`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged, recentMerge? })` and
-`unknownJobYield(hours)`; `yieldTally(...).jobYield()` streams the same report.
-`readJobYield(path, hours?, now?, read?)` in `metrics-series.ts` owns the read.
-Rows used: `launch`, `finish` (`empty`), `precheck_skip`, `publish` and
-`outcome` (`state`). Only launches inside the window count; a relaunched job is
-several launches and a MERGED job is credited once.
+`jobKind(id, repo?)`, `jobVerdict({ launches, running, merged, recentMerge? })`,
+`hasRevertEvidence(row)` and `unknownJobYield(hours)`; `yieldTally(...).jobYield()`
+streams the same report. `readJobYield(path, hours?, now?, read?)` in
+`metrics-series.ts` owns the read.
+Rows fold through the fleet jobs-ledger dialect — job ids
+`job|job_id|jobId|id`, event names `event|type|kind` (`published` reads as
+`publish`), phases `state|outcome|status`, the timestamp aliases and the
+`pool` lane alias, with eventless PUBLISHED/MERGED/CLOSED/OPEN rows inferring
+`publish`/`outcome` — the same field sets `fleet/lane-yield-weight` accepts,
+so `metrics-outcomes` reconciler rows count. Lifecycle rows: `launch`,
+`finish` (`empty`), skip events (`precheck_skip`, `skipped_empty`; a row with
+`applied:false` is a dry run and does not count), `publish` (`class`
+`pr`/`empty`/`abort*`, or any PR url under `url|pr_url|prUrl|pr|html_url`)
+and resolved outcomes (`merged:true`, a `merged` event, or a resolved phase on
+an outcome-ish or publish row). Only launches inside the window count; a
+relaunched job is several launches and a MERGED job is credited once. A merge recorded as reverted
+(`hasRevertEvidence`: `reverted:true`, a parseable `reverted_at`/`revertedAt`
+stamp, a `revert`/`reverted` event name or terminal state field — the router
+outcome fold's vocabulary) is credited as `reverted`, never as a held merge;
+an explicit `reverted:false` is not evidence, and a terminal REVERT/REVERTED
+outcome state counts as reverted on its own.
 
 ```json
 { "schema": "jobs.yield.v1", "version": 1, "window_hours": 24, "known": true,
-  "launches": 30, "merged": 9, "empty": 14, "skipped": 3, "stop_slots": 12,
+  "launches": 30, "merged": 9, "reverted": 2, "empty": 14, "skipped": 3, "stop_slots": 12,
   "summary": "12 of 30 launches went to 3 job kinds that merged nothing",
   "families": [{ "family": "RQ-PHX-RECUTCORE", "launches": 6, "running": 0,
-    "empty": 6, "skipped": 0, "prs": 0, "merged": 0, "merged_per_launch": 0,
+    "empty": 6, "skipped": 0, "prs": 0, "merged": 0, "reverted": 0, "merged_per_launch": 0,
     "verdict": "stop", "reason": "0 merged from 6 launches, 6 empty" }],
   "stop_first": [{ "family": "RQ-PHX-RECUTCORE", "slots": 6, "merged": 0,
     "reason": "0 merged from 6 launches, 6 empty" }] }
@@ -200,11 +234,64 @@ Job kind (`family`) is the job id minus its trailing counter:
 
 Verdicts: `keep` at 0.3 merged per launch or more; `stop` when 6 or more
 launches have ended and merged per launch is under 0.1; `watch` otherwise.
-Launches still running never count toward `stop`. `families` sort stop, watch,
+Launches still running never count toward `stop`, and a reverted merge is not
+a recent merge either. `families` sort stop, watch,
 keep, most launches first; `stop_first` holds at most 5. `skipped` counts
 precheck skip rows, which take no slot. With no launches `merged_per_launch` is
 null. An unreadable or interrupted read gives `known: false`, null totals and
 empty lists, never zero.
+
+## Family yield (`fleet.family-yield.v1`)
+
+RQ-FAMYIELDN19NQ8. `phm fleet yield [--hours 24] [--metrics <jobs.jsonl>] [--json]`
+(`--since 24h` still works) judges coarse job families, so a generator that
+spreads its launches over many areas is judged as one. A family is the job id
+with its numbers collapsed (`collapseFamily`): `RQ-PHX-RECUTAPIC606` and
+`RQ-PHX-RECUTCLIC607` are `RQ-PHX-RECUT*C*`, `RQ-MD12A111815Q8` is `RQ-MD*A*Q8`.
+Families of one job id are listed under `single`.
+
+- Verdict: `stop` with 6+ finished runs and merged per launch under 0.2;
+  `watch` under 0.4; `keep` otherwise. Merged per launch counts held merges
+  only: a merge recorded as reverted (`hasRevertEvidence`, see job yield) is
+  `reverted`, its tokens still count as wasted, and it never counts as a
+  recent merge.
+- Order: most `wasted_tokens` (tokens on runs that did not merge) first.
+- Tokens: missing counts stay null (unknown). `tokens_unknown` counts ended runs
+  without a count; `wasted_tokens_partial` marks a lower bound.
+- Stop rows: one per `stop` family, `<anchored ERE>\t<until epoch s, now + 24 h>\t<reason>`,
+  in the job stop file format; `phm jobs yield --stop-file` keeps hand-pasted rows.
+- An unreadable file is `known: false` with null totals.
+
+`empty_recommendations` lists recurring job kinds with at least three explicit
+empty launches, most empties first. Run `phm fleet yield --json` to read the typed
+`EmptyFamilyRecommendation[]`: family, `review_family` action, launches, empty,
+merged and missing-outcome counts, reason, and `last_successful_pr` (job, URL,
+merge time). It uses `jobKind` grouping, including recurring `N<day><letter>Q8`
+ids. Success means a non-reverted merge within the launch cohort and window;
+open PRs and missing outcomes never count as empty or successful. The last PR
+is null without success or usable merge ordering; an unrecorded URL stays null.
+These recommendations are advisory and do not change dispatch or family stops.
+
+`src/core/fleet/family-yield.ts` exports `collapseFamily(id)`, `familyVerdict(row)`,
+the pure `familyYield(lines, now, hours)`, `familyYieldFromRuns(runs, now, hours, lanesTiers?)`,
+`readFamilyYield(path, hours, now, read?)` and `unknownFamilyYield(hours)`; it parses
+through `yieldTally(...).runs()` (slot-yield.ts), which returns each launch as a
+read-only `YieldRun` with `last`, its newest row time.
+
+```json
+{ "schema": "fleet.family-yield.v1", "version": 1, "window_hours": 24, "known": true,
+  "launches": 14, "merged": 4, "reverted": 1, "wasted_tokens": 537000, "wasted_tokens_partial": false,
+  "families": [{ "family": "RQ-PHX-RECUT*C*", "jobs": 7, "launches": 7, "finished": 7,
+    "empty": 6, "prs": 1, "merged": 1, "reverted": 0, "merged_per_launch": 0.14, "tokens_total": 550000,
+    "tokens_unknown": 0, "tokens_per_merged": 550000, "wasted_tokens": 510000,
+    "wasted_tokens_partial": false, "last_seen": "2026-11-18T15:00:00.000Z", "verdict": "stop",
+    "reason": "1 merged of 7 launches, 6 empty, 510000 tokens on unmerged runs" }],
+  "single": [], "stops": [{ "family": "RQ-PHX-RECUT*C*", "pattern": "^RQ-PHX-RECUT[A-Z]+C[0-9]+$",
+    "until": 1795111200, "reason": "yield_1of7_empty6", "line": "<pattern>\t<until>\t<reason>" }],
+  "lanes": [], "tiers": [] }
+```
+
+Hermetic coverage: `test/fleet-family-yield.test.ts`.
 
 ## Recut cycle plan (`recut.plan.v1`)
 
@@ -233,3 +320,16 @@ as it is. The launch precheck and stop list only see a job through that line.
 `withTaskLine(prompt, line, id)`, `eligibleRecutPrs(prs, area, now)` and
 `planRecutArea(area, family, gate, list, now)`; `recut-gate.ts` exports `AREA_PATHS` and `RECUT_AREAS`.
 Hermetic coverage: `test/recut-plan.test.ts`.
+
+## Lane yield (`fleet.lane-yield.v1`)
+
+RQ-YIELDBOARDN22UQ8. `phm fleet yield --by lane [--since 24h | --hours N] [--metrics <jobs.jsonl>] [--json]`
+prints one row per lane that launched in the window: launches, finished, PRs opened, merged PRs,
+`empty_rate` (empty finishes over finished runs; null when nothing finished), `merged_per_launch` and
+`median_minutes_to_merge` (launch to the newest recorded row of merged runs; null when nothing merged).
+A job merged twice counts once (the `yieldTally` model). A lane with no merge and 3 or more launches has
+`not_paying_off: true`. Lanes with no launches are omitted; an unreadable file is `known: false`.
+The first line is `Last 24 h: 79 merged PRs. Best lane: claude (0.69 merged per launch). Weakest: zai (0.03).`,
+or `No jobs in this window (last 24 h).`. `src/core/fleet/lane-yield-board.ts` owns the report
+(`readLaneYield`, `laneYieldFromRuns`); `GET /api/fleet/lane-yield[?hours=]` serves it and the Home and
+phone Yield card draws it without recounting. Tests: `test/fleet-lane-yield-board.test.ts`.

@@ -152,6 +152,14 @@ describe('feedback scan and digest', () => {
     ].map(r => JSON.stringify(r)).join('\n');
     expect(feedbackDigest(s, partial, now)).toMatchObject({ needsReview: [], failures: [], stillRunning: [] });
   });
+  it('reads jobs-ledger dialect spellings in the digest ledger', () => {
+    const s = snapshot();
+    const ledger = [
+      JSON.stringify({ type: 'finish', job_id: 'DONE', recordedAt: now, exit_code: 0, repo: 'phantom' }),
+      JSON.stringify({ event: 'outcome', jobId: 'M2', conclusion: 'MERGED', updatedAt: now, repo: 'phantom' }),
+    ].join('\n');
+    expect(feedbackDigest(s, ledger, now)).toMatchObject({ needsReview: ['DONE'], invalidRows: 0 });
+  });
   it('CLI validates before calling dependencies and emits bounded operational errors', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
     const run = vi.fn(runFeedback);

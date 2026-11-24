@@ -46,9 +46,43 @@ describe('fleet runs api', () => {
     expect(status).toBe(200);
     expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date(NOW).toISOString() });
     const goals = (wire as unknown as { goals: { status: string; current: unknown }[] }).goals;
-    expect(goals.length).toBe(5);
+    expect(goals.length).toBe(6);
     expect(goals.every(g => g.status === 'unknown' && g.current === null)).toBe(true);
     expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
+  });
+  it('serves the inventory read-only: every kind, one kind with ?kind=, 400 for an unknown kind', async () => {
+    const { buildInventory, INVENTORY_PATH } = await import('../src/core/fleet/inventory.js');
+    const inventory = buildInventory({
+      now: new Date(NOW), channels: null, plugins: null, skills: null, tools: null, registry: [], roster: ['claude'],
+      connectors: [{ id: 'docs', kind: 'mcp-stdio', description: null, lanes: ['claude'], credentials: 1, availability: 'available' }],
+    });
+    const readInventory = vi.fn(async () => inventory);
+    const api = createFleetRunsApi(deps({ readInventory }));
+    const all = await request(api, { path: INVENTORY_PATH });
+    expect(all.status).toBe(200);
+    expect(all.wire).toEqual(JSON.parse(JSON.stringify(inventory)));
+    expect(all.wire).toMatchObject({ schema: 'phantom.inventory.v1', version: 1, kind: null, parity: { compared: 1, widestGap: 0 } });
+    const one = (await request(api, { path: `${INVENTORY_PATH}?kind=connectors` })).wire as unknown as typeof inventory;
+    expect(one).toMatchObject({ kind: 'connector', counts: { ready: 1, unknown: 0 }, kinds: [{ kind: 'connector', total: 1 }] });
+    expect(one.items.map(i => i.id)).toEqual(['connector:docs']);
+    expect(one.parity).toEqual(inventory.parity);
+    const bad = await request(api, { path: `${INVENTORY_PATH}?kind=secrets` });
+    expect(bad.status).toBe(400);
+    expect(bad.wire).toEqual({ code: 'INVENTORY_KIND', error: 'kind must be one of: channel, connector, plugin, skill, tool' });
+    expect(readInventory).toHaveBeenCalledTimes(2);
+    expect((await request(api, { path: INVENTORY_PATH, method: 'POST' })).status).toBe(405);
+  });
+  it('reads the real inventory sources by default and never throws on an empty machine', async () => {
+    const { INVENTORY_PATH } = await import('../src/core/fleet/inventory.js');
+    const runsDir = mkdtempSync(join(tmpdir(), 'inventory-'));
+    const { status, wire } = await request(createFleetRunsApi(deps({ runsDir })), { path: `${INVENTORY_PATH}?kind=tool` });
+    expect(status).toBe(200);
+    expect(wire).toMatchObject({ schema: 'phantom.inventory.v1', kind: 'tool', at: new Date(NOW).toISOString() });
+    // No lane-tools.json: only the router's built-in declarations are known, the rest stay unknown.
+    const items = (wire as unknown as { items: { id: string; state: string }[] }).items;
+    expect(items.find(i => i.id === 'tool:shell')).toMatchObject({ state: 'unknown' });
+    // The router declares that claude workers have no gh, so no known lane has it.
+    expect(items.find(i => i.id === 'tool:github-read')).toMatchObject({ state: 'needs setup' });
   });
   it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
     const runsDir = mkdtempSync(join(tmpdir(), 'tools-matrix-'));

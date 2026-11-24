@@ -36,7 +36,7 @@ describe('cloud agent routes documentation (373)', () => {
   it('requires the no-claim-route statement to be revisited if MCP adds a claim tool', () => {
     expect(doc).toContain('There is no HTTP or MCP claim route.');
     // Read-only evidence tools are documented in the tool table; any other claim tool needs the statement revisited.
-    const readOnlyClaimEvidence = ['fleet_coordination_claims', 'fleet_claim_execution', 'fleet_claim_notices'];
+    const readOnlyClaimEvidence = ['fleet_coordination_claims', 'fleet_claim_execution', 'fleet_claim_notices', 'fleet_bus_claims'];
     for (const name of readOnlyClaimEvidence) expect(doc, `Document read-only claim evidence tool: ${name}`).toContain(`\`${name}\``);
     expect(toolNames.filter(name => name.includes('claim') && !readOnlyClaimEvidence.includes(name)), 'Update CLOUD-AGENT-ROUTES.md: a claim tool now exists').toEqual([]);
   });

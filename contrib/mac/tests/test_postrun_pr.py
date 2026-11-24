@@ -103,12 +103,16 @@ class Unit(unittest.TestCase):
             'PATH': '/parent/bin',
             'PUBLISH_FULL_TESTS': '1',
             'PUBLISH_JUDGE_CMD': 'python3 judge.py --threshold 0.95',
+            'PUBLISH_JUDGE_THRESHOLD': '0.91',
+            'PUBLISH_JUDGE_TIMEOUT': '37',
             'PUBLISH_UNRELATED': 'not-forwarded',
             'GH_TOKEN': 'sentinel',
         }
         child = postrun_pr.child_env(self.home, parent)
         self.assertEqual(child['PUBLISH_FULL_TESTS'], '1')
         self.assertEqual(child['PUBLISH_JUDGE_CMD'], 'python3 judge.py --threshold 0.95')
+        self.assertEqual(child['PUBLISH_JUDGE_THRESHOLD'], '0.91')
+        self.assertEqual(child['PUBLISH_JUDGE_TIMEOUT'], '37')
         self.assertEqual({name for name in child if name.startswith('PUBLISH_')}, set(postrun_pr.PUBLISH_POLICY_ENV))
         self.assertNotIn('PUBLISH_UNRELATED', child)
         self.assertNotIn('GH_TOKEN', child)

@@ -1,0 +1,119 @@
+/* The Leader reply box's keyboard help: the session list `@` opens, and the recall line. */
+.assist {
+  display: grid;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  animation: assist-in var(--duration-fast) var(--ease-standard);
+  container-type: inline-size;
+}
+
+.assist p { margin: 0; }
+.assist [data-tone='unknown'] { color: var(--status-unknown-fg); }
+
+.list {
+  display: grid;
+  max-height: 14rem;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-input);
+}
+
+/* One session per line: who, where and when, then its last words taking the rest. */
+.option {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+
+.option + .option { border-top: 1px solid var(--border-subtle); }
+.option:hover { background: var(--bg-hover); }
+.option[aria-selected='true'] { border-left-color: var(--accent-500); background: var(--bg-hover); }
+
+.name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.name strong { overflow: hidden; font-weight: var(--font-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+
+/* The state is a dot before the name: running is quiet green, a quiet session asks for a look. */
+.name::before {
+  content: '';
+  flex: none;
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--status-success-solid);
+}
+
+.option[data-state='quiet'] .name::before { background: var(--status-warning-solid); }
+.option[data-state='quiet'] .facts { color: var(--status-warning-fg); }
+
+/* A command's argument rows (CommandArgAssist.tsx) say their state the same way; a pane or an unheld lane has no dot. */
+.option[data-tone='warn'] .name::before { background: var(--status-warning-solid); }
+.option[data-tone='warn'] .facts { color: var(--status-warning-fg); }
+.option[data-tone='bad'] .name::before { background: var(--status-danger-solid); }
+.option[data-tone='bad'] .facts { color: var(--status-danger-fg); }
+.option[data-tone='off'] .name::before { background: var(--status-unknown-solid); }
+.option[data-tone='none'] .name::before { display: none; }
+
+.facts { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.said {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.said[data-unknown] { color: var(--status-unknown-fg); }
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.assist kbd,
+.recall kbd {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font: inherit;
+}
+
+.assist kbd + kbd { margin-left: var(--space-1); }
+
+.recall {
+  margin: 0 0 var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+/* A narrow dock column drops the middle facts under the name rather than squeezing the last words away. */
+@container (max-width: 520px) {
+  .option { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+@keyframes assist-in {
+  from { opacity: 0; transform: translateY(var(--space-1)); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assist { animation: none; }
+}

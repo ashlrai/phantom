@@ -6,7 +6,7 @@
 # polling so --timeout can expire (exit 75). The holder (pid, job, command, since) is written into the lock file while held;
 # the flock dies with the process, so a crashed holder never wedges the fleet. Commands that are not installs run unlocked.
 # No network, no LLM; the child inherits only this process's environment.
-import fcntl, json, os, signal, subprocess, sys, time
+import fcntl, json, os, signal, subprocess, sys, tempfile, time
 
 INSTALL = {"npm": {"ci", "install", "i"}, "pnpm": {"install", "i"}, "bun": {"install", "i"}}
 WAIT_S = 1800; POLL_S = 0.25; EX_TEMPFAIL = 75
@@ -70,11 +70,19 @@ exec /usr/bin/python3 "{gate}" -- "$real" "$@"
 
 
 def write_shims(directory):
+    """Concurrent runs never share a temp path: a failed rename cannot corrupt another launch's shim."""
     os.makedirs(directory, exist_ok=True)
+    gate = os.path.abspath(__file__)
     for tool in INSTALL:
         dest = os.path.join(directory, tool)
-        with open(dest + ".tmp", "w") as f: f.write(SHIM.format(tool=tool, gate=os.path.abspath(__file__)))
-        os.chmod(dest + ".tmp", 0o755); os.replace(dest + ".tmp", dest)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=tool + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f: f.write(SHIM.format(tool=tool, gate=gate))
+            os.chmod(tmp, 0o755); os.replace(tmp, dest)
+        except BaseException:
+            try: os.unlink(tmp)
+            except OSError: pass
+            raise
     return 0
 
 

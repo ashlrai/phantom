@@ -66,7 +66,7 @@ it('resumes the CLI across filtered pages without consuming authenticated handof
   };
   now += 12_345;
   const first = await read(0);
-  expect(first).toEqual({ status: 'ok', messages: [], nextCursor: 100 });
+  expect(first).toEqual({ status: 'ok', messages: [], nextCursor: 100, workResults: 'missing' });
   const second = await read(first.nextCursor);
   expect(second.status).toBe('ok');
   expect(second.nextCursor).toBe(103);

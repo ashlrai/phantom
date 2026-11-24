@@ -53,7 +53,9 @@ it('polls both bus reads only while visible', async () => {
     '/api/verse/agent-bus': { v: 1, status: 'ok', messages: [], nextCursor: 110 } } });
   const view = render(<LeaderThreadPane visible />);
   await act(async () => {});
-  const reads = () => net.fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/verse/agent-bus')).length;
+  // The status read and the page read. The ask ledger at the top of the pane
+  // reads /api/verse/agent-bus/needs-mason/asks on its own clock; not counted here.
+  const reads = () => net.fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/verse/agent-bus') && !String(url).includes('/needs-mason/')).length;
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
   expect(reads()).toBe(4);
   view.rerender(<LeaderThreadPane visible={false} />);

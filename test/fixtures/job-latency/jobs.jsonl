@@ -8,4 +8,9 @@
 {"job":"two","event":"launch","ts":"2026-01-01T00:00:00Z"}
 {"job":"two","event":"launch","ts":"2026-01-01T00:00:01Z"}
 {"job":"two","event":"checkout_complete","ts":"2026-01-01T00:00:05Z"}
+{"job":"three","event":"enqueue","repo":"phantom","lane":"work","ts":"2026-01-01T00:00:00Z"}
+{"job":"three","event":"launch","repo":"phantom","lane":"work","ts":"2026-01-01T00:00:20Z"}
+{"job":"three","event":"finish","lane":"work","wall_s":100,"ts":"2026-01-01T00:02:00Z"}
+{"jobId":"three","prUrl":"https://github.com/ashlrai/phantom/pull/9","outcome":"PUBLISHED","ts":"2026-01-01T00:02:30Z"}
+{"jobId":"three","prUrl":"https://github.com/ashlrai/phantom/pull/9","outcome":"MERGED","ts":"2026-01-01T00:05:00Z","mergedAt":"2026-01-01T00:05:00Z","source":"metrics-outcomes-reconciler"}
 invalid

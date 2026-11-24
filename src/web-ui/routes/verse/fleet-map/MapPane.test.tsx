@@ -4,8 +4,9 @@ import { buildFleetLiveMap, messageLineWidth, type FleetLiveMap } from '../../..
 import type { NodeRow } from '../../../../core/fleet/nodes-view.js';
 import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
-import { projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
+import { agentToAgent, projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
 import { buildMapEdges } from '../../../../core/fleet/map-edges.js';
+import { matchAgentMessages } from '../../../../core/fleet/agent-messages.js';
 import { buildAgentsMessages } from '../../../../core/fleet/agents-messages.js';
 import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
@@ -20,8 +21,8 @@ import './fleet-map.pane.js';
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = new Date(NOW).toISOString();
 const receipt = (from: string, to: string, receivedAt: number) => ({ cursor: 1, receivedAt,
   envelope: { id: `${from}-${to}-${receivedAt}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text: 'fixture' } } });
-const computer = (name: string, jobs: string[], isSelf = false): NodeRow => ({ name, isSelf, reachable: true, lastSeen: AT, phantom: 'running',
-  freeMemoryBytes: 8e9, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work' });
+const computer = (name: string, jobs: string[], isSelf = false): NodeRow => ({ name, isSelf, reachable: true, lastSeen: AT, heartbeatAgeSeconds: 2, phantom: 'running',
+  freeMemoryBytes: 8e9, freeMemoryPercent: 25, load: 1, cpuHeadroomPercent: 50, lanes: ['claude'], jobsRunning: jobs, freeSlots: 1, stateCode: 'ready', state: 'ready for work', joined: true, joinCommand: null });
 
 function fleet(): FleetLiveMap {
   const messages = { schema: 'fleet.edges.v1' as const, source: 'available' as const, edges: projectFleetEdges([
@@ -30,7 +31,7 @@ function fleet(): FleetLiveMap {
     { job: 'RQ-A', lane: 'claude', repo: 'phantom', model: 'fixture-model', status: 'running', elapsedSeconds: 60, startedAt: '2026-11-17T11:59:00Z', live: 'yes' },
   ] } as unknown as FleetSessionsV1 });
   return buildFleetLiveMap({ now: NOW, org: { ...map, tree: fleetOrgTree(map) },
-    computers: { schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', reasons: [], nodes: [computer('node-a', [], true), computer('node-b', [])] } });
+    computers: { schema: 'phantom.nodes-view.v1', schemaVersion: 1, asOf: AT, self: 'node-a', registry: 'local', reasons: [], nodes: [computer('node-a', [], true), computer('node-b', [])] } });
 }
 
 let viewport: ViewportMock | null = null;
@@ -74,12 +75,21 @@ it('shows the empty state with every unknown spelled out', () => {
   expect(screen.getAllByRole('button')).toHaveLength(2);
 });
 
-it('opens the existing detail pane for the node clicked and polls at most every 5 seconds', async () => {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(fleet()), { status: 200, headers: { 'content-type': 'application/json' } }));
+it('opens the existing detail pane and reads live messages alongside the graph', async () => {
+  const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/job/tail') ? {
+    schema: 'fleet.job.tail.v1', job: 'RQ-A', events: [
+      ...Array.from({ length: 25 }, (_, i) => ({ source: 'log', text: `line ${i}` })), { source: 'event', text: 'launched' }],
+  } : fleet()));
   vi.stubGlobal('fetch', fetch);
   const openPane = vi.fn();
   render(<MapPane visible host={{ openPane } as never} />);
   fireEvent.click(await screen.findByRole('button', { name: /^Open job RQ-A/ }));
+  const log = await screen.findByRole('log');
+  await waitFor(() => expect(log.textContent).toContain('line 24'));
+  expect(log.textContent?.split('\n')).toHaveLength(20);
+  expect(log.textContent).not.toContain('line 4'); expect(log.textContent).not.toContain('launched');
+  expect(fetch).toHaveBeenCalledWith('/api/fleet/job/tail?id=RQ-A&lines=20', expect.anything());
+  fireEvent.click(screen.getByRole('button', { name: 'Open full log' }));
   expect(openPane).toHaveBeenLastCalledWith('worker-log');
   fireEvent.click(screen.getByRole('button', { name: /^Open lane claude:/ }));
   expect(openPane).toHaveBeenLastCalledWith('fleet-lanes');
@@ -88,9 +98,15 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   fireEvent.click(screen.getByRole('button', { name: /^Open leader/ }));
   expect(openPane).toHaveBeenLastCalledWith('leader-thread');
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
-  // One read each of the graph, its message edges and its message cards; none repeats inside the poll interval.
+  // One read each of the graph, its message edges, its message cards, its conversations and its replay frames; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-messages', 'live-map', 'map-edges']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['/api/fleet/job/tail?id=RQ-A&lines=20', '/api/fleet/map/messages', 'agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+});
+
+it('shows a plain message for a known empty fleet', () => {
+  const map = buildFleetLiveMap({ now: NOW, jobs: { schema: 'jobs.live.v1', generatedAt: AT, known: true, jobs: [] } });
+  render(<MapView map={map} now={NOW} onOpen={() => {}} />);
+  expect(screen.getByRole('status').textContent).toBe('Nothing running right now');
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {
@@ -126,6 +142,8 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('message edges on the 
     viewport = mockViewport(width);
     const onOpenMessages = vi.fn();
     const view = render(<MapView {...scene(said, jobs)} now={NOW} onOpen={() => {}} onOpenMessages={onOpenMessages} />);
+    // A phone starts on the org list; the drawn map is one tap away.
+    if (width < 480) fireEvent.click(screen.getByRole('button', { name: 'Show the full map' }));
     return { ...view, onOpenMessages, talk: screen.getByRole('region', { name: 'Messages on the map' }) };
   }
 
@@ -183,7 +201,7 @@ it('draws lines without last words when the edges read is unknown, and caps thic
 
 it('a message line opens the Messages pane on that pair, read from the typed messages API', async () => {
   const { map, edges } = scene(CHAT);
-  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, from: { name: 'leader', lane: 'leader' },
+  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, priority: 'P2', from: { name: 'leader', lane: 'leader' },
     to: { name: 'claude', lane: 'claude' }, kind: 'status', summary: 'thanks, next the docs', conversation: 'pair:claude|leader', job: null, pr: null }] };
   const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/map-edges') ? { schema: 'fleet.map-edges.v1', version: 1, edges }
     : String(input).includes('/agent-bus/messages') ? pairRead : map));
@@ -206,7 +224,8 @@ it('a message line opens the Messages pane on that pair, read from the typed mes
 function pairsOf(said: Said[]) {
   const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
     envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
-  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', rows: rows as never }, { since: NOW - 3_600_000 }, NOW))));
+  const matched = matchAgentMessages(rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= NOW), { since: NOW - 3_600_000 }, {}, false);
+  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', matched }, { since: NOW - 3_600_000 }, NOW))));
 }
 
 describe('message cards, the Messages switch and reduced motion', () => {
@@ -292,6 +311,28 @@ describe('the 2D/3D toggle', () => {
     expect(screen.getByRole('radio', { name: '3D' }).getAttribute('aria-checked')).toBe('true');
   });
 
+  it('3D groups by org: a label per lane with its running count; clicking it hides the lane\'s jobs and counts them; nodes still open', () => {
+    viewport = mockViewport(1440);
+    localStorage.setItem('phantom.fleet-map.view', '3d');
+    const onOpen = vi.fn();
+    render(<MapView map={map()} now={NOW} onOpen={onOpen} />);
+    const labels = () => [...stage()!.querySelectorAll<HTMLElement>('[data-label]')];
+    const claude = () => stage()!.querySelector<HTMLElement>('[data-label="lane:claude"]')!;
+    expect(claude().textContent).toMatch(/^claude: \d+ running/);
+    expect(labels().length).toBeGreaterThan(0);
+    expect(claude().style.transform).toMatch(/translate\(/);
+    const jobs = () => screen.queryAllByRole('button', { name: /^Open job RQ-A/ }).length;
+    expect(jobs()).toBe(1);
+    fireEvent.click(claude());
+    expect(claude().getAttribute('aria-expanded')).toBe('false');
+    expect(claude().textContent).toMatch(/, \d+ hidden$/);
+    expect(jobs()).toBe(0);
+    fireEvent.click(claude());
+    expect(jobs()).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: /^Open lane claude:/ }));
+    expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'lane:claude' }));
+  });
+
   it('desktop, empty fixture: 3D shows the empty note and only the leader', () => {
     viewport = mockViewport(1440);
     localStorage.setItem('phantom.fleet-map.view', '3d');
@@ -325,6 +366,7 @@ describe('the 2D/3D toggle', () => {
     viewport = mockViewport(390);
     localStorage.setItem('phantom.fleet-map.view', '3d');
     render(<MapView map={map()} now={NOW} onOpen={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show the full map' }));
     expect(screen.queryByRole('radiogroup', { name: 'Map view' })).toBeNull();
     expect(stage()).toBeNull();
     expect(screen.getByRole('button', { name: /^Open lane claude:/ }).style.top).not.toBe('');
@@ -347,4 +389,65 @@ it('3D preserves message cards, the Messages switch and reduced-motion pulse sup
   expect(screen.queryByRole('tooltip')).toBeNull();
   expect(stage.querySelectorAll('line[data-kind="reports-to"]').length).toBeGreaterThan(0);
   localStorage.clear();
+});
+
+describe('filter bar', () => {
+  /** RQ-A (claude, phantom, running) plus RQ-Z (zai, docs, done). */
+  const view = () => {
+    const raw = JSON.parse(JSON.stringify(fleet())) as FleetLiveMap;
+    raw.nodes.push({ id: 'job:RQ-Z', kind: 'job', level: 2, label: 'RQ-Z', provider: 'unknown', status: 'running', detail: 'fixture-model · docs', live: null, lane: 'zai', repo: 'docs', state: 'done' });
+    return narrowLiveMap(raw)!;
+  };
+  const choose = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  afterEach(() => sessionStorage.clear());
+
+  it('narrows the desktop map, says so when nothing matches, and Clear restores everything', () => {
+    viewport = mockViewport(1440);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
+    choose('Lane', 'claude');
+    expect(screen.getByRole('button', { name: /^Open job RQ-A/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Open computer node-b/ })).toBeNull();
+    choose('State', 'running');
+    choose('Repo', 'phantom');
+    expect(screen.getByRole('button', { name: /^Open job RQ-A/ })).toBeTruthy();
+    choose('State', 'done');
+    expect(screen.getByRole('status').textContent).toBe('No agents match these filters.');
+    expect(screen.queryByRole('button', { name: /^Open job/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByRole('button', { name: /^Open computer node-b/ })).toBeTruthy();
+    expect((screen.getByLabelText('Lane') as HTMLSelectElement).value).toBe('');
+    expect(sessionStorage.getItem('phantom.fleet-map.filter')).toBe('{}');
+  });
+
+  it('keeps the choice for the session across a remount', () => {
+    viewport = mockViewport(1440);
+    const first = render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    choose('State', 'running');
+    first.unmount();
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect((screen.getByLabelText('State') as HTMLSelectElement).value).toBe('running');
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
+  });
+
+  it('uses the same filter on the phone list', () => {
+    viewport = mockViewport(390);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect(screen.getByRole('group', { name: 'Filter the map' })).toBeTruthy();
+    choose('Lane', 'claude');
+    expect(screen.getByTestId('org-headline')).toBeTruthy();
+    choose('State', 'done');
+    expect(screen.getByRole('status').textContent).toBe('No agents match these filters.');
+    expect(screen.queryByTestId('org-headline')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByTestId('org-headline')).toBeTruthy();
+  });
+
+  it('reads a stored filter with a bad state as none', () => {
+    sessionStorage.setItem('phantom.fleet-map.filter', '{"state":"asleep","lane":"claude"}');
+    viewport = mockViewport(1440);
+    render(<MapView map={view()} now={NOW} onOpen={() => {}} />);
+    expect((screen.getByLabelText('State') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('Lane') as HTMLSelectElement).value).toBe('claude');
+  });
 });

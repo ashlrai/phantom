@@ -25,6 +25,16 @@ it('joins unordered rows, deduplicates jobs and computes an even median', async 
   expect(report.jobs[2]?.precheck_code).toBe(11);
 });
 
+it('records precheck codes from the live skipped_empty spelling only', async () => {
+  const report = await fleetLeaderScore(read(
+    row('RQ-L1Q8', 'skipped_empty', { code: 10 }),
+    row('RQ-L2Q8', 'skipped_empty', { code: 14 }),
+    row('RQ-L3Q8', 'skipped_empty', { reason: 'task_empty_repeat_24h' }),
+    row('RQ-L4Q8', 'skipped_empty', { code: 10, applied: false }),
+  ), now);
+  expect(report.totals).toEqual({ jobs: 2, launched: 0, precheck: 2, prs: 0, merged: 0 });
+  expect(report.jobs.map(j => [j.job, j.precheck_code])).toEqual([['RQ-L1Q8', 10], ['RQ-L2Q8', 14]]);
+});
 it('filters exact suffix, auto-generated IDs, times and irrelevant events', async () => {
   const report = await fleetLeaderScore(read(
     row('RQ-A123456Q8', 'launch'), row('RQ-A123456-XQ8', 'launch'),

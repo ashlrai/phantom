@@ -6,6 +6,8 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import styles from '../SidebarResources.module.css';
 import bar from './SpendDown.module.css';
 import { UsageHistoryChart } from './UsageHistoryChart.js';
+import { SpendDownChart, paceQuery, spendDownQuery } from './SpendDownChart.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n)}%`;
 const width = (n: number | null): string => `${Math.min(100, Math.max(0, n ?? 0))}%`;
@@ -61,7 +63,14 @@ export function SpendDown() {
   }, []);
   useEffect(() => { refresh(); return () => pending.current?.abort(); }, [refresh]);
   usePollWhileVisible(refresh, 60_000);
+  // The chart reads pools.spenddown.v1 only; when that read fails the rows below still say everything.
+  const chart = useQuery(spendDownQuery);
+  const refetchChart = useRefetch(spendDownQuery);
+  const pace = useQuery(paceQuery);
+  const refetchPace = useRefetch(paceQuery);
+  usePollWhileVisible(() => { refetchChart(); refetchPace(); }, 60_000);
   return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
+    {chart.data ? <SpendDownChart data={chart.data} pace={pace.data} /> : null}
     {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
       : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <><p className={bar.headline} role="status">{data.headline}</p><ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>

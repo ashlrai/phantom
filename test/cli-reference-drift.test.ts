@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { HELP_ENTRIES } from '../src/cli/help.js';
 import { cliReferenceRows } from '../src/cli/docs-cli.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
-import { checkCliReference, renderCliReference } from '../src/core/commands/cli-reference.js';
+import { checkCliReference, registeredVerbs, renderCliReference, verbsMissingFromReference } from '../src/core/commands/cli-reference.js';
 import { dispatchedCommands } from './helpers/cli-command-table.js';
 // @ts-expect-error Standalone Node documentation checker has no declaration output.
 import { checkDocumentation } from '../scripts/check-documentation.mjs';
@@ -24,7 +24,7 @@ describe('generated CLI reference', () => {
     expect(dispatched.length).toBeGreaterThan(70);
     expect(dispatched.filter(command => !documented.has(command)), `Missing commands in ${path}`).toEqual([]);
 
-    for (const prefix of ['home ', 'map ', 'worklog ', 'nodes ', 'autonomy ', 'admission explain ', 'job pause|resume|stop|move ']) {
+    for (const prefix of ['home ', 'map ', 'worklog ', 'nodes [', 'nodes pool ', 'nodes plan ', 'nodes offload ', 'autonomy ', 'admission explain ', 'job pause|resume|stop|move ']) {
       const entries = HELP_ENTRIES.filter(entry => entry.cmd.startsWith(prefix));
       expect(entries, `Expected one registered help row for ${prefix}`).toHaveLength(1);
       const command = entries[0]!.cmd;
@@ -62,6 +62,32 @@ describe('generated CLI reference', () => {
       expect(row!.cmd).toContain('--json');
       expect(page).toContain(renderCliReference([row!]).split('\n').find(line => line.startsWith('| <code>phm ')));
     }
+  });
+
+  it('lists every fleet, leader and host verb, and names the one that is missing', () => {
+    const rows = cliReferenceRows(HELP_ENTRIES);
+    const page = read('docs/CLI-REFERENCE.md');
+    expect(verbsMissingFromReference(rows, page)).toEqual([]);
+    const verbs = registeredVerbs(rows).map(entry => `${entry.group} ${entry.verb}`);
+    for (const name of ['fleet org', 'fleet stranded', 'leader thread', 'leader seat', 'host load', 'host top']) expect(verbs).toContain(name);
+
+    // Fixture: drop one verb's row and the message must name that verb.
+    const without = page.split('\n').filter(line => !line.startsWith('| <code>phm host load ')).join('\n');
+    expect(verbsMissingFromReference(rows, without)).toEqual([
+      'phm host load is a registered command but is missing from docs/CLI-REFERENCE.md. Run: phm docs cli',
+    ]);
+  });
+
+  it('shows each verb group command with a JSON form or says it is unknown, and ends with the help gaps', () => {
+    const rows = cliReferenceRows(HELP_ENTRIES);
+    const page = read('docs/CLI-REFERENCE.md');
+    for (const line of page.split('\n').filter(entry => /^\| <code>phm (fleet|leader|host) /.test(entry))) {
+      expect(line, line.slice(0, 80)).toMatch(/\| (<code>phm .*--json.*<\/code>|unknown \(not in the registered usage\)) \|$/);
+    }
+    const tail = page.slice(page.indexOf('## Fleet, leader and host verbs without help text'));
+    const gaps = registeredVerbs(rows).filter(entry => !entry.help).map(entry => `<code>phm ${entry.group} ${entry.verb}</code>`);
+    for (const gap of gaps) expect(tail).toContain(gap);
+    expect(tail).not.toContain('<code>phm fleet org</code>');
   });
 
   it('normalizes terminal formatting without dropping command options', () => {

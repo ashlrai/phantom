@@ -27,7 +27,7 @@ Companions install separately; each has its own capabilities and authorization b
 - [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
 - [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
 
-Package: `@ashlr/phantom` v3.30.39.
+Package: `@ashlr/phantom` v3.30.72.
 Node.js floor: 22.15.0 or newer.
 
 ## Install
@@ -75,6 +75,7 @@ Phantom autonomy ships dormant and runs only inside a standing grant you sign wi
 - [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview
 - [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map
 - [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
+- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge
 - [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations
 - [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries
 - [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn

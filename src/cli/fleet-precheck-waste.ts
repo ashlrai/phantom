@@ -1,5 +1,6 @@
 /** Read-only precheck skips over the trailing six hours. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet precheck-waste [--json]';
@@ -56,10 +57,10 @@ export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJo
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       row = value as Record<string, unknown>;
     } catch { continue; }
-    if (row.event !== 'launch' && row.event !== 'precheck_skip') continue;
+    if (row.event !== 'launch' && !isPrecheckSkipRow(row)) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
     if (!Number.isFinite(at) || at < now - 6 * HOUR || at > now) continue;
-    const skip = row.event === 'precheck_skip';
+    const skip = row.event !== 'launch';
     const hour = new Date(Math.floor(at / HOUR) * HOUR).toISOString();
     add(report.totals, skip);
     const bucket = hours.get(hour) ?? { hour, ...empty() };
@@ -96,7 +97,7 @@ export async function fleetPrecheckWaste(read: TaskCheckReader = readTaskCheckJo
 
 export async function cmdFleetPrecheckWaste(args: string[], read: TaskCheckReader = readTaskCheckJobs, now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nRead six hours of jobs.jsonl. Count precheck skips by code, repo, prefix (before the first digit) and UTC hour. JSON groups codes by repo with reasons and next steps. Only precheck_skip events count; precheck_parked events are separate. Top 10 prefixes by skips. Share = skips / (launches + skips), from 0 to 1; code groups contain skips only. Unread metrics are unknown.`);
+    console.log(`${usage}\nRead six hours of jobs.jsonl. Count precheck skips by code, repo, prefix (before the first digit) and UTC hour. JSON groups codes by repo with reasons and next steps. precheck_skip events and code-carrying skipped_empty rows count; precheck_parked events are separate. Top 10 prefixes by skips. Share = skips / (launches + skips), from 0 to 1; code groups contain skips only. Unread metrics are unknown.`);
     return 0;
   }
   if (args.length > 1 || args.some(arg => arg !== '--json')) { console.error(usage); return 2; }

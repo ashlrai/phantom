@@ -37,6 +37,13 @@
  * counts as delivery; any other post result ends admission via
  * observer-error semantics without re-running the tick, and produces
  * nonzero exit.  Opt-in only: without the group, the bus is untouched.
+ *
+ * --stop-file <abs> adds a graceful admission stop for a supervising agent:
+ * an existing file admits no further pass (creation during the idle wait is
+ * noticed through an event-driven watch, well under a second), a running pass
+ * still finishes, and the file itself is never created or removed by this
+ * command. A read error other than a missing file ends the run as
+ * termination 'stop-check-error' (exit 1).
  */
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -46,6 +53,7 @@ import type { RunSelfTickOptions, SelfTickSteps } from '../core/fleet/self-tick.
 import type { SpawnLike } from '../core/fleet/planner-run.js';
 import {
   runSelfLoop,
+  watchSelfLoopStopFile,
   SELF_LOOP_DEFAULT_INTERVAL_MS,
   SELF_LOOP_MAX_DURATION_MS,
   SELF_LOOP_MIN_INTERVAL_MS,
@@ -92,7 +100,7 @@ const toStreamLine = (record: Record<string, unknown>, heavyKey: 'report' | 'las
   return out;
 };
 
-const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--max-ticks <n>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]
+const usage = `Usage: ashlr fleet self-loop --duration-ms <ms> [--interval-ms <ms>] [--max-ticks <n>] [--failure-backoff-max-ms <ms>] [--busy-backoff-max-ms <ms>] [--runs-dir <abs>] [--stop-file <abs>] [--apply] [--json | --stream] [--bus-to <label> --bus-root <abs> --bus-run-id <token>]
 Repeat the self-management pass (fleet self-tick) for a bounded window:
 first pass immediately, then one pass every interval (default 60000ms,
 minimum 1000ms), never overlapping, until --duration-ms (maximum 24h) is
@@ -110,7 +118,12 @@ pass records include consecutiveFailures, consecutiveBusy (when enabled) and
 nextDelayMs (when either is enabled). --max-ticks <n> (integer 1..1000) is
 optional alongside --duration-ms: whichever bound occurs first stops
 admission. When the count bound ends the loop the summary carries
-termination 'max-ticks' and an optional maxTicks count. --json prints one
+termination 'max-ticks' and an optional maxTicks count. --stop-file <abs>
+names a path a supervisor creates to stop admission gracefully: an existing
+file ends admission before the next pass, creation during the idle wait is
+noticed within a second, and a read error other than a missing file ends the
+run with termination 'stop-check-error' and exit 1. The file is never created
+or removed here. --json prints one
 final sanitized summary line (unchanged default shape). --stream instead
 prints sanitized bounded NDJSON live: one {"v":1,"record":"pass",...} line
 per completed pass, then exactly one {"v":1,"record":"summary",...} line.
@@ -119,8 +132,15 @@ runs. --bus-to/--bus-root/--bus-run-id post a compact progress envelope (kind,
 run-id, pass, exit-code, state, consecutiveFailures, nextDelayMs) to the
 existing durable bus after each pass; all three flags are required together,
 otherwise the bus is untouched. Ticks remain dry-run unless --apply.
-Exit 0 when no pass failed, 1 when any did (or the stream/bus sink did),
+Exit 0 when no pass failed, 1 when any did (or the stream/bus sink did, or a stop-file read failed),
 2 on usage.`;
+
+/** Paths passed to --stop-file must stay single-line and printable. */
+const hasControlChar = (value: string): boolean =>
+  Array.from(value).some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 0x20 || code === 0x7f;
+  });
 
 interface Dependencies {
   now?: () => number;
@@ -149,6 +169,7 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   let durationMs: number | undefined, intervalMs: number | undefined, runsDir: string | undefined;
   let failureBackoffMaxMs: number | undefined, busyBackoffMaxMs: number | undefined;
   let maxTicks: number | undefined;
+  let stopFile: string | undefined;
   // Bus flags (one required group: all absent = inactive).
   let busTo: string | undefined, busRoot: string | undefined, busRunId: string | undefined;
   const busValue = (value: string | undefined): string | undefined =>
@@ -188,6 +209,10 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       const value = args[++i];
       if (typeof value !== 'string' || !isAbsolute(value)) return invalid();
       runsDir = value;
+    } else if (arg === '--stop-file' && stopFile === undefined) {
+      const value = args[++i];
+      if (typeof value !== 'string' || !isAbsolute(value) || hasControlChar(value)) return invalid();
+      stopFile = value;
     } else if (arg === '--bus-to' && busTo === undefined) {
       const value = busValue(args[++i]);
       if (value === undefined) return invalid();
@@ -282,6 +307,9 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
     : stream ? emitPass
     : postBusPass;
   const removeSignalListeners = onSignal(() => controller.abort());
+  // The explicit stop file, when given, gates admission read-only: one
+  // directory watch for the whole run, released with the signal listeners.
+  const stopAdmission = stopFile === undefined ? null : watchSelfLoopStopFile(stopFile);
   let summary;
   try {
     summary = await runSelfLoop({
@@ -294,9 +322,14 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
       now,
       signal: controller.signal,
       ...(onPass === undefined ? {} : { onPass }),
+      ...(stopAdmission === null ? {} : {
+        checkStop: stopAdmission.checkStop,
+        stopObserved: stopAdmission.stopObserved,
+      }),
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
     });
   } finally {
+    stopAdmission?.close();
     removeSignalListeners();
   }
   if (stream) {
@@ -308,9 +341,11 @@ export async function cmdFleetSelfLoop(args: string[], deps: Dependencies = {}):
   } else {
     const label = summary.termination === 'observer-error' ? 'OBSERVER-ERROR'
       : summary.termination === 'max-ticks' ? 'MAX-TICKS'
-        : summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE';
+        : summary.termination === 'stop-file' ? 'STOPPED-BY-FILE'
+          : summary.termination === 'stop-check-error' ? 'STOP-CHECK-ERROR'
+            : summary.termination === 'interrupted' ? 'INTERRUPTED' : 'DONE';
     output(`fleet self-loop: ${label
     } — ticks=${summary.ticks} failed=${summary.failures} busy=${summary.busy} (${apply ? 'apply' : 'dry-run'})`);
   }
-  return summary.failures > 0 || summary.observerError !== undefined ? 1 : 0;
+  return summary.failures > 0 || summary.observerError !== undefined || summary.termination === 'stop-check-error' ? 1 : 0;
 }

@@ -82,9 +82,25 @@ function GoalCard({ goal, onEvidence }: { goal: FleetGoal; onEvidence?: (() => v
         <TrendLine goal={goal} span="7 d" trend={goal.trend7d} />
       </div>
       {parts.length ? <p className={styles.meta}>{parts.map(p => `${p.name} ${p.value}`).join(' · ')}</p> : null}
+      {goal.next ? <p className={styles.meta}>Next: {goal.next}</p> : null}
       <p className={styles.meta}>{goal.status === 'unknown' ? `Unknown: ${goal.reason}` : goal.reason}</p>
       <p className={styles.meta}>{asOfText(goal.updated_at)} · {goal.source}</p>
     </Card>
+  );
+}
+
+/** The leader's current bets; a missing vision file says so in plain words instead of showing nothing. */
+function FleetBets({ card }: { card: GoalScorecard }) {
+  const bets = Array.isArray(card.bets) ? card.bets : [];
+  if (!bets.length) return card.bets_reason ? <p className={styles.meta}>Current bets: none. {card.bets_reason}</p> : null;
+  return (
+    <section aria-label="Current bets">
+      <h4 className={styles.headline}>Current bets</h4>
+      <ul>
+        {bets.map(b => <li key={b.id} className={styles.meta}>{b.id}{b.pool ? ` (${b.pool}${b.repo ? `, ${b.repo}` : ''})` : ''}: {b.goal}</li>)}
+      </ul>
+      <p className={styles.meta}>{asOfText(card.as_of ?? null)} · {card.bets_source ?? 'unknown'}</p>
+    </section>
   );
 }
 
@@ -101,8 +117,11 @@ export function FleetGoalCards({ visible = true, host }: Pick<Partial<PaneProps>
       {goals.length === 0
         ? <CardNote>No fleet goals yet. They appear once Phantom has recorded jobs, usage pools or releases.</CardNote>
         : <>
-          <p className={styles.mission}>{goalsSummary(goals)}</p>
+          {data.end_state_text ? <p className={styles.mission}>{data.end_state_text}</p> : null}
+          {data.endState ? <p className={styles.mission}>{data.endState}</p> : null}
+          <p className={styles.meta}>{goalsSummary(goals)}</p>
           {goals.map(goal => <GoalCard key={goal.id} goal={goal} onEvidence={host ? () => host.openPane(goal.evidencePane) : undefined} />)}
+          <FleetBets card={data} />
         </>}
     </section>
   );
