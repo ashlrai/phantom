@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Fifty-six sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fifty-eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -594,6 +594,25 @@
  *     'duplicate' for that PR head forever) never became work, and the
  *     append-only file's growth past its own 8 MiB read bound — which
  *     makes every trigger refuse 'unavailable' — was invisible;
+ *   - the fleet custody spawns ledger's recurring unwrapped reasons:
+ *     the {schema, at, wrapped, engine, preflight_exit, reason?} rows
+ *     appendCustodyRecord (src/core/run/custody-ledger.ts) appends to
+ *     ~/.ashlr/custody/spawns.jsonl — plus its one rotated generation
+ *     spawns.jsonl.1 — on every engine spawn runEngine makes, the
+ *     closed UnwrappedReason vocabulary decidePhantomCustody names when
+ *     a spawn runs without `phantom exec` (custodyBacklogItems below).
+ *     Until now the ledger's only readers were `phm status`'s
+ *     point-in-time custody summary and the receipt timeline's per-run
+ *     window, so a fleet whose spawns kept missing custody for the same
+ *     reason — checkouts never initialized, the phantom binary missing,
+ *     linked-worktree vault-namespace gaps, preflight refusals — never
+ *     became work. An (engine, reason) cell emits only at the recurring
+ *     bars of three adverse rows across two distinct UTC days inside
+ *     the 7-day window; the by-design verdicts
+ *     self-authenticating-engine and phantom-disabled count toward
+ *     spawn totals but never emit, truncated tails are stated as lower
+ *     bounds, and rows emit only for the fleet's own repository since
+ *     the ledger carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -679,6 +698,7 @@ import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { asksLedgerBacklogItems } from './asks-backlog.js';
 import { queueVisitBacklogItems } from './queue-visit-backlog.js';
 import { devinReviewBacklogItems } from './devin-review-backlog.js';
+import { custodyBacklogItems } from './custody-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1602,6 +1622,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the 7-day window, truncated tails are stated as lower bounds, and
   // journal strings are scrubbed before they reach a prompt.
   items.push(...await devinReviewBacklogItems({ repo }));
+
+  // Custody spawns ledger: the fleet custody ledger's own audit trail —
+  // one {schema, at, wrapped, engine, preflight_exit, reason?} row per
+  // engine spawn runEngine makes, appended by appendCustodyRecord to
+  // ~/.ashlr/custody/spawns.jsonl (rotating once to spawns.jsonl.1 past
+  // the 4 MiB cap) — becomes backlog items too. Until now the ledger was
+  // trend-blind: `phm status`'s custody section folds point-in-time
+  // counts and the receipt timeline reads one run's window, so recurring
+  // unwrapped reasons never became work. An (engine, reason) cell emits
+  // only at the recurring bars of three adverse rows across two distinct
+  // UTC days inside the 7-day window; self-authenticating-engine and
+  // phantom-disabled are deliberate-posture verdicts that count toward
+  // spawn totals but never emit, truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the ledger describes this install's spawn machinery and
+  // carries no repository column.
+  items.push(...await custodyBacklogItems({ repo }));
   return { items, errors };
 }
 

@@ -1194,7 +1194,29 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   file has no rotation and past the bound the writer's journalRows
   refuses every trigger, which emits its own item for the fleet's own
   repository while the outcome cells emit only for the repository the
-  rows name, case-insensitively.
+  rows name, case-insensitively,
+  and the fleet custody spawns ledger's recurring unwrapped reasons,
+  the {schema, at, wrapped, engine, preflight_exit, reason?} rows
+  appendCustodyRecord (src/core/run/custody-ledger.ts) appends to
+  ~/.ashlr/custody/spawns.jsonl — plus its one rotated generation
+  spawns.jsonl.1 — on every engine spawn runEngine makes, carrying the
+  closed UnwrappedReason vocabulary decidePhantomCustody names when a
+  spawn runs without `phantom exec` (otherwise only visible through
+  `phm status`'s point-in-time custody summary and the receipt
+  timeline's per-run window — reports someone had to run — so a fleet
+  whose spawns kept missing custody for the same reason never became
+  work). An (engine, reason) cell becomes an item only while its
+  in-window rows reach the recurring bars of three across two distinct
+  UTC days inside the 7-day window; the by-design verdicts
+  self-authenticating-engine and phantom-disabled count toward spawn
+  totals but never emit, rows count only under the writer's contract
+  (schema 1, a parseable at, boolean wrapped, the engine shape bound,
+  preflight_exit null or a bounded integer, the closed reason
+  vocabulary on unwrapped rows), a bounded no-follow tail read at the
+  writer's own read bound is stated as a lower bound when it
+  truncates, and rows emit only for the fleet's own repository since
+  the ledger describes this install's spawn machinery and carries no
+  repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1204,8 +1226,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit and
-  devin-review items carry priority 3;
+  catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
+  devin-review and custody items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1520,7 +1542,17 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   forward window or pinned ops machinery, and emit outcome cells only
   for the repository the rows name while the journal-oversize item —
   the file-level condition with no repo attribution — emits only for
-  the fleet's own repository. They
+  the fleet's own repository. Custody items name the
+  custody spawns ledger, `src/core/run/custody-ledger.ts`,
+  `src/core/run/phantom-custody.ts` and the `phm status` custody
+  summary, keep the find-why-spawns-keep-missing-custody framing per
+  cell — init coverage, the pending worktree source binding, a
+  preflight check or a classification gap this repository owns versus
+  owner-side install state, config and posture — quoting the recorded
+  wrapped share of the engine's in-window spawns, with the same
+  owner-side no-change escape, and emit only for the fleet's own
+  repository since the ledger describes this install's spawn machinery
+  and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
