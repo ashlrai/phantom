@@ -87,6 +87,7 @@ lifecycle transition. Missing node storage is never initialized by observation.
 ```sh
 phm bots seats --json
 phm bots handoffs --json
+phm bots handoffs --apply --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
 ```
@@ -103,7 +104,14 @@ with pending handoff records as a `seat-handoff` item — the same plan read —
 so pending seat work surfaces in the unified pending view without a second
 lookup. `phm agents bus work mine`'s `seats` section reads the same plan
 narrowed to the seats the queried agent denotes, so an agent sees its own
-pending seat handoffs inside the one per-agent digest. The isolated fleet
+pending seat handoffs inside the one per-agent digest. `phm bots handoffs
+--apply` is the fleet-wide apply: it runs the same per-seat
+`applySeatHandoff` for every eligible seat in roster order —
+journal-before-release, idempotent notices and stale-safe claim fencing
+unchanged — and reports each seat's outcome (`applied`, `skipped`,
+`contended` or `failed` with a fixed reason) instead of stopping at the
+first failure, so one command drains the whole roster and a re-run resumes
+where a partial apply stopped. The isolated fleet
 MCP server serves the same whole-roster plan as `fleet_seat_handoffs` —
 no arguments, server-owned roots, `apply` always false — so MCP-connected
 agents read the same handoff posture the CLI prints. The roster itself —

@@ -29,6 +29,9 @@ export const buildConversations = (messages: readonly ConversationMessage[], now
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const text = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value.trim() : null;
+/** The body's own `inReplyTo` citation verbatim — never the `replyTo` alias and never trimmed, so the conversations `inReplyTo` filter applies the same own-property exact match `busBodyInReplyToMatch` gives every other bus read. */
+const ownInReplyTo = (body: Record<string, unknown> | null): string | undefined =>
+  body !== null && Object.hasOwn(body, 'inReplyTo') && typeof body['inReplyTo'] === 'string' ? body['inReplyTo'] : undefined;
 
 /** Bus receipts → messages. Subjects come from the scrubbed `phm messages` projection; only ids and states are read from the body. */
 export function conversationMessages(rows: readonly BusInboxReceipt[]): ConversationMessage[] {
@@ -49,6 +52,7 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
+      priority: m.priority, inReplyTo: ownInReplyTo(body),
       ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
@@ -134,11 +138,16 @@ export function buildAgentConversations(scan: { source: AgentConversations['sour
 
 /** The one read behind the CLI, the API and the map. */
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
-  const registryRead = query.agent === undefined && query.waitingOn === undefined
-    ? undefined : readAgentRegistry({ root: options.root });
+  // The registry backs `agent`, `waitingOn` and the `from`/`excludeFrom`
+  // sender filters' identity matching; `channel`, `priority` and
+  // `inReplyTo` decide on member-message fields alone and need no read.
+  const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
+    query.from !== undefined || query.excludeFrom !== undefined;
+  const registryRead = needsRegistry ? readAgentRegistry({ root: options.root }) : undefined;
   const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
-  const identityOf = query.agent === undefined || registry === undefined ? undefined : labelIdentityOf(registry);
-  const refKeyFor = query.agent === undefined || registry === undefined ? undefined
+  const needsIdentity = query.agent !== undefined || query.from !== undefined || query.excludeFrom !== undefined;
+  const identityOf = !needsIdentity || registry === undefined ? undefined : labelIdentityOf(registry);
+  const refKeyFor = !needsIdentity || registry === undefined ? undefined
     : (ref: string) => resolveAgent(registry, ref)?.id;
   const waitingOnMatch = query.waitingOn === undefined ? undefined : waitingOnScope(query.waitingOn, registry);
   return buildAgentConversations(scanBusInbox(options), query, (options.now ?? Date.now)(), identityOf, waitingOnMatch, refKeyFor);

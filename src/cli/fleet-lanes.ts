@@ -17,9 +17,20 @@ export async function cmdFleetLanes(args: string[], read = getFleetLaneSnapshot)
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let queueDir: string | undefined;
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--json') continue;
-    if (args[i] !== '--queue-dir' || !args[i + 1] || !isAbsolute(args[i + 1]!)) { console.error(usage); return 2; }
-    queueDir = args[++i];
+    const arg = args[i]!;
+    if (arg === '--json') continue;
+    if (arg === '--queue-dir') {
+      const value = args[i + 1];
+      if (!value || !isAbsolute(value)) {
+        process.stderr.write('error: fleet lanes: --queue-dir requires an absolute path\n');
+        return 2;
+      }
+      queueDir = value;
+      i++;
+      continue;
+    }
+    process.stderr.write(`error: fleet lanes: unknown option ${arg}\n`);
+    return 2;
   }
   try {
     const snapshot = await read(queueDir ? { queueDir } : {});

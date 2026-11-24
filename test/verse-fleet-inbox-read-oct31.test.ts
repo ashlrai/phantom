@@ -27,7 +27,16 @@ describe('inbox read query and projection', () => {
     expect(parseInboxReadQuery(new URLSearchParams('limit=3&source=Telegram'))).toEqual({ limit: 3, source: 'Telegram' });
     expect(parseInboxReadQuery('?limit=200')).toEqual({ limit: 200, source: null });
   });
-  it.each(['limit=0', 'limit=201', 'limit=abc', 'limit=1.5', 'limit=', 'limit=1&limit=2', 'source=', 'source=a%2Fb', 'source=' + 'x'.repeat(41), 'other=x'])('rejects %s', search => {
+  it('parses the shared read filters into one query', () => {
+    expect(parseInboxReadQuery('contains=ship%20it&priority=P1&after=2026-10-31T04%3A12%3A00Z&before=2026-10-31T09%3A47%3A00.500%2B05%3A30'))
+      .toEqual({ limit: 50, source: null, contains: 'ship it', priority: 'P1',
+        after: { seconds: Date.parse('2026-10-31T04:12:00Z') / 1000, fraction: '' },
+        before: { seconds: Date.parse('2026-10-31T04:17:00Z') / 1000, fraction: '5' } });
+  });
+  it.each(['limit=0', 'limit=201', 'limit=abc', 'limit=1.5', 'limit=', 'limit=1&limit=2', 'source=', 'source=a%2Fb', 'source=' + 'x'.repeat(41), 'other=x',
+    'contains=%20%20', 'contains=' + 'x'.repeat(513), 'priority=P4', 'priority=p1', 'priority=',
+    'after=not-a-date', 'after=2026-13-40T99:99:99Z', 'before=2026-10-31', 'after=2026-10-31T04:17:00Z&before=2026-10-31T04:12:00Z',
+    'after=2026-10-31T04:12:00Z&after=2026-10-31T04:13:00Z'])('rejects %s', search => {
     expect(parseInboxReadQuery(search)).toHaveProperty('error');
   });
   it('validates, filters, limits, reverses and projects only declared fields', () => {
@@ -48,6 +57,31 @@ describe('inbox read query and projection', () => {
       { ...entry('near', 'phone-extra (phone-2)'), channel: 'phone-extra', id: 'phone-2' },
     ] }, { limit: 50, source: 'PHONE' });
     expect(result?.entries).toEqual([entry('valid', 'phone (phone-1)')]);
+  });
+  it('applies the contains, priority and exclusive window filters before limiting', () => {
+    const parsed = parseInboxReadQuery('source=mobile&priority=P0&contains=match&after=2026-10-31T04:12:00Z&before=2026-10-31T04:17:00Z&limit=5');
+    if ('error' in parsed) throw new Error('unexpected parse error');
+    const timed = (at: string, source: string, priority: string | null, text: string) => ({ at, source, priority, text });
+    // Newest-first file order, as the inbox reader supplies it.
+    const result = projectInboxRead({ sourceState: 'healthy', entries: [
+      timed('2026-10-31 00:16', 'mobile', 'P1', 'other priority match'),
+      timed('2026-10-31 00:15', 'desktop', 'P0', 'other source MATCH'),
+      timed('2026-10-31 00:14', 'mobile', 'P0', 'second match here'),
+      timed('2026-10-31 00:13', 'Mobile', 'P0', 'first MATCH here'),
+      timed('2026-10-31 00:11', 'mobile', 'P0', 'too early match'),
+      timed('not a date', 'mobile', 'P0', 'undated match'),
+    ] }, parsed);
+    expect(result).toMatchObject({ dropped: 0, entries: [
+      { at: '2026-10-31 00:13', source: 'Mobile', priority: 'P0', text: 'first MATCH here' },
+      { at: '2026-10-31 00:14', source: 'mobile', priority: 'P0', text: 'second match here' },
+    ] });
+  });
+  it('keeps undated and out-of-window entries when no time bound is set', () => {
+    const result = projectInboxRead({ sourceState: 'healthy', entries: [
+      { at: 'not a date', source: 'Telegram', priority: 'P0', text: 'one' },
+      entry('middle', 'telegram'),
+    ] }, { limit: 50, source: null, contains: 'ONE' });
+    expect(result?.entries.map(item => item.text)).toEqual(['one']);
   });
   it('scrubs secrets, rejects paths in all fields and invalid reader envelopes', () => {
     const result = projectInboxRead({ sourceState: 'missing', entries: [
@@ -71,7 +105,22 @@ describe('fleet inbox read route', () => {
     expect((await request(api, INBOX + '?source=Telegram')).wire).toMatchObject({ entries: [entry('old', 'telegram'), entry('new')] });
     expect(readInbox.mock.calls.map(args => args[0])).toEqual([200, 200, 200]);
   });
-  it.each(['limit=0', 'limit=201', 'limit=abc', 'source=a%2Fb'])('rejects %s before reading', async search => {
+  it('reads with the shared filters composed into one window', async () => {
+    const timed = (at: string, source: string, priority: string | null, text: string) => ({ at, source, priority, text });
+    const readInbox = vi.fn(async (_limit: number) => ({ sourceState: 'healthy', entries: [
+      timed('2026-10-31 00:16', 'mobile', 'P1', 'other priority'),
+      timed('2026-10-31 00:15', 'desktop', 'P0', 'other source'),
+      timed('2026-10-31 00:14', 'mobile', 'P0', 'second match'),
+      timed('2026-10-31 00:13', 'Mobile', 'P0', 'first match'),
+      timed('2026-10-31 00:11', 'mobile', 'P0', 'too early match'),
+    ] }));
+    const api = createFleetRunsApi({ readInbox });
+    const search = '?source=mobile&priority=P0&contains=match&after=2026-10-31T04:12:00Z&before=2026-10-31T04:17:00Z&limit=5';
+    expect(await request(api, INBOX + search)).toMatchObject({ handled: true, status: 200, wire: { entries: [
+      { at: '2026-10-31 00:13', text: 'first match' }, { at: '2026-10-31 00:14', text: 'second match' }] } });
+    expect(readInbox).toHaveBeenCalledWith(200);
+  });
+  it.each(['limit=0', 'limit=201', 'limit=abc', 'source=a%2Fb', 'priority=P9', 'after=soon', 'before=2026-10-31T04:12:00Z&after=2026-10-31T04:17:00Z', 'contains=%20'])('rejects %s before reading', async search => {
     const readInbox = vi.fn(async () => raw);
     expect(await request(createFleetRunsApi({ readInbox }), INBOX + '?' + search)).toMatchObject({ status: 400, wire: { code: 'VERSE_INVALID' } });
     expect(readInbox).not.toHaveBeenCalled();

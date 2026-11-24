@@ -7,7 +7,7 @@ import {
   registerAgentIdentity, resolveAgent, stableAgentId,
 } from '../src/core/agents/bus-identity.js';
 import {
-  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, listBusChannels, postChannelMessage, postLabelMessage,
+  agentWakeClaimHolderSuffix, agentWakeMessageSuffix, announceWork, busBodySummary, busPageResumeCursor, listBusChannels, postChannelMessage, postLabelMessage,
   readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff,
   sendWakeRequest, shouldWake, updateWorkStatus, type AgentWakeRow, type UnifiedBusOptions,
 } from '../src/core/agents/bus-unified.js';
@@ -297,6 +297,28 @@ describe('channel reads', () => {
     if (resumed.status !== 'ok') throw new Error(`unexpected ${resumed.status}`);
     expect(resumed.matched).toBe(0);
     expect(resumed.messages).toEqual([]);
+  });
+});
+
+describe('busPageResumeCursor', () => {
+  const row = (cursor: number) => ({ cursor });
+
+  it('keeps the page cursor when matched was not asked or every match is shown', () => {
+    expect(busPageResumeCursor({ nextCursor: 9, messages: [row(7)] })).toBe(9);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 1, messages: [row(7)] })).toBe(9);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 2, messages: [row(4), row(7)] })).toBe(9);
+  });
+
+  it('resumes at the newest shown row when matched hides rows beyond the page', () => {
+    // The raw nextCursor is the store's end after a whole-store matched scan;
+    // resuming there would skip the unshown matches, so the honest cursor is
+    // the newest shown row's.
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 3, messages: [row(4), row(7)] })).toBe(7);
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 3, messages: [row(7)] })).toBe(7);
+  });
+
+  it('keeps the page cursor when a matched page shows no rows', () => {
+    expect(busPageResumeCursor({ nextCursor: 9, matched: 2, messages: [] })).toBe(9);
   });
 });
 
@@ -1053,6 +1075,185 @@ describe('since-filtered reads', () => {
     expect(readAgentInbox('nova', { since: 1.5 }, options)).toMatchObject({ status: 'invalid' });
     expect(readAgentChannel('release', { since: Number.NaN }, options)).toMatchObject({ status: 'invalid' });
     expect(readAgentChannel('release', { since: Number.MAX_SAFE_INTEGER + 1 }, options)).toMatchObject({ status: 'invalid' });
+  });
+
+  it('keeps only rows received strictly before the cutoff on inbox and channel reads', async () => {
+    const options = setup(10_000);
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'old dm', id: 'bb-old-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'old post', id: 'bb-old-ch' }, options);
+    options.clock.now = 20_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'new dm', id: 'bb-new-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'new post', id: 'bb-new-ch' }, options);
+    options.clock.now = 30_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'edge dm', id: 'bb-edge-dm' }, options);
+
+    // The bound is exclusive: a row stamped exactly at it never matches,
+    // and the channel post reaches nova's inbox as channel mail too.
+    const inbox = readAgentInbox('nova', { before: 30_000 }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => m.envelope.id))
+      .toEqual(['bb-old-dm', 'bb-old-ch', 'bb-new-dm', 'bb-new-ch']);
+    const channel = readAgentChannel('release', { before: 30_000 }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['bb-old-ch', 'bb-new-ch']);
+
+    // --matched counts only the rows the cutoff accepts.
+    const counted = readAgentInbox('nova', { before: 30_000, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(4);
+
+    // The pair reads one [since, before) window on receivedAt: the lower
+    // bound inclusive, the upper exclusive.
+    expect(readAgentInbox('nova', { since: 20_000, before: 30_000 }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-new-dm' } },
+        { envelope: { id: 'bb-new-ch' } }] });
+    expect(readAgentChannel('release', { since: 10_000, before: 20_000 }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-old-ch' } }] });
+    // A window that admits nothing still scans the whole store.
+    const empty = readAgentInbox('nova', { since: 30_000, before: 30_000 }, options);
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.messages).toEqual([]);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+
+    // It composes with the other page filters.
+    expect(readAgentInbox('nova', { before: 30_000, kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-old-dm' } },
+        { envelope: { id: 'bb-new-dm' } }] });
+    expect(readAgentChannel('release', { before: 30_000, topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Invalid cutoffs are refused, never silently widened or emptied.
+    expect(readAgentInbox('nova', { before: -1 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { before: 1.5 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { before: Number.NaN }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { before: Number.MAX_SAFE_INTEGER + 1 }, options))
+      .toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('reply-citation-filtered reads', () => {
+  it('keeps only rows whose object body cites the envelope id on inbox and channel reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // The cited parent and three replies to it, plus mail that must never match.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'take this', id: 'rt-ask' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer one', replyTo: 'rt-ask', id: 'rt-ans1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer two', replyTo: 'rt-ask', id: 'rt-ans2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer elsewhere', replyTo: 'rt-other', id: 'rt-ans3' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'no citation', id: 'rt-plain' }, options);
+    // A replyTo alias, a substring citation and a non-object body never match.
+    expect(appendBusInbox({ id: 'rt-alias', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { replyTo: 'rt-ask', text: 'alias shape' } }, { root: options.root, now: options.now }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'rt-sub', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'x', inReplyTo: 'rt-ask-extra' } }, { root: options.root, now: options.now }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'rt-prim', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: 'rt-ask' }, { root: options.root, now: options.now }).status).toBe('posted');
+    // Channel posts citing the same parent join the room read, not nova's dm kinds.
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room answer', replyTo: 'rt-ask', id: 'rt-ch1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room noise', id: 'rt-ch2' }, options);
+
+    // Inbox: the two citing DMs plus the channel post nova receives as channel mail.
+    const inbox = readAgentInbox('nova', { inReplyTo: 'rt-ask' }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => m.envelope.id).sort()).toEqual(['rt-ans1', 'rt-ans2', 'rt-ch1']);
+    // It composes with the other filters and --matched counts only accepted rows.
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-ask', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'rt-ans1' } }, { envelope: { id: 'rt-ans2' } }] });
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-ask', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const counted = readAgentInbox('nova', { inReplyTo: 'rt-ask', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // A cited id nothing answers is an honest empty page, and the unfiltered
+    // page still sees every row the filter skipped.
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-none' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(10);
+
+    // Channel read: only the room post carrying the citation.
+    const room = readAgentChannel('release', { inReplyTo: 'rt-ask' }, options);
+    if (room.status !== 'ok') throw new Error(`unexpected ${room.status}`);
+    expect(room.messages.map(m => m.envelope.id)).toEqual(['rt-ch1']);
+    const roomCounted = readAgentChannel('release', { inReplyTo: 'rt-ask', matched: true }, options);
+    if (roomCounted.status !== 'ok') throw new Error(`unexpected ${roomCounted.status}`);
+    expect(roomCounted.matched).toBe(1);
+    expect(readAgentChannel('release', { inReplyTo: 'rt-ask', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Malformed citations are refused on both reads, never silently widened.
+    for (const bad of ['', 'has space', 'x'.repeat(129), 42 as never]) {
+      expect(readAgentInbox('nova', { inReplyTo: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { inReplyTo: bad }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { inReplyTo: 'x'.repeat(128) }, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('envelope-id-filtered reads', () => {
+  it('keeps only the row whose own wire id equals the value on inbox, channel and wakes reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'first', id: 'id-dm-1', priority: 'P1', wake: true }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'second', id: 'id-dm-2', priority: 'P2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room one', id: 'id-ch-1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room two', id: 'id-ch-2' }, options);
+    // A substring, a citation and a near-miss id never match — the filter is
+    // the wire id's own strict equality, like the raw bus reads' --id.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'cites id-dm-1',
+      replyTo: 'id-dm-1', id: 'id-dm-3' }, options);
+
+    // Inbox: the addressed row only, composing with the other filters and
+    // --matched counting the same accepted set.
+    const inbox = readAgentInbox('nova', { id: 'id-dm-1' }, options);
+    expect(inbox).toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-dm-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-ch-1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'id-ch-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-dm-1', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-dm-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-dm-1', kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const counted = readAgentInbox('nova', { id: 'id-dm-1', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(1);
+    // An id no addressed row carries is an honest empty page.
+    expect(readAgentInbox('nova', { id: 'id-absent' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Channel read: only the room post carrying that wire id.
+    const room = readAgentChannel('release', { id: 'id-ch-2' }, options);
+    expect(room).toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-ch-2' } }] });
+    const roomCounted = readAgentChannel('release', { id: 'id-ch-2', matched: true }, options);
+    if (roomCounted.status !== 'ok') throw new Error(`unexpected ${roomCounted.status}`);
+    expect(roomCounted.matched).toBe(1);
+    expect(readAgentChannel('release', { id: 'id-dm-1' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Wakes: the bus.send hint carries the triggering envelope's wire id as
+    // its own, so id-dm-1's pending hint is one filtered read — per-agent
+    // and fleet-wide — decided on the queue row alone.
+    const wake = readAgentWakes('nova', undefined, options, { id: 'id-dm-1' });
+    expect(wake).toMatchObject({ status: 'ok', matched: 1 });
+    if (wake.status !== 'ok') throw new Error('unreachable');
+    expect(wake.wakes.map(row => row.id)).toEqual(['id-dm-1']);
+    const fleet = readAllWakes(undefined, options, { id: 'id-dm-2' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 0, wakes: [] });
+    // A wh-… claim-holder hint id matches its own row the same way.
+    expect(readAllWakes(undefined, options, { id: 'wh-' + 'a'.repeat(32) }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+
+    // Malformed ids are refused on every read, never silently widened.
+    for (const bad of ['', 'has space', 'x'.repeat(129), 42 as never]) {
+      expect(readAgentInbox('nova', { id: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { id: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentWakes('nova', undefined, options, { id: bad })).toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { id: bad })).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { id: 'x'.repeat(128) }, options)).toMatchObject({ status: 'ok' });
   });
 });
 
@@ -2675,6 +2876,55 @@ describe('fleet-wide wakes read', () => {
       .toMatchObject({ status: 'invalid' });
   });
 
+  it('filters hints by the channel room their to label addresses', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    expect(createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'orion'] }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops', createdBy: 'atlas' }, options).status).toBe('created');
+    expect(createAgentChannel({ name: 'ops-team', createdBy: 'atlas' }, options).status).toBe('created');
+    // P0 posts wake the room address; a plain DM wakes only its addressee.
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', text: 'cut now',
+      id: 'w-rel-atlas', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'orion', channel: 'release', text: 'ack',
+      id: 'w-rel-orion', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops', text: 'page ops',
+      id: 'w-ops', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'ops-team', text: 'sub-team',
+      id: 'w-ops-team', priority: 'P0' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'dm',
+      id: 'w-dm', priority: 'P0', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    const release = readAllWakes(undefined, options, { channel: 'release' });
+    expect(release).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (release.status !== 'ok') throw new Error('unreachable');
+    expect(release.wakes.map(row => row.id)).toEqual(['w-rel-atlas', 'w-rel-orion']);
+    expect(release.wakes.map(row => row.to)).toEqual(['group:release:general', 'group:release:general']);
+    // The room prefix is exact — ops-team traffic never leaks into ops, and a
+    // grammatically valid name no hint addresses matches nothing, not an error.
+    const ops = readAllWakes(undefined, options, { channel: 'ops' });
+    expect(ops).toMatchObject({ status: 'ok', matched: 1 });
+    if (ops.status !== 'ok') throw new Error('unreachable');
+    expect(ops.wakes.map(row => row.id)).toEqual(['w-ops']);
+    expect(readAllWakes(undefined, options, { channel: 'absent' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAllWakes(undefined, options, { channel: 'Bad Name' }))
+      .toMatchObject({ status: 'invalid' });
+
+    // The per-agent read narrows inside the same addressee scope: nova belongs
+    // to release but not ops, so only the room's hints show for her.
+    const novaRelease = readAgentWakes('nova', undefined, options, { channel: 'release' });
+    expect(novaRelease).toMatchObject({ status: 'ok', matched: 2 });
+    if (novaRelease.status !== 'ok') throw new Error('unreachable');
+    expect(novaRelease.wakes.map(row => row.id)).toEqual(['w-rel-atlas', 'w-rel-orion']);
+    expect(readAgentWakes('nova', undefined, options, { channel: 'ops' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // The filter composes with the queue-tail sender match like every other.
+    const orionOnly = readAllWakes(undefined, options, { channel: 'release', from: 'orion' });
+    expect(orionOnly).toMatchObject({ status: 'ok', matched: 1 });
+    if (orionOnly.status !== 'ok') throw new Error('unreachable');
+    expect(orionOnly.wakes.map(row => row.id)).toEqual(['w-rel-orion']);
+  });
+
   it('resolves claim-holder hints and fails closed on an unreadable bus store', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
@@ -2710,6 +2960,55 @@ describe('fleet-wide wakes read', () => {
     expect(readAllWakes(undefined, options, { priority: 'P0' }))
       .toMatchObject({ status: 'unavailable' });
     expect(readAllWakes(undefined, options)).toMatchObject({ status: 'ok' });
+  });
+
+  it('bounds wake hints by the exclusive before on queue time under the same (since, before) window', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // Direct queue writes carry the injected clock, so old/edge/new
+    // discrimination is provable — the send path stamps wall-clock `at`.
+    const wake = (id: string, at: number, to = 'agent:atlas'): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to },
+        { root: options.runsRoot, now: () => at })).toBe('queued');
+    };
+    wake('wb-old', 1_000);
+    wake('wb-edge', 2_000);
+    wake('wb-new', 3_000);
+    wake('wb-other', 1_500, 'agent:nova');
+
+    // before is exclusive on the hint's queue `at`: the edge row drops,
+    // and the addressee scope still applies on the per-agent read.
+    const page = readAgentWakes('atlas', undefined, options, { before: 2_000 });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wb-old']);
+
+    // It composes with sinceAt's strictly-after boundary into one
+    // (since, before) window on queue time.
+    const window = readAgentWakes('atlas', 1_000, options, { before: 3_000 });
+    expect(window).toMatchObject({ status: 'ok', matched: 1 });
+    if (window.status !== 'ok') throw new Error('unreachable');
+    expect(window.wakes.map(row => row.id)).toEqual(['wb-edge']);
+
+    // The fleet-wide read applies the identical bound and window.
+    const fleet = readAllWakes(undefined, options, { before: 2_000 });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['wb-old', 'wb-other']);
+    // The edge row drops here too: wb-new sits exactly at the cutoff, and
+    // wb-other — another addressee's hint — stays inside the window.
+    const fleetWindow = readAllWakes(1_000, options, { before: 3_000 });
+    expect(fleetWindow).toMatchObject({ status: 'ok', matched: 2 });
+    if (fleetWindow.status !== 'ok') throw new Error('unreachable');
+    expect(fleetWindow.wakes.map(row => row.id)).toEqual(['wb-edge', 'wb-other']);
+
+    // Invalid cutoffs are refused like every other filter, on both reads.
+    for (const before of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(readAgentWakes('atlas', undefined, options, { before }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { before }))
+        .toMatchObject({ status: 'invalid' });
+    }
   });
 });
 

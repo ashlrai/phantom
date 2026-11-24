@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdBus } from '../src/cli/bus.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createBusMailbox, type BusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { MAX_BUS_ENVELOPE_BYTES, validateBusEnvelope, type BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
@@ -185,6 +186,119 @@ describe('phm bus CLI', () => {
     expect(large.code).toBe(2);
     const deep = await json(['send', '--from', 'a', '--to', 'b', '--body', '['.repeat(33) + '0' + ']'.repeat(33)]);
     expect(deep.code).toBe(2);
+    expect(readdirSync(home)).toEqual([]);
+  });
+});
+
+describe('phm bus inbox read filters', () => {
+  const ids = (value: { messages: { id: string }[] }): string[] => value.messages.map(m => m.id);
+
+  it('keeps one priority band and reports the filtered truncation honestly', async () => {
+    bus.send(envelope({ id: 'urgent', priority: 'P0' }));
+    time++;
+    bus.send(envelope({ id: 'urgent-later', priority: 'P0' }));
+    bus.send(envelope({ id: 'normal', priority: 'P2' }));
+    bus.send(envelope({ id: 'low', priority: 'P3' }));
+    const result = await json(['inbox', '--to', 'fleet', '--priority', 'P0']);
+    expect(ids(result.value)).toEqual(['urgent', 'urgent-later']);
+    expect(result.value.hasMore).toBe(false);
+    // hasMore counts the filtered pending set: two P0 matches against limit 1 truncates even though three other priorities wait.
+    const limited = await json(['inbox', '--to', 'fleet', '--priority', 'P0', '--limit', '1']);
+    expect(ids(limited.value)).toEqual(['urgent']);
+    expect(limited.value.hasMore).toBe(true);
+    const none = await json(['inbox', '--to', 'fleet', '--priority', 'P1']);
+    expect(none.value).toEqual({ ok: true, hasMore: false, messages: [] });
+  });
+
+  it('filters by sender label and excludes one, resolving identities through the registry', async () => {
+    bus.send(envelope({ id: 'from-alice', from: 'alice' }));
+    bus.send(envelope({ id: 'from-bob', from: 'bob' }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--from', 'alice'])).value)).toEqual(['from-alice']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--exclude-from', 'alice'])).value)).toEqual(['from-bob']);
+    // An unresolvable ref keeps exact-label matching: no identity named 'carol' exists.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--from', 'carol'])).value)).toEqual([]);
+  });
+
+  it('matches every label of one registered identity for --from and --exclude-from', async () => {
+    const registered = registerAgentIdentity({ handle: 'devin', aliases: ['legacy-dv'] });
+    expect(registered.status).toBe('created');
+    bus.send(envelope({ id: 'via-handle', from: 'agent:devin' }));
+    bus.send(envelope({ id: 'via-alias', from: 'legacy-dv' }));
+    bus.send(envelope({ id: 'via-other', from: 'other' }));
+    const from = await json(['inbox', '--to', 'fleet', '--from', 'devin']);
+    expect(ids(from.value).sort()).toEqual(['via-alias', 'via-handle']);
+    const excluded = await json(['inbox', '--to', 'fleet', '--exclude-from', 'devin']);
+    expect(ids(excluded.value)).toEqual(['via-other']);
+  });
+
+  it('keeps mail inside the [since, before) acceptance-time window', async () => {
+    // ttl outlives the whole window so expiry never masquerades as a filter miss.
+    const live = { ttl: 86_400_000 };
+    time = 1000; bus.send(envelope({ id: 'early', ...live }));
+    time = 2000; bus.send(envelope({ id: 'middle', ...live }));
+    time = 3000; bus.send(envelope({ id: 'late', ...live }));
+    time = 3000;
+    // --since is inclusive, --before exclusive: the pair reads one [since, before) window.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--since', '2000', '--before', '3000'])).value)).toEqual(['middle']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--since', '2000'])).value)).toEqual(['middle', 'late']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--before', '2000'])).value)).toEqual(['early']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--before', '1000'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--since', '15m'])).value)).toEqual([]);
+  });
+
+  it('keeps envelopes whose body cites the job, thread or reply id', async () => {
+    bus.send(envelope({ id: 'job-mail', body: { kind: 'note', thread: 'job:RQ-7', text: 'about the feed' } }));
+    bus.send(envelope({ id: 'thread-mail', body: { kind: 'note', thread: 't-42', text: 'side chat' } }));
+    bus.send(envelope({ id: 'reply-mail', body: { inReplyTo: 'orig-1', text: 'the answer' } }));
+    bus.send(envelope({ id: 'plain', body: { text: 'unrelated' } }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--job', 'RQ-7'])).value)).toEqual(['job-mail']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--thread', 't-42'])).value)).toEqual(['thread-mail']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--in-reply-to', 'orig-1'])).value)).toEqual(['reply-mail']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--in-reply-to', 'job-mail'])).value)).toEqual([]);
+  });
+
+  it('keeps envelopes addressed to the channel prefix and matches --contains on the rendered summary', async () => {
+    bus.send(envelope({ id: 'chan-work', to: 'group:general:work', body: { text: 'deploy the fix' } }));
+    bus.send(envelope({ id: 'chan-alerts', to: 'group:general:alerts', body: { text: 'deploy the alarm' } }));
+    bus.send(envelope({ id: 'dm', to: 'fleet', body: { text: 'deploy the plan' } }));
+    // --channel keeps the room's whole traffic under every topic on the same to label.
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--channel', 'general'])).value)).toEqual(['chan-work']);
+    expect(ids((await json(['inbox', '--to', 'group:general:work', '--channel', 'alerts'])).value)).toEqual([]);
+    // --contains is a case-insensitive substring of the scrubbed one-line summary.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--contains', 'DEPLOY THE'])).value)).toEqual(['dm']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--contains', 'nomatch'])).value)).toEqual([]);
+  });
+
+  it('ANDs every supplied filter and keeps hasMore honest about the filtered set', async () => {
+    bus.send(envelope({ id: 'hit', from: 'alice', priority: 'P0', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
+    bus.send(envelope({ id: 'miss-priority', from: 'alice', priority: 'P2', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
+    bus.send(envelope({ id: 'miss-job', from: 'alice', priority: 'P0', body: { text: 'needle here' } }));
+    bus.send(envelope({ id: 'miss-sender', from: 'bob', priority: 'P0', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
+    const result = await json(['inbox', '--to', 'fleet', '--from', 'alice', '--priority', 'P0',
+      '--job', 'RQ-9', '--contains', 'needle']);
+    expect(ids(result.value)).toEqual(['hit']);
+    expect(result.value.hasMore).toBe(false);
+  });
+
+  it('rejects malformed filter values before loading the store', async () => {
+    const load = vi.fn(() => bus);
+    for (const args of [
+      ['inbox', '--to', 'fleet', '--priority', 'urgent'],
+      ['inbox', '--to', 'fleet', '--since', 'not-a-time'],
+      ['inbox', '--to', 'fleet', '--before', 'not-a-time'],
+      ['inbox', '--to', 'fleet', '--contains', '   '],
+      ['inbox', '--to', 'fleet', '--channel', 'Bad Channel'],
+      ['inbox', '--to', 'fleet', '--job', 'two words'],
+      ['inbox', '--to', 'fleet', '--from', ''],
+      ['inbox', '--to', 'fleet', '--in-reply-to', 'has space'],
+      ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
+      ['ack', 'a', '--to', 'fleet', '--since', '1h'],
+    ]) {
+      const result = await json(args, load);
+      expect(result.code, JSON.stringify(args)).toBe(2);
+      expect(result.value.error.code).toBe('usage');
+    }
+    expect(load).not.toHaveBeenCalled();
     expect(readdirSync(home)).toEqual([]);
   });
 });

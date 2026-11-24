@@ -18,7 +18,8 @@
  * the printable-label rule keeps literal-`to` matching under `scope:
  * 'label'` — the same fallback the CLI read reports — so hints queued
  * under a bare coordination label stay readable by their addressee.
- * `since`, `job`, `from`, `excludeFrom`, `priority` and `contains` apply
+ * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
+ * `contains` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
  * the bounded queue tail accepted before its row cap) and `truncated`
@@ -36,30 +37,37 @@
 import {
   busReadContains, readAgentWakes, readAllWakes, type AllWakesPage, type WakePage,
 } from '../core/agents/bus-unified.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job`, `from` and `excludeFrom` share. */
+/** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'priority', 'contains']);
-const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id']);
+const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id'] as const;
 
 export interface FleetAgentWakesArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. Omit for the fleet-wide read: every hint in the bounded queue tail, each row's own `to` naming its addressee. */
   agent?: string;
   /** Keep only hints recorded strictly after this epoch-ms cutoff — the wakes read's own boundary. */
   since?: number;
+  /** Keep only hints recorded strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into the wakes read's own `(since, before)` window on queue time. */
+  before?: number;
   /** Keep only hints provably naming this job id — the same `busBodyJobMatch` rule every bus `--job` read applies. */
   job?: string;
   /** Keep only hints sent under any registered spelling of this sender ref. */
   from?: string;
   /** Drop hints sent under any registered spelling of this sender ref. */
   excludeFrom?: string;
+  /** Keep only hints addressed to `group:<name>:*` of this channel — the same room prefix `phm agents bus wakes --channel` and every other bus read's channel filter match. */
+  channel?: string;
   /** Keep only hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies. */
   priority?: BusPriority;
   /** Keep only hints whose resolved referent text carries this needle — the shared `--contains` rule. */
   contains?: string;
+  /** Keep only the hint whose own id is strictly equal to the value — the triggering envelope's wire id on a bus.send hint, the wh-… claim-holder id on those — the same exact-id match `phm agents bus wakes --id` applies. */
+  id?: string;
 }
 
 /**
@@ -67,8 +75,9 @@ export interface FleetAgentWakesArgs {
  * tools/list schema, so the server re-validates on every call. `agent`
  * is required — the addressed read has no meaningful default — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
- * the other bus reads share: `job`/`from`/`excludeFrom` printable routing
- * labels, the P0–P3 priority enum, `since` the shared
+ * the other bus reads share: `job`/`from`/`excludeFrom`/`id` printable
+ * routing labels (`id` the exact hint-id match), `channel` the strict
+ * channel-name grammar, the P0–P3 priority enum, `since` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
  * to a safe non-negative epoch-ms integer, and `contains` the bounded
  * free-text needle `busReadContains` normalizes. Unknown keys, wrong
@@ -88,6 +97,11 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     parsed[key] = value;
   }
+  const channel = args.channel;
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    parsed.channel = channel;
+  }
   const priority = args.priority;
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
@@ -99,6 +113,13 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     parsed.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.before = resolved;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
@@ -142,8 +163,11 @@ export async function readFleetAgentWakes(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
+    ...(args.id === undefined ? {} : { id: args.id }),
   };
   const page: WakePage | AllWakesPage = args.agent === undefined
     ? (deps.readAll ?? readAllWakes)(args.since, {}, filter)

@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, appendBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxPost, type BusInboxReceipt } from './bus-inbox.js';
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
+import { busReplyCitations } from './handoff-body.js';
 import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 
 export type RequestOutcome = 'replied' | 'timeout' | 'cancelled' | 'post-refused' | 'source-unavailable' | 'invalid-input';
@@ -69,9 +70,15 @@ export async function requestBusRoundtrip(input: unknown, timeoutMs: number, int
       if (stopped()) return result(stopped()!);
       if (!beforePost) {
         for (const row of page.messages) {
-          const { envelope } = row, body = envelope.body;
-          if (envelope.ttl > Math.max(0, readEnded - readStarted) && replyFrom(envelope.from) && replyTo(envelope.to) && body !== null &&
-              typeof body === 'object' && !Array.isArray(body) && Object.hasOwn(body, 'inReplyTo') && body.inReplyTo === request.id) {
+          const { envelope } = row;
+          // A reply cites the request id through the same inReplyTo/replyTo
+          // citations busReplyCitations collects — the rule
+          // workerHandoffAnswered, the conversation projection, the message
+          // classifier and the pending-work sections already apply — so a
+          // peer answering under either spelling completes the roundtrip.
+          // Correlation stays untrusted routing data either way.
+          if (envelope.ttl > Math.max(0, readEnded - readStarted) && replyFrom(envelope.from) && replyTo(envelope.to) &&
+              busReplyCitations(envelope).some(citation => citation.citedId === request.id)) {
             const stopBeforeReply = stopped();
             if (stopBeforeReply) return result(stopBeforeReply);
             cursor = row.cursor;
