@@ -4,13 +4,27 @@ import test from 'node:test';
 import { ACTIONS_APP_ID, SMOKE, SUITES, RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS, masterReleaseSettled, releasePrepDecision, releasePrepPlan } from '../scripts/release-prep-dedup.mjs';
 
 const check = (name, status, conclusion, appId = ACTIONS_APP_ID) => ({ name, status, conclusion, appId });
-const run = (event, status, path = '.github/workflows/ci.yml') => ({ path, event, status });
+const run = (event, status, conclusion = null, path = '.github/workflows/ci.yml') => ({ path, event, status, conclusion });
+const pushSuccess = () => run('push', 'completed', 'success');
 const NOW = Date.parse('2026-11-19T12:00:00Z');
 const dispatchRun = (status, ageMs = 60_000, event = 'workflow_dispatch', path = '.github/workflows/ci.yml') =>
   ({ path, event, status, createdAt: NOW - ageMs });
 
 test('dispatches when this sha has no smoke or suites yet', () => {
-  assert.deepEqual(releasePrepDecision({ checks: [], runs: [] }), { dispatch: true, reason: 'needed' });
+  assert.deepEqual(releasePrepDecision({ checks: [], runs: [pushSuccess()] }), { dispatch: true, reason: 'needed' });
+});
+
+test('waits for completed exact-sha push CI before dispatching', () => {
+  assert.deepEqual(releasePrepDecision({ checks: [], runs: [] }), { dispatch: false, reason: 'push-ci-pending' });
+  assert.deepEqual(releasePrepDecision({
+    checks: [], runs: [run('push', 'in_progress')],
+  }), { dispatch: false, reason: 'push-ci-pending' });
+});
+
+test('does not dispatch after completed exact-sha push CI fails', () => {
+  assert.deepEqual(releasePrepDecision({
+    checks: [], runs: [run('push', 'completed', 'failure')],
+  }), { dispatch: false, reason: 'push-ci-red' });
 });
 
 test('does not dispatch when both checks are already green on this sha', () => {
@@ -27,11 +41,11 @@ test('does not dispatch while either check or a release-gate run is in flight', 
     checks: [check(SMOKE, 'in_progress', null)], runs: [],
   }).reason, 'checks-in-progress');
   assert.equal(releasePrepDecision({
-    checks: [], runs: [run('workflow_dispatch', 'queued')],
+    checks: [], runs: [pushSuccess(), run('workflow_dispatch', 'queued')],
   }).reason, 'release-run-in-flight');
   assert.equal(releasePrepDecision({
     checks: [], runs: [run('push', 'in_progress')],
-  }).reason, 'needed');
+  }).reason, 'push-ci-pending');
 });
 
 test('ignores a same-named check from another app', () => {
@@ -39,12 +53,12 @@ test('ignores a same-named check from another app', () => {
     check(SMOKE, 'completed', 'success', 1),
     check(SUITES, 'completed', 'success', 1),
   ];
-  assert.equal(releasePrepDecision({ checks, runs: [] }).reason, 'needed');
+  assert.equal(releasePrepDecision({ checks, runs: [pushSuccess()] }).reason, 'needed');
 });
 
 test('an unfinished master dispatch on any sha already covers the owed version', () => {
   for (const status of ['queued', 'in_progress', 'waiting', 'requested', 'pending']) {
-    assert.equal(releasePrepDecision({ checks: [], runs: [], dispatchRuns: [dispatchRun(status)], now: NOW }).reason,
+    assert.equal(releasePrepDecision({ checks: [], runs: [pushSuccess()], dispatchRuns: [dispatchRun(status)], now: NOW }).reason,
       'release-run-in-flight');
   }
   // Completed dispatches, scheduled full runs and foreign paths never block:
@@ -55,25 +69,25 @@ test('an unfinished master dispatch on any sha already covers the owed version',
     dispatchRun('queued', 60_000, 'workflow_dispatch', '.github/workflows/other.yml'),
     { path: '.github/workflows/ci.yml', event: 'workflow_dispatch', status: 'queued' },
   ]) {
-    assert.equal(releasePrepDecision({ checks: [], runs: [], dispatchRuns: [row], now: NOW }).reason, 'needed');
+    assert.equal(releasePrepDecision({ checks: [], runs: [pushSuccess()], dispatchRuns: [row], now: NOW }).reason, 'needed');
   }
 });
 
 test('a stale or future-dated unfinished dispatch cannot gate later decisions forever', () => {
   assert.equal(RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS, 3 * 60 * 60_000);
   assert.equal(releasePrepDecision({
-    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS + 1)], now: NOW,
+    checks: [], runs: [pushSuccess()], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS + 1)], now: NOW,
   }).reason, 'needed');
   assert.equal(releasePrepDecision({
-    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS)], now: NOW,
+    checks: [], runs: [pushSuccess()], dispatchRuns: [dispatchRun('queued', RELEASE_RUN_IN_FLIGHT_MAX_AGE_MS)], now: NOW,
   }).reason, 'release-run-in-flight');
   // Sixty seconds of clock skew still counts as in flight; beyond that or a
   // missing timestamp fails open to dispatching, matching prior behavior.
   assert.equal(releasePrepDecision({
-    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', -60_000)], now: NOW,
+    checks: [], runs: [pushSuccess()], dispatchRuns: [dispatchRun('queued', -60_000)], now: NOW,
   }).reason, 'release-run-in-flight');
   assert.equal(releasePrepDecision({
-    checks: [], runs: [], dispatchRuns: [dispatchRun('queued', -120_000)], now: NOW,
+    checks: [], runs: [pushSuccess()], dispatchRuns: [dispatchRun('queued', -120_000)], now: NOW,
   }).reason, 'needed');
 });
 
@@ -86,7 +100,7 @@ test('sha-local evidence still decides before the cross-sha dispatch check', () 
     checks: [check(SMOKE, 'in_progress', null)], runs: [], dispatchRuns: blocking, now: NOW,
   }).reason, 'checks-in-progress');
   assert.equal(releasePrepDecision({
-    checks: [], runs: [run('workflow_dispatch', 'queued')], dispatchRuns: blocking, now: NOW,
+    checks: [], runs: [pushSuccess(), run('workflow_dispatch', 'queued')], dispatchRuns: blocking, now: NOW,
   }).reason, 'release-run-in-flight');
 });
 
@@ -153,7 +167,8 @@ test('releasePrepPlan skips the inventory once the version is settled', () => {
   const owed = settledRead({ version: '3.30.41', tag: 404 });
   const decision = releasePrepPlan('ashlrai/phantom', SHA40, (path) => {
     if (/check-runs/.test(path)) return { check_runs: [] };
-    if (/workflows\/ci\.yml\/runs/.test(path)) return { workflow_runs: [] };
+    if (path.includes('event=workflow_dispatch&branch=master')) return { workflow_runs: [] };
+    if (/workflows\/ci\.yml\/runs/.test(path)) return { workflow_runs: [pushSuccess()] };
     return owed.read(path);
   });
   assert.deepEqual(decision, { dispatch: true, reason: 'needed' });
