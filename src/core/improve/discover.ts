@@ -685,6 +685,22 @@
  *     days, designed posture reasons never emit, truncated tails are
  *     stated as lower bounds, and items emit only for the fleet's own
  *     repository since the market view describes this install's lanes;
+ *   - the live fleet-config audit journal's recurring per-key churn and
+ *     off-contract rows: the {v, at, op, key, from, to, by, reason}
+ *     fleet.config.audit.v1 rows `phm fleet config set|unset` appends to
+ *     <runs>/queue/live-config-audit.jsonl — the runtime-dynamic layer
+ *     above slots.json, budget-overrides.json and the pinned
+ *     dispatcher's own lane controller — until now read only by `phm
+ *     fleet config audit`'s point-in-time display, so a knob that kept
+ *     being hand-retuned never became work (liveConfigBacklogItems
+ *     below). A cell emits only at the recurring bars of three change
+ *     rows across two distinct UTC days inside the 7-day window —
+ *     per-key for keys in the writer's current mutable vocabulary,
+ *     global for rows whose keys fell outside it — truncated tails are
+ *     stated as lower bounds, actor and reason text is never emitted,
+ *     and items emit only for the fleet's own repository since the
+ *     journal describes this install's config and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -775,6 +791,7 @@ import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { marketPostureBacklogItems } from './market-posture-backlog.js';
+import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1786,6 +1803,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // stated as lower bounds, and only the fleet's own repository
   // inherits the items since the journal carries no repo column.
   items.push(...await landedCloseBacklogItems({ repo }));
+
+  // Live fleet-config audit journal (queue/live-config-audit.jsonl under
+  // the runs dir): the {v, at, op, key, from, to, by, reason}
+  // fleet.config.audit.v1 rows `phm fleet config set|unset` appends per
+  // applied live-config write — the runtime-dynamic layer above
+  // slots.json, budget-overrides.json and the pinned dispatcher's own
+  // lane controller. Until now the journal's only reader was `phm fleet
+  // config audit`'s point-in-time display, so a mutable key that kept
+  // being hand-retuned — lane bounds, the fleet hard_cap, the *.off
+  // kill switches, local.worker_gb, the compact.lanes.* freeze lines —
+  // or audit rows whose keys fell outside the current mutable
+  // vocabulary never became work. A cell emits only at the recurring
+  // bars of three change rows across two distinct UTC days inside the
+  // 7-day window, truncated tails are stated as lower bounds, actor and
+  // reason text is never emitted, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // config and carries no repo column.
+  items.push(...await liveConfigBacklogItems({ repo }));
   return { items, errors };
 }
 

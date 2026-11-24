@@ -630,6 +630,7 @@
 /test/improve-launch-cost-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
+/test/improve-live-config-backlog.test.ts @masonwyatt23
 /test/improve-load-backlog.test.ts @masonwyatt23
 /test/improve-lost-launch-backlog.test.ts @masonwyatt23
 /test/improve-market-posture-backlog.test.ts @masonwyatt23

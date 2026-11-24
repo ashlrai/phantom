@@ -1286,7 +1286,25 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   cell emits only at the recurring bars of three adverse rows across
   two distinct UTC days inside the 7-day window, truncated tails are
   stated as lower bounds, and items emit only for the fleet's own
-  repository since the journal carries no repo column.
+  repository since the journal carries no repo column,
+  and the live fleet-config audit journal's recurring per-key churn
+  and off-contract rows, the {v, at, op, key, from, to, by, reason}
+  fleet.config.audit.v1 rows `phm fleet config set|unset` appends to
+  <runs>/queue/live-config-audit.jsonl — the runtime-dynamic layer
+  above slots.json, budget-overrides.json and the pinned dispatcher's
+  own lane controller (liveConfigBacklogItems). Until now the
+  journal's only reader was `phm fleet config audit`'s point-in-time
+  display, so a mutable key that kept being hand-retuned — lane
+  bounds, the fleet hard_cap, the *.off kill switches,
+  local.worker_gb, the compact.lanes.* freeze lines — or audit rows
+  whose keys fell outside the writer's current mutable vocabulary
+  never became work. A cell emits only at the recurring bars of three
+  change rows across two distinct UTC days inside the 7-day window —
+  per-key for keys in the mutable vocabulary, global for off-contract
+  rows — truncated tails are stated as lower bounds, actor and reason
+  text is never emitted, and items emit only for the fleet's own
+  repository since the journal describes this install's config and
+  carries no repo column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1297,7 +1315,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome and landed-close items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close and live-config items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
