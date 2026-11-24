@@ -1069,7 +1069,39 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   self-trim is stated as a lower bound when it truncates, argument
   signatures quote key names only, and rows emit only for the fleet's
   own repository since the journal describes this install's gateway
-  and carries no repository column.
+  and carries no repository column,
+  and the scheduled-routines attempt journal's recurring adverse
+  evidence, the per-attempt {routine, executor, at, duration,
+  costEstimate, outcome, slot} rows run() in
+  `src/core/routines/scheduler.ts` appends to `runs.jsonl` under the
+  routines directory of the Ashlr home on every `phm routines tick`
+  firing and `phm routines run` — outcome the writer's closed
+  vocabulary, 'success' and 'submitted' the working states, 'failed'
+  the classify() fallback for an invocation error that is not quota,
+  rate-limit or unhealthy, 'quota', 'rate-limit' and 'unhealthy' the
+  provider-side limits and 'unavailable' the no-eligible-executor
+  record always under the 'none' executor sentinel (otherwise only
+  visible through the scheduler's own point-in-time folds —
+  history() feeding candidates()' cooldowns and daily-limit tallies
+  and status() rendering STATUS.md's last-attempt table — so a
+  routine whose attempts keep failing, a routine that keeps finding
+  no eligible executor and an executor that keeps recording
+  provider-side failures across the routines that use it never
+  became work). A cell — a (routine, outcome) group on the
+  routine-side outcomes 'failed' and 'unavailable', or an
+  (executor, outcome) group on 'failed', 'quota', 'rate-limit' and
+  'unhealthy' — becomes an item only while its in-window rows reach
+  the recurring bars of three across two distinct UTC days inside
+  the 7-day window; 'success' and 'submitted' rows never emit and
+  'unavailable' rows never form executor cells since the 'none'
+  sentinel names no executor, rows count only under the writer's
+  contract (the scheduler's own id pattern on routine and executor,
+  a parseable `at`, finite non-negative duration and costEstimate,
+  the closed outcome vocabulary, an optional string slot), a bounded
+  no-follow tail read is stated as a lower bound when it truncates,
+  and rows emit only for the fleet's own repository since the
+  journal describes this install's schedules and executors and
+  carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1079,7 +1111,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh and mcp-gateway items carry priority 3;
+  catalog-refresh, mcp-gateway and routines items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1346,7 +1378,16 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   human report needs no machine-telemetry recurrence bar, and flags
   carry no expiry so the fold covers every retained row — with
   descriptions scrubbed, deduped, capped and quoted inside a DATA
-  fence. They
+  fence. Routine items
+  name the attempt journal, `phm routines status` and
+  `src/core/routines/scheduler.ts`, keep the
+  routine-definition-versus-executor-versus-operator-config framing
+  per cell — a classify() gap, an executor adapter or eligibility bug
+  this repository owns versus routines.yaml definitions, credentials,
+  billing and provider-side quota only the owner can fix — with the
+  same owner-side no-change escape, and emit only for the fleet's own
+  repository since the journal describes this install's schedules and
+  executors and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

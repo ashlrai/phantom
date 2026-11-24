@@ -597,6 +597,7 @@ import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
+import { routineBacklogItems } from './routine-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1401,6 +1402,30 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fleet's own repository inherits the items since the journal
   // describes this install's console and carries no repository column.
   items.push(...await frictionFlagBacklogItems({ repo }));
+
+  // Scheduled-routine attempt journal: the `phm routines` scheduler's own
+  // per-attempt record — runs.jsonl under the Ashlr home's routines
+  // directory, appended by tick/run on every scheduled firing — carrying
+  // the Attempt outcome vocabulary (success, submitted, failed, quota,
+  // rate-limit, unhealthy, unavailable). Until now the journal's only
+  // readers were the scheduler's own point-in-time folds — history()
+  // feeding candidates()' cooldowns and daily-limit tallies and
+  // status() rendering STATUS.md's last-attempt table — so a routine
+  // whose attempts keep failing, a routine that keeps finding no
+  // eligible executor, and an executor that keeps recording provider-
+  // side failures across the routines that use it never became work.
+  // Same bounded no-follow tail read; routine cells key (routine,
+  // outcome) on the routine-side outcomes 'failed' and 'unavailable',
+  // executor cells key (executor, outcome) on 'failed', 'quota',
+  // 'rate-limit' and 'unhealthy' — 'unavailable' rows never form
+  // executor cells since their 'none' sentinel names no executor, and
+  // 'success'/'submitted' never emit — a cell emits only at the
+  // recurring bars of rows across distinct UTC days inside the
+  // 7-day window, rows count only under the writer's contract,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's schedules and carries no repository column.
+  items.push(...await routineBacklogItems({ repo }));
   return { items, errors };
 }
 
