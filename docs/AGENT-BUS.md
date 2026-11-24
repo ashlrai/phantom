@@ -1674,10 +1674,14 @@ requester's own prior claim — so `empty` distinguishes a dry well
 (completed, expired, lost, missing, or a receipt that changed mid-claim);
 expired receipts never reach the scan, so they are never candidates.
 `fleet bus-request` and `fleet bus-scatter` correlate replies the same way: a
-reply counts when its `from` resolves to the request's `to` identity and its
-`to` resolves to the request's `from` identity, under any of their labels; a
-label that resolves to no identity, and an unreadable registry, keep
-exact-label matching. `fleet bus-follow --to` resolves its stream filter the
+reply counts when its `from` resolves to the request's `to` identity, its
+`to` resolves to the request's `from` identity under any of their labels, and
+its body cites the request id through an `inReplyTo` or `replyTo` field — the
+same citations `busReplyCitations`, `workerHandoffAnswered`, the conversation
+projection and the pending-work sections credit, so a peer answering under
+either spelling completes the roundtrip while correlation stays untrusted
+routing data; a label that resolves to no identity, and an unreadable
+registry, keep exact-label matching. `fleet bus-follow --to` resolves its stream filter the
 same way, once when the stream starts: mail addressed under any label of the
 named identity — or to a `group:<channel>:<topic>` address of a channel it
 belongs to, minus the identity's own channel posts — streams, and an
