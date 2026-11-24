@@ -51,7 +51,7 @@ export function SlackTraceBody({ view, nowMs, board }: { view: SlackTraceView; n
         <td>{row.threadTs}</td><td>{row.ingress}</td>
         <td><span className={styles.healthBadge}>{row.outcome}</span></td>
         <td>{row.replyTs ?? '—'}</td>
-        {withWork && <td><WorkCell cell={joinSlackWork(row.threadTs, board)} /></td>}
+        {withWork && <td><WorkCell cell={joinSlackWork(row.threadTs, row.channelId, board)} /></td>}
       </tr>)}</tbody>
     </table>}
   </section>;

@@ -1,6 +1,6 @@
 /** Narrowed view for GET /api/verse/fleet/control/slack-trace. Ids and timestamps only. Never throws. */
 export type SlackTraceOutcomeLabel = 'ANSWERED' | 'UNCERTAIN' | 'BUS-FAILED' | 'UNANSWERED';
-export interface SlackTraceViewRow { at: string; threadTs: string; ingress: string; outcome: SlackTraceOutcomeLabel; replyTs: string | null }
+export interface SlackTraceViewRow { at: string; channelId?: string; threadTs: string; ingress: string; outcome: SlackTraceOutcomeLabel; replyTs: string | null }
 export interface SlackTraceView {
   asOf: string;
   rows: SlackTraceViewRow[];
@@ -27,7 +27,7 @@ export function narrowSlackTrace(raw: unknown): SlackTraceView | null {
     if (!object(r)) return [];
     const outcome = typeof r.outcome === 'string' ? LABELS[r.outcome] : undefined;
     if (!outcome || !str(r.at)) return [];
-    return [{ at: str(r.at), threadTs: str(r.threadTs), ingress: str(r.ingress) || 'unknown', outcome, replyTs: str(r.replyTs) || null }];
+    return [{ at: str(r.at), channelId: typeof r.channelId === 'string' && r.channelId.length <= 64 ? r.channelId : undefined, threadTs: str(r.threadTs), ingress: str(r.ingress) || 'unknown', outcome, replyTs: str(r.replyTs) || null }];
   });
   const c = raw.counts;
   const counts = { answered: count(c.answered), uncertain: count(c.uncertain), busFailed: count(c.busFailed), unanswered: count(c.unanswered) };

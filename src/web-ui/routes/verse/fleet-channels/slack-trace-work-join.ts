@@ -14,12 +14,20 @@ export type SlackWorkCell =
 const STATES: readonly string[] = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'];
 const UNKNOWN: SlackWorkCell = { kind: 'unknown' };
 
-/** Last segment after the final `/` or `:`; covers `T/C/ts` and `slack:T:C:ts`. */
-function refThread(ref: string): string {
-  return ref.slice(Math.max(ref.lastIndexOf('/'), ref.lastIndexOf(':')) + 1);
+// Mirror the Slack identity grammar locally; browser code cannot import the backend.
+const CHANNEL = /^[CDG][A-Z0-9]{2,32}$/;
+const TEAM = /^[TE][A-Z0-9]{2,32}$/;
+const TS = /^\d{1,20}\.\d{1,10}$/;
+
+function refMatches(ref: string, channelId: string, threadTs: string): boolean {
+  if (ref.length > 128) return false;
+  const parts = ref.startsWith('slack:') ? ref.slice(6).split(':') : ref.split('/');
+  return parts.length === 3 && TEAM.test(parts[0]!) && CHANNEL.test(parts[1]!) &&
+    TS.test(parts[2]!) && parts[1] === channelId && parts[2] === threadTs;
 }
 
-export function joinSlackWork(threadTs: string, board: unknown): SlackWorkCell {
+export function joinSlackWork(threadTs: string, channelId: string | undefined, board: unknown): SlackWorkCell {
+  if (typeof channelId !== 'string' || !CHANNEL.test(channelId)) return UNKNOWN;
   if (board === null || typeof board !== 'object') return UNKNOWN;
   const b = board as Record<string, unknown>;
   if (b['inbox'] !== 'ok' || !Array.isArray(b['items'])) return UNKNOWN;
@@ -29,7 +37,7 @@ export function joinSlackWork(threadTs: string, board: unknown): SlackWorkCell {
       if (raw === null || typeof raw !== 'object') continue;
       const it = raw as Record<string, unknown>;
       if (it['channel'] !== 'slack' || typeof it['channelRef'] !== 'string') continue;
-      if (refThread(it['channelRef']) !== threadTs) continue;
+      if (!refMatches(it['channelRef'], channelId, threadTs)) continue;
       const state = it['state'];
       if (typeof state !== 'string' || !STATES.includes(state)) continue;
       const owner = typeof it['owner'] === 'string' && it['owner'] !== '' ? it['owner'] : null;
