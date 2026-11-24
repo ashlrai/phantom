@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { diffNeedsOsLegs, pathIsOsSensitive } from '../scripts/ci-os-paths.mjs';
 import { osGateDecision } from '../scripts/ci-os-gate.mjs';
 import { typecheckArgs } from '../scripts/ci-os-typecheck.mjs';
-import { PACKAGE, phmCandidates } from '../scripts/ci-install-smoke.mjs';
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { PACKAGE, assertReleaseChecksum, phmCandidates, releaseChecksumFields } from '../scripts/ci-install-smoke.mjs';
 import { failureAnnotation, firstFailureLocation } from '../scripts/ci-fast-run.mjs';
 
 test('docs and unrelated source skip the OS legs; scripts, manifests, workflows, installers and path code do not', () => {
@@ -37,6 +39,26 @@ test('the install smoke names the published package and looks up phm per OS', ()
   assert.equal(PACKAGE, '@ashlr/phantom');
   const candidates = phmCandidates('/tmp/prefix');
   assert.ok(candidates.some((candidate) => candidate.endsWith('phm') || candidate.endsWith('phm.cmd')));
+});
+
+test('the published tarball is rejected before install when its checksum is missing or wrong', () => {
+  const bytes = Buffer.from('phantom-release-bytes');
+  const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  const meta = releaseChecksumFields({
+    version: '3.30.72',
+    'dist.integrity': integrity,
+    'dist.tarball': 'https://registry.npmjs.org/@ashlr/phantom/-/phantom-3.30.72.tgz',
+  });
+  assert.equal(meta.integrity, integrity);
+  assert.doesNotThrow(() => assertReleaseChecksum(bytes, meta.integrity));
+  let installed = false;
+  const install = () => { installed = true; };
+  assert.throws(() => { assertReleaseChecksum(Buffer.alloc(0), integrity); install(); }, /tarball is missing/);
+  assert.throws(() => { assertReleaseChecksum(bytes, ''); install(); }, /checksum is missing/);
+  assert.throws(() => { assertReleaseChecksum(bytes, 'sha1-abc'); install(); }, /checksum is missing/);
+  assert.throws(() => { assertReleaseChecksum(bytes, 'sha512-aaaaaaaa'); install(); }, /checksum mismatch/);
+  assert.equal(installed, false);
+  assert.throws(() => releaseChecksumFields({ version: '3.30.72', 'dist.tarball': meta.tarball }), /checksum is missing/);
 });
 
 test('the first failing test becomes one file:line annotation', () => {

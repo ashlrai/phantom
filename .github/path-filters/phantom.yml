@@ -47,18 +47,19 @@ xplat_install:
   - tools/custody/**
 
 signer_proof:
-  # Custody helper signer: the key that produces the standing-grant signature.
-  - tools/custody/Sources/ashlr-custody/SigningKey.swift
-  - tools/custody/Sources/CustodyCore/KeyMaterial.swift
-  - tools/custody/Sources/CustodyCore/StandingGrant.swift
-  # Node client that asks the helper to sign and checks the returned envelope.
-  - src/core/authority/custody-client.ts
-  # Authority surface digest the grant pins, and the build step that writes it.
-  - src/core/authority/surface.ts
+  # Authority signer client, surface, canonical encoder, and standing-grant verifier.
+  - src/core/authority/**
+  # macOS custody helper, including Package.swift and Package.resolved when present.
+  - tools/custody/**
+  # Build step that writes the authority-surface digest the grant pins.
   - scripts/authority-surface.mjs
-  # Canonical JSON encoder shared by the signer, the verifier, and the surface digest.
-  - src/core/authority/canonical-json.ts
-  # Verifier for a signed standing grant.
-  - src/core/authority/standing-grant.ts
+  # Fleet grant and envelope verifiers and their canonical encoders, including forum/canon.ts.
+  - src/core/fleet/**
+  # Reserved for future Windows and Linux signer helpers. Empty until those land.
+  - tools/signer/**
   # Placeholder workflow Core will add for the M3-13 signer-proof job. Not created here.
   - .github/workflows/signer-proof.yml
+  # This filter file. A change to the globs must re-evaluate the proof path.
+  - .github/path-filters/phantom.yml
+  # Workflow that runs dorny/paths-filter for this file.
+  - .github/workflows/ci.yml
