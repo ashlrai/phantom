@@ -14,8 +14,8 @@ const board: coordination.FleetBoard = {
     body: 'RESULT VERIFIED ashlrai/phantom claim claim-392 task "Read returns": pr #392 head abc1234' }],
 };
 
-async function read() {
-  const result = await client.callTool({ name, arguments: {} });
+async function read(args: Record<string, unknown> = {}) {
+  const result = await client.callTool({ name, arguments: args });
   const text = (result.content as Array<{ text: string }>)[0]!.text;
   return { result, text, value: JSON.parse(text) };
 }
@@ -35,10 +35,12 @@ afterEach(async () => {
 });
 
 describe('fleet coordination returns real MCP handler (392)', () => {
-  it('lists an empty closed schema with the same read-only annotations as claims', async () => {
+  it('lists the returns filters with the same read-only annotations as claims', async () => {
     const { tools } = await client.listTools();
     const tool = tools.find(t => t.name === name);
-    expect(tool?.inputSchema).toEqual({ type: 'object', properties: {}, additionalProperties: false });
+    expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
+    expect(Object.keys((tool?.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}).sort())
+      .toEqual(['before', 'claim', 'contains', 'from', 'repo', 'result', 'since']);
     expect(tool?.annotations?.readOnlyHint).toBe(true);
     expect(tool?.annotations).toEqual(tools.find(t => t.name === 'fleet_coordination_claims')?.annotations);
   });
@@ -64,6 +66,47 @@ describe('fleet coordination returns real MCP handler (392)', () => {
 
   it.each(['path', 'root', 'cwd', 'limit'])('rejects caller %s before reading', async key => {
     await expect(client.callTool({ name, arguments: { [key]: '/synthetic/private' } }))
+      .rejects.toMatchObject({ code: -32602 });
+    expect(coordination.readFleetBoard).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ claim: 'claim-392' }, 1],
+    [{ claim: 'claim-other' }, 0],
+    [{ repo: 'ashlrai/phantom' }, 1],
+    [{ repo: 'ASHLRAI/PHANTOM' }, 1],
+    [{ repo: 'other/repo' }, 0],
+    [{ result: 'VERIFIED' }, 1],
+    [{ result: 'BLOCKED' }, 0],
+    [{ from: 'dot-example' }, 1],
+    [{ from: 'other-agent' }, 0],
+    [{ contains: 'abc1234' }, 1],
+    [{ contains: 'no-such-evidence' }, 0],
+    [{ since: '1h' }, 1],
+    [{ before: '1h' }, 0],
+    [{ claim: 'claim-392', result: 'VERIFIED', contains: 'phantom' }, 1],
+    [{ claim: 'claim-392', result: 'BLOCKED' }, 0],
+  ])('applies the shared returns filters %j', async (args, kept) => {
+    const { result, value } = await read(args);
+    expect(result.isError).not.toBe(true);
+    expect(value.state).toBe('known');
+    expect(value.returns).toHaveLength(kept);
+    expect(value.coverage.matched).toBe(kept);
+  });
+
+  it.each([
+    { claim: 'bad claim' },
+    { claim: 42 },
+    { repo: 'not-a-repo' },
+    { result: 'MAYBE' },
+    { from: 'bad from' },
+    { since: 'not-a-time' },
+    { before: 'whenever' },
+    { contains: '' },
+    { contains: 'x'.repeat(513) },
+    { unknown: 'filter' },
+  ])('rejects malformed filter %j before reading the ledger', async args => {
+    await expect(client.callTool({ name, arguments: args }))
       .rejects.toMatchObject({ code: -32602 });
     expect(coordination.readFleetBoard).not.toHaveBeenCalled();
   });

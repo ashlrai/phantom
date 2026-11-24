@@ -15,7 +15,6 @@ import { defaultTailnetPeersDeps, readTailnetPeers } from '../core/fleet/tailnet
 import { defaultPoolReachDeps, readPoolReach } from '../core/fleet/pool-reach.js';
 import { readFleetBoard, type FleetBoard } from '../core/fleet/coordination.js';
 import { projectCoordinationClaims } from '../core/fleet/coordination-claims-view.js';
-import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
 import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
@@ -49,6 +48,7 @@ import { parseFleetBusShowArgs, readFleetBusShow, type FleetBusShowArgs } from '
 import { parseFleetBusThreadArgs, readFleetBusThread, type FleetBusThreadArgs } from './fleet-bus-thread.js';
 import { parseFleetBusStatusArgs, readFleetBusStatus } from './fleet-bus-status.js';
 import { parseFleetBusClaimsArgs, readFleetBusClaims, type FleetBusClaimsArgs } from './fleet-bus-claims.js';
+import { parseFleetCoordinationReturnsArgs, readFleetCoordinationReturns, type FleetCoordinationReturnsArgs } from './fleet-coordination-returns.js';
 import { parseFleetBusBoardArgs, readFleetBusBoard, type FleetBusBoardArgs } from './fleet-bus-board.js';
 import { parseFleetSeatHandoffsArgs, readFleetSeatHandoffs } from './fleet-seat-handoffs.js';
 import { parseFleetBotSeatsArgs, readFleetBotSeats } from './fleet-bot-seats.js';
@@ -228,14 +228,6 @@ function readFleetCoordinationClaims() {
   return projectCoordinationClaims(board, now);
 }
 
-/** Read retained receipts from the server-owned ledger without exposing reader errors. */
-function readFleetCoordinationReturns() {
-  const now = Date.now();
-  let board: FleetBoard | null;
-  try { board = readFleetBoard({ now, reap: false }); } catch { board = null; }
-  return projectCoordinationReturns(board, now);
-}
-
 /** Runtime identity: host, installed version and fleet-state freshness, sanitized by the reader. */
 async function readFleetRuntimeIdentity() {
   return readRuntimeIdentity(defaultRuntimeIdentityDeps());
@@ -357,6 +349,7 @@ export interface FleetReaders {
   busThread?: (input: FleetBusThreadArgs) => Promise<unknown>;
   busStatus?: () => Promise<unknown>;
   busClaims?: (input: FleetBusClaimsArgs) => Promise<unknown>;
+  coordinationReturns?: (input: FleetCoordinationReturnsArgs) => unknown;
   busBoard?: (input: FleetBusBoardArgs) => Promise<unknown>;
   seatHandoffs?: () => Promise<unknown>;
   botSeats?: () => Promise<unknown>;
@@ -853,8 +846,20 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_coordination_returns',
-      description: "Read-only retained RESULT receipts from this computer's coordination ledger, newest first, at most 50. VERIFIED means the returning agent named that evidence, not that Phantom checked the PR. Unknown means unknown, not absent. Takes no arguments; no caller path, root or cwd is accepted; never writes.",
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      description: "Read-only retained RESULT receipts from this computer's coordination ledger, newest first, at most 50, including PR and head evidence — the same projectCoordinationReturns projection `phm fleet coordination returns` serves. `claim` keeps one claim id's receipts; `repo` one repo (owner/name, case-insensitive); `result` one verdict (VERIFIED or BLOCKED); `from` one sender label; `since` (15m, 2h, 1d, epoch ms or ISO) keeps receipts at or after the cutoff and `before` keeps receipts strictly before its own cutoff — the pair reading one [since, before) window on each receipt's at stamp; `contains` keeps receipts whose repo, verdict, evidence kind or evidence text carries the needle as a case-insensitive substring. The filters narrow the parsed set before the newest-50 page, so a filtered read reaches receipts the unfiltered cap hides, and coverage.matched/coverage.omitted keep the filtered truncation honest. VERIFIED means the returning agent named that evidence, not that Phantom checked the PR; unknown means unknown, not absent. No caller path, root or cwd is accepted; never writes, and grants no merge, verify, dispatch or delivery authority.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          claim: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$', description: 'Keep only receipts whose RESULT claim field names this claim id — the same `phm fleet coordination returns --claim` match.' },
+          repo: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$', description: 'Keep only receipts for this owner/name repo, compared case-insensitively — the same `--repo` match.' },
+          result: { type: 'string', enum: ['VERIFIED', 'BLOCKED'], description: 'Keep only receipts carrying this RESULT verdict — the same `--result` match.' },
+          from: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$', description: 'Keep only receipts one sender label posted — the ledger\'s agent labels are coordination names, never resolved through the bus registry; the same `--from` match.' },
+          since: { type: 'string', description: 'Keep receipts at or after the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm fleet coordination returns --since` takes; inclusive on each receipt\'s at stamp.' },
+          before: { type: 'string', description: 'Keep receipts strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window, the same grammar `--before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: 512, description: 'Case-insensitive substring over each receipt\'s repo, verdict, evidence kind and evidence text — the same `--contains` match.' },
+        },
+        additionalProperties: false,
+      },
       annotations,
     },
     {
@@ -1571,6 +1576,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const botSeatsArgs = name === 'fleet_bot_seats' ? parseFleetBotSeatsArgs(args) : null;
     const workFeedArgs = name === 'fleet_work_feed' ? parseFleetWorkFeedArgs(args) : null;
     const workBoard = name === 'fleet_work_board' ? parseFleetWorkBoardArgs(args) : null;
+    const coordinationReturnsArgs = name === 'fleet_coordination_returns' ? parseFleetCoordinationReturnsArgs(args) : null;
     const reviewPick = name === 'fleet_review_pick' ? parseFleetReviewPickArgs(args) : null;
     const orderState = name === 'fleet_order_state' ? parseFleetOrderStateArgs(args) : null;
     const history = name === 'fleet_reset_history' ? parseFleetResetHistoryArgs(args) : null;
@@ -1693,6 +1699,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_seat_handoffs' ? seatHandoffsArgs === null :
         name === 'fleet_bot_seats' ? botSeatsArgs === null :
         name === 'fleet_work_feed' ? workFeedArgs === null :
+        name === 'fleet_coordination_returns' ? coordinationReturnsArgs === null :
         name === 'fleet_reset_history' ? history === null :
         name === 'fleet_bus_hops' ? busHopsArgs === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
@@ -1710,7 +1717,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(busHopsArgs as FleetBusHopsArgs)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
-        : name === 'fleet_coordination_returns' ? readFleetCoordinationReturns()
+        : name === 'fleet_coordination_returns' ? await (readers.coordinationReturns ?? readFleetCoordinationReturns)(coordinationReturnsArgs as FleetCoordinationReturnsArgs)
         : name === 'fleet_runtime' ? await (readers.runtime ?? readFleetRuntime)()
         : name === 'fleet_peer_ledger' ? (readers.peerLedger ?? readFleetPeerLedger)(peerLedgerArgs as FleetPeerLedgerArgs)
         : name === 'fleet_session_handoff' ? (readers.sessionHandoff ?? readFleetSessionHandoff)(sessionHandoffArgs!)
