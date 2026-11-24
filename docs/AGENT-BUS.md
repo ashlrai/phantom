@@ -298,8 +298,8 @@ latest runtime's provider, `origin_bridge` is `agent-bus`).
 
 | Kind | `to` | `channel` | Body |
 | --- | --- | --- | --- |
-| DM | `agent:<handle>` | `bus` | v2 `note` |
-| Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note` |
+| DM | `agent:<handle>` | `bus` | v2 `note`, or `context` with `--kind context` |
+| Channel post | `group:<channel>:<topic>` (topic defaults to `general`) | `bus` | v2 `note`, or `context` with `--kind context` |
 | Label post | any printable routing label outside the reserved `agent:`/`group:`/`dm:`/`handoff:` prefixes | `bus` | v2 `note`, or `context` with `--kind context` |
 | Handoff | `agent:<handle>` | `handoff` | `worker-handoff` (`taskId`, `prompt`), the shape `phm fleet handoff-receive` reads |
 | Wake request | `agent:<handle>` | `bus` | v2 `wake` (`target`, `reason`, optional `jobId`) |
@@ -1537,7 +1537,10 @@ citation as the answer — resolved through the identity registry, so any
 label of the two identities (or a member of the addressed channel) counts —
 so an agent can close an ask or assignment without
 dropping to the fleet reply verbs. The citation names a routing id, never
-proof the target existed or was received.
+proof the target existed or was received. `--kind context` on `dm`, `post`
+and `channel post` posts the v2 `context` body — reference material rather
+than a conversational `note` — instead of the default; every conversational
+send accepts the same `note`/`context` choice.
 
 `body.kind` is one of:
 

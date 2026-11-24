@@ -30,14 +30,14 @@ export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
 ashlr agents bus id show [<ref>]
-ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus dm --to <agent> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus post --to <label> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
-ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--wake|--no-wake]
+ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
 ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--after <cursor>] [--limit <1..100>]
-ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
+ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--id <id>]
@@ -66,7 +66,10 @@ wakes, P1 and handoffs wake by default, and wake always records its hint.
 post sends a v2 note (or context with --kind context) to any printable routing
 label outside the reserved agent:/group:/dm:/handoff: prefixes — the sink and
 topic mail dm, channel post and the work verbs cannot carry; the sender is
-still a registered identity under the same scrub and wake rules.
+still a registered identity under the same scrub and wake rules. --kind on
+dm, post and channel post picks the v2 conversational body kind — note by
+default, context for reference material; the delivery-kind enum inbox reads
+filter by is a different --kind.
 --thread on dm, post, channel post, inbox and channel read is the v2 conversation
 label carried by note/context bodies; reads match that field only. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
@@ -552,6 +555,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       return value as InboxKind | undefined;
     };
+    // Send-side --kind on dm, post and channel post is the v2 body-kind enum:
+    // a bad value is a usage error here and an 'invalid' result inside the
+    // core send, the same split the read-side enum keeps.
+    const bodyKindArg = (): 'note' | 'context' | undefined => {
+      const value = one('--kind');
+      if (value !== undefined && value !== 'note' && value !== 'context') {
+        throw new UsageError('--kind must be note or context.');
+      }
+      return value as 'note' | 'context' | undefined;
+    };
     // Read-side --origin on claim list is the claim-origin enum: a bad
     // value is a usage error here and an 'invalid' result inside the core read.
     const originArg = (): CoordinationOrigin | undefined => {
@@ -684,17 +697,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'dm') {
       noExtra(1);
       const result = await sendDirectMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
-        thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
+        kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
     if (verb === 'post') {
       noExtra(1);
-      const kind = one('--kind');
-      if (kind !== undefined && kind !== 'note' && kind !== 'context') {
-        throw new UsageError('--kind must be note or context.');
-      }
       const result = await postLabelMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
-        kind: kind as 'note' | 'context' | undefined, thread: one('--thread'), refs: p.values.get('--ref'),
+        kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'),
         replyTo: one('--reply-to') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
@@ -719,7 +728,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'post') {
         const result = await postChannelMessage({ ...send, from: actor('--from'), channel: arg, topic: one('--topic'),
-          text: required('--text'), thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
+          text: required('--text'), kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'),
+          replyTo: one('--reply-to') }, options);
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
       if (sub === 'read') {
