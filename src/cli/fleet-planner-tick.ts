@@ -17,6 +17,7 @@ import {
 } from '../core/fleet/planner-autorun.js';
 import { readPlannerCandidates, type PlannerCandidatesRead } from '../core/fleet/planner-candidates.js';
 import { readPlannerPromptPath } from '../core/fleet/planner-prompt.js';
+import { acquirePlannerCycleLock } from '../core/fleet/planner-cycle-lock.js';
 import { readPlannerPassOutput, summarizePlannerPassOutput } from '../core/fleet/planner-pass-output.js';
 import { runPlannerPass, type SpawnLike } from '../core/fleet/planner-run.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
@@ -24,7 +25,8 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 const usage = `Usage: ashlr fleet planner-tick [--json] [--runs-dir <abs>] [--apply] [--min-gap-minutes <n>] [--low-supply <n>]
 One shot of the autorun decision: the queued Phantom-job supply fell under
 --low-supply (default 24) while some lane still has free slots, and the last
-pass is at least --min-gap-minutes (default 25) old. Without --apply this is
+pass or accepted request is at least --min-gap-minutes (default 25) old.
+A confirmed empty queue caps that gap at five minutes. Without --apply this is
 a dry-run: it prints the decision (RUN or SKIP) and appends one PLANNER_TICK
 line to queue/dispatch-events.log. With --apply a RUN decision fires one
 pass through runPlannerPass on the declared slate; a missing slate or an
@@ -103,6 +105,29 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
   }
   const now = typeof deps.now === 'function' ? deps.now() : deps.now ?? Date.now();
   const root = runsDir ?? join(homedir(), '.ashlr-runs');
+  const evaluate = () => evaluateTick(root, now, { json, apply, minGap, lowSupply }, deps);
+  if (!apply) return evaluate();
+  // Share the cycle guard, and read supply/health only after acquiring it.
+  const lock = acquirePlannerCycleLock(root);
+  if (lock.state !== 'acquired') {
+    output(JSON.stringify({ outcome: lock.state === 'busy' ? 'planner-busy' : 'planner-lock-unsafe' }));
+    return lock.state === 'busy' ? 0 : 1;
+  }
+  let released = false;
+  let code: number;
+  try { code = await evaluate(); }
+  finally { released = lock.release(); }
+  if (!released) { error('Planner lock ownership was lost or release failed.'); return 1; }
+  return code;
+}
+
+async function evaluateTick(
+  root: string, now: number,
+  { json, apply, minGap, lowSupply }: { json: boolean; apply: boolean; minGap?: number; lowSupply?: number },
+  deps: Dependencies,
+): Promise<number> {
+  const output = deps.output ?? ((text: string) => console.log(text));
+  const error = deps.error ?? ((text: string) => console.error(text));
   let input: PlannerAutorunInput;
   try {
     input = await (deps.readInput ?? readPlannerAutorunInput)(root, now);
@@ -146,6 +171,10 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
     output(JSON.stringify(sanitizePublicJson({ outcome: 'no-prompt-declared', path: slate.path })));
     return 0;
   }
+  // Persist before spawning: failed starts also cool down. Unlike tick observations,
+  // a request receipt is required; without it another process could retry at once.
+  try { await appendTickLine(root, `${eventClock(new Date(now))} PLANNER_REQUEST restock\n`); }
+  catch { error('Cannot record the planner restock request.'); return 1; }
   const result = await runPlannerPass({
     runsRoot: root,
     // A fallback pass runs on the chosen login only: the slate's own order

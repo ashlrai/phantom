@@ -1,11 +1,13 @@
 import { EventEmitter } from 'node:events';
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetPlannerTick } from '../src/cli/fleet-planner-tick.js';
 import type { PlannerAutorunInput } from '../src/core/fleet/planner-autorun.js';
+import { readPlannerAutorunInput } from '../src/core/fleet/planner-autorun.js';
+import { acquirePlannerCycleLock } from '../src/core/fleet/planner-cycle-lock.js';
 import * as runner from '../src/core/fleet/planner-run.js';
 import type { SpawnedPlannerProcess, SpawnLike } from '../src/core/fleet/planner-run.js';
 
@@ -56,7 +58,71 @@ async function touch(path: string) {
   await utimes(path, new Date(now), new Date(now));
 }
 
+async function emptyQueue(root: string, at: number) {
+  const date = new Date(at), pad = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  await writeFile(join(root, 'queue', 'ready.tsv'), '');
+  await writeFile(join(root, 'queue', 'status.json'), JSON.stringify({ lanes: { test: { running: 0, target: 1, held: false } } }));
+  await writeFile(join(root, 'queue', 'dispatch-events.log'), `${stamp} LEADER test ok\n`);
+}
+
 describe('planner tick output evidence', () => {
+  it('retries an empty queue after repeated skips, and bounds retries after a failed start', async () => {
+    const { root } = await fixture();
+    await emptyQueue(root, now);
+    const spawn = vi.fn<SpawnLike>(() => { throw new Error('fixture start failed'); });
+    const tickAt = (minutes: number, args = ['--apply']) => run(root, spawn,
+      { now: now + minutes * 60_000, readInput: readPlannerAutorunInput }, args);
+    for (const minute of [0, 1, 2, 3, 4]) {
+      expect((await tickAt(minute)).report).toMatchObject({ run: false, reason: 'too-soon' });
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    expect((await tickAt(5, [])).report.run).toBe(true); // Preview cannot reserve the retry.
+    expect((await tickAt(5)).report.outcome).toBe('spawn-failed');
+    for (const minute of [5, 6, 7, 8, 9]) {
+      expect((await tickAt(minute)).report).toMatchObject({ run: false, reason: 'too-soon' });
+    }
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect((await tickAt(10)).report.outcome).toBe('spawn-failed');
+    expect(spawn).toHaveBeenCalledTimes(2);
+    const requests = (await readFile(join(root, 'queue', 'dispatch-events.log'), 'utf8')).split('\n')
+      .filter(line => line.includes(' PLANNER_REQUEST '));
+    expect(requests).toHaveLength(2);
+  });
+
+  it('deduplicates overlapping ticks and shares the planner-cycle guard', async () => {
+    const { root } = await fixture();
+    await emptyQueue(root, now - 5 * 60_000);
+    let unblock!: () => void;
+    const blocked = new Promise<void>(resolve => { unblock = resolve; });
+    let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const spawn = fakeSpawn(async () => { started(); await blocked; });
+    const first = run(root, spawn, { readInput: readPlannerAutorunInput });
+    try {
+      await entered;
+      expect((await run(root, spawn)).report.outcome).toBe('planner-busy');
+      expect(acquirePlannerCycleLock(root).state).toBe('busy');
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally { unblock(); await first; }
+    expect((await run(root, spawn, { readInput: readPlannerAutorunInput })).report.reason).toBe('too-soon');
+    const lock = acquirePlannerCycleLock(root);
+    expect(lock.state).toBe('acquired');
+    if (lock.state === 'acquired') expect(lock.release()).toBe(true);
+  });
+
+  it('does not spawn when the request receipt cannot be persisted', async () => {
+    const { root } = await fixture();
+    await mkdir(join(root, 'queue', 'dispatch-events.log'));
+    const spawn = fakeSpawn(), errors: string[] = [];
+    const code = await cmdFleetPlannerTick(['--runs-dir', root, '--apply'], {
+      now, readInput: async () => input, spawn, error: text => errors.push(text),
+    });
+    expect(code).toBe(1);
+    expect(errors).toEqual(['Cannot record the planner restock request.']);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('observes a pending drop created by its single execution', async () => {
     const { root, drop } = await fixture();
     const spawn = fakeSpawn(() => touch(join(drop, 'claude', 'RQ-PHX-NEW.md')));

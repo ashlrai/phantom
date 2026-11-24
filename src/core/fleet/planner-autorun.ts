@@ -14,7 +14,8 @@
  * The trigger is the leader's hand rule: the queue of Phantom jobs (ids
  * starting RQ-PHX-) in queue/ready.tsv has fallen under 24 across lanes
  * while some lane still has free slots, and the last pass is at least 25
- * minutes old — or, under the stricter critical floor (default 6), even with
+ * minutes old (five for a confirmed empty queue) — or, under the stricter
+ * critical floor (default 6), even with
  * every lane full: real Phantom supply nearly gone must not wait on a slot.
  * The queued supply comes from ready-supply.ts — the canonical summary that
  * already knows every parked-row form ready.tsv carries (headered status,
@@ -64,7 +65,7 @@ export interface PlannerAutorunInput {
   /** The ORCH_OFF kill switch — the same rule planner-run.ts checks. */
   orchOff: boolean;
   nowMs: number;
-  /** Minimum age of the last pass before another may run. Default 25. */
+  /** Minimum age of the last pass/request. Default 25; confirmed empty queues cap it at five. */
   minGapMinutes?: number;
   /** Queued Phantom supply below which a pass is due. Default 24. */
   lowSupply?: number;
@@ -95,6 +96,7 @@ export interface PlannerAutorunDecision {
   reason: PlannerAutorunReason;
   phxReady: number;
   freeSlots: number;
+  /** Latest completed pass or accepted restock request (including failed starts). */
   lastPassAt: string | null;
   minutesSinceLastPass: number | null;
   /** One sentence a person can read — no paths. */
@@ -112,6 +114,7 @@ export interface PlannerAutorunDecision {
 }
 
 const DEFAULT_MIN_GAP_MINUTES = 25;
+const EMPTY_QUEUE_RETRY_MINUTES = 5;
 const DEFAULT_LOW_SUPPLY = 24;
 const DEFAULT_SUPPLY_FLOOR = 6;
 
@@ -156,16 +159,21 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
   const phxReady = nonneg(input.phxReady);
   const lowSupply = input.lowSupply === undefined ? DEFAULT_LOW_SUPPLY : nonneg(input.lowSupply);
   const supplyFloor = input.supplyFloor === undefined ? DEFAULT_SUPPLY_FLOOR : nonneg(input.supplyFloor);
-  const minGap = input.minGapMinutes === undefined ? DEFAULT_MIN_GAP_MINUTES : nonneg(input.minGapMinutes);
+  const unreadable = input.queueUnreadable === true || !Number.isFinite(input.phxReady);
+  const normalGap = input.minGapMinutes === undefined ? DEFAULT_MIN_GAP_MINUTES : nonneg(input.minGapMinutes);
+  const minGap = !unreadable && input.phxReady === 0 ? Math.min(normalGap, EMPTY_QUEUE_RETRY_MINUTES) : normalGap;
   const freeSlots = (input.lanes ?? [])
     .filter((lane) => !lane.held)
     .reduce((sum, lane) => sum + Math.max(0, nonneg(lane.target) - nonneg(lane.running)), 0);
-  const lastPassAt = health.lastGoodPassAt ?? health.failingSince;
+  const completedAt = health.lastGoodPassAt ?? health.failingSince;
+  const completedMs = Date.parse(completedAt ?? '');
+  const requestMs = Date.parse(health.lastRequestedAt ?? '');
+  const lastPassAt = requestMs > (Number.isFinite(completedMs) ? completedMs : -Infinity)
+    ? health.lastRequestedAt! : completedAt;
   const passMs = lastPassAt === null ? Number.NaN : Date.parse(lastPassAt);
   const minutesSince = Number.isFinite(passMs)
     ? Math.floor((nonneg(input.nowMs) - passMs) / 60_000)
     : null;
-  const unreadable = input.queueUnreadable === true || !Number.isFinite(input.phxReady);
   let fallback: { lane: string; from: string } | null = null;
   const done = (run: boolean, reason: PlannerAutorunReason, detail: string): PlannerAutorunDecision =>
     ({
@@ -214,7 +222,7 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
   }
   if (minutesSince !== null && minutesSince < minGap) {
     return done(false, 'too-soon',
-      `The last pass is only ${minutesSince} minute(s) old, inside the ${minGap}-minute gap, so this tick skips.`);
+      `The last pass or restock request is only ${minutesSince} minute(s) old, inside the ${minGap}-minute gap, so this tick skips.`);
   }
   if (floorEscape) {
     return done(true, 'supply-floor',
