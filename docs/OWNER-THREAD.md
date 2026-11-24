@@ -17,13 +17,15 @@ phm comms thread --channel telegram --since 2h --json
 phm comms thread --since 4h --before-at 2h --json
 phm comms thread --direction inbound --json
 phm comms thread --contains "deploy window" --json
+phm comms thread --reply-to telegram-msg-1 --json
 phm comms send-owner --text "Synthetic reply" --json
 ```
 
 MCP tools: `ashlr_comms_thread` (read; optional `channel`, `direction`,
-`since`, `beforeAt` and `contains` narrow the same view), `ashlr_comms_send_owner`
+`since`, `beforeAt`, `contains` and `replyTo` narrow the same view),
+`ashlr_comms_send_owner`
 (append; KILL refuses it), `fleet_comms_thread` on the isolated fleet
-server (the same read with `limit` plus the same five filters) and
+server (the same read with `limit` plus the same six filters) and
 `fleet_owner_history` there too (the archived pages `fleet_comms_thread`
 cannot see, with `before`/`limit` plus the same view slice). `ashlr_comms`
 includes the same adapter rollup as `phm comms status --json`, and
@@ -42,16 +44,22 @@ is `--before-at`, not `--before`, because `phm fleet owner-history` already
 spends `--before` on its sequence cursor) and `--contains <text>` (a
 case-insensitive substring over the stored message text, whitespace
 collapsed, at most 512 characters — the same `--contains` rule every other
-comms and bus read applies) to keep one channel's slice, one direction's
-lines, only messages inside the time window, or only messages that carry the
-text. `contains` is the only text search the thread offers:
+comms and bus read applies) and `--reply-to <key>` (one message's
+idempotency key — the same key `send-owner --reply-to` cites — keeps the
+exchange rooted at it: the message carrying that key plus every recorded
+reply whose `replyTo` cites it, across every channel the reply fanned out
+to; an outbound key matches only the message carrying it, and a key
+nothing carries is an honest empty slice) to keep one channel's slice, one
+direction's
+lines, only messages inside the time window, only messages that carry the
+text, or only one reply exchange. `contains` is the only text search the thread offers:
 iMessage bodies are redacted on the bus mirror, so this private read is the
 one place they can be found. The receipt join and the `awaitingReply` mark
 follow the same slice, so a filtered view never reports marks for rows it
 hid; an unreadable thread still answers `unavailable` with
 `awaitingReply: null` whatever the filter. The desktop owner-thread API
-accepts the same `channel`, `direction`, `since`, `beforeAt` and `contains`
-query parameters.
+accepts the same `channel`, `direction`, `since`, `beforeAt`, `contains`
+and `replyTo` query parameters.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`
@@ -103,7 +111,8 @@ phm fleet owner-pull --channel telegram     # pull remote channels into the thre
 ```
 
 Archived pages take the same view slice `phm comms thread` does —
-`--channel`, `--direction`, `--since`, `--before-at` and `--contains` —
+`--channel`, `--direction`, `--since`, `--before-at`, `--contains` and
+`--reply-to` —
 applied through
 the shared predicate, so "what did the owner say about X on Telegram
 before the live window" is one filtered call, not manual paging. There
@@ -112,7 +121,7 @@ the sequence cursor.
 
 The isolated fleet MCP server serves the same projection as
 `fleet_owner_history` (`before`/`limit` plus the same
-`channel`/`direction`/`since`/`beforeAt`/`contains` slice, same bounds) — the only
+`channel`/`direction`/`since`/`beforeAt`/`contains`/`replyTo` slice, same bounds) — the only
 MCP read that reaches the archives `fleet_comms_thread`'s live window
 cannot see.
 

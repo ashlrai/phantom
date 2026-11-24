@@ -12,7 +12,7 @@ import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
 import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../comms/leader-mailbox.js';
-import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
+import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, isOwnerThreadKey, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 /** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
@@ -164,6 +164,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     let since: number | undefined;
     let beforeAt: number | undefined;
     let contains: string | undefined;
+    let replyTo: string | undefined;
     try {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       limit = parseLimit(params.get('limit'));
@@ -209,6 +210,14 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         }
         contains = containsRaw;
       }
+      const replyToRaw = params.get('replyTo');
+      if (replyToRaw !== null) {
+        if (!isOwnerThreadKey(replyToRaw)) {
+          sendJson(res, 400, { error: 'replyTo takes an owner-thread message key.' });
+          return true;
+        }
+        replyTo = replyToRaw;
+      }
     } catch {
       limit = null;
     }
@@ -218,8 +227,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined
-        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}) }
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined || replyTo !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}), ...(replyTo !== undefined ? { replyTo } : {}) }
         : undefined;
       const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);

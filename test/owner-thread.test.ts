@@ -575,6 +575,54 @@ describe('owner thread', () => {
     expect(view.messages.map(message => message.text)).toEqual(['first deploy']);
   });
 
+  it('filters the thread read by replyTo, keeping the whole exchange across channels', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'deploy question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'unrelated ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    await sendOwnerReply({ text: 'deploy answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    await sendOwnerReply({ text: 'second deploy answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-02' }, options);
+    // m1 telegram inbound, m2 email inbound, m3+m4 outbound replies citing m1's key across the fanout.
+    const exchange = readOwnerThread(options, 200, { replyTo: 'telegram-msg-1' });
+    expect(exchange.messages.map(message => message.seq)).toEqual([1, 3, 4]);
+    expect(exchange.awaitingReply).toEqual([]);
+    // The email inbound is answered by nothing and stays out of the slice.
+    expect(exchange.messages.some(message => message.channel === 'email')).toBe(false);
+    // An unanswered inbound's exchange is just itself, still marked awaiting.
+    const pending = readOwnerThread(options, 200, { replyTo: 'email-msg-0001' });
+    expect(pending.messages.map(message => message.seq)).toEqual([2]);
+    expect(pending.awaitingReply).toEqual(['m2']);
+    // An outbound key matches only the message carrying it — no replyTo ever cites one.
+    const own = readOwnerThread(options, 200, { replyTo: 'reply-owner-01' });
+    expect(own.messages.map(message => message.seq)).toEqual([3]);
+    // A key nothing carries is an honest empty slice, and the filter composes with direction.
+    expect(readOwnerThread(options, 200, { replyTo: 'no-such-key-1' }).messages).toEqual([]);
+    const outboundOnly = readOwnerThread(options, 200, { replyTo: 'telegram-msg-1', direction: 'outbound' });
+    expect(outboundOnly.messages.map(message => message.seq)).toEqual([3, 4]);
+    expect(outboundOnly.awaitingReply).toEqual([]);
+  });
+
+  it('serves reply-to on the thread CLI and rejects bad keys', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    await sendOwnerReply({ text: 'answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--reply-to', 'telegram-msg-1', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--reply-to', 'email-msg-0001', '--json'], options)).toBe(0);
+      expect(await cmdCommsOwner(['thread', '--reply-to', 'has space'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--reply-to', 'short'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--reply-to'], options)).toBe(2);
+      expect(await cmdCommsOwner(['thread', '--reply-to', '--json'], options)).toBe(2);
+    } finally { console.log = write; }
+    const exchange = JSON.parse(lines[0] ?? '{}') as { messages: Array<{ seq: number; direction: string }> };
+    const pending = JSON.parse(lines[1] ?? '{}') as { messages: Array<{ seq: number }> };
+    expect(exchange.messages.map(message => [message.seq, message.direction])).toEqual([[1, 'inbound'], [3, 'outbound']]);
+    expect(pending.messages.map(message => message.seq)).toEqual([2]);
+  });
+
   it('filters the thread read by direction, keeping marks inside the slice', async () => {
     const { options } = fixture();
     await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
