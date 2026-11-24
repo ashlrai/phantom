@@ -3482,8 +3482,9 @@ when a returned message cites a jobId, so the citation answers where its
 job stands (status, claim coverage, `job:null` on an orphaned citation, or
 the feed's own refused/unavailable state) without a `show` per message),
 `readAgentWakes(ref, sinceAt, options?, filter?)` (the ok page carries `scope` —
-`'identity'` when the ref resolved through the registry and every label of
-that identity plus its member channels matched, `'label'` when the ref
+`'identity'` when the ref resolved through the registry and every spelling
+that resolves to that identity — exact label first, then lowercase — plus
+its member channels matched, `'label'` when the ref
 resolved to no identity and only hints whose `to` is the queried label
 verbatim matched, the same exact-label fallback the claim/next/owner
 filters keep so bare coordination labels like claim-owner fan-out targets
@@ -3795,7 +3796,8 @@ a feed lookup. `postLabelMessage(LabelPostInput)` posts a schema-checked v2
 `note` (or `context` with `kind`) to any printable routing label outside
 `RESERVED_PREFIXES` — the sink/topic mail the identity and channel verbs
 cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
-a `to` matching one of a registered identity's labels lands in its inbox as
+a `to` that resolves to a registered identity — any of its labels, exact
+first then lowercase — lands in its inbox as
 legacy mail.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
