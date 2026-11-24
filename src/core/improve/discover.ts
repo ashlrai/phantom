@@ -393,6 +393,15 @@
  *     blockedHourLine warning, plus the contributor cross-references
  *     inside the sibling memory- and controller-pressure prompts, so
  *     recurring host-load blocking never became work;
+ *   - the PR-autopilot outcomes journal `phm autopilot` appends to
+ *     autopilot/outcomes.jsonl under the Ashlr home on every tick —
+ *     per-PR 'stop' escalations, 'error' tick failures,
+ *     'verify-failed' fixer rejections, guard 'refused' actions and
+ *     empty fixer diffs on fix-ci/address-review plans
+ *     (autopilotBacklogItems below). Until now the journal was
+ *     write-only audit, so a PR the autopilot kept handing to a
+ *     person, a verify loop that never converged, or tick machinery
+ *     that kept failing never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -462,6 +471,7 @@ import { recutLoopBacklogItems } from './recut-loop-backlog.js';
 import { judgeBacklogItems } from './judge-backlog.js';
 import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
+import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1078,6 +1088,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's host and carries no repository column.
   items.push(...await loadBacklogItems({ repo }));
+
+  // PR-autopilot outcomes journal: the `phm autopilot` tick record —
+  // recurring per-PR 'stop' escalations (the diagnose plan concluding a
+  // person must drive the PR), 'error' tick failures, 'verify-failed'
+  // fixer rejections, guard 'refused' actions and empty fixer diffs on
+  // fix-ci/address-review plans — become backlog items too. Until now
+  // the journal's only readers were tests asserting the write, so a PR
+  // the autopilot kept handing to a person, a verify loop that never
+  // converged, or tick machinery that kept failing never became work.
+  // Same bounded no-follow tail read; deliberate-off stops (kill
+  // switch, pause, foreign PRs) and mid-act kill-switch/pause refusals
+  // never count, a cell emits only at the recurring bars of rows across
+  // distinct UTC days inside the window, repo matching is the row's own
+  // recorded owner/name, truncated tails are stated as lower bounds,
+  // and every journal string is scrubbed before it reaches a prompt.
+  items.push(...await autopilotBacklogItems({ repo }));
   return { items, errors };
 }
 

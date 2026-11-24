@@ -595,6 +595,7 @@
 /test/idea-verdict-route.test.ts @masonwyatt23
 /test/improve-api.test.ts @masonwyatt23
 /test/improve-autoland-backlog.test.ts @masonwyatt23
+/test/improve-autopilot-backlog.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
