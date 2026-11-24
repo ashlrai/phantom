@@ -46,7 +46,7 @@ const lane = { lane: 'claude', running: 1, target: 2, held: false, heldReason: n
 const fakes = (): StatusDigestSources => ({
   installedVersion: () => '3.29.15',
   publishedVersion: async () => '3.30.32',
-  mergeFacts: async () => ({ shipped: [{ text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
+  mergeFacts: async (_sinceMs: number, nowMs: number) => ({ shipped: [{ at: new Date(nowMs).toISOString(), text: 'ashlrai/phantom#1: a' }], mergeCountUnavailable: false }),
   runsState: async () => ({ runsDirPresent: true, sources: { status: 'healthy' } as never, lanes: [lane] }),
   needs: () => ({ status: 'available', items: [] }),
   inbox: async () => ({ sourceState: 'healthy', entries: [] }),

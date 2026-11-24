@@ -203,6 +203,7 @@ describe('brief — composed from recorded state, with links', () => {
       merged: [{ repo: VERSE, number: 541, title: '', url: 'https://github.com/ashlrai/ashlr-hub/pull/541', mergedAtMs: ET('06:00'), source: 'gh' }],
       mergeCountState: 'ok', truncated: false, running: null, queued: null });
     const facts = await gatherBriefFacts(ET('00:00'), ET('08:05'), sources);
+    expect(facts.shipped[0]?.at).toBe(new Date(ET('06:00')).toISOString());
     const text = composeBrief('morning', facts, { narrative: 'One line of narrative.' });
     const lines = text.split('\n');
     expect(lines[0]).toBe('Morning brief · Sun, Sep 27');

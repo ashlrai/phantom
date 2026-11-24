@@ -67,7 +67,7 @@ describe('buildStatusDigest', () => {
 
 describe('gatherStatusDigestInput', () => {
   const now = new Date('2026-11-10T20:00:00Z');
-  const shipped = (...n: string[]) => ({ shipped: n.map(text => ({ text })), mergeCountUnavailable: false });
+  const shipped = (...n: string[]) => ({ shipped: n.map(text => ({ text, at: now.toISOString() })), mergeCountUnavailable: false });
   const base = {
     installedVersion: () => '3.29.15', publishedVersion: async () => '3.30.32',
     mergeFacts: async () => shipped('ashlrai/phantom#1: a', 'ashlrai/ashlr-hub#2: b', 'ashlrai/phantom#3'),
@@ -79,10 +79,59 @@ describe('gatherStatusDigestInput', () => {
   it('counts only phantom merges, only hard-limit asks, and the newest P0 with its age', async () => {
     const input = await gatherStatusDigestInput('/r', now, base);
     expect(input.mergesLastHour).toEqual(ok(2));
+    expect(input.mergesLast24h).toEqual(ok(2));
     expect(input.needsMason).toEqual(ok(1));
     expect(input.updatePending).toBe(true);
     expect(input.topP0).toEqual(ok({ text: 'Phantom status', ageMs: 12 * 60_000 }));
     expect(input.lanes).toEqual(ok([{ lane: 'claude', running: 1, target: 2, held: false, heldReason: null }]));
+  });
+
+  it('counts unique merged PRs by explicit time, including both window boundaries', async () => {
+    const HOUR = 3_600_000;
+    const at = (ago: number) => new Date(now.getTime() - ago).toISOString();
+    const items = [
+      { text: 'ashlrai/phantom#1: first observation', at: at(HOUR / 2) },
+      { text: 'ashlrai/phantom#1: replay with a new title', at: at(HOUR / 2) },
+      { text: 'ASHLRAI/PHANTOM#1: another source', at: at(HOUR / 2) },
+      { text: 'ashlrai/phantom#2', at: at(HOUR) },
+      { text: 'ashlrai/phantom#3', at: at(0) },
+      { text: 'ashlrai/phantom#4', at: at(HOUR + 1) },
+      { text: 'ashlrai/phantom#5', at: at(24 * HOUR) },
+      { text: 'ashlrai/phantom#6', at: at(24 * HOUR + 1) },
+      { text: 'ashlrai/phantom#7', at: at(-1) },
+      { text: 'ashlrai/other#8', at: at(0) },
+      { text: 'ashlrai/phantom#9suffix', at: at(0) },
+      { text: 'opened ashlrai/phantom#10', at: at(0) },
+    ];
+    const calls: number[][] = [];
+    const input = await gatherStatusDigestInput('/r', now, { ...base, mergeFacts: async (since, end) => {
+      calls.push([since, end]);
+      // Deliberately return the same unfiltered outcomes for both requests.
+      return { shipped: items, mergeCountUnavailable: false };
+    } });
+    expect(input.mergesLastHour).toEqual(ok(3));
+    expect(input.mergesLast24h).toEqual(ok(5));
+    expect(calls).toEqual([[now.getTime() - HOUR, now.getTime()], [now.getTime() - 24 * HOUR, now.getTime()]]);
+  });
+
+  it.each([undefined, '', 'invalid timestamp'])('keeps missing or invalid merge time (%s) unknown', async at => {
+    const input = await gatherStatusDigestInput('/r', now, { ...base, mergeFacts: async () => ({
+      shipped: [{ text: 'ashlrai/phantom#1', at }], mergeCountUnavailable: false,
+    }) });
+    expect(input.mergesLastHour).toEqual(no('GitHub merge count unavailable or incomplete'));
+    expect(input.mergesLast24h).toEqual(no('GitHub merge count unavailable or incomplete'));
+  });
+
+  it('distinguishes a complete empty window from unavailable merge evidence', async () => {
+    const empty = await gatherStatusDigestInput('/r', now, { ...base, mergeFacts: async () => shipped() });
+    expect(empty.mergesLastHour).toEqual(ok(0));
+    expect(empty.mergesLast24h).toEqual(ok(0));
+    for (const mergeFacts of [async () => ({ shipped: [], mergeCountUnavailable: true }),
+      async () => { throw new Error('unreadable'); }]) {
+      const input = await gatherStatusDigestInput('/r', now, { ...base, mergeFacts });
+      expect(input.mergesLastHour.ok).toBe(false);
+      expect(input.mergesLast24h.ok).toBe(false);
+    }
   });
 
   it('turns throwing or self-declared unavailable readers into unknown facts', async () => {
