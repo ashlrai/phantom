@@ -565,11 +565,15 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 The desktop inbox box and the phone box show the same chat above their Send.
 The default `phm leader thread` shows the whole conversation as plain lines.
 Add `--json` for the `leader.thread.v1` shape or `--text` for explicit plain
-lines. Optionally filter with `--since <hours|date>` or keep the newest n with
-`--limit <n>`. The same view is available at GET
-`/api/verse/leader/thread/merged?since=…&limit=…`. Each entry has `at`, `from` (`mason`,
+lines. Optionally filter with `--since <hours|date>` and `--before <hours|date>`
+or keep the newest n with `--limit <n>`. `since` keeps entries at or after its
+cutoff and `before` keeps entries strictly before its own, so the pair reads
+one `[since, before)` window — the same bound pair every other comms read
+applies; an entry with no readable date cannot be placed inside or outside
+the window, so neither bound ever drops it. The same view is available at GET
+`/api/verse/leader/thread/merged?since=…&before=…&limit=…`. Each entry has `at`, `from` (`mason`,
 `leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
-numbers named in the text). Without `--since`, no time filter is applied.
+numbers named in the text). Without `--since`/`--before`, no time filter is applied.
 A reply in both the outbox and the PLAN-LOG shows once, and an entry with no readable date
 keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader
@@ -579,7 +583,7 @@ journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--since 24] [--limit 20] [--json]
+ashlr leader thread [--since 24] [--before 2] [--limit 20] [--json]
 ashlr leader thread --legacy [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>

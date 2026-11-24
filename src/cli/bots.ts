@@ -1,4 +1,4 @@
-import { applySeatHandoff, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage } from '../core/bots/seats.js';
+import { applySeatHandoff, applySeatHandoffs, listSeats, planSeatHandoff, planSeatHandoffs, sendSeatMessage } from '../core/bots/seats.js';
 import { explainPhantomBot, listPhantomBots, planPhantomBot, readPhantomBot } from '../core/agents/phantom-bot.js';
 
 function options(args: string[], flags: string[], values: string[]): Record<string, string> {
@@ -15,13 +15,13 @@ export async function runBotsCli(argv: string[], out = console.log, home?: strin
   try {
     const [verb, ...args] = argv;
     if (!verb || ['help', '--help', '-h'].includes(verb) || args.includes('--help')) {
-      out('phm bots list|seats|handoffs|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
+      out('phm bots list|seats|handoffs [--apply]|handoff --seat <id> [--apply]|show <id>|explain <id>|create --dry-run --id <id> --outcome <text> --profile <id>|message --from <seat> --to <seat|owner> --text <text> [--json]'); return 0;
     }
     const name = ['show', 'explain'].includes(verb) ? args.shift()! : '';
     const opts = options(args, ['--json', '--dry-run', '--apply'], ['--seat', '--id', '--outcome', '--profile', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--from', '--to', '--text']);
     let result: unknown;
     if (verb === 'seats') result = await listSeats({ home });
-    else if (verb === 'handoffs') result = await planSeatHandoffs({ home });
+    else if (verb === 'handoffs') result = await (opts['--apply'] ? applySeatHandoffs : planSeatHandoffs)({ home });
     else if (verb === 'handoff') {
       if (!opts['--seat']) throw new Error('Missing --seat.');
       result = await (opts['--apply'] ? applySeatHandoff : planSeatHandoff)(opts['--seat'], { home });

@@ -363,6 +363,53 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(error).toHaveBeenCalledTimes(4);
   });
 
+  it('filters jobs by --before on last activity and refuses bad cutoffs', async () => {
+    const appendLive = (body: unknown, cursor: number) => {
+      expect(appendBusInbox({ id: `fake-live-${cursor}`, from: 'fake-agent', to: 'leaders',
+        priority: 'P2', ttl: 86_400_000, body }, { root, now: () => now }).status).toBe('posted');
+    };
+    appendLive(post, 1);                            // fake-job announced at now
+    const first = now;
+    now += 120_000;
+    appendLive({ ...post, jobId: 'fake-new' }, 2);  // fake-new announced two minutes later
+    const log = output();
+    // An epoch-ms cutoff between the two announcement times keeps only the older job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(now - 60_000)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=2 feed=ok');
+    log.mockClear();
+    // The shared grammar resolves the same way: 1m back still drops the newer job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', '1m'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    log.mockClear();
+    // The bound is exclusive: the older job's own updatedAt drops it out too.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(first)])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=2 feed=ok');
+    log.mockClear();
+    // since/before read one [since, before) window — the older job alone sits inside.
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', String(first), '--before', String(now)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    log.mockClear();
+    // A status moves the older job's last activity past the bound — only the
+    // never-statused job stays under it.
+    now += 10_000;
+    appendLive({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 3);
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(now - 5_000)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} running`))).toBe(false);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(true);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=3 feed=ok');
+    // Unparseable and duplicate cutoffs are usage errors, never silently widened.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--before', 'bogus'], ['--root', root, '--before', '1m', '--before', '2m'],
+      ['--root', root, '--before'], ['--root', root, '--before', '--json']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(4);
+  });
+
   it('pages the feed with --limit and reports matched/omitted honestly', async () => {
     append(post);                                   // fake-job announced first
     now += 10;
@@ -632,6 +679,54 @@ describe('work-feed --to announcement-address filter', () => {
     log.mockClear();
     expect(await cmdFleetWorkFeed(['--root', root, '--to', 'leaders'])).toBe(0);
     expect(jobLines(log.mock.calls)).toEqual([expect.stringContaining('fake-sink')]);
+  });
+});
+
+describe('work-feed --channel room filter', () => {
+  it('keeps only jobs announced to group:<channel>:* under every topic', async () => {
+    append(post, 1, 'fake-agent', 'group:release:general');
+    now += 10;
+    append({ ...post, jobId: 'fake-room-topic' }, 2, 'fake-agent', 'group:release:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-other-room' }, 3, 'fake-agent', 'group:ops:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-direct' }, 4, 'fake-agent', 'agent:worker-bot');
+    now += 10;
+    append({ ...post, jobId: 'fake-sink' }, 5, 'fake-agent', 'leaders');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 5 });
+    const log = output();
+    // The room's whole traffic under every topic — the same group:<name>:
+    // prefix agents bus inbox --channel and channel read match.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', receipts: 5, jobs: [{ id: 'fake-room-topic' }, { id: 'fake-job' }] });
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ops'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-')))
+      .toEqual([expect.stringContaining('fake-other-room')]);
+    log.mockClear();
+    // A room nothing was announced to is an honest empty view, not an error.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ghost'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=5 feed=ok');
+    // The prefix needs the topic separator: lookalike labels never match.
+    now += 10;
+    append({ ...post, jobId: 'fake-lookalike' }, 6, 'fake-agent', 'group:release2:x');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-room-topic', 'fake-job']);
+  });
+
+  it('rejects channel names outside the bus channel grammar', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--channel', 'Has Space'], ['--root', root, '--channel', 'UPPER'],
+      ['--root', root, '--channel', ''], ['--root', root, '--channel', 'x'.repeat(33)],
+      ['--root', root, '--channel', 'a:b'], ['--root', root, '--channel', 'release', '--channel', 'ops'],
+      ['--root', root, '--channel']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
   });
 });
 

@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[] } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -62,7 +62,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
           : '##[group]Run node <<\'NODE\'\nError: Secret scan (diff) concluded failure\n##[error]Process completed with exit code 1.\n';
         return success(gateLog);
       }
-      const isMaster = endpoint.includes('/jobs/10/');
+      const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
       const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       let prefix: string;
@@ -89,12 +89,18 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
       const isMaster = endpoint.includes('/runs/1/');
       const conclusion = isMaster && options.pass ? 'success' : 'failure';
       const head_sha = isMaster ? master : head;
-      const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : 20, conclusion, head_sha }];
-      if (options.gate) jobs.push({ id: isMaster ? 11 : 21, name: 'Merge Gate', conclusion, head_sha });
-      value = { total_count: jobs.length, jobs };
+      if (options.noJobs) {
+        value = { total_count: 0, jobs: [] };
+      } else {
+        const jobs: { id: number; name?: string; conclusion: string; head_sha: string }[] = [{ id: isMaster ? 10 : 20, conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha }];
+        if (options.gate) jobs.push({ id: isMaster ? 11 : 21, name: 'Merge Gate', conclusion: (isMaster ? options.masterJobConclusion : options.prJobConclusion) ?? conclusion, head_sha });
+        if (isMaster && options.extraMasterJob) jobs.push({ id: 30, conclusion: options.extraMasterJob, head_sha });
+        if (!isMaster && options.extraPrJob) jobs.push({ id: 40, conclusion: options.extraPrJob, head_sha });
+        value = { total_count: jobs.length, jobs };
+      }
     } else if (endpoint.includes('/actions/runs?')) {
       const isMaster = endpoint.includes(master);
-      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head }] };
+      value = { total_count: 1, workflow_runs: [{ id: isMaster ? 1 : 2, workflow_id: 1, status: 'completed', head_sha: isMaster ? master : options.stale ? master : head, ...(options.runConclusion !== undefined ? { conclusion: options.runConclusion } : {}) }] };
     } else throw new Error(`unexpected call ${args.join(' ')}`);
     return success(JSON.stringify(value));
   };
@@ -140,6 +146,53 @@ describe('CI baseline evidence', () => {
       const report = await analyzeCiBaseline('owner/repo', github(options).gh);
       expect(report.groups).toEqual([]);
       expect(report.freshness.every(p => p.state === (options.stale ? 'stale' : 'unknown'))).toBe(true);
+    }
+  });
+  it('reads jobs that never reached a verdict as unknown, never fresh', async () => {
+    // A cancelled, timed-out, action-required, startup-failed or stale job
+    // produced no verdict even when its log verifies: the run cannot prove
+    // the head's checks, so the PR reads unknown and its parsed failures
+    // are dropped with the rest of the unverifiable evidence.
+    for (const conclusion of ['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ prJobConclusion: conclusion }).gh);
+      expect(report.groups).toEqual([]);
+      expect(report.freshness.every(p => p.state === 'unknown' && p.reason === 'incomplete-check')).toBe(true);
+      expect(report.master.known).toBe(true);
+    }
+    // The same holds when the incomplete job sits beside a verifiable
+    // failure job: the failure is real but the run still cannot prove the
+    // head, so nothing groups.
+    const mixed = await analyzeCiBaseline('owner/repo', github({ extraPrJob: 'cancelled' }).gh);
+    expect(mixed.groups).toEqual([]);
+    expect(mixed.freshness.every(p => p.state === 'unknown' && p.reason === 'incomplete-check')).toBe(true);
+    // Skipped and neutral jobs are deliberate non-verdicts, not incomplete
+    // checks: they neither poison the run nor hide its failure evidence.
+    for (const conclusion of ['skipped', 'neutral']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ extraPrJob: conclusion }).gh);
+      expect(report.groups.length).toBeGreaterThan(0);
+      expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
+    }
+  });
+  it('drops master known state on incomplete checks but keeps failure evidence', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ masterJobConclusion: 'timed_out' }).gh);
+    expect(report.master.known).toBe(false);
+    // The cancelled job's verified log still feeds failure parsing, so the
+    // shared-baseline group keeps its master:'fail' reading.
+    expect(report.groups[0]).toMatchObject({ classification: 'shared-baseline', master: 'fail' });
+    expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
+  });
+  it('reads a jobless run that did not succeed as incomplete evidence', async () => {
+    for (const conclusion of ['startup_failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'failure']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);
+      expect(report.freshness.every(p => p.state === 'unknown' && p.reason === 'incomplete-check')).toBe(true);
+      expect(report.master.known).toBe(false);
+    }
+    // A jobless run that succeeded (or stayed neutral/skipped) instantiated
+    // nothing to verify: it is not incomplete evidence.
+    for (const conclusion of ['success', 'neutral', 'skipped']) {
+      const report = await analyzeCiBaseline('owner/repo', github({ noJobs: true, runConclusion: conclusion }).gh);
+      expect(report.freshness.every(p => p.state === 'fresh')).toBe(true);
+      expect(report.master.known).toBe(true);
     }
   });
   it('tolerates inert no-checkout aggregator jobs but rejects unverifiable evidence', async () => {

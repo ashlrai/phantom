@@ -9,9 +9,9 @@ import {
 } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
-import { agentAddressMatcher, agentIdentityKeys } from '../core/agents/bus-identity.js';
+import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 export const MAX_FLEET_BUS_INBOX_READ = BUS_INBOX_MAX_READ;
@@ -38,10 +38,23 @@ export interface FleetBusInboxFilters {
   topic?: string;
   /** v2 thread label — matches `note`/`context` bodies only. */
   thread?: string;
+  /** Room filter: keeps only envelopes addressed to `group:<channel>:*` —
+   * the same raw `to`-prefix rule `phm comms bus read --channel`,
+   * `fleet bus-follow --channel`, `phm messages --channel`,
+   * `agents bus wakes --channel` and the work feed's `--channel` apply; the
+   * strict channel-name grammar, decided on the `to` label with no registry
+   * dependence — the addressed `agents bus inbox --channel` resolves the
+   * same prefix only across channels the agent belongs to. */
+  channel?: string;
   /** One job id the body must name (the shared `busBodyJobMatch` rule). */
   job?: string;
   /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt >= since`. */
   since?: number;
+  /** Epoch-ms cutoff resolved at parse time; keeps `receivedAt < before` —
+   * the exclusive upper bound composing with `since` into one
+   * `[since, before)` window, the same rule `phm comms bus read|watch
+   * --before` and `fleet bus-follow --before` apply. */
+  before?: number;
   /** Normalized `--contains` needle over the scrubbed one-line summary. */
   contains?: string;
 }
@@ -65,7 +78,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'since', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'before', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -125,12 +138,24 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     filters[key] = value;
   }
+  const channel = args['channel'];
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    filters.channel = channel;
+  }
   const since = args['since'];
   if (since !== undefined) {
     if (typeof since !== 'string') return null;
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     filters.since = resolved;
+  }
+  const before = args['before'];
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters.before = resolved;
   }
   const contains = busReadContains(args['contains']);
   if (contains === null) return null;
@@ -175,25 +200,26 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
   if (page.status !== 'ok') {
     return { ...base, sourceState: page.status, messages: null, returnedMessages: null, nextCursor: null };
   }
-  const identityOf = input.to === undefined && input.from === undefined && filters?.excludeFrom === undefined
-    ? undefined : agentIdentityKeys();
-  const to = input.to === undefined ? undefined : agentAddressMatcher(identityOf, input.to);
-  const from = input.from === undefined ? undefined : agentAddressMatcher(identityOf, input.from);
-  const excludeFrom = filters?.excludeFrom === undefined ? undefined : agentAddressMatcher(identityOf, filters.excludeFrom);
+  const registryRead = input.to === undefined && input.from === undefined && filters?.excludeFrom === undefined
+    ? undefined : readAgentRegistry();
+  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const to = input.to === undefined ? undefined : agentRefAddressMatcher(input.to, registry);
+  const from = input.from === undefined ? undefined : agentRefAddressMatcher(input.from, registry);
+  const excludeFrom = filters?.excludeFrom === undefined ? undefined : agentRefAddressMatcher(filters.excludeFrom, registry);
   const messages = page.messages.filter(({ envelope, receivedAt }) =>
     (to === undefined || to(envelope.to)) &&
     (from === undefined || from(envelope.from)) &&
     (excludeFrom === undefined || !excludeFrom(envelope.from)) &&
     (filters?.id === undefined || envelope.id === filters.id) &&
-    (filters?.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
-      !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') &&
-      envelope.body.inReplyTo === filters.inReplyTo) &&
+    (filters?.inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) &&
     (filters?.priority === undefined || envelope.priority === filters.priority) &&
     (filters?.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
     (filters?.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
     (filters?.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
     (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
+    (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
+    (filters?.before === undefined || receivedAt < filters.before) &&
     (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));
   return {
     ...base, sourceState: 'ok' as const, messages,

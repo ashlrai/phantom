@@ -17,6 +17,9 @@
  * passes every merge gate like any other. Nothing here writes a repo.
  */
 import { getEntries } from '../../vision/playbook.js';
+import { listCloudTasks } from '../../cloud/store.js';
+import { lessonTrial, type LessonEffect } from '../../improve/lesson-trial.js';
+import { revertedPrKeys } from '../../improve/reverted.js';
 import { vetoLessons } from './inject.js';
 import {
   cleanText,
@@ -35,6 +38,7 @@ import {
   RETRO_FAILURE_KINDS,
   type KnowledgeDecisionRequest,
   type KnowledgeNoteV1,
+  type KnowledgeTrialSummary,
   type LessonsCauseRow,
   type LessonsStateV1,
   type RetroSource,
@@ -184,6 +188,37 @@ export async function proposeAgentsMd(id: string, enqueue: AgentsMdEnqueue): Pro
 // Lessons view state
 // ---------------------------------------------------------------------------
 
+/** The holdout trial's read, minus the per-row `scope` (the map key / parent note is the scope). */
+type TrialEffect = Omit<LessonEffect, 'scope'>;
+
+interface LessonTrialState {
+  byNote: Map<string, TrialEffect>;
+  overall: LessonEffect;
+  holdout: number;
+  excluded: KnowledgeTrialSummary['excluded'];
+}
+
+/**
+ * The cloud lesson holdout's verdicts (improve/lesson-trial.ts), computed
+ * from the same cloud task files `phm improve lessons` prints. One task scan
+ * feeds both the trial and the revert set, so a merged-then-reverted PR never
+ * counts as landed. null = the task store or either ledger could not be read
+ * — every `trial` field stays absent (unknown, never a verdict).
+ */
+function lessonTrialState(): LessonTrialState | null {
+  try {
+    const tasks = listCloudTasks(Number.MAX_SAFE_INTEGER);
+    const report = lessonTrial(tasks, revertedPrKeys(tasks));
+    const byNote = new Map<string, TrialEffect>();
+    for (const e of report.byNote) {
+      byNote.set(e.scope, { served: e.served, holdout: e.holdout, delta: e.delta, ci95: e.ci95, verdict: e.verdict });
+    }
+    return { byNote, overall: report.overall, holdout: report.holdout, excluded: report.excluded };
+  } catch {
+    return null;
+  }
+}
+
 function summarize(r: RetroV1): RetroSummary {
   return {
     id: r.id,
@@ -226,14 +261,19 @@ export async function buildLessonsState(nowMs: number, windowDays = 30): Promise
     // in which case every note's `outcomes` stays absent (unknown, never 0).
     readKnowledgeNoteOutcomes().catch(() => null),
   ]);
+  // The holdout trial is the causal half of the same question; like
+  // `noteOutcomes`, a degraded read withholds every `trial` field.
+  const trial = lessonTrialState();
   const inWindow = all.filter((r) => r.endedAt >= since);
   const endKinds: LessonsStateV1['endKinds'] = {};
   for (const r of inWindow) endKinds[r.endKind] = (endKinds[r.endKind] ?? 0) + 1;
   const withHits = notes.map((n) => {
     const h = hits.get(n.id);
     const o = noteOutcomes?.get(n.id);
+    const t = trial?.byNote.get(n.id);
     const base = h ? { ...n, hits: n.hits + h.hits, lastHitAt: h.lastHitAt ?? n.lastHitAt } : n;
-    return o ? { ...base, outcomes: o } : base;
+    const withOutcomes = o ? { ...base, outcomes: o } : base;
+    return t ? { ...withOutcomes, trial: t } : withOutcomes;
   });
   const approved = withHits.filter((n) => n.status === 'approved')
     .sort((a, b) => b.hits - a.hits || (b.decidedAt ?? '').localeCompare(a.decidedAt ?? ''));
@@ -258,6 +298,11 @@ export async function buildLessonsState(nowMs: number, windowDays = 30): Promise
       rejected: withHits.filter((n) => n.status === 'rejected').length,
       approvedBytes: approved.reduce((s, n) => s + Buffer.byteLength(n.text, 'utf8'), 0),
       capBytes: KNOWLEDGE_INJECT_CAP_BYTES,
+      // No finished eligible run yet means the trial has measured nothing —
+      // absent reads as unknown, not as a 0/0 verdict.
+      ...(trial && trial.overall.served.tasks + trial.overall.holdout.tasks > 0
+        ? { trial: { holdout: trial.holdout, overall: trial.overall, excluded: trial.excluded } }
+        : {}),
     },
     playbook,
     sweptAt: sweep.sweptAt,

@@ -6,7 +6,7 @@ const usage = 'Usage: phm fleet map [--minutes N] [--json]\nShow the org and ret
 
 export async function cmdFleetMap(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\n       phm fleet map messages [--json] [--since <10m|2h|1d|ISO>] [--limit N]\nThe last agent-to-agent messages, one line each.`);
+    console.log(`${usage}\n       phm fleet map messages [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>] [--limit N]\nThe last agent-to-agent messages, one line each.`);
     return 0;
   }
   if (args[0] === 'messages') return (await import('./fleet-map-messages.js')).cmdFleetMapMessages(args.slice(1));
