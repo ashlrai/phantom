@@ -490,10 +490,12 @@ if [ "$bad" = 1 ]; then exit 1; fi
 if [ "$pending" = 0 ]; then echo green=true; exit 0; fi
 echo pending=true; exit 2
 `;
-      const result = spawnSync('/bin/bash', ['-c', script], {
-        encoding: 'utf8',
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
-      });
+      // Windows runners have Git bash on PATH, not a Win32 /bin/bash.
+      const env = { ...process.env };
+      const pathName = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+      const sep = process.platform === 'win32' ? ';' : ':';
+      env[pathName] = `${dir}${sep}${env[pathName] ?? ''}`;
+      const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env });
       return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     } finally {
       rmSync(dir, { recursive: true, force: true });

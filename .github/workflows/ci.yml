@@ -109,7 +109,15 @@ jobs:
           fi
           base="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
           git diff --no-color --no-ext-diff "${base}" "${HEAD_SHA}" > "${RUNNER_TEMP}/candidate.diff"
-          perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
+          set +e
+          perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff" > "${RUNNER_TEMP}/secret-shape.out" 2>&1
+          code=$?
+          set -e
+          cat "${RUNNER_TEMP}/secret-shape.out"
+          if [ "$code" -ne 0 ]; then
+            node .github/scripts/ci-failure-summary.mjs --title "Secret-shape scan" --file "${RUNNER_TEMP}/secret-shape.out"
+          fi
+          exit "$code"
 
   quick:
     # Master-push typecheck that also publishes the protected-branch compiler
@@ -365,7 +373,10 @@ jobs:
             node scripts/generate-docs-llms.mjs
             status="$(git status --porcelain --untracked-files=normal)"
             if [ -n "$status" ]; then
-              printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
+              {
+                printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status"
+              } | tee "${RUNNER_TEMP}/generated-files.out" >&2
+              node .github/scripts/ci-failure-summary.mjs --title "Check generated files" --file "${RUNNER_TEMP}/generated-files.out"
               exit 1
             fi
             node .github/scripts/ci-green-reuse.mjs write --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
@@ -1802,12 +1813,16 @@ jobs:
           echo "ASHLR_TEST_RESOURCES_CREATED=1" >> "$GITHUB_ENV"
 
       - name: Check native broker formatting
-        run: >-
-          rustfmt --edition 2021 --check
-          desktop/src-tauri/src/lib.rs
-          desktop/src-tauri/src/native_launchd_broker.rs
-          desktop/src-tauri/src/native_updates.rs
-          desktop/src-tauri/src/native_update_client.rs
+        run: |
+          set +e
+          rustfmt --edition 2021 --check desktop/src-tauri/src/lib.rs desktop/src-tauri/src/native_launchd_broker.rs desktop/src-tauri/src/native_updates.rs desktop/src-tauri/src/native_update_client.rs > "$RUNNER_TEMP/rustfmt.out" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/rustfmt.out"
+          if [ "$code" -ne 0 ]; then
+            node .github/scripts/ci-failure-summary.mjs --title "Check native broker formatting" --file "$RUNNER_TEMP/rustfmt.out"
+          fi
+          exit "$code"
 
       - name: Check native broker library
         run: >-
@@ -1815,9 +1830,16 @@ jobs:
           --lib --locked
 
       - name: Lint native broker library
-        run: >-
-          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml
-          --lib --locked -- -D warnings
+        run: |
+          set +e
+          cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --lib --locked -- -D warnings > "$RUNNER_TEMP/clippy.out" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/clippy.out"
+          if [ "$code" -ne 0 ]; then
+            node .github/scripts/ci-failure-summary.mjs --title "Lint native broker library" --file "$RUNNER_TEMP/clippy.out"
+          fi
+          exit "$code"
 
       - name: Test native broker library
         run: >-
@@ -1952,7 +1974,15 @@ jobs:
           # A PR must not allowlist its own leak: ignore any repo-supplied config.
           rm -f .gitleaks.toml .gitleaksignore
           echo "scanning ${base}..${HEAD_SHA}"
-          "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
+          set +e
+          "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120 > "${RUNNER_TEMP}/secret-scan.out" 2>&1
+          code=$?
+          set -e
+          cat "${RUNNER_TEMP}/secret-scan.out"
+          if [ "$code" -ne 0 ]; then
+            node .github/scripts/ci-failure-summary.mjs --title "Secret scan (diff)" --file "${RUNNER_TEMP}/secret-scan.out"
+          fi
+          exit "$code"
 
   merge-gate:
     # One stable required check. PR and merge_group: Secret-shape scan, Secret

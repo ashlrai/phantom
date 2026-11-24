@@ -125,5 +125,5 @@ it('keeps empty evidence successful and unreadable coverage unknown without GitH
   const text = await run(1, false);
   expect(text).toContain('returns: unknown');
   expect(text).toContain('projection coverage: parsed-total=unknown omitted=unknown unparsed=unknown');
-  expect(projectCoordinationReturns(null, 5_000).coverage).toEqual({ parsedTotal: null, omitted: null, unparsed: null });
+  expect(projectCoordinationReturns(null, 5_000).coverage).toEqual({ parsedTotal: null, matched: null, omitted: null, unparsed: null });
 });

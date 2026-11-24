@@ -46,7 +46,7 @@ only read, so they need no unlock and leave no note in the Leader inbox:
 | `/thread <session>` | Opens that session as a conversation in the Leader pane (beside the chat when there is room, over it otherwise) and says its state and lane. Esc in the conversation returns to the reply box. |
 | `/summary <session>` | Prints the session's state, lane, model, when it last spoke and its recorded summary, without leaving the chat. |
 | `/log <job-id>` | Opens the job's live log. |
-| `/find <words>` | Looks for the words in every session's whole conversation and answers in the chat: how many sessions hold them, then a row for each of the first six with its state, how many of its messages match and the newest line that does. |
+| `/find <words>` | Looks for the words in every session's whole conversation and answers in the chat: how many sessions hold them, then a row for each of the first six with its state, how many of its messages match and the newest line that does. "Open at this line" after a job's quoted line opens that conversation at the line. |
 
 Type `@` after the command to pick the session from the list above; the `@`
 is dropped. A job id in a command's answer is a button that opens that session
@@ -59,7 +59,11 @@ behind `phm sessions --json` and `phm sessions thread <id> --json`.
 
 `/find` asks what the find box in Conversations asks (`phm sessions find <words> --json`), across
 every lane and repo, for words of two letters or more; a session must hold
-all of them. A quoted line is cut around the first word found. Sessions past
+all of them. A quoted line is cut around the first word found. "Open at this
+line" opens the job's conversation beside the chat at the line quoted, with
+the words marked and `,` and `.` stepping between the entries that hold them
+([Sessions](SESSIONS.md)); an answer left from before a reload keeps its
+session buttons only. Sessions past
 the sixth are counted, with a pointer to the Conversations find box, which
 lists them all. When the search does not answer, or the server is too old to
 have it, the line says the answer is unknown and why; it never reads as

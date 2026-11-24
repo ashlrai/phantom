@@ -95,10 +95,11 @@ export const NEW_MARK_ATTR = 'data-new-mark';
 /**
  * `keys` is null until the conversation has been read. `end` is the element after the conversation; whether it is on
  * screen decides between following and keeping the reader's place. Without IntersectionObserver the view follows.
- * `unreadAtOpen` (message keys) is used once, when the conversation's first read arrives.
+ * `unreadAtOpen` (message keys) is used once, when the conversation's first read arrives. While `hold` is true the reader is
+ * being kept at a line of their choosing (ThreadFound.tsx), and an arrival does not scroll the view to the end.
  */
 export function useThreadFollow(id: string, keys: readonly string[] | null, root: RefObject<HTMLElement | null>, end: RefObject<HTMLElement | null>,
-  unreadAtOpen: readonly string[] = NOTHING_UNREAD): ThreadFollow {
+  unreadAtOpen: readonly string[] = NOTHING_UNREAD, hold?: RefObject<boolean>): ThreadFollow {
   const [state, setState] = useState<FollowState | null>(null);
   const pinned = useRef(true);
   const signature = keys === null ? null : keys.join('\n');
@@ -127,7 +128,7 @@ export function useThreadFollow(id: string, keys: readonly string[] | null, root
   const current = state !== null && state.id === id ? state : null;
   const followed = current?.followed ?? 0;
   // Follow an arrival the reader was watching the end for; the first read is placed by the conversation itself.
-  useLayoutEffect(() => { if (followed > 0) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [end, followed]);
+  useLayoutEffect(() => { if (followed > 0 && !hold?.current) end.current?.scrollIntoView?.({ block: 'nearest' }); }, [end, followed, hold]);
 
   const jumpToEnd = useCallback(() => { end.current?.scrollIntoView?.({ block: 'nearest' }); }, [end]);
   const jumpToNew = useCallback(() => {

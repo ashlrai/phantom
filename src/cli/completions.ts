@@ -169,7 +169,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     // passes test/cli-help-no-side-effects; a registry verb whose --help still
     // misbehaves stays out until it is fixed.
     'activity', 'admission', 'api-pools', 'apps-follow', 'apps-status', 'apps-watch', 'asks',
-    'bin-diff', 'brains', 'bridge-check', 'brief-send', 'bus-claim', 'channel-health', 'ci-plan',
+    'bin-diff', 'brains', 'bridge-check', 'brief-send', 'bus-claim', 'caps-route', 'channel-health', 'ci-plan',
     'claim-bind', 'claim-drift', 'claim-notices', 'config', 'conflict-risk', 'coordination',
     'cos-decline', 'cos-loop', 'cos-reconcile', 'cos-work', 'dep-gate', 'dirty-landed', 'disk',
     'disk-forecast', 'disk-sweep', 'done-evaluate', 'done-plan', 'dot-handoff', 'drift', 'edges',

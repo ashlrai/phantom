@@ -227,11 +227,17 @@ and the fast gate never skips tests silently:
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
   `test/docs-repo-links.test.ts` always runs, plus each test whose source
   names a changed file by its path or its bare file name, even in a comment,
-  up to 25 in total. A page no test names runs only the link suite; a
+  up to the same related cap. A page no test names runs only the link suite; a
   docs-only diff never takes the fallback set below.
-- **Code diff**: changed test files and a few tests named by path (below)
-  always run; tests whose name matches a changed file and tests that import a
-  changed module directly fill the rest, up to 25 files in total. Named tests:
+- **Code diff, fresh graph**: the dependency graph for this commit
+  (schema `phantom-dep-graph.v1`, `commit` equal to `HEAD` or an ancestor of
+  the base, blob hashes matching) selects tests by transitive reverse-import
+  reachability, nearest first, up to the related cap in
+  `.github/fast-gate-budget.json` (25 in the measured file). Name-matched
+  `test/**/<stem>.test.ts` files fill in after that closure. A web test that
+  reaches a changed file, and the colocated `src/web-ui/**/*.test.ts` or
+  `*.test.tsx` for a changed web file, run under `vitest.config.web.ts`
+  (`npm run test:web -- <files>`). Changed test files always run. Named tests:
   - `.github/CODEOWNERS`, `src/core/authority/`, a `test/authority-*310b*`
     suite or `.github/tests/secret-shape/` adds the two
     `test/authority-*-310b.test.ts` suites.
@@ -244,13 +250,25 @@ and the fast gate never skips tests silently:
   - `.github/workflows/ci.yml` adds `test/m30.ci.test.ts`.
   - A changed `.github/scripts/<name>.mjs` adds its
     `.github/tests/<name>.test.mjs`.
+  A changed `.github/tests/secret-shape/` path is one of the Tier-1 paths
+  above, so those two authority suites stay in the selection. The
+  secret-shape scan itself is a separate required job and is not selected
+  here.
+- **No importers**: a changed source the fresh graph shows with no importers
+  and no colocated test runs the versioned smoke set in
+  `.github/fast-gate-smoke.json` (`phantom-fast-gate-smoke.v1`) instead
+  of a stride sample. The two Tier-1 authority suites are always in that set.
 - **Fallback**: a change to `package.json` or `package-lock.json`, a
   `tsconfig*.json`, a Vite or Vitest config, `test/setup/`, `test/config/` or
-  `scripts/test-ci*.mjs`, a diff that maps to no test (a `src/web-ui/`-only
-  change, for example), or a selection error runs an even spread of up to 120
-  backend tests across the repository (three shards of 40) that always
+  `scripts/test-ci*.mjs`, a missing, unparsable, or stale graph (its `commit`
+  is not `HEAD` and not an ancestor of the base), a changed file with a
+  dynamic import or other specifier the graph cannot resolve, a docs diff
+  that maps to no test, or a selection error runs an even spread of the
+  fallback budget in `.github/fast-gate-budget.json` (three shards of 40 in
+  the measured file) that always
   includes the two authority suites. A `package.json` change also adds
-  `test/package-files-allowlist.test.ts`.
+  `test/package-files-allowlist.test.ts`. Uncertain inputs run this broader
+  set, never a smaller one.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
 picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
@@ -259,13 +277,18 @@ gate, so run it yourself whenever you touch markdown.
 To see the plan for your branch, commit and run:
 
 ```sh
-RUNNER_TEMP="$(mktemp -d)" ASHLR_CI_BASE_SHA="$(git rev-parse origin/master)" \
-  ASHLR_CI_HEAD_SHA="$(git rev-parse HEAD)" node .github/scripts/ci-fast-select.mjs
+graph="$(mktemp)"
+node .github/scripts/ci-dep-graph.mjs update --out "$graph"
+RUNNER_TEMP="$(mktemp -d)" CI_DEP_GRAPH="$graph" \
+  ASHLR_CI_BASE_SHA="$(git rev-parse origin/master)" \
+  ASHLR_CI_HEAD_SHA="$(git rev-parse HEAD)" \
+  node .github/scripts/ci-fast-select.mjs
 ```
 
 It prints the mode and test counts and writes the list to
-`$RUNNER_TEMP/fast-gate-plan.json`. Run those files with
-`npm run test:ci -- <files>` before you push.
+`$RUNNER_TEMP/fast-gate-plan.json`. Run the vitest files with
+`npm run test:ci -- <files>` and any `src/web-ui` tests with
+`npm run test:web -- <files>` before you push.
 
 ## 7. Auto-merge
 
