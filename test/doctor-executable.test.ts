@@ -90,10 +90,24 @@ describe('doctor executable discovery', () => {
     vi.stubEnv('PATH', undefined);
     expect(findDoctorExecutable('inert-tool')).toBeNull();
   });
-  it('leaves Windows discovery to the trusted platform locator, without searching cwd', () => {
-    executable(first);
+  it('finds Windows npm shims without launching a locator or requiring execute bits', () => {
     Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
-    expect(findDoctorExecutable('inert-tool')).toBeNull();
+    vi.stubEnv('PATH', `"${first}";${second}`);
+    writeFileSync(join(first, 'inert-tool.cmd'), 'fixture; never executed', { mode: 0o600 });
+    executable(second, 'inert-tool.exe');
+    expect(findDoctorExecutable('inert-tool')).toBe(join(first, 'inert-tool.cmd'));
+    for (const mock of Object.values(children)) expect(mock).not.toHaveBeenCalled();
+  });
+  it('refuses implicit cwd and relative Windows PATH entries', () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    executable(root, 'inert-tool.cmd');
+    vi.spyOn(process, 'cwd').mockReturnValue(root);
+    try {
+      for (const value of ['', '.', 'first', 'C:relative']) {
+        vi.stubEnv('PATH', value);
+        expect(findDoctorExecutable('inert-tool')).toBeNull();
+      }
+    } finally { vi.mocked(process.cwd).mockRestore(); }
     for (const mock of Object.values(children)) expect(mock).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import { join } from 'node:path';
 import type { CpuInfo } from 'node:os';
 import { readVerifiedFleetRoots, observedPsStartIdentity, type VerifiedFleetRootsObservation } from './machine-verified-roots.js';
+import { defaultOsSensorHost, readOsSensors, type OsSensorHost, type OsSensorSnapshot } from './os-sensors.js';
 import {
   parseAccelerators, parseDisks, parseLinuxMemory, parseMacSwap, parseMemoryPressure,
   parsePs, parseQueueStatus, parseVmStat, sumJobTrees,
@@ -22,6 +23,8 @@ export interface MachineTelemetry {
   ram: { totalBytes: number | null; usedBytes: number | null; freeBytes: number | null };
   swap: { usedBytes: number | null; growthBytesPerSecond: number | null };
   memoryPressure: { level: MemoryPressure; freePercent: number | null; pageouts: number | null };
+  /** Additive native observations; older persisted samples can omit this field. */
+  osSensors?: OsSensorSnapshot;
   disks: ReturnType<typeof parseDisks>;
   gpuPercent: number | null;
   anePercent: number | null;
@@ -48,8 +51,8 @@ export interface TelemetryHost {
   totalmem: () => number;
   freemem: () => number;
   loadavg: () => number[];
-  read: (file: string) => Promise<string | null>;
-  command: (file: string, args: string[]) => Promise<string | null>;
+  read: (file: string, signal?: AbortSignal) => Promise<string | null>;
+  command: (file: string, args: string[], signal?: AbortSignal) => Promise<string | null>;
 }
 export interface SampleMachineOptions {
   host?: TelemetryHost;
@@ -100,9 +103,28 @@ export async function sampleMachine(options: SampleMachineOptions = {}): Promise
   const mac = io.platform === 'darwin', linux = io.platform === 'linux';
   const supported = mac || linux;
   const rootReader = options.readRoots ?? (() => readVerifiedFleetRoots({ runsDir: join(os.homedir(), '.ashlr-runs'), worktreeRoot: join(os.homedir(), 'Projects', 'ashlrai', 'wt') }));
-  const command = (file: string, args: string[]) => io.command(file, args).catch(() => null);
-  const read = (file: string) => io.read(file).catch(() => null);
-  const [ps, df, status, vm, pressure, pressureLevel, swap, accelerators, meminfo, linuxGpu, rootObservation] = await Promise.all([
+  // Share already requested probes with the OS collector. In particular, do
+  // not spawn a second vm_stat/sysctl process for the same machine sample.
+  const commands = new Map<string, Promise<string | null>>();
+  const reads = new Map<string, Promise<string | null>>();
+  const key = (file: string, args: string[]) => JSON.stringify([file, args]);
+  const command = (file: string, args: string[], signal?: AbortSignal) => {
+    const id = key(file, args);
+    if (!commands.has(id)) commands.set(id, Promise.resolve().then(() => io.command(file, args, signal)).catch(() => null));
+    return commands.get(id)!;
+  };
+  const read = (file: string, signal?: AbortSignal) => {
+    if (!reads.has(file)) reads.set(file, Promise.resolve().then(() => io.read(file, signal)).catch(() => null));
+    return reads.get(file)!;
+  };
+  // Injected hosts never fall through to the real machine. The native provider
+  // owns Windows process environment, deadlines and Linux device enumeration.
+  const sensorHost: OsSensorHost = options.host ? { ...io, command, read } : {
+    ...defaultOsSensorHost,
+    command: (file, args, signal) => commands.get(key(file, args)) ?? defaultOsSensorHost.command(file, args, signal),
+    read: (file, signal) => reads.get(file) ?? defaultOsSensorHost.read(file, signal),
+  };
+  const [ps, df, status, vm, pressure, pressureLevel, swap, accelerators, meminfo, linuxGpu, rootObservation, osSensors] = await Promise.all([
     supported ? command('/bin/ps', ['-axo', 'pid=,ppid=,%cpu=,rss=,lstart=']) : null,
     supported ? command('/bin/df', ['-lkP']) : null,
     read(options.statusPath ?? join(os.homedir(), '.ashlr-runs', 'queue', 'status.json')),
@@ -114,6 +136,7 @@ export async function sampleMachine(options: SampleMachineOptions = {}): Promise
     linux ? read('/proc/meminfo') : null,
     linux ? read('/sys/class/drm/card0/device/gpu_busy_percent') : null,
     supported ? Promise.resolve().then(rootReader).catch(() => null) : null,
+    readOsSensors({ host: sensorHost }),
   ]);
   const queue = parseQueueStatus(status);
   // Timestamp completion, so a legitimate root observation made during probes
@@ -183,7 +206,7 @@ export async function sampleMachine(options: SampleMachineOptions = {}): Promise
     schemaVersion: 1, sampledAtMs, platform: io.platform, durationMs: performance.now() - start,
     cpu: { perCore: cores, loadAverage: supported ? io.loadavg() : [] }, ram: { totalBytes, freeBytes, usedBytes },
     swap: { usedBytes: swapUsed, growthBytesPerSecond: growth },
-    memoryPressure: { level, freePercent, pageouts: macMemory?.pageouts ?? null },
+    memoryPressure: { level, freePercent, pageouts: macMemory?.pageouts ?? null }, osSensors,
     disks: parseDisks(df), ...acceleratorReading, jobs,
     queueState: queue.paused === null ? 'unknown' : 'known', memguardPaused: queue.paused, estimatedJobRssBytes,
     rootsState: rootsKnown ? 'known' : 'unknown', jobCpuBasis: 'os-average-one-core-100-percent',

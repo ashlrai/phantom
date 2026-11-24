@@ -30,7 +30,14 @@ const unitMaxWorkers = Number.isInteger(configuredUnitWorkers) &&
 // exclude list in each project explicitly, is what keeps the two lanes a
 // clean, non-overlapping partition (verified with `vitest list`; see
 // scripts/check-realio-lane-membership.mjs for the ongoing guard).
+// Native installer contracts execute their actual interpreter. Select the
+// matching OS suite at collection time; every collected test runs normally.
+const NATIVE_INSTALLER_EXCLUDES = process.platform === 'win32'
+  ? ['test/install-release-posix.test.ts']
+  : ['test/install-release-windows.test.ts'];
+
 const BASE_EXCLUDE = [
+  ...NATIVE_INSTALLER_EXCLUDES,
   '**/node_modules/**',
   '**/dist/**',
   // Defense-in-depth: never collect tests from scaffolded output dirs that

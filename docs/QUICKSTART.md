@@ -77,10 +77,14 @@ irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1
 On Linux or macOS, the matching command is:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | sh
 ```
 
 Register the per-user daemon after install:
+
+The installers default to the complete npm package and verify the staged
+payload before installing it. See [platform installation](CROSS-PLATFORM.md)
+for version pins, native CLI assets and service troubleshooting.
 
 | OS | Service | Command |
 | --- | --- | --- |

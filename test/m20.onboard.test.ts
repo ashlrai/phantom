@@ -19,18 +19,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { onboard } from '../src/core/onboard.js';
+import { onboard, stepSymlink } from '../src/core/onboard.js';
 
 // ---------------------------------------------------------------------------
 // Hermetic HOME — redirect all home-relative paths to a tmp dir
 // ---------------------------------------------------------------------------
 
 let tmpHome: string;
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'ashlr-m20-onboard-'));
@@ -39,9 +40,32 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', originalPlatform);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+describe('onboard CLI installation across operating systems', () => {
+  it.each(['darwin', 'linux', 'win32'])('%s recognizes an npm CLI already on PATH', async (platform) => {
+    const bin = join(tmpHome, 'npm bin with spaces');
+    mkdirSync(bin);
+    writeFileSync(join(bin, platform === 'win32' ? 'phm.cmd' : 'phm'), 'fixture', { mode: 0o700 });
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
+    vi.stubEnv('PATH', bin);
+    expect(await stepSymlink()).toMatchObject({ name: 'symlink', status: 'ok', detail: expect.stringContaining('CLI present on PATH') });
+    expect(existsSync(join(tmpHome, '.local'))).toBe(false);
+  });
+
+  it('Windows gives npm guidance without creating a symlink', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: 'win32' });
+    vi.stubEnv('PATH', '');
+    const result = await stepSymlink();
+    expect(result).toMatchObject({ name: 'symlink', status: 'manual' });
+    expect(result.detail).toContain('npm install -g @ashlr/phantom');
+    expect(result.detail).toContain('PowerShell');
+    expect(existsSync(join(tmpHome, '.local'))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

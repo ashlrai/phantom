@@ -16,6 +16,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { buildToolPath } from '../run/tool-path.js';
@@ -120,7 +121,7 @@ function clearServiceStatusCache(): void {
 function resolveBinPath(): string {
   // __dirname is src/core/daemon/ or dist/core/daemon/
   // bin/ashlr is always at <repo-root>/bin/ashlr
-  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../..');
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
   return path.join(repoRoot, 'bin', 'ashlr');
 }
 
@@ -166,6 +167,14 @@ export function generateServiceDefinition(opts: ServiceInstallOptions = {}): Ser
   const home = resolveHome(opts.homeDir);
   const configDir = path.join(home, '.ashlr');
 
+  // Definition files are configuration languages, not argv arrays. Reject
+  // line/control injection before any platform can serialize these paths.
+  for (const value of [nodePath, binPath, home]) {
+    if ([...value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) {
+      throw new Error('Service paths cannot contain control characters');
+    }
+  }
+
   const budget = opts.budget ?? 5;
   const intervalMs = opts.intervalMs ?? 1_800_000;
   const restartSec = Number.isFinite(opts.restartSec) && opts.restartSec !== undefined
@@ -204,6 +213,25 @@ interface BuildOpts {
   keepAwake?: boolean;
 }
 
+function xmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Matches scheduled jobs: % expands everywhere, $ only in command arguments. */
+function unitWord(value: string, command = false): string {
+  const literal = value.replace(/%/g, '%%').replace(/\$/g, () => command ? '$$' : '$');
+  return /^[A-Za-z0-9_./:=+-]+$/.test(literal)
+    ? literal
+    : `"${literal.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function batchPath(value: string): string {
+  if (value.includes('"')) throw new Error('Windows service paths cannot contain quotes');
+  // Batch files expand percent variables even inside quotes. Delayed
+  // expansion is disabled in the launcher so literal exclamation marks work.
+  return `"${value.replace(/%/g, '%%')}"`;
+}
+
 function buildLaunchdDefinition(o: BuildOpts): ServiceDefinition {
   const plistPath = path.join(o.home, 'Library', 'LaunchAgents', 'ai.ashlr.daemon.plist');
   const outLog = path.join(o.configDir, 'daemon.launchd.out.log');
@@ -237,7 +265,7 @@ function buildLaunchdDefinition(o: BuildOpts): ServiceDefinition {
     '--parallel',
     String(o.parallel),
   );
-  const programArgs = runtimeArguments.map((argument) => `\t\t<string>${argument}</string>`);
+  const programArgs = runtimeArguments.map((argument) => `\t\t<string>${xmlText(argument)}</string>`);
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -254,9 +282,9 @@ ${programArgs.join('\n')}
 \t<key>EnvironmentVariables</key>
 \t<dict>
 \t\t<key>HOME</key>
-\t\t<string>${o.home}</string>
+\t\t<string>${xmlText(o.home)}</string>
 \t\t<key>PATH</key>
-\t\t<string>${pathEnv}</string>
+\t\t<string>${xmlText(pathEnv)}</string>
 \t</dict>
 \t<key>RunAtLoad</key>
 \t<true/>
@@ -268,9 +296,9 @@ ${programArgs.join('\n')}
 \t<key>ThrottleInterval</key>
 \t<integer>${o.restartSec}</integer>
 \t<key>StandardOutPath</key>
-\t<string>${outLog}</string>
+\t<string>${xmlText(outLog)}</string>
 \t<key>StandardErrorPath</key>
-\t<string>${errLog}</string>
+\t<string>${xmlText(errLog)}</string>
 </dict>
 </plist>
 `;
@@ -311,13 +339,13 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${o.nodePath} ${o.binPath} daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}
+ExecStart=${unitWord(o.nodePath)} ${unitWord(o.binPath, true)} daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}
 Restart=always
 RestartSec=${o.restartSec}
-Environment=HOME=${o.home}
-Environment=PATH=${buildToolPath({ home: o.home, basePath: '' })}
-StandardOutput=append:${outLog}
-StandardError=append:${outLog}
+Environment=${unitWord(`HOME=${o.home}`)}
+Environment=${unitWord(`PATH=${buildToolPath({ home: o.home, basePath: '' })}`)}
+StandardOutput=append:${outLog.replace(/%/g, '%%')}
+StandardError=append:${outLog.replace(/%/g, '%%')}
 
 [Install]
 WantedBy=default.target
@@ -352,7 +380,7 @@ function buildSchtasksDefinition(o: BuildOpts): ServiceDefinition {
     '/IT',
   ];
 
-  const content = `@echo off\r\n"${o.nodePath}" "${o.binPath}" daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}\r\n`;
+  const content = `@echo off\r\nsetlocal DisableDelayedExpansion\r\n${batchPath(o.nodePath)} ${batchPath(o.binPath)} daemon start --budget ${o.budget} --interval ${o.intervalMs} --parallel ${o.parallel}\r\n`;
 
   return {
     filePath: cmdPath,
@@ -2075,7 +2103,13 @@ async function ensureRunningWithinLifecycleFence(
  */
 export function serviceStatus(opts: ServiceInstallOptions = {}): ServiceStatusResult {
   const platform = (opts.platform ?? process.platform) as Platform;
-  const def = generateServiceDefinition(opts);
+  let def: ServiceDefinition;
+  try {
+    def = generateServiceDefinition(opts);
+  } catch {
+    return { registrationState: 'unknown', installed: false, running: false,
+      runtimeState: 'unknown', platformSpec: 'unknown' };
+  }
   const serviceFilePresent = fs.existsSync(def.filePath);
 
   if (platform === 'darwin') {

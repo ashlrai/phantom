@@ -1196,6 +1196,7 @@
     "src/core/resources/native-boot-identity.ts",
     "src/core/resources/native-diagnostics.ts",
     "src/core/resources/native-profile.ts",
+    "src/core/resources/os-sensors.ts",
     "src/core/resources/pacing.ts",
     "src/core/resources/pacing/horizon.ts",
     "src/core/resources/pacing/index.ts",

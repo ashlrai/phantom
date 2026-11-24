@@ -24,6 +24,7 @@ import { listLocalModels, ollamaInstalled } from './run/model-manager.js';
 import { detectEditors, wireEditor } from './integrations/editors.js';
 import { getPhantomStatus } from './phantom.js';
 import { runDoctor, prewarmDoctor } from './doctor.js';
+import { findDoctorExecutable } from '../doctor/executable.js';
 
 // Modules only needed by the extended setup/status surfaces load lazily inside
 // their step functions. onboard() itself keeps this file's static graph to a
@@ -130,7 +131,14 @@ async function stepEditors(opts: { wire: boolean }): Promise<OnboardStep> {
  * bin/ashlr file can be resolved from this module's location.  Never modifies
  * shell profiles.  If source cannot be resolved → manual guidance.
  */
-async function stepSymlink(): Promise<OnboardStep> {
+export async function stepSymlink(): Promise<OnboardStep> {
+  const installed = findDoctorExecutable('phm') ?? findDoctorExecutable('ashlr');
+  if (installed) return step('symlink', 'ok', `CLI present on PATH: ${installed}`);
+  if (process.platform === 'win32') {
+    // npm creates native .cmd/.ps1 shims without requiring symlink privileges.
+    return step('symlink', 'manual',
+      'CLI not found on PATH. Run: npm install -g @ashlr/phantom, then reopen PowerShell.');
+  }
   const localBin = join(homedir(), '.local', 'bin');
   const symlinkDest = join(localBin, 'ashlr');
 
@@ -158,7 +166,7 @@ async function stepSymlink(): Promise<OnboardStep> {
       return step(
         'symlink',
         'manual',
-        `ashlr not yet in ~/.local/bin. Run: ./install.sh  (from the ashlr-hub repo)`,
+        'CLI not found. Run: npm install -g @ashlr/phantom',
       );
     }
 
@@ -171,7 +179,7 @@ async function stepSymlink(): Promise<OnboardStep> {
     return step(
       'symlink',
       'manual',
-      `Could not ensure symlink: ${msg}. Run: ./install.sh  (from the ashlr-hub repo)`,
+      `Could not ensure symlink: ${msg}. Run: npm install -g @ashlr/phantom`,
     );
   }
 }
@@ -719,7 +727,7 @@ export async function onboard(
     nextSteps.push('Wire your editor: ashlr init --wire');
   }
   if (symlinkStep.status === 'manual') {
-    nextSteps.push('Install the CLI symlink: ./install.sh  (from the ashlr-hub repo)');
+    nextSteps.push('Install the CLI: npm install -g @ashlr/phantom, then reopen your terminal');
   }
   // Surface doctor guidance for any remaining issues (blocking or advisory) —
   // doctorStep is 'manual' on a blocking fail and 'detected' when there are

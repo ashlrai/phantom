@@ -20,6 +20,7 @@ const effects = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   runDaemon: vi.fn(),
   stopDaemon: vi.fn(),
+  serviceStatus: vi.fn(),
 }));
 
 vi.mock('../src/core/config.js', async (importOriginal) => {
@@ -33,6 +34,10 @@ vi.mock('../src/core/config.js', async (importOriginal) => {
 });
 
 vi.mock('../src/core/daemon/loop.js', () => ({ runDaemon: effects.runDaemon, stopDaemon: effects.stopDaemon }));
+vi.mock('../src/core/daemon/service.js', () => ({
+  install: vi.fn(), registerPerUserDaemon: vi.fn(), uninstall: vi.fn(), ensureRunning: vi.fn(),
+  serviceStatus: effects.serviceStatus,
+}));
 
 import { cmdDaemon } from '../src/cli/daemon.js';
 import { daemonLockPath, loadDaemonStateStrict, saveDaemonState } from '../src/core/daemon/state.js';
@@ -94,6 +99,9 @@ beforeEach(() => {
   effects.loadConfig.mockReset();
   effects.runDaemon.mockReset();
   effects.stopDaemon.mockReset();
+  effects.serviceStatus.mockReset();
+  effects.serviceStatus.mockReturnValue({ platformSpec: 'systemd', installed: false, running: false,
+    registrationState: 'absent', runtimeState: 'stopped' });
   effects.loadConfig.mockReturnValue({ daemon: { dailyBudgetUsd: 5, intervalMs: 300_000, parallel: 1 } });
   effects.runDaemon.mockResolvedValue(idleState);
   resetDaemonLivenessCache();
@@ -207,6 +215,31 @@ describe('daemon doctor', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/record: +says not running/);
     expect(result.stdout).not.toMatch(/--clear-stale/);
+  });
+
+  it('reports native supervisor state without treating a queued task as a live daemon', async () => {
+    effects.loadConfig.mockReturnValue({ daemon: { dailyBudgetUsd: 9, intervalMs: 60_000, parallel: 2 } });
+    effects.serviceStatus.mockReturnValue({ platformSpec: 'schtasks', installed: true, running: true,
+      registrationState: 'present', runtimeState: 'queued' });
+    writeRecord({ running: false, pid: null });
+    const result = await run(['doctor', '--json']);
+    const body = JSON.parse(result.stdout);
+    expect(result.code).toBe(0);
+    expect(body.service).toMatchObject({ platformSpec: 'schtasks', runtimeState: 'queued' });
+    expect(body.liveness).toMatchObject({ state: 'stopped', alive: false });
+    expect(effects.serviceStatus).toHaveBeenCalledOnce();
+    expect(effects.serviceStatus).toHaveBeenCalledWith({ budget: 9, intervalMs: 60_000, parallel: 2, keepAwake: false });
+    expect(effects.runDaemon).not.toHaveBeenCalled();
+    expect(effects.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it('keeps liveness available when native service configuration cannot be read', async () => {
+    effects.loadConfig.mockImplementation(() => { throw new Error('fixture configuration unavailable'); });
+    writeRecord({ running: false, pid: null });
+    const result = await run(['doctor', '--json']);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ service: null, liveness: { state: 'stopped', alive: false } });
+    expect(effects.serviceStatus).not.toHaveBeenCalled();
   });
 
   it('refuses unknown flags before doing anything', async () => {

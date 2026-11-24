@@ -820,7 +820,9 @@ describe('runDoctor — compatible CLI installation guidance', () => {
     const report = await runDoctor(makeConfig(tmpHome));
     expect(report.checks.find(check => check.id === 'ashlr')).toMatchObject({
       label: 'Phantom CLI installed (phm / ashlr)', status: 'fail',
-      fix: 'Run: npm install -g @ashlr/phantom  (or ensure ~/.local/bin is on PATH)',
+      fix: process.platform === 'win32'
+        ? 'Run: npm install -g @ashlr/phantom, then reopen PowerShell.'
+        : 'Run: npm install -g @ashlr/phantom  (or ensure ~/.local/bin is on PATH)',
     });
     expect(report.checks.find(check => check.id === 'mcp-plugin')?.label)
       .toBe('Phantom MCP plugin registered (ashlr)');
@@ -831,7 +833,7 @@ describe('runDoctor — compatible CLI installation guidance', () => {
     isolateCommandPath();
     const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
     expect(check?.status).toBe('pass');
-    expect(check?.detail).toMatch(/^not needed: phm is on PATH at /);
+    expect(check?.detail).toMatch(process.platform === 'win32' ? /^phm is on PATH at / : /^not needed: phm is on PATH at /);
   });
 
   it('still warns about ~/.local/bin when phm is not on PATH either', async () => {
@@ -839,7 +841,7 @@ describe('runDoctor — compatible CLI installation guidance', () => {
     isolateCommandPath();
     const check = (await runDoctor(makeConfig(tmpHome))).checks.find(c => c.id === 'local-bin');
     expect(check?.status).toBe('warn');
-    expect(check?.fix).toContain('export PATH="$HOME/.local/bin:$PATH"');
+    expect(check?.fix).toContain(process.platform === 'win32' ? 'reopen PowerShell' : 'export PATH="$HOME/.local/bin:$PATH"');
   });
 
   it('points unregistered MCP checks at the phm mcp commands that register them, not init', async () => {

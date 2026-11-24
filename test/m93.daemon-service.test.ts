@@ -640,6 +640,56 @@ describe('generateServiceDefinition — win32 (schtasks)', () => {
   });
 });
 
+describe('service definitions preserve platform path literals', () => {
+  it('escapes plist text while preserving the exact native runtime arguments', () => {
+    const nodePath = '/Applications/Node & Tools/node';
+    const binPath = '/Users/A & B/<checkout>/bin/ashlr';
+    const homeDir = '/Users/A & B';
+    const def = generateServiceDefinition({ ...baseOpts('darwin'), nodePath, binPath, homeDir });
+    expect(def.content).toContain('<string>/Applications/Node &amp; Tools/node</string>');
+    expect(def.content).toContain('<string>/Users/A &amp; B/&lt;checkout&gt;/bin/ashlr</string>');
+    expect(def.launchdRuntime?.arguments.slice(0, 2)).toEqual([nodePath, binPath]);
+    expect(def.launchdRuntime?.environment.HOME).toBe(homeDir);
+  });
+
+  it('quotes systemd paths and keeps percent and dollar characters literal', () => {
+    const def = generateServiceDefinition({ ...baseOpts('linux'),
+      nodePath: '/opt/Node $Runtime/node', binPath: '/home/A %h/${USER}/bin/ashlr', homeDir: '/home/A %h/${USER}' });
+    expect(def.content).toContain('ExecStart="/opt/Node $Runtime/node" "/home/A %%h/$${USER}/bin/ashlr" daemon start');
+    expect(def.content).toContain('Environment="HOME=/home/A %%h/${USER}"');
+    expect(def.content).toContain('StandardOutput=append:/home/A %%h/${USER}/.ashlr/daemon.systemd.log');
+  });
+
+  it('escapes systemd quotes and backslashes inside one executable argument', () => {
+    const def = generateServiceDefinition({ ...baseOpts('linux'), binPath: '/home/a"b\\c/bin/ashlr' });
+    expect(def.content).toContain('"/home/a\\"b\\\\c/bin/ashlr" daemon start');
+  });
+
+  it('preserves percent and exclamation marks in Windows batch launchers', () => {
+    const def = generateServiceDefinition({ ...baseOpts('win32'),
+      nodePath: 'C:\\Program Files\\nodejs\\node.exe', binPath: 'C:\\Users\\A%PATH%!\\bin\\ashlr' });
+    expect(def.content).toContain('setlocal DisableDelayedExpansion\r\n');
+    expect(def.content).toContain('"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\A%%PATH%%!\\bin\\ashlr"');
+  });
+
+  it.each(['darwin', 'linux', 'win32'] as const)('%s refuses injected definition lines', (platform) => {
+    expect(() => generateServiceDefinition({ ...baseOpts(platform), homeDir: '/home/a\nEnvironment=EVIL=1' }))
+      .toThrow('control characters');
+  });
+
+  it('Windows refuses quote injection in launcher paths', () => {
+    expect(() => generateServiceDefinition({ ...baseOpts('win32'), binPath: 'C:\\a" & echo injected' }))
+      .toThrow('cannot contain quotes');
+  });
+
+  it('status degrades to unknown when a definition cannot be generated', () => {
+    expect(serviceStatus({ platform: 'freebsd' as 'linux' })).toEqual({
+      installed: false, running: false, registrationState: 'unknown', runtimeState: 'unknown', platformSpec: 'unknown',
+    });
+    expect(serviceStatus({ ...baseOpts('linux'), homeDir: '/home/a\n' }).registrationState).toBe('unknown');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 4. install transaction — child_process mock assertions
 // ---------------------------------------------------------------------------
