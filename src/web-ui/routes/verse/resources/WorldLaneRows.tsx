@@ -16,6 +16,7 @@ import { openResources } from './resources-store.js';
 import { worldModelQuery } from './world-query.js';
 import { sameWorldLaneRow, WORLD_LANE_STALE_MS, worldLaneRows, type LaneEngine, type WorldLaneRow } from './world-lane-rows.js';
 import styles from './WorldLaneRows.module.css';
+import { BurnSparkline } from './BurnSparkline.js';
 
 const AGE_CLOCK_MS = 60_000;
 
@@ -98,10 +99,33 @@ function Gauge({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
   );
 }
 
-const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneRow; expanded: boolean }) {
+const PROVIDER: Record<LaneEngine, string> = {
+  claude: 'Claude', codex: 'Codex', devin: 'Devin', grok: 'Grok', cursor: 'Cursor', dot: 'Dot', local: 'Local', other: 'Other',
+};
+
+/** The one state chip an expanded row shows: live, stale with its age, or not connected. */
+export function laneStateChip(row: WorldLaneRow): string {
+  if (row.freshness === 'fresh') return `live · ${row.age === 'just now' ? 'now' : row.age.replace(' ago', '')}`;
+  if (row.freshness === 'stale') return row.age === 'unknown' ? 'stale' : `stale · ${row.age}`;
+  return 'not connected';
+}
+
+/** Measured facts only; an unmeasured field is left out instead of printed as unknown. */
+function measuredLine(row: WorldLaneRow): string | null {
+  const parts = [
+    row.usage === 'unknown' ? null : `Used ${row.usage}`,
+    row.remaining === 'unknown' ? null : `${row.remaining} left`,
+    row.forecast === 'unknown' ? null : row.forecastText,
+  ].filter((part): part is string => part !== null);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: WorldLaneRow; expanded: boolean; now: number }) {
   const badge = !expanded
     ? row.freshness === 'fresh' ? (row.age === 'just now' ? 'now' : row.age.replace(' ago', '')) : row.freshness === 'stale' ? 'stale' : '?'
-    : row.observedAt ? `${row.freshness} · ${row.age}` : row.freshness;
+    : laneStateChip(row);
+  const measured = measuredLine(row);
+  const metered = row.forecast !== 'unknown' || row.exhaustFraction !== null || row.resetAt !== null;
   return (
     <Tooltip placement="right" content={
       <div className={styles.tip}>
@@ -126,19 +150,31 @@ const LaneButton = memo(function LaneButton({ row, expanded }: { row: WorldLaneR
         <span className={styles.line}>
           <Mark engine={row.engine} />
           {expanded ? <span className={styles.name}>{row.label}</span> : null}
-          {expanded ? null : <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time>}
+          <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time>
         </span>
-        <span className={styles.line}>
-          <Gauge row={row} expanded={expanded} />
-          {expanded ? <span className={styles.forecast}>{row.forecastText}</span> : null}
-        </span>
-        {expanded ? <span className={styles.meta}>Used {row.usage} · left {row.remaining}</span> : null}
-        {expanded ? <span className={styles.meta}>Burn {row.burn} · reset {row.reset}</span> : null}
-        {expanded ? <span className={styles.source}>Source {row.source} · <time className={styles.badge} data-freshness={row.freshness} dateTime={row.observedAt ?? undefined}>{badge}</time></span> : null}
+        {!expanded || metered ? (
+          <span className={styles.line}>
+            <Gauge row={row} expanded={expanded} />
+            {expanded && row.resetIn ? <span className={styles.forecast}>{row.resetIn}</span> : null}
+          </span>
+        ) : null}
+        {expanded && measured ? <span className={styles.meta}>{measured}</span> : null}
+        {expanded ? <BurnSparkline history={row.history} now={now} /> : null}
+        {expanded && row.freshness === 'unknown' && !measured && !metered ? <span className={`${styles.meta} ${styles.unmeasured}`}>Not measured yet · connect</span> : null}
       </button>
     </Tooltip>
   );
-}, (prev, next) => prev.expanded === next.expanded && sameWorldLaneRow(prev.row, next.row));
+}, (prev, next) => prev.expanded === next.expanded && prev.now === next.now && sameWorldLaneRow(prev.row, next.row));
+
+function providerGroups(rows: readonly WorldLaneRow[]): Array<{ engine: LaneEngine; rows: WorldLaneRow[] }> {
+  const groups: Array<{ engine: LaneEngine; rows: WorldLaneRow[] }> = [];
+  for (const row of rows) {
+    const group = groups.find((entry) => entry.engine === row.engine);
+    if (group) group.rows.push(row);
+    else groups.push({ engine: row.engine, rows: [row] });
+  }
+  return groups;
+}
 
 export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive, snapshot }: {
   expanded: boolean;
@@ -173,7 +209,12 @@ export function WorldLaneRows({ expanded, enabled = true, now: fixedNow, onLive,
   if (!live || rows.length === 0) return null;
   return (
     <div className={styles.group} data-expanded={expanded || undefined} data-world-lanes role="group" aria-label="Lane resources">
-      {rows.map((row) => <LaneButton key={row.key} row={row} expanded={expanded} />)}
+      {expanded ? providerGroups(rows).map((group) => (
+        <div key={group.engine} className={styles.provider} role="group" aria-label={`${PROVIDER[group.engine]} resources`}>
+          <span className={styles.providerName} aria-hidden="true">{PROVIDER[group.engine]}</span>
+          {group.rows.map((row) => <LaneButton key={row.key} row={row} expanded now={now} />)}
+        </div>
+      )) : rows.map((row) => <LaneButton key={row.key} row={row} expanded={false} now={now} />)}
     </div>
   );
 }

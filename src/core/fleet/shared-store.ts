@@ -144,6 +144,23 @@ export interface SharedQueueClaimSample {
   owned: boolean;
 }
 
+/** One queue claim reduced to routing-visible fields for read-only digests. */
+export interface SharedQueueClaimIndexEntry {
+  /** Logical machine/peer label; modern owner keys unwrap to it. */
+  machineId: string;
+  /** Absolute epoch ms when the lease expires. */
+  leaseUntil: number;
+  /** 'claimed' | 'executing' when the owner record proves it; 'unknown' for legacy or unparsable records, which the claim path never auto-reclaims once expired. */
+  phase: QueueClaimPhase | 'unknown';
+}
+
+/** Queue claims by item id paired with the readability bit `readSnapshot` cannot express. */
+export interface SharedQueueClaimIndex {
+  /** False means the queue could not be inspected; `claims` is then empty and every hold question is unknown, never "free". */
+  readable: boolean;
+  claims: Record<string, SharedQueueClaimIndexEntry>;
+}
+
 /** Read-only health summary of the shared filesystem queue. */
 export interface SharedQueueHealth {
   /** Shared directory path backing the queue. */
@@ -1621,6 +1638,33 @@ export class SharedStore {
         },
       ])),
     };
+  }
+
+  /**
+   * Read queue claims by item id together with the readability bit in one
+   * queue read — the atomic pair `readSnapshot` cannot give, because it
+   * returns an empty queue on failure. `phase` is 'unknown' for legacy or
+   * unparsable owner records; an expired claim in that state is never
+   * auto-reclaimed by `claimLeasesByLane`. Never throws.
+   */
+  readClaimIndex(): SharedQueueClaimIndex {
+    try {
+      const { queue, readable } = this.readQueueResult();
+      if (!readable) return { readable: false, claims: {} };
+      const claims: Record<string, SharedQueueClaimIndexEntry> = {};
+      for (const [itemId, claim] of Object.entries(queue.claims)) {
+        const modern = parseModernOwner(claim.machineId);
+        const proven = modern !== null && modern !== 'invalid' ? modern : null;
+        claims[itemId] = {
+          machineId: logicalMachineId(claim.machineId),
+          leaseUntil: proven ? proven.leaseUntil : claim.leaseUntil,
+          phase: proven ? proven.phase : 'unknown',
+        };
+      }
+      return { readable: true, claims };
+    } catch {
+      return { readable: false, claims: {} };
+    }
   }
 
   /**

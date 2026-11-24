@@ -151,8 +151,11 @@ nextCursor}`; each message row is the stored receipt — the persistent integer
   `messages` with an advanced `nextCursor` is normal. `ttl` in a returned
   envelope is the *remaining* milliseconds; reads never renew it.
 - `--limit` is 1–100 (default 50) and counts scanned live records before
-  filtering. `--id`, `--to`, `--from`, `--exclude-from`, `--priority` are
-  exact, case-sensitive, and combined.
+  filtering. `--id` and `--priority` are exact and case-sensitive; `--to`,
+  `--from` and `--exclude-from` also match any other label of the same
+  registered agent identity (handle, `agent:` address, stable id or alias),
+  resolved once per read — an unresolvable label or unreadable registry
+  keeps exact matching. All filters combine.
 - `phm comms bus watch` polls the same pages for a live tail.
 
 Full store: retained capacity is 1 MiB or 1024 records, whichever is reached
@@ -177,8 +180,9 @@ do not retry a full store as if it were contention.
   chat) produces a verified remote sender; the `cli` channel does not
   authenticate internet or email senders.
 - Bus `from`/`to`, inbox `source`, and `priority` are routing labels and
-  metadata — exact and case-sensitive for filtering, but they confer no
-  authenticated identity or authority. Any local writer can claim any label.
+  metadata — matched literally or through the agent identity registry for
+  filtering, but they confer no authenticated identity or authority. Any
+  local writer can claim any label.
 - Remote delivery is a separate concern with its own configuration. Nothing
   here sends to Telegram, email, or a provider: `bus post` retains a local
   record and `inbox post` appends a local file. Cloud/provider identity

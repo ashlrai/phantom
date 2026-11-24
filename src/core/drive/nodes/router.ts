@@ -30,17 +30,38 @@ export function liveNodes(state: NodesState, now: number): NodeRecord[] {
   return state.nodes.filter(n => nodeCanAcceptWork(n, now));
 }
 
-function activeClaims(state: NodesState, nodeId: string, now: number): number {
+/** True while a running job's claim can still be acted on: the claim is
+ * unexpired and an unexpired node record carries the same id and session.
+ * A lapsed claim is re-routable, and a claim fenced by a rejoin or departure
+ * frees the node's capacity at once even though the job stays fenced until
+ * the claim expires. */
+export function actionableClaim(state: NodesState, job: QueueJobV1, now: number): boolean {
+  const claim = job.claim;
+  return job.state === 'running' && claim !== undefined && claim.expiresAt > now &&
+    state.nodes.some(n => n.expiresAt > now && n.nodeId === claim.nodeId && n.session === claim.session);
+}
+
+function activeClaims(state: NodesState, node: NodeRecord, now: number): number {
   return state.jobs.filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    j.claim.nodeId === nodeId).length;
+    j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
+}
+
+/** Capability fences every assignment path honors: a session that released the
+ * job unrun is never offered it again, advertised caps must cover `requires`,
+ * and `gh` work needs a live local auth heartbeat. Owner scope is routing's
+ * concern; a leader's direct claim still honors these. */
+export function jobBlockers(node: NodeRecord, job: QueueJobV1): string[] {
+  const reasons: string[] = [];
+  if (job.declined?.includes(node.session)) reasons.push('declined');
+  const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
+  if (missing.length) reasons.push(`caps:${missing.join(',')}`);
+  if ((job.requires ?? []).includes('gh') && node.auth !== 'ok') reasons.push('auth');
+  return reasons;
 }
 
 function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   if (!node.owners?.includes(job.owner!)) return 'owner';
-  const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
-  if (missing.length) return `caps:${missing.join(',')}`;
-  if ((job.requires ?? []).includes('gh') && node.auth !== 'ok') return 'auth';
-  return null;
+  return jobBlockers(node, job)[0] ?? null;
 }
 
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
@@ -53,8 +74,8 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const id = isNodeCapacity(node.capacity) ? node.capacity.hostId : node.nodeId;
     const members = groups.get(id) ?? []; members.push(node); groups.set(id, members);
   }
-  const unplacedClaims = (state?.jobs ?? []).some(j => j.state === 'running' && j.claim && j.claim.expiresAt > now &&
-    !j.executionHostId && !state?.nodes.some(n => n.nodeId === j.claim!.nodeId && isNodeCapacity(n.capacity)));
+  const unplacedClaims = state !== null && state.jobs.some(j => actionableClaim(state, j, now) &&
+    !j.executionHostId && !state.nodes.some(n => n.nodeId === j.claim!.nodeId && isNodeCapacity(n.capacity)));
   const hosts = [...groups].filter(([id, nodes]) => safe(id) && nodes.every(n => safe(n.nodeId))).map(([hostId, nodes]) => {
     const nodeIds = nodes.map(n => n.nodeId).sort();
     const onHost = (j: NodesState['jobs'][number]) => j.executionHostId ? j.executionHostId === hostId : !!j.claim && nodeIds.includes(j.claim.nodeId);
@@ -64,8 +85,10 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     // Stale workers' old grants are not capacity. Live claims still occupy the physical host.
     const known = !unplacedClaims && measured.length > 0 && measured.length === live.length;
     const slots = held ? 0 : known ? Math.min(...measured.map(n => n.capacity!.slots)) : null;
-    const running = (state?.jobs ?? []).filter(j => j.state === 'running' && j.claim && j.claim.expiresAt > now && onHost(j)).length;
-    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && onHost(j) &&
+    const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
+    // A producer withdrawal completes without executing: its startedAt→completedAt
+    // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
+    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
       j.startedAt !== undefined && j.completedAt !== undefined && j.startedAt <= j.completedAt &&
       j.completedAt <= now && now - j.completedAt <= 86_400_000).map(j => j.completedAt! - j.startedAt!).sort((a, b) => a - b);
     const median = durations.length ? (durations[Math.floor((durations.length - 1) / 2)]! + durations[Math.floor(durations.length / 2)]!) / 2 : null;
@@ -90,8 +113,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
   const neutralLatency = measuredLatency.length ? measuredLatency.reduce((a, b) => a + b, 0) / measuredLatency.length : 1;
   const reserved = new Map<string, number>();
   const nodes = liveNodes(state, now).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
-  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n.nodeId, now)]));
-  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n.nodeId, now)]));
+  const load = new Map(nodes.map(n => [n.nodeId, (n.usage ?? 0) + CLAIM_LOAD * activeClaims(state, n, now)]));
+  const claims = new Map(nodes.map(n => [n.nodeId, activeClaims(state, n, now)]));
   const plan: RouteAssignment[] = [];
   for (const job of state.jobs) {
     if (!job.owner || (owner !== undefined && job.owner !== owner) || !routable(job, now)) continue;
@@ -122,6 +145,8 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       ? `No live node belongs to owner '${job.owner}'. Run: phm node join --node <id> --owner ${job.owner} --caps <caps>`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
+      : reasons.has('declined') && !reasons.has('caps')
+        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
       : reasons.has('caps')
         ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
         : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;

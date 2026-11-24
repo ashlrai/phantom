@@ -4,7 +4,7 @@
  * the already-validated inbox message (never the raw reply) until an append is
  * confirmed. Not a general outbox: one item, one message, one receipt.
  */
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 const MAX_BYTES = 4 * 1024;
@@ -75,4 +75,47 @@ export function serializeDelivery<T>(key: string, work: () => Promise<T>): Promi
   queues.set(key, tail);
   void tail.then(() => { if (queues.get(key) === tail) queues.delete(key); });
   return run;
+}
+
+const ITEM_FILE = /^nm-[0-9a-f]{12}\.json$/;
+
+export interface NeedsMasonDeliveryPending { itemId: string; source: string }
+/**
+ * Every receipt under `<runsDir>/needs-mason-delivery/`, classified by the same
+ * per-file validation `readDelivery` applies. `pending` answers are recorded
+ * but not confirmed appended to the planner inbox — they retry only when the
+ * same item id is resolved again, so a read surface is the only way they are
+ * ever seen. `unsafe` names files that failed validation (contents untrusted,
+ * never parsed past the schema check). A missing directory is a verified-empty
+ * list; an unreadable or non-directory one is `unavailable`, never empty.
+ */
+export type NeedsMasonDeliveryListing =
+  | { status: 'ok'; pending: NeedsMasonDeliveryPending[]; unsafe: string[]; delivered: number }
+  | { status: 'unavailable' };
+
+export function listNeedsMasonDeliveries(runsDir: string): NeedsMasonDeliveryListing {
+  const dir = join(runsDir, DIR);
+  let names: string[];
+  try {
+    const info = lstatSync(dir);
+    if (!info.isDirectory() || info.isSymbolicLink()) return { status: 'unavailable' };
+    names = readdirSync(dir);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? { status: 'ok', pending: [], unsafe: [], delivered: 0 }
+      : { status: 'unavailable' };
+  }
+  const pending: NeedsMasonDeliveryPending[] = [];
+  const unsafe: string[] = [];
+  let delivered = 0;
+  for (const name of names) {
+    if (!ITEM_FILE.test(name)) continue;
+    const itemId = name.slice(0, -'.json'.length);
+    const read = readDelivery(runsDir, itemId);
+    if (read.kind === 'none') continue;
+    if (read.kind === 'unsafe') { unsafe.push(itemId); continue; }
+    if (read.state.status === 'pending') pending.push({ itemId, source: read.state.source });
+    else delivered += 1;
+  }
+  return { status: 'ok', pending, unsafe, delivered };
 }

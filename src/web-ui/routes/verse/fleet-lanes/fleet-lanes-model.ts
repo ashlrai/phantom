@@ -1,12 +1,4 @@
-import { ageText, countText, relativeText, type FleetRuns } from '../ops/ops-runs-model.js';
-
-export function laneBars(runs: FleetRuns) {
-  return runs.lanes.map(({ lane, running, target, queued, held, heldReason, tokensLastHour, merged24h }) => ({
-    lane, running, target, queued, held, heldReason, tokensLastHour, merged24h,
-    fillPct: target > 0 ? Math.max(0, Math.min(100, running / target * 100)) : null,
-    tone: held ? 'held' : 'running',
-  }));
-}
+import { ageText, type FleetRuns } from '../ops/ops-runs-model.js';
 
 export function formatTokens(n: number | null): string {
   if (n === null || !Number.isFinite(n) || n < 0) return '—';
@@ -73,15 +65,4 @@ export function repoMixLine(mix: ReturnType<typeof repoMix>): string {
   const others = mix.others.slice(0, 4).map(({ repo, count }) => `${repo} ${count}`).join(', ');
   const more = mix.others.length > 4 ? ` +${mix.others.length - 4} more` : '';
   return `${mix.phantom} of ${mix.total} on phantom${others ? ` · others: ${others}${more}` : ''}`;
-}
-
-export function headline(runs: FleetRuns | null, nowMs: number): string {
-  const running = runs ? String(runs.lanes.reduce((sum, lane) => sum + lane.running, 0)) : '—';
-  const target = runs ? String(runs.lanes.reduce((sum, lane) => sum + lane.target, 0)) : '—';
-  const tick = runs?.lastTick ?? null;
-  const at = tick === null ? NaN : Date.parse(tick);
-  const elapsed = (nowMs - at) / 1000;
-  const tickText = Number.isFinite(elapsed) && elapsed >= 0 && elapsed < 60
-    ? `${Math.floor(elapsed)} s ago` : relativeText(tick, nowMs);
-  return `${running} running · ${target} target · ${countText(runs?.mergesLastHour.count ?? null)} merged last hour · tick ${tickText}`;
 }

@@ -37,7 +37,7 @@ function reading(id: ResourceLiveId, over: Partial<ResourceLiveReading> = {}): R
   const limit = over.limit === undefined ? 100 : over.limit;
   const measured = used !== null && limit !== null && limit > 0;
   return {
-    id, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: true, used, limit, unit: 'percent',
+    id, label: allowance.label, lane: allowance.lane, class: allowance.class, verified: true, confidence: 'high', used, limit, unit: 'percent',
     used_pct: measured ? Math.round(used / limit * 1000) / 10 : null, remaining: measured ? limit - used : null,
     reset_at: WEEKLY_RESET, expires_at: allowance.expires_at, source: 'test-source', source_tier: 'official',
     observed_at: iso(NOW), stale_after: iso(NOW + 15 * 60_000), reason: null, ...over,
@@ -46,7 +46,7 @@ function reading(id: ResourceLiveId, over: Partial<ResourceLiveReading> = {}): R
 
 function unverified(id: ResourceLiveId): ResourceLiveReading {
   return { ...reading(id), verified: false, used: null, limit: null, unit: null, used_pct: null, remaining: null, reset_at: null,
-    source: null, source_tier: null, observed_at: null, stale_after: null, reason: 'no-supported-source' };
+    source: null, source_tier: null, confidence: null, observed_at: null, stale_after: null, reason: 'no-supported-source' };
 }
 
 const fixed = (seen: Partial<ResourceLiveObservation> | null, tier: ResourceLiveSource['tier'] = 'official'): ResourceLiveSource => ({
@@ -62,6 +62,14 @@ const stored = (runsDir: string): ResourceLiveSidecar => JSON.parse(readFileSync
 const byId = (sidecar: ResourceLiveSidecar, id: ResourceLiveId): ResourceLiveReading => sidecar.readings.find(row => row.id === id)!;
 
 describe('poll cadence', () => {
+  it('derives confidence for new and legacy sidecars and keeps unverified confidence null', () => {
+    for (const [source_tier, confidence] of [['official', 'high'], ['own-call', 'medium'], ['visible-window', 'low'], ['operator-entry', 'low']] as const) {
+      const row = { ...reading('devin'), source_tier };
+      const { confidence: _old, ...legacy } = row;
+      expect(parseResourceLiveSidecar({ schema: RESOURCE_LIVE_SCHEMA, readings: [legacy] }).readings[0]?.confidence).toBe(confidence);
+    }
+    expect(parseResourceLiveSidecar({ schema: RESOURCE_LIVE_SCHEMA, readings: [unverified('devin')] }).readings[0]?.confidence).toBeNull();
+  });
   it('polls an active lane every minute and doubles to ten minutes when nothing changes', () => {
     let state = nextPollState(undefined, 'a', true, NOW);
     expect(state.interval_s).toBe(60);
@@ -242,6 +250,13 @@ describe('reset rule', () => {
 });
 
 describe('resource-live tick', () => {
+  it('passes measured scope through and normalizes its window', async () => {
+    const runsDir = tmp();
+    await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
+      devin: [fixed({ account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR).replace('.000Z', '+00:00') })],
+    }) });
+    expect(byId(stored(runsDir), 'devin')).toMatchObject({ verified: true, account_id: 'org-test', model: 'swe-2-high', window_start: iso(NOW - HOUR) });
+  });
   it('writes every allowance with source and observed time, and nulls for unverified ones', async () => {
     const runsDir = tmp();
     const result = await runResourceLiveTick({ runsDir, nowMs: NOW, activeLanes: () => new Set(), sources: sourcesOf({
@@ -258,7 +273,7 @@ describe('resource-live tick', () => {
     expect(JSON.stringify(byId(sidecar, 'gemini'))).not.toContain(':0');
     expect(result.polled).toHaveLength(RESOURCE_LIVE_ALLOWANCES.length);
     expect(statSync(resourceLivePath(runsDir)).mode & 0o777).toBe(0o600);
-    expect(readdirSync(join(runsDir, 'state'))).toEqual(['resource-live.json']);
+    expect(readdirSync(join(runsDir, 'state'))).toEqual(['resource-live-history.json', 'resource-live.json']);
   });
 
   it('falls through the source order and records which tier answered', async () => {
@@ -447,13 +462,19 @@ describe('resource-live tick', () => {
 });
 
 describe('default sources', () => {
+  it('carries the Claude organization scope without inventing a model', async () => {
+    const sources = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => ({ ...quota(iso(NOW)), accountId: 'claude:0123456789abcdef' }) });
+    const observation = await sources['claude-weekly'][0]!.read(NOW);
+    expect(observation).toMatchObject({ account_id: 'claude:0123456789abcdef' });
+    expect(observation).not.toHaveProperty('model');
+  });
   const quota = (observedAt: string) => ({ v: 1 as const, observedAt, reason: 'ok', fresh: true,
     windows: [{ id: 'seven_day', usedPct: 71, resetAt: WEEKLY_RESET }, { id: 'seven_day_fable', usedPct: 30, resetAt: WEEKLY_RESET }] });
 
   it('reads the Claude weekly allowance from the CLI usage reading, then the rate-limit event', async () => {
     const sources = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => quota(iso(NOW - 60_000)),
       readClaudeEvent: () => ({ utilization: 0.5, resetsAt: Date.parse(WEEKLY_RESET) / 1000, capturedAt: iso(NOW - 1000) }) });
-    expect(sources['claude-weekly'].map(source => source.tier)).toEqual(['official', 'own-call']);
+    expect(sources['claude-weekly'].map(source => source.tier)).toEqual(['official', 'official', 'own-call']);
     expect(await sources['claude-weekly'][0]!.read(NOW)).toEqual({ used: 71, limit: 100, unit: 'percent', reset_at: WEEKLY_RESET,
       source: 'claude-usage', observed_at: iso(NOW - 60_000) });
     const none = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => null, readClaudeEvent: () => null });
@@ -524,7 +545,8 @@ describe('default sources', () => {
     const without = defaultResourceLiveSources({ runsDir: tmp() });
     expect(without.gemini).toEqual([]);
     expect(without['claude-weekly'].some(source => source.tier === 'visible-window')).toBe(false);
-    for (const id of ['devin-flash', 'antigravity', 'dot', 'instinct', 'cursor'] as const) expect(without[id]).toEqual([]);
+    expect(without['devin-flash'].map(source => source.tier)).toEqual(['official']);
+    for (const id of ['antigravity', 'dot', 'instinct', 'cursor'] as const) expect(without[id]).toEqual([]);
     const page = (text: string, url?: string) => ({ newPage: async () => ({ goto: async () => {}, url: () => url ?? 'https://claude.ai/settings/usage',
       visibleText: async () => text, close: async () => {} }), close: async () => {} });
     const withBrowser = defaultResourceLiveSources({ runsDir: tmp(), browser: page('Weekly limits\nResets in 3 days\n62% used\n') });
@@ -575,7 +597,7 @@ describe('feeds', () => {
   });
 
   it('yields nothing for a missing or malformed sidecar', async () => {
-    expect(await loadResourceLiveFeed(NOW, tmp())).toEqual({ readings: [], pace: [] });
+    expect(await loadResourceLiveFeed(NOW, tmp())).toEqual({ readings: [], pace: [], history: {} });
     expect(projectResourceLiveFeed('nope', NOW)).toEqual({ readings: [], pace: [] });
     expect(projectResourceLiveFeed({ schema: RESOURCE_LIVE_SCHEMA, readings: [unverified('devin')] }, NOW)).toEqual({ readings: [], pace: [] });
   });
@@ -618,7 +640,8 @@ describe('phm usage resource-live', () => {
       sources: sourcesOf({ 'claude-weekly': [fixed({ used: 62, source: 'claude-usage' })] }) });
     expect(code).toBe(0);
     expect(io.out.find(line => line.startsWith('claude-weekly'))).toContain('used=62% reset=2026-11-20T23:00:00.000Z source=claude-usage (official)');
-    expect(io.out.find(line => line.startsWith('gemini'))).toBe('gemini unverified (no-supported-source) plan=steady');
+    expect(io.out.find(line => line.startsWith('gemini'))).toBe('gemini unverified (no-supported-source) confidence=null plan=steady');
+    expect(io.out.find(line => line.startsWith('claude-weekly'))).toContain('confidence=high');
     expect(io.out.at(-1)).toMatch(/^spend order: /);
     expect(existsSync(resourceLivePath(runsDir))).toBe(true);
   });

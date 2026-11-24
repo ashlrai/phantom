@@ -29,6 +29,8 @@ import { laneTargetsQuery } from '../../ops/lane-targets-queries.js';
 import { ago } from '../../command/ladder-model.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { BusSection } from '../BusSection.js';
+import { LaneCapBadges } from '../../../../components/fleet/LaneCapBadges.js';
+import { fleetLanesQuery } from '../../../../data/queries.js';
 import { busLiteQuery } from '../bus-query.js';
 import { mergeLaneRows } from '../lane-target-model.js';
 import { runMobileAction } from '../mobile-actions.js';
@@ -80,6 +82,8 @@ export function RunsScreen() {
   const { permissions, reachability, navigate } = useMobile();
   const runs = useQuery(fleetRunsQuery);
   const targets = useQuery(laneTargetsQuery);
+  // Same typed lanes API as the desktop map; a failed read leaves badges at "unknown".
+  const capsByLane = new Map((useQuery(fleetLanesQuery).data?.lanes ?? []).map((l) => [l.lane, l.caps]));
   const refetchTargets = useRefetch(laneTargetsQuery);
   usePollWhileVisible(refetchTargets, RUNS_POLL_MS, { enabled: targets.data !== null });
   const [selected, setSelected] = useState<string | null>(null);
@@ -162,7 +166,7 @@ export function RunsScreen() {
                   title={lane.lane}
                   label={`Adjust ${lane.lane} target`}
                   onClick={canAct && targets.data != null ? () => setSelected(lane.lane) : undefined}
-                  subtitle={`${count(lane.running)} running · target ${count(lane.target)} · queued ${count(lane.queued)}${lane.held && lane.heldReason ? ` · ${lane.heldReason}` : ''}`}
+                  subtitle={<>{`${count(lane.running)} running · target ${count(lane.target)} · queued ${count(lane.queued)}${lane.held && lane.heldReason ? ` · ${lane.heldReason}` : ''}`} <LaneCapBadges caps={capsByLane.get(lane.lane)} lane={lane.lane} /></>}
                   trailing={lane.held ? <Badge tone="warning">held</Badge> : undefined}
                 />
               ))}

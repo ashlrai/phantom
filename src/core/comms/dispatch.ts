@@ -45,7 +45,7 @@ import {
   type InboundEvent,
 } from '../integrations/telegram.js';
 import {
-  DEFAULT_REQUEST_TTL_HOURS,
+  commsRequestTtlMs,
   expireStaleRequests,
   listRequests,
   markReportDelivered,
@@ -89,12 +89,9 @@ export const DEFAULT_BATCH_CAP = 8;
 /** A report that fails this many sends in a row is expired, so it cannot wedge the queue. */
 const MAX_REPORT_SEND_FAILURES = 3;
 
-/** Request TTL in ms from cfg.comms.requestTtlHours; invalid values use the default. */
-export function commsRequestTtlMs(cfg: AshlrConfig): number {
-  const hours = cfg.comms?.requestTtlHours;
-  const valid = typeof hours === 'number' && Number.isFinite(hours) && hours > 0;
-  return (valid ? hours : DEFAULT_REQUEST_TTL_HOURS) * 3_600_000;
-}
+// commsRequestTtlMs lives in requests.ts next to the TTL it describes; the
+// re-export keeps this module's existing import surface unchanged.
+export { commsRequestTtlMs };
 
 // ---------------------------------------------------------------------------
 // Watermark / state
@@ -324,6 +321,12 @@ async function handleTelegramText(event: InboundEvent, text: string, cfg: AshlrC
   if (local !== null) {
     const sent = await sendTelegramMessage(local, replyOpts(event), cfg);
     if (!sent.ok) throw new Error('Telegram command reply failed');
+    result.resolved++;
+    return;
+  }
+  // `yes 3f2a` / `no 3f2a` / `done 3f2a` answers an ask (phm asks); only Mason's own chat can.
+  const { handleTelegramAskReply } = await import('./telegram-ask-reply.js');
+  if (await handleTelegramAskReply(event, text, cfg, { send: sendTelegramMessage })) {
     result.resolved++;
     return;
   }

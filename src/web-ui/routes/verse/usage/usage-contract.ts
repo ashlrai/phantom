@@ -74,6 +74,7 @@ import type {
   VerseLocalRuntimeReport,
 } from '../../../../core/verse/local-models.js';
 import type { DailyUsage as CoreDailyUsage } from '../../../../core/types.js';
+import { projectPeriod, type WindowPeriod } from './window-period.js';
 
 // ---------------------------------------------------------------------------
 // Seam contract — compile-time only, zero runtime cost.
@@ -234,6 +235,8 @@ export interface AccountWindow {
   resetsAt: string | null;
   /** Verbatim provider prose, e.g. "resets Sep 25 at 7pm (America/New_York)". */
   resetDescription: string | null;
+  /** When this window began, where the server's reset provenance says. Absent or null = not known, so nothing is drawn against time. */
+  period?: WindowPeriod | null;
   /**
    * True when the provider signalled `rateLimitReachedType` — the upstream
    * writes the SENTINEL 100, which is a flag, not a measurement. Rendered as
@@ -504,6 +507,10 @@ function clampPercent(value: number | null): number | null {
   return Math.max(0, Math.min(100, value));
 }
 
+// The start of a window comes from the `resetProvenance` the server attaches to it; window-period.ts owns
+// the rule so the seat roster reads the same start this contract does.
+export type { WindowPeriod };
+
 function projectWindow(raw: unknown): AccountWindow | null {
   const r = record(raw);
   if (!r) return null;
@@ -512,6 +519,7 @@ function projectWindow(raw: unknown): AccountWindow | null {
   const native = record(r['nativeReport']);
   const limitReached = bool(r, 'limitReached') || bool(r, 'rateLimitReached');
   const measuredRaw = r['measured'];
+  const period = projectPeriod(r['resetProvenance'], str(r, 'resetsAt') ?? str(r, 'resets_at'));
   return {
     id,
     label: str(r, 'label'),
@@ -524,6 +532,8 @@ function projectWindow(raw: unknown): AccountWindow | null {
     // upstream writes the sentinel 100. Defaulting a flagged window to
     // `measured: true` would let a denial print as "100% used".
     measured: typeof measuredRaw === 'boolean' ? measuredRaw : !limitReached,
+    // Only when known, so a window without provenance is the object it has always been.
+    ...(period ? { period } : {}),
   };
 }
 

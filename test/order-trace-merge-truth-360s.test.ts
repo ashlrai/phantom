@@ -105,6 +105,7 @@ it('producer merge spellings verify the order, including URL fallbacks', async (
     { id: 'RQ-PHX-TRUTH-V3', order: 'B' },
     { id: 'RQ-PHX-TRUTH-V4', order: 'B' },
     { id: 'RQ-PHX-TRUTH-V5', order: 'B' },
+    { id: 'RQ-PHX-TRUTH-V6', order: 'B' },
   ];
   await fixture(jobs);
   await writeMetrics([
@@ -123,6 +124,9 @@ it('producer merge spellings verify the order, including URL fallbacks', async (
     // outcome row carrying the reconciler's prUrl field.
     { event: 'outcome', job: 'RQ-PHX-TRUTH-V5', outcome: 'MERGED', prUrl: PR(920015),
       mergedAt: '2026-11-13T14:15:00.000Z', ts: '2026-11-13T14:15:00.000Z' },
+    // full field-dialect spelling: kind event, conclusion phase, jobId id, html_url.
+    { kind: 'outcome', conclusion: 'MERGED', jobId: 'RQ-PHX-TRUTH-V6', html_url: PR(920016),
+      recordedAt: '2026-11-13T14:20:00.000Z' },
   ]);
   const trace = await readOrderTrace({ runsDir: root });
   expect(jobOf(trace, ORDER_B_KEY, 'RQ-PHX-TRUTH-V1'))
@@ -134,6 +138,8 @@ it('producer merge spellings verify the order, including URL fallbacks', async (
   expect(jobOf(trace, ORDER_B_KEY, 'RQ-PHX-TRUTH-V4').state).toBe('merged');
   expect(jobOf(trace, ORDER_B_KEY, 'RQ-PHX-TRUTH-V5'))
     .toEqual({ id: 'RQ-PHX-TRUTH-V5', lane: 'fake-lane', state: 'merged', url: PR(920015) });
+  expect(jobOf(trace, ORDER_B_KEY, 'RQ-PHX-TRUTH-V6'))
+    .toEqual({ id: 'RQ-PHX-TRUTH-V6', lane: 'fake-lane', state: 'merged', url: PR(920016) });
   expect(verdict(trace, ORDER_B_KEY)).toBe('VERIFIED');
 });
 

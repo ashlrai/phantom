@@ -90,7 +90,9 @@ export function computeLaneHealth(live: FleetLiveSnapshotV1, nowMs: number = Dat
     const runs = live.runs.filter((r) => r.lane === state.lane);
     const inWindow = runs.filter((r) => {
       const started = ms(r.startedAt);
-      return started !== null && started >= sinceMs;
+      // The window is [since, until]: a run stamped after `until` (clock skew or a
+      // corrupt record) has not started inside it and must not count as a call.
+      return started !== null && started >= sinceMs && started <= untilMs;
     });
     const finished = inWindow.filter((r) => r.outcome !== null && r.endedAt !== null);
     const latencies = finished

@@ -27,6 +27,10 @@ def pr(number=1, repo='phantom', **values):
 
 
 class RecutFeedTests(unittest.TestCase):
+    def test_paused_cli_family_does_not_emit(self):
+        self.assertEqual(feed.plan([pr(1)], TEMPLATE, 6, paused={'RQ-RCFP1Q'}), [])
+        self.assertEqual(len(feed.plan([pr(2)], TEMPLATE, 6, paused={'RQ-RCFP1Q'})), 1)
+
     def test_dirty_clean_closed_unknown_and_oldest(self):
         rows = [pr(4), pr(2, mergeable_state='clean'), pr(3, state='closed'),
                 pr(5, mergeable_state=None), pr(1)]

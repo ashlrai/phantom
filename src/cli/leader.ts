@@ -2,6 +2,7 @@
  * `ashlr leader` — V3.10 Track B (unit U8). Registered by B-U1 in src/cli/index.ts.
  *
  *   ashlr leader show [--json]               the latest memo, actions, hit-rate
+ *   ashlr leader brief [--since 2h] [--stale-after 3h] [--json]  one read of what the last bets did and what to queue next
  *   ashlr leader run [--force]               run the Leader now (waits for the memo)
  *   ashlr leader tick [--wait]               apply due class-B actions, grade moves,
  *                                            and start a run if one is due
@@ -12,8 +13,8 @@
  *
  * 3.14 — talk to the Leader (vision/leader-thread.ts; the same thread Verse
  * and Telegram use):
- *   ashlr leader say "<text>"                 say something; prints the reply
- *   ashlr leader thread [--limit n] [--json]  the conversation, oldest first
+ *   ashlr leader say "<text>" [--text]        send through the verified inbox writer; prints the id
+ *   ashlr leader thread [--since hours|time] [--before hours|time] [--limit n] [--json]  merged conversation, oldest first
  *   ashlr leader answer <questionId> "<text>" answer one of the memo's questions
  *   ashlr leader approve <actionId>           approve a pending action (class B
  *                                            applies now only if the grant
@@ -25,17 +26,19 @@
  *
  * `run` spends at most one Leader call on a seat the router allows (with no
  * standing grant: a free local model or nothing). `veto` only lowers what
- * autonomy is doing. Exit codes: 0 success, 1 error / refused, 2 bad usage.
+ * autonomy is doing. Exit codes: 0 success, 1 error / refused, 2 bad usage,
+ * 3 no leader seat available (`seat`, `run --seat auto`).
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { leaderAsk, leaderAssign, leaderOrg, leaderStatus } from '../core/agents/leader-office.js';
 import { loadConfig } from '../core/config.js';
 import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import type { LeaderAction, LeaderMemo, LeaderStateV1 } from '../core/vision/leader-types.js';
+import { parseStaleAfter } from '../core/fleet/leader-batches.js';
 
 const USAGE = `Phantom Leader — memo, actions and veto
 
@@ -43,21 +46,27 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
+  phm leader brief [--json] [--write <path>]  compact fleet snapshot; --since 2h or --stale-after 3h selects the detailed bets view
   phm leader status [--json]
   phm leader ask "<text>" [--json]
   phm leader org [--json]
   phm leader assign --rq <RQ-KEY> --owner <role> --summary "<text>" [--due YYYY-MM-DD] [--status assigned|in_progress|blocked|done|proposed] [--outcome "<text>"] [--json]
-  phm leader seat [--json] [--tier elite|workhorse|fast|local]
+  phm leader seat --pick  print only the lane and model to launch the leader on now (exit 3: none)
+  phm leader seat [pick] [--json]  where the leader runs now and where it moves next (read-only; exit 3: no seat)
+  phm leader seat --tier elite|workhorse|fast|local [--json]  inspect legacy task-tier admission
   phm leader inbox [--json] [--limit n] [--text "message"]
   phm leader run [--force]
+  phm leader run --seat auto --prompt-file <file> --dry-run [--json]  print the exact leader command for the chosen seat (exit 3: no seat)
   phm leader tick [--wait]
   phm leader veto <actionId> [--note "why"]
   phm leader veto --memo <memoId> [--note "why"]
   phm leader oversight-plist --print [--bin /path/to/phm]
-  phm leader say "<text>"
-  phm leader replies [--json] [--limit n] [--file PATH]  show recent PLAN-LOG replies, newest first
+  phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
+  phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
-  phm leader thread [--limit n] [--follow] [--since messageId] [--json]
+  phm leader thread [--since <hours|time>] [--before <hours|time>] [--limit <n>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
+  phm leader thread --legacy [--limit n] [--json|--text]  chat with ids and received/answered state (JSON default)
+  phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
   phm leader directives [list] [--all] [--json]
@@ -389,62 +398,86 @@ function takeTextArgs(args: string[], allowed: AllowedOptions): string[] | null 
   return separator === -1 ? [] : args.splice(separator).slice(1);
 }
 
+/**
+ * `say`: one message to the leader through the verified local-owner inbox
+ * writer (the same path as `leader inbox --text`). JSON `{ id, ts }` by
+ * default; `--text` prints one plain line. Never calls a model.
+ */
+async function sayToLeader(message: string, text: boolean): Promise<number> {
+  if (message.length === 0) {
+    console.error(USAGE);
+    return 2;
+  }
+  const { composeLeaderInbox } = await import('../core/agents/leader-network-runtime.js');
+  const result = await composeLeaderInbox(message);
+  if (!result.ok) {
+    console.error(text ? `Not sent: ${result.reason}` : JSON.stringify({ ok: false, reason: result.reason }));
+    return 1;
+  }
+  console.log(text ? `Sent to the leader (${result.id ?? 'id unknown'}).` : JSON.stringify({ ok: true, id: result.id ?? null, ts: result.at }));
+  return 0;
+}
+
+/** `thread --legacy`: MASON-INBOX entries and the leader's replies with ids and state. */
+async function printLeaderChat(limit: number, text: boolean): Promise<number> {
+  const { readLeaderChat } = await import('../core/fleet/leader-chat.js');
+  const { leaderChatLine } = await import('../core/fleet/leader-chat-text.js');
+  const chat = await readLeaderChat({ limit });
+  if (!text) {
+    console.log(JSON.stringify(chat, null, 2));
+    return 0;
+  }
+  if (chat.messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
+  for (const m of chat.messages) console.log(leaderChatLine(m, Date.parse(chat.generatedAt)));
+  if (chat.skipped.malformedInbox > 0) console.log(`(${chat.skipped.malformedInbox} unreadable inbox block${chat.skipped.malformedInbox === 1 ? '' : 's'} skipped)`);
+  return 0;
+}
+
 async function runThreadCli(sub: string, args: string[]): Promise<number> {
   if (sub === 'say' || sub === 'answer') {
-    const tail = takeTextArgs(args, {});
+    const tail = takeTextArgs(args, sub === 'say' ? { flags: ['--text', '--json'] } : {});
     if (!tail) return 2;
+    if (sub === 'say') {
+      const text = flag(args, '--text');
+      flag(args, '--json');
+      return sayToLeader([...args, ...tail].join(' ').trim(), text);
+    }
     args.push(...tail);
   }
+  // One-shot reads share the merged reader; legacy chat and the live follow stream are explicit.
+  if (sub === 'thread' && !args.includes('--legacy') && !args.includes('--follow')) return (await import('./leader-thread.js')).runLeaderThreadCli(args);
   const thread = await import('../core/vision/leader-thread.js');
-  if (sub === 'say') {
-    const text = args.join(' ').trim();
-    if (text.length === 0) {
-      console.error(USAGE);
-      return 2;
-    }
-    return threadCall(thread, async () => {
-      const result = await thread.appendMasonMessage(text, { channel: 'cli', cfg: loadConfig() });
-      if (result.directive) console.log(`Standing directive recorded: ${result.directive.id} (${result.directive.kind}) ${result.directive.text}`);
-      if (result.reply) console.log(result.reply.text);
-      return 0;
-    });
-  }
   if (sub === 'thread') {
+    const text = flag(args, '--text');
     const json = flag(args, '--json');
     const limitOpt = option(args, '--limit');
     const follow = flag(args, '--follow');
+    const legacy = flag(args, '--legacy');
     const sinceId = option(args, '--since');
-    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
+    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || (legacy && follow) || (text && (json || follow)) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
       console.error(USAGE);
       return 2;
     }
-    if (follow) {
-      const { followThread } = await import('../core/vision/leader-thread-follow.js');
-      const controller = new AbortController();
-      const stop = () => controller.abort();
-      process.on('SIGINT', stop);
-      process.on('SIGTERM', stop);
-      try {
-        await followThread({
-          list: thread.listThread, signal: controller.signal,
-          ...(limitOpt === null ? {} : { backlog: Number(limitOpt) }),
-          ...(sinceId === null ? {} : { sinceId }),
-          onMessage: m => { if (json) console.log(JSON.stringify(m)); else printThreadMessage(m); },
-          onError: error => console.error(error instanceof Error ? error.message : String(error)),
-        });
-      } finally {
-        process.off('SIGINT', stop);
-        process.off('SIGTERM', stop);
-      }
-      return 0;
+    if (!follow) return printLeaderChat(limitOpt === null ? 50 : Number(limitOpt), text);
+    // --follow streams the in-process Leader conversation (vision/leader-thread.ts) live.
+    const { followThread } = await import('../core/vision/leader-thread-follow.js');
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    try {
+      await followThread({
+        list: thread.listThread, signal: controller.signal,
+        ...(limitOpt === null ? {} : { backlog: Number(limitOpt) }),
+        ...(sinceId === null ? {} : { sinceId }),
+        onMessage: m => { if (json) console.log(JSON.stringify(m)); else printThreadMessage(m); },
+        onError: error => console.error(error instanceof Error ? error.message : String(error)),
+      });
+    } finally {
+      process.off('SIGINT', stop);
+      process.off('SIGTERM', stop);
     }
-    return threadCall(thread, async () => {
-      const messages = await thread.listLeaderThread(limitOpt === null ? {} : { limit: Number(limitOpt) });
-      if (json) console.log(JSON.stringify({ messages }, null, 2));
-      else if (messages.length === 0) console.log('No messages yet. Say something: phm leader say "…"');
-      else for (const m of messages) printThreadMessage(m);
-      return 0;
-    });
+    return 0;
   }
   if (sub === 'answer') {
     const questionId = args.shift();
@@ -602,6 +635,21 @@ async function runOfficeCli(sub: 'status' | 'ask' | 'org' | 'assign', args: stri
 /** Typed CEO inspection and compose verbs; inspection never calls a model. */
 async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number> {
   const json = flag(args, '--json');
+  if (sub === 'seat' && !args.includes('--tier')) {
+    const onlyPick = flag(args, '--pick');
+    if (args.length > 1 || (args.length === 1 && args[0] !== 'pick')) { console.error(USAGE); return 2; }
+    const { readLeaderSeat, leaderSeatText, launcherSeat } = await import('../core/fleet/leader-seat.js');
+    const { sanitizePublicJson } = await import('../core/util/public-json.js');
+    const result = await readLeaderSeat();
+    if (onlyPick) {
+      const chosen = launcherSeat(result);
+      if (!chosen) { console.error(result.fallback_reason ?? result.reason ?? 'No seat available.'); return 3; }
+      console.log(sanitizePublicJson(`${chosen.lane} ${chosen.model}`));
+      return 0;
+    }
+    console.log(json ? JSON.stringify(sanitizePublicJson(result), null, 2) : sanitizePublicJson(leaderSeatText(result, args[0] === 'pick')));
+    return result.pick ? 0 : 3;
+  }
   const limit = option(args, '--limit');
   const text = option(args, '--text');
   const tier = option(args, '--tier');
@@ -640,6 +688,47 @@ async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number>
   }
 }
 
+/**
+ * `leader run --seat auto --prompt-file F --dry-run`: print the one command the
+ * pinned leader loop should run for the chosen seat. Never runs it, and the
+ * command carries no environment values: the prompt is redirected from F.
+ */
+async function runSeatDryRun(args: string[]): Promise<number> {
+  const json = flag(args, '--json');
+  const dryRun = flag(args, '--dry-run');
+  const seat = option(args, '--seat');
+  const promptFile = option(args, '--prompt-file');
+  if (args.length || seat !== 'auto' || !promptFile) { console.error(USAGE); return 2; }
+  if (!dryRun) { console.error('Only --dry-run is supported: it prints the command, and the leader loop runs it.'); return 2; }
+  const path = resolve(promptFile);
+  if (!existsSync(path) || !statSync(path).isFile()) { console.error('Prompt file not found.'); return 2; }
+  const { readLeaderSeat, pickSeat, leaderSeatCommand } = await import('../core/fleet/leader-seat.js');
+  const choice = pickSeat(await readLeaderSeat());
+  if (!choice.ok) {
+    console.log(json ? JSON.stringify({ schema: 'leader.run.dry-run.v1', seat: choice, command: null }) : choice.reason);
+    return 3;
+  }
+  const command = leaderSeatCommand(choice, path);
+  console.log(json ? JSON.stringify({ schema: 'leader.run.dry-run.v1', seat: choice, command }) : command.text);
+  return 0;
+}
+
+/** `leader brief [--since 2h] [--stale-after 3h] [--json]`: thin; the reading and rendering live in core/fleet/leader-job-brief.ts. */
+async function runBrief(args: string[]): Promise<number> {
+  if (!args.includes('--since') && !args.includes('--stale-after')) return (await import('./leader-brief.js')).cmdLeaderBrief(args);
+  const json = flag(args, '--json');
+  const since = option(args, '--since');
+  const m = since === null ? null : /^(\d+(?:\.\d+)?)([hd])$/.exec(since ?? '');
+  const stale = option(args, '--stale-after');
+  const staleHours = stale === null ? undefined : stale === undefined ? NaN : parseStaleAfter(stale) ?? NaN;
+  const core = await import('../core/fleet/leader-job-brief.js');
+  const hours = since === null ? core.BRIEF_DEFAULT_HOURS : m ? Number(m[1]) * (m[2] === 'd' ? 24 : 1) : NaN;
+  if (args.length || since === undefined || Number.isNaN(staleHours) || !(hours > 0 && hours <= core.BRIEF_MAX_HOURS)) { console.error(USAGE); return 2; }
+  const brief = await core.readJobBrief({ hours, staleAfterHours: staleHours });
+  console.log(json ? JSON.stringify(brief) : core.jobBriefLines(brief).join('\n'));
+  return 0;
+}
+
 export async function runLeaderCli(argv: string[]): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -663,15 +752,15 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
     const file = option(args, '--file');
     if (args.length || file === undefined || (sync && file !== null) || limit === undefined || (sync && limit !== null) || (limit !== null && (!/^\d{1,3}$/.test(limit) || Number(limit) < 1 || Number(limit) > 200))) { console.error(USAGE); return 2; }
     try {
+      const planLog = (await import('../core/config.js')).loadConfigReadOnly().comms?.leaderPlanLogPath;
       if (!sync) {
-        const { readPlanLogReplies } = await import('../core/fleet/mason-outbox.js');
-        const result = await readPlanLogReplies({ limit: limit === null ? 30 : Number(limit), file: file ?? undefined });
-        result.entries.reverse();
-        console.log(json ? JSON.stringify(result) : result.entries.map(entry => `${entry.at}  ${entry.text}`).join('\n\n') || result.reason || 'No replies yet.');
+        const { readLeaderReplies, replyLine } = await import('../core/fleet/mason-outbox.js');
+        const result = await readLeaderReplies({ limit: limit === null ? 10 : Number(limit), file: file ?? undefined, planLog });
+        console.log(json ? JSON.stringify(result) : result.entries.map(replyLine).join('\n') || result.reason || 'No replies yet.');
         return result.sourceState === 'unknown' ? 1 : 0;
       }
       const { syncLeaderReplies } = await import('../core/vision/leader-thread.js');
-      const result = await syncLeaderReplies();
+      const result = await syncLeaderReplies(planLog);
       console.log(json ? JSON.stringify(result) : `${result.posted.length} replies posted; ${result.skipped.length} skipped. Source: ${result.sourceState}. Uncertain: ${result.unknown.length}.`);
       return result.sourceState === 'unknown' || result.unknown.length ? 1 : 0;
     } catch {
@@ -679,10 +768,12 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
       return 1;
     }
   }
+  if (sub === 'brief') return runBrief(args);
   if (sub === 'oversight-plist') return runOversightPlist(args);
   if (sub === 'status' || sub === 'ask' || sub === 'org' || sub === 'assign') return runOfficeCli(sub, args);
   if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);
   if (sub === 'say' || sub === 'thread' || sub === 'answer' || sub === 'approve' || sub === 'directives') return runThreadCli(sub, args);
+  if (sub === 'run' && args.includes('--seat')) return runSeatDryRun(args);
   const leader = await import('../core/vision/leader.js');
 
   if (sub === 'show') {

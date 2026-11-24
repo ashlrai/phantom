@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { probeDaemonLiveness, type DaemonLivenessV1 } from './liveness.js';
 import { readDaemonPause } from './pause.js';
+import { resolveExecutable, type ExecutableResolution } from '../run/tool-path.js';
 
 import { evidenceDir } from '../autonomy/evidence-pack.js';
 import { readKillSwitch } from '../sandbox/policy.js';
@@ -276,6 +277,60 @@ export interface DaemonHealthClient {
   model: string | null;
 }
 
+/** Why a frontier client did not resolve: the inventory reason plus whether its CLI is on PATH. */
+export interface DaemonHealthClientDiagnosis {
+  id: string;
+  engine: string;
+  reason: string;
+  /** null when the engine has no CLI binary to look for (local, grok-cli). */
+  binaryOnPath: boolean | null;
+  binaryPath: string | null;
+  binarySource: 'path' | 'well-known' | null;
+  /** Admission is inferred from inventory; authentication is never inspected. */
+  cause: 'binary-not-found' | 'auth-or-seat-not-admitted' | 'policy-refused' |
+    'resource-unavailable' | 'not-selected' | 'non-loopback-refused' | 'probe-timeout' | 'unavailable';
+}
+
+export interface DaemonHealthFrontierDiagnostics {
+  unavailable: DaemonHealthClientDiagnosis[];
+  /** Set when the inventory itself could not be read (config or resolver threw). */
+  error?: string;
+}
+
+const FRONTIER_CLI_BINARY: Record<string, string> = { codex: 'codex', claude: 'claude' };
+
+/** PATH lookup by metadata only: never launches the CLI or reads its auth. */
+export function binaryOnPath(name: string, pathValue: string | undefined = process.env['PATH']): boolean {
+  return resolveExecutable(name, { pathValue: pathValue ?? '' })?.source === 'path';
+}
+
+export function diagnoseFrontierClients(
+  inventory: ReadonlyArray<{ id: string; engine: string; available: boolean; reason: string }>,
+  lookup: (name: string) => ExecutableResolution | null = resolveExecutable,
+): DaemonHealthClientDiagnosis[] {
+  return inventory.filter((client) => !client.available).map((client) => {
+    const binary = FRONTIER_CLI_BINARY[client.engine];
+    const resolved = binary ? lookup(binary) : null;
+    const reason = client.reason;
+    const cause: DaemonHealthClientDiagnosis['cause'] =
+      reason === 'policy-refused' || reason === 'resource-unavailable' || reason === 'not-selected' ||
+      reason === 'non-loopback-refused' || reason === 'probe-timeout' ? reason
+        : binary && !resolved ? 'binary-not-found'
+          : reason === 'unavailable-or-not-admitted' && resolved ? 'auth-or-seat-not-admitted'
+            : reason === 'unavailable-or-not-selected' ? 'not-selected' : 'unavailable';
+    return { id: client.id, engine: client.engine, reason, cause,
+      binaryOnPath: binary ? resolved?.source === 'path' : null,
+      binaryPath: resolved?.path ?? null, binarySource: resolved?.source ?? null };
+  });
+}
+
+function frontierDetail(diagnostics: DaemonHealthFrontierDiagnostics): string {
+  if (diagnostics.error) return `frontier inventory unreadable: ${diagnostics.error}`;
+  const parts = diagnostics.unavailable.map((client) =>
+    `${client.id}: ${client.cause}${client.binaryPath ? ` (${client.binaryPath})` : ''}`);
+  return parts.length > 0 ? `no frontier client resolved (${parts.join('; ')})` : 'no frontier client resolved';
+}
+
 export interface DaemonHealthDeps {
   nowMs?: number;
   liveness?: () => DaemonLivenessV1;
@@ -296,12 +351,16 @@ export interface DaemonHealth {
   logAgeMs: number | null;
   logState: 'fresh' | 'stale' | 'missing' | 'unknown';
   frontierClientsResolved: DaemonHealthClient[] | null;
+  /** Each unresolved client and why; present when diagnostics were supplied. */
+  frontierClientsUnavailable?: DaemonHealthClientDiagnosis[];
   paused: boolean | null;
   killed: boolean | null;
   healthy: boolean;
   supervisor: {
     restartRecommended: boolean;
     reason: 'healthy' | 'dead' | 'log-stale' | 'paused' | 'killed' | 'unknown' | 'logs-missing' | 'frontier-unavailable';
+    /** Concrete cause for 'frontier-unavailable' and an unreadable inventory. */
+    detail?: string;
   };
 }
 
@@ -319,6 +378,7 @@ function readLogMtime(name: string): number | null | undefined {
 export function readDaemonHealth(
   frontierClientsResolved: DaemonHealthClient[] | null,
   deps: DaemonHealthDeps = {},
+  frontier?: DaemonHealthFrontierDiagnostics,
 ): DaemonHealth {
   const nowMs = deps.nowMs ?? Date.now();
   const live = (deps.liveness ?? probeDaemonLiveness)();
@@ -357,10 +417,15 @@ export function readDaemonHealth(
     logAgeMs,
     logState,
     frontierClientsResolved,
+    ...(frontier ? { frontierClientsUnavailable: frontier.unavailable } : {}),
     paused: pause === 'unknown' ? null : pause === 'paused',
     killed: kill === 'unknown' ? null : kill === 'active',
     healthy: live.alive === true && logState === 'fresh' && pause === 'running' &&
       kill === 'inactive' && frontierClientsResolved !== null && frontierClientsResolved.length > 0,
-    supervisor: { restartRecommended: reason === 'dead' || reason === 'log-stale', reason },
+    supervisor: {
+      restartRecommended: reason === 'dead' || reason === 'log-stale', reason,
+      ...(frontier && (reason === 'frontier-unavailable' || (reason === 'unknown' && frontier.error))
+        ? { detail: frontierDetail(frontier) } : {}),
+    },
   };
 }

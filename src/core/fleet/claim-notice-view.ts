@@ -11,14 +11,16 @@
  * A "sent" row means a durable bus note was written, NOT that Slack
  * delivered it. To keep that distinction honest each recent row also carries
  * `delivery`, which joins the row's claim binding onto the Slack transport's
- * own outbound send store: 'slack-sent' only when a same-channel, same-thread
- * `sent` receipt with a well-formed Slack ts exists at-or-after the ledger
+ * own outbound send store: 'slack-sent' only when the exact notice identity has
+ * a same-channel, same-thread `sent` receipt with a well-formed Slack ts at-or-after the ledger
  * time (minus skew) and no later than the collection time, 'no-slack-receipt'
  * when the store is healthy but nothing matches, 'unknown' whenever the evidence
  * itself is incomplete (missing or ambiguous binding, unparseable threadKey,
  * missing/degraded/thrown store read). Thread keys are Slack ids/timestamps;
  * tokens, author ids and file paths never enter the view. */
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { slackSendStoreKey } from '../agents/slack-reply-identity.js';
 import { isSlackTs, loadAgentNetworkConfig } from '../agents/slack-network.js';
 import { readSlackSendReceipts, type SlackSendReceiptRead } from '../agents/slack-send-receipts.js';
 import { parseNoticeThreadRef } from '../../cli/fleet-claim-notices.js';
@@ -44,6 +46,17 @@ export interface ClaimNoticeDeliverySummary {
   unknown: number;
 }
 
+/** Fixed, sanitized reasons a pending observation could not be made. */
+export type ClaimNoticePendingUnknownReason = 'state-missing' | 'ledger-unavailable' | 'board-unavailable'
+  | 'bindings-unavailable' | 'prev-unavailable' | 'observation-failed';
+
+/** 'known' only after a successful dry-run pass, so `pending: []` under
+ * 'known' means nothing awaits delivery. Under 'unknown' `pending` is `[]`
+ * only for compatibility and says nothing. Diagnostic, never dispatch authority. */
+export type ClaimNoticePendingObservation =
+  | { state: 'known' }
+  | { state: 'unknown'; reason: ClaimNoticePendingUnknownReason };
+
 export interface ClaimNoticeView {
   v: 1;
   generatedAt: string;
@@ -53,6 +66,8 @@ export interface ClaimNoticeView {
   /** Counts over the listed `sent.recent` rows plus the send-store state they were read under. */
   delivery: ClaimNoticeDeliverySummary;
   pending: Array<{ state: string; threadKey: string; text: string }>;
+  /** Whether `pending` was actually observed; independent of `delivery` receipts. */
+  pendingObservation: ClaimNoticePendingObservation;
   /** Live claims with no binding: runClaimNoticePass drops every notice for them.
    * 'unknown' whenever the board could not be read as known; never an empty-list guess.
    * Task text is deliberately not carried. */
@@ -115,6 +130,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
   } catch { /* stays unknown */ }
   const empty = (source: 'missing' | 'unreadable'): ClaimNoticeView =>
     ({ ...base, source, bindings: 0, sent: { total: 0, recent: [] }, delivery: summary([]), pending: [],
+      pendingObservation: { state: 'unknown', reason: source === 'missing' ? 'state-missing' : 'ledger-unavailable' },
       unbound: { state: 'unknown', total: 0, rows: [] }, slackConfigured });
   if (!existsSync(root)) return empty('missing');
 
@@ -122,7 +138,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
   const rows = readClaimNoticeSentRows(paths.sent);
   if (rows === null) return empty('unreadable');
   const bindings = readClaimThreadBindings(paths.bindings);
-  const classify = (claimId: string, repo: string | undefined, at: number): ClaimNoticeDeliveryWord => {
+  const classify = (claimId: string, repo: string | undefined, at: number, dedupeKey: string): ClaimNoticeDeliveryWord => {
     // A non-ok store can hide receipts; only a healthy read may say "none matched".
     if (sendStore.state !== 'ok') return 'unknown';
     const threads = new Set(bindings
@@ -134,7 +150,11 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     if (ref === null) return 'unknown';
     const floorSeconds = (at - CLAIM_NOTICE_RECEIPT_SKEW_MS) / 1000;
     const ceilingSeconds = collectedAtMs / 1000;
-    return sendStore.receipts.some(r => r.state === 'sent' && r.channel === ref.channelId &&
+    // Match the producer's envelope id and the transport's store key exactly.
+    // Thread/time proximity alone cannot identify which transition was sent.
+    const envelopeId = `claim-notice-${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`;
+    const key = slackSendStoreKey(envelopeId);
+    return sendStore.receipts.some(r => r.key === key && r.state === 'sent' && r.channel === ref.channelId &&
         r.thread === ref.threadTs && isSlackTs(r.ts) &&
         Number(r.ts) >= floorSeconds && Number(r.ts) <= ceilingSeconds)
       ? 'slack-sent' : 'no-slack-receipt';
@@ -145,13 +165,13 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
     const parsed = parseClaimNoticeKey(row.key);
     if (parsed !== null) {
       recent.push({ state: parsed.state, claimId: parsed.claimId, at: row.at,
-        delivery: classify(parsed.claimId, parsed.repo, row.at) });
+        delivery: classify(parsed.claimId, parsed.repo, row.at, row.key) });
     }
   }
 
   // One board read, shared by the unbound list and the dry run below.
   let boardRead: { board: FleetBoard } | { error: unknown };
-  try { boardRead = { board: (opts.readBoard ?? (() => readFleetBoard({ now: now() })))() }; }
+  try { boardRead = { board: (opts.readBoard ?? (() => readFleetBoard({ now: collectedAtMs })))() }; }
   catch (error) { boardRead = { error }; }
   const readBoardOnce = (): FleetBoard => {
     if ('error' in boardRead) throw boardRead.error;
@@ -170,18 +190,24 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
 
   const files = claimNoticeFileDeps(root);
   let pending: ClaimNoticeView['pending'] = [];
+  let pendingObservation: ClaimNoticePendingObservation = { state: 'unknown', reason: 'observation-failed' };
   try {
     const pass = await runClaimNoticePass({
       ...files,
       readBoard: readBoardOnce,
       writePrevSnapshot: () => { throw new Error('claim-notice view is read-only'); },
       appendSentLedger: () => { throw new Error('claim-notice view is read-only'); },
-      send: neverSend, now, dryRun: true,
+      send: neverSend, now: () => collectedAtMs, dryRun: true,
     });
-    pending = pass.deliveries.filter(d => d.result === 'planned').slice(0, CLAIM_NOTICE_VIEW_ROWS)
+    if (pass.status === 'dry-run') pendingObservation = { state: 'known' };
+    else if (pass.status !== 'completed') pendingObservation = { state: 'unknown', reason: pass.status };
+    if (pass.status === 'dry-run') pending = pass.deliveries.filter(d => d.result === 'planned').slice(0, CLAIM_NOTICE_VIEW_ROWS)
       .map(d => ({ state: d.state, threadKey: d.threadKey, text: d.text.slice(0, CLAIM_NOTICE_VIEW_TEXT) }));
-  } catch { /* pending stays empty; the sent half is still honest */ }
+  } catch {
+    // A thrown board read is a board outage; anything else stays 'observation-failed'.
+    if ('error' in boardRead) pendingObservation = { state: 'unknown', reason: 'board-unavailable' };
+  }
 
   return { ...base, source: 'ok', bindings: bindings.length,
-    sent: { total: rows.length, recent }, delivery: summary(recent), pending, unbound, slackConfigured };
+    sent: { total: rows.length, recent }, delivery: summary(recent), pending, pendingObservation, unbound, slackConfigured };
 }

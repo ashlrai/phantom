@@ -65,6 +65,26 @@ describe('remote fleet read adapter', () => {
     }
   });
 
+  it('builds the inbox read filters into reviewed gateway paths', async () => {
+    const { feed, calls, response } = fixture();
+    const results = await Promise.all([
+      feed.inbox({ contains: 'ship it', priority: 'P1' }),
+      feed.inbox({ after: '2026-10-31T04:12:00Z', before: '2026-10-31T04:17:00.250-04:00' }),
+      feed.inbox({ limit: 5, source: 'mobile', contains: 'a&b', priority: 'P0',
+        after: '2026-10-31T04:12:00Z', before: '2026-10-31T04:17:00Z' }),
+    ]);
+    expect(results.every((result) => result === response)).toBe(true);
+    expect(calls.map((call) => call.path)).toEqual([
+      '/api/verse/fleet/runs/inbox?limit=50&contains=ship%20it&priority=P1',
+      '/api/verse/fleet/runs/inbox?limit=50&after=2026-10-31T04%3A12%3A00Z&before=2026-10-31T04%3A17%3A00.250-04%3A00',
+      '/api/verse/fleet/runs/inbox?limit=5&source=mobile&contains=a%26b&priority=P0&after=2026-10-31T04%3A12%3A00Z&before=2026-10-31T04%3A17%3A00Z',
+    ]);
+    for (const call of calls) {
+      expect(call.method).toBe('GET');
+      expect(classifyRemoteRoute(call.method, call.path).kind).toBe('read');
+    }
+  });
+
   it('rejects invalid options before any transport call', () => {
     const { feed, calls } = fixture();
     for (const limit of [0, -1, 201, 1.5, NaN, Infinity, '1', null]) {
@@ -74,6 +94,17 @@ describe('remote fleet read adapter', () => {
     }
     for (const source of ['', 'x'.repeat(41), 'a/b', 'a&limit=1', 'line\nbreak', 'é', 1, null]) {
       expect(() => feed.inbox({ source } as RemoteFleetInboxOptions)).toThrow();
+    }
+    for (const contains of ['', '   ', 'x'.repeat(513), 1, null]) {
+      expect(() => feed.inbox({ contains } as RemoteFleetInboxOptions)).toThrow();
+    }
+    for (const priority of ['', 'P4', 'p1', 'P10', 1, null]) {
+      expect(() => feed.inbox({ priority } as RemoteFleetInboxOptions)).toThrow();
+    }
+    // The adapter bounds the instant's shape; the Hub owns calendar validity.
+    for (const bound of ['soon', '2026-10-31', '2026-10-31 04:12', 5, null]) {
+      expect(() => feed.inbox({ after: bound } as RemoteFleetInboxOptions)).toThrow();
+      expect(() => feed.inbox({ before: bound } as RemoteFleetInboxOptions)).toThrow();
     }
     for (const options of [null, [], 'bad', { extra: 1 }, { body: 'fake' }]) {
       for (const read of [feed.inbox, feed.queue, feed.bus]) {

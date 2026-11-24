@@ -26,6 +26,7 @@ import { Shell } from '../components/layout/Shell.js';
 import { PlaceholderView } from '../routes/PlaceholderView.js';
 import { NAV_GROUPS, ALL_NAV_LEAVES } from './nav-config.js';
 
+const PagesView = lazy(() => import('../routes/pages/PagesView.js').then((module) => ({ default: module.PagesView })));
 const DecisionInbox = lazy(() => import('../routes/verse/inbox/DecisionInbox.js').then((module) => ({ default: module.DecisionInbox })));
 const FleetDashboardView = lazy(() => import('../routes/fleet-dashboard/FleetDashboardView.js').then((module) => ({ default: module.FleetDashboardView })));
 const ShowView = lazy(() => import('../routes/show/ShowView.js').then((module) => ({ default: module.ShowView })));
@@ -34,6 +35,7 @@ const PulseView = lazy(() => import('../routes/intelligence/pulse/PulseView.js')
 const GenomeView = lazy(() => import('../routes/intelligence/genome/GenomeView.js').then((module) => ({ default: module.GenomeView })));
 const ProductionView = lazy(() => import('../routes/intelligence/production/ProductionView.js').then((module) => ({ default: module.ProductionView })));
 const PortfolioView = lazy(() => import('../routes/portfolio/PortfolioView.js').then((module) => ({ default: module.PortfolioView })));
+const JobLogView = lazy(() => import('../routes/work/worklog/JobLogView.js').then((module) => ({ default: module.JobLogView })));
 const WorklogView = lazy(() => import('../routes/work/worklog/WorklogView.js').then((module) => ({ default: module.WorklogView })));
 const RunsView = lazy(() => import('../routes/work/runs/RunsView.js').then((module) => ({ default: module.RunsView })));
 const RunDetailView = lazy(() => import('../routes/work/runs/RunDetailView.js').then((module) => ({ default: module.RunDetailView })));
@@ -81,10 +83,13 @@ export function AppRoutes() {
         <Route path="/universe" element={<UniverseView />} />
         <Route path="/show" element={<ShowView />} />
         <Route path="/journal" element={<JournalView />} />
+        <Route path="/pages" element={<PagesView />} />
+        <Route path="/pages/:slug" element={<PagesView />} />
         <Route path="/intelligence/pulse" element={<PulseView />} />
         <Route path="/intelligence/genome" element={<GenomeView />} />
         <Route path="/intelligence/production" element={<ProductionView />} />
         <Route path="/portfolio" element={<PortfolioView />} />
+        <Route path="/work/jobs" element={<JobLogView />} />
         <Route path="/work/log" element={<WorklogView />} />
         <Route path="/work/runs" element={<RunsView />} />
         <Route path="/work/runs/:id" element={<RunDetailView />} />

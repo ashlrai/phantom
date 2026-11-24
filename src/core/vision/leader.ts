@@ -969,8 +969,13 @@ export interface LeaderRunDeps {
   adviseActionClass?: LeaderActionAdvisor;
   /** Release-live announcement (release-live-announce.ts); absent in injected tests. */
   announceRelease?: () => Promise<unknown>;
+  /** Plan pace warning (usage/plan-pace.ts): one line per too-fast or too-slow plan, at most every 2 h; absent in injected tests. */
+  announcePace?: () => Promise<unknown>;
+  /** Starved-lane notice (fleet/lane-starved.ts): one line per lane starved 30 min, at most once per 6 h; absent in injected tests. */
+  announceStarved?: () => Promise<unknown>;
   /** Offline advisory pass: its only write is metrics/amplify.jsonl. */
   amplifyTick?: (nowMs: number) => Promise<void>;
+  board?: { record(nowMs: number): Promise<unknown> };
 }
 
 export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<LeaderRunDeps> {
@@ -980,14 +985,14 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
   // Trigger and prompt gathering in one tick share the same bounded inspection.
   // This cache belongs to this dependency instance, never another home/account.
   let feedbackRead: { at: number; root: string | undefined; snapshot: import('../fleet/execution-feedback.js').ExecutionFeedbackSnapshot } | null = null;
-  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoningApi, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
+  const [apply, seat, budgetStore, quarantine, quality, modelStats, reasoning, goalsStore, ledger, effective, cloudBacklog, lessons, playbookLanes] = await Promise.all([
     loadDefaultLeaderDeps(),
     loadDefaultLeaderSeatDeps(cfg),
     import('../routing/budget-store.js'),
     import('../fleet/quarantine.js'),
     import('../fleet/quality-metrics.js'),
     import('../fleet/model-stats.js'),
-    import('../reasoning/reasoning-api.js'),
+    import('../reasoning/digest.js'),
     import('../goals/store.js'),
     import('../authority/ledger.js'),
     import('../authority/effective-config.js'),
@@ -1004,6 +1009,8 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
     cloudBacklog: { append: (items) => cloudBacklog.appendUserBacklogItems(items) },
     adviseActionClass: defaultLeaderActionAdvisor(cfg),
     announceRelease: () => import('../fleet/release-live-announce.js').then(m => m.runDefaultReleaseAnnouncement()),
+    announcePace: () => import('../usage/plan-pace.js').then(m => m.runDefaultPaceAlerts()),
+    announceStarved: () => import('../fleet/lane-starved.js').then(m => m.runDefaultStarvedNotices()),
     amplifyTick: async nowMs => { amplifySnapshot = await amplifier.amplifyTick(undefined, nowMs); },
     sources: {
       amplify: async nowMs => {
@@ -1051,7 +1058,7 @@ export async function loadDefaultLeaderRunDeps(cfg: AshlrConfig): Promise<Leader
           merged: m.merged,
           costUsd: Math.round(m.costUsd * 100) / 100,
         })),
-      reasoning: () => reasoningApi.computeReasoningDigest(14),
+      reasoning: () => reasoning.computeReasoningDigest(14),
       lessons: () => lessons.leaderLessons(),
       playbooks: () => playbookLanes.leaderPlaybookCatalog(),
     },
@@ -1496,7 +1503,28 @@ export interface LeaderTickResult {
  * grades due moves, and STARTS a run when one is due without waiting for the
  * model (a memo can take minutes on a local model; a tick must not).
  */
+function recordLeaderBoardTick(deps: LeaderRunDeps, nowMs: number): Promise<void> {
+  const record = deps.board?.record;
+  try {
+    const job = record
+      ? Promise.resolve().then(() => record.call(deps.board, nowMs))
+      : import('../fleet/leader-board.js').then(m => m.recordLeaderBoard({ nowMs }));
+    return job.then(() => undefined, () => undefined);
+  } catch {
+    return Promise.resolve();
+  }
+}
+
 export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
+  const boardJob = recordLeaderBoardTick(deps, deps.now());
+  try {
+    return await leaderTickOnce(deps, opts);
+  } finally {
+    await boardJob;
+  }
+}
+
+async function leaderTickOnce(deps: LeaderRunDeps, opts: { awaitRun?: boolean } = {}): Promise<LeaderTickResult> {
   const nowMs = deps.now();
   try { await deps.amplifyTick?.(nowMs); }
   catch { console.error('leader tick: amplify advisory journal unavailable'); }
@@ -1525,6 +1553,16 @@ export async function leaderTick(deps: LeaderRunDeps, opts: { awaitRun?: boolean
   if (deps.announceRelease) {
     void Promise.resolve().then(deps.announceRelease).catch((error: unknown) => {
       console.error(`leader tick: release announcement failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+  }
+  if (deps.announcePace) {
+    void Promise.resolve().then(deps.announcePace).catch((error: unknown) => {
+      console.error(`leader tick: pace warning failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    });
+  }
+  if (deps.announceStarved) {
+    void Promise.resolve().then(deps.announceStarved).catch((error: unknown) => {
+      console.error(`leader tick: starved lane notice failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     });
   }
   let graded: LeaderOutcomeRecord[] = [];

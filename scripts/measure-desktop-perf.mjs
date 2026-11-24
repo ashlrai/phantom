@@ -548,7 +548,11 @@ async function main() {
   let opts;
   try { opts = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
   if (opts.help) {
-    console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('*/')[0].replace(/^#!.*\n/, '').replace(/^\/\*\*?|^ \* ?/gm, ''));
+    // The file starts with an eslint globals comment. Help is the documentation
+    // block, not whatever `*/` closes first.
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const doc = source.match(/\/\*\*[\s\S]*?\*\//);
+    console.log((doc?.[0] ?? '').replace(/^\/\*\*?|^ \* ?/gm, '').trim());
     return;
   }
   if (!existsSync(join(repoRoot, 'dist/cli/index.js'))) { console.error('dist/ is missing: run `npm run build` first'); process.exit(2); }

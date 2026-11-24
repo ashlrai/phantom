@@ -62,22 +62,43 @@ function isActionableRequest(text: string): boolean {
     && !/\b(?:is|was|looks?)\s+(?:ready|done|complete|good)\b/i.test(target);
 }
 
+/** Transfer frames, artifact chunks, diffs and task `RESULT <job> <token>` lines are protocol, never conversation. */
+function isProtocolText(text: string): boolean {
+  return isPatchFrameText(text) || /^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text)
+    || /^(?:diff --git |--- [ab/] |```)/.test(text) || /^\s*RESULT\s+\S+\s+\S+/.test(text);
+}
+
+/**
+ * A statement worth one short confirmation: a handoff, authorization, receipt,
+ * blocker, claim or coordination note. Short status lines and bare
+ * acknowledgements are too thin to answer.
+ */
+function isSubstantiveUpdate(text: string): boolean {
+  const body = text.trim();
+  if (isProtocolText(body) || body.length < 48 || body.split(/\s+/).length < 8) return false;
+  return /\b(?:hand(?:ing|ed)?[ -]?off|handoff|handover|authori[sz]\w*|receipt|received|delivered|block(?:ed|er|ers|ing)|claim(?:ed|ing|s)?|taking over|picked up|coordinat\w*|waiting on|depends on|released?)\b/i.test(body);
+}
+
 /** Pure acknowledgements cannot cause agent-to-agent acknowledgement loops. */
 export function teammateNeedsReply(text: string): boolean {
   // Code chunks often contain question marks/requests as source literals. They are
   // artifacts to retain, never conversation requests to answer once per chunk.
   // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.
-  if (isPatchFrameText(text)) return false;
-  if (/^.{0,80}\b(?:patch|artifact|chunk)\s+\d+\/\d+\b/i.test(text) || /^(?:diff --git |--- [ab/] |```)/.test(text)) return false;
+  if (isProtocolText(text)) return false;
+  // Task protocol belongs to the fleet task ledger. Malformed, unmatched or quoted
+  // TASK/RESULT frames must never become model replies or jobs; the check is
+  // case-sensitive so lowercase prose such as "task list?" stays conversation.
+  if (/^[\s>]*(?:RESULT|TASK)(?:\s|:|$)/m.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
     && (/\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text) || isActionableRequest(text));
 }
 
 /** Dispatch explicit artifact work; keep privileged requests for leader review. */
-export function classifyTeammateIntent(text: string, dispatchWork: true): 'ignore' | 'reply' | 'leader' | 'actionable';
+export function classifyTeammateIntent(text: string, dispatchWork: true): 'ignore' | 'reply' | 'leader' | 'actionable' | 'acknowledge';
 export function classifyTeammateIntent(text: string, dispatchWork?: false): 'ignore' | 'reply' | 'leader';
-export function classifyTeammateIntent(text: string, dispatchWork = false): 'ignore' | 'reply' | 'leader' | 'actionable' {
-  if (!teammateNeedsReply(text)) return 'ignore';
+export function classifyTeammateIntent(text: string, dispatchWork = false): 'ignore' | 'reply' | 'leader' | 'actionable' | 'acknowledge' {
+  // `acknowledge` is worker-only, like `actionable`: observers still see `ignore`.
+  if (!teammateNeedsReply(text)) return dispatchWork && isSubstantiveUpdate(text) ? 'acknowledge' : 'ignore';
   if (/\b(?:approve|approval|authorize|authorise|permission|decision|decide|escalat\w*|leader|mason)\b/i.test(text)
       || /\b(?:deploy|ship|merge|delete|pay|buy|execute)\b/i.test(text)
       || /\b(?:to|then|and)\s+(?:release|remove|change)\b/i.test(text)) return 'leader';

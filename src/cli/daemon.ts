@@ -923,7 +923,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
   // V3.10 (U5): the recorded `running` is a CLAIM (pid 850 said running for
   // three weeks after it died). Liveness is the proof; loaded lazily so a
   // missing module only costs this line, never the command.
-  let liveness: { state: string; alive: boolean | null; reason: string; staleRecord: boolean } | null = null;
+  let liveness: { state: string; alive: boolean | null; reason: string; staleRecord: boolean; tickLoop?: { state: string; summary: string } } | null = null;
   try {
     const mod = await import('../core/daemon/liveness.js');
     // The record this command already read (no second state-file read).
@@ -937,7 +937,13 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
           }
         : { running: null, pid: null, startedAt: null, lastTickAt: null },
     });
-    liveness = { state: verdict.state, alive: verdict.alive, reason: verdict.reason, staleRecord: verdict.staleRecord };
+    liveness = {
+      state: verdict.state,
+      alive: verdict.alive,
+      reason: verdict.reason,
+      staleRecord: verdict.staleRecord,
+      ...(verdict.tickLoop ? { tickLoop: verdict.tickLoop } : {}),
+    };
   } catch {
     liveness = null;
   }
@@ -1041,6 +1047,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
             : null,
           // Additive: the tick in progress right now, or null.
           tickInProgress: tickProgress,
+          ciReruns: (await import('../core/fleet/ci-rerun.js')).readCiRerunStatus(),
           todayDate: stateKnown ? state.todayDate : null,
           todaySpentUsd: stateKnown ? state.todaySpentUsd : null,
           dailyBudgetUsd: dailyCap ?? null,
@@ -1072,6 +1079,11 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
   );
   if (stateKnown && state.running && liveness?.staleRecord) {
     console.log('  ' + col.dim('                 clear it with `ashlr daemon doctor --clear-stale`'));
+  }
+  if (liveness?.tickLoop && liveness.tickLoop.state !== 'unknown') {
+    console.log('  ' + col.bold('tick loop:      ') + (liveness.tickLoop.state === 'stalled'
+      ? col.red(liveness.tickLoop.summary)
+      : col.dim(liveness.tickLoop.summary)));
   }
   console.log('  ' + col.bold('state source:   ') +
     (stateKnown ? col.dim(stateSource.reason) : col.yellow(stateSource.reason)));
@@ -1138,20 +1150,33 @@ function describeAgeMs(ms: number | null): string {
 
 async function cmdDaemonHealth(jsonMode: boolean): Promise<number> {
   try {
-    const { readDaemonHealth } = await import('../core/daemon/guard-health.js');
+    const { readDaemonHealth, diagnoseFrontierClients } = await import('../core/daemon/guard-health.js');
     const { listFrontierClients } = await import('../core/generative/invent.js');
+    const { TICK_PHASE_FRONTIER_PROBE_MS } = await import('../core/daemon/tick-phases.js');
     const loadConfig = await importConfig(true, true);
     let clients: import('../core/daemon/guard-health.js').DaemonHealthClient[] | null = null;
+    let frontier: import('../core/daemon/guard-health.js').DaemonHealthFrontierDiagnostics;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     try {
-      if (loadConfig) {
-        clients = (await listFrontierClients(loadConfig()))
-          .filter((client) => client.available)
-          .map(({ id, engine, model }) => ({ id, engine, model }));
-      }
+      if (!loadConfig) throw new Error('config module unavailable');
+      const inventory = await Promise.race([
+        listFrontierClients(loadConfig()),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { timedOut = true; reject(new Error('frontier probe timeout')); }, TICK_PHASE_FRONTIER_PROBE_MS);
+        }),
+      ]);
+      clients = inventory.filter((client) => client.available).map(({ id, engine, model }) => ({ id, engine, model }));
+      frontier = { unavailable: diagnoseFrontierClients(inventory) };
     } catch {
       // Unknown configuration/availability is not an empty, healthy inventory.
+      // The error text is not reported: configuration errors can quote values.
+      frontier = { unavailable: [], error: clients === null && loadConfig ? 'config or frontier inventory unreadable' : 'config module unavailable' };
+      if (timedOut) frontier.error = `frontier probe timed out after ${TICK_PHASE_FRONTIER_PROBE_MS / 1000} s`;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    const health = readDaemonHealth(clients);
+    const health = readDaemonHealth(clients, {}, frontier);
     if (jsonMode) {
       console.log(JSON.stringify(health, null, 2));
     } else {
@@ -1160,6 +1185,10 @@ async function cmdDaemonHealth(jsonMode: boolean): Promise<number> {
       console.log(`Last log write: ${health.lastLogWriteAt ?? 'unknown'} (${health.logState})`);
       console.log(`Frontier clients resolved: ${health.frontierClientsResolved?.map((client) => client.id).join(', ') || 'none or unknown'}`);
       console.log(`Supervisor: ${health.supervisor.reason}; restart recommended: ${health.supervisor.restartRecommended}`);
+      if (health.supervisor.detail) console.log(`Reason: ${health.supervisor.detail}`);
+      for (const client of health.frontierClientsUnavailable ?? []) {
+        console.log(`Frontier ${client.id}: ${client.cause}${client.binaryPath ? ` (${client.binaryPath})` : ''}`);
+      }
     }
     return health.healthy ? 0 : 1;
   } catch {
@@ -1201,6 +1230,10 @@ async function cmdDaemonDoctor(jsonMode: boolean, clearStale: boolean): Promise<
     console.log('  ' + col.bold('activity:  ') + col.dim(verdict.activity
       ? `${verdict.activity.phase ?? 'unknown'} · ${describeAgeMs(verdict.activity.ageMs)} · owner ${verdict.activity.ownerState}`
       : 'none'));
+    if (verdict.tickLoop) {
+      const loopLine = verdict.tickLoop.state === 'stalled' ? col.red(verdict.tickLoop.summary) : col.dim(verdict.tickLoop.summary);
+      console.log('  ' + col.bold('tick loop: ') + loopLine);
+    }
     if (cleared) {
       console.log('  ' + (cleared.ok ? col.green('✓ ') : col.red('✗ ')) + cleared.reason);
     } else if (verdict.staleRecord) {
@@ -1210,6 +1243,7 @@ async function cmdDaemonDoctor(jsonMode: boolean, clearStale: boolean): Promise<
     console.log('');
   }
   if (cleared) return cleared.ok ? 0 : 1;
+  if (verdict.tickLoop?.state === 'stalled') return 1;
   return verdict.state === 'alive' || verdict.state === 'stopped' ? 0 : 1;
 }
 

@@ -19,7 +19,7 @@
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
 import { groupMergeBursts } from './feed-merge-burst.js';
-import type { FeedReport } from '../../../../core/feed.js';
+import { FEED_SCHEMA, FEED_SOURCES, FEED_VERSION, type FeedReport } from '../../../../core/feed-schema.js';
 import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
@@ -45,6 +45,8 @@ export interface FeedItem {
   label?: string;
   /** The registered pane that owns this item (set by buildFeed, see feedItemPane); the Feed offers "Open in …" for it. */
   pane?: FeedPane;
+  /** Canonical CLI rows retain one time, one line and one destination. */
+  shared?: boolean;
 }
 
 /**
@@ -67,7 +69,8 @@ export function feedPaneLabel(paneId: string | undefined): string | undefined {
 }
 
 export interface FeedSources {
-  shared?: FeedReport;
+  /** GET /api/feed as received; validated by `sharedFeedAdapter`. */
+  shared?: unknown;
   leader?: readonly LeaderThreadMessage[] | null;
   /** The raw /api/verse/fleet/runs snapshot (outbox, merges and events). */
   runs?: unknown;
@@ -244,10 +247,42 @@ export function inboxOverAdapter(payload: unknown, now: number = Date.now()): Fe
   return items;
 }
 
+export function isSharedFeedReport(value: unknown): value is FeedReport {
+  const row = record(value), sources = record(row.sources);
+  return row.schema === FEED_SCHEMA && row.version === FEED_VERSION && Array.isArray(row.items)
+    && FEED_SOURCES.every(key => sources[key] === 'available' || sources[key] === 'unknown');
+}
+
+const SHARED_KINDS: Record<string, FeedKind> = { merged: 'merge', released: 'update', failed: 'alert', lane: 'alert', incident: 'alert', leader: 'leader' };
+/** Exported for the Feed cards, which follow the same allowlist. */
+export const sharedLink = (href: unknown): href is string => typeof href === 'string' &&
+  (/^\/verse\/\?pane=(?:fleet-merges|fleet-events|fleet-bus|fleet-lanes|leader-thread|worker-log)$/.test(href)
+    || /^https:\/\/github\.com\/[a-z\d_.-]+\/[a-z\d_.-]+\/(?:pull\/[1-9]\d*|releases\/tag\/[a-z\d_.%+-]+|commits)\/?$/i.test(href));
+
+/** Validate network data before it reaches a link or the legacy adapters. */
+export function sharedFeedAdapter(value: unknown): FeedItem[] {
+  if (!isSharedFeedReport(value)) return [];
+  return value.items.flatMap((raw, index): FeedItem[] => {
+    const item = record(raw);
+    if (typeof item.kind !== 'string' || !Object.hasOwn(SHARED_KINDS, item.kind)
+      || typeof item.at !== 'string' || !Number.isFinite(Date.parse(item.at)) || typeof item.text !== 'string' || !item.text.trim()
+      || (item.href !== undefined && !sharedLink(item.href)) || (item.id !== undefined && (typeof item.id !== 'string' || !item.id))) return [];
+    const text = item.text.replace(/\s+/g, ' ').trim();
+    const shared = typeof item.id === 'string' && sharedLink(item.href);
+    return [{ id: typeof item.id === 'string' ? item.id : `shared:${item.kind}:${item.at}:${index}`, at: item.at,
+      kind: SHARED_KINDS[item.kind]!, ...(shared ? { title: text, href: item.href as string, shared: true } : headline(text)) }];
+  });
+}
+
+const duplicateKey = (item: FeedItem): string => item.kind === 'merge' && item.href ? `merge:${item.href.replace(/\/$/, '')}`
+  : item.kind === 'leader' ? `leader:${Date.parse(item.at)}:${(item.body ?? item.title).replace(/\s+/g, ' ').trim()}` : item.id;
+
 /** Every source merged, each item with its owning pane: deduped by id (newest copy wins), unparsable times dropped, newest first, at most FEED_LIMIT. */
 export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.now()): FeedItem[] {
+  const shared = sharedFeedAdapter(sources.shared);
+  const sharedKeys = new Set(shared.filter(item => item.shared).map(duplicateKey));
   const all: FeedItem[] = [
-    ...(sources.shared?.items ?? []).map((item, index): FeedItem => ({ id: `shared:${item.kind}:${item.at}:${index}`, at: item.at, kind: item.kind === 'merge' ? 'merge' : 'leader', ...headline(item.text) })),
+    ...shared,
     ...leaderAdapter(sources.leader),
     ...outboxAdapter(sources.runs),
     ...alertAdapter(sources.needsYou),
@@ -262,6 +297,7 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.n
     ...inboxOverAdapter(sources.inboxPlans, now),
   ];
   const timed = all.flatMap(item => {
+    if (!item.shared && sharedKeys.has(duplicateKey(item))) return [];
     const ms = Date.parse(item.at);
     if (!Number.isFinite(ms)) return [];
     const pane = feedItemPane(item);
@@ -274,7 +310,8 @@ export function buildFeed(sources: FeedSources, limit = FEED_LIMIT, now = Date.n
     seen.add(item.id);
     out.push(item);
   }
-  return groupMergeBursts(out).slice(0, Math.max(0, limit));
+  return [...out.filter(item => item.shared), ...groupMergeBursts(out.filter(item => !item.shared))]
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, Math.max(0, limit));
 }
 
 export function filterFeed(items: readonly FeedItem[], filter: FeedFilter): FeedItem[] {

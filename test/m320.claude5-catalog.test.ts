@@ -263,7 +263,7 @@ describe('M320 evaluateMergeAuthority spelling safety', () => {
 
 describe('current native catalog and exact historical semantics', () => {
   it('uses current concrete defaults and published API estimates without rewriting old tags', () => {
-    expect(DEFAULT_CODEX_MODEL_ID).toBe('gpt-6.1-sol');
+    expect(DEFAULT_CODEX_MODEL_ID).toBe('gpt-6.2-sol');
     expect(costOf(`codex:${DEFAULT_CODEX_MODEL_ID}`)).toBe(6);
     expect(costOf(`claude:${DEFAULT_CLAUDE_MODEL_ID}`)).toBe(12);
     expect(canonicalModelTag('claude', 'claude-opus-4-8')).toBe('opus');

@@ -25,9 +25,34 @@ def metrics(home, event):
 
 
 class Batching(unittest.TestCase):
-    def test_terminal_target_is_removed_before_batch_leases(self):
+    def test_active_attempt_cannot_be_claimed_as_a_batch_member(self):
+        for job, action in (('RQ-Q-A', 'retry'), ('RQ-Q-B', 'timeout'), ('RQ-Q-C', 'recovery')):
+            self.queue(job, f'{job} (P1): fix src/core/queue/store.ts {action} handling')
+        (self.r / 'metrics/jobs.jsonl').write_text(json.dumps(dict(event='launch', job='RQ-Q-A')) + '\n')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-B', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-A.batched').exists())
+        self.assertIn('RQ-Q-A', self.ready())
+
+    def test_duplicate_requests_never_take_batch_leases(self):
         for job in ('RQ-Q-A', 'RQ-Q-B', 'RQ-Q-C'):
-            self.queue(job, f'{job} (pr={42 if job == "RQ-Q-B" else 43}): edit src/core/queue/store.ts')
+            action = 'retry' if job != 'RQ-Q-C' else 'timeout'
+            self.queue(job, f'{job} (P1): fix src/core/queue/store.ts {action} handling')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-A', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-B.batched').exists())
+        self.assertIn('RQ-Q-B', self.ready())
+        self.run_tick()
+        self.assertIn('RQ-Q-B', self.ready())
+        self.assertTrue(any(r.get('job') == 'RQ-Q-B' and r.get('reason') == 'duplicate-request'
+                            for r in metrics(self.home, 'dispatch_deferred')))
+
+    def test_terminal_target_is_removed_before_batch_leases(self):
+        # Keep two distinct actionable targets after the merged target is removed.
+        for job, pr in (('RQ-Q-A', 43), ('RQ-Q-B', 42), ('RQ-Q-C', 44)):
+            self.queue(job, f'{job} (pr={pr}): edit src/core/queue/store.ts')
         from datetime import datetime, timezone
         (self.r / 'metrics/jobs.jsonl').write_text(json.dumps(dict(event='outcome', job='old', state='MERGED',
             url='https://github.com/ashlrai/phantom/pull/42', ts=datetime.now(timezone.utc).isoformat())) + '\n')

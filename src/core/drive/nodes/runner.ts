@@ -14,16 +14,20 @@ import { assertPermitted, endpointPermitted } from '../../policy/local-only.js';
 import { localLanePlan } from './local-model-caps.js';
 import { callPool, readPoolConfig, type PoolConfig } from './pool-host.js';
 import { validCap, validId } from './state.js';
+import { isNodeProvider, providerBinaryCandidates, resolveProviderBinary, type ProviderBinaries } from './provider-binary.js';
 import { nodeStopped } from './worker.js';
 import type { JobClaim, JobView } from './index.js';
 
 const exec = promisify(execFile);
-const PROTOCOL = 'phm-node-worker/v1';
+export const NODE_RUNNER_PROTOCOL = 'phm-node-worker/v1';
+const PROTOCOL = NODE_RUNNER_PROTOCOL;
 const MAX_INPUT = 16 * 1024;
 const OMLX_URL = 'http://127.0.0.1:8000/v1/chat/completions';
 const SHELL_CHECK = 'process.stdout.write("node-shell-check-ok\\n")';
-type Pack = 'shell-check' | 'omlx-chat';
-export interface NodeRunnerRequest { protocol: typeof PROTOCOL; job: JobView & { pack: Pack }; claim: JobClaim }
+/** Packs this reference runner executes; `phm node run-once packs` reports them to the worker. */
+export const NODE_RUNNER_PACKS = ['shell-check', 'omlx-chat'] as const;
+type Pack = typeof NODE_RUNNER_PACKS[number];
+export interface NodeRunnerRequest { protocol: typeof PROTOCOL; job: JobView & { pack: Pack }; claim: JobClaim; providerBinaries?: ProviderBinaries }
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -40,17 +44,24 @@ export function parseNodeRunnerRequest(text: string): NodeRunnerRequest {
   if (Buffer.byteLength(text) > MAX_INPUT) return fail();
   let value: unknown;
   try { value = JSON.parse(text); } catch { return fail(); }
-  if (!object(value) || !keys(value, 'claim,job,protocol') || value.protocol !== PROTOCOL ||
+  if (!object(value) || !(keys(value, 'claim,job,protocol') || keys(value, 'claim,job,protocol,providerBinaries')) || value.protocol !== PROTOCOL ||
       !object(value.job) || !object(value.claim)) return fail();
   const j = value.job, c = value.claim;
   // validId allows paths; result filenames deliberately accept only one bounded component.
   if (!keys(j, 'id,owner,pack,requires,secrets,state') || !reference(j.id) ||
       !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,119}$/.test(j.id) || !reference(j.owner) || j.state !== 'running' ||
-      !['shell-check', 'omlx-chat'].includes(String(j.pack)) || !Array.isArray(j.secrets) || j.secrets.length ||
+      !(NODE_RUNNER_PACKS as readonly string[]).includes(String(j.pack)) || !Array.isArray(j.secrets) || j.secrets.length ||
       !Array.isArray(j.requires) || j.requires.length > 64 || !j.requires.every(validCap) ||
       new Set(j.requires).size !== j.requires.length ||
       !keys(c, 'expiresAt,jobId,leaderToken,nodeId,session,token') || c.jobId !== j.id || !reference(c.nodeId) ||
       ![c.session, c.token, c.leaderToken, c.expiresAt].every(positive)) return fail();
+  // Optional lane receipt: one allowlisted absolute binary per required provider lane, never a command.
+  if ('providerBinaries' in value) {
+    const receipt = value.providerBinaries;
+    if (!object(receipt) || !Object.keys(receipt).length || !Object.entries(receipt).every(([provider, path]) =>
+      isNodeProvider(provider) && (j.requires as unknown[]).includes(provider) && typeof path === 'string' &&
+      providerBinaryCandidates(provider).includes(path))) return fail();
+  }
   return value as unknown as NodeRunnerRequest;
 }
 
@@ -131,13 +142,18 @@ export interface NodeRunnerDeps {
   config?: PoolConfig;
   call?: typeof callPool;
   stopped?: () => boolean;
+  resolveBinary?: typeof resolveProviderBinary;
 }
 
 export async function runNodeRunner(request: NodeRunnerRequest, deps: NodeRunnerDeps = {}): Promise<{ resultRef: string }> {
   // Revalidate even internal callers; no typed cast can bypass the closed input boundary.
-  const { job, claim } = parseNodeRunnerRequest(JSON.stringify(request));
+  const { job, claim, providerBinaries } = parseNodeRunnerRequest(JSON.stringify(request));
   const config = deps.config ?? readPoolConfig();
   if (!config || config.node !== claim.nodeId || config.owner !== job.owner) throw new Error('Runner identity mismatch');
+  // The worker's probe and this runner must agree on the one binary; a receipt for a missing one is refused.
+  const resolveBinary = deps.resolveBinary ?? resolveProviderBinary;
+  for (const [provider, path] of Object.entries(providerBinaries ?? {}))
+    if (!isNodeProvider(provider) || resolveBinary(provider) !== path) throw new Error('Runner lane receipt mismatch');
   const call = deps.call ?? callPool, stopped = deps.stopped ?? nodeStopped;
   const lease = ['--node', claim.nodeId, '--session', String(claim.session), '--job', claim.jobId,
     '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];

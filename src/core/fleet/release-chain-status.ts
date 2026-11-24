@@ -25,6 +25,11 @@
 
 import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { open } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { promisify } from 'node:util';
+import { scrubSecrets } from '../util/scrub.js';
 
 /** Autorun completion markers. Fixture shas may be shorter than 40 hex. */
 const AUTORUN_RC = /^sha-([0-9a-f]{4,64})\.rc$/;
@@ -317,4 +322,85 @@ export function readReleaseChainStatus(opts: ReleaseChainStatusOptions): Release
     verdict, sources,
     evidence: { versionJoin, feedRc, feedState, boundLog: boundLogName, diagnostics },
   };
+}
+
+export interface LocalReleaseStatusDeps { root?: string; repoPath?: string; runsDir?: string; cadenceMinutes?: number }
+export interface ReleaseSummary {
+  latestPublishedTag: string | null; publishedAt: string | null; recordedAt: string | null;
+  signedAssets: boolean | null; updaterHttp: number | null; mergedPrsSinceTag: number | null;
+  nextCandidate: { version: string | null; eta: string | null; cadenceMinutes: number | null };
+  autorun: { rc: number | null; reason: string | null; log: string | null };
+}
+
+/** Bounded local evidence only; never follow a final symlink or return raw logs. */
+async function localText(path: string, tail = false): Promise<string | null> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => null);
+  if (!file) return null;
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile() || (!tail && stat.size > 65536)) return null;
+    const buffer = Buffer.alloc(Math.min(stat.size, 65536));
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, tail ? Math.max(0, stat.size - buffer.length) : 0);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } catch { return null; } finally { await file.close(); }
+}
+const iso = (value: unknown): string | null => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+const version = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value) && value.split('.').every(part => Number.isSafeInteger(Number(part)) && Number(part) < Number.MAX_SAFE_INTEGER);
+async function localJson(path: string): Promise<Record<string, unknown>> {
+  try { const value = JSON.parse(await localText(path) ?? 'null'); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; } catch { return {}; }
+}
+
+export async function getLocalReleaseStatus(deps: LocalReleaseStatusDeps = {}): Promise<ReleaseSummary> {
+  const cwdPackage = await localJson(join(process.cwd(), 'package.json'));
+  const repo = deps.repoPath ?? (deps.root ? join(deps.root, 'phantom') : cwdPackage.name === '@ashlr/phantom' ? process.cwd() : join(homedir(), 'Projects', 'ashlrai', 'phantom'));
+  const runs = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const sign = join(runs, 'release-sign'), autorun = join(sign, 'autorun');
+  const git = async (...args: string[]): Promise<string | null> => {
+    try { return (await promisify(execFile)('git', ['-C', repo, ...args], { timeout: 5000, maxBuffer: 1024 * 1024 })).stdout.trim(); } catch { return null; }
+  };
+  const chain = readReleaseChainStatus({ runsDir: runs });
+  const sha = chain.latestAutorun?.sha;
+  const rawLog = sha ? await localText(join(autorun, `sha-${sha}.log`), true)
+    ?? (chain.evidence.boundLog ? await localText(join(sign, chain.evidence.boundLog), true) : null) : null;
+  const log = rawLog === null ? null : scrubSecrets(rawLog).replace(/\p{Cc}/gu, char => char === '\n' || char === '\t' ? char : '').trim();
+  const reason = log?.split('\n').filter(line => /^\s*Reason:/.test(line)).at(-1)?.trim() ?? null;
+  let cadence: number | null = null;
+  const configured = String(deps.cadenceMinutes ?? (process.env.RELEASE_CADENCE_MINUTES || '5')); // Train default; parity tested.
+  if (/^[1-9]\d*$/.test(configured) && Number(configured) <= 1440) cadence = Number(configured);
+  const result: ReleaseSummary = { latestPublishedTag: null, publishedAt: null, recordedAt: null, signedAssets: null, updaterHttp: null, mergedPrsSinceTag: null,
+    nextCandidate: { version: null, eta: null, cadenceMinutes: cadence }, autorun: { rc: chain.latestAutorun?.rc ?? null, reason, log } };
+  const refs = (await git('for-each-ref', '--sort=-version:refname', '--format=%(refname:strip=2)%09%(objectname)%09%(*objectname)%09%(committerdate:iso-strict)%(*committerdate:iso-strict)', 'refs/tags/v*'))?.split('\n').map(line => line.split('\t')).filter(([tag]) => version(tag.slice(1))) ?? [];
+  const tags = refs.map(([tag]) => tag);
+  const marker = (await localText(join(sign, 'last-released-tag')))?.trim();
+  for (const [tag, object, peeled] of refs) {
+    const tagSha = peeled || object;
+    const receipt = await localJson(join(autorun, `feed-${tagSha}.json`));
+    const release = await localJson(join(autorun, `feed-${tagSha}.rel.json`));
+    const bound = receipt.kind === 'desktop-update-channel-check' && receipt.sha === tagSha && receipt.tag === tag;
+    const feedRc = (await localText(join(autorun, `feed-${tagSha}.rc`)))?.trim();
+    const verified = bound && iso(receipt.checkedAt) !== null && (await localText(join(autorun, `sha-${tagSha}.rc`)))?.trim() === '0'
+      && ((receipt.state === 'verified-live' && feedRc === '0') || (receipt.state === 'superseded' && feedRc === '21'));
+    const publishedAt = release.tag_name === tag && release.draft === false ? iso(release.published_at) : null;
+    if (!verified && !publishedAt && marker !== tag) continue;
+    result.latestPublishedTag = tag;
+    result.publishedAt = publishedAt;
+    result.recordedAt = bound ? iso(receipt.checkedAt) : null;
+    result.signedAssets = verified ? true : bound && receipt.reason === 'asset-set-incomplete' ? false : null;
+    result.updaterHttp = bound && Number.isInteger(receipt.endpointHttp) && Number(receipt.endpointHttp) >= 100 && Number(receipt.endpointHttp) <= 599 ? Number(receipt.endpointHttp) : null;
+    const branch = await git('symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD');
+    if (branch && await git('rev-parse', '--is-shallow-repository') === 'false' && await git('merge-base', '--is-ancestor', `refs/tags/${tag}`, branch) !== null) {
+      const subjects = await git('log', '--first-parent', '--format=%s', `refs/tags/${tag}..${branch}`);
+      if (subjects !== null) result.mergedPrsSinceTag = new Set([...subjects.matchAll(/^(?:Merge pull request #(\d+)\b|.*\(#(\d+)\)$)/gm)].map(match => match[1] ?? match[2])).size;
+    }
+    break;
+  }
+  const pkg = await localJson(join(repo, 'package.json'));
+  if (version(pkg.version)) {
+    const base = [pkg.version, ...tags.map(tag => tag.slice(1))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1)!;
+    const parts = base.split('.').map(Number);
+    result.nextCandidate.version = result.latestPublishedTag === `v${base}` ? `${parts[0]}.${parts[1]}.${parts[2] + 1}` : base;
+    const taggedAt = iso(refs[0]?.[3]);
+    if (cadence !== null && taggedAt) result.nextCandidate.eta = new Date(Date.parse(taggedAt) + cadence * 60000).toISOString();
+  }
+  return result;
 }

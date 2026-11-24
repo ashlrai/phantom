@@ -44,7 +44,9 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { parsePublishResult } from './job-state.js';
 import { listLiveWorkers, type ListLiveWorkersOptions } from './runs-live-workers.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPrUrl } from './empty-cause.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.sessions.v1 wire shape.
@@ -104,6 +106,14 @@ export interface FleetSessionV1 {
   /** Finished sessions only: publish/exit outcome. */
   outcome: FleetSessionOutcome | null;
   prUrl: string | null;
+  /** Newest write to the worker's own `<job>.log` (lstat mtime): when the
+   *  agent last printed anything. Null when no regular log file was found.
+   *  Optional only because older servers do not send it. */
+  lastOutputAt?: string | null;
+  /** True when the job's publish record has a RESULT line: the work is done even
+   *  if no exit code or finish marker reached this host (cloud jobs). Optional
+   *  only because older servers do not send it. */
+  published?: boolean;
 }
 
 export interface FleetSessionsDispatcherV1 {
@@ -442,13 +452,6 @@ const emptyFacts = (): JobMetricFacts => ({
   enqueueTsMs: null, claimTsMs: null, publishTsMs: null, prUrl: null,
 });
 
-function parseMetricTs(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  // dispatchd writes local time `%Y-%m-%dT%H:%M:%S%z`; Date.parse handles it.
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
-}
-
 const nonNegInt = (v: unknown): number | null =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 
@@ -467,15 +470,15 @@ export function parseSessionMetrics(text: string): { facts: Map<string, JobMetri
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) { malformed++; continue; }
       row = parsed as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const job = row.job;
+    const job = ledgerJobId(row);
     // Jobless ledger events (concurrency, pool, …) carry no session facts —
     // they are skipped silently, not counted malformed.
-    if (typeof job !== 'string') continue;
+    if (job === null) continue;
     if (!JOB_ID.test(job)) { malformed++; continue; }
-    const ts = parseMetricTs(row.ts);
+    const ts = ledgerAtMs(row);
     const f = facts.get(job) ?? emptyFacts();
     facts.set(job, f);
-    switch (row.event) {
+    switch (ledgerEventName(row)) {
       case 'enqueue':
         if (ts !== null) f.enqueueTsMs = ts;
         break;
@@ -499,7 +502,8 @@ export function parseSessionMetrics(text: string): { facts: Map<string, JobMetri
       }
       case 'publish': {
         if (ts !== null) f.publishTsMs = ts;
-        const url = typeof row.url === 'string' && PR_URL.test(row.url) && scrubSecrets(row.url) === row.url ? row.url : null;
+        const raw = ledgerPrUrl(row);
+        const url = raw !== null && PR_URL.test(raw) && scrubSecrets(raw) === raw ? raw : null;
         if (url) f.prUrl = url;
         break;
       }
@@ -530,7 +534,7 @@ function emptySession(job: string): FleetSessionV1 {
     pid: null, live: 'no', exitCode: null, timedOut: false,
     enqueuedAt: null, claimedAt: null, launchedAt: null, startedAt: null, finishedAt: null,
     elapsedSeconds: null, durationSeconds: null, queueWaitSeconds: null,
-    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null,
+    tokensTotal: null, wallSeconds: null, diffLines: null, outcome: null, prUrl: null, lastOutputAt: null,
   };
 }
 
@@ -799,6 +803,7 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
     const metaProbe = await probe(join(root, `${draft.job}.base.meta`));
 
     session.model = attemptLaunch?.launchModel ?? null;
+    session.lastOutputAt = logProbe.kind === 'file' && logProbe.mtimeMs !== null ? iso(logProbe.mtimeMs) : null;
     session.exitCode = m!.rc ?? attemptFinish?.exitCode ?? null;
 
     // Timestamps: marker content first (exact epochs), file mtimes next,
@@ -820,7 +825,11 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
     const publishText = publishProbe.kind === 'file'
       ? (await readSlice(join(root, `${draft.job}.publish`), PUBLISH_TAIL))?.text ?? null
       : null;
-    const finished = finFresh || attemptFinish !== null
+    // A RESULT PR/EMPTY publish record written for this attempt means done, with or
+    // without an exit code, worktree or local log (Devin cloud jobs have none).
+    const publishedResult = publishText !== null && publishProbe.mtimeMs !== null && publishProbe.mtimeMs >= lineMs - 2000
+      && parsePublishResult(publishText).result !== null;
+    const finished = finFresh || attemptFinish !== null || publishedResult
       || (publishText !== null && m!.rc !== null && !m!.reaping);
 
     // Liveness evidence shared by the requeue guard and status classification:
@@ -831,6 +840,8 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
       baseProbe.mtimeMs ?? 0, logProbe.mtimeMs ?? 0, launchProbe.mtimeMs ?? 0, lineMs,
     );
     const dispatchedMs = m!.dispatched !== null ? m!.dispatched * 1000 : lineMs;
+    // A RESULT written before this attempt was dispatched belongs to an earlier attempt.
+    session.published = publishedResult && (publishProbe.mtimeMs ?? 0) >= dispatchedMs;
     const withinGrace = m!.rc === null && nowMs - dispatchedMs <= LAUNCH_GRACE_MS;
     const diskLive = m!.rc === null && diskFreshMs > 0 && nowMs - diskFreshMs <= DISK_ACTIVE_MS;
     const attemptLive = worker !== undefined || m!.reaping || withinGrace || diskLive;

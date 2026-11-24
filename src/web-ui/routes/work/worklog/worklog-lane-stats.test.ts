@@ -3,10 +3,13 @@ import type { WorklogEntry } from '../../../../core/fleet/worklog.js';
 import { formatDuration, laneStats } from './worklog-lane-stats.js';
 
 const entry = (lane: string | null, seconds: number | null, model: string | null = null): WorklogEntry => ({
-  job: null, repo: null, lane, model, mergedAt: '', openToMergeSeconds: seconds, url: null,
+  job: null, repo: null, lane, model, kind: 'merged', at: '', mergedAt: '', openToMergeSeconds: seconds, url: null, goal: null, detail: null,
 });
 
 describe('laneStats', () => {
+  it('keeps launch and finish events out of merge counts', () => {
+    expect(laneStats([{ ...entry('work', null), kind: 'launch' }, { ...entry('work', null), kind: 'failed' }])).toEqual([]);
+  });
   it('sorts lanes by count then name, finds odd and even medians, and counts unknown timing', () => {
     expect(laneStats([
       entry('z', 9, 'b'), entry('z', 1, 'a'), entry('z', 5, 'a'),

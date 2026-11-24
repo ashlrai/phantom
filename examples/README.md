@@ -18,6 +18,7 @@ bodies.
 | [node-pool](node-pool) | Small-Mac join commands and credential-free shared Phantom connector metadata. |
 | [plugins](plugins) | Plugins example: backlog-scanner and org-scaffold. |
 | [quickstart.md](quickstart.md) | Quickstart — end-to-end walk-through (fresh clone to dry-run preview in five steps). |
+| [router-gateway](router-gateway) | Dependency-free sample agent call through the loopback Phantom router gateway (`phm router serve`); reads the token file and never prints it. |
 | [skill-calibration-export.ts](skill-calibration-export.ts) | Exports a canonical skill-routing calibration snapshot keyed by a separately managed 32-byte key. |
 | [universe-site](universe-site) | Universe site showcase: the source repository's offline replica site data. |
 | [upgrade](upgrade) | Upgrade audit recipes: channel, graph, inbox, queue, and worker evidence patterns. |

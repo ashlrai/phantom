@@ -4,7 +4,7 @@
  * 3e2d0d6c6e6de2efddbd1c865830176a9df1f338). Drives the real
  * composeOwnerStatusReply -> gatherStatusDigestInput -> buildStatusDigest chain
  * with deterministic readers through the supported overrides seam, and asserts
- * the original five facts reach the owner-facing answer. Complements
+ * the original five facts remain intact alongside #5435/#5991 status lines. Complements
  * leader-status-digest.test.ts (unit facts) and leader-status-reply-path.test.ts
  * (Slack socket); nothing here touches live GitHub, a host inbox or Slack.
  */
@@ -42,18 +42,21 @@ const originalFacts: Partial<StatusDigestSources> = {
     { at: '2026-11-10 14:48', source: 'Slack', priority: 'P0', text: 'Phantom status' },
     { at: '2026-11-10 09:00', source: 'Slack', priority: 'P0', text: 'an older p0' },
   ] }),
-  // The claims line postdates the original contract: disabling the reader keeps
-  // this reply the original five facts byte-for-byte (covered by -claims-314).
+  // The claims line postdates the original contract; disabling the reader keeps
+  // the original digest facts unchanged (covered by -claims-314).
   workClaims: undefined,
+  mergeLatency: undefined,
 };
 
 /** Same construction as the production digestBrief: real gather + real build, readers injected. */
 const briefFrom = (sources: Partial<StatusDigestSources>) => async (runsDir: string, at: Date) =>
   ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(runsDir, at, sources))].join('\n');
 
-describe('composeOwnerStatusReply preserves the original PR #4885 contract', () => {
-  it('renders all five original facts in the owner-facing answer', async () => {
-    const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(originalFacts) });
+const emptyBoard = () => ({ items: [], inbox: 'ok' as const, truncated: false });
+
+describe('composeOwnerStatusReply preserves PR #4885 facts with later status additions', () => {
+  it('renders the original facts before the #5991 node-runs and #5435 work-board lines', async () => {
+    const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(originalFacts), board: emptyBoard });
     expect(reply).toBe([
       HEADING,
       'App: installed 3.29.15 · published 3.30.32 · update pending',
@@ -61,6 +64,8 @@ describe('composeOwnerStatusReply preserves the original PR #4885 contract', () 
       'Lanes: claude 4/8 · held: codex-cmp (usage limit)',
       'Needs Mason: 2 hard-limit asks waiting',
       'Top P0: Phantom status (12m ago)',
+      'Node runs: none recorded on this computer',
+      'Work items as of 15:00 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED',
     ].join('\n'));
   });
 
@@ -73,8 +78,9 @@ describe('composeOwnerStatusReply preserves the original PR #4885 contract', () 
       needs: () => { throw new Error('fake needs read'); },
       inbox: async () => { throw new Error('fake inbox read'); },
       workClaims: undefined,
+      mergeLatency: undefined,
     };
-    const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(dead) });
+    const reply = await composeOwnerStatusReply(RUNS_DIR, NOW, { brief: briefFrom(dead), board: emptyBoard });
     expect(reply).toBe([
       HEADING,
       'App: installed unknown (installed app version not readable) · published unknown (published release not readable)',
@@ -82,6 +88,8 @@ describe('composeOwnerStatusReply preserves the original PR #4885 contract', () 
       'Lanes: unknown (lane state not readable)',
       'Needs Mason: unknown (NEEDS-MASON.md could not be read)',
       'Top P0: unknown (MASON-INBOX.md not readable)',
+      'Node runs: none recorded on this computer',
+      'Work items as of 15:00 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED',
     ].join('\n'));
     expect(reply).not.toMatch(/update pending|up to date|\b0 in the last|none waiting|none in the inbox/);
   });
@@ -94,10 +102,13 @@ describe('composeOwnerStatusReply preserves the original PR #4885 contract', () 
     expect(reply.endsWith('…')).toBe(true);
   });
 
-  it('returns the fixed fallback when composition fails instead of rejecting', async () => {
+  it('returns the fixed fallback plus the #5781 snapshot when composition fails', async () => {
     const brief = async () => { throw new Error('fake composition failure'); };
     await expect(composeOwnerStatusReply(RUNS_DIR, NOW, { brief })).resolves.toBe(OWNER_STATUS_FALLBACK);
-    await expect(ownerStatusReply({ brief }).compose(RUNS_DIR, NOW)).resolves.toBe(OWNER_STATUS_FALLBACK);
+    const wrapper = ownerStatusReply({ brief, snapshot: async () => { throw new Error('fake snapshot failure'); } });
+    await expect(wrapper.compose(RUNS_DIR, NOW)).resolves.toBe(
+      `${OWNER_STATUS_FALLBACK}\nRuntime: UNKNOWN (snapshot unavailable)`,
+    );
   });
 
   it('keeps the wrapper contract: exact short asks answered, anything else left to the Leader', () => {

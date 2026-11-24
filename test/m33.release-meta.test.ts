@@ -303,6 +303,7 @@ describe('release workflow', () => {
       '.github/tests/release-smoke-phase.test.mjs',
       '.github/tests/ci-release-same-runner.test.mjs',
       '.github/tests/release-cadence.test.mjs',
+      '.github/tests/release-version-provenance.test.mjs',
       '.github/tests/ci-history-source.test.mjs',
       '.github/tests/ci-test-feedback.test.mjs',
       '.github/tests/ci-impact-map.test.mjs',
