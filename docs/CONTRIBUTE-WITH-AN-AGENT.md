@@ -320,8 +320,8 @@ do not block auto-merge:
   the file's tolerance (20% unless a target sets its own). A red result means your change may have slowed startup, or the
   shared runner was slow; look before you dismiss it.
 - `Dependency audit (root + Raycast)` runs only when a manifest, lockfile or
-  audit configuration changes. Those paths are protected, so the owner reviews
-  that pull request anyway; see
+  audit configuration changes. Dependency manifests and lockfiles are protected;
+  other audit inputs need not be. See
   [docs/DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md).
 - `PR topology observation (non-authoritative)` is telemetry, and the
   `Merge Queue Reaper` only cancels queue runs whose queue entry is gone.
