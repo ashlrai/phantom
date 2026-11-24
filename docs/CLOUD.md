@@ -696,14 +696,37 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   writer's closed contract or whose cls disagrees with its gate drop
   like the sibling readers' own parse, a missing or unreadable ledger
   emits nothing, truncated tails are stated as lower bounds, and
-  secret-shaped detail text is scrubbed before it reaches a prompt.
+  secret-shaped detail text is scrubbed before it reaches a prompt,
+  and the Jev decision ledger's recurring fallback-dominant kinds, the
+  DecisionRecords `decide()` appends to `jev/decisions/YYYY-MM-DD.jsonl`
+  under the Ashlr home for every wired call site — engine-error
+  classification, task-class, the judge/taste/red-team verdicts,
+  completion-claim, retro-root-cause, needs-you-priority,
+  interrupt-worthiness, lane-choice, resource-choice, trigger-triage,
+  action-class and operator-intent (otherwise only visible through
+  `phm jev status [--day]` and the Verse Jev card — day-scoped reports
+  someone had to run and read, so a kind whose Jev path kept losing
+  across a week, or a provider-side fallback reason recurring across
+  kinds, never became work). Deliberate-off fallbacks — no-key,
+  disabled, killed, kind-disabled, no-input — are filtered before the
+  write, so every recorded fallback is a decision Jev was eligible for
+  and lost; a kind becomes an item only while its in-window decisions,
+  fallback rows across distinct UTC days and fallback share reach the
+  recurring bars inside the 7-day window, day files read bounded with
+  truncation stated as lower bounds, estimated cost stays unknown
+  rather than zero when calls were unpriced, a missing day file means
+  no decisions were recorded while an unreadable one emits nothing,
+  malformed lines and off-contract rows drop like the writer's own
+  contract, and rows emit only for the fleet's own repository since
+  every call site is this install's own code and the ledger carries no
+  repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward, job-control, usage-gap, runtime-journal, generator-yield and
-  incident-gate items carry priority 3;
+  reward, job-control, usage-gap, runtime-journal, generator-yield,
+  incident-gate and jev-decisions items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -841,7 +864,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   runs-dir writability, the repo-hold store, the KILL switch) — with
   the same owner-side no-change escape, and emit lane-error cells only
   for the fleet's own repository while repo-scoped cells match the
-  discovery target's owner/repo exactly. They
+  discovery target's owner/repo exactly. Jev items name the decision
+  ledger, `phm jev status`, and the decide registry, ledger and call
+  sites, keep the which-side-is-losing framing per kind — miscalibrated
+  thresholds or drifting question maps and interpret functions versus
+  a degraded TypeSafe provider path versus owner-side key, quota or
+  budget state — with the same owner-side no-change escape for a kind
+  that legitimately falls back by design, and emit only for the fleet's
+  own repository since the ledger is this install's decision record and
+  carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
