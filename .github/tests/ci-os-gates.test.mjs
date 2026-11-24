@@ -1,3 +1,4 @@
+import process from 'node:process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { diffNeedsOsLegs, pathIsOsSensitive } from '../scripts/ci-os-paths.mjs';
@@ -5,7 +6,10 @@ import { osGateDecision } from '../scripts/ci-os-gate.mjs';
 import { typecheckArgs } from '../scripts/ci-os-typecheck.mjs';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { PACKAGE, assertReleaseChecksum, phmCandidates, releaseChecksumFields } from '../scripts/ci-install-smoke.mjs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PACKAGE, assertReleaseChecksum, assertVersion, phmCandidates, releaseChecksumFields } from '../scripts/ci-install-smoke.mjs';
 import { failureAnnotation, firstFailureLocation } from '../scripts/ci-fast-run.mjs';
 
 test('docs and unrelated source skip the OS legs; scripts, manifests, workflows, installers and path code do not', () => {
@@ -59,6 +63,32 @@ test('the published tarball is rejected before install when its checksum is miss
   assert.throws(() => { assertReleaseChecksum(bytes, 'sha512-aaaaaaaa'); install(); }, /checksum mismatch/);
   assert.equal(installed, false);
   assert.throws(() => releaseChecksumFields({ version: '3.30.72', 'dist.tarball': meta.tarball }), /checksum is missing/);
+});
+
+test('a checksum-valid release fails when the installed CLI prints a different version', () => {
+  const bytes = Buffer.from('checksum-valid-not-a-tarball');
+  const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+  const meta = releaseChecksumFields({
+    version: '3.30.72',
+    'dist.integrity': integrity,
+    'dist.tarball': 'https://registry.npmjs.org/@ashlr/phantom/-/phantom-3.30.72.tgz',
+  });
+  assert.doesNotThrow(() => assertReleaseChecksum(bytes, meta.integrity));
+  const dir = mkdtempSync(join(tmpdir(), 'phantom-version-fixture-'));
+  try {
+    const bin = join(dir, process.platform === 'win32' ? 'phm.cmd' : 'phm');
+    writeFileSync(bin, process.platform === 'win32'
+      ? '@echo off\r\nnode -e "process.stdout.write(\'9.9.9\\n\')"\r\n'
+      : '#!/usr/bin/env node\nprocess.stdout.write("9.9.9\\n");\n');
+    chmodSync(bin, 0o755);
+    assert.throws(() => assertVersion(bin, meta.version), (error) => {
+      assert.match(error.message, /^::error file=\.github\/scripts\/ci-install-smoke\.mjs,line=\d+::installed phm version 9\.9\.9, expected 3\.30\.72$/);
+      assert.equal(error.message.includes('\n'), false);
+      return true;
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the first failing test becomes one file:line annotation', () => {

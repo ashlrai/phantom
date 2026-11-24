@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-/* global process, console, fetch */
+/* global process, console, fetch, URL */
 // README quickstart, from this commit's pack and from the published release.
 // `npm install -g @ashlr/phantom` then `phm --version` must exit 0.
 // The published tarball is hashed against dist.integrity before it is written or run.
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,18 +47,34 @@ function capture(command, args) {
   return (result.stdout ?? '').trim();
 }
 
-function assertVersion(bin) {
+export function parseCliVersion(output) {
+  const line = String(output ?? '').split(/\r?\n/).map((part) => part.trim()).find(Boolean) ?? '';
+  const match = /^(?:phm |ashlr |v)?(\d+\.\d+\.\d+)$/.exec(line);
+  return match ? match[1] : '';
+}
+
+function repoVersion() {
+  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  if (typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(pkg.version)) {
+    throw new Error('package.json version is missing');
+  }
+  return pkg.version;
+}
+
+export function assertVersion(bin, expected) {
   const result = spawnSync(bin, ['--version'], {
     encoding: 'utf8',
     shell: process.platform === 'win32',
   });
-  const version = (result.stdout ?? '').trim();
-  if (result.status !== 0 || version.length === 0) {
-    throw new Error(`phm --version failed (${result.status}): ${version}`);
+  const actual = result.status === 0 ? parseCliVersion(result.stdout) : '';
+  if (actual !== expected) {
+    const line = (new Error().stack ?? '').match(/ci-install-smoke\.mjs:(\d+)/)?.[1] ?? '0';
+    const shown = actual || '(none)';
+    throw new Error(`::error file=.github/scripts/ci-install-smoke.mjs,line=${line}::installed phm version ${shown}, expected ${expected}`);
   }
-  console.log(`phm --version ${version}`);
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `phm --version ${version}\n`);
-  return version;
+  console.log(`phm --version ${actual}`);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `phm --version ${actual}\n`);
+  return actual;
 }
 
 function installPrefix(label) {
@@ -74,7 +90,7 @@ export function smokeCommit() {
   if (!tarball) throw new Error('npm pack produced no tarball');
   const prefix = installPrefix('commit');
   run('npm', ['install', '-g', '--prefix', prefix, join(dest, tarball)]);
-  return assertVersion(findPhm(prefix));
+  return assertVersion(findPhm(prefix), repoVersion());
 }
 
 // npm view <pkg> version dist.integrity dist.tarball --json uses dotted keys.
@@ -118,7 +134,7 @@ export async function smokeRelease() {
   console.log(`published ${PACKAGE}@${meta.version} checksum ok`);
   const prefix = installPrefix('release');
   run('npm', ['install', '-g', '--prefix', prefix, tarball]);
-  return assertVersion(findPhm(prefix));
+  return assertVersion(findPhm(prefix), meta.version);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
