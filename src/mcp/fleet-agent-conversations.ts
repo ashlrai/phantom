@@ -14,7 +14,7 @@
  * Every argument is optional and takes the same value rules the
  * `phm agents conversations` flags and the API params share, all validated
  * before any store read: `agent`, `job`, `waitingOn`, `with`, `inReplyTo`,
- * `id`, `from` and `excludeFrom` printable routing
+ * `id`, `from`, `excludeFrom`, `thread` and `bodyKind` printable routing
  * labels (`agent` keeps threads that identity is in, resolved through the
  * server-owned registry; `waitingOn` keeps the waiting threads one agent
  * owes a reply on — its own labels or a `group:<channel>:<topic>` address
@@ -66,9 +66,9 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'limit',
+  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -105,6 +105,10 @@ export interface FleetAgentConversationsArgs {
   excludeFrom?: string;
   /** Keep only threads holding the two-way exchange `agent` and this agent name — the shared `--with` rule; needs `agent`, refused without it. */
   with?: string;
+  /** Keep only threads where at least one member message declared this exact conversation bucket — a thread label, threadId, job:<id> or origin key — the shared `--thread` rule. */
+  thread?: string;
+  /** Keep only threads where at least one member message's body carries this exact kind discriminator — the shared `--body-kind` rule. */
+  bodyKind?: string;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
   limit?: number;
 }
@@ -228,6 +232,8 @@ export async function readFleetAgentConversations(
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.with === undefined ? {} : { with: args.with }),
+    ...(args.thread === undefined ? {} : { thread: args.thread }),
+    ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
   const result: AgentConversations = read(query);

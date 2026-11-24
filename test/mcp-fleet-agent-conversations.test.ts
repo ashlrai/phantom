@@ -84,14 +84,14 @@ describe('fleet_agent_conversations argument parsing', () => {
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
       before: '1800000001000', contains: '  Build   OK ',
       inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', with: 'agent:peer', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post', limit: 25,
     });
     expect(parsed).toEqual({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
       before: 1800000001000, contains: 'build ok',
       inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', with: 'agent:peer', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post', limit: 25,
     });
   });
 
@@ -155,6 +155,8 @@ describe('fleet_agent_conversations argument parsing', () => {
       { from: 'has space' }, { from: '' }, { from: 5 },
       { excludeFrom: 'has space' }, { excludeFrom: '' }, { excludeFrom: 5 },
       { with: 'has space' }, { with: '' }, { with: 5 }, { with: 'x'.repeat(129) },
+      { thread: 'has space' }, { thread: '' }, { thread: 5 }, { thread: 'x'.repeat(129) },
+      { bodyKind: 'has space' }, { bodyKind: '' }, { bodyKind: 5 }, { bodyKind: 'x'.repeat(129) },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentConversationsArgs(bad)).toBeNull();
   });
@@ -171,13 +173,15 @@ describe('fleet_agent_conversations reader', () => {
       parseFleetAgentConversationsArgs({
         agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
         job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
-        before: '1800000001000', contains: 'Build OK', id: 'env-9', with: 'agent:peer', limit: 10,
+        before: '1800000001000', contains: 'Build OK', id: 'env-9', with: 'agent:peer',
+        thread: 'release-1', bodyKind: 'work.post', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'agent:claude', waitingOnly: true, blockedOnly: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
-      before: 1800000001000, contains: 'build ok', id: 'env-9', with: 'agent:peer', limit: 10,
+      before: 1800000001000, contains: 'build ok', id: 'env-9', with: 'agent:peer',
+      thread: 'release-1', bodyKind: 'work.post', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
