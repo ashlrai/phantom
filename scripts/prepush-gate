@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Local affected gate. See scripts/prepush-gate.mjs.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+exec node "$root/scripts/prepush-gate.mjs" "$@"

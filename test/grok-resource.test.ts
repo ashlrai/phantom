@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { fleetPaceAdvice, paceAgainstCeiling } from '../src/core/usage/sensor-pace.js';
-import { GROK_ULTRA_RESET_AT, grokManualSensorReadings, presentUsageSensors, type UsageSensorReading } from '../src/core/usage/sensor-reading.js';
+import { presentUsageSensors, type UsageSensorReading } from '../src/core/usage/sensor-reading.js';
 import { projectWorldModel } from '../src/core/world/project.js';
 
 const OBSERVED = Date.parse('2026-11-09T07:12:00.000Z');
 const LATER = Date.parse('2026-11-12T12:00:00.000Z');
+const GROK_ULTRA_RESET_AT = '2026-11-16T01:21:00.000Z';
+
+/** An operator-entered Grok Ultra reading: 51.4% used, weekly reset Nov 15 8:21 PM New York. */
+function manualReading(): UsageSensorReading {
+  return { lane: 'grok-ultra', observedAt: new Date(OBSERVED).toISOString(), source: 'manual',
+    staleAfter: new Date(OBSERVED + 15 * 60_000).toISOString(), used: 51.4, limit: 100, unit: 'percent', resetAt: GROK_ULTRA_RESET_AT };
+}
 
 function spent(): UsageSensorReading {
-  return { ...grokManualSensorReadings(OBSERVED)[0]!, observedAt: new Date(LATER - 60_000).toISOString(),
+  return { ...manualReading(), observedAt: new Date(LATER - 60_000).toISOString(),
     staleAfter: new Date(LATER + 60_000).toISOString(), used: 100 };
 }
 
@@ -19,24 +26,16 @@ function world(sensors: ReturnType<typeof presentUsageSensors>, nowMs: number) {
 }
 
 describe('Grok as a world-model resource', () => {
-  it('seeds the manual reading: 51.4% used at 02:12 ET, reset Nov 15 8:21 PM ET', () => {
-    const [row] = grokManualSensorReadings(OBSERVED);
-    expect(row).toMatchObject({ lane: 'grok-ultra', source: 'manual', used: 51.4, limit: 100, unit: 'percent' });
-    expect(row!.observedAt).toBe(new Date('2026-11-09T02:12:00-05:00').toISOString());
-    expect(GROK_ULTRA_RESET_AT).toBe(new Date('2026-11-15T20:21:00-05:00').toISOString());
-    expect(grokManualSensorReadings(Date.parse(GROK_ULTRA_RESET_AT))).toEqual([]);
-  });
-
   it('shows capacity and reset in the world model, and a stale reading is unknown, not room', () => {
-    const fresh = world(presentUsageSensors(grokManualSensorReadings(OBSERVED), OBSERVED + 60_000), OBSERVED + 60_000);
+    const fresh = world(presentUsageSensors([manualReading()], OBSERVED + 60_000), OBSERVED + 60_000);
     expect(fresh.used.value).toBe(51.4);
     expect(fresh.remaining.value).toBeCloseTo(48.6);
     expect(fresh.resetAt.value).toBe(GROK_ULTRA_RESET_AT);
     expect(fresh.zeroCapacityUntil.value).toBeNull();
-    const stale = world(presentUsageSensors(grokManualSensorReadings(OBSERVED), LATER), LATER);
+    const stale = world(presentUsageSensors([manualReading()], LATER), LATER);
     expect(stale.headroom.value).toBeNull();
     expect(stale.resetAt.value).toBe(GROK_ULTRA_RESET_AT);
-    expect(fleetPaceAdvice(presentUsageSensors(grokManualSensorReadings(OBSERVED), LATER))['grok-cli']).toBeUndefined();
+    expect(fleetPaceAdvice(presentUsageSensors([manualReading()], LATER))['grok-cli']).toBeUndefined();
   });
 
   it('treats a spent allowance as zero until the reset, even once the reading is stale', async () => {

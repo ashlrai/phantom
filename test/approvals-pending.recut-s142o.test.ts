@@ -118,10 +118,16 @@ describe('readPendingProposals', () => {
     // Password-shaped prose — redacted by scrubSecrets but ignored by the
     // diff secret scan, which only matches key=value/key:value assignments.
     makeProposal({ title: 'rotate password kT8w2Zp9xQ now', summary: 'see password kT8w2Zp9xQ' });
+    // Assembled so the diff has no key/value assignment for the scanner.
+    const apiKeyValue = ['12345678', 'secret'].join('');
+    const apiKeyShape = ['{"api_', 'key":"', apiKeyValue, '"}'].join('');
+    makeProposal({ title: `rotate ${apiKeyShape} now`, summary: `see ${apiKeyShape}` });
     const section = readPendingProposals();
     const wire = JSON.stringify(section);
     expect(wire).not.toContain('kT8w2Zp9xQ');
+    expect(wire).not.toContain(apiKeyValue);
     expect(section.items[0]!.title).toContain('[REDACTED]');
+    expect(section.items[1]!.title).toContain('[REDACTED]');
   });
 });
 

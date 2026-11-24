@@ -30,7 +30,7 @@ it('pool-reach CLI prints a fixed unreadable reason for a throwing config reader
     if (failing) throw new Error(`pool parse failed: ${MARKER} near ${HOME}/.ashlr/node-pool/config.json`);
     return CONFIG;
   });
-  const exec = vi.fn((_cmd: string, _args: readonly string[]) => JSON.stringify({ Self: { HostName: 'mac-self' }, Peer: PEERS }));
+  const exec = vi.fn((_cmd: string, _args: readonly string[]) => JSON.stringify({ BackendState: 'Running', Self: { HostName: 'mac-self' }, Peer: PEERS }));
   const deps: PoolReachDeps = { readConfig, peers: { now: () => new Date(now), homeDir: () => HOME, exec } };
 
   const first = capture();

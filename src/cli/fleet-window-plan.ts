@@ -1,6 +1,6 @@
 /** Offline advisory only; uses the existing resource ledger, never changes holds. */
 import { readResourceLedger, type ResourceLedgerV1 } from '../core/fleet/runs-resource-ledger.js';
-import { resetWindowPlan } from '../core/fleet/reset-window-plan.js';
+import { ledgerWindowPlan } from '../core/fleet/reset-window-plan.js';
 
 const usage = `ashlr fleet window-plan [--json]
 Advisory only; changes no slot or hold. Missing evidence stays unknown.`;
@@ -16,16 +16,7 @@ export async function cmdFleetWindowPlan(
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;
   try {
-    const ledger = await read();
-    const nowMs = now();
-    const resources = resetWindowPlan(ledger.lanes.map(row => {
-      const observed = Date.parse(row.observation?.asOf ?? ledger.asOf ?? '');
-      const fresh = Number.isFinite(observed) && observed <= nowMs && nowMs - observed <= 300_000;
-      return { resource: row.lane, usedPercent: fresh ? row.usedPct : null, resetAt: row.resetAt,
-        burnPctPerHour: fresh ? row.burnPctPerHour : null, running: row.running, target: row.target,
-        // Weekly allowances expire; credit balances alone do not establish expiry.
-        expiresUnused: row.window === 'weekly' };
-    }), nowMs);
+    const resources = ledgerWindowPlan(await read(), now());
     const result = { schema: 'fleet.window-plan.v1', advisory: true, resources };
     console.log(args[0] === '--json' ? JSON.stringify(result) : resources.map(row => `${row.resource}: ${row.verdict} — ${row.reason}`).join('\n'));
     return 0;

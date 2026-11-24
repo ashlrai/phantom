@@ -140,6 +140,7 @@ describe('board-notify source-thread rebind', { timeout: 60_000 }, () => {
       boardNotifyLedgerKey(ID, 'BLOCKED'),
       boardNotifyLedgerKey(ID, 'BLOCKED', deltaA),
       boardNotifyLedgerKey(ID, 'BLOCKED', deltaB),
+      JSON.stringify(['board-notify-provenance', ID, 'BLOCKED', 'modern']),
     ]));
 
     // Restart-equivalent reload before snapshot bookkeeping completes: the

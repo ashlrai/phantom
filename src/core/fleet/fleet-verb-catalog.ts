@@ -82,12 +82,16 @@ export function inferVerbEffect(source: string | null): FleetVerbEffect {
 
 export function extractVerbSummary(source: string, verb: string): { usage: string | null; summary: string | null } {
   let usage: string | null = null;
+  let usageHelp: string | null = null;
   // Some older commands spell this constant `usage` and use a multiline template.
   const constants = /\bconst\s+usage\s*=\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/gi;
   for (const match of source.matchAll(constants)) {
     const firstLine = match[2].split(/\r?\n/)[0].trim();
     if (firstLine.includes(`fleet ${verb}`)) {
       usage = firstLine.replace(/^Usage:\s*/i, '');
+      // No doc comment? The line under the usage line, when it is a plain sentence, is the help.
+      const next = match[2].split(/\r?\n|\\n/).slice(1).map((line: string) => line.trim()).find(Boolean);
+      if (next && /^[A-Z][a-z-]+ [A-Za-z]/.test(next) && !/^(?:Usage|Exit)|\$\{/i.test(next)) usageHelp = next.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? next;
       break;
     }
   }
@@ -95,7 +99,7 @@ export function extractVerbSummary(source: string, verb: string): { usage: strin
   const cleaned = comment?.[1].replace(/^\s*\*\s?/gm, '').replace(/`/g, '')
     .replace(/\b(?:\.\.\/|\.\/|[\w.-]+\/)+(?=[\w.-])/g, '').replace(/\s+/g, ' ').trim();
   const sentence = cleaned?.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? cleaned;
-  return { usage, summary: sentence ? sentence.slice(0, 160) : null };
+  return { usage, summary: sentence ? sentence.slice(0, 160) : usageHelp?.slice(0, 160) ?? null };
 }
 
 export function buildFleetVerbCatalog(verbs: string[], readSource: (verb: string) => string | null): FleetVerbEntry[] {

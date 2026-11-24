@@ -36,11 +36,25 @@ describe('PR #5633 bridge coverage recut', () => {
       { channel: 'imessage', requestCoverage: 'verified', unansweredCount: 0 },
     ]);
     const reply = formatRecheckReply(result);
-    expect(reply).toContain('Slack: 2 requests without a bound reply');
-    expect(reply).toContain('IMessage: recent requests answered in thread');
-    expect(reply.indexOf('Bridge:')).toBeLessThan(reply.indexOf('Slack:'));
-    expect(reply.indexOf('IMessage:')).toBeLessThan(reply.indexOf('Task:'));
+    // Computers, pool and owners already use the cap, so this fixture drops
+    // coverage and keeps a whole verdict. The same proof still prints once
+    // the timestamps leave room.
     expect(reply.length).toBeLessThanOrEqual(900);
+    expect(reply.endsWith('…')).toBe(false);
+    expect(reply).not.toContain('Slack:');
+    expect(reply.split('\n').at(-1)).toBe(formatRecheckReply(idle).split('\n').at(-1));
+    const fitted = formatRecheckReply({
+      ...result,
+      asOf: 't',
+      tailnet: { ...result.tailnet, asOf: 't' },
+      pool: { ...result.pool, asOf: 't' },
+    });
+    expect(fitted).toContain('Slack: 2 requests without a bound reply');
+    expect(fitted).toContain('IMessage: recent requests answered in thread');
+    expect(fitted.indexOf('Bridge:')).toBeLessThan(fitted.indexOf('Slack:'));
+    expect(fitted.indexOf('IMessage:')).toBeLessThan(fitted.indexOf('Task:'));
+    expect(fitted.length).toBeLessThanOrEqual(900);
+    expect(fitted.split('\n').at(-1)).toBe(reply.split('\n').at(-1));
   });
 
   it('omits idle proof and records an absent required channel explicitly', async () => {

@@ -30,7 +30,7 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 describe('changelogSection', () => {
   it('returns only the requested version, links reduced to text, refs stripped', () => {
     expect(changelogSection(FIXTURE, '3.30.28')).toEqual([
-      '**verse:** show release notes in the card',
+      'verse: show release notes in the card',
       'plain bullet',
       'dash bullet',
     ]);

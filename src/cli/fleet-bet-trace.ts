@@ -2,6 +2,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 
 export interface LeaderOutput { name: string; text: string; at: number }
 export interface BetTraceReaders {
@@ -39,7 +40,7 @@ export async function readBetTrace(readers: BetTraceReaders, now = Date.now()) {
     const id = row.job ?? row.job_id ?? row.id;
     if (typeof id !== 'string') { metricsHealthy = false; continue; }
     const event = row.event ?? row.state;
-    const state: State = event === 'precheck_skip' || row.outcome === 'precheck_skip' ? 'precheck_skip'
+    const state: State = event === 'precheck_skip' || row.outcome === 'precheck_skip' || isPrecheckSkipRow(row) ? 'precheck_skip'
       : ['finish', 'finished', 'complete', 'completed', 'outcome'].includes(String(event)) ? 'finished'
       : ['launch', 'launched', 'start', 'started'].includes(String(event)) ? 'launched'
       : ['enqueue', 'queued', 'enqueued'].includes(String(event)) ? 'queued' : 'unknown';

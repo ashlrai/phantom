@@ -17,6 +17,8 @@
  */
 
 import type { AshlrConfig, EngineId, RunOptions, RunState, RunTask, RunStep } from '../core/types.js';
+import { isRouterModelFlag } from '../core/router-gateway/config.js';
+import { cmdRunRouted } from './router-gateway.js';
 import {
   DEFAULT_MAX_TOKENS,
   DEFAULT_MAX_STEPS,
@@ -500,6 +502,13 @@ async function cmdRunShow(id: string, jsonMode: boolean): Promise<number> {
  */
 const RUN_VALUE_FLAGS = new Set(['--budget', '--max-steps', '--parallel', '--engine', '--model', '--resume']);
 
+/** True when `--model` names the router (`auto` or `<lane>:<model>`), not a local tag. */
+function routedModelFlag(args: readonly string[]): boolean {
+  const at = args.indexOf('--model');
+  const value = at === -1 ? undefined : args[at + 1];
+  return value !== undefined && isRouterModelFlag(value);
+}
+
 /** `--help` / `-h` anywhere, outside a value flag's value. */
 function wantsRunHelp(args: readonly string[]): boolean {
   for (let i = 0; i < args.length; i++) {
@@ -517,6 +526,9 @@ export async function cmdRun(args: string[]): Promise<number> {
     printRunHelp();
     return 0;
   }
+
+  // `--model auto` or `--model <lane>:<model>` is one routed completion, not a goal run.
+  if (routedModelFlag(args)) return cmdRunRouted(args);
 
   let engineConfig: AshlrConfig | undefined;
   if (args.includes('--engine')) {
@@ -867,6 +879,7 @@ function printRunHelp(): void {
     ['--engine <e>',            `Registered engine id (default: builtin); additional providers must be enabled in foundry.allowedBackends.`],
     ['--sandbox-engine',        `Run a registered CLI or API engine in a sandbox; its diff → inbox, never the live tree.`],
     ['--model <name>',          `Local model to use (default: smallest/fastest; or set ASHLR_MODEL).`],
+    ['--model auto|<lane:model>', `One routed completion through the router gateway instead of a goal run (see phm router --help).`],
     ['--allow-cloud',           `Allow cloud provider if no local is available (requires API key).`],
     ['--no-tools',              `Disable MCP tool loading (faster; for simple goals).`],
     ['--no-memory',             `Skip genome recall injection into sub-agent prompts.`],

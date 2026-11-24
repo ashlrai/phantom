@@ -57,7 +57,7 @@ const firstLabel = (name: string): string => name.split('.')[0] ?? name;
  * case-insensitive). First-label-vs-first-label is deliberately not a match:
  * "a.x" and "a.y" are different hosts.
  */
-function aliasMatches(alias: string, name: string): boolean {
+export function aliasMatches(alias: string, name: string): boolean {
   const a = alias.toLowerCase();
   const n = name.toLowerCase();
   return a === n || a === firstLabel(n) || firstLabel(a) === n;
@@ -74,6 +74,10 @@ function reachForSlot(
   // they can never confirm an alias.
   const matches = peers.peers.filter(peer => peer.name !== UNKNOWN && aliasMatches(alias, peer.name));
   const isSelf = peers.self !== UNKNOWN && aliasMatches(alias, peers.self);
+  // Only a peer whose name is this computer is the self row. A different host
+  // that merely shares the first DNS label is still a competing claimant.
+  const competitors = matches.filter(peer =>
+    peers.self === UNKNOWN || peer.name.toLowerCase() !== peers.self.toLowerCase());
   // tailnet-peers caps the peer list and records the truncation in reasons[];
   // a truncated set cannot prove an alias names exactly one host.
   const truncated = peers.reasons.some(reason => reason.startsWith('peers: truncated to '));
@@ -92,22 +96,22 @@ function reachForSlot(
     isSelf,
   };
   let reason: string | null = null;
-  if (isSelf && matches.length > 0) {
-    // The alias names this computer but peers also claim it; which identity
+  if (isSelf && competitors.length > 0) {
+    // The alias names this computer but other peers also claim it; which identity
     // the alias reaches is uncertain, so online stays unknown.
-    reason = `${slot}: ${alias} matches this computer and ${matches.length} tailnet peers`;
+    reason = `${slot}: ${alias} matches this computer and ${competitors.length} tailnet peers`;
     if (truncated) reason += '; peer list truncated, more matches may be hidden';
-  } else if (matches.length > 1) {
+  } else if (competitors.length > 1) {
     // Two peers claim the alias; naming one would be a guess.
-    reason = `${slot}: ${alias} matches ${matches.length} tailnet peers`;
+    reason = `${slot}: ${alias} matches ${competitors.length} tailnet peers`;
     if (truncated) reason += '; peer list truncated, more matches may be hidden';
-  } else if (matches.length === 1) {
+  } else if (competitors.length === 1) {
     if (truncated) {
       // A retained match cannot prove uniqueness: peers past the cap may
       // claim the same alias, so the identity stays unknown.
       reason = `${slot}: ${alias} matches a tailnet peer but the peer list is truncated; identity not proven unique`;
     } else {
-      const peer = matches[0] as TailnetPeer;
+      const peer = competitors[0] as TailnetPeer;
       host.matched = peer.name;
       host.online = peer.online;
       host.lastSeen = peer.lastSeen;
@@ -133,7 +137,7 @@ function reachForSlot(
   // Self is certain only when no peer competes for the alias and the peer
   // list is complete; online is certain only while the backend does not
   // report a non-running state.
-  if (isSelf && matches.length === 0 && !truncated && !backendNotRunning) host.online = true;
+  if (isSelf && competitors.length === 0 && !truncated && !backendNotRunning) host.online = true;
   return { host, reason };
 }
 
@@ -186,8 +190,8 @@ export function readPoolReach(deps: PoolReachDeps): PoolReach {
   let configError: string | null = null;
   try {
     config = deps.readConfig();
-  } catch (error) {
-    configError = error instanceof Error ? error.message : String(error);
+  } catch {
+    configError = 'pool config unreadable';
   }
   return joinPoolReach(config, configError, peers, home);
 }

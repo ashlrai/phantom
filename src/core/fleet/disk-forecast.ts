@@ -45,9 +45,11 @@ export function diskForecast(storage: string | null, jobs: string | null, now = 
           const row: unknown = JSON.parse(line);
           if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
           const r = row as Record<string, unknown>;
-          const id = r.job ?? r.job_id ?? r.jobId, time = r.ts ?? r.timestamp ?? r.at;
-          const ms = typeof time === 'string' ? Date.parse(time) : NaN;
-          if (r.event === 'launch' && typeof id === 'string' && id && ms > first.at * 1000 && ms <= last.at * 1000) ids.add(id);
+          const id = [r.job, r.job_id, r.jobId, r.id].find((v): v is string => typeof v === 'string');
+          const event = [r.event, r.type, r.kind].find((v): v is string => typeof v === 'string');
+          const time = [r.ts, r.timestamp, r.at, r.time, r.mergedAt, r.closedAt, r.recordedAt, r.updatedAt].find(v => v !== undefined && v !== null);
+          const ms = typeof time === 'string' ? Date.parse(time) : typeof time === 'number' ? time * (time < 1e12 ? 1000 : 1) : NaN;
+          if (event === 'launch' && id && ms > first.at * 1000 && ms <= last.at * 1000) ids.add(id);
         } catch { /* ignore malformed ledger rows */ }
       }
       result.launchedJobs = ids.size;

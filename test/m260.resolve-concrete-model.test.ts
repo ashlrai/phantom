@@ -71,8 +71,16 @@ describe('M260 resolveConcreteModel — registry defaultModel fallback', () => {
     delete process.env.ASHLR_MODEL;
   });
 
-  it('codex: no cfg.foundry.models, no capturedModel, no ASHLR_MODEL → registry defaultModel gpt-6.1-sol', () => {
+  it('codex: no cfg.foundry.models, no capturedModel, no ASHLR_MODEL → registry defaultModel gpt-6.2-sol', () => {
     const cfg = makeCfg([{ engine: 'codex', model: 'gpt-5.5' }]);
+    expect(resolveConcreteModel('codex', cfg)).toBe('gpt-6.2-sol');
+  });
+
+  it('codex: explicitly configured gpt-6.1-sol still resolves', () => {
+    const cfg = makeCfg(
+      [{ engine: 'codex', model: 'gpt-5.5' }],
+      { codex: 'gpt-6.1-sol' },
+    );
     expect(resolveConcreteModel('codex', cfg)).toBe('gpt-6.1-sol');
   });
 

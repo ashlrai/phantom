@@ -620,6 +620,7 @@ describe('cli/verse: background services', () => {
       loadRetroSweep: async () => ({
         scheduleRetroSweep: (cfg: AshlrConfig) => { order.push(`retro:start:${cfg === OPEN_CFG}`); return () => { order.push('retro:stop'); }; },
       }),
+      loadMesh: async () => ({ scheduleAgentMesh: () => { order.push('mesh:start'); return () => { order.push('mesh:stop'); }; } }),
     };
   }
 
@@ -636,14 +637,14 @@ describe('cli/verse: background services', () => {
     expect(isolated.started).not.toContain('teammate-comms'); expect(schedule).toHaveBeenCalledOnce(); isolated.stop();
   });
 
-  it('starts all eight with the server config, without awaiting the usage prime or the Apps warm-up, and stops them newest first', async () => {
+  it('starts all services without awaiting the usage prime or the Apps warm-up, and stops them newest first', async () => {
     const order: string[] = [];
     const services = await startVerseBackgroundServices(OPEN_CFG, fakes(order));
-    expect(services.started).toEqual(['health', 'claude-usage', 'reasoning', 'budget', 'apps', 'wiki', 'automations', 'retro-sweep']);
-    expect(order).toEqual(['health:start:true', 'usage:prime', 'reasoning:start', 'budget:start', 'apps:warm:true', 'wiki:start:true', 'automations:start', 'retro:start:true']);
+    expect(services.started).toEqual(['health', 'claude-usage', 'reasoning', 'budget', 'apps', 'wiki', 'automations', 'retro-sweep', 'agent-mesh']);
+    expect(order).toEqual(['health:start:true', 'usage:prime', 'reasoning:start', 'budget:start', 'apps:warm:true', 'wiki:start:true', 'automations:start', 'retro:start:true', 'mesh:start']);
     services.stop();
     services.stop(); // idempotent
-    expect(order.slice(8)).toEqual(['retro:stop', 'automations:stop', 'wiki:stop', 'budget:stop', 'reasoning:stop', 'health:stop']);
+    expect(order.slice(9)).toEqual(['mesh:stop', 'retro:stop', 'automations:stop', 'wiki:stop', 'budget:stop', 'reasoning:stop', 'health:stop']);
   });
 
   it('a service that fails to load or start is reported and skipped; the rest still run', async () => {
@@ -658,13 +659,13 @@ describe('cli/verse: background services', () => {
       }),
       log,
     });
-    expect(services.started).toEqual(['claude-usage', 'budget', 'apps', 'wiki', 'automations', 'retro-sweep']);
+    expect(services.started).toEqual(['claude-usage', 'budget', 'apps', 'wiki', 'automations', 'retro-sweep', 'agent-mesh']);
     expect(log.mock.calls.map(([m]) => m)).toEqual([
       'health did not start: module missing',
       'reasoning did not start: bad root',
     ]);
     services.stop();
-    expect(order).toEqual(['usage:prime', 'budget:start', 'apps:warm:true', 'wiki:start:true', 'automations:start', 'retro:start:true', 'retro:stop', 'automations:stop', 'wiki:stop', 'budget:stop']);
+    expect(order).toEqual(['usage:prime', 'budget:start', 'apps:warm:true', 'wiki:start:true', 'automations:start', 'retro:start:true', 'mesh:start', 'mesh:stop', 'retro:stop', 'automations:stop', 'wiki:stop', 'budget:stop']);
   });
 
   it('skips the account services (and the wiki auto-refresh, automations and retro sweep) under --no-accounts', async () => {

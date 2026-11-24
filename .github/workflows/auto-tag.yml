@@ -1,6 +1,8 @@
 # Auto-tag: create v<version> and its draft GitHub release when the version in
 # package.json on master is untagged and every required check for that exact
-# commit is green and its latest six-hour scheduled full CI is green. A missing
+# commit is green and its release gate is green (RELEASE_GATE_MODE: 'full' =
+# latest six-hour scheduled full CI green, the default; 'split' = release-relevant
+# suites green on the exact SHA, see RELEASE-GATE-SPLIT-1). A missing
 # tag is owed even when the bump landed earlier, so this heals a stranded release instead of waiting for the next bump.
 # Tags and releases are created only here, with the ashlr-release GitHub App
 # token. The release starts as a draft: releases/latest keeps resolving to the
@@ -14,20 +16,27 @@
 # - only GitHub Actions check runs (app id 15368) count; every latest run with
 #   a required name must be completed + success; commit statuses never count
 # - a required check missing, queued or in progress: bounded wait (~9.5 min),
-#   then no tag (notice on the push trigger, which workflow_run re-evaluates;
-#   failure on workflow_run)
+#   then no tag (notice on the push trigger; failure on workflow_run/dispatch)
 # - any conclusion other than success: fail at once. skipped and neutral are NOT
 #   green: required checks here use the skip-job pattern (phantom #811),
 #   which reports success, so a skipped required check means it did not run.
 # - "Check generated files" and "Check authority drift (hermetic)" are always
 #   required on the exact sha in addition to the discovered checks, even though
 #   the second is advisory for merge (RQ-PH-GATE-SPLIT-1).
+# Release prep dispatches the release-gate CI run with GITHUB_TOKEN, which does
+# not produce a workflow_run event. After both release-gate jobs succeed, CI
+# explicitly dispatches this workflow with the exact candidate SHA.
 name: Auto-tag
 
 on:
   push:
     branches: [master]
     paths: ["package.json"]
+  # Desktop release smoke and Release suites are jobs in CI. For CI runs that
+  # produce a workflow_run event, evaluate workflow_run.head_sha. Release prep's
+  # GITHUB_TOKEN dispatch is handled by CI's explicit exact-SHA dispatch below.
+  # Release prep starts that CI run on the master push and again every five
+  # minutes, deduped per sha, so a missed push is retried without a second build.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -35,16 +44,24 @@ on:
   schedule:
     - cron: "22,52 * * * *"
   workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact release-gated master commit to evaluate
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
+# One evaluation per commit. A second completion for the same sha waits, then
+# the version step no-ops once the tag and its release both exist.
 concurrency:
-  group: auto-tag-${{ github.repository }}
+  group: auto-tag-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha) || github.sha }}
   cancel-in-progress: false
 
 jobs:
   tag:
-    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule'))
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == 'ashlrai/phantom' && github.event.workflow_run.head_branch == 'master' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -56,17 +73,51 @@ jobs:
       REPO: ${{ github.repository }}
       BRANCH: master
       VERSION_FILE: package.json
-      SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'workflow_dispatch' && inputs.sha != '' && inputs.sha) || github.sha }}
+      # RELEASE-GATE-SPLIT-2: a dispatched master CI run (release_gate=true
+      # release prep) explicitly dispatches this workflow after both release
+      # jobs succeed, passing the exact SHA. GitHub does not emit workflow_run
+      # for the GITHUB_TOKEN dispatch, so do not rely on that trigger for it.
       # A workflow_run for a push-event CI run evaluates a fresh master commit
       # that cannot have its own scheduled full yet, so it holds quietly like a
       # direct push. Only schedule-sourced workflow_run, schedule and dispatch
       # fail closed (the scheduled full re-evaluates the held commit).
-      TRIGGER: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && 'push' || github.event_name }}
-      # Required checks designed to report skipped on push to master (PR-only
-      # jobs). Only these may be skipped; everything else must be success.
+      TRIGGER: ${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') && 'push' || github.event_name }}
+      # SKIP_OK is unused (empty). A skipped required check is red, except
+      # Check generated files, Check authority drift (hermetic) and Quick
+      # typecheck, which may be skipped only when another latest run of the
+      # same exact name on this SHA is completed + success. Merge Gate,
+      # Secret-shape scan and Secret scan (diff) always treat skipped as red.
       SKIP_OK: ""
       ACTIONS_APP_ID: "15368"   # GitHub Actions; other apps' same-named runs never count
     steps:
+      - name: Validate explicit dispatch SHA
+        id: validate-dispatch-sha
+        if: github.event_name == 'workflow_dispatch' && inputs.sha != ''
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::invalid sha input; expected a lowercase 40-character commit SHA"
+            exit 1
+          }
+          status=$(gh api "repos/$REPO/compare/$CANDIDATE_SHA...master" -q .status)
+          case "$status" in
+            ahead|identical) ;;
+            *) echo "::error::sha input is not an ancestor of current master (compare status: $status)"; exit 1 ;;
+          esac
+      # GATES v4: preflight must not use workflow_run. Start it here, on
+      # master, with the job token this workflow already holds. A dispatch
+      # failure does not block the tag.
+      - name: Start preflight fixer on master
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${REPO}/actions/workflows/preflight-fixer.yml/dispatches" --input - <<'EOF'
+          {"ref":"master"}
+          EOF
       - name: Detect version change
         id: version
         shell: bash
@@ -117,8 +168,10 @@ jobs:
           # RQ-PH-GATE-SPLIT-1: Merge Gate does not cover the advisory authority
           # drift job, and a failed generated-files job once let a tag through.
           # Both split jobs must also be completed + success on this exact sha,
-          # with the same rules as every discovered check (skipped is not green,
-          # missing or running waits within the bounded loop, then no tag).
+          # with the same rules as every discovered check (skipped is red,
+          # except Check generated files, Check authority drift (hermetic)
+          # and Quick typecheck when a same-sha success run exists; missing
+          # or running waits within the bounded loop, then no tag).
           required=$( { printf '%s\n' "$required" "Check generated files" "Check authority drift (hermetic)"; } | sort -u )
           # One evaluation pass. Check runs: only GitHub Actions (app id
           # $ACTIONS_APP_ID) counts, and EVERY latest run with the required name
@@ -134,6 +187,22 @@ jobs:
                   if [ "$status" != completed ]; then echo "pending: $name ($status)"; pending=1
                   elif [ "$conclusion" = success ]; then echo "green: $name"
                   elif [ "$conclusion" = skipped ] && [ -n "$SKIP_OK" ] && [ "$name" = "$SKIP_OK" ]; then echo "skipped by design on push: $name"
+                  # RELEASE-GATE-SPLIT-3: a dispatched release prep on this
+                  # master SHA reports these push/PR-scoped jobs as skipped.
+                  # A skipped run is accepted only for an exact-name case on
+                  # Check generated files, Check authority drift (hermetic)
+                  # and Quick typecheck, and only when another latest run of
+                  # the same name on this exact SHA is completed + success.
+                  # Every other required name, including Merge Gate,
+                  # Secret-shape scan and Secret scan (diff), treats skipped as red.
+                  elif [ "$conclusion" = skipped ]; then
+                    case "$name" in
+                      "Check generated files"|"Check authority drift (hermetic)"|"Quick typecheck")
+                        if awk -F'	' 'BEGIN{f=1} $2=="completed" && $3=="success"{f=0} END{exit f}' <<<"$rows"; then echo "skipped on another event, green run present: $name"
+                        else echo "::error::not green: $name ($conclusion)"; bad=1; fi ;;
+                      *)
+                        echo "::error::not green: $name ($conclusion)"; bad=1 ;;
+                    esac
                   else echo "::error::not green: $name ($conclusion)"; bad=1; fi
                 done <<<"$rows"
                 continue
@@ -162,12 +231,19 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
-      # Fail closed before minting write authority. Exact SHA only: descendants
-      # wait for their own scheduled full, even if a required fast check is green.
-      - name: Require scheduled full green on this exact commit
+      # Fail closed before minting write authority. RELEASE-GATE-SPLIT-1:
+      # RELEASE_GATE_MODE unset or 'full' keeps the scheduled-full requirement
+      # (ci-master-full.mjs, unchanged). 'split' requires the release-relevant
+      # suites green on this exact SHA (build, typecheck, fast gate, desktop
+      # release smoke, signing path); the six-hour full suite then files P0
+      # fix-forward lines instead of blocking. Step id stays 'full' so every
+      # later step keeps its existing guard.
+      - name: Require release gate on this exact commit
         id: full
         if: steps.checks.outputs.green == 'true'
-        run: node .github/scripts/ci-master-full.mjs require
+        env:
+          RELEASE_GATE_MODE: ${{ vars.RELEASE_GATE_MODE }}
+        run: node .github/scripts/ci-release-gate.mjs require
 
       - name: Mint ashlr-release App token (contents write, this repo only)
         id: app
@@ -213,4 +289,3 @@ jobs:
           gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" --input - <<EOF
           {"ref":"v${VERSION}","inputs":{"release_gate":"true"}}
           EOF
-

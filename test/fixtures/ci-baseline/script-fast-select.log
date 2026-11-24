@@ -1,0 +1,23 @@
+##[group]Run node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
+node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
+node .github/scripts/ci-fast-select.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  CI_DEP_GRAPH: /home/runner/work/_temp/dep-graph.json
+##[endgroup]
+TAP version 13
+# Subtest: warm sparse checkout
+ok 1 - warm sparse checkout
+  ---
+  duration_ms: 1.23
+  ...
+1..1
+# tests 1
+# pass 1
+# fail 0
+Error: EACCES: permission denied, open '/home/runner/work/_temp/fast-gate-plan.json'
+    at writeFileSync (node:fs:2430:20)
+    at file:///home/runner/work/repo/repo/.github/scripts/ci-fast-select.mjs:325:3
+
+Node.js v22.22.3
+##[error]Process completed with exit code 1.

@@ -8,7 +8,7 @@
 import type { ReactNode } from 'react';
 import { UNKNOWN_HATCH, engineColor, type ChartEngine } from './colors.js';
 import plot from './plot.module.css';
-import { ProviderLogo } from '../primitives/ProviderLogo.js';
+import { BrandMark } from '../primitives/BrandMark.js';
 
 export interface ChartLegendItem {
   label: string;
@@ -154,14 +154,14 @@ export function engineLetter(engine: ChartEngine): string {
 
 /**
  * SVG engine mark for a lane label: the 2px identity tick and the provider's
- * mark (3.11.1, ProviderLogo). The engine's NAME still travels in the lane's
+ * mark (3.11.1, BrandMark). The engine's NAME still travels in the lane's
  * spoken summary and the table — the mark is a glance aid only.
  */
 export function EngineTick({ engine, x, y, height }: { engine: ChartEngine; x: number; y: number; height: number }) {
   return (
     <g data-engine={engine} aria-hidden="true">
       <rect x={x} y={y} width={2} height={height} rx={1} fill={engineColor(engine)} />
-      <ProviderLogo engine={engine} x={x + 5} y={y + height / 2 - 6} size={12} className={plot.monogram} />
+      <BrandMark brand={engine} x={x + 5} y={y + height / 2 - 6} size={12} className={plot.monogram} />
     </g>
   );
 }

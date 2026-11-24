@@ -22,20 +22,25 @@ const HOME_GETS = [
   '/api/verse/cloud', // resources/resources-queries
   '/api/verse/devin', // resources/ResourcesBar
   '/api/verse/resources/credit-pools', // resources/credit-pools-query
+  '/api/verse/leader/resources/usage-history', // resources/SpendDown
   '/api/verse/observe', // resources/ResourcesBar
   '/api/verse/proactive-agents', // resources/ResourcesBar
   '/api/verse/leader/thread?limit=50', // leader/thread-data, Feed
-  '/api/verse/comms/owner-thread?limit=100', // leader-thread/owner-thread-queries
-  '/api/verse/comms/owner-thread/status', // leader-thread/leader-status-now
   '/api/verse/leader/office', // leader-thread/leader-office-data
   '/api/verse/agent-bus?after=0&limit=50', // Feed
-  '/api/verse/comms/gmail-triage/archive-plan', // Feed
-  '/api/verse/release/stages', // Feed
-  '/api/verse/comms/inbox?limit=20', // Feed
-  '/api/verse/fleet/comms-status', // Feed
-  '/api/verse/fleet/library-files', // library/LibraryPane
-  '/api/verse/fleet/handoffs', // library/LibraryPane
-  '/api/verse/cos/memory', // library/CosMemorySection
+] as const;
+
+// These reads stay hidden until dispatch is on. A read session must not open them.
+const DISPATCH_HIDDEN = [
+  '/api/verse/comms/owner-thread?limit=100',
+  '/api/verse/comms/owner-thread/status',
+  '/api/verse/comms/gmail-triage/archive-plan',
+  '/api/verse/release/stages',
+  '/api/verse/comms/inbox?limit=20',
+  '/api/verse/fleet/comms-status',
+  '/api/verse/fleet/library-files',
+  '/api/verse/fleet/handoffs',
+  '/api/verse/cos/memory',
 ] as const;
 
 let root: string;
@@ -58,14 +63,37 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 describe('first run with an empty runs directory', () => {
+  const proof = 'ab'.repeat(32);
+  let cookie = '';
+  beforeAll(async () => {
+    const session = await fetch(`${server.url}/api/session`, {
+      method: 'POST',
+      headers: { 'x-ashlr-token': server.readToken, 'x-ashlr-read-client': proof },
+    });
+    expect(session.status).toBe(204);
+    const setCookie = session.headers.get('set-cookie') ?? '';
+    cookie = setCookie.split(';', 1)[0] ?? '';
+    expect(cookie.startsWith('ashlr_read_session=')).toBe(true);
+  });
   it.each(HOME_GETS)('%s returns JSON without an error state', async path => {
-    const response = await fetch(`${server.url}${path}`, { headers: { 'x-ashlr-token': server.readToken }, signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${server.url}${path}`, {
+      headers: { cookie, 'x-ashlr-read-client': proof },
+      signal: AbortSignal.timeout(5000),
+    });
     expect(response.status, path).toBeGreaterThanOrEqual(200);
     expect(response.status, path).toBeLessThan(300);
     const body: unknown = await response.json();
     if (body && typeof body === 'object' && 'sourceState' in body) {
       expect(['degraded', 'error']).not.toContain((body as { sourceState: unknown }).sourceState);
     }
+  }, 10000);
+  it.each(DISPATCH_HIDDEN)('%s stays not found while dispatch is off', async path => {
+    const response = await fetch(`${server.url}${path}`, {
+      headers: { cookie, 'x-ashlr-read-client': proof },
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(response.status, path).toBe(404);
+    expect(await response.json()).toEqual({ error: 'not found' });
   }, 10000);
   it('does not create files in the runs directory', async () => {
     expect(await readdir(runs)).toEqual([]);

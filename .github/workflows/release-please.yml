@@ -13,8 +13,11 @@ name: Release PR
 on:
   push:
     branches: [master]
+  # Live version bump on the release train cadence. release-please opens the
+  # pull request; this is not a dry run. Cadence due-ness is still decided by
+  # release-cadence.mjs (default 5 minutes).
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions: {}

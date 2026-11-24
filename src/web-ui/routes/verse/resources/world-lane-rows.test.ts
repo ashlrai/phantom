@@ -174,6 +174,20 @@ describe('world lane rows', () => {
     expect(rows.map((row) => row.lane).filter((lane) => !CANONICAL.includes(lane))).toEqual(['grok-bot', 'terra', 'omlx']);
   });
 
+  it('names the live resource lanes that have no canonical row and shows their source and time', () => {
+    const rows = worldLaneRows(model([
+      { lane: 'zai', used: field(12, 'fresh', RECENT, 'zai-lane-resources'), remaining: field(88, 'fresh', RECENT, 'zai-lane-resources'), unit: field('percent') },
+      { lane: 'gemini', used: field(null, 'unknown', null, 'unmeasured') },
+      { lane: 'agy', used: field(null, 'unknown', null, 'unmeasured') },
+      { lane: 'instinct', used: field(null, 'unknown', null, 'unmeasured') },
+    ]), NOW);
+    expect(rows.find((row) => row.lane === 'zai')).toMatchObject({ label: 'GLM Lite', usage: '12%', remaining: '88%',
+      source: 'zai-lane-resources', observedAt: RECENT, freshness: 'fresh' });
+    expect(rows.find((row) => row.lane === 'gemini')).toMatchObject({ label: 'Gemini', usage: 'unknown', freshness: 'unknown' });
+    expect(rows.find((row) => row.lane === 'agy')!.label).toBe('Antigravity');
+    expect(rows.find((row) => row.lane === 'instinct')!.label).toBe('Instinct');
+  });
+
   it('uses a lone oMLX reading for the local row', () => {
     const rows = worldLaneRows(model([{ lane: 'omlx', used: field(6), unit: field('percent') }]), NOW);
     expect(rows.filter((row) => row.label === 'Local / oMLX')).toHaveLength(1);

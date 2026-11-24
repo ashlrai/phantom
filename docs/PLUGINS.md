@@ -100,6 +100,7 @@ Then:
 
 ```bash
 ashlr plugins list             # discovery — reads manifests only
+ashlr plugins list --all --json   # also Claude Code plugins; the desktop Plugins pane
 ashlr plugins info my-scanner  # manifest detail for one plugin
 ashlr plugins enable my-scanner   # confirm + integrity pin
 ashlr backlog refresh          # plugin items appear tagged [plugin]

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { withScratchRepo } from '../core/fleet/dirty-landed-inspect.js';
 import { defaultGitRunner } from '../core/verse/git-ops.js';
 
-const usage = 'Usage: phm prs triage [--repo ashlrai/<name>] [--limit N] --json';
+const usage = 'Usage: phm prs arm-sweep [--repos <list>] [--since 24h] [--apply] [--json]\n       phm prs triage [--repo ashlrai/<name>] [--limit N] --json';
 const sha = /^[0-9a-f]{40}$/;
 type Verdict = 'superseded' | 'rebase-clean' | 'rebase-manual' | 'failing-checks' | 'green' | 'unknown';
 const run = (dir: string, binary: 'git' | 'gh', args: string[]) => defaultGitRunner(binary, args, { cwd: dir, timeoutMs: 60_000, maxStdoutBytes: 16 * 1024 * 1024 });
@@ -35,6 +35,7 @@ export async function inspectTriage(dir: string, remote: string, row: { number: 
 }
 
 export async function cmdPrs(args: string[]): Promise<number> {
+  if (args[0] === 'arm-sweep') return (await import('./prs-arm-sweep.js')).cmdPrsArmSweep(args.slice(1));
   if (args.includes('--help') || args.includes('-h')) { console.log(usage); return 0; }
   if (args.shift() !== 'triage') { console.error(usage); return 2; }
   let repo = 'ashlrai/phantom', limit = 100, json = false;

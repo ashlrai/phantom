@@ -12,8 +12,11 @@ const receipt = (id: string): string => createHash('sha256').update(id).digest('
 export function planEmptyRetries(queue: string, jobs: EmptyJobResult[], receipts: Set<string>): string[] {
   const lines = queue.split(/\r?\n/);
   const output: string[] = [];
+  const retried = new Set(lines.flatMap(line => /^\s*-\s+\S+\s+.*\bretry-empty-source=([\w.-]+)\s*$/.exec(line)?.[1] ?? []));
   for (const job of jobs) {
-    if (!['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id))) continue;
+    // A class a model picked is advisory; only a rule's class may queue a retry.
+    if (job.source === 'decide' || !['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id)) || retried.has(job.id)) continue;
+    if (job.outcome && ['already-implemented', 'duplicate', 'empty'].includes(job.outcome)) continue;
     const id = job.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const entries = lines.filter(line => new RegExp(`^\\s*-\\s+(?:\\S+\\s+)*${id}\\s*\\(`).test(line));
     if (entries.length !== 1 || /\bretry-empty-source=/.test(entries[0]!)) continue;
@@ -28,6 +31,7 @@ export function planEmptyRetries(queue: string, jobs: EmptyJobResult[], receipts
     const retryId = `RQ-EMPTYRETRY-${receipt(job.id).slice(0, 20).toUpperCase()}`;
     if (lines.some(line => line.includes(retryId))) continue;
     output.push(`- READY ${retryId} (P1, pool=${pool}, tier=${tier}, repo=${repo}, size<=200, src=leader): Complete one smallest independently shippable part of this goal: ${goal} Ship partial, list the gap. retry-empty-source=${job.id}`);
+    retried.add(job.id);
   }
   return output;
 }

@@ -5,6 +5,8 @@ import { isRemoteMobileMode } from '../../../data/remote-mode.js';
 export interface MainHealthRepo {
   repo: string; branch: string; sha: string | null; state: 'green' | 'red' | 'unknown';
   checkedAt: string | null; failingCheck: string | null; fixJobs: string[]; nightlyRed: string | null;
+  /** Absent from servers that predate empty-attempt tracking. */
+  emptyAttempts?: number; retryHold?: boolean;
 }
 export interface MainHealthData {
   v: 1; generatedAt: string; source: 'ok' | 'unavailable'; statusAt: string | null;
@@ -20,7 +22,9 @@ export function isMainHealthRepo(value: unknown): value is MainHealthRepo {
     && nullableString(value.sha) && (value.state === 'green' || value.state === 'red' || value.state === 'unknown')
     && nullableString(value.checkedAt) && nullableString(value.failingCheck)
     && Array.isArray(value.fixJobs) && value.fixJobs.every((job: unknown) => typeof job === 'string')
-    && nullableString(value.nightlyRed);
+    && nullableString(value.nightlyRed)
+    && (value.emptyAttempts === undefined || typeof value.emptyAttempts === 'number' && Number.isSafeInteger(value.emptyAttempts) && value.emptyAttempts >= 0)
+    && (value.retryHold === undefined || typeof value.retryHold === 'boolean');
 }
 
 function isMainHealthData(value: unknown): value is MainHealthData {

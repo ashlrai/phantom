@@ -8,7 +8,7 @@
  * reports real counts; a source that cannot be read reports 'unknown', never a
  * fabricated zero.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { AshlrConfig } from '../types.js';
@@ -33,8 +33,8 @@ export interface ChannelStatusRow {
   configured: boolean;
   /** Where the channel's credential lives — never the value. */
   credential: ChannelCredential;
-  /** Verified-sender pairing state; null when the channel has no pairing step. */
-  paired: boolean | null;
+  /** Verified-sender pairing state; 'unknown' when the pairing store cannot be read; null when the channel has no pairing step. */
+  paired: boolean | 'unknown' | null;
   /** Inbox entries attributed to the channel (bounded tail — same read as `phm comms inbox read`). */
   received: CountOrUnknown;
   /** `at` string of the newest attributed entry; null when none; 'unknown' when unreadable. */
@@ -64,6 +64,8 @@ export interface ChannelsStatusOptions {
   /** Defaults to process.env — presence checks only, values are never read. */
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  /** A shared-inbox read the caller already made, so one pass reads the file once. */
+  inbox?: Awaited<ReturnType<typeof readInboxEntries>>;
 }
 
 /** Map an inbox `source` label back to its channel kind. */
@@ -93,35 +95,69 @@ function emailCredential(homeDir: string, env: NodeJS.ProcessEnv): ChannelCreden
   return 'missing';
 }
 
-function telegramPaired(runsDir: string): boolean {
+/**
+ * Telegram pairing record: absent file is verified-unpaired; a present record
+ * proves pairing only with a positive integer userId — anything else unreadable
+ * or malformed is 'unknown', never a guessed "not paired".
+ */
+function telegramPaired(runsDir: string): boolean | 'unknown' {
+  const path = join(runsDir, 'queue', 'telegram-pair.json');
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(join(runsDir, 'queue', 'telegram-pair.json'), 'utf8'));
-    return !!parsed && typeof parsed === 'object' && Number.isSafeInteger((parsed as { userId?: unknown }).userId);
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? false : 'unknown';
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'unknown';
+    const userId = (parsed as { userId?: unknown }).userId;
+    return Number.isSafeInteger(userId) && (userId as number) > 0 ? true : 'unknown';
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 
-function emailPairedCount(runsDir: string): number {
+/**
+ * Verified email senders: addresses that completed the pairing-secret handshake.
+ * A missing file is a measured zero; an unreadable or malformed one is 'unknown'.
+ */
+export function emailPairedCount(runsDir: string): CountOrUnknown {
+  const path = join(runsDir, 'queue', 'email-paired.json');
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(join(runsDir, 'queue', 'email-paired.json'), 'utf8'));
-    const addresses = parsed && typeof parsed === 'object' ? (parsed as { addresses?: unknown }).addresses : null;
-    return Array.isArray(addresses) ? addresses.filter((a) => typeof a === 'string').length : 0;
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : 'unknown';
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'unknown';
+    const addresses = (parsed as { addresses?: unknown }).addresses;
+    if (!Array.isArray(addresses)) return 'unknown';
+    return addresses.filter((a): a is string => typeof a === 'string').length;
   } catch {
-    return 0;
+    return 'unknown';
   }
 }
 
 /** Leader-thread outbound index: 'pending' telegram deliveries. Read-only — no memo sync. */
 function telegramPendingOutbound(homeDir: string): CountOrUnknown {
+  const indexPath = join(homeDir, '.ashlr', 'vision', 'leader', 'thread-index.json');
   try {
-    const indexPath = join(homeDir, '.ashlr', 'vision', 'leader', 'thread-index.json');
-    if (!existsSync(indexPath)) return 0;
+    // statSync, not existsSync: a permission failure must not read as "no file".
+    if (!statSync(indexPath).isFile()) return 'unknown';
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : 'unknown';
+  }
+  try {
     const read = readPrivateFileCapped(indexPath, 512 * 1024);
     if (!read || read.truncated) return 'unknown';
     const parsed: unknown = JSON.parse(read.text);
-    const delivery = parsed && typeof parsed === 'object' ? (parsed as { delivery?: unknown }).delivery : null;
-    if (!delivery || typeof delivery !== 'object') return 0;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 'unknown';
+    const delivery = (parsed as { delivery?: unknown }).delivery;
+    if (delivery === null || delivery === undefined) return 0;
+    if (typeof delivery !== 'object' || Array.isArray(delivery)) return 'unknown';
     let pending = 0;
     for (const state of Object.values(delivery as Record<string, unknown>)) {
       if (state && typeof state === 'object' && (state as { telegram?: unknown }).telegram === 'pending') pending++;
@@ -137,8 +173,9 @@ function emailPendingOutbound(config: EmailDropConfig | undefined): CountOrUnkno
   if (!config?.outboxDir) return 'unknown';
   try {
     return readdirSync(config.outboxDir).filter((name) => name.endsWith('.eml')).length;
-  } catch {
-    return 0;
+  } catch (error) {
+    // A missing outbox holds no replies; any other read failure is unknown.
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : 'unknown';
   }
 }
 
@@ -151,7 +188,7 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
   const env = opts.env ?? process.env;
   const now = opts.now ?? (() => new Date());
 
-  const inbox = await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER });
+  const inbox = opts.inbox ?? await readInboxEntries({ runsDir, limit: Number.MAX_SAFE_INTEGER });
   const seen = new Map<InboundChannel, { received: number; lastSeenAt: string | null; lastMs: number }>();
   if (inbox.sourceState !== 'degraded') {
     for (const entry of inbox.entries) {
@@ -180,6 +217,7 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
   const emailConfig = await readEmailDropConfig(runsDir);
   const emailConfigured = emailConfig.state === 'ok';
   const emailCred = emailCredential(homeDir, env);
+  const emailPairs = emailPairedCount(runsDir);
 
   const mobileConfigured = existsSync(join(homeDir, '.ashlr', 'verse-remote.json'));
 
@@ -203,7 +241,7 @@ export async function buildChannelsStatus(opts: ChannelsStatusOptions = {}): Pro
       kind: 'email',
       configured: emailConfigured,
       credential: emailCred,
-      paired: emailPairedCount(runsDir) > 0,
+      paired: emailPairs === 'unknown' ? 'unknown' : emailPairs > 0,
       received: receivedOf('email'),
       lastSeenAt: lastSeenOf('email'),
       pendingOutbound: emailPendingOutbound(emailConfig.config),

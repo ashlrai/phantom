@@ -40,14 +40,14 @@ describe('site freshness', () => {
     expect(facts.mcpServers.length).toBeGreaterThan(0);
     expect(facts.cliTop.has('verse')).toBe(true);
     expect(facts.models.claude.length).toBeGreaterThan(0);
-    expect(facts.models.claude.some((name) => name.startsWith('Fable 5.2'))).toBe(true);
+    expect(facts.models.claude).toContain('Fable 5.2 · planning and orchestration');
     expect(facts.models.codex.length).toBeGreaterThan(0);
     expect(facts.models.grok.length).toBeGreaterThan(0);
   });
 
   it('renders each managed block from facts', () => {
     expect(renderBlock('node-floor', facts)).toBe(facts.nodeFloor);
-    expect(renderBlock('mcp-servers', facts)).toBe('ashlr, lexicon, locus, phantom-secrets, stack');
+    expect(renderBlock('mcp-servers', facts)).toBe('ashlr, context7, lexicon, locus, phantom-secrets, stack');
     expect(renderBlock('models-grok', facts)).toBe('Grok 4.7, 4.7 Fast, 4.6, 4.5');
     expect(renderBlock('install-commands', facts)).toContain(`npm i -g ${facts.pkgName}`);
     expect(renderBlock('release-line', facts)).toContain(facts.released);

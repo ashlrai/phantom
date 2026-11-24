@@ -12,6 +12,7 @@ hosted schema endpoint exists. Validation requires no network access.
 | `fleet.v1` | [Coding fleet snapshot](fleet.v1.schema.json): pool readings, windows, usage projections, router evidence, agents, PRs and coordination | [Fleet fixture](../test/schemas/fixtures/fleet.v1.json) |
 | `loop.v1` | [Goal conductor cycle](loop.v1.schema.json): a timestamped envelope around `ConductorCycleSummary` | [Loop fixture](../test/schemas/fixtures/loop.v1.json) |
 | `ci_time.v1` | [CI job timing observation](ci_time.v1.schema.json): repository, exact revision, run attempt and observed jobs | [CI fixture](../test/schemas/fixtures/ci_time.v1.json) |
+| `ecosystem-changelog.v1` | [Ecosystem changelog document](ecosystem-changelog.v1.schema.json): per-repo changelog entries, published releases and merged PRs with source status | [Ecosystem changelog fixture](../test/schemas/fixtures/ecosystem-changelog.v1.json) |
 
 The fleet contract follows the coding fleet projection, including its eight pool
 IDs, seven ecosystem repositories, bounded collections and explicit unknowns.

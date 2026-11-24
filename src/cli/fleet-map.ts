@@ -1,17 +1,27 @@
-import { fleetOrgMap } from '../core/fleet/org-map.js';
-import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
+import { mapWindowMinutes } from '../core/fleet/org-map.js';
+import { readFleetOrgMap } from '../core/verse/fleet-org-map-api.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: phm fleet map [--json]\nShow the Leader, lanes and running jobs.';
+const usage = 'Usage: phm fleet map [--minutes N] [--json]\nShow the org and retained agent messages (default 60 minutes; 1..1440).';
 
 export async function cmdFleetMap(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(usage);
+    console.log(`${usage}\n       phm fleet map messages [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>] [--limit N]\nThe last agent-to-agent messages, one line each.`);
     return 0;
   }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) return 2;
-  const { snapshot } = await buildFleetLiveSnapshot();
-  const map = sanitizePublicJson(fleetOrgMap(snapshot));
+  if (args[0] === 'messages') return (await import('./fleet-map-messages.js')).cmdFleetMapMessages(args.slice(1));
+  let minutes = 60;
+  const seen = new Set<string>();
+  try {
+    for (let i = 0; i < args.length; i++) {
+      const flag = args[i]!;
+      if (seen.has(flag)) return 2;
+      seen.add(flag);
+      if (flag === '--minutes' && args[i + 1] !== undefined) minutes = mapWindowMinutes(args[++i]);
+      else if (flag !== '--json') return 2;
+    }
+  } catch { return 2; }
+  const map = sanitizePublicJson(await readFleetOrgMap(minutes));
   console.log(args.includes('--json') ? JSON.stringify(map) : JSON.stringify(map, null, 2));
   return 0;
 }

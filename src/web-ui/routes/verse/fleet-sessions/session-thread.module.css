@@ -1,0 +1,85 @@
+/* One session as a conversation. Tokens only; reads down to 390 px wide. */
+.root { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); outline: none; }
+.header { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); }
+.back, .link { flex: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-decoration: none; cursor: pointer; }
+.back:hover, .link:hover, .back:focus-visible, .link:focus-visible { background: var(--bg-hover); }
+.id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--text-sm-size); }
+.state { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--bg-surface-raised); color: var(--text-secondary); font-weight: 600; }
+.state::before { content: ''; width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; }
+.state[data-state='running'] { background: var(--status-success-bg); color: var(--status-success-fg); }
+.state[data-state='running']::before { animation: session-thread-live var(--duration-pulse, 2s) var(--ease-standard) infinite; }
+.state[data-state='quiet'] { background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.state[data-state='failed'] { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.muted { color: var(--text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: var(--space-1); margin-left: auto; }
+
+/* Steering the session's job: one quiet row under the header. What stands is a chip, and the receipt is said after the buttons. */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.controls .link:disabled { opacity: 0.5; cursor: default; }
+.controls .link[data-danger]:not(:disabled):hover, .controls .link[data-danger]:not(:disabled):focus-visible { border-color: var(--status-danger-solid); background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.standing { flex: none; padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--status-warning-bg); color: var(--status-warning-fg); font-weight: 600; }
+.standing[data-status='requested'] { animation: session-thread-live var(--duration-pulse, 2s) var(--ease-standard) infinite; }
+.move { max-width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-input); color: inherit; font: inherit; }
+.move:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.said { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; animation: session-thread-in var(--duration-base) var(--ease-decelerate); }
+.said[data-tone='done'] { color: var(--status-success-fg); }
+.said[data-tone='refused'] { color: var(--status-danger-fg); }
+
+.summary { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-left: 2px solid var(--accent-500); border-radius: var(--radius-sm); background: var(--bg-surface-raised); }
+.summaryTitle { font-family: var(--font-display); font-weight: 600; }
+.plain { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mono { margin: 0; font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.log { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.entry { display: flex; flex-direction: column; gap: 2px; max-width: min(86%, 72ch); min-width: 0; animation: session-thread-in var(--duration-base) var(--ease-decelerate); }
+.entry[data-side='session'] { align-self: flex-start; align-items: flex-start; }
+.entry[data-side='other'] { align-self: flex-end; align-items: flex-end; }
+.label, .receipt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-variant-numeric: tabular-nums; }
+.bubble { min-width: 0; max-width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface-raised); overflow-wrap: anywhere; }
+.entry[data-side='session'] .bubble { border-bottom-left-radius: var(--radius-xs); }
+.entry[data-side='other'] .bubble { border-color: transparent; border-bottom-right-radius: var(--radius-xs); background: var(--bg-selected); }
+.entry[data-kind='sent'] .bubble { background: var(--accent-500); color: var(--accent-contrast); }
+.entry[data-kind='latest'] .bubble { border-color: var(--border-strong); }
+/* What the session wrote: the end of its log, read like a terminal. The edge takes the session's state, and a caret pulses after the last line while it runs. */
+.entry[data-kind='output'] { max-width: 100%; align-self: stretch; }
+.entry[data-kind='output'] .bubble { align-self: stretch; padding: var(--space-2) var(--space-3); border-color: var(--border-strong); border-left: 2px solid var(--border-strong); background: var(--bg-surface); }
+.entry[data-kind='output'] .mono { max-height: 24em; overflow-y: auto; color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); tab-size: 2; }
+.root:has(.state[data-state='running']) .entry[data-kind='output'] .bubble { border-left-color: var(--status-success-solid); }
+.root:has(.state[data-state='running']) .entry[data-kind='output'] .mono::after { content: ''; display: inline-block; width: 0.55em; height: 1em; margin-left: 2px; vertical-align: text-bottom; background: var(--status-success-solid); animation: session-thread-live var(--duration-pulse, 2s) var(--ease-standard) infinite; }
+.root:has(.state[data-state='quiet']) .entry[data-kind='output'] .bubble { border-left-color: var(--status-warning-solid); }
+.record { align-self: center; display: flex; flex-wrap: wrap; justify-content: center; column-gap: var(--space-2); max-width: 100%; color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); text-align: center; overflow-wrap: anywhere; }
+.recordLabel { font-weight: 600; }
+/* A pause, resume, stop or move asked of the job: a rule across the conversation, like a day heading, so it reads as a turn in it. */
+.record[data-kind='control'] { align-self: stretch; align-items: center; color: var(--status-warning-fg); }
+.record[data-kind='control']::before, .record[data-kind='control']::after { content: ''; flex: 1; min-width: var(--space-3); height: 1px; background: currentColor; opacity: 0.4; }
+.routing { align-self: stretch; display: flex; flex-direction: column; gap: 2px; padding: var(--space-1) var(--space-2); border-left: 2px solid var(--border-strong); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); }
+.routed { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.routed a { color: var(--accent-500); }
+
+/* A day heading and the "New" mark: rules across the conversation. The mark clears the sticky header when jumped to. */
+.day, .newMark { align-self: stretch; display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 600; }
+.day::before, .day::after, .newMark::before, .newMark::after { content: ''; flex: 1; height: 1px; background: var(--border-subtle); }
+.newMark { color: var(--accent-500); scroll-margin-top: calc(var(--space-6) * 2); }
+.newMark::before, .newMark::after { background: var(--accent-500); }
+.newPill { flex: none; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-full); background: var(--accent-500); color: var(--accent-contrast); font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; animation: session-thread-in var(--duration-base) var(--ease-decelerate); }
+.newPill:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+.sources, .notice, .hint, .noReply, .loading, .empty { margin: 0; color: var(--text-secondary); }
+.gaps { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; color: var(--text-secondary); }
+.fault { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--status-danger-solid); border-radius: var(--radius-sm); background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.fault[data-kind='gone'], .fault[data-kind='unsupported'] { border-color: var(--border-default); background: var(--bg-surface-raised); color: var(--text-primary); }
+.noReply { padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+
+.reply { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr auto; gap: var(--space-1) var(--space-2); align-items: end; padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); background: var(--bg-surface); }
+.box { min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-input); color: inherit; font: inherit; resize: vertical; }
+.box:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.send { padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--accent-500); color: var(--accent-contrast); font: inherit; font-weight: 600; cursor: pointer; }
+.send:disabled { opacity: 0.5; cursor: default; }
+.hint, .failure { grid-column: 1 / -1; margin: 0; }
+.failure { color: var(--status-danger-fg); }
+
+@keyframes session-thread-live { 50% { opacity: 0.3; } }
+@keyframes session-thread-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .entry, .newPill, .said, .standing[data-status='requested'], .state[data-state='running']::before, .entry[data-kind='output'] .mono::after { animation: none; }
+}

@@ -62,12 +62,18 @@ export async function noticeOverdueSlackRequests(opts: { runsDir: string; now?: 
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    for (const row of replies.unansweredSample) {
+    const rows = [
+      ...replies.unansweredSample.map(r => ({ ...r, failed: false })),
+      ...replies.busFailedSample.map(r => ({ ...r, failed: true })),
+    ];
+    for (const row of rows) {
       const age = now - Date.parse(row.at);
       if (!(age > (opts.thresholdMs ?? 5 * 60_000))) continue;
       const key = `slack-overdue-${row.channelId}-${row.messageTs}`;
       if (keys.includes(key) || !opts.apply) { skipped++; continue; }
-      const result = await postOwnerThreadNotice(`Slack request in ${row.channelId} (thread ${row.threadTs}) has waited ${Math.floor(age / 60_000)} min with no same-thread reply. Check: phm channels slack status --json`, key, {
+      const result = await postOwnerThreadNotice(row.failed
+        ? `BUS-FAILED: Slack request in ${row.channelId} (thread ${row.threadTs}) was received ${Math.floor(age / 60_000)} min ago but its bus publish failed or was not confirmed; reply evidence for it may still exist. Check: phm channels slack status --json`
+        : `Slack request in ${row.channelId} (thread ${row.threadTs}) has waited ${Math.floor(age / 60_000)} min with no reply under its Leader reply key. Check: phm channels slack status --json`, key, {
         runsDir: opts.runsDir, now: () => now, settings: emptyOwnerSettings(),
       });
       if (result.status !== 'accepted' && result.status !== 'duplicate') return { state: 'unavailable', raised, skipped };

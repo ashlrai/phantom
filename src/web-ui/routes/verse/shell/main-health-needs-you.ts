@@ -14,9 +14,13 @@ export function deriveMainHealthNeedsYou(read: MainHealthRead | undefined): Flee
   const { repos, guardianOff, stale, statusAt } = read.data;
   const items: FleetNeedsYouItem[] = repos.flatMap(repo => repo.state === 'red' && repo.fixJobs.length === 0 ? [{
     id: `main-red-${repo.repo}`, severity: 'urgent' as const, target: 'fleet' as const,
-    title: `${repo.repo} ${repo.branch} is red with no fix job: ${repo.failingCheck || 'unknown check'}`,
+    title: repo.retryHold
+      ? `${repo.repo} ${repo.branch} is red after ${repo.emptyAttempts ?? 0} empty fix attempts: ${repo.failingCheck || 'unknown check'}`
+      : `${repo.repo} ${repo.branch} is red with no fix job: ${repo.failingCheck || 'unknown check'}`,
     detail: `${repo.sha ? repo.sha.slice(0, 7) : 'unknown SHA'} · checked ${displayTime(repo.checkedAt)}`,
-    nextStep: 'Read ~/.ashlr-runs/guardian/guardian.log',
+    nextStep: repo.retryHold
+      ? 'Do not retry the same fix. Read ~/.ashlr-runs/guardian/guardian.log, then fix or revert by hand'
+      : 'Read ~/.ashlr-runs/guardian/guardian.log',
     open: { kind: 'pane' as const, paneId: 'fleet-lanes' },
   }] : []);
   if (guardianOff) {

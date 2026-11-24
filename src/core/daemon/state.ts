@@ -281,8 +281,27 @@ function strictSpendGuardAccountingIssues(
 
 const MAX_PERSISTED_TICK_PHASES = 40;
 const TICK_PHASE_STATUSES: ReadonlySet<string> = new Set([
-  'ok', 'degraded', 'timeout', 'skipped', 'running',
+  'ok', 'degraded', 'timeout', 'skipped', 'running', 'off-tick',
 ]);
+
+function parseOffTick(value: unknown): NonNullable<DaemonState['lastTickPhases']>[number]['offTick'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  if (obj['state'] !== 'started' && obj['state'] !== 'running') return undefined;
+  if (!Number.isSafeInteger(obj['run']) || (obj['run'] as number) < 1) return undefined;
+  if (typeof obj['since'] !== 'string' || !Number.isFinite(Date.parse(obj['since']))) return undefined;
+  if (obj['lastStatus'] !== undefined && (typeof obj['lastStatus'] !== 'string' || !TICK_PHASE_STATUSES.has(obj['lastStatus']))) return undefined;
+  if (obj['lastDurationMs'] !== undefined && (typeof obj['lastDurationMs'] !== 'number' || !Number.isFinite(obj['lastDurationMs']) || obj['lastDurationMs'] < 0)) return undefined;
+  if (obj['lastSettledAt'] !== undefined && (typeof obj['lastSettledAt'] !== 'string' || !Number.isFinite(Date.parse(obj['lastSettledAt'])))) return undefined;
+  if (obj['lastError'] !== undefined && typeof obj['lastError'] !== 'string') return undefined;
+  return {
+    state: obj['state'], run: obj['run'] as number, since: obj['since'].slice(0, 80),
+    ...(obj['lastStatus'] !== undefined ? { lastStatus: obj['lastStatus'] as NonNullable<DaemonState['lastTickPhases']>[number]['status'] } : {}),
+    ...(typeof obj['lastDurationMs'] === 'number' ? { lastDurationMs: obj['lastDurationMs'] } : {}),
+    ...(typeof obj['lastSettledAt'] === 'string' ? { lastSettledAt: obj['lastSettledAt'].slice(0, 80) } : {}),
+    ...(typeof obj['lastError'] === 'string' ? { lastError: obj['lastError'].slice(0, 300) } : {}),
+  };
+}
 
 /** Tolerant phase-ledger parse: unknown entries are dropped, not fatal. */
 function parseTickPhases(value: unknown): DaemonState['lastTickPhases'] {
@@ -294,11 +313,13 @@ function parseTickPhases(value: unknown): DaemonState['lastTickPhases'] {
     if (typeof row['name'] !== 'string' || row['name'].length === 0) continue;
     if (typeof row['status'] !== 'string' || !TICK_PHASE_STATUSES.has(row['status'])) continue;
     if (typeof row['durationMs'] !== 'number' || !Number.isFinite(row['durationMs'])) continue;
+    const offTick = parseOffTick(row['offTick']);
     rows.push({
       name: row['name'].slice(0, 120),
       status: row['status'] as NonNullable<DaemonState['lastTickPhases']>[number]['status'],
       durationMs: row['durationMs'],
       ...(typeof row['error'] === 'string' ? { error: row['error'].slice(0, 300) } : {}),
+      ...(offTick ? { offTick } : {}),
     });
   }
   return rows.length > 0 ? rows : undefined;
@@ -383,6 +404,8 @@ function parseDaemonState(
         ? obj['lastTickOutcome']
         : undefined,
     lastTickPhases: parseTickPhases(obj['lastTickPhases']),
+    counterfactualReplayPending:
+      typeof obj['counterfactualReplayPending'] === 'boolean' ? obj['counterfactualReplayPending'] : undefined,
     lastTickError:
       obj['lastTickError'] === null
         ? null

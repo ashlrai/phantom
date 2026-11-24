@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { cmdFleetRebasePlan, type FleetRebasePlanDeps } from '../src/cli/fleet-rebase-plan.js';
+import { cmdFleetRebasePlan, readRebaseCoverage, type FleetRebasePlanDeps } from '../src/cli/fleet-rebase-plan.js';
 import type { MergeBatchPr } from '../src/core/fleet/merge-batch.js';
 import {
   REBASE_PLAN_SCHEMA,
@@ -9,6 +9,7 @@ import {
   parseHoldList,
   planRebaseJobs,
   rebaseAttemptsSpent,
+  rebaseWorkState,
   type RebasePlanExistingJob,
 } from '../src/core/fleet/rebase-plan.js';
 
@@ -177,6 +178,16 @@ describe('planRebaseJobs', () => {
     });
     expect(result.counts.covered).toBe(0);
     expect(result.jobs).toHaveLength(1);
+  });
+
+  it.each(['READY', 'QUEUED', 'WAITING', 'RUNNING', 'PR-OPEN', 'PUBLISH_UNKNOWN'])('covers legacy IDs by repository and PR while %s', status => {
+    const jobs = [1234, 3231, 3193].map(n => existing(`RQ-REBASE-PHANTOM-${n}`, status, '', 'ashlrai/phantom'));
+    expect([...coveredPrNumbers(jobs, 'ashlrai/phantom')]).toEqual([1234, 3231, 3193]);
+    expect(coveredPrNumbers(jobs, 'other/phantom').size).toBe(0);
+    expect(coveredPrNumbers(jobs, 'ashlrai/locus').size).toBe(0);
+    expect(plan([conflictedBridge(1234), conflictedBridge(3231), conflictedBridge(3193)], { existing: jobs }).jobs).toEqual([]);
+    jobs.forEach(job => { job.status = 'FAILED'; });
+    expect(plan([conflictedBridge(1234), conflictedBridge(3231), conflictedBridge(3193)], { existing: jobs }).jobs).toHaveLength(3);
   });
 
   it('covers PRs named in batch ids and router-queue line text', () => {
@@ -428,6 +439,22 @@ async function run(args: string[], opts: { stdinText?: string | null; files?: Re
 }
 
 describe('phm fleet rebase-plan', () => {
+  it('reads active and failed legacy JSON queue rows for the scheduler', async () => {
+    const jobs = [existing('RQ-REBASE-phantom-1234', 'RUNNING'), existing('RQ-REBASE-phantom-3231', 'FAILED')];
+    const coverage = await readRebaseCoverage('/queue', async path => path.endsWith('.md') ? jobs.map(job => JSON.stringify(job)).join('\n') : '');
+    expect(rebaseWorkState(coverage.jobs, ['ashlrai/phantom'])).toEqual({ active: new Set(['ashlrai/phantom#1234']), failed: new Set(['RQ-REBASE-phantom-3231']) });
+  });
+
+  it('preserves repository owners and sees a live retry after a failed TSV row', async () => {
+    const result = await run(['--json', '--repo', 'ashlrai/phantom'], { stdinText: OPEN_PRS, files: {
+      '/runs/queue/router-queue.md': '- READY RQ-REBASE-phantom-4021 (repo=other/phantom): rebase #4021\n- READY RQ-REBASE-phantom-4023 (repo=ashlrai/phantom): rebase #4023',
+      '/runs/queue/ready.tsv': 'FAILED\tRQ-REBASE-phantom-4025\tdevin\twork\tphantom\nQUEUED\tRQ-REBASE-phantom-4025\tdevin\twork\tphantom',
+    } });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out).coverage.coveredPrs).toEqual([4023, 4025]);
+    expect(JSON.parse(result.out).jobs.flatMap((job: { prs: number[] }) => job.prs)).toEqual([4021]);
+  });
+
   it('plans a piped snapshot: cluster + single job specs', async () => {
     const result = await run(['--json', '--repo', 'ashlrai/phantom'], { stdinText: OPEN_PRS });
     expect(result.code).toBe(0);

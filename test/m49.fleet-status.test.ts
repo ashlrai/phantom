@@ -27,7 +27,7 @@ import {
   type FleetStatus,
   type FleetReadinessSourceQuality,
 } from '../src/core/fleet/status.js';
-import { formatFleetStatus } from '../src/cli/fleet.js';
+import { cmdFleet, formatFleetStatus } from '../src/cli/fleet.js';
 import { buildProposalFunnelObservability } from '../src/core/fleet/proposal-funnel-observability.js';
 import { buildFleetLaneLocks } from '../src/core/fleet/lane-lock.js';
 import { buildContextEfficiencyStatus } from '../src/core/fleet/context-efficiency.js';
@@ -914,6 +914,21 @@ describe('buildFleetStatus — read-only aggregation (M49)', () => {
     } catch {
       // best-effort
     }
+  });
+
+  it('includes read-only disk attribution in status JSON and human output', async () => {
+    const reader = await import('../src/core/fleet/disk-attribution.js');
+    const disk = await reader.readFleetDiskAttribution({ runsRoot: join(tmpHome, 'runs'), wtRoot: join(tmpHome, 'wt'), ps: () => '' });
+    const read = vi.spyOn(reader, 'readFleetDiskAttribution').mockResolvedValue(disk);
+    const config = vi.spyOn(await import('../src/core/config.js'), 'loadConfig').mockReturnValue(baseConfig());
+    let output = '';
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true; });
+    try {
+      expect(await cmdFleet(['status', '--json'])).toBe(0);
+      const status = JSON.parse(output) as FleetStatus;
+      expect(status.disk).toEqual(disk);
+      expect(formatFleetStatus(status)).toContain('Largest safe cleanup candidates: none proven');
+    } finally { read.mockRestore(); config.mockRestore(); stdout.mockRestore(); }
   });
 
   it('returns the full shape with sane fallbacks on an empty ~/.ashlr', async () => {

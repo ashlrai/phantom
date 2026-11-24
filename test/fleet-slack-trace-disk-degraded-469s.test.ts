@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { cmdFleetSlackTrace } from '../src/cli/fleet-slack-trace.js';
 import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { recordSlackObservation, slackJournalPath } from '../src/core/agents/slack-journal.js';
 
 const CHANNEL = 'C0FAKE4691';
@@ -30,6 +31,8 @@ interface Fixture {
   storeBytes: Buffer;
 }
 
+/** One Leader request id per (channel, message): the same ts in another channel is another request. */
+const rid = (channelId: string, messageTs: string) => fakeRequestId(`${channelId}:${THREAD}:${messageTs}`);
 const roots: string[] = [];
 
 afterEach(() => {
@@ -48,7 +51,7 @@ function fixture(): Fixture {
   ] as const) {
     expect(recordSlackObservation({
       at: new Date(at).toISOString(), decision: 'ingested', channelId,
-      threadTs: THREAD, messageTs, authorId: AUTHOR, bus: 'posted',
+      threadTs: THREAD, messageTs, authorId: AUTHOR, bus: 'posted', requestId: rid(channelId, messageTs),
     }, { runsDir: deps.runsDir })).toBe('recorded');
   }
   mkdirSync(deps.stateRoot, { recursive: true, mode: 0o700 });
@@ -58,8 +61,8 @@ function fixture(): Fixture {
     state: 'sent', ts, text: BODY,
   });
   writeFileSync(storePath, JSON.stringify({ version: 1, messages: {
-    ['a'.repeat(64)]: receipt(CHANNEL, REPLY),
-    ['c'.repeat(64)]: receipt(OTHER, OTHER_REPLY),
+    [replyKey(rid(CHANNEL, FIRST))]: receipt(CHANNEL, REPLY),
+    [replyKey(rid(OTHER, FIRST))]: receipt(OTHER, OTHER_REPLY),
   } }), { mode: 0o600 });
   const journalPath = slackJournalPath(deps.runsDir);
   return { root, deps, journalPath, storePath,
@@ -201,9 +204,9 @@ describe('fleet slack-trace disk-degraded sources (469s)', () => {
     expect(degraded.counts).toMatchObject({ answered: 0, unanswered: 1 });
 
     writeFileSync(fx.storePath, JSON.stringify({ version: 1, messages: {
-      ['c'.repeat(64)]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12,
+      [replyKey(rid(CHANNEL, FIRST))]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12,
         channel: 'X-not-a-channel', thread: THREAD, state: 'sent', ts: REPLY, text: BODY },
-      ['d'.repeat(64)]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12,
+      [replyKey(rid(OTHER, FIRST))]: { digest: DIGEST, clientId: CLIENT, expiresAt: 9e12,
         channel: OTHER, thread: THREAD, state: 'sent', ts: OTHER_REPLY, text: BODY },
     } }), { mode: 0o600 });
     expect(readerSources(fx)).toEqual({ journal: 'ok', sends: 'degraded' });

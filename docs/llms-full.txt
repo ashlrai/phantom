@@ -1,6 +1,14 @@
 # Phantom
 
-> Open-source engineering agent workbench. Copy the blocks below. Do not add flags that are not on this page. `phm docs --agent --json` from the installed binary wins if it disagrees with this file. A zero exit code is not a merge, a release, or permission to spend.
+> Open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Mission: chasing open-source RSI (recursive self-improvement) as an agent-run software factory; agents follow `AGENTS.md` at the repository root. Copy the blocks below. Do not add flags that are not on this page. `phm docs --agent --json` from the installed binary wins if it disagrees with this file. A zero exit code is not a merge, a release, or permission to spend.
+
+## Mission and roles
+
+Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the repository's sanctioned workflow. The human owner acts as a passive board member: they set direction and are needed only for passwords, 2FA, device approvals and payments.
+
+Kept limits stay with the owner or are refused: secret values, force-pushes and admin bypass, spending and billing, and messages to people outside the organization. A completed run, a merged PR and a published release are separate evidence; unknown readings stay unknown.
+
+Read [AGENTS.md](../AGENTS.md) before acting and the [strategy for recursive self-improvement and an open fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md) for direction.
 
 ## Install
 
@@ -120,6 +128,61 @@ Separate from `ashlr-hub`. This server does not launch work or merge.
 
 Call `tools/list`, then `fleet_status` with `{}`. See [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md).
 
+## Ecosystem companions
+
+Phantom is the hub. Each companion installs separately, from its own repository, and keeps its own authorization boundaries. Nothing below is bundled into `@ashlr/phantom`.
+
+| Companion | Role |
+| --- | --- |
+| [phantom-secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
+| [ashlr-plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger for coding agents. |
+| [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
+| [lexicon](https://github.com/ashlrai/lexicon) | Corrects recurring speech-to-text errors before agents read them. |
+| [ashlr-md](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
+| [ashlr-stack](https://github.com/ashlrai/ashlr-stack) | Configures supported development services through CLI and MCP. |
+
+Inspect what is installed (read-only; Secrets, Locus and Lexicon), then detect and grant integrations:
+
+```sh
+phm companions --json
+phm onboard --ecosystem --json
+phm mcp ecosystem --json
+```
+
+Install guides pinned to reviewed commits are in [COMPANIONS.md](COMPANIONS.md). The repository's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7` and `ashlr`; see [AGENT-TOOLCHAIN.md](AGENT-TOOLCHAIN.md) for limits and approvals.
+
+## Watch the factory
+
+```sh
+phm org --text
+phm improve propose --json
+```
+
+`phm org` prints the live leader, its planners, each lane and each running job; a fact no source reported is `null` in JSON and `unknown` in text. `phm improve propose` prints evidence-backed improvement proposals and does not open a PR unless you pass `--open-pr`.
+
+## Work on Phantom from source
+
+Agents build Phantom. To change this repository:
+
+```sh
+git clone https://github.com/ashlrai/phantom.git
+cd phantom
+npm ci
+npm run dev -- --help
+```
+
+Before a PR, run the changed-file check once in the foreground, then the documentation check and the affected tests:
+
+```sh
+node scripts/verify-changed.mjs
+npm run check:docs
+npx vitest run test/doc-facts.test.ts
+```
+
+Tests are hermetic: never touch the real home directory or real model endpoints. `src/cli/` handlers stay thin and logic lives in `src/core/`. Changing an exported signature means updating `CONTRACT.md` in the same change.
+
+Outside contributors keep `ashlrai/phantom` as `origin`, push the branch to their own fork and open the pull request against `master`; `Merge Gate` is the one required check. [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md) walks through clone to auto-merge. Full conventions: [CONTRIBUTING.md](../CONTRIBUTING.md), [AGENT-OPERATIONS.md](AGENT-OPERATIONS.md) and the repository's `CLAUDE.md`.
+
 ## Optional cloud handoff
 
 ```sh
@@ -130,34 +193,78 @@ phm devin launch "<task>"
 
 These do not merge by themselves. See [CLOUD.md](CLOUD.md) and [DEVIN.md](DEVIN.md).
 
+## Fleet operation notes
+
+### Route hysteresis
+
+Dispatcher pool proposals keep a 60-minute residency; only auth failure or zero quota permits early movement. Launched jobs never move. At most two moves per six hours; blocked moves log `ROUTE_HOLD`. Read accepted trailing-hour moves:
+
+```sh
+phm route explain --json
+```
+
+See [ROUTE-HYSTERESIS.md](ROUTE-HYSTERESIS.md).
+
+### Connector profiles
+
+`phm connectors add|list|remove|show|import|exec|config --json` manages declarative connector metadata and Phantom Secrets references. `exec` launches with phantom-injected session tokens; `config` prints token-free client entries. See [CONNECTORS.md](CONNECTORS.md).
+
+### Multi-Mac node pool
+
+Configure explicit team SSH aliases, then join each Mac. Replace the placeholders with your own owner scope and aliases:
+
+```sh
+phm node pool --role primary --node <id> --owner <scope> --primary <alias> --backup <alias> --json
+phm node join --owner <scope> --primary <alias> --backup <alias> --json
+phm node watch --once --json
+phm node list --owner <scope> --json
+```
+
+- Node ID defaults to the sanitized hostname. Repeating `phm node join --json` rechecks saved config without changing roles.
+- RAM slots reserve max(4 GiB, 30%), then budget 4 GiB per job: 8 GiB gives one slot, 16 GiB gives two.
+- Admission holds on available RAM below 30%, swap use, disk below 20 GB or unknown telemetry; pressure stops running work. Disk telemetry covers the home filesystem; the runner's DISKGUARD must cover checkout and artifact volumes.
+- `phm node worker --runner /absolute/host-owned-runner --json` launches one bounded batch up to the RAM ceiling under one session, waits for every started slot and exits; there is no permanent supervisor.
+- `phm node rpc --json` is the SSH stdin endpoint. The backup witnesses every admission and promotes after fifteen minutes; a returning primary is demoted.
+- Share credential-free connector metadata and reviewed checkout MCP and skill files, never client auth. There is no automatic config synchronization, copied auth, new paid service, message send or worker publication.
+- Lanes are independent per node; sharded inference has no measured win. iPad and phone are mobile control only.
+
+See [AGENT-NETWORK.md](AGENT-NETWORK.md), [NODES.md](NODES.md) and `examples/node-pool/README.md`. Channel metadata, default-deny send policy and offline CLI examples are in [AGENT-NETWORK-CHANNELS.md](AGENT-NETWORK-CHANNELS.md).
+
+### Small-Mac oMLX lanes
+
+Enable with `~/.ashlr/local-lanes.json` containing `{"schemaVersion":1,"enabled":true}`, then:
+
+```sh
+phm node lanes --json
+```
+
+It prints the evidence-picked model, slots, backoff and suggested caps; `phm node join` and `phm node worker` advertise the `omlx`/`omlx-work` caps automatically. Hugging Face and oMLX weight caches under protected model roots are never deleted by disk maintenance by default. See [OMLX-SMALL-MACS.md](OMLX-SMALL-MACS.md).
+
+### Tier-1 import diagnosis
+
+```sh
+npx tsx scripts/tier1-why.ts <file> --json
+```
+
+Prints a shortest runtime import chain from a Tier-1 root, or unreachable. `test/tier1-apps-boundary.test.ts` guards fleet apps isolation; do not regenerate the protected snapshot. See [TIER1-WHY.md](TIER1-WHY.md).
+
 ## Doc index
 
 - [llms.txt](llms.txt): short index
+- [README.md](README.md): doc map
+- [Repository README](../README.md): mission, quickstart and ecosystem
+- [AGENTS.md](../AGENTS.md): agent constitution
 - [QUICKSTART.md](QUICKSTART.md): first local session
 - [SELF-HOSTING.md](SELF-HOSTING.md): install, MCP, upgrade, uninstall
 - [VERSE.md](VERSE.md): console guide
-- [README.md](README.md): doc map
+- [AGENT-MCP-CLI.md](AGENT-MCP-CLI.md): MCP gateway setup for Claude, Cursor and Codex
 - [AGENT-OPERATIONS.md](AGENT-OPERATIONS.md): cold start from source
 - [AGENT-TOOLCHAIN.md](AGENT-TOOLCHAIN.md): companion MCP servers for this repo
+- [COMPANIONS.md](COMPANIONS.md): companion inventory and install guides
+- [ECOSYSTEM-MAP.md](ECOSYSTEM-MAP.md): how the ecosystem repositories compose
 - [ARCHITECTURE.md](ARCHITECTURE.md): module map
 - [AUTOMATIC-OUTCOMES.md](AUTOMATIC-OUTCOMES.md): chat routing and fleet outcomes
 - [AUTONOMY-SETUP.md](AUTONOMY-SETUP.md): dormant autonomy commissioning
 - [FLEET-MCP-ONRAMP.md](FLEET-MCP-ONRAMP.md): read-only fleet MCP
-- [Repository README](../README.md): agent quickstart
-
-Route hysteresis: see docs/ROUTE-HYSTERESIS.md. Dispatcher pool proposals keep a
-60-minute residency; only auth failure or zero quota permits early movement.
-Launched jobs never move. At most two moves per six hours; blocked moves log
-ROUTE_HOLD. Read accepted trailing-hour moves with phm route explain --json.
-
-- [Connector profiles](CONNECTORS.md): `phm connectors add|list|remove|show|import|exec|config --json`; metadata and Phantom Secrets references, phantom-injected launch and token-free client configs.
-
-Multi-Mac node pool: see docs/AGENT-NETWORK.md and docs/NODES.md. Configure explicit team SSH aliases with phm node pool --role primary|backup --node <id> --owner <scope> --primary <alias> --backup <alias> --json. First join: npm install -g @ashlr/phantom && phm node join --owner mason --primary primary-mac --backup backup-mac --json. Node ID defaults to sanitized hostname; repeat phm node join --json rechecks saved config without changing roles. RAM slots reserve max(4 GiB, 30%) then budget 4 GiB/job: 8 GiB gives one, 16 GiB gives two. Hold on available RAM below 30%, swap use, disk below 20 GB or unknown telemetry; pressure stops running work. Worker launches one bounded batch up to the RAM ceiling concurrently under one session, waits for all started slots and leaves; no permanent supervisor. Disk telemetry covers the home filesystem; runner DISKGUARD must cover checkout/artifact volumes. Nominal three-second pressure checks can be delayed by bounded synchronous probes and SSH. DISKGUARD remains in force. Share credential-free Phantom connector metadata and reviewed checkout MCP/skill files, never client auth; no automatic config synchronization. Independent per-node lanes; sharded inference has no measured win. iPad and phone are mobile control only. See examples/node-pool/README.md. Use phm node watch [--once] --json, phm node worker --runner /absolute/host-owned-runner --json and phm node list|status --json. phm node rpc --json is the SSH stdin endpoint. The backup witnesses every admission and promotes after fifteen minutes; returning primary is demoted. No copied auth, new paid service, message sends or worker publication.
-
-Agent network channels: see AGENT-NETWORK-CHANNELS.md for channel metadata, default-deny policy, and offline CLI examples.
-
-Small-Mac oMLX lanes: see docs/OMLX-SMALL-MACS.md. Enable with ~/.ashlr/local-lanes.json {"schemaVersion":1,"enabled":true}; phm node lanes --json prints the evidence-picked model, slots, backoff and suggested caps, and phm node join/worker advertise the omlx/omlx-work caps automatically. HF/oMLX weight caches under protected model roots are never deleted by disk maintenance by default; sharded inference stays off until a measured comparison beats per-node.
-
-Tier-1 import diagnosis: npx tsx scripts/tier1-why.ts <file> [--json]
-Prints a shortest runtime import chain from a Tier-1 root, or unreachable.
-Guide: docs/TIER1-WHY.md. The ordinary test/tier1-apps-boundary.test.ts guards fleet apps isolation. Do not regenerate the protected snapshot.
+- [JOB-COST.md](JOB-COST.md): per-job cost breakdown by model call
+- [APP-RESTART.md](APP-RESTART.md): held restart command, process ownership audit and remaining zero-downtime acceptance work

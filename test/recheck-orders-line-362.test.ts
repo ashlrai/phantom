@@ -100,7 +100,10 @@ describe('summarizeOrders', () => {
     expect(summary.windowHours).toBe(24);
     expect(summary.total).toBe(3);
     expect(summary.counts).toEqual({ VERIFIED: 1, ASSIGNED: 1, RECEIVED: 1 });
-    expect(summary.reasons).toEqual([]);
+    expect(summary.reasons).toEqual([
+      'orders: live workers unavailable, RUNNING not checked',
+      'orders: lane holds unavailable, BLOCKED not checked',
+    ]);
   });
 
   it('reports one reason per unhealthy trace source', () => {
@@ -108,7 +111,12 @@ describe('summarizeOrders', () => {
       ...TRACE,
       sources: { inbox: 'healthy', prompts: 'degraded', publishes: 'missing' },
     }, ISO);
-    expect(summary.reasons).toEqual(['orders: prompts degraded', 'orders: publishes missing']);
+    expect(summary.reasons).toEqual([
+      'orders: prompts degraded',
+      'orders: publishes missing',
+      'orders: live workers unavailable, RUNNING not checked',
+      'orders: lane holds unavailable, BLOCKED not checked',
+    ]);
     expect(summary.total).toBe(3);
   });
 });
@@ -150,7 +158,11 @@ describe('fleet recheck orders evidence', () => {
     const lines = formatRecheckReply(v).split('\n');
     const i = lines.findIndex(l => l.startsWith('Task:'));
     expect(i).toBeGreaterThan(-1);
-    expect(lines[i + 1]).toBe(`Orders 24h: 1 VERIFIED, 1 ASSIGNED, 1 RECEIVED · as of ${ISO} (order-trace)`);
+    expect(lines[i + 1]).toBe(
+      'Orders 24h: 1 VERIFIED, 1 ASSIGNED, 1 RECEIVED'
+      + ' · orders: live workers unavailable, RUNNING not checked; orders: lane holds unavailable, BLOCKED not checked'
+      + ` · as of ${ISO} (order-trace)`,
+    );
   });
 
   it('a throwing reader says reader failed and changes nothing else', async () => {

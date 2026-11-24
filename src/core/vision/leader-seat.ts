@@ -1,3 +1,4 @@
+import { localModelFit } from '../resources/local-memory-fit.js';
 import { FABLE_ORCHESTRATOR_MODEL } from '../routing/fable-orchestrator.js';
 import { readFableAdmission } from '../routing/fable-admission.js';
 /** Leader roles use task fit and observed account capacity, not provider bans.
@@ -24,6 +25,7 @@ import type { NativeRoleEngine, RoleCompletionMetrics } from '../run/role-comple
 import type { AgentActionEvent } from '../fleet/agent-action-ledger.js';
 import type { LocalLeaderCompletionMetrics, LocalLeaderBinding } from './local-leader-transport.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
+import { learnedSeatRouteEvidence } from '../routing/learned-seat-evidence.js';
 import { devinCliIdentityCurrent, peekDevinCliExecutionBinding, refreshDevinCliExecutionBindings, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import type { VerseSeat } from '../verse/types.js';
@@ -254,7 +256,12 @@ async function routeLeader(
     }
     const models=candidate.seat.models.filter(model=>!model.unavailableReason && (model.id !== FABLE_ORCHESTRATOR_MODEL ||
       candidate.seat.engine === 'claude' && deps.transports.native && readFableAdmission({ role: 'leader' }, nowMs).allowed));
-    const variants=models.map(model => ({
+    const variants=models.filter(model => {
+      if (candidate.seat.engine !== 'local') return true;
+      const fit = localModelFit(model.id, request.contextTokens);
+      if (fit.verdict !== 'fits') ruledOut.push(skippedSeat(candidate, fit.reason));
+      return fit.verdict === 'fits';
+    }).map(model => ({
       candidate:{...candidate,seat:{...candidate.seat,models:[model],contextWindow:model.contextWindow}},
       capacity:{...base,contextWindow:model.contextWindow,tier:seatTier(candidate.seat.engine,model.id),
         ...(candidate.seat.engine === 'devin' && candidate.seat.id === 'devin-cli' && currentDevinBinding(candidate, model.id)
@@ -312,6 +319,8 @@ function buildSeat(deps: LeaderSeatDeps, chosen: LeaderSeatCandidate, opts: { mo
   const budget = leaderCallBudget(engine, model, opts.mode, opts.promptChars);
   let complete: LeaderComplete;
   if (engine === 'local') {
+    const fit = localModelFit(model, budget.contextTokens ?? 65536);
+    if (fit.verdict !== 'fits') return { ok: false, reason: fit.reason };
     if (chosen.localDispatch?.kind === 'llama-server') {
       const binding = chosen.localDispatch.binding;
       if (!binding || binding.model !== model || binding.contextWindow !== chosen.seat.contextWindow || !deps.transports.llama) {
@@ -603,7 +612,7 @@ export function ollamaLeaderTransport(
   model: string,
   cfg: AshlrConfig | undefined,
   timeoutMs = 15 * 60_000,
-  opts: { maxOutputTokens?: number; contextTokens?: number | null } = {},
+  opts: { maxOutputTokens?: number; contextTokens?: number | null; json?: boolean } = {},
 ): LeaderComplete {
   return async (system, user) => {
     const url = `${baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '')}/api/chat`;
@@ -627,7 +636,9 @@ export function ollamaLeaderTransport(
           stream: true,
           // JSON-constrained decoding: the memo parser fails closed on prose,
           // so asking the runtime for an object is the cheap way to not fail.
-          format: 'json',
+          // Free-text callers (the router gateway) pass json: false. Omitted
+          // stays JSON, which is what every existing caller relies on.
+          ...(opts.json === false ? {} : { format: 'json' as const }),
           think: false,
           options,
         }),
@@ -855,7 +866,13 @@ export async function loadDefaultLeaderSeatDeps(cfg: AshlrConfig): Promise<Leade
     budgetPolicy: () => budgetStore.loadBudgetPolicy(),
     standingPolicy: () => effective.currentStandingPolicy(),
     clampBudget: (policy, standing) => effective.clampBudgetPolicy(policy, standing),
-    route: (req, capacity, policy, nowMs) => router.routeSeat(req, capacity, policy, { nowMs }),
+    route: (req, capacity, policy, nowMs) => router.routeSeat(req, capacity, policy, {
+      nowMs,
+      // The fleet's own outcome record, pooled per seat and cached for
+      // LEARNED_SEAT_EVIDENCE_TTL_MS; {} when the ledgers have no usable
+      // evidence, which leaves the ranking exactly as the weights alone.
+      ...learnedSeatRouteEvidence(nowMs),
+    }),
     capacityFromSeat: (seat) => headroom.capacityFromSeat(seat),
     recordDecision: (req, decision) => budgetStore.recordShadowDecision({ source: 'leader', request: req, decision, actual: null }),
     transports: defaultLeaderTransports(cfg),

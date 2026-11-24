@@ -77,6 +77,11 @@ export function OperationsDeck() {
       </li>)}</ol> : <p>{!machine || !fleet || daemonTick.level === 'unknown' || !admission || admission.warnings === null || fleet.blockedHolds == null ? 'Needs-you evidence unknown or incomplete.' : 'No operator actions reported by these sources.'}</p>}
       {items.length > 5 ? <p>More items are recorded in the source projections.</p> : null}
     </section>
+    <section aria-label="Why isn't it launching">
+      <h3>Why isn't it launching?</h3>
+      <p>{machine?.launchVitals?.reason ?? 'Reason unknown.'} Next launch window: {machine?.launchVitals?.nextWindowSeconds == null ? 'unknown' : `${machine.launchVitals.nextWindowSeconds} seconds`}. Queued: {show(machine?.launchVitals?.queued)}.</p>
+      {machine?.launchVitals?.lanes.map(lane => <p key={lane.lane}>{lane.lane}: {show(lane.running)} running of {show(lane.target)} target; {show(lane.queued)} queued</p>)}
+    </section>
     <dl className={styles.metrics}>
       <div title={`${STATUS} · publishes_24h`}><dt>Publishes · 24h</dt><dd>{show(machine?.operations?.publishes24h)}</dd></div>
       <div title="/api/queue/stats?window=3600 · stations[merge-queue].windows.currentQueueLength"><dt>Merge-queue depth</dt><dd>{show(mergeQueue?.currentQueueLength)}</dd></div>

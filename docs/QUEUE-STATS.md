@@ -1,7 +1,8 @@
 # Queue statistics
 
 `phm queue stats --json` reads the local metadata journal at
-`$ASHLR_HOME/queue/visits.jsonl` (default `~/.ashlr/queue/visits.jsonl`) and
+`$ASHLR_HOME/queue/visits.jsonl` when `ASHLR_HOME` is an absolute path, otherwise
+`~/.ashlr/queue/visits.jsonl`, and
 returns station and pool aggregates for sliding
 1 hour, 24 hour and 7 day windows. `--window <seconds>` selects one window.
 The command is read-only and requires no service or credentials. Missing journals
@@ -19,7 +20,57 @@ All snapshots for a visit must retain the same arrival time, station and pool;
 the last appended snapshot wins. A retry or station transfer gets a new visit ID.
 Do not put prompts, credentials or task descriptions in these labels. Existing
 fleet events do not contain these timestamps: producers must record visits before
-the estimator can report them. The journal currently has no automatic retention.
+the estimator can report them. The journal keeps itself bounded: every
+`visits-sync` pass (the daemon off-tick job and `--apply`) compacts it once it
+exceeds 4 MiB, rewriting to the latest snapshot per (station, pool, id) — the
+only form every reader folds to — while keeping open visits, visits completed
+within the last 30 days, and every key still derivable from the jobs-ledger
+tail or live queue. Completed visits older than that whose jobs have left
+every evidence window are dropped; stats windows never reach them, and a visit
+id is never reused so nothing can append against a dropped key.
+
+`phm queue visits-sync` is the fleet producer: it folds `metrics/jobs.jsonl`
+and the live `- READY` rows of `queue/router-queue.md` into visits and appends
+new or progressed snapshots to the journal. Dry run by default; `--apply`
+writes, `--json` prints a `queue.visits-sync.v1` report, and `--jobs`,
+`--queue`, `--journal` override the default paths. The resident daemon runs
+the same fold (`syncQueueVisits` in `src/core/queue/visit-sync.ts`) as a
+`visit-sync` off-tick job on the self-improvement cadence, so the journal
+stays fed without a manual pass; it reads the newest bounded tail of the jobs
+ledger like the sibling evidence syncs and reports its health in the tick's
+off-tick job list. Re-running is idempotent:
+a visit appends again only when it gains a transition, and a candidate less
+complete than the journal's latest snapshot is refused.
+
+Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
+
+- **READY** — queue dwell. Arrival is the earliest `enqueue`/`queued` stamp
+  or `launch_failed` receipt with `action=retry` before the attempt's launch
+  (attempt 1 also accepts enqueue stamps; later attempts only retry receipts);
+  departure is the `launch` stamp, with `startedAt === completedAt` because
+  dispatch service is instantaneous. Jobs still listed `- READY` in
+  router-queue.md with zero recorded launches produce open visits (arrival
+  from the ledger enqueue stamp or the line's `enq=` epoch-seconds token). A
+  job resolved `DONE-NOOP` before any launch completes its READY visit at the
+  outcome stamp.
+- **claimed** — `launch` to the first of `finish`, `publish` or a matched
+  terminal outcome; service starts at launch (dedicated worker), so `wait` is
+  zero and `rho` measures mean concurrency.
+- **publish** — `finish` to `publish` (or an outcome `PUBLISHED` row); a
+  finish without publish stays open as publisher-slot WIP.
+- **pr-ci** — `publish` to `ci_complete`, a matched `MERGED`/`CLOSED` outcome,
+  or stays open; `ci_start` is the service start when the ledger carries it,
+  otherwise the whole dwell reports as wait.
+- **merge-queue** — `ci_complete` to `MERGED`/`CLOSED`; needs the CI boundary,
+  otherwise absent.
+- **merged** — zero-dwell marker at the merge stamp for throughput.
+
+Known gaps stay unknown: `planned`, `released`, `fix-main`, review and release
+stations have no ledger boundaries; re-queued attempts (a second launch after
+a non-launch-failure requeue) have no recorded re-arrival, so their READY wait
+is not emitted; `checkout`, `model` and check phases inside claimed/pr-ci are
+not split. URL-bearing outcomes match the attempt that published that PR;
+URL-less outcomes follow the dispatcher's current-attempt rule.
 
 Windows are half-open `[now - window, now)`. Arrivals divided by window seconds
 are `lambda`; `mu` is completed visits divided by their total service seconds

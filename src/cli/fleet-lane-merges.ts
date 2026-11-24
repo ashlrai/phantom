@@ -14,6 +14,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { readJobsTail } from '../core/fleet/report-ledger.js';
 
 const usage = 'Usage: ashlr fleet lane-merges [--root <dir>] [--hours <1..168>] [--json]';
 const MAX_JOBS_BYTES = 32 * 1024 * 1024;
@@ -99,14 +100,13 @@ async function readBounded(path: string, max: number): Promise<string> {
   } finally { await file.close(); }
 }
 
-/** An absent metrics file reports as missing; other read failures propagate. */
+/** An absent metrics file reports as missing; other read failures propagate.
+ * The ledger is append-only, so the read keeps its newest MAX_JOBS_BYTES tail. */
 export async function readLaneMergesJobs(root: string): Promise<string | null> {
-  try {
-    return await readBounded(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_BYTES);
-  } catch (error) {
-    if (['ENOENT', 'ENOTDIR'].includes(String((error as NodeJS.ErrnoException)?.code))) return null;
-    throw error;
-  }
+  const read = await readJobsTail(join(root, 'metrics', 'jobs.jsonl'), MAX_JOBS_BYTES);
+  if (read.missing) return null;
+  if (read.text === null) throw new Error('unavailable');
+  return read.text;
 }
 
 /** slots.json lane targets; a lane without a readable target simply has none. */

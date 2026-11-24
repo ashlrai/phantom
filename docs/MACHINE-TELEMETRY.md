@@ -129,6 +129,19 @@ The local host uses Node OS counters and statfs, with no shell or network probes
 RAM used here means physical total minus OS free, rather than working-set attribution.
 Pressure and memguard state are available only from a fresh existing machine sample.
 
+Node pool capacity. Each node also carries its advertised `caps` (null when none were
+reported). The payload adds `hosts` and `pool`, a rollup from `src/core/fleet/compute-hosts.ts`
+that groups workers per physical Mac (mbp-w1 + mbp-w2) and sums advertised slots of
+live (ready) workers per host and fleet-wide next to the slots the host's RAM alone would
+allow, so oversubscription is visible. Node records carry no hostname, so grouping uses
+evidence two Macs cannot share: identical RAM total, identical core count and a boot time
+(sample time minus uptime) within 10 seconds. Nodes with no host-stats are not placed on
+any host; they are counted as `unplacedNodes`. A sum with any live worker's slots
+unreported is `null` (rendered unknown), never zero. A live worker advertising zero slots
+is shown as held; the held reason (memory-pressure, disk-pressure, ...) is not stored in
+the node record, so the view says "reason not recorded" instead of guessing. Both fields are
+optional: older servers omit them and the map says the rollup is unavailable.
+
 Per-core sparklines retain up to 32 observations in the view. The first sample,
 reboots, reordered counters and gaps over 90 seconds cannot establish utilization.
 Stale/future readings never drive the heat overlay. Load heat is relative to the

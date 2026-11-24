@@ -287,11 +287,12 @@ beforeEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('buildSnapshot — shape invariants', () => {
+  // Full-fleet snapshot build is CPU-heavy; under parallel lanes it can exceed the 5 s default.
   it('resolves to a DashboardSnapshot (does not throw)', async () => {
     const snap = await buildSnapshot(makeConfig());
     expect(snap).toBeDefined();
     expect(typeof snap).toBe('object');
-  });
+  }, 15_000);
 
   it('generatedAt is a non-empty ISO string', async () => {
     const snap = await buildSnapshot(makeConfig());

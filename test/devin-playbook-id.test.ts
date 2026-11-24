@@ -80,7 +80,7 @@ describe('the checked-in playbook source', () => {
     expect(body).toMatch(/em dash/i);
     expect(body).toMatch(/secrets/i);
     expect(body).toMatch(/acceptance tests/i);
-    expect(body).toMatch(/small/i);
+    expect(body).toMatch(/tier budget/i);
     expect(body).toContain('CHANGELOG.md');
     expect(body).toContain('.github/**');
   });

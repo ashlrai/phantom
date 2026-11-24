@@ -1,8 +1,6 @@
 /**
- * routes/verse/library/LibraryPane.tsx: one read-only place to see what
- * Phantom remembers: per-project shared memory, past chats and the way in to
- * the agent conversation. It reuses the context queries and adds no route;
- * nothing here writes. Every string from the server renders as plain text.
+ * Library: the shared overview plus existing memory, pin and source tools.
+ * Server strings are untrusted; render previews as plain text.
  */
 import { useEffect, useMemo, useState } from 'react';
 import type { VerseSearchResponse } from '../../../../core/verse/types.js';
@@ -16,11 +14,13 @@ import { openDockPane } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { verseSessionsQuery } from '../verse-queries.js';
 import { CosMemorySection } from './CosMemorySection.js';
+import { LibraryOverview } from './LibraryOverview.js';
 import { MediaSection } from './MediaSection.js';
 import { HandoffsSection } from './HandoffsSection.js';
 import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
 import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
 import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
+import { PinnedGroup, PinToggle } from './LibraryPins.js';
 import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
 import styles from './library.module.css';
 
@@ -61,6 +61,7 @@ function MemoryCard({ project, visible }: { project: RecentProject; visible: boo
           </pre> : null}
         </>
       )}
+      <div><PinToggle kind="memory" pinRef={project.path} title={`${project.name} memory`} visible={visible} /></div>
     </Card>
   );
 }
@@ -71,12 +72,11 @@ type SearchState =
   | { status: 'ready'; response: VerseSearchResponse }
   | { status: 'error'; message: string };
 
-function PastChats() {
-  const [q, setQ] = useState('');
+function PastChats({ q, visible }: { q: string; visible: boolean }) {
   const [state, setState] = useState<SearchState>({ status: 'idle' });
 
   useEffect(() => {
-    if (!searchQueryValid(q)) {
+    if (!visible || !searchQueryValid(q)) {
       setState({ status: 'idle' });
       return undefined;
     }
@@ -88,13 +88,11 @@ function PastChats() {
         .catch((err: unknown) => { if (!controller.signal.aborted) setState({ status: 'error', message: errorSentence(err) }); });
     }, LIBRARY_SEARCH_DEBOUNCE_MS);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [q]);
+  }, [q, visible]);
 
   return (
     <section className={styles.section} aria-label="Past chats">
       <h2>Past chats</h2>
-      <input type="search" className={styles.input} value={q} placeholder="Search what was said in past chats"
-        aria-label="Search past chats" autoComplete="off" spellCheck={false} onChange={(event) => setQ(event.target.value)} />
       {state.status === 'idle' ? (
         <p className={styles.meta}>Type at least 2 characters. Nothing is sent to a model.</p>
       ) : state.status === 'loading' ? (
@@ -156,6 +154,7 @@ function AgentConversation({ visible }: { visible: boolean }) {
               </span>
               <span className={styles.busText}>{line.text}</span>
               <span className={styles.meta}>{line.age}</span>
+              <PinToggle kind="bus" pinRef={line.id} title={`${line.from} → ${line.to}: ${line.text}`} visible={visible} />
             </li>
           ))}
         </ul>
@@ -226,15 +225,19 @@ function LeaderFiles({ visible }: { visible: boolean }) {
 }
 
 export function LibraryPane({ visible = true }: { visible?: boolean }) {
+  const [search, setSearch] = useState('');
   const sessions = useQuery(verseSessionsQuery, { enabled: visible });
   const handoffs = useQuery(handoffsQuery, { enabled: visible, freshMs: 30_000 });
-  const projects = useMemo(() => recentProjects(sessions.data ?? []), [sessions.data]);
+  const malformedSessions = sessions.data !== undefined && !Array.isArray(sessions.data);
+  const projects = useMemo(() => recentProjects(Array.isArray(sessions.data) ? sessions.data : []), [sessions.data]);
   return (
     <div className={styles.root}>
+      <LibraryOverview visible={visible} search={search} onSearch={setSearch} />
+      <PinnedGroup visible={visible} />
       <CosMemorySection visible={visible} />
       <section className={styles.section} aria-label="Memory">
         <h2>Memory</h2>
-        {sessions.error && !sessions.data ? (
+        {malformedSessions ? <CardNote tone="danger">Project list unavailable.</CardNote> : sessions.error && !sessions.data ? (
           <CardNote tone="danger">Could not list projects: {errorSentence(sessions.error)}</CardNote>
         ) : projects.length === 0 ? (
           <CardNote>{sessions.data ? 'No projects yet. Start a chat to give Phantom something to remember.' : 'Loading…'}</CardNote>
@@ -244,7 +247,7 @@ export function LibraryPane({ visible = true }: { visible?: boolean }) {
           </div>
         )}
       </section>
-      <PastChats />
+      <PastChats q={search} visible={visible} />
       <AgentConversation visible={visible} />
       <LeaderFiles visible={visible} />
       <MediaSection visible={visible} />

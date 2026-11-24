@@ -2,6 +2,8 @@ import { resolve } from 'node:path';
 import { leaderAttachmentDir } from '../core/verse/leader-attachment-api.js';
 import { listLeaderAttachments } from '../core/verse/leader-attachment-list.js';
 
+export const FLEET_ATTACHMENTS_USAGE = 'Usage: ashlr fleet attachments [--json] [--limit N]';
+
 export async function cmdFleetAttachments(args: string[]): Promise<number> {
   let json = false;
   let limit: number | undefined;

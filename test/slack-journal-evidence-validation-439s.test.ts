@@ -152,7 +152,18 @@ describe('slack journal evidence validation (439s)', () => {
     const trace = readSlackRequestTrace({ runsDir, stateRoot, now: () => new Date('2026-11-15T13:00:00.000Z') });
     expect(trace.sources.journal).toBe('ok');
     expect(trace.rows).toHaveLength(1);
-    expect(trace.rows[0]).toMatchObject({ outcome: 'unanswered', ingress: 'posted' });
+    // A row without a requestId has no reply identity: uncertain/unverified, not unanswered.
+    expect(trace.rows[0]).toMatchObject({ outcome: 'uncertain', ingress: 'posted', evidence: 'unverified' });
+  });
+
+  it('round-trips a valid requestId and degrades the row on a malformed one', () => {
+    const good = 'ab'.repeat(32);
+    const ok = readSlackJournal({ runsDir: journalDir([row({ requestId: good }), row({ at: '2026-11-15T12:01:00.000Z' })]) });
+    expect(ok.state).toBe('ok');
+    expect(ok.entries.map((e) => e.requestId)).toEqual([undefined, good]);
+    for (const bad of ['short', 'AB'.repeat(32), 7, null, 'g'.repeat(64)]) {
+      expect(readSlackJournal({ runsDir: journalDir([row({ requestId: bad })]) }).state).toBe('degraded');
+    }
   });
 
   it('preserves missing and truncated behavior', () => {

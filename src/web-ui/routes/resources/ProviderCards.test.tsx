@@ -10,10 +10,12 @@ const view = buildResourceView({ readings: {
 } }, NOW);
 
 describe('ProviderCards', () => {
-  it('renders a card per provider with monograms, unknown readings and no chart for them', () => {
+  it('renders a card per provider with brand marks, unknown readings and no chart for them', () => {
     render(<ProviderCards view={view} />);
     for (const name of ['OpenAI', 'Anthropic', 'Cognition / Devin', 'xAI']) expect(screen.getByRole('article', { name: `${name} capacity` })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Anthropic mark' })).toHaveTextContent('A');
+    const mark = screen.getByRole('img', { name: 'Anthropic mark' });
+    expect(mark).toHaveAttribute('data-provider', 'claude');
+    expect(mark.querySelector('path')).not.toBeNull();
     expect(screen.getByRole('article', { name: 'xAI capacity' })).toHaveTextContent('Highest used unknown');
     expect(screen.getAllByText(/No burn-down/).length).toBe(5);
     expect(screen.getByRole('article', { name: 'Local models capacity' })).toHaveTextContent('Local models: unknown');

@@ -1,4 +1,5 @@
 /** Compatibility alias for `phm fleet imessage-tasks`, including its safe receipts and cancellation. */
+export const FLEET_TEAMMATE_TASKS_USAGE = 'Usage: phm fleet teammate-tasks enqueue --peer dot|instinct --job <id>';
 import { cmdFleetImessageTasks, type FleetImessageTasksDeps } from './fleet-imessage-tasks.js';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { enqueueTeammateTask, listTeammateTasks, runTeammateTasks, teammateTaskPeers } from '../core/comms/imessage-teammate-tasks.js';

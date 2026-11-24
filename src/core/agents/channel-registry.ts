@@ -36,18 +36,22 @@ export function localChannelAdapters(options: BusInboxOptions = {}): Partial<Rec
   };
 }
 
-function channelHealthy(id: ChannelId): boolean {
-  if (id !== 'bus' && id !== 'handoff') return false;
-  const inspection = inspectBusInbox();
-  return inspection.source === 'missing' || inspection.source === 'available';
+/** `true` usable, `false` confirmed down, `'unknown'` when nothing can assess it. */
+export type ChannelHealth = boolean | 'unknown';
+
+function channelHealthy(id: ChannelId, options: BusInboxOptions): ChannelHealth {
+  if (id !== 'bus' && id !== 'handoff') return 'unknown';
+  const inspection = inspectBusInbox(options);
+  if (inspection.source === 'unavailable') return false;
+  return true;
 }
 
-export function listChannelRegistry(): Array<{ id: ChannelId; adapterRegistered: boolean; healthy: boolean }> {
+export function listChannelRegistry(options: BusInboxOptions = {}): Array<{ id: ChannelId; adapterRegistered: boolean; healthy: ChannelHealth }> {
   ensureDefaultAdapters();
   return CHANNEL_IDS.map(id => ({
     id,
     adapterRegistered: registry.has(id),
-    healthy: registry.has(id) ? channelHealthy(id) : false,
+    healthy: registry.has(id) ? channelHealthy(id, options) : 'unknown',
   }));
 }
 

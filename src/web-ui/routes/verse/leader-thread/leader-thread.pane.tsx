@@ -5,5 +5,6 @@ registerPane({
   shortcut: 'mod+alt+l',
   id: 'leader-thread', title: 'Leader', icon: ContextGlyph, needsSession: false,
   description: 'Talk with your engineering leader and see the current plan.',
-  component: lazyPane(() => import('./LeaderThreadPane.js').then(m => m.LeaderThreadPane)),
+  // The surface is the conversation with the "Working now" strip above it.
+  component: lazyPane(() => import('./LeaderSurface.js').then(m => m.LeaderSurface)),
 });

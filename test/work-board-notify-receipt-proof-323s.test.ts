@@ -142,6 +142,7 @@ describe('sendNotifications receipt proof', () => {
     expect(sentSet).toEqual(new Set([
       boardNotifyLedgerKey('req-proof-1', 'BLOCKED'),
       boardNotifyLedgerKey('req-proof-1', 'BLOCKED', plan2.notices[0]!.delta),
+      JSON.stringify(['board-notify-provenance', 'req-proof-1', 'BLOCKED', 'modern']),
     ]));
 
     // Restart: a fresh read of the same private ledger still dedupes, so a
@@ -152,8 +153,8 @@ describe('sendNotifications receipt proof', () => {
     const replay = vi.fn();
     await sendNotifications(plan3.notices, { senders: { slack: replay }, ledgerPath });
     expect(replay).not.toHaveBeenCalled();
-    // One delivered row yields two dedupe keys: the entry key and the delta key.
-    expect(readBoardNotifySent(ledgerPath)!.size).toBe(2);
+    // One delivered row yields the entry key, the delta key, and the modern provenance key.
+    expect(readBoardNotifySent(ledgerPath)!.size).toBe(3);
   });
 
   it('an append failure mid-batch leaves later notices pending and retryable', async () => {

@@ -6,8 +6,17 @@
  * secret itself stays in Phantom Secrets custody and is resolved by the
  * security-reviewed poster at request time.
  */
+import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { ashlrHome } from '../cloud/store.js';
+import { formatAsOf } from '../comms/as-of-label.js';
+import { listWorkBoard, type WorkBoardItem } from '../comms/work-board.js';
+import { formatWorkItemStatusLine } from '../comms/work-item-state.js';
+import { readPrivateFileCapped } from '../verse/preferences.js';
+import { scrubSecrets } from '../util/scrub.js';
 import {
-  loadAgentNetworkConfig, loadCommsConfirmation, slackChannelForTopic, slackThreadRef,
+  loadAgentNetworkConfig, loadCommsConfirmation, slackChannelForTopic, slackThreadRef, parseSlackThreadRef,
   type AgentNetworkConfig, type SlackBridgeConfig,
 } from './slack-network.js';
 import { readSlackJournal, type SlackJournalRead, type SlackObservation } from './slack-journal.js';
@@ -45,8 +54,19 @@ export interface SlackBridgeStatus {
     ignoredReasonsOmitted?: number;
   };
   /**
-   * Ingested requests bound to same-thread `sent` receipts. An `attempted`
-   * send is never an answer; `uncertainSends` counts attempts never confirmed.
+   * Ingested requests bound by exact Leader reply key to a `sent` receipt. An
+   * `attempted` send is never an answer; `uncertainSends` counts attempts never
+   * confirmed. `unanswered` (and the ordinary overdue notice built on it) counts
+   * only requests with a known reply identity, durable bus ingress (posted or
+   * duplicate) and no stored send. Bus-ingress failures are a separate class:
+   * `busFailed`/`busFailedSample` hold EVERY failed row (keyed or not) and raise
+   * an explicit BUS-FAILED notice, never an ordinary reply-overdue one.
+   * `unverified` counts requests with no reply identity (legacy, peer path, not
+   * Leader-routed), failed or not, so it OVERLAPS `busFailed` for failed
+   * unidentified rows; the counters are not disjoint totals.
+   * `uncertainRequests` counts keyed requests whose send is only attempted or
+   * inconsistent, or whose ingress was never durably recorded. Unverified and
+   * uncertain rows are neither answered nor certified unanswered.
    */
   replies: {
     state: 'ok' | 'missing' | 'degraded';
@@ -54,10 +74,15 @@ export interface SlackBridgeStatus {
     unanswered: number;
     oldestUnansweredAt: string | null;
     uncertainSends: number;
+    unverified: number;
+    uncertainRequests: number;
     rejected: number;
     futureDated: number;
     unansweredSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
+    busFailed: number;
+    busFailedSample: { channelId: string; threadTs: string; messageTs: string; at: string }[];
   };
+  work: SlackWorkStatus;
   ready: boolean;
   /** Offline configuration does not establish a connected bot or receive route. */
   transport: { health: 'unknown'; observedAt: null; probeCommand: string };
@@ -72,7 +97,69 @@ export interface SlackBridgeStatusOptions {
   /** Slack transport state root holding messages.json (tests). */
   stateRoot?: string;
   home?: string;
+  busRoot?: string;
   now?: () => Date;
+}
+
+/** Current receipt-backed work, shared by thread replies and the status CLI. */
+export interface SlackWorkStatus {
+  asOf: string | null;
+  /** When asOf was read; absent means staleness cannot be proven. */
+  readAt?: string;
+  inbox: 'ok' | 'unavailable';
+  truncated: boolean;
+  items: Array<Pick<WorkBoardItem, 'id' | 'channelRef' | 'state' | 'owner' | 'claimReceipt'> & {
+    pr: number | null; head: string | null; dependency: string | null;
+    statusLine?: string;
+  }>;
+}
+
+const safeWorkText = (text: string | null): string | null => text === null ? null
+  : scrubSecrets(text).replace(/[\r\n\p{Cc}]/gu, ' ').replace(/[<>&]/g, '?').slice(0, 200);
+
+export function readSlackWorkStatus(options: { runsDir?: string; busRoot?: string; now?: () => Date; channelRef?: string } = {}): SlackWorkStatus {
+  const now = (options.now ?? (() => new Date()))();
+  let asOf: string | null = null;
+  try {
+    const read = readPrivateFileCapped(join(options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue/status.json'), 1024 * 1024);
+    const tick: unknown = read && !read.truncated ? JSON.parse(read.text)?.last_tick : null;
+    if (typeof tick === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(tick) && Number.isFinite(Date.parse(tick)) && Date.parse(tick) <= now.getTime()) asOf = new Date(tick).toISOString();
+  } catch { /* Missing, malformed or future fleet time stays unknown. */ }
+  const board = listWorkBoard({ root: options.busRoot ?? join(ashlrHome(), 'fleet'), now: now.getTime(), limit: 100, channelRef: options.channelRef });
+  return { asOf, readAt: now.toISOString(), inbox: board.inbox, truncated: board.truncated, items: board.items
+    .filter(item => item.channel === 'slack' && item.channelRef !== null && parseSlackThreadRef(item.channelRef))
+    .map(item => ({ id: item.id, channelRef: item.channelRef, state: item.state,
+      statusLine: formatWorkItemStatusLine({ ...item, owner: item.owner ?? undefined }).replace(/[<>&]/g, '?'),
+      owner: safeWorkText(item.owner), claimReceipt: safeWorkText(item.claimReceipt),
+      pr: item.result?.kind === 'verified' ? item.result.pr : null,
+      head: item.result?.kind === 'verified' ? safeWorkText(item.result.head) : null,
+      dependency: item.result?.kind === 'blocked' ? safeWorkText(item.result.dependency) : null })) };
+}
+
+export const SLACK_FLEET_SOURCE = 'fleet tick';
+
+/** Fleet reading label with source; marks stale readings, never presents an unprovable one as current. */
+export function slackFleetAsOf(work: SlackWorkStatus): string {
+  if (work.asOf === null) return 'fleet as of unknown';
+  const readAt = work.readAt === undefined ? null : new Date(work.readAt);
+  if (readAt === null || Number.isNaN(readAt.getTime())) return `fleet as of unknown from ${SLACK_FLEET_SOURCE}`;
+  return `fleet ${formatAsOf(SLACK_FLEET_SOURCE, work.asOf, readAt)}`;
+}
+
+/** Match the exact receipt, never a different request sharing the thread. */
+export function slackWorkStatusLine(work: SlackWorkStatus, body: Record<string, unknown>): string {
+  const aliases = [body.inReplyTo, body.in_reply_to, body.requestId];
+  const supplied = aliases.map(value => typeof value === 'string' && value.length > 0 ? value : null);
+  const matches = work.items.filter(row => supplied.some((value, index) => value !== null &&
+    (index === 2 ? createHash('sha256').update(JSON.stringify(['slack', row.id])).digest('hex') : row.id) === value));
+  const candidate = matches.length === 1 ? matches[0] : undefined;
+  const item = candidate && supplied.every((value, index) => value === null || value === (index === 2
+    ? createHash('sha256').update(JSON.stringify(['slack', candidate.id])).digest('hex') : candidate.id)) ? candidate : undefined;
+  const detail = item?.state === 'VERIFIED' ? `PR ${item.pr ?? 'unknown'}; head ${item.head ?? 'unknown'}`
+    : item?.state === 'BLOCKED' ? `dependency ${item.dependency ?? 'unknown'}`
+      : `owner ${item?.owner ?? 'unknown'}; claim ${item?.claimReceipt ?? 'unknown'}`;
+  return item?.statusLine ? `${item.statusLine} · ${scrubSecrets(detail).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').replace(/[<>&]/g, '?')}`
+    : `${item?.state ?? 'UNKNOWN'}; ${detail}; ${slackFleetAsOf(work)}`;
 }
 
 function slackIdentityCount(config: AgentNetworkConfig): number {
@@ -112,7 +199,8 @@ export function slackInboundRequests(entries: readonly SlackObservation[]): Inbo
   const requests: InboundRequest[] = [];
   for (const entry of entries) {
     if (entry.decision === 'ingested' && entry.channelId && entry.messageTs && entry.threadTs) {
-      requests.push({ at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs });
+      requests.push({ at: entry.at, channelId: entry.channelId, messageTs: entry.messageTs, threadTs: entry.threadTs,
+        ...(entry.requestId !== undefined ? { requestId: entry.requestId } : {}) });
     }
   }
   return requests;
@@ -148,9 +236,24 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
   const ignoredReasons = sortedReasons.slice(0, IGNORED_REASONS_MAX_ROWS);
   const sends = readSlackSendReceipts(options.stateRoot ? { stateRoot: options.stateRoot } : {});
   const binding = bindSlackReplies({ requests, receipts: sends.receipts, now: now() });
-  // Failed bus appends remain unresolved and cannot consume sent evidence.
+  // Failed bus appends never reached durable ingress and cannot consume sent
+  // evidence: they are reported as their own class, keyed or not.
   const failed = bindSlackReplies({ requests: failedRequests, receipts: [], now: now() });
-  const unansweredByAge = [...binding.unanswered, ...failed.unanswered].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const failedRows = [...failed.unanswered, ...failed.unverified, ...failed.uncertain]
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  // Ordinary overdue needs a positively known Leader reply identity AND durable
+  // ingress. A keyed row whose ingress was never recorded is uncertain, not overdue.
+  const durable = new Set(journal.entries
+    .filter((e) => e.decision === 'ingested' && (e.bus === 'posted' || e.bus === 'duplicate') && e.requestId !== undefined)
+    .map((e) => e.requestId!));
+  const unansweredByAge = binding.unanswered.filter((r) => r.requestId !== undefined && durable.has(r.requestId))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const unknownIngress = binding.unanswered.length - unansweredByAge.length;
+  // 'answered' also needs durable ingress; an exact key with unknown ingress is uncertain.
+  const answeredDurable = binding.answered.filter((r) => r.requestId !== undefined && durable.has(r.requestId)).length;
+  const answeredUnknownIngress = binding.answered.length - answeredDurable;
+  const unverified = binding.unverified.length + failed.unverified.length;
+  const uncertain = binding.uncertain.length + unknownIngress + answeredUnknownIngress;
   const confirmedByMason = loadCommsConfirmation({ ...(options.commsPath ? { path: options.commsPath } : {}), ...(options.home ? { home: options.home } : {}) });
   const slackIds = slackIdentityCount(config);
   const ready = config.state === 'ok' && bridge !== undefined &&
@@ -182,16 +285,22 @@ export function buildSlackBridgeStatus(options: SlackBridgeStatusOptions = {}): 
     replies: {
       state: journal.state === 'degraded' || sends.state === 'degraded' ? 'degraded'
         : journal.state === 'missing' && sends.state === 'missing' ? 'missing' : 'ok',
-      answered: binding.answered.length,
+      answered: answeredDurable,
       unanswered: unansweredByAge.length,
       oldestUnansweredAt: unansweredByAge[0]?.at ?? null,
       uncertainSends: sends.receipts.filter((r) => r.state === 'attempted').length,
+      unverified, uncertainRequests: uncertain,
       rejected: binding.rejected + failed.rejected,
       futureDated: binding.futureDated + failed.futureDated,
       unansweredSample: unansweredByAge.slice(0, 5).map((r) => ({
         channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
       })),
+      busFailed: failedRows.length,
+      busFailedSample: failedRows.slice(0, 5).map((r) => ({
+        channelId: r.channelId, threadTs: r.threadTs, messageTs: r.messageTs, at: r.at,
+      })),
     },
+    work: readSlackWorkStatus(options),
     ready,
     transport: { health: 'unknown', observedAt: null, probeCommand: 'phm channels slack probe --json' },
     next: nextStep(config.state, config.slack, bridge, slackIds, ingested, ignored, ignoredReasons[0]?.reason),

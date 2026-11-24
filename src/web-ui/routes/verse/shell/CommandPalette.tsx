@@ -13,6 +13,10 @@
  *   ⌫ on an empty argument query steps back · Esc closes (or leaves the
  *   argument step) · ⌘K closes.
  *
+ * Commands group: every `phm` command from the CLI's own catalog. ↩ shows its
+ * CLI line (⌘C copies). A read-only command that needs nothing runs right
+ * there; one that changes state asks first, then goes to the Terminal.
+ *
  * Accessibility: a combobox driving a listbox through aria-activedescendant
  * (focus never leaves the input); group headings are presentational labels
  * the options reference, and the result count is announced politely.
@@ -25,7 +29,7 @@ import { useQuery } from '../../../data/hooks.js';
 import { verseBootstrapQuery, verseSessionsQuery } from '../verse-queries.js';
 import { useVerseUi } from '../useVerseUi.js';
 import { ReturnKeyIcon } from '../verse-icons.js';
-import { closeVerseOverlay, recordVerseAction, openVerseNeedsYou, openVerseSession, requestVerseCommand } from '../verse-ui-store.js';
+import { closeVerseOverlay, recordVerseAction, openVerseNeedsYou, openVerseSession, requestVerseCommand, setVerseSection } from '../verse-ui-store.js';
 import { PALETTE_QUERY_EVENT, takePaletteQuery } from '../voice/palette-handoff.js';
 import { insertDictation } from '../voice/insert-text.js';
 import { detectKeyPlatform, findCommand, type WorkbenchCommand } from './command-catalog.js';
@@ -35,12 +39,15 @@ import { useActivity } from './useActivity.js';
 import { deriveCiNeedsYou } from './ci-needs-you.js';
 import { FLEET_CI_RUNS_POLL_MS, fleetCiRunsQuery } from './fleet-ci-runs-query.js';
 import styles from './CommandPalette.module.css';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { revealDockPane } from '../dock/reveal-pane.js';
 import { usePanes } from '../panes/pane-registry.js';
 import { paletteBacklogQuery } from './palette-backlog-queries.js';
+import { cliStep, paletteCommandsQuery, runCliCommand } from './palette-commands.js';
+import { commandLine, type CatalogCommand } from '../../../../core/commands/catalog.js';
+import { requestTerminal } from '../dock/dock-store.js';
 import { palettePhoneQuery } from './palette-phone-query.js';
 import { paletteWorkers } from './palette-workers.js';
 
@@ -67,6 +74,9 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   const phone = useQuery(palettePhoneQuery, { enabled: open, freshMs: 0 });
   const runs = useQuery(opsRunsQuery, { enabled: open, freshMs: 0 });
   const backlog = useQuery(paletteBacklogQuery, { enabled: open, freshMs: 0 });
+  const cli = useQuery(paletteCommandsQuery, { enabled: open });
+  // The CLI command on show (its line, then its output or the confirm step).
+  const [shown, setShown] = useState<{ command: CatalogCommand; output: string | null } | null>(null);
   const panes = usePanes();
   useEffect(() => { void import('../panes/index.js'); }, []);
   const activity = useActivity();
@@ -88,8 +98,11 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
   // sees the key), so "Esc leaves the argument step first" lives here.
   const argRef = useRef<WorkbenchCommand | null>(null);
   argRef.current = argFor;
+  const shownRef = useRef(false);
+  shownRef.current = shown !== null;
   const trapClose = useCallback(() => {
-    if (argRef.current) setArgFor(null);
+    if (shownRef.current) setShown(null);
+    else if (argRef.current) setArgFor(null);
     else onClose();
   }, [onClose]);
   useFocusTrap({ open: true, containerRef: panelRef, onClose: trapClose, initialFocusRef: inputRef });
@@ -99,6 +112,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       panes: [...panes].sort((a, b) => a.title.localeCompare(b.title)),
       workers: paletteWorkers(runs.data),
       backlog: backlog.data ?? [],
+      cli: cli.data ?? [],
       phone: phone.data && !('kind' in phone.data) ? phone.data : null,
       lanes: paletteLanes(runs.data, parsePauseRecord(localStorage.getItem(LANE_PAUSE_KEY))),
       needsYou: activity.data?.needsYou ?? [],
@@ -110,7 +124,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       recentActions: ui.recentActions,
       platform,
     }),
-    [panes, runs.data, backlog.data, phone.data, activity.data, ciRead.data, ciRead.status, sessions.data, bootstrap.data, ui.recentActions, platform],
+    [panes, runs.data, backlog.data, cli.data, phone.data, activity.data, ciRead.data, ciRead.status, sessions.data, bootstrap.data, ui.recentActions, platform],
   );
 
   const view = useMemo(() => {
@@ -221,9 +235,31 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
     } finally { setLaneWriting(false); }
   }
 
+  function showCli(command: CatalogCommand) {
+    setShown({ command, output: null });
+    if (cliStep(command) !== 'run') return;
+    void runCliCommand(command.name).catch(readFailureReason)
+      .then((output) => setShown((now) => (now?.command === command ? { command, output } : now)));
+  }
+
+  /** Confirmed (or needs input): the line goes to the Terminal, where Return runs it. */
+  function sendCliToTerminal(command: CatalogCommand) {
+    onClose();
+    setVerseSection('chat');
+    requestTerminal({ paste: commandLine(command) });
+  }
+
+  function copyCli(command: CatalogCommand) {
+    void copyText(commandLine(command)).then((copied) => shellNotify(copied ? 'Command copied' : 'Could not copy the command', copied ? 'success' : 'danger'));
+  }
+
   function run(item: PaletteItem | undefined) {
     if (!item) return;
     const payload = item.payload;
+    if (payload.kind === 'cli') {
+      showCli(payload.command);
+      return;
+    }
     if (payload.kind === 'copy-text') {
       onClose();
       void copyText(payload.text).then((copied) => shellNotify(copied ? 'Phone URL copied' : 'Could not copy phone URL', copied ? 'success' : 'danger'));
@@ -301,6 +337,19 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
       onClose();
       return;
     }
+    if (shown) {
+      if (key === 'Enter') {
+        event.preventDefault();
+        if (cliStep(shown.command) !== 'run') sendCliToTerminal(shown.command);
+      } else if ((event.metaKey || event.ctrlKey) && key.toLowerCase() === 'c') {
+        event.preventDefault();
+        copyCli(shown.command);
+      } else if (key === 'Backspace' || key === 'Escape' || key === 'Tab' || key.startsWith('Arrow')) {
+        event.preventDefault();
+        if (key === 'Backspace' || key === 'Escape') setShown(null);
+      }
+      return;
+    }
     switch (key) {
       case 'ArrowDown':
         manuallySelectedRef.current = true;
@@ -376,11 +425,12 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
             aria-expanded="true"
             aria-controls={listId}
             aria-autocomplete="list"
-            aria-activedescendant={activeItem ? `${listId}-${active}` : undefined}
+            aria-activedescendant={activeItem && !shown ? `${listId}-${active}` : undefined}
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
             onChange={(e) => {
+              setShown(null);
               setQuery(e.target.value);
               highlightBestRef.current = true;
               manuallySelectedRef.current = false;
@@ -391,6 +441,22 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
             <VoiceInput surface="palette" targetRef={inputRef} onInsert={insertDictated} />
           </Suspense>
         </div>
+        {shown ? (
+          <div id={listId} className={styles.cli} role="group" aria-label="Command">
+            <div className={styles.cliLine}>
+              <code>{commandLine(shown.command)}</code>
+              <button type="button" className={styles.key} onMouseDown={(e) => e.preventDefault()} onClick={() => copyCli(shown.command)}>Copy</button>
+            </div>
+            <p className={styles.cliAbout}>{shown.command.description}</p>
+            {cliStep(shown.command) === 'run' ? (
+              <pre className={styles.cliOutput} aria-live="polite">{shown.output ?? 'Running…'}</pre>
+            ) : (
+              <p className={styles.cliAsk} role="alert">
+                {cliStep(shown.command) === 'confirm' ? 'This changes state.' : 'This needs input.'} Press Return to put it in the Terminal. It runs when you press Return there.
+              </p>
+            )}
+          </div>
+        ) : (
         <div ref={listRef} id={listId} className={styles.list} role="listbox" aria-label="Results">
           {view.flat.length === 0 ? (
             <p className={styles.empty}>
@@ -420,7 +486,7 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
                     >
                       <span className={styles.lead} aria-hidden="true">
                         {item.monogram ? (
-                          <span className={styles.monogram} data-engine={item.engine ?? undefined}>{item.engine ? <ProviderLogo engine={item.engine} size={13} /> : item.monogram}</span>
+                          <span className={styles.monogram} data-engine={item.engine ?? undefined}>{item.engine ? <BrandMark brand={item.engine} size={13} /> : item.monogram}</span>
                         ) : (
                           <span className={styles.bullet} data-kind={item.kind} />
                         )}
@@ -440,12 +506,13 @@ export function CommandPalette({ onClose = closeVerseOverlay }: CommandPalettePr
             ))
           )}
         </div>
+        )}
         <div className={styles.foot} aria-hidden="true">
-          <span><kbd className={styles.key}>↑↓</kbd> move</span>
-          <span><kbd className={styles.key}><ReturnKeyIcon /></kbd> run</span>
+          {shown ? <span><kbd className={styles.key}>⌘C</kbd> copy</span> : <span><kbd className={styles.key}>↑↓</kbd> move</span>}
+          <span><kbd className={styles.key}><ReturnKeyIcon /></kbd> {shown && cliStep(shown.command) !== 'run' ? 'open in Terminal' : 'run'}</span>
           {activeItem?.argument ? <span><kbd className={styles.key}>⇥</kbd> {activeItem.argument.prompt.toLowerCase()}</span> : null}
-          <span><kbd className={styles.key}>esc</kbd> {argFor ? 'back' : 'close'}</span>
-          {argFor ? null : <span><kbd className={styles.key}>&gt;</kbd> actions only · <kbd className={styles.key}>#</kbd> chats only · <kbd className={styles.key}>@</kbd> workers only</span>}
+          <span><kbd className={styles.key}>esc</kbd> {argFor || shown ? 'back' : 'close'}</span>
+          {argFor || shown ? null : <span><kbd className={styles.key}>&gt;</kbd> actions only · <kbd className={styles.key}>#</kbd> chats only · <kbd className={styles.key}>@</kbd> workers only</span>}
         </div>
         <p className="visually-hidden" role="status" aria-live="polite">
           {view.flat.length === 1 ? '1 result' : `${view.flat.length} results`}

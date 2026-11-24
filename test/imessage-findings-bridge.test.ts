@@ -27,7 +27,7 @@ let runsDir = '';
 let busRoot = '';
 const dir = () => join(runsDir, 'imessage');
 const busMessages = () => {
-  const page = listBusInboxAfter(0, 100, { root: busRoot });
+  const page = listBusInboxAfter(0, 100, { root: busRoot, now: () => NOW.getTime() });
   return page.status === 'ok' ? page.messages : [];
 };
 const seed = (rowid: number, text: string, at = NOW) =>

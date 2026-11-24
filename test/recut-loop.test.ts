@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MergeBacklogReadItem, MergeBacklogReadV1 } from '../src/core/fleet/merge-backlog-read.js';
 import type { MergedFleetPr } from '../src/core/fleet/superseded-prs.js';
 import { recutLoopTick, type RecutLoopDeps } from '../src/core/fleet/recut-loop.js';
+import type { DirtyLandedPr } from '../src/core/fleet/dirty-landed-inspect.js';
 
 const NOW = Date.parse('2026-11-01T00:10:00.000Z');
 const HEAD_SHA = '0123abcd'.repeat(5);
@@ -62,6 +63,7 @@ const deps = (items: MergeBacklogReadItem[], over: Partial<RecutLoopDeps> = {}):
   readBacklog: async () => backlog(items),
   readMerged: async () => [],
   readHeadSha: async () => HEAD_SHA,
+  readLanded: async () => null,
   readUnionSafe: async () => false,
   now: () => NOW,
   ...over,
@@ -212,6 +214,18 @@ describe('recutLoopTick', () => {
     expect(existsSync(dropDir)).toBe(false);
   });
 
+  it('recuts conflicting agent PRs from every bridge job family, not only RQ-PHX', async () => {
+    const items = [
+      item(18, { title: 'bridge: RQ-CL-DOCS-1795103686', job: null }),
+      item(19, { title: 'bridge: RQ-DVL-FLEET-1795098583', job: null }),
+    ];
+
+    const result = await recutLoopTick(deps(items));
+
+    expect(result.outcome).toBe('wrote');
+    expect(result.written.map((row) => row.pr).sort()).toEqual([18, 19]);
+  });
+
   it('skips a candidate whose head sha cannot be observed', async () => {
     const result = await recutLoopTick(deps([item(15)], { readHeadSha: async () => null }));
 
@@ -240,6 +254,8 @@ describe('recutLoopTick', () => {
       writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
     };
     const ledger = (rows: Record<string, unknown>[]): void => {
+      // Each historical-ledger scenario starts without a publication reservation.
+      rmSync(join(runsDir, 'queue', 'recut-loop-leases.jsonl'), { force: true });
       mkdirSync(join(runsDir, 'queue'), { recursive: true });
       writeFileSync(ledgerPath(), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
     };
@@ -248,6 +264,57 @@ describe('recutLoopTick', () => {
     const emptyFinish = (id: string, at: string): Record<string, unknown> =>
       ({ event: 'finish', job: `RQ-PHX-${id}`, empty: true, ts: at });
     const landed = { readLanded: async () => 'needs-recut' as const };
+
+    it.each(['unchanged', 'landed', 'base-moved', 'legacy', 'head-moved', 'unknown'] as const)(
+      'uses fresh inspection before suppressing repeated attempts: %s', async state => {
+        const baseSha = 'b'.repeat(40);
+        ledger(['RECUT15L1', 'RECUT15L2'].map((id, i) => ({
+          ...attempt(15, id, HEAD_SHA, hoursAgo(50 - i * 20)),
+          ...(state === 'legacy' ? {} : { baseSha }),
+        })));
+        metrics([emptyFinish('RECUT15L1', hoursAgo(49)), emptyFinish('RECUT15L2', hoursAgo(29))]);
+        const remainingPaths = Array.from({ length: 22 }, (_, i) => `src/conflict-${i}.ts`);
+        const inspection: DirtyLandedPr = {
+          number: 15, title: item(15).title, head: HEAD_SHA, base: 'master',
+          baseSha: state === 'base-moved' ? 'c'.repeat(40) : baseSha,
+          class: state === 'landed' ? 'landed' : 'needs-recut',
+          changedPaths: remainingPaths, landedPaths: [], remainingPaths,
+          ...(state === 'head-moved' ? { reason: 'head-moved', class: 'unknown' as const } : {}),
+          ...(state === 'unknown' ? { class: 'unknown' as const, remainingPaths: [] } : {}),
+        };
+        const d = deps([item(15)], { readLanded: async () => inspection,
+          readUnionSafe: async () => { throw new Error('preview unavailable'); } });
+        const result = await recutLoopTick(d);
+        if (state === 'base-moved' || state === 'legacy') {
+          expect(result.written).toHaveLength(1);
+          expect(ledgerLines().at(-1)).toMatchObject({ headSha: HEAD_SHA, baseSha: inspection.baseSha });
+          const body = readFileSync(result.written[0]!.file, 'utf8');
+          expect(body).toContain('Do not merge, push, or publish');
+          expect(body).toContain('Keep required merge-queue checks; never use an admin bypass');
+        } else {
+          const suppressed = state === 'unchanged' || state === 'unknown';
+          const expected = { pr: 15, reason: suppressed ? 'empty-yield' : state,
+            ...(suppressed ? { evidence: {
+              headSha: HEAD_SHA, baseSha, remainingPaths: inspection.remainingPaths.slice(0, 20),
+              remainingPathCount: state === 'unknown' ? null : 22,
+            } } : {}) };
+          expect(result.skipped).toEqual([expected]);
+          expect((await recutLoopTick(d)).skipped).toEqual([expected]);
+          expect(result.written).toEqual([]);
+          expect(existsSync(dropDir)).toBe(false);
+          expect(ledgerLines()).toHaveLength(2);
+        }
+      });
+
+    it.each(['duplicate', 'older-outcome'] as const)('does not invent an empty streak from %s evidence', async state => {
+      ledger([
+        attempt(15, 'RECUT15L1', HEAD_SHA, hoursAgo(50)),
+        attempt(15, state === 'duplicate' ? 'RECUT15L1' : 'RECUT15L2', HEAD_SHA, hoursAgo(30)),
+      ]);
+      metrics([emptyFinish('RECUT15L1', hoursAgo(29)), emptyFinish('RECUT15L2', hoursAgo(31)),
+        { event: 'finish', job: 'RQ-PHX-RECUT15L2', ts: hoursAgo(29) }]);
+      expect((await recutLoopTick(deps([item(15)], landed))).written).toHaveLength(1);
+    });
 
     it('suppresses a recut whose last two same-head attempts both finished empty', async () => {
       // Both attempts are older than the 24h 'recent' window — only the
@@ -263,7 +330,9 @@ describe('recutLoopTick', () => {
       expect(result.outcome).toBe('nothing');
       expect(result.written).toEqual([]);
       // The avoided-launch report: one suppressed candidate with its reason.
-      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield' }]);
+      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield', evidence: {
+        headSha: HEAD_SHA, remainingPaths: [], remainingPathCount: null,
+      } }]);
       expect(existsSync(dropDir)).toBe(false);
       expect(ledgerLines()).toHaveLength(2);   // suppression never mints evidence
     });
@@ -350,7 +419,9 @@ describe('recutLoopTick', () => {
 
       expect(result.outcome).toBe('wrote');
       expect(result.written.map((row) => row.pr)).toEqual([16, 17]);
-      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield' }]);
+      expect(result.skipped).toEqual([{ pr: 15, reason: 'empty-yield', evidence: {
+        headSha: HEAD_SHA, remainingPaths: [], remainingPathCount: null,
+      } }]);
       expect(ledgerLines()).toHaveLength(4);   // 2 old + 2 new writes
     });
   });

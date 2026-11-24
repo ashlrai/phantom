@@ -5,7 +5,7 @@ describe('native backend compiler selection', () => {
   it('runs the installed binary with backend arguments', () => {
     const spawn = vi.fn(() => ({ status: 0 }));
     expect(runNativeTypecheck('/fixture', 60, spawn, () => true)).toBe(true);
-    expect(spawn).toHaveBeenCalledWith('/fixture/node_modules/.bin/tsgo', ['--noEmit', '-p', 'tsconfig.json'], expect.objectContaining({ cwd: '/fixture' }));
+    expect(spawn).toHaveBeenCalledWith('/fixture/node_modules/.bin/tsgo', ['--noEmit', '-p', 'tsconfig.json', '--incremental', '--tsBuildInfoFile', '/fixture/.ashlr-gate/verify/backend.tsbuildinfo'], expect.objectContaining({ cwd: '/fixture' }));
   });
   it('falls back when the binary is missing', () => {
     const spawn = vi.fn();

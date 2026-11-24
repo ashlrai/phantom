@@ -11,18 +11,19 @@ afterEach(() => {
 describe('Home refresh', () => {
   it('includes every Home query key', () => {
     expect(new Set(homeRefreshKeys())).toEqual(new Set([
-      'verse-control', 'verse-fleet-live', 'verse-bootstrap', 'mobile-fleet-runs', 'verse-resources-cloud',
+      'verse-control', 'verse-fleet-live', 'verse-bootstrap', 'mobile-fleet-runs', 'verse-resources-cloud', 'verse-fleet-host-top',
     ]));
   });
 
   it('re-requests all reads and settles when the fleet runs read fails', async () => {
-    const paths = ['/api/verse/control', '/api/verse/fleet/live', '/api/verse/bootstrap', '/api/verse/fleet/runs', '/api/verse/cloud'];
+    const paths = ['/api/verse/control', '/api/verse/fleet/live', '/api/verse/bootstrap', '/api/verse/fleet/runs', '/api/verse/cloud', '/api/verse/fleet/memory/host-top'];
     const { calls } = stubFetch({
       'GET /api/verse/control': {},
       'GET /api/verse/fleet/live': {},
       'GET /api/verse/bootstrap': {},
       'GET /api/verse/fleet/runs': json({ error: 'Unavailable' }, 500),
       'GET /api/verse/cloud': {},
+      'GET /api/verse/fleet/memory/host-top': {},
     });
 
     await refreshHome();
