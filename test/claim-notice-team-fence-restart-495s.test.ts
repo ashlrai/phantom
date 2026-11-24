@@ -65,7 +65,7 @@ describe('claim notice workspace fence across restarts', () => {
       claimId: claimed.value.claim.id, repo: REPO, threadKey: thread, pr: 7, head: HEAD,
     }, now);
     expect(binding.ok).toBe(true);
-    const key = JSON.stringify(['ASSIGNED', claimed.value.claim.id, HEAD]);
+    const key = JSON.stringify(['ASSIGNED', REPO, claimed.value.claim.id, OWNER, claimed.value.claim.claimedAt, HEAD]);
     const claimBytes = readFileSync(coordination);
     const bindingBytes = readFileSync(paths.bindings);
 

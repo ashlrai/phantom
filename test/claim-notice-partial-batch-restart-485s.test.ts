@@ -52,8 +52,8 @@ it('resumes only the pending assignment after an unknown board and file-backed r
   expect(appendClaimThreadBinding(paths.bindings, bindingB, now).ok).toBe(true);
   const bindingRows = readFileSync(paths.bindings, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   expect(bindingRows).toMatchObject([bindingA, bindingB]);
-  const keyA = JSON.stringify(['ASSIGNED', a.claim.id, bindingA.head]);
-  const keyB = JSON.stringify(['ASSIGNED', b.claim.id, bindingB.head]);
+  const keyA = JSON.stringify(['ASSIGNED', a.claim.repo, a.claim.id, a.claim.agent, a.claim.claimedAt, bindingA.head]);
+  const keyB = JSON.stringify(['ASSIGNED', b.claim.repo, b.claim.id, b.claim.agent, b.claim.claimedAt, bindingB.head]);
 
   const partial = await pass();
   const partialAt = now;

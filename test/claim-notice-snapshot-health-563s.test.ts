@@ -48,7 +48,7 @@ function setup() {
     const binding = { claimId: claim.id, repo: 'fake/alpha', threadKey: thread, pr: 7, head: 'abcdef1234567' };
     expect(appendClaimThreadBinding(paths.bindings, binding, now).ok).toBe(true);
     expect(JSON.parse(readFileSync(paths.bindings, 'utf8').trim())).toMatchObject(binding);
-    return { claim, key: JSON.stringify(['ASSIGNED', claim.id, binding.head]) };
+    return { claim, key: JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]) };
   };
   return { paths, thread, receipt, calls, pass, seed, acquire,
     setFailSend: (value: boolean) => { failSend = value; }, clock: () => now };
