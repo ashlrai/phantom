@@ -32,6 +32,11 @@ phm fleet config restart-required [--json]
 
 `hard_cap`, `autofill.off` (1 stops self-tick autofill; see QUEUE.md), `empty_stop.off` (1 stops the hourly empty-family stop in self-tick), `lanes.<lane>.target|floor|ceiling|hard_cap`,
 `compact.lanes.raise_freeze_below_gb`, `compact.lanes.halve_below_gb`.
+`mason.digest.off` (1 stops the hourly owner digest in self-tick).
+The `order-notices` step posts at most once an hour, only when news changes. Run
+`phm fleet mason-digest [--since 1h] [--post] [--json]` or `phm mason digest` for a manual digest;
+without `--post` it only prints the report. Posting records a local owner-thread
+notice at most once an hour and never invokes a channel transport.
 Anything else is refused. Lane `target`/`floor`/`ceiling` writes are checked
 for coherence against the effective sibling values.
 

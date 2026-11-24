@@ -1,10 +1,14 @@
 import { isJobControlAction } from '../core/fleet/job-control-types.js';
 import { readEmptyJobs } from '../core/fleet/empty-jobs.js';
 
-const usage = 'Usage: phm jobs pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>] | phm jobs yield [--since 24h] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs cost [--since 24h] [--by lane|model] [--metrics <jobs.jsonl>] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs gaps [--since 24h] [--propose] [--json] | phm jobs lost [--since 24h] [--requeue-hint] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by lane|reason] [--record] [--by-family [--apply [--dry-run] [--ttl-hours N] | --undo <family>]] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stranded [--since 24h] [--runs-dir <dir>] [--json]';
+const usage = 'Usage: phm jobs order [--json] [--apply] [--runs-dir <dir>] | phm jobs live [--json] [--write <file>] | phm jobs tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] | phm jobs pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>] | phm jobs yield [--since 24h|7d] [--by source|lane|family] [--stop-list | --stop-file [--ttl-hours N] [--out PATH] [--dry-run]] [--json] | phm jobs cost [--since 24h] [--by lane|model] [--metrics <jobs.jsonl>] [--json] | phm jobs tokens --lane <lane> [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs empty-why [--since 24h] [--metrics <jobs.jsonl>] [--json] | phm jobs producers [--since 6h] [--metrics <jobs.jsonl>] [--queue <router-queue.md>] [--json] | phm jobs gaps [--since 24h] [--propose] [--json] | phm jobs lost [--since 24h] [--requeue-hint] [--json] | phm jobs state <id> [--json] | phm jobs empty [--json] [--since <hours>h] [--family F] [--lane L] [--by lane|reason] [--record] [--by-family [--apply [--dry-run] [--ttl-hours N] | --undo <family>]] | phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>] | phm jobs stuck [--lane L] [--json] | phm jobs stranded [--since 24h] [--runs-dir <dir>] [--requeue [--apply]] [--json] | phm jobs dupcheck <prompt-file> [--repo <path>] [--json] | phm jobs skipped [--since 24h] [--json]';
 export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies: (hours: number) => ReturnType<typeof import('../core/fleet/empty-families.js').readEmptyFamilies> = async hours => (await import('../core/fleet/empty-families.js')).readEmptyFamilies(hours)): Promise<number> {
+  if (args[0] === 'order') return (await import('./jobs-order.js')).cmdJobsOrder(args.slice(1));
+  if (args[0] === 'redfix-candidates') return (await import('./jobs-redfix-candidates.js')).cmdJobsRedfixCandidates(args.slice(1));
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(usage); return 0; }
   if (isJobControlAction(args[0])) return (await import('./job.js')).cmdJobControl(args[0], args.slice(1), 'jobs');
+  if (args[0] === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1));
+  if (args[0] === 'live') return (await import('./jobs-live.js')).cmdJobsLive(args.slice(1));
   if (args[0] === 'yield') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1));
   if (args[0] === 'empty-why') return (await import('./jobs-yield.js')).cmdJobsYield(args.slice(1), undefined, Date.now(), true);
   if (args[0] === 'cost') return (await import('./jobs-cost.js')).cmdJobsCost(args.slice(1));
@@ -12,7 +16,10 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
   if (args[0] === 'producers') return (await import('./jobs-producers.js')).cmdJobsProducers(args.slice(1));
   if (args[0] === 'gaps') return (await import('./jobs-gaps.js')).cmdJobsGaps(args.slice(1));
   if (args[0] === 'lost') return (await import('./jobs-lost.js')).cmdJobsLost(args.slice(1));
+  if (args[0] === 'stuck') return (await import('./jobs-stuck.js')).cmdJobsStuck(args.slice(1));
   if (args[0] === 'stranded') return (await import('./jobs-stranded.js')).cmdJobsStranded(args.slice(1));
+  if (args[0] === 'dupcheck') return (await import('./jobs-dupcheck.js')).cmdJobsDupcheck(args.slice(1));
+  if (args[0] === 'skipped') return (await import('./fleet-skipped.js')).cmdJobsSkipped(args.slice(1));
   if (args[0] === 'state') return cmdJobsState(args.slice(1));
   if (args[0] === 'retry-empty') return (await import('./jobs-retry-empty.js')).cmdJobsRetryEmpty(args.slice(1));
   if (args[0] !== 'empty') { console.error(usage); return 2; }
@@ -95,7 +102,7 @@ export async function cmdJobs(args: string[], read = readEmptyJobs, readFamilies
     await (await import('../core/queue/dupcheck-gate.js')).recordDupcheckOutcomes(runsRoot(), report.tagged).catch(() => 0);
   }
   if (json) console.log(JSON.stringify(report));
-  else if (by && report.tags) for (const line of (await import('../core/fleet/empty-tags.js')).formatEmptyTags(report.tags, by, hours)) console.log(line);
+  else if (by && report.digest) for (const line of (await import('../core/fleet/empty-digest.js')).formatEmptyDigest(report.digest, by, hours)) console.log(line);
   else if (report.total === 0) console.log('No empty jobs.');
   else {
     console.log(`${report.total} empty jobs in the last ${hours} hours`);
@@ -119,14 +126,13 @@ async function cmdJobsState(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const rest = args.filter(a => a !== '--json');
   if (rest.length !== 1 || rest[0]!.startsWith('-')) { console.error(usage); return 2; }
-  const { readJobState } = await import('../core/fleet/job-state.js');
+  const { readJobWorkState, formatWorkState } = await import('../core/fleet/job-work-state.js');
   let state;
-  try { state = await readJobState(rest[0]!); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); return 2; }
+  try { state = await readJobWorkState(rest[0]!); } catch (error) { console.error(error instanceof Error ? error.message : String(error)); return 2; }
   if (json) console.log(JSON.stringify(state));
   else {
-    const result = state.result ? (state.result.kind === 'pr' ? `; result PR ${state.result.url}` : '; result empty') : '';
-    console.log(`${state.job}: ${state.state}${result}`);
+    console.log(formatWorkState(state));
     for (const line of state.evidence) console.log(`- ${line}`);
   }
-  return 0;
+  return state.state === 'UNKNOWN' ? 1 : 0;
 }

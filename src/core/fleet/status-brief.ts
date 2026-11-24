@@ -9,10 +9,12 @@ import { readMetrics, metricsReader, type MetricsReport } from './metrics-glance
 import { defaultRunsDir } from './landed-closes-read.js';
 import { readPoolRunway, runwayStatusPath } from '../usage/runway-read.js';
 import { runwayHours, type RunwaySnapshot } from '../usage/runway.js';
+import { readWhyIdle } from './why-idle-read.js';
 
 export const FLEET_BRIEF_SCHEMA = 'fleet.brief.v1' as const;
 
 export interface FleetBrief {
+  whyIdle?: string[];
   schema: typeof FLEET_BRIEF_SCHEMA;
   v: 1;
   asOf: string;
@@ -58,24 +60,26 @@ export function buildFleetBrief(input: FleetBriefInputs, now: number): FleetBrie
   };
 }
 
-/** Read the three sources once. A source that fails leaves only its own number unknown. */
+/** Read each source once. A source that fails leaves only its own reading unknown. */
 export async function readFleetBrief(opts: { runsDir?: string; now?: number } = {}): Promise<FleetBrief> {
   const runsDir = opts.runsDir ?? defaultRunsDir();
   const now = opts.now ?? Date.now();
   const quiet = <T>(read: Promise<T>): Promise<T | null> => read.catch(() => null);
-  const [metrics, guardian, runway] = await Promise.all([
+  const [metrics, guardian, runway, whyIdle] = await Promise.all([
     quiet(readMetrics({ now, reader: metricsReader(runsDir) })),
     quiet(readGuardianGlance(runsDir, now)),
     quiet(readPoolRunway(runwayStatusPath(runsDir), now)),
+    readWhyIdle(runsDir, now),
   ]);
-  return buildFleetBrief({ metrics, guardian, runway }, now);
+  return { ...buildFleetBrief({ metrics, guardian, runway }, now), whyIdle };
 }
 
 const known = (n: number | null, say: (n: number) => string): string => (n === null ? 'unknown' : say(n));
 
-/** Four plain lines for a terminal. */
+/** Idle reasons followed by four status lines for a terminal. */
 export function briefText(b: FleetBrief): string[] {
   return [
+    ...(b.whyIdle ?? []),
     `Merged: ${known(b.merged.lastHour, n => `${n} in the last hour`)}, ${known(b.merged.last24h, n => `${n} in 24 hours`)}.`,
     `Typical time to merge: ${known(b.medianMergeMinutes, n => `${n} min`)}.`,
     `Main green: ${b.main.green === null ? 'unknown' : `${b.main.green} of ${b.main.total}`}${b.main.red.length ? ` (red: ${b.main.red.join(', ')})` : ''}.`,

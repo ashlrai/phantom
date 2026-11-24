@@ -232,7 +232,7 @@ const ledgerTs = (row: Row, phase: string): number | null => {
 };
 
 const EVENT = (row: Row): string => (str(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const PHASE = (row: Row): string => (str(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
+const PHASE = (row: Row): string => (str(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
 const PR_URL_RE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\/?$/;
 
 /** Canonical join key for a GitHub PR URL; null when the value is not one. */
@@ -341,7 +341,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       counts.events++;
       const route = {
         atMs: atMs ?? 0,
-        lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'),
+        lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'),
         repo: str(row, 'repo'), model: str(row, 'model'),
       };
       if (job) jobFold(job).routes.push(route);
@@ -358,7 +358,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       const empty = row['empty'] === true;
       if (job) jobFold(job).finishes.push({ atMs: atMs ?? 0, failed, empty });
       if (inWindow) {
-        activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed, empty });
+        activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed, empty });
       }
       continue;
     }
@@ -366,7 +366,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       counts.events++;
       if (job && pr) jobFold(job).urls.add(pr.key);
       if (inWindow) {
-        activity.push({ kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed: false, empty: false });
+        activity.push({ kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }
@@ -388,7 +388,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
         });
       }
       if (inWindow && (phase === 'MERGED' || phase === 'CLOSED')) {
-        activity.push({ kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed: false, empty: false });
+        activity.push({ kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }

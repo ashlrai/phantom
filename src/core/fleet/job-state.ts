@@ -98,7 +98,8 @@ export function jobStateOf(e: JobStateEvidence): JobState {
   return { version: JOB_STATE_VERSION, state: 'idle', result: null, evidence };
 }
 
-const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+export const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/;
+const JOB_ID = JOB_ID_PATTERN;
 const READ_BYTES = 64 * 1024;
 
 async function mtime(path: string): Promise<number | null> {

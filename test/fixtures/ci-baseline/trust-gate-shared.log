@@ -1,0 +1,14 @@
+##[group]Run echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+.github/tests/secret-shape/scrub.pl: FAILED
+sha256sum: WARNING: 1 computed checksum did NOT match
+##[error]Process completed with exit code 1.
+##[group]Run echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict -
+echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict -
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+/home/runner/work/_temp/gitleaks.tar.gz: FAILED
+sha256sum: WARNING: 1 computed checksum did NOT match
+##[error]Process completed with exit code 1.

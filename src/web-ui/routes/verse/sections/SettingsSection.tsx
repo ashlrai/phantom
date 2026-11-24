@@ -20,6 +20,7 @@ import { APP_NAME, APP_VERSION, installedDesktopVersion } from './app-version.js
 import { AboutPanel } from './AboutPanel.js';
 import { WhatsNewPanel } from './WhatsNewPanel.js';
 import { AppearancePanel } from './AppearancePanel.js';
+import { BuildLimitsRow } from './BuildLimitsRow.js';
 import { ChatSettingsPanel } from './ChatSettingsPanel.js';
 import { CommsLimitsRow } from './CommsLimitsRow.js';
 import { ConfigFilePanel } from './ConfigFilePanel.js';
@@ -54,6 +55,7 @@ export function SettingsSection() {
           <QuietHoursRow />
           <PlannerSlatePanel />
           <ResidentAwakePanel />
+          <BuildLimitsRow />
           <ConfigFilePanel />
           <ConnectionPanel />
           <ConnectorsSettings />

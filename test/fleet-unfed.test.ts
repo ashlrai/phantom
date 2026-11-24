@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
-import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldRouteRejections, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -338,6 +338,98 @@ describe('foldDecisionOutcomes', () => {
   });
 });
 
+describe('foldRouteRejections', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const rejected = (lane: string, ...codes: string[]) => ({ lane, reason_codes: codes });
+  const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts,
+      chosen_lane: 'claude', preferred_lane: 'codex-personal', override: null,
+      ...extra,
+    });
+
+  it("collapses to each job's latest decision and tallies rejected lanes by reason", () => {
+    const journal = [
+      // Same job decided twice: only the latest rejection set counts.
+      decision('RQ-A', t - 300, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      decision('RQ-A', t - 60, { rejected_lanes: [rejected('codex-cmp', 'saturated'), rejected('devin', 'quota_exhausted', 'held')] }),
+      decision('RQ-B', t - 120, { rejected_lanes: [rejected('codex-cmp', 'missing_capability'), rejected('devin', 'quota_exhausted')] }),
+      // An unrouted decision still records why every lane was rejected.
+      decision('RQ-C', t - 90, { chosen_lane: null, preferred_lane: null, reason_codes: ['no_runnable_lane'], rejected_lanes: [rejected('codex-cmp', 'held'), rejected('devin', 'provider_backoff')] }),
+      // A routed decision with no rejected lanes contributes decided only.
+      decision('RQ-D', t - 80, { rejected_lanes: [] }),
+      // Out-of-window, future, malformed-ts, broken and non-decision rows never count.
+      decision('RQ-OLD', t - 25 * 3600, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      decision('RQ-FUTURE', t + 3600, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-NOTS' }),
+      '{"event":"route_decision" broken',
+      unfedRow(t - 60, {}),
+    ].join('\n');
+    expect(foldRouteRejections(journal, now, 24)).toEqual({
+      available: true,
+      decided: 4, // RQ-A (latest), RQ-B, RQ-C, RQ-D
+      unrouted: 1, // RQ-C
+      lanes: [
+        { lane: 'codex-cmp', jobs: 3, reasons: { saturated: 1, missing_capability: 1, held: 1 } },
+        { lane: 'devin', jobs: 3, reasons: { quota_exhausted: 2, held: 1, provider_backoff: 1 } },
+      ],
+      // byReason counts each job once per reason across all its rejected lanes:
+      // RQ-A contributes saturated+quota_exhausted+held, RQ-B missing_capability+quota_exhausted,
+      // RQ-C held+provider_backoff — so quota_exhausted and held each reach 2.
+      byReason: { quota_exhausted: 2, held: 2, saturated: 1, missing_capability: 1, provider_backoff: 1 },
+    });
+  });
+
+  it('counts a job once per reason however many lanes rejected it for that reason', () => {
+    const journal = [
+      decision('RQ-A', t - 100, { rejected_lanes: [rejected('codex-cmp', 'quota_exhausted'), rejected('devin', 'quota_exhausted'), rejected('omlx', 'local_opt_in_required')] }),
+      decision('RQ-B', t - 90, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+    ].join('\n');
+    const tally = foldRouteRejections(journal, now, 24);
+    expect(tally.byReason).toEqual({ quota_exhausted: 2, local_opt_in_required: 1 });
+    expect(tally.lanes).toEqual([
+      { lane: 'devin', jobs: 2, reasons: { quota_exhausted: 2 } },
+      { lane: 'codex-cmp', jobs: 1, reasons: { quota_exhausted: 1 } },
+      { lane: 'omlx', jobs: 1, reasons: { local_opt_in_required: 1 } },
+    ]);
+  });
+
+  it('skips malformed rejected_lanes entries and reason codes, never guessing', () => {
+    const journal = [
+      decision('RQ-A', t - 100, {
+        rejected_lanes: [
+          'not-an-object',
+          { lane: 'bad lane!', reason_codes: ['quota_exhausted'] },
+          { lane: 'omlx' },                                  // no reason_codes array
+          { lane: 'omlx', reason_codes: 'quota_exhausted' }, // reason_codes not an array
+          { lane: 'claude', reason_codes: ['NOT_A_CODE', 'also bad', 'quota_exhausted'] },
+          { lane: 'devin', reason_codes: ['quota_exhausted', 'quota_exhausted'] }, // dup code deduped
+          { lane: 'devin', reason_codes: ['saturated'] },    // duplicate lane: first entry wins
+        ],
+      }),
+      // rejected_lanes present but not an array records nothing.
+      decision('RQ-B', t - 90, { rejected_lanes: 'quota_exhausted' }),
+    ].join('\n');
+    expect(foldRouteRejections(journal, now, 24)).toEqual({
+      available: true,
+      decided: 2,
+      unrouted: 0,
+      lanes: [
+        { lane: 'claude', jobs: 1, reasons: { quota_exhausted: 1 } },
+        { lane: 'devin', jobs: 1, reasons: { quota_exhausted: 1 } },
+      ],
+      // RQ-A hit quota_exhausted on two lanes but counts once; RQ-B recorded none.
+      byReason: { quota_exhausted: 1 },
+    });
+  });
+
+  it('says when there is no market journal', () => {
+    expect(foldRouteRejections(null, now, 24)).toEqual({ available: false, decided: 0, unrouted: 0, lanes: [], byReason: {} });
+    expect(foldRouteRejections('', now, 24)).toEqual({ available: true, decided: 0, unrouted: 0, lanes: [], byReason: {} });
+  });
+});
+
 describe('phm fleet unfed', () => {
   it('is registered as a fleet verb', async () => {
     const mod = await FLEET_SUBCOMMAND_LOADERS.unfed!();
@@ -376,7 +468,9 @@ describe('phm fleet unfed', () => {
       unfedRow(t - 3 * 3600, { 'codex-cmp': { unfed: true, headroom: 1, waiting_elsewhere: 1, blocked: {} } }),
       decisionRow('RQ-M1', t - 500),
       decisionRow('RQ-M2', t - 400),
-      decisionRow('RQ-M1', t - 100, null),
+      // RQ-M1's latest decision also records the lanes it rejected and why.
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-M1', ts: t - 100, chosen_lane: 'claude', preferred_lane: 'codex-personal', override: null,
+        rejected_lanes: [{ lane: 'codex-cmp', reason_codes: ['saturated'] }, { lane: 'devin', reason_codes: ['quota_exhausted'] }] }),
     ].join('\n') + '\n');
     const claimTs = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
     writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), [
@@ -426,6 +520,15 @@ describe('phm fleet unfed', () => {
       byReason: { preferred_lane_fallback: 1 },
       byClass: { unclassified: { decided: 2, known: 2, merged: 1, unmerged: 1, reverted: 0, unresolved: 0 } },
     });
+    // Only RQ-M1's latest decision recorded rejected_lanes; RQ-M2's did not.
+    expect(report.rejections).toEqual({
+      available: true, decided: 2, unrouted: 0,
+      lanes: [
+        { lane: 'codex-cmp', jobs: 1, reasons: { saturated: 1 } },
+        { lane: 'devin', jobs: 1, reasons: { quota_exhausted: 1 } },
+      ],
+      byReason: { saturated: 1, quota_exhausted: 1 },
+    });
     vi.restoreAllMocks();
     const text = await run([]);
     expect(text.code).toBe(1);
@@ -446,6 +549,9 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('Last 24h: outcomes for 2 decided job(s): 1 merged, 1 unmerged, 0 unresolved.');
     expect(body).toContain('overridden: 1 decided, 0 merged, 1 unmerged, 0 unresolved');
     expect(body).toContain('unexplained: 1 decided, 1 merged, 0 unmerged, 0 unresolved');
+    expect(body).toContain('Last 24h: lane rejections across 2 decided job(s): quota_exhausted 1, saturated 1');
+    expect(body).toContain('codex-cmp: 1 job(s) rejected (saturated 1)');
+    expect(body).toContain('devin: 1 job(s) rejected (quota_exhausted 1)');
   });
 
   it('exits 0 with no unfed capacity and no history file', async () => {
@@ -489,7 +595,7 @@ describe('status freshness', () => {
     ...(lastTick === undefined ? {} : { last_tick: lastTick }),
   });
   const render = (report: ReturnType<typeof currentUnfed>) =>
-    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24) });
+    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
 
   it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
     const tick = new Date(NOW - 30_000).toISOString();
@@ -532,7 +638,7 @@ describe('status freshness', () => {
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
       'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
       'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);

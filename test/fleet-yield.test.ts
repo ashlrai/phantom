@@ -160,6 +160,25 @@ describe('jobs-ledger dialect', () => {
     ];
     expect(fleetYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, prs: 1, merged: 1 });
   });
+
+  it('skips node-pool producer rows instead of minting phantom launches', () => {
+    const lines = [
+      // fleet.session-pool.v1 and phm-node-runner.v1 rows are a different
+      // producer dialect: `job` is a per-attempt/claim id, never a
+      // dispatchd launch, so none of them may mint or finish a run.
+      row({ schema: 'fleet.session-pool.v1', ts: at(3), sessionId: 'sess-a', event: 'session_start', context: 0 }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(3), sessionId: 'sess-a', event: 'launch', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(2.9), sessionId: 'sess-a', event: 'finish', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1', outcome: 'completed' }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(2.8), sessionId: 'sess-a', event: 'session_stop', context: 0 }),
+      row({ schema: 'phm-node-runner.v1', ts: at(2), event: 'finish', job: 'ready:RQ-NODE-2:1:4', jobId: 'ready:RQ-NODE-2:1', node: 'muse', pack: 'shell-check', token: 4, outcome: 'succeeded' }),
+      launch('RQ-DIALECT-8', 3),
+      finish('RQ-DIALECT-8', { empty: false, wall_s: 100 }),
+    ];
+    const report = fleetYield(lines, now, 24);
+    expect(report.launches).toBe(1);
+    expect(report.families).toEqual([expect.objectContaining({ name: 'RQ-DIALECT*', launches: 1, finished: 1 })]);
+    expect(report.lanes.map(r => [r.name, r.launches])).toEqual([['codex-personal', 1]]);
+  });
 });
 
 describe('cmdFleetYield', () => {

@@ -40,7 +40,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 - **Watch** — owner thread with the Leader (send a message), live world-model summary (lanes, pull outcomes, releases, bottlenecks), and agent activity. The screen polls while it is visible.
 - **Fleet** — fleet switches, lanes, and holds; read fleet activity and live bus.
 - **Runs** — fleet runs list and current state.
-- **Inbox** — fleet inbox messages with optional source filter.
+- **Inbox** — fleet inbox messages with optional source, contains, priority and time-window filters.
 - **Leader** — leader threads, directives, resources, and unanswered questions.
 - **Needs-you** — tasks awaiting your approval: session cancellations, task dismissals, agent plan decisions.
 - **Workers** — worker status, live bus output, and telling workers things.

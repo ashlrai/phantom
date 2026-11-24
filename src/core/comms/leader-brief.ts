@@ -34,6 +34,7 @@ export interface BriefItem {
 export interface BriefFacts {
   nowMs: number;
   sinceMs: number;
+  hourLine?: string | null;
   shipped: BriefItem[];
   /** PRs opened in the window (count only — the shipped line leads with merges). */
   prsOpened: number;
@@ -273,6 +274,7 @@ function header(kind: BriefKind, nowMs: number, timeZone: string): string {
 export function composeBrief(kind: BriefKind, facts: BriefFacts, opts: { narrative?: string | null; timeZone?: string } = {}): string {
   const tz = opts.timeZone ?? 'America/New_York';
   const lines = [header(kind, facts.nowMs, tz)];
+  if (facts.hourLine) lines.push(clip(facts.hourLine, 200));
   const opened = facts.prsOpened > 0 ? ` · ${facts.prsOpened} PR${facts.prsOpened === 1 ? '' : 's'} opened` : '';
   const unavailable = facts.mergeCountUnavailable === true;
   if (facts.shipped.length > 0) {

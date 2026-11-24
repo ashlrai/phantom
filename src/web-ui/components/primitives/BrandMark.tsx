@@ -28,9 +28,18 @@ export interface BrandMarkProps {
   style?: CSSProperties;
   /** Accessible name; omit when the provider's name is shown as text nearby. */
   title?: string;
+  /**
+   * Set in a line of text, before the name it identifies: sits on the text's
+   * centre line with a gap after it, and wraps with the name. One treatment,
+   * so a name reads the same in a card head, a table cell and a list row.
+   */
+  inline?: boolean;
 }
 
-export function BrandMark({ brand, size = 16, className, style, title, x, y }: BrandMarkProps) {
+/** In ems, so the nudge and the gap follow the text the mark is set in. */
+const INLINE_STYLE: CSSProperties = { verticalAlign: '-0.16em', marginInlineEnd: '0.4em' };
+
+export function BrandMark({ brand, size = 16, className, style, title, x, y, inline = false }: BrandMarkProps) {
   const id = resolveBrand(brand);
   const common = {
     x,
@@ -38,7 +47,8 @@ export function BrandMark({ brand, size = 16, className, style, title, x, y }: B
     width: size,
     height: size,
     className,
-    style: { flex: 'none', ...style } as CSSProperties,
+    'data-inline': inline ? ('true' as const) : undefined,
+    style: { flex: 'none', ...(inline ? INLINE_STYLE : null), ...style } as CSSProperties,
     role: title ? ('img' as const) : undefined,
     'aria-hidden': title ? undefined : (true as const),
     'aria-label': title,

@@ -13,10 +13,16 @@
 .track i[data-part='unused'], .swatch[data-part='unused'] { border: 1px solid var(--status-warning-solid); }
 .track i[data-part='unused'] { border-radius: 0 var(--radius-full) var(--radius-full) 0; }
 .track[data-ending='dry'] i[data-part='used'], .track[data-ending='dry'] i[data-part='more'] { background: var(--status-warning-solid); }
+/* The provider flagged the limit: the window is spent until its reset. */
+.track[data-ending='spent'] i[data-part='used'] { background: var(--status-danger-solid); }
+/* A share held back at the window's end: hatched from a tick, over whatever is drawn under it. */
+.track i[data-part='kept'], .swatch[data-part='kept'] { border-inline-start: 1.5px solid var(--text-secondary); background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text-secondary) 55%, transparent) 0 2px, transparent 2px 4px); }
+.track i[data-part='kept'] { position: absolute; inset-block: 0; transition: none; }
 /* How far the window's time has run: a bar that stops short of this mark is behind an even spend. */
 .track i[data-part='elapsed'] { position: absolute; inset-block: 0; width: 2px; margin-inline-start: -1px; background: var(--text-primary); transition: none; }
 
 .swatch { display: inline-block; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-sm); }
 .swatch[data-part='elapsed'] { width: 2px; border-radius: 0; background: var(--text-primary); }
+.swatch[data-part='kept'] { border-radius: 0; }
 
 @media (prefers-reduced-motion: reduce) { .track i { transition: none; } }

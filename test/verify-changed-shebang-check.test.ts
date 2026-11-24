@@ -19,6 +19,10 @@ describe('shebangInterpreter', () => {
       ['#!/usr/bin/env -S node --no-warnings', 'node'],
       ['#!/usr/bin/env -S bash -e', 'shell'],
       ['#!/usr/bin/env FOO=bar python3', 'python'],
+      ['#!/usr/bin/perl', 'perl'],
+      ['#!/usr/bin/env perl', 'perl'],
+      ['#!/usr/bin/perl5.34', 'perl'],
+      ['#!/usr/bin/env -S perl -w', 'perl'],
     ];
     for (const [line, kind] of cases) expect(shebangInterpreter(line), line).toBe(kind);
   });
@@ -27,7 +31,6 @@ describe('shebangInterpreter', () => {
     for (const line of [
       '',
       '# comment',
-      '#!/usr/bin/perl',
       '#!/usr/bin/env zsh',
       '#!/usr/bin/env ksh',
       '#!/usr/bin/env fish',
@@ -48,19 +51,21 @@ describe('selectShebangScripts', () => {
     'contrib/mac/metrics-outcomes': '#!/usr/bin/env python3\n',
     'contrib/router/ashlr-router': '#!/usr/bin/env bash\n',
     'scripts/changelog-sync': '#!/bin/sh\n',
+    'scripts/scrub-fixtures': '#!/usr/bin/env perl\n',
     'LICENSE': 'MIT License\n',
     'checksums/SHA256SUMS': 'deadbeef  file\n',
   };
 
   it('buckets extensionless shebang files and skips everything else', () => {
     const selection = selectShebangScripts(
-      ['bin/tool', 'contrib/mac/metrics-outcomes', 'contrib/router/ashlr-router', 'scripts/changelog-sync', 'LICENSE', 'checksums/SHA256SUMS', 'docs/guide.md', 'gone', 'src/core/x.ts'],
-      ['bin/tool', 'contrib/mac/metrics-outcomes', 'contrib/router/ashlr-router', 'scripts/changelog-sync', 'LICENSE', 'checksums/SHA256SUMS', 'docs/guide.md', 'src/core/x.ts'],
+      ['bin/tool', 'contrib/mac/metrics-outcomes', 'contrib/router/ashlr-router', 'scripts/changelog-sync', 'scripts/scrub-fixtures', 'LICENSE', 'checksums/SHA256SUMS', 'docs/guide.md', 'gone', 'src/core/x.ts'],
+      ['bin/tool', 'contrib/mac/metrics-outcomes', 'contrib/router/ashlr-router', 'scripts/changelog-sync', 'scripts/scrub-fixtures', 'LICENSE', 'checksums/SHA256SUMS', 'docs/guide.md', 'src/core/x.ts'],
       (path) => lines[path] ?? '',
     );
     expect(selection.node).toEqual(['bin/tool']);
     expect(selection.python).toEqual(['contrib/mac/metrics-outcomes']);
     expect(selection.shell).toEqual(['contrib/router/ashlr-router', 'scripts/changelog-sync']);
+    expect(selection.perl).toEqual(['scripts/scrub-fixtures']);
   });
 
   it('skips dotted basenames even when their first line is a shebang', () => {
@@ -69,7 +74,7 @@ describe('selectShebangScripts', () => {
       ['script.sh', 'tool.py', 'run.command', '.envrc'],
       () => '#!/usr/bin/env python3\n',
     );
-    expect(selection).toEqual({ python: [], shell: [], node: [] });
+    expect(selection).toEqual({ python: [], shell: [], node: [], perl: [] });
   });
 
   it('classifies an unreadable first line to nothing', () => {
@@ -78,7 +83,7 @@ describe('selectShebangScripts', () => {
       ['bin/tool'],
       () => { throw new Error('EACCES'); },
     );
-    expect(selection).toEqual({ python: [], shell: [], node: [] });
+    expect(selection).toEqual({ python: [], shell: [], node: [], perl: [] });
   });
 });
 

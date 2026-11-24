@@ -22,6 +22,8 @@ import { readdirSync, statSync, statfsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { buildDiskPlanReport, formatDiskPlan, type DiskPlanReportV1, type WorktreeRecord, type WorktreeResult } from '../core/disk-maint/removal-plan.js';
+import { ledgerPhase } from '../core/fleet/empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../core/fleet/jobs-ledger-dialect.js';
 import { HOST_DISK_FLOOR_GB, diskTrend, type HostDiskTrend } from '../core/fleet/host-top-view.js';
 import { readDiskSamples } from '../core/fleet/host-top.js';
 import { readSource, type Source } from '../core/fleet/runs-parked-queue.js';
@@ -109,36 +111,44 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
 const HOUR_MS = 3_600_000;
 
 /**
- * Latest outcome and finish rows after the last launch per job id: the last row
- * of each event type wins, outcome.state (or .outcome) lowercased, finish.ts
- * parsed for age, finish.empty for an empty run. Torn lines are skipped,
- * never echoed.
+ * Latest outcome and finish rows after the last launch per job id, read in the
+ * jobs-ledger dialect (job|job_id|jobId|id, event|type|kind, phase aliases,
+ * timestamp aliases and eventless reconciler rows). The last resolved outcome
+ * wins — a phase-less outcome row records nothing rather than overwriting a
+ * merge — and finish.empty marks an empty run. Publish claims and other
+ * operational rows are not lifecycle rows. Torn lines are skipped, never
+ * echoed.
  */
 export function parseJobLedger(
   text: string,
 ): Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }> {
-  const latest = new Map<string, { outcome?: Record<string, unknown>; finish?: Record<string, unknown> }>();
+  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
   for (const line of text.split(/\r?\n/)) {
     try {
       const row = JSON.parse(line) as Record<string, unknown> | null;
       if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-      const id = row.job ?? row.job_id ?? row.id;
-      if (typeof id !== 'string') continue;
-      if (row.event === 'launch') { latest.delete(id); continue; }
-      if (row.event !== 'outcome' && row.event !== 'finish') continue;
-      const entry = latest.get(id) ?? {};
-      entry[row.event] = row;
+      const id = ledgerJobId(row);
+      if (id === null) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (event === 'launch') { latest.delete(id); continue; }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (event !== 'finish' && state === null) continue;
+      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
+      if (event === 'finish') {
+        entry.finishMs = ledgerEventTs(row, phase);
+        entry.finishEmpty = row['empty'] === true;
+      }
+      if (state !== null) entry.outcome = state.toLowerCase();
       latest.set(id, entry);
     } catch { /* skip damaged rows; never echo their contents */ }
   }
   const records = new Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }>();
-  for (const [id, { outcome, finish }] of latest) {
-    const state = outcome ? String(outcome.state ?? outcome.outcome ?? '').toLowerCase() : null;
-    const at = typeof finish?.ts === 'string' ? Date.parse(finish.ts) : NaN;
+  for (const [id, entry] of latest) {
     records.set(id, {
-      state: state || null,
-      finishMs: Number.isFinite(at) ? at : null,
-      finishEmpty: finish?.empty === true,
+      state: entry.outcome ?? null,
+      finishMs: entry.finishMs,
+      finishEmpty: entry.finishEmpty,
     });
   }
   return records;

@@ -35,6 +35,9 @@
 .group:first-child { padding-top: 0; }
 .group > strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface-raised); animation: session-wall-in var(--duration-base) var(--ease-decelerate); }
+/* A card with a pull request holds its link at the left of the last line (wall-vitals.module.css), so the reply line gives it room. */
+.card[data-pr] { position: relative; }
+.card[data-pr] .replyTo { max-width: calc(100% - 11ch); }
 .card[data-state='quiet'] { border-color: var(--status-warning-solid); }
 .card[data-state='failed'] { border-color: var(--status-danger-solid); }
 .card[data-state='done'], .card[data-state='unknown'] { background: none; }

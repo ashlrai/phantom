@@ -4,7 +4,7 @@ import {
   type MergeQueueIo, type MergeQueuePr, type MergeQueueRepoSnapshot, type MergeQueueState,
 } from '../src/core/drive/merge-queue-loop.js';
 import { drainKey } from '../src/core/drive/refix-loop.js';
-import { enqueueMergeQueuePr, readSnapshot } from '../scripts/merge-queue-loop.mjs';
+import { dequeueMergeQueuePr, enqueueMergeQueuePr, readSnapshot } from '../scripts/merge-queue-loop.mjs';
 
 const NOW = 1_700_000_000_000;
 const MIN = 60_000;
@@ -157,6 +157,88 @@ describe('classifyMergeQueuePr', () => {
 });
 
 describe('runMergeQueueCycle', () => {
+  it.each(['read', 'dequeue', 'enqueue'])('recovers a stalled entry after transient %s failure, without bypassing checks', stage => {
+    let at = NOW, fail = true;
+    const snapshots = only([pr({ inMergeQueue: true })]), commands: string[][] = [];
+    const fake = makeIo({ snapshots, now: () => at });
+    const read = fake.io.readSnapshot;
+    let reads = 0;
+    fake.io.readSnapshot = repo => {
+      if (++reads === 3 && stage === 'read') throw new Error('provider secret');
+      return read(repo);
+    };
+    fake.io.dequeue = (repo, head) => {
+      expect(Object.values(fake.state()!.attempts)).toHaveLength(fail ? 1 : 2);
+      dequeueMergeQueuePr((args: string[]) => {
+        commands.push(args);
+        if (fail && stage === 'dequeue') throw new Error('provider secret');
+        return { data: { dequeuePullRequest: { clientMutationId: null } } };
+      }, repo, head);
+      snapshots.set(REPO, snap([pr()]));
+    };
+    fake.io.enqueue = (repo, head) => enqueueMergeQueuePr((args: string[]) => {
+      commands.push(args);
+      if (fail && stage === 'enqueue') throw new Error('provider secret');
+      snapshots.set(REPO, snap([pr({ inMergeQueue: true, checks: 'PENDING' })]));
+    }, repo, head);
+    const cycle = () => runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(cycle().enqueued).toBe(0);
+    at += 60 * MIN - 1; expect(cycle().repos[0]!.stalled).toEqual([]);
+    reads = 1; at++;
+    expect(cycle()).toMatchObject({ failed: 1, repos: [{ stalled: [1], recovered: [] }] });
+    const saved = structuredClone(fake.state());
+    const restart = makeIo({ state: saved, snapshots, now: () => at + MIN });
+    restart.io.dequeue = () => { throw new Error('must respect persisted cooldown'); };
+    expect(runMergeQueueCycle(restart.io, { repos: [REPO] }).enqueued).toBe(0);
+    fail = false; at += 15 * MIN;
+    expect(cycle().enqueued).toBe(1);
+    expect(commands.at(-1)).toEqual(['pr', 'merge', '1', '--repo', REPO, '--auto', '--match-head-commit', sha('a')]);
+    expect(commands.filter(args => args[0] === 'api').every(args => args.includes('id=PR_1'))).toBe(true);
+    expect(cycle().enqueued).toBe(0); // The merge group still runs its required checks.
+    expect(fake.logs.join(' ')).not.toContain('secret');
+  });
+
+  it.each(['merged', 'moved', 'held', 'owned', 'red', 'pending', 'review', 'pinned', 'truncated', 'no-queue', 'dry-run'])(
+    'does not restart a stalled entry when refreshed state is %s', status => {
+      let at = NOW, reads = 0;
+      const fake = makeIo({ now: () => at });
+      fake.io.dequeue = () => { throw new Error('must not dequeue'); };
+      fake.io.readHoldList = () => new Set(reads >= 3 && status === 'held' ? ['phantom#1'] : []);
+      const over: Partial<MergeQueuePr> = { inMergeQueue: true,
+        ...(status === 'moved' ? { headSha: sha('b') } : {}),
+        ...(status === 'owned' ? { activeOwner: true } : {}),
+        ...(status === 'red' ? { checks: 'FAILURE' } : {}),
+        ...(status === 'pending' ? { checks: 'PENDING' } : {}),
+        ...(status === 'review' ? { reviewDecision: 'REVIEW_REQUIRED' } : {}),
+        ...(status === 'pinned' ? { files: ['.github/workflows/ci.yml'] } : {}),
+        ...(status === 'truncated' ? { filesTruncated: true } : {}),
+      };
+      fake.io.readSnapshot = () => ++reads < 3 ? snap([pr({ inMergeQueue: true })])
+        : snap(status === 'merged' ? [] : [pr(over)], { mergeQueue: status !== 'no-queue' });
+      runMergeQueueCycle(fake.io, { repos: [REPO] }); at += 60 * MIN;
+      const report = runMergeQueueCycle(fake.io, { repos: [REPO], dryRun: status === 'dry-run' });
+      expect(report).toMatchObject({ enqueued: 0, failed: 0, repos: [{ stalled: [1], recovered: [] }] });
+    });
+
+  it('resets queue residence after recovery and shares the per-cycle cap', () => {
+    let at = NOW;
+    const fake = makeIo({ snapshots: only([pr({ inMergeQueue: true }), pr({ number: 2, inMergeQueue: true })]), now: () => at });
+    fake.io.dequeue = () => {};
+    const cycle = () => runMergeQueueCycle(fake.io, { repos: [REPO], cycleCap: 1 });
+    cycle(); at += 60 * MIN;
+    expect(cycle()).toMatchObject({ capped: true, repos: [{ stalled: [1, 2], recovered: [1] }] });
+    expect(fake.state()!.latency![`${REPO}#1`].since).toBe(at);
+    at += 15 * MIN;
+    expect(cycle()).toMatchObject({ repos: [{ stalled: [2], recovered: [2] }] });
+    expect(fake.calls.filter(call => call.startsWith('enqueue'))).toHaveLength(2);
+  });
+
+  it('rejects GraphQL dequeue errors and missing success payloads', () => {
+    for (const payload of [{ errors: [{ message: 'refused' }] }, {}, { data: { dequeuePullRequest: null } }]) {
+      expect(() => dequeueMergeQueuePr(() => payload, REPO, pr())).toThrow('dequeue refused');
+    }
+  });
+
   it('measures overlapping blockers hidden by queue membership and ownership', () => {
     let at = NOW;
     const snapshots = only([pr({ inMergeQueue: true, mergeState: 'BEHIND', checks: 'PENDING', reviewDecision: 'REVIEW_REQUIRED' })]);

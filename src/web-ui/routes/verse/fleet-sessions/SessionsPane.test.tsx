@@ -10,7 +10,7 @@ import { getPane } from '../panes/pane-registry.js';
 import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.js';
 import { takeRequestedWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { SessionsPane, SessionsView } from './SessionsPane.js';
-import { narrowLiveSessions, sessionsHeadline } from './sessions-model.js';
+import { filterSessionTree, narrowLiveSessions, sessionScopeCounts, sessionsHeadline } from './sessions-model.js';
 import './fleet-sessions.pane.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
@@ -86,6 +86,87 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Sessions at %s', (_na
     expect(screen.getByRole('status').textContent).toBe('No agent sessions running.');
     expect(screen.getAllByText('No agent sessions running.')).toHaveLength(2);
     expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
+});
+
+describe('narrowing the tree', () => {
+  const list = () => narrowLiveSessions(JSON.parse(JSON.stringify(fleet())))!;
+  const shown = () => within(screen.getByRole('list', { name: 'Session tree' })).getAllByRole('listitem')
+    .map(row => `${row.querySelector('strong')?.textContent ?? row.textContent}${row.getAttribute('data-context') ? ' (context)' : ''}`);
+
+  it('counts every scope from the tree itself and keeps a match under its parent', () => {
+    expect(sessionScopeCounts(list())).toEqual({ all: 8, running: 5, quiet: 1, failed: 1 });
+    expect(sessionScopeCounts(narrowLiveSessions(JSON.parse(JSON.stringify(empty())))!)).toEqual({ all: 0, running: 0, quiet: 0, failed: 0 });
+    const helpers = filterSessionTree(list(), 'all', '  HELPER small-model ');
+    expect(helpers.matches).toBe(2);
+    expect(helpers.rows.map(row => [row.node.id, row.depth, row.context])).toEqual([
+      ['leader', 0, true], ['RQ-A', 1, true], ['helper-a', 2, false], ['unknown parent', 0, false], ['helper-lost', 1, false]]);
+    expect(filterSessionTree(list(), 'failed', 'helper')).toEqual({ rows: [], matches: 0 });
+    expect(filterSessionTree(list(), 'all', '').matches).toBe(8);
+  });
+
+  it('narrows by scope and by typed words, says how many are shown, and restores the full tree', () => {
+    render(<SessionsView list={list()} onOpen={() => {}} />);
+    const scopes = within(screen.getByRole('radiogroup', { name: 'Show sessions' }));
+    expect(scopes.getAllByRole('radio').map(option => option.getAttribute('aria-label'))).toEqual([
+      'All, 8 sessions', 'Running, 5 sessions', 'Quiet, 1 session', 'Failed, 1 session']);
+    expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(scopes.getByRole('radio', { name: 'Failed, 1 session' }));
+    expect(shown()).toEqual(['leader (context)', 'RQ-FAILED']);
+    expect(screen.getByRole('status').textContent).toContain('Showing 1 of 8 sessions.');
+    fireEvent.click(scopes.getByRole('radio', { name: 'Quiet, 1 session' }));
+    expect(shown()).toEqual(['leader (context)', 'RQ-QUIET']);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'no-such-session' } });
+    expect(screen.queryByRole('list', { name: 'Session tree' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('No sessions match.');
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+    expect(shown()).toHaveLength(9);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect((screen.getByRole('searchbox', { name: 'Filter sessions' }) as HTMLInputElement).value).toBe('');
+  });
+
+  it('is driven from the keyboard: / to filter, arrows or j k to move, Esc to clear', () => {
+    const onOpen = vi.fn();
+    render(<SessionsView list={list()} onOpen={onOpen} />);
+    const box = screen.getByRole('searchbox', { name: 'Filter sessions' }) as HTMLInputElement;
+    const open = (id: string) => screen.getByRole('button', { name: new RegExp(`^Open messages for ${id}`) });
+    fireEvent.keyDown(open('RQ-A'), { key: '/' });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: 'j' });
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(open('RQ-A'));
+    fireEvent.keyDown(open('RQ-A'), { key: 'j' });
+    expect(document.activeElement).toBe(open('RQ-NOMODEL'));
+    fireEvent.keyDown(open('RQ-NOMODEL'), { key: 'End' });
+    expect(document.activeElement).toBe(open('RQ-FAR'));
+    fireEvent.keyDown(open('RQ-FAR'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(open('RQ-FAR'));
+    fireEvent.keyDown(open('RQ-FAR'), { key: 'Home' });
+    fireEvent.keyDown(open('RQ-A'), { key: 'k', metaKey: true });
+    expect(document.activeElement).toBe(open('RQ-A'));
+    fireEvent.keyDown(open('RQ-A'), { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(box);
+    fireEvent.change(box, { target: { value: 'quiet' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(box.value).toBe('');
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('keeps leader navigation and conversation actions on filtered context rows', () => {
+    const onOpenLeader = vi.fn(), onThread = vi.fn(), onOpen = vi.fn();
+    render(<SessionsView list={list()} onOpen={onOpen} onOpenLeader={onOpenLeader} onThread={onThread} />);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter sessions' }), { target: { value: 'RQ-QUIET' } });
+    const leader = screen.getByRole('button', { name: 'Open the Leader chat' });
+    expect(leader.closest('li')?.getAttribute('data-context')).toBe('true');
+    fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(leader);
+    fireEvent.click(leader);
+    expect(onOpenLeader).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Read RQ-QUIET as a conversation' }));
+    expect(onThread).toHaveBeenCalledWith('RQ-QUIET');
+    fireEvent.click(screen.getByRole('button', { name: 'Open messages for RQ-QUIET, quiet' }));
+    expect(onOpen).toHaveBeenCalledWith('RQ-QUIET');
   });
 });
 

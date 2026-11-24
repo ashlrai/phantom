@@ -86,12 +86,29 @@ describe('build-stale pulse alert', () => {
     expect(sent).toHaveBeenCalledTimes(2);
   });
 
-  it('unknown: no alert, and the gap is listed', async () => {
-    const pulse = buildPulseAlerts(busy(unknown), NOW);
+  it('unidentified (no embedded commit, no git checkout): one alert, one notice, cleared once identified', async () => {
+    const [alert, ...rest] = buildPulseAlerts(busy(unknown), NOW).alerts;
+    expect(rest).toEqual([]);
+    expect(alert).toMatchObject({ kind: 'build-stale', lane: 'unidentified', since: null,
+      detail: 'The running phm cannot say which commit it was built from (not a git checkout), so nobody can tell whether it is current.',
+      fix_hint: 'Fix: rebuild from a master checkout.' });
+    expect(buildPulseAlerts(busy(unknown), NOW).unknown).toEqual([]);
+    await tick(unknown, NOW);
+    await tick(unknown, NOW + 3 * HOUR);
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(await stateFile()).toContain('build-stale:unidentified');
+    await tick(behindBy(0, null), NOW + 4 * HOUR);
+    expect((await stateFile()).filter(k => k.startsWith('build-stale'))).toEqual([]);
+  });
+
+  it('identified but not measurable (no fetched master ref): no alert, and the gap is listed', async () => {
+    const noRef = { commit: { state: 'known', sha: 'abc1234def5678', source: 'build' }, behind: { state: 'unknown', why: 'no local origin/master ref (nothing fetched yet)' } } as const;
+    const pulse = buildPulseAlerts(busy(noRef), NOW);
     expect(pulse.alerts).toEqual([]);
     expect(pulse.unknown).toEqual(['Live build: how far behind master is not known here.']);
     expect(buildPulseAlerts(busy(null), NOW).alerts).toEqual([]);
-    await tick(unknown, NOW);
+    expect(buildPulseAlerts(busy(undefined), NOW).alerts).toEqual([]);
+    await tick(noRef, NOW);
     expect(sent).not.toHaveBeenCalled();
   });
 });

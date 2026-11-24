@@ -97,6 +97,24 @@ describe('parseJobLedger', () => {
     ].map(row => JSON.stringify(row)).join('\n'));
     expect(classifyWorktree(ledger.get('RQ-1'))).toBe('none');
   });
+  it('reads the ledger dialect: field aliases, eventless and reconciler rows', () => {
+    const ledger = parseJobLedger([
+      // Eventless metrics-outcomes reconciler row: jobId/prUrl/outcome/mergedAt + source.
+      { jobId: 'RQ-1', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED', mergedAt: '2026-10-01T00:05:00Z', source: 'metrics-outcomes-reconciler' },
+      { jobId: 'RQ-1', type: 'finish', timestamp: '2026-10-01T00:00:00Z' },
+      // kind/status aliases on a named outcome event.
+      { job_id: 'RQ-2', kind: 'outcome', status: 'CLOSED' },
+      // A publish claim carrying a phase but no reconciler source is not lifecycle.
+      { id: 'RQ-3', event: 'publish', state: 'MERGED' },
+      // A publish-shaped reconciler row resolves through its terminal phase.
+      { jobId: 'RQ-4', event: 'publish', prUrl: 'https://github.com/o/r/pull/4', outcome: 'PUBLISHED' },
+      { jobId: 'RQ-4', event: 'publish', prUrl: 'https://github.com/o/r/pull/4', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect(ledger.get('RQ-1')).toEqual({ state: 'merged', finishMs: Date.parse('2026-10-01T00:00:00Z'), finishEmpty: false });
+    expect(ledger.get('RQ-2')?.state).toBe('closed');
+    expect(ledger.has('RQ-3')).toBe(false);
+    expect(ledger.get('RQ-4')?.state).toBe('merged');
+  });
 });
 
 describe('classifyWorktree', () => {

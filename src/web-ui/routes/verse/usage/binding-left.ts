@@ -9,7 +9,7 @@ import type { CapacityRow } from './capacity-strip-model.js';
 /**
  * What is LEFT of the window that binds a seat right now (0–100), or null when
  * no window has a reading: the binding window when it is measured, else the
- * most-used measured one; a flagged limit is 0. The rail's batteries and
+ * most-used measured one; a flagged limit is 0. The rail's usage bars and
  * Command's seat strip both read this, so the two never disagree on headroom.
  */
 export function bindingLeftPercent(row: Pick<CapacityRow, 'windows' | 'quotaCurrent'>): number | null {

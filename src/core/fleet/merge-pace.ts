@@ -30,7 +30,8 @@ function summarize(repo: string, times: (number | null)[]): MergePaceRow {
  * growth/series.ts mergeRow, metrics/loop.ts jobTimelines and
  * fleet/eval-report.ts foldJobsLedger accept: job ids take
  * job|job_id|jobId|id; the event name event|type|kind; the phase
- * outcome|state|status (outcome first, so a reconciler-swapped outcome beats
+ * outcome|state|status plus the producer aliases phase|result|conclusion
+ * (outcome first, so a reconciler-swapped outcome beats
  * a stale copied state); timestamps prefer mergedAt on MERGED rows then
  * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt (dispatchd's
  * %z stamps need parseLedgerTs); PR links url|prUrl|pr_url|pr|html_url; the
@@ -38,7 +39,7 @@ function summarize(repo: string, times: (number | null)[]): MergePaceRow {
  */
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['outcome', 'state', 'status'] as const;
+const PHASE_KEYS = ['outcome', 'state', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const URL_KEYS = ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const;
 const TTM_KEYS = ['ttm_s', 'ttmS'] as const;

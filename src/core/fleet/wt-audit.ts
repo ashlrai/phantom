@@ -40,6 +40,8 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readSource, type Source } from './runs-parked-queue.js';
+import { ledgerPhase, ledgerPrUrl } from './empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from './jobs-ledger-dialect.js';
 import {
   isKeptWorktree, measureWorktreeBytes, readKeptWorktrees,
   type KeptWorktrees, type WorktreeMeasurement,
@@ -174,12 +176,16 @@ export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
     let row: Record<string, unknown>;
     try { row = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    const id = row.job ?? row.job_id ?? row.id;
-    if (typeof id !== 'string' || !JOB_ID.test(id)) continue;
-    const event = row.event;
-    if (typeof event !== 'string') continue;
-    const ts = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-    const at = Number.isFinite(ts) ? ts : null;
+    // jobs.jsonl dialect: job|job_id|jobId|id, event|type|kind, phase and
+    // timestamp aliases, and eventless reconciler rows (`jobId`/`prUrl`/
+    // `outcome`/`mergedAt` + source). A publish-shaped reconciler row is both
+    // a publish claim and an outcome, so the branches below are not exclusive.
+    const id = ledgerJobId(row);
+    if (id === null || !JOB_ID.test(id)) continue;
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    if (event === null) continue;
+    const at = ledgerEventTs(row, phase);
     const entry = jobs.get(id) ?? {
       rows: 0, launchMs: null, finishSeen: false, finishMs: null, finishEmpty: false,
       outcomeState: null, outcomeMs: null, publishUrl: null, publishClass: null, lastMs: null, repo: null,
@@ -196,13 +202,18 @@ export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
       if (event === 'finish') {
         entry.finishSeen = true;
         entry.finishMs = at ?? entry.finishMs;
-        entry.finishEmpty = row.empty === true;
-      } else if (event === 'outcome') {
-        entry.outcomeState = String(row.state ?? row.outcome ?? '').toLowerCase() || null;
+        entry.finishEmpty = row['empty'] === true;
+      }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (state !== null) {
+        entry.outcomeState = state.toLowerCase();
         entry.outcomeMs = at ?? entry.outcomeMs;
-      } else if (event === 'publish') {
-        entry.publishUrl = typeof row.url === 'string' && /^https:\/\/github\.com\/[\w./-]{1,300}$/.test(row.url) ? row.url : null;
-        entry.publishClass = typeof row.class === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(row.class) ? row.class : null;
+      }
+      if (event === 'publish') {
+        const url = ledgerPrUrl(row);
+        entry.publishUrl = url !== null && /^https:\/\/github\.com\/[\w./-]{1,300}$/.test(url) ? url : null;
+        const publishClass = row['class'];
+        entry.publishClass = typeof publishClass === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(publishClass) ? publishClass : null;
         entry.repo ??= repoOfUrl(entry.publishUrl);
       }
       if (at !== null && (entry.lastMs === null || at > entry.lastMs)) entry.lastMs = at;
@@ -212,16 +223,22 @@ export function parseAuditLedger(text: string): Map<string, WtJobLedger> {
   return jobs;
 }
 
-/** PR urls whose outcome row says MERGED — matches dispatchd's `_merged_urls`
- * so a relaunched attempt that reused a merged PR still reads as landed. */
+/** PR urls whose outcome evidence says MERGED — matches dispatchd's
+ * `_merged_urls` so a relaunched attempt that reused a merged PR still reads
+ * as landed. Reads the same dialect as parseAuditLedger: event|type|kind,
+ * phase aliases, url|pr_url|prUrl|pr links and eventless reconciler rows. */
 export function mergedUrlsFromLedger(text: string): Set<string> {
   const urls = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
     if (!line.includes('MERGED')) continue;
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
-      if (row?.event === 'outcome' && String(row.state ?? row.outcome ?? '').toUpperCase() === 'MERGED'
-        && typeof row.url === 'string' && row.url) urls.add(row.url);
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (ledgerOutcomeState(row, event, phase) !== 'MERGED') continue;
+      const url = ledgerPrUrl(row);
+      if (url !== null && url !== '') urls.add(url);
     } catch { /* skip torn rows */ }
   }
   return urls;
@@ -305,6 +322,8 @@ export interface WtEvidence {
   rc: boolean;
   pid: boolean;
   reapingMarker: boolean;
+  /** A `<job>.publish` file exists, even when it holds no RESULT line. */
+  publishFile?: boolean;
   publish: { class: PublishClass; url: string | null } | null;
   ledger: WtJobLedger | undefined;
   ledgerMergedUrl: boolean;
@@ -340,6 +359,8 @@ export interface WtAuditEntry {
     statusNamed: boolean; statusKept: boolean; statusReaping: boolean; keepListed: boolean;
     pinned: boolean; psAlive: boolean; psReaping: boolean; psPublishing: boolean;
     ledgerRows: number; outcome: string | null; publishClass: PublishClass | null;
+    /** A publish file exists; with publishClass null it holds no readable RESULT line. */
+    publishFile: boolean;
   };
 }
 
@@ -447,7 +468,7 @@ export function classifyEntry(ev: WtEvidence, ctx: WtAuditContext): Omit<WtAudit
       psAlive: ev.psAlive, psReaping: ev.psReaping, psPublishing: ev.psPublishing,
       ledgerRows: ledger?.rows ?? 0,
       outcome,
-      publishClass: ev.publish?.class ?? null,
+      publishClass: ev.publish?.class ?? null, publishFile: ev.publishFile ?? ev.publish !== null,
     },
   };
 }
@@ -597,6 +618,7 @@ export async function readWtAudit(deps: ReadWtAuditOptions = {}): Promise<WtAudi
       baseMatch: base.match,
       dispatched: runSet.has(`${name}.dispatched`),
       rc: runSet.has(`${name}.rc`),
+      publishFile: hasPublish,
       pid: runSet.has(`${name}.pid`) || runsSet.has(`${name}.pid`),
       reapingMarker: runSet.has(`${name}.reaping`),
       publish,

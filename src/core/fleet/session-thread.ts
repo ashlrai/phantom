@@ -22,12 +22,15 @@ import { flatTree, sessionAge, spoke, type LiveSessionRow, type LiveSessionsV1 }
 import type { InboxEntry } from './mason-inbox.js';
 import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
+import { prSentence, sessionPr, type SessionThreadPr } from './session-pr.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { JobLogScan } from './runs-job-detail.js';
 import { sessionReply, type SessionThreadReply } from './session-reply.js';
+import { sessionTask, taskWords, type SessionThreadTask } from './session-task.js';
 import type { SessionKind, SessionNode, SessionState } from './session-tree.js';
 
 export { sessionReply, type SessionThreadReply } from './session-reply.js';
+export { sessionTask, type SessionThreadTask } from './session-task.js';
 
 export const SESSION_THREAD_SCHEMA = 'fleet.session-thread.v1';
 /** Session ids: `leader`, a job id such as `RQ-FIX-1`, or a subagent id such as `sa-0123abcd`. */
@@ -96,6 +99,17 @@ export interface SessionThreadSession {
 }
 /** The request that stands for a session's job: the newest one the dispatcher did not turn down. */
 export interface SessionThreadControl { action: JobControlAction; lane: string | null; status: 'requested' | 'applied'; at: string }
+/** What a session's job has done, as values: the ones the summary's "commands seen, files changed" and "Latest step" sentences state in words. */
+export interface SessionThreadWork {
+  /** What the ledger records became of the job's pull request (session-pr.ts). Null when no outcome is recorded for it: unknown, not "open". */
+  pr: SessionThreadPr | null;
+  /** Commands seen in the job's log; null when the log's commands could not be read. */
+  commands: number | null;
+  /** The job's changed files; `partial` when the change read was degraded. Null when no change read answered. */
+  files: { count: number; added: number; removed: number; partial: boolean } | null;
+  /** The newest recorded step, `at` as the ledger wrote it (null when it carried no time that parses). Null when no step is recorded. */
+  step: { event: string; summary: string; at: string | null } | null;
+}
 export interface SessionThreadV1 {
   schema: typeof SESSION_THREAD_SCHEMA;
   generatedAt: string;
@@ -104,6 +118,11 @@ export interface SessionThreadV1 {
   session: SessionThreadSession | null;
   /** Short sentences assembled from the records. Empty when `session` is null. */
   summary: string[];
+  /**
+   * What the session's job was asked to do, as one line quoted from its brief (session-task.ts). Null for a session with no job,
+   * a job whose activity was not read, and a brief that holds no line past its fleet view: unknown, never a guess.
+   */
+  task: SessionThreadTask | null;
   /**
    * The conversation in reading order: for a worker the message of Mason's it serves and that message's routing, then brief,
    * recorded steps, commands, changed files, notes, bus messages, Mason's messages, leader replies, control requests, the newest lines of its log, the
@@ -115,6 +134,11 @@ export interface SessionThreadV1 {
   sources: { sessions: 'available' | 'unavailable'; activity: SessionThreadSource; bus: SessionThreadSource; owner: SessionThreadSource; replies: SessionThreadSource; orders: SessionThreadSource; output: SessionThreadSource; controls: SessionThreadSource };
   /** Plain words for every part the thread could not show. */
   gaps: string[];
+  /**
+   * What the session's job has done (`sessionWork`), the same answer its entry in `fleet.session-threads.v1` gives. Null for a
+   * session with no job, a job whose activity was not asked for, and a failed activity read: `sources.activity` tells those apart.
+   */
+  work: SessionThreadWork | null;
   /** How to write to this session (session-reply.ts), so every client aims a message the same way. */
   reply: SessionThreadReply;
   /** Null when no request stands (none was made, every one was refused, or the control file was not read). */
@@ -161,6 +185,20 @@ function sessionOf(node: SessionNode, row: LiveSessionRow | undefined): SessionT
   };
 }
 
+/** The same records, and the same rules, as the summary's "commands seen, files changed" and "Latest step" sentences below. */
+export function sessionWork(activity: FleetJobActivityV1 | null | undefined): SessionThreadWork | null {
+  if (!activity) return null;
+  const files = activity.entries.find(entry => entry.kind === 'files');
+  const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
+  return {
+    pr: sessionPr(activity),
+    commands: activity.sources.commands === 'healthy' ? activity.counts.commands : null,
+    files: !files || files.state === 'missing' ? null
+      : { count: files.totals.files, added: files.totals.added, removed: files.totals.removed, partial: files.state === 'degraded' },
+    step: last ? { event: last.event, summary: last.summary, at: last.at && Number.isFinite(Date.parse(last.at)) ? last.at : null } : null,
+  };
+}
+
 function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSessionRow | undefined, activity: FleetJobActivityV1 | null | undefined, aimed: readonly InboxEntry[], routed: readonly string[]): string[] {
   const kind = session.kind === 'subagent' ? 'Helper' : session.kind === 'leader' ? 'Leader' : 'Worker';
   const lines = [`${kind} on ${named('lane', session.lane)}, ${named('model', session.model)}, in ${named('repo', session.repo)}.`, ...routed];
@@ -178,6 +216,8 @@ function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSe
     lines.push(`${activity.sources.commands === 'healthy' ? `${plural(activity.counts.commands, 'command')} seen` : 'Commands unknown'}, ${changed}.`);
     const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
     if (last) lines.push(`Latest step: ${[last.event, last.summary].filter(Boolean).join(' ')}${when(last.at) ? ` at ${last.at}` : ''}.`);
+    const pr = sessionPr(activity);
+    if (pr) lines.push(prSentence(pr));
   }
   // The inbox is the Leader's: an aimed message is on record there, and nothing records the worker reading it.
   if (session.kind === 'worker' && aimed.length > 0) {
@@ -281,9 +321,9 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const node = flatTree(list.tree.roots).map(entry => entry.node).find(entry => entry.id === id && entry.kind !== 'unknown-parent');
   const base = { schema: SESSION_THREAD_SCHEMA, generatedAt: new Date(now).toISOString(), id } as const;
   if (!node) {
-    return { ...base, session: null, summary: [], messages: [],
+    return { ...base, session: null, summary: [], task: null, messages: [],
       sources: { sessions: parts.sessionsRead ? 'available' : 'unavailable', activity: 'none', bus: 'none', owner: 'none', replies: 'none', orders: 'none', output: 'none', controls: 'none' },
-      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], reply: sessionReply(null), control: null, depth, deeper: false };
+      gaps: [parts.sessionsRead ? `No session ${id} in the list. Finished sessions stay for an hour.` : 'Sessions unknown: the session list could not be read.'], work: null, reply: sessionReply(null), control: null, depth, deeper: false };
   }
   const row = node.jobId === null ? undefined : list.sessions.find(entry => entry.job === node.jobId);
   const session = sessionOf(node, row), leader = session.kind === 'leader';
@@ -432,8 +472,10 @@ export function buildSessionThread(list: LiveSessionsV1, id: string, parts: Sess
   const repeated = node.lastMessage !== null && wrote.length > 0 && wrote.at(-1)!.startsWith(node.lastMessage.replace(/…$/, ''));
   if (node.lastMessage !== null && !repeated) messages.push({ key: 'latest', kind: 'latest', side: 'session', label: 'Latest', at: when(node.lastMessageAt), text: node.lastMessage, format: 'plain' });
   if (session.jobId === null && !leader) gaps.push('This session has no job record: its steps, commands and changed files are not recorded.');
-  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered], messages,
-    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
+  return { ...base, session, summary: [...summaryOf(session, node, row, parts.activity, aimed, routed), ...steered],
+    task: session.jobId !== null ? sessionTask(parts.activity, session.jobId) : null, messages,
+    sources: { sessions: 'available', activity, bus, owner, replies, orders, output, controls }, gaps,
+    work: session.jobId !== null ? sessionWork(parts.activity) : null, reply: sessionReply(session), control, depth, deeper: depth === 'recent' && cut };
 }
 
 const PENDING_CONTROL = 'The dispatcher has not applied it yet.';
@@ -443,7 +485,8 @@ const SIDE_MARK: Readonly<Record<SessionThreadMessage['side'], string>> = { sess
 export function renderSessionThreadText(thread: SessionThreadV1): string {
   if (!thread.session) return thread.gaps.join('\n');
   const { session } = thread;
-  const lines = [`${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`, ...thread.summary.map(line => `  ${line}`), ''];
+  const lines = [`${session.id} | ${session.kind} | ${session.state === 'unknown' ? 'state unknown' : session.state}`,
+    ...(thread.task ? [`  ${taskWords(thread.task)}`] : []), ...thread.summary.map(line => `  ${line}`), ''];
   if (thread.messages.length === 0) lines.push('Nothing is recorded for this session yet.');
   for (const message of thread.messages) {
     lines.push(`${SIDE_MARK[message.side]} ${message.label}${message.at ? ` [${message.at}]` : ''}`);

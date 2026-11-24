@@ -1,0 +1,4 @@
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+Test case passed only after a failed attempt (flaky): test/example.test.ts > owner status reports delivery
+##[error]Process completed with exit code 1.

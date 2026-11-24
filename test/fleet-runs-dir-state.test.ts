@@ -89,6 +89,13 @@ describe('dispatchd runs directory', () => {
     expect(ordered).toHaveLength(50); expect(ordered[0].at).toBe(new Date(nowMs).toISOString());
     expect(result.publishes).toEqual([{ job: 'RQ-FAKE-1', lane: null, url: null, at: row.ts }]);
   });
+  it('reads finish and publish rows through the jobs-ledger field dialect', () => {
+    const finish = { job_id: 'RQ-DIAL-1', type: 'finish', pool: 'codex-personal', timestamp: '2026-10-31T00:20:00Z', tokens_total: 11 };
+    const publish = { id: 'RQ-DIAL-2', kind: 'publish', class: 'pr', pr_url: 'https://github.com/example/fake/pull/3', recordedAt: '2026-10-31T00:25:00Z' };
+    const result = parseJobsMetrics([JSON.stringify(finish), JSON.stringify(publish)].join('\n'), nowMs);
+    expect(result.tokensByLane).toEqual({ 'codex-personal': 11 });
+    expect(result.publishes).toEqual([{ job: 'RQ-DIAL-2', lane: null, url: 'https://github.com/example/fake/pull/3', at: '2026-10-31T00:25:00Z' }]);
+  });
   it('reads only complete metrics lines from the last MiB', async () => {
     const dir = await fixture();
     const row = JSON.stringify({ event: 'finish', job: 'RQ-FAKE-1', lane: 'codex-personal', tokens_total: 7, ts: '2026-10-31T00:20:00Z' });

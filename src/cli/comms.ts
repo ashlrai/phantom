@@ -586,13 +586,14 @@ function printCommsHelp(): void {
   console.log('  Compatible alias: ashlr comms <command>');
   console.log('');
   console.log('    bus post|read|watch|next|claim  durable local agent message plane (bus --help)');
-  console.log('    inbox [--json]               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work, comms requests');
+  console.log('    inbox [--source <n>] [--severity <band>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--json]');
+  console.log('                               unified pending view: needs-you, teammate texts, drafts, unclaimed bus work, comms requests');
   console.log('    inbox read|post              Mason inbox for local operators (inbox --help)');
   console.log('    email-drop <dir> --from <a>  ingest .eml files from a drop folder (allowlisted From only)');
   console.log('    email-cycle                  process the enabled saved email drop configuration');
   console.log('    setup-email                  print drop paths and Mail.app / forwarder setup');
   console.log('    status [--json]              config + pending/outstanding + watermark; --json is the owner-thread adapter rollup');
-  console.log('    thread [--limit n] [--json]  the single owner thread, oldest first');
+  console.log('    thread [--limit n] [--channel c] [--since t] [--json]  the single owner thread, oldest first');
   console.log('    send-owner --text <message>  fan a leader reply out to the owner channel and the desktop thread');
   console.log('    send-test                    post + send a test report to verify the channel');
   console.log('    cycle                        run one send-pending + poll-replies pass');
