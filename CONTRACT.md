@@ -4042,6 +4042,18 @@ are deduplicated by id before the since filter. The desktop's existing 2D/3D
 map overlays these messages for 10 seconds; clicking opens the text in place.
 `fleet.live-map.v1` also draws standing planners as `kind: "planner"` nodes.
 
+`phm map edges` and `phm fleet message-graph` take the same window flags plus
+the same `phm messages` filter vocabulary — agent/with, kind, priority, job,
+thread, channel, contains, from/exclude-from, in-reply-to and id — parsed by
+`parseMapEdgesQuery` and applied by the same `matchAgentMessages` pipeline,
+so `fleet.map-edges.v1`, `fleet.message-graph.v1`, GET
+`/api/verse/fleet/control/map-edges` and GET `/api/fleet/message-graph` count
+exactly the rows every other filtered bus read accepts. `readMapEdges` and
+`readMessageGraph` take a `MapEdgesFlags` input and return
+`{ok:true,result}|{ok:false,error}`; a malformed flag is a usage error, never
+a guessed window. `phm map edges --minutes <n>` stays the `--since <n>m`
+alias and cannot combine with `--since`.
+
 ## Approval actor (RQ-APPROVAL-ACTOR-1)
 
 `src/core/approvals/actor.ts` exports `principalFromWebToken(token)`,

@@ -51,7 +51,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet/stranded` | days (default 3, up to 90), verify (1 compares pushed branches with the local main branch) | [StrandedWorkReport](../src/core/fleet/stranded-work.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/stranded?days=3'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
-| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
+| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
 | GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
@@ -490,14 +490,17 @@ reduced motion; phones always get the 2D rows. No 3D library is used.
 
 #### Map edges
 
-`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` lists who
+`phm map edges [--json] [--since <10m|2h|1d|ISO|epoch> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>]` lists who
 messaged whom, read from the
 same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
-(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h]` serves
+(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h&job=RQ-1]` serves
 the same read with a current read session. The default window is the last 15
-minutes, the same as the map. `--before` keeps only messages received strictly
+minutes, the same as the map; `--minutes <n>` is the `--since <n>m` alias.
+`--before` keeps only messages received strictly
 before its cutoff, so `--since` and `--before` read one closed
-`[since, before)` window.
+`[since, before)` window. Every other flag is the `phm messages` filter
+vocabulary — the matching rules `phm messages --help` describes — so
+`map edges --job RQ-1` counts exactly the rows `messages --job RQ-1` lists.
 
 `phm map replay [--json] [--since 6h] [--step 5m]` replays the fleet one frame
 per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
@@ -533,13 +536,16 @@ opens its messages.
 
 #### Message graph
 
-`phm fleet message-graph [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` shows the same messages as
+`phm fleet message-graph [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>]` shows the same messages as
 lines between organizations: the company behind each agent's lane, or
 `unknown` when the agent's name proves no lane (the leader included). `--json`
 prints `fleet.message-graph.v1` (`version` 1), and
-`GET /api/fleet/message-graph[?since=10m&before=1h]` serves the same read; the Fleet map
+`GET /api/fleet/message-graph[?since=10m&before=1h&job=RQ-1]` serves the same read; the Fleet map
 lists it under Messages. `--before` is the same exclusive upper bound `map
 edges` takes, so the two reads always describe one `[since, before)` window.
+Every other flag is the `phm map edges` vocabulary — the same `phm messages`
+matching rules — so a filtered read here regroups exactly the edges `map
+edges` would list.
 
 | Field | Meaning |
 | --- | --- |
@@ -549,8 +555,8 @@ edges` takes, so the two reads always describe one `[since, before)` window.
 
 Only names, counts and times are returned, never message text. When the bus
 cannot be read, `groups` and `organizations` are `null` (unknown, not zero),
-the CLI exits 1 and the route answers 503 with that same body. A bad `since`
-or `before`, or any other query, is exit 2 or 400.
+the CLI exits 1 and the route answers 503 with that same body. A bad `since`,
+`before` or filter value, an unknown or repeated query key, is exit 2 or 400.
 
 - `edges[]`, newest first: `id`, `from`, `to`, `count`, `lastAt` and
   `lastSummary` (the first 80 characters of the newest message, one scrubbed
