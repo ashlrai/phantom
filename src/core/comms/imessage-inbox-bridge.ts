@@ -38,6 +38,10 @@ import { receiptOwnerChat } from '../agents/chat-owner-ingress.js';
  * accepted envelope through cos/intake.ts). Secret-shaped, empty and oversize
  * bodies are refused there, not stored. iMessage opts out of the agent-bus
  * mirror (`publish: null`): Mason's texts stay in local inbox/queue files.
+ * Each accepted or deduplicated receipt is also copied into the unified owner
+ * thread (comms/owner-thread.ts) — the same record the Telegram, email and
+ * Slack receivers get — as a best-effort step that never changes the receipt,
+ * the cursor or this result.
  *
  * Acknowledgement: the shared ack text (channel-ack-text.ts) is RECORDED to
  * <runs>/imessage/acks.jsonl. Nonduplicate acknowledgements pass through the
@@ -65,7 +69,7 @@ import {
   imessageAllowlist, isVerifiedMasonHandle, imessageStateDir, pollInboundSince, readCursor, readMaxRowId, writeCursor,
   type ChatDbState, type IntakeMsg, type IntakePoll,
 } from '../integrations/imessage.js';
-import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelMessage } from '../fleet/channel-envelope.js';
+import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../types.js';
 
@@ -165,6 +169,47 @@ export function imessageChannelMessage(msg: IntakeMsg): ChannelMessage | null {
 
 const TRANSIENT = new Set(['write-failed', 'dedupe-store-unavailable', 'full']);
 
+/**
+ * Best-effort copy of an authenticated owner receipt into the unified owner
+ * thread — the same record receiptLeaderChannel gives the Telegram, email and
+ * Slack receivers. The channel receiver already appended the durable inbox
+ * entry, so the leader mailbox plug is the always-accept stub noteOwnerReceipt
+ * hands the other channels: the thread records the message without a second
+ * MASON-INBOX write. The stored senderId is the configured owner identity
+ * whenever it names the same verified handle — ownerAllowed compares exactly
+ * while intake verifies handles case-insensitively — and owner-thread's own
+ * bus mirror is already redacted for iMessage.
+ * Dynamic imports keep owner-thread's store closure out of this module's
+ * Tier-1 import graph. A miss never changes the receipt, the cursor or result.
+ */
+async function noteImessageOwnerThread(
+  handle: string,
+  envelope: ChannelEnvelope,
+  context: { runsDir: string; busRoot?: string; now: () => Date },
+): Promise<void> {
+  try {
+    const [{ noteOwnerReceipt }, { fixedOwnerConfigDir, loadOwnerThreadSettings }] = await Promise.all([
+      import('./owner-thread.js'),
+      import('./owner-channel.js'),
+    ]);
+    const settings = loadOwnerThreadSettings(fixedOwnerConfigDir());
+    const verified = handle.trim();
+    const configured = settings.owners.imessage?.trim();
+    // ownerAllowed compares exactly while intake verifies handles
+    // case-insensitively; the configured owner id is canonical on a match.
+    const senderId = configured !== undefined && configured.toLowerCase() === verified.toLowerCase() ? configured : verified;
+    const at = Date.parse(envelope.receivedAt);
+    await noteOwnerReceipt({
+      channel: 'imessage', senderId, text: envelope.body, idempotencyKey: envelope.dedupeKey,
+      at: Number.isNaN(at) ? context.now().getTime() : at,
+      ...(envelope.threadId === undefined ? {} : { channelRef: envelope.threadId }),
+    }, {
+      runsDir: context.runsDir, busRoot: context.busRoot, now: () => context.now().getTime(), settings,
+      mailbox: { accept: async () => ({ status: 'accepted' as const }) },
+    });
+  } catch { /* The durable inbox receipt stays authoritative. */ }
+}
+
 function recordAck(ack: ChannelAck, rowid: number, runsDir: string | undefined, at: Date): void {
   try {
     const dir = imessageStateDir(runsDir);
@@ -236,7 +281,10 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       publish: null,
       acknowledge: async (ack) => {
         recordAck(ack, current, deps.runsDir, now());
-        if (ack.status !== 'duplicate') await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
+        // A same-channel repeat stays quiet. A duplicate that joined another
+        // channel's entry (entryId) is this channel's first word on the order,
+        // so it gets its own ack quoting the shared receipt.
+        if (ack.status !== 'duplicate' || ack.entryId !== undefined) await sendIMessageOutbox(await ackText(ack), cfg, currentHandle);
       },
     });
     for (const msg of polled.messages) {
@@ -267,6 +315,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
         const got = await receive({ ...message, canonicalSenderId: OPERATOR_SENDER_ID });
         if (got.ok) {
           if (got.ack.status === 'duplicate') result.duplicate++; else result.accepted++;
+          await noteImessageOwnerThread(msg.handle, got.envelope, { runsDir, busRoot: deps.busRoot, now });
           // Explicit structured share only, after native verified-owner receipt. Ordinary
           // private traffic remains local. A transient group write must retry this row.
           const share = receiptOwnerChat(msg, cfg, { runsDir: deps.runsDir, busRoot: deps.busRoot, now: () => now().getTime() });

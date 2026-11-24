@@ -16,7 +16,7 @@ vi.mock('../../../data/client.js', async original => ({ ...await original<typeof
 
 const LIST: ApprovalsList = {
   schema: 'approvals.asks.v1', asOf: '2026-11-17T15:00:00.000Z', ledger: 'available', count: 2, expired: 0, approvals: [
-    { id: 'nm-3f2a00000001', ref: '3f2a', number: null, kind: 'device', question: 'Approve the fake-device sign-in', options: ['yes', 'no', 'done'],
+    { id: 'nm-3f2a00000001', ref: '3f2a', number: null, kind: 'device', question: 'Approve the fake-device sign-in', options: ['yes', 'no', 'later'],
       askedBy: null, created: '2026-11-17T14:00:00.000Z', ageSeconds: 3600, expires: null },
     { id: 'nm-b7c100000002', ref: '3', number: 3, kind: 'approval', question: 'Use the $40 example credit on the fake plan?', options: ['use it', 'not now'],
       askedBy: 'claude', created: null, ageSeconds: null, expires: '2026-11-17T17:00:00.000Z' },
@@ -29,14 +29,14 @@ const show = (data: unknown, width = 390, props: Parameters<typeof ApprovalsCard
 beforeEach(() => { state.post.mockReset(); state.refetch.mockClear(); setMutationToken('example-unlock'); });
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; resetGuard(); clearMutationToken(); });
 
-describe.each([['390 px', 390], ['desktop width', 1440]])('Approvals card at %s', (_name, width) => {
+describe.each([['390 px', 390], ['desktop width', 1440]])('Decisions card at %s', (_name, width) => {
   it('shows one row per ask with one big button per option, who asked, age and expiry', () => {
     show(LIST, width);
-    const card = within(screen.getByRole('region', { name: 'Approvals' }));
+    const card = within(screen.getByRole('region', { name: 'Decisions' }));
     expect(card.getByLabelText('2 waiting').textContent).toBe('2');
     const rows = card.getAllByRole('listitem');
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getAllByRole('button').map(button => button.textContent)).toEqual(['Yes', 'No', 'Done']);
+    expect(within(rows[0]!).getAllByRole('button').map(button => button.textContent)).toEqual(['Yes', 'No', 'Later']);
     expect(within(rows[1]!).getAllByRole('button').map(button => button.textContent)).toEqual(['Use it', 'Not now']);
     expect(within(rows[0]!).getByText('Device approval')).toBeTruthy();
     expect(within(rows[0]!).getByText('asked 60 min ago · by unknown · reply “yes 3f2a” from your phone')).toBeTruthy();
@@ -45,8 +45,22 @@ describe.each([['390 px', 390], ['desktop width', 1440]])('Approvals card at %s'
     for (const el of rows[1]!.querySelectorAll<HTMLElement>('*')) expect(el.style.whiteSpace).not.toBe('nowrap');
   });
 
-  it('is hidden when nothing is waiting, and for anything that is not approvals.asks.v1', () => {
-    for (const data of [{ ...LIST, count: 0, approvals: [] }, undefined, { error: 'nope' }, { schema: 'asks.v1', asks: [] }]) {
+  it('says "Nothing needs you" in plain words when nothing is waiting, with no buttons', () => {
+    show({ ...LIST, count: 0, approvals: [] }, width);
+    const card = within(screen.getByRole('region', { name: 'Decisions' }));
+    expect(card.getByRole('status').textContent).toBe('Nothing needs you');
+    expect(card.queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('labels an outreach ask in plain words and offers Yes / No / Later', () => {
+    show({ ...LIST, count: 1, approvals: [{ ...LIST.approvals[0]!, kind: 'outreach', question: 'Send the intro note to Dana' }] }, width);
+    const row = within(screen.getByRole('listitem'));
+    expect(row.getByText('Message outside the team')).toBeTruthy();
+    expect(row.getAllByRole('button').map(button => button.textContent)).toEqual(['Yes', 'No', 'Later']);
+  });
+
+  it('is hidden for anything that is not approvals.asks.v1', () => {
+    for (const data of [undefined, { error: 'nope' }, { schema: 'asks.v1', asks: [] }]) {
       const view = show(data, width);
       expect(view.container.innerHTML).toBe('');
       cleanup();
@@ -93,6 +107,6 @@ it('a read-only phone sees the rows without buttons; the phone caps rows and say
   expect(screen.queryAllByRole('button')).toHaveLength(0);
   expect(screen.getByText('1 more after these.')).toBeTruthy();
   cleanup();
-  show({ ...LIST, count: 0, approvals: [] }, 390, { emptyNote: 'Nothing needs you.' });
-  expect(screen.getByText('Nothing needs you.')).toBeTruthy();
+  show({ ...LIST, count: 0, approvals: [] }, 390, { emptyNote: 'All quiet.' });
+  expect(screen.getByText('All quiet.')).toBeTruthy();
 });

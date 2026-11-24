@@ -30,7 +30,16 @@ import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { defaultRuntimeLine } from '../core/agents/owner-status-runtime-line.js';
+import { buildDotEvidencePacket } from '../core/comms/dot-evidence-packet.js';
+import { formatDotEvidenceReply } from '../core/comms/dot-evidence-reply.js';
+import { resolveDotBridgeOwner } from '../core/comms/dot-bridge-owner.js';
+import { defaultDotEvidenceDeps } from './fleet-dot-evidence.js';
 import { createClaimNoticeTick } from './channels-slack-claim-tick.js';
+import { createSlackNoticeHealth } from './slack-notice-health.js';
+
+/** Read-only Dot evidence for a long live-evidence ask (runtime, claims, bridge owner). */
+const dotEvidenceReply = async (now: Date): Promise<string> =>
+  formatDotEvidenceReply(buildDotEvidencePacket({ ...defaultDotEvidenceDeps(await resolveDotBridgeOwner()), now: () => now }));
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -194,14 +203,21 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
   const counts = { sent: 0, duplicate: 0, uncertain: 0, refused: 0 };
   // Run mode only: proactive ASSIGNED / RELEASED / BLOCKED / VERIFIED notices.
   // The pass appends bus notes that the drain below delivers under its gates.
-  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0 };
-  const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices } : counts);
+  const noticeHealth = createSlackNoticeHealth();
+  const claimNotices = { passes: 0, sent: 0, failed: 0, skipped: 0,
+    stage: 'durable-bus-enqueue', receiptKind: 'bus-note',
+    sentMeaning: 'enqueued', skippedMeaning: 'enqueue-ledger-deduped',
+    slackDelivery: 'unverified', health: noticeHealth.health };
+  // Tick results expose no envelope correlation. Session transport successes
+  // (including owner replies) cannot establish delivery of proactive notices.
+  const totals = (): Record<string, unknown> => (run ? { ...counts, claimNotices,
+    transport: { scope: 'all-session-slack-messages', ...counts } } : counts);
   try {
     await verifySlackIdentity(call, config);
     if (run) {
       socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
         signal: controller.signal,
-        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply({ runtime: defaultRuntimeLine }) }),
+        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply({ runtime: defaultRuntimeLine, evidence: dotEvidenceReply }) }),
         readIngest: () => {
           const current = readSlackDeliveryPolicy();
           return current && JSON.stringify(current.config) === JSON.stringify(config) ? { config, teamIdentities: current.teamIdentities } : undefined;
@@ -216,7 +232,9 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
         const owners = await flushSlackLeaderReplies({ call, signal: controller.signal });
         if (owners.state !== 'completed') throw new Error('leader-slack-unavailable');
         counts.sent += owners.sent;
+        const attemptedAt = new Date().toISOString();
         const tick = await claimTick.maybeRun(controller.signal);
+        noticeHealth.observe(tick, attemptedAt);
         if (tick.ran) {
           claimNotices.passes++; claimNotices.sent += tick.sent;
           claimNotices.failed += tick.failed; claimNotices.skipped += tick.deduped;

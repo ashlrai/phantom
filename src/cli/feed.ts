@@ -1,11 +1,12 @@
 import { FEED_QUERY_ERROR, parseFeedQuery, readFeed, type FeedReport } from '../core/feed.js';
 
-const usage = `Usage: phm feed [--json] [--since 1h|<ISO time>] [--kind merged|released|failed|incident|leader] [--limit N]
+const usage = `Usage: phm feed [--json] [--since 1h|<ISO time>] [--kind merged|released|failed|lane|incident|leader] [--limit N]
 ${FEED_QUERY_ERROR}`;
 
-/** One line per event: time, kind, sentence (with a repeat count), link. Unknown sources are named, never shown as empty. */
+/** One line per event: time, kind, sentence (with a repeat count), link; a burst lists its merges beneath. Unknown sources are named, never shown as empty. */
 export function renderFeed(report: FeedReport): string {
-  const lines = report.items.map(item => `${item.at}  ${item.kind.padEnd(8)}  ${item.text}${item.count > 1 ? ` (x${item.count})` : ''}  ${item.href}`);
+  const lines = report.items.flatMap(item => [`${item.at}  ${item.kind.padEnd(8)}  ${item.text}${item.count > 1 ? ` (x${item.count})` : ''}  ${item.href}`,
+    ...(item.group ?? []).map(entry => `    ${entry.text}  ${entry.href}`)]);
   const unknown = Object.entries(report.sources).filter(([, state]) => state === 'unknown').map(([name]) => name);
   return [lines.join('\n') || 'Nothing happened in this window.', ...(report.more ? ['More events are older; raise --limit to see them.'] : []),
     `Unknown sources: ${unknown.join(', ') || 'none'}`].join('\n');

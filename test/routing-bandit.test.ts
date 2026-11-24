@@ -47,6 +47,17 @@ vi.mock('../src/core/fleet/subscription-usage.js', () => ({
   subscriptionUsage: vi.fn(() => null),
 }));
 
+vi.mock('../src/core/resources/local-memory-fit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/resources/local-memory-fit.js')>();
+  return {
+    ...actual,
+    // Hermetic homes have no host memory snapshot; fixtures assume a fitting machine
+    // so local-engine routing stays deterministic (same convention as leader-cloud-311).
+    localModelFit: () => actual.memoryFit('qwen', 8 * 1024 ** 3, 65536,
+      { totalBytes: 64 * 1024 ** 3, freeBytes: 48 * 1024 ** 3, swapGrowth: 0 }),
+  };
+});
+
 import type { AshlrConfig, WorkItem, WorkSource } from '../src/core/types.js';
 import {
   armKey,

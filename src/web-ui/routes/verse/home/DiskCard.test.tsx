@@ -28,6 +28,7 @@ describe.each([['390 px', 390], ['desktop width', 1440]])('Disk card at %s', (_n
       'merged PR: 300', 'empty result: 130', 'open PR: 80', 'live job: 9', 'kept on purpose: 6', 'unknown: 15',
     ]);
     expect(card.getByText('Safe to remove: 412 (612.4 GB).')).toBeTruthy();
+    expect(card.getByText('phm worktrees --reap --plan').tagName).toBe('CODE');
     expect(card.getByText('phm worktrees --reap --apply').tagName).toBe('CODE');
     expect(card.queryAllByRole('button')).toHaveLength(0);
   });

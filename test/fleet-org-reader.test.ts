@@ -43,7 +43,7 @@ describe('phm org reader', () => {
     const tree = await org(fleet({ sessions: [], lanes: [lane('claude', 0, 8), lane('gemini', 0, 1, { queued: 2 })] }));
     expect(tree).toMatchObject({ schema: 'fleet.org.v1', version: 1, jobsKnown: true });
     expect(tree.leader).toMatchObject({ state: 'idle', doing: 'No jobs running', provider: 'unknown', model: null });
-    expect(find(tree, 'claude')).toMatchObject({ state: 'idle', doing: 'Idle', running: 0, target: 8, model: null, jobs: [] });
+    expect(find(tree, 'claude')).toMatchObject({ state: 'idle', doing: 'Idle, nothing queued', running: 0, target: 8, model: null, jobs: [] });
     expect(find(tree, 'gemini')).toMatchObject({ state: 'idle', doing: 'Idle, 2 queued' });
     expect(tree.lanes.every(row => row.state === 'idle')).toBe(true);
   });
@@ -85,8 +85,8 @@ describe('phm org reader', () => {
     // Held is not idle: the held lane's running job still counts for the leader once dispatch resumes.
     const resumed = await org(fleet({ sessions: [session('RQ-D', 'devin')], lanes: [lane('devin', 1, 0, { held: true })] }));
     expect(resumed.leader).toMatchObject({ state: 'running', doing: 'Directing 1 running job across 1 lane' });
-    expect(find(resumed, 'devin')).toMatchObject({ state: 'held', doing: 'Held' });
-    expect(renderOrgTreeText(tree, NOW)).toContain('devin (Cognition, fixture-model): held. autobackoff: usage limit. 1 running of 0, 0 queued, held');
+    expect(find(resumed, 'devin')).toMatchObject({ state: 'held', doing: 'Held, reason not reported' });
+    expect(renderOrgTreeText(tree, NOW)).toContain('devin (Cognition, fixture-model): held. Held: autobackoff: usage limit. 1 running of 0, 0 queued, held');
   });
 
   it('shows a published cloud job as done and does not count it as running', async () => {

@@ -8,7 +8,7 @@ const row: ReturnEvidenceRow = {
 const merged = {
   number: 42, base: { repo: { full_name: 'Example/Project' } },
   state: 'closed', merged: true, merged_at: '2026-11-12T00:00:00Z',
-  head: { sha: 'abc123456789', repo: { full_name: 'fork/Project' } },
+  head: { sha: 'abc1234567890000000000000000000000000000', repo: { full_name: 'fork/Project' } },
 };
 
 describe('return PR response identity', () => {

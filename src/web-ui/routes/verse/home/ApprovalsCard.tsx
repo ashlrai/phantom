@@ -1,8 +1,11 @@
 /**
- * The Approvals card on desktop Home and the phone's Home: one row per decision
- * only Mason can make, with one big button per option. Built only on the
- * `phm approvals` API (approvals.asks.v1 / approvals.answer.v1). Hidden when
- * nothing is waiting; says unknown when the ledger could not be read. A tap
+ * The Decisions card on desktop Home and the phone's Home: one row per decision
+ * only Mason can make, with one big button per option (Yes / No / Later for a
+ * password, 2FA, device, payment or outreach ask; an agent's own options
+ * otherwise). Built only on the `phm approvals` API (approvals.asks.v1 /
+ * approvals.answer.v1), the same ledger and answer path as `phm decisions`.
+ * Says "Nothing needs you" when nothing is waiting, and unknown when the
+ * ledger could not be read. A tap
  * goes through the shared guard (the unlock prompt appears only if the hold
  * has lapsed), and the answer is only recorded: nothing is paid or sent.
  */
@@ -19,7 +22,8 @@ import styles from './approvals.module.css';
 export const APPROVALS_PATH = '/api/verse/agent-bus/needs-mason/approvals';
 export const APPROVALS_ANSWER_PATH = `${APPROVALS_PATH}/answer`;
 export const approvalAsksQuery: QueryDef<ApprovalsList> = { key: 'approval-asks', fetch: signal => apiGet(APPROVALS_PATH, signal) };
-const KIND: Record<Approval['kind'], string> = { approval: '', password: 'Password', '2fa': '2FA code', device: 'Device approval', payment: 'Payment' };
+const KIND: Record<Approval['kind'], string> = { approval: '', password: 'Password', '2fa': '2FA code', device: 'Device approval', payment: 'Payment', outreach: 'Message outside the team', usage: 'Your usage number' };
+export const DECISIONS_EMPTY = 'Nothing needs you';
 
 const label = (option: string): string => option.charAt(0).toUpperCase() + option.slice(1);
 
@@ -52,11 +56,11 @@ export interface ApprovalsCardProps {
   canAnswer?: boolean;
   /** Rows drawn at once (the phone keeps its numbers on the first screen); the rest surface as these are answered. */
   limit?: number;
-  /** Shown instead of hiding the card when nothing is waiting. */
+  /** The plain line shown when nothing is waiting. */
   emptyNote?: string;
 }
 
-export function ApprovalsCard({ visible = true, from = 'desktop', canAnswer = true, limit, emptyNote }: ApprovalsCardProps) {
+export function ApprovalsCard({ visible = true, from = 'desktop', canAnswer = true, limit, emptyNote = DECISIONS_EMPTY }: ApprovalsCardProps) {
   const read = useQuery(approvalAsksQuery, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(approvalAsksQuery);
   usePollWhileVisible(refresh, 30_000, { enabled: visible });
@@ -66,10 +70,12 @@ export function ApprovalsCard({ visible = true, from = 'desktop', canAnswer = tr
   const list = listOf(read.data);
   if (!list) return null;
   if (list.ledger === 'unavailable') {
-    return <section className={styles.card} aria-label="Approvals"><h3>Approvals</h3><p data-unknown>Unknown: the needs-you ledger could not be read.</p></section>;
+    return <section className={styles.card} aria-label="Decisions"><h3>Decisions</h3><p data-unknown>Unknown: the needs-you ledger could not be read.</p></section>;
   }
   const open = list.approvals.filter(approval => !done.includes(approval.id));
-  if (open.length === 0 && !note) return emptyNote ? <p className={styles.meta} role="status">{emptyNote}</p> : null;
+  if (open.length === 0 && !note) {
+    return <section className={styles.card} aria-label="Decisions"><h3>Decisions</h3><p className={styles.meta} role="status">{emptyNote}</p></section>;
+  }
   const shown = limit === undefined ? open : open.slice(0, limit);
 
   function answer(approval: Approval, option: string) {
@@ -96,8 +102,8 @@ export function ApprovalsCard({ visible = true, from = 'desktop', canAnswer = tr
     });
   }
 
-  return <section className={styles.card} aria-label="Approvals">
-    <h3>Approvals <span className={styles.count} aria-label={`${open.length} waiting`}>{open.length}</span></h3>
+  return <section className={styles.card} aria-label="Decisions">
+    <h3>Decisions <span className={styles.count} aria-label={`${open.length} waiting`}>{open.length}</span></h3>
     {open.length > 0 && <ul className={styles.list}>
       {shown.map(approval => {
         const meta = [ageText(approval.ageSeconds), `by ${approval.askedBy ?? 'unknown'}`, expiryText(approval.expires, list.asOf),

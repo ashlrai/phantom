@@ -1,23 +1,41 @@
 /**
- * The phone opens here. Approvals come first (the same card as desktop Home,
- * built on `phm approvals`: one row per decision, one big button per option),
- * then four plain numbers from one read of `phm home --json` (home.v1, GET
- * /api/verse/fleet/runs/home), then a box to message the leader. A fact the Mac
- * could not read says Unknown with the reason, never 0.
- *
- * Writes use paths that already exist: an answer is `phm approvals answer`
- * (POST .../needs-mason/approvals/answer) and a message is the fleet inbox.
+ * The phone opens here, with fleet health, admission, decisions and activity:
+ *  -1. the four tiles: merged, time to merge, main green, plan runway (`phm status --brief --json`);
+ *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
+ *   1. one line of fleet health: merges in the last hour, lanes running, main
+ *      green or red (one read of `phm home --json`, home.v1);
+ *   2. decisions, one tap each (the desktop Home Decisions card, built on `phm approvals`);
+ *   3. the leader's newest reply (the desktop Home From your leader card, `phm leader replies`);
+ *   3b. the Supply card: is the fleet feeding itself (`phm doctor supply --json`);
+ *   4. a box that posts to the fleet inbox, the same API as the desktop inbox box;
+ *   5. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
+ * A fact the Mac could not read says unknown, never 0.
  */
 import type { HomeField, HomeSummary } from '../../../../../core/fleet/home.js';
 import { refetchQuery } from '../../../../data/cache.js';
 import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
+import { BriefTiles, briefQuery } from '../BriefTiles.js';
+import { TodayCard } from '../TodayCard.js';
+import { AdmissionCard } from '../AdmissionCard.js';
+import { FamilyYieldCard, familyYieldQuery } from '../../fleet-hub/FamilyYieldCard.js';
+import { fleetAdmissionQuery } from '../../fleet-hub/fleet-admission-query.js';
+import { hostLoadQuery } from '../../fleet-host/host-load-query.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
+import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
+import { LiveBuildLine } from '../../home/LiveBuildLine.js';
+import { ReleasesLine } from '../../home/ReleasesLine.js';
+import { MachinesCard } from '../../home/MachinesCard.js';
+import { LaneYieldCard } from '../../home/LaneYieldCard.js';
+import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
+import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
+import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
+import { SupplyCardPhone, supplyQuery } from '../../home/SupplyCard.js';
+import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
-import type { MobileRoute } from '../mobile-router.js';
 import { Button, SkeletonList } from '../ui.js';
 import { ui } from '../ui-parts.js';
 import styles from './HomeScreen.module.css';
@@ -34,81 +52,68 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(familyYieldQuery.key, () => familyYieldQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(fleetAdmissionQuery.key, () => fleetAdmissionQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(hostLoadQuery.key, () => hostLoadQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(briefQuery.key, () => briefQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(pulseLanesQuery.key, () => pulseLanesQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(leaderRepliesQuery(1).key, () => leaderRepliesQuery(1).fetch(), true).catch(() => undefined),
+  refetchQuery(supplyQuery.key, () => supplyQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
 ]);
 
-interface TileView { value: string; hint?: string; tone?: 'alert' | 'ok' | 'unknown' }
-const unknownTile = (reason: string): TileView => ({ value: 'Unknown', hint: reason, tone: 'unknown' });
-const view = <T,>(field: HomeField<T>, known: (value: T) => TileView): TileView => field.state === 'ok' ? known(field.value) : unknownTile(field.reason);
+const known = <T,>(field: HomeField<T>, say: (value: T) => string, unknown: string): string => field.state === 'ok' ? say(field.value) : unknown;
 
-export function runningTile(running: HomeSummary['running']): TileView {
-  return view(running, (lanes) => {
-    const total = lanes.reduce((sum, lane) => sum + lane.running, 0);
-    const wanted = lanes.every((lane) => lane.target !== null) ? lanes.reduce((sum, lane) => sum + (lane.target ?? 0), 0) : null;
-    return { value: String(total), hint: wanted === null ? undefined : `of ${wanted} wanted` };
-  });
-}
-
-export function mainTile(main: HomeSummary['main']): TileView {
-  return view(main, (repos) => {
-    const names = (state: string) => repos.filter((repo) => repo.state === state).map((repo) => repo.repo).join(', ');
-    const red = names('red'), dim = names('unknown'), green = repos.filter((repo) => repo.state === 'green').length;
-    return {
-      value: `${green} of ${repos.length}`,
-      hint: red ? `Red: ${red}` : dim ? `Not known: ${dim}` : 'Every main is green',
-      tone: red ? 'alert' : dim ? 'unknown' : 'ok',
-    };
-  });
-}
-
-function Tile({ label, tile, onClick }: { label: string; tile: TileView; onClick: () => void }) {
-  return (
-    <button type="button" className={`${styles.stat} ${styles.tile}`} onClick={onClick}>
-      <span className={styles.statValue} data-tone={tile.tone}>{tile.value}</span>
-      <span className={styles.statLabel}>{label}</span>
-      {tile.hint ? <span className={styles.statHint}>{tile.hint}</span> : null}
-    </button>
-  );
+/** "7 merged in the last hour · 2 lanes running · main green". Red names the repos; anything unread says unknown. */
+export function healthLine(home: HomeSummary): { text: string; tone: 'ok' | 'red' | 'unknown' } {
+  const red = home.main.state === 'ok' ? home.main.value.filter((repo) => repo.state === 'red').map((repo) => repo.repo) : [];
+  const green = home.main.state === 'ok' && home.main.value.length > 0 && home.main.value.every((repo) => repo.state === 'green');
+  const text = [
+    known(home.mergedLastHour, (count) => `${count} merged in the last hour`, 'merges unknown'),
+    known(home.running, (lanes) => { const busy = lanes.filter((lane) => lane.running > 0).length; return `${busy} ${busy === 1 ? 'lane' : 'lanes'} running`; }, 'lanes unknown'),
+    red.length ? `main red: ${red.join(', ')}` : green ? 'main green' : 'main unknown',
+  ].join(' · ');
+  return { text, tone: red.length ? 'red' : green && home.mergedLastHour.state === 'ok' && home.running.state === 'ok' ? 'ok' : 'unknown' };
 }
 
 export function HomeGlance() {
-  const { navigate, permissions } = useMobile();
+  const { permissions, navigate } = useMobile();
   const read = useQuery(homeQuery);
   const refetch = useRefetch(homeQuery);
   usePollWhileVisible(refetch, 15_000);
   const home = read.data ?? null;
-  const go = (screen: Extract<MobileRoute['screen'], 'agents' | 'goals' | 'feed' | 'runs' | 'fleet'>) => () => navigate({ screen });
-  const merged = (field: HomeField<number>) => view(field, (count) => ({ value: String(count) }));
-
-  if (!home) {
-    const loading = read.status === 'loading' || read.status === 'idle';
-    // Approvals stand on their own API: what only Mason can decide should not wait on the summary.
-    return loading ? <SkeletonList rows={4} label="Loading Home" /> : (
-      <>
-        <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} emptyNote="Nothing needs you." />
-        <section className={`${ui.card} ${styles.needs}`} role="alert">
-          <p className={styles.askText}>Home is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>
-          <Button variant="tinted" onClick={() => refetch()}>Try again</Button>
-        </section>
-      </>
-    );
-  }
+  const loading = !home && (read.status === 'loading' || read.status === 'idle');
+  if (loading) return <SkeletonList rows={4} label="Loading Home" />;
+  const health = home ? healthLine(home) : null;
   return (
     <>
-      <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} emptyNote="Nothing needs you." />
-      <div className={styles.tiles}>
-        <Tile label="Running now" tile={runningTile(home.running)} onClick={go('runs')} />
-        <Tile label="Mains green" tile={mainTile(home.main)} onClick={go('fleet')} />
-        <Tile label="Merged, last hour" tile={merged(home.mergedLastHour)} onClick={go('feed')} />
-        <Tile label="Merged, 24 hours" tile={merged(home.merged24h)} onClick={go('feed')} />
-      </div>
-      <nav className={styles.links} aria-label="Open">
-        <Button variant="tinted" onClick={go('agents')}>Sessions</Button>
-        <Button variant="tinted" onClick={go('goals')}>Goals</Button>
-        <Button variant="tinted" onClick={go('feed')}>PRs</Button>
-      </nav>
+      <TodayCard home={home} />
+      <BriefTiles />
+      <PulseStrip />
+      <PulseCard />
+      <AdmissionCard />
+      <FamilyYieldCard />
+      {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
+        <section className={`${ui.card} ${styles.needs}`} role="alert">
+          <p className={styles.askText}>Fleet health is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>
+          <Button variant="tinted" onClick={() => refetch()}>Try again</Button>
+        </section>
+      )}
+      <LiveBuildLine className={styles.health} />
+      <ReleasesLine className={styles.health} />
+      {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
+      <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
+      <LeaderRepliesCard limit={1} />
+      <SupplyCardPhone />
+      <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
+      <LaneYieldCard compact />
+      <MachinesCard className={ui.card} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
+      <ShippedCard days={1} />
     </>
   );
 }

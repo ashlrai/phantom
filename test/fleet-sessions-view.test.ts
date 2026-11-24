@@ -90,3 +90,32 @@ it('bounds detail work and marks omitted details partial while preserving unknow
   expect(['queued', 'parked', 'running', 'launching', 'publishing', 'exited', 'stale'].map(s => sessionMapState(s as typeof row.status)))
     .toEqual(['queued', 'held', 'running', 'running', 'running', 'idle', 'unknown']);
 });
+
+
+it('does not manufacture an active claim-only duplicate of a recently finished job', async () => {
+  const f = await fixture();
+  const view = await readFleetSessionMap({ compute: { ...f.compute, nodes: [{ ...node(f.compute.localNodeId, 'RQ-CLOUD'), local: true }] },
+    sessions: f.inventory, runsDir: f.root, now });
+  expect(view.mapSessions.filter(s => s.job === 'RQ-CLOUD')).toEqual([]);
+  expect(view.mapRecent.filter(s => s.job === 'RQ-CLOUD')).toEqual([expect.objectContaining({ status: 'finished',
+    outcome: 'pr', branch: 'work/cloud', prUrl: 'https://github.com/ashlrai/phantom/pull/123' })]);
+});
+
+it('keeps a new active attempt ahead of an older terminal receipt with the same id', async () => {
+  const f = await fixture(), row = f.inventory.sessions.find(s => s.job === 'RQ-A')!;
+  const view = await readFleetSessionMap({ compute: f.compute, sessions: { ...f.inventory,
+    recent: [{ ...row, status: 'finished', model: 'older-attempt' }] }, runsDir: f.root, now });
+  expect(view.mapSessions.filter(s => s.job === 'RQ-A')).toHaveLength(1);
+  expect(view.mapSessions.find(s => s.job === 'RQ-A')).toMatchObject({ model: 'fixture-model', mapState: 'running' });
+  expect(view.mapRecent.filter(s => s.job === 'RQ-A')).toEqual([]);
+});
+
+
+it('never hydrates a recent job from local files when its claim is on another host', async () => {
+  const f = await fixture(), detail = vi.fn();
+  const view = await readFleetSessionMap({ compute: { ...f.compute, nodes: [node('remote', 'RQ-CLOUD')] },
+    sessions: { ...f.inventory, sessions: [] }, runsDir: f.root, now, readDetail: detail });
+  expect(view.mapSessions).toEqual([]);
+  expect(view.mapRecent.find(s => s.job === 'RQ-CLOUD')).toMatchObject({ status: 'finished', nodeId: 'remote', branch: null, activity: null });
+  expect(detail).not.toHaveBeenCalled();
+});

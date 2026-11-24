@@ -135,6 +135,18 @@ export async function cmdModels(args: string[]): Promise<number>;
 - `ashlr models check [--json] [--diff <file>]`: `checkModels` in
   `src/core/fleet/model-check.ts`, returning `ModelCheckReport` (`models.check.v1`,
   `version: 1`). Read-only; exit 0 only when `ok`.
+  `checkModelsAgainstDocs(registry, docs)` in `src/core/fleet/model-verify.ts`
+  is the pure comparison with provider docs; `readDocsRecords` reads the
+  `models.docs.v1` list, and `selectVerifiedModel(models, registry, docs?)`
+  skips a model the docs call retired or do not name.
+- `ashlr models radar [--json] [--from <folder>] [--fetch]`: `runModelRadar` in
+  `src/core/fleet/model-radar.ts`, returning `ModelRadarReport` (`models.radar.v1`,
+  `version: 1`). `scanModelReleaseNotes(docs, registry)` is the pure scan
+  (`new_models`, `retired_models`, `renamed`, `unchanged_count`, `providers`) and
+  `proposeRegistryPatch(scan)` builds the `models.registry-patch.v1` proposal,
+  which nothing applies. `MODEL_RADAR_SOURCES` and `fetchModelRadarDocs(folder)`
+  in `src/core/fleet/model-radar-fetch.ts` are the page table and the fetch
+  behind `--fetch`. Exit 0 only when `ok`.
 - `ashlr models verify <id> --source <url>`: `markModelVerified`; see
   [the router gateway guide](../ROUTER-GATEWAY.md#model-verification).
 - `ashlr models pull <name>`: EXPLICIT management. Confirm (large download),

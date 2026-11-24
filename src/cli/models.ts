@@ -5,6 +5,7 @@
  *   (none)           List the model registry (verified, unverified, stale), then
  *                    local models (Ollama + LM Studio).
  *   check [--diff <file>]
+ *   radar [--from <folder>] [--fetch]
  *                    Report every model the router can pick as confirmed, stale or
  *                    unconfirmed; --diff compares a saved release-notes page.
  *   verify <id> --source <url>
@@ -33,6 +34,7 @@ import { BUILTIN_ENGINE_REGISTRY } from '../core/run/engine-registry.js';
 import { probeApiModelEngine } from '../core/providers.js';
 import type { ApiModelReadiness } from '../core/providers.js';
 import type { ModelCheckReport } from '../core/fleet/model-check.js';
+import type { ModelRadarReport } from '../core/fleet/model-radar.js';
 import type { ModelRegistryRow, ModelVerifyOptions } from '../core/fleet/model-verify.js';
 
 const { bold, dim, green, yellow, cyan, gray } = makeColors(isTty());
@@ -102,7 +104,11 @@ async function loadConfig(): Promise<AshlrConfig> {
 // ---------------------------------------------------------------------------
 
 interface ParsedModelsArgs {
-  subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing' | 'verify' | 'check';
+  subcommand: 'list' | 'pull' | 'start' | 'inventory' | 'routing' | 'verify' | 'check' | 'radar';
+  /** `radar --from <folder>`: saved release notes, one file per provider. */
+  from?: string;
+  /** `radar --fetch`: save today's pages into the folder first. */
+  fetch?: boolean;
   /** `check --diff <file>`: a saved provider release-notes page. */
   diff?: string;
   pullName?: string;
@@ -134,13 +140,15 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
       result.json = true;
     } else if (arg === '--text') {
       result.text = true;
+    } else if (arg === '--fetch') {
+      result.fetch = true;
     } else if (arg === '--yes' || arg === '-y') {
       result.yes = true;
-    } else if (arg === '--source' || arg === '--provider' || arg === '--lane' || arg === '--diff') {
+    } else if (arg === '--source' || arg === '--provider' || arg === '--lane' || arg === '--diff' || arg === '--from') {
       const value = args[++i];
       if (!value || value.startsWith('--')) { result.usageError = `${arg} needs a value`; return result; }
       if (arg === '--lane') result.lanes.push(value);
-      else result[arg === '--source' ? 'source' : arg === '--diff' ? 'diff' : 'provider'] = value;
+      else result[arg === '--source' ? 'source' : arg === '--diff' ? 'diff' : arg === '--from' ? 'from' : 'provider'] = value;
     } else if (arg === '--help' || arg === '-h') {
       // handled upstream via help check
     } else if (arg.startsWith('--')) {
@@ -171,6 +179,9 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
   } else if (sub === 'check') {
     result.subcommand = 'check';
     if (positional.length > 1 || result.yes || result.source) result.usageError = 'Usage: phm models check [--json] [--diff <saved release-notes file>]';
+  } else if (sub === 'radar') {
+    result.subcommand = 'radar';
+    if (positional.length > 1 || result.yes || result.source) result.usageError = 'Usage: phm models radar [--json] [--from <folder of saved release notes>] [--fetch]';
   } else if (sub === 'routing') {
     result.subcommand = 'routing';
     if (positional.length > 1 || result.yes) result.usageError = 'Usage: phm models routing [--json]';
@@ -180,11 +191,12 @@ function parseModelsArgs(args: string[]): ParsedModelsArgs {
   } else if (sub === 'start') {
     result.subcommand = 'start';
   } else {
-    result.usageError = `unknown subcommand: ${sub}. Use list, check, routing, inventory, verify, pull <name>, or start.`;
+    result.usageError = `unknown subcommand: ${sub}. Use list, check, radar, routing, inventory, verify, pull <name>, or start.`;
   }
 
   if ((result.provider || result.lanes.length) && !result.verifyId) result.usageError = '--provider and --lane are only for models verify <id> --source <url>.';
   if (result.diff && result.subcommand !== 'check') result.usageError = '--diff is only for models check.';
+  if ((result.from || result.fetch) && result.subcommand !== 'radar') result.usageError = '--from and --fetch are only for models radar.';
   if (result.text && (result.subcommand !== 'verify' || result.json)) result.usageError = '--text is only for models verify and cannot be combined with --json.';
   return result;
 }
@@ -242,17 +254,36 @@ export function formatModelRegistry(rows: readonly ModelRegistryRow[] | null): s
   ];
 }
 
-/** `phm models check` in plain words: the three counts, the list, then the one next step. */
+/** `phm models check` in plain words: the top line, the three counts, the list, then the one next step. */
 export function formatModelCheck(report: ModelCheckReport): string[] {
   if (report.registry === 'unknown') return [`Models: unknown. ${report.error}`];
   const { counts, diff } = report;
-  const lines = [`Models: ${counts.confirmed} confirmed, ${counts.stale} stale, ${counts.unconfirmed} unconfirmed`];
+  const lines = [report.summary, `Models: ${counts.confirmed} confirmed, ${counts.stale} stale, ${counts.unconfirmed} unconfirmed`];
   for (const row of report.models) lines.push(`  ${row.id}: ${row.state}${row.routable ? '' : ', not routable'}; ${row.provider ?? 'unknown provider'}; lanes ${row.lanes.join(', ') || 'unknown'}; `
-    + `confirmed ${row.confirmed_on ?? 'never'}; source ${row.source_url ?? 'none'}`);
+    + `confirmed ${row.confirmed_on ?? 'never'}; source ${row.source_url ?? 'none'}; docs ${row.docs}${row.replacement ? `, use ${row.replacement}` : ''}`);
   if (counts.stale || counts.unconfirmed) lines.push('Confirm one: phm models verify <id> --source <official doc URL>');
+  for (const model of report.missing) lines.push(`  missing: ${model.id} (${model.provider}), seen ${model.seen_at}. Add it: phm models verify ${model.id} --source ${model.source_url} --provider ${model.provider}`);
   if (diff?.error) lines.push(`${diff.file}: ${diff.error}`);
   else if (diff) lines.push(`${diff.file} (${diff.provider}): ${diff.new.length} new, ${diff.renamed.length} renamed, ${diff.retired.length} retired`,
     ...diff.new.map(id => `  new: ${id}`), ...diff.renamed.map(pair => `  renamed: ${pair.from} is now ${pair.to}`), ...diff.retired.map(id => `  retired: ${id}`));
+  return lines;
+}
+
+/** `phm models radar` in plain words: the one-line summary, each finding with its doc line, what is unknown, then the one next step. */
+export function formatModelRadar(report: ModelRadarReport): string[] {
+  if (report.registry === 'unknown') return [`Model radar: unknown. ${report.error}`];
+  const lines = [report.summary];
+  const row = (kind: string, item: ModelRadarReport['new_models'][number], what = item.id) =>
+    lines.push(`  ${kind}: ${what} (${item.provider}, ${item.confidence} confidence), line ${item.line_number}: ${item.line}`);
+  for (const item of report.new_models) row('new', item);
+  for (const item of report.retired_models) row('retired', item);
+  for (const item of report.renamed) row('renamed', item, `${item.from} is now ${item.id}`);
+  for (const provider of report.providers) if (provider.note) lines.push(`  ${provider.doc === 'read' ? 'note' : 'unknown'}: ${provider.provider}: ${provider.note}`);
+  for (const page of report.fetch ?? []) if (!page.saved) lines.push(`  not fetched: ${page.provider}: ${page.url}`);
+  if (report.error) lines.push(report.error);
+  const first = report.patch.add[0];
+  if (first) lines.push(`Confirm one: phm models verify ${first.id} --provider ${first.provider} --source <official doc URL>`);
+  lines.push('Nothing was changed. The proposed registry patch is in --json.');
   return lines;
 }
 
@@ -590,7 +621,8 @@ function printModelsHelp(): void {
   console.log('');
 
   const subs: [string, string][] = [
-    ['check [--diff <file>]', 'Report every model the router can pick: confirmed, stale (over 14 days) or unconfirmed (not routable).'],
+    ['check [--diff <file>]', 'Report every model the router can pick: confirmed, stale (over 14 days) or unconfirmed (not routable), and what provider docs say.'],
+    ['radar [--from <folder>] [--fetch]', 'Read saved provider release notes and list new, retired and renamed model ids, with a proposed registry patch (never applied).'],
     ['verify', 'Show model status, evidence age and configured choices (JSON by default; --text for people).'],
     ['verify <id> --source <url>', 'Mark one model verified once its official doc page names the exact id (--provider adds a new model).'],
     ['routing', 'Inspect recorded task fit, latency availability and execution feedback (read-only).'],
@@ -616,6 +648,8 @@ function printModelsHelp(): void {
     ['--provider', 'Provider of a model that is not in the registry yet (models verify <id>).'],
     ['--lane',    'A lane that can run the model; repeat for more (models verify <id>).'],
     ['--diff',    'A saved provider release-notes page; lists new, renamed and retired ids (models check).'],
+    ['--from',    'Folder of saved release notes, one file per provider such as anthropic.md (models radar).'],
+    ['--fetch',   'Save today\'s official release-notes pages into the folder first (models radar).'],
   ];
   const optW = Math.max(...opts.map(([o]) => o.length));
   for (const [opt, desc] of opts) {
@@ -676,6 +710,20 @@ export async function cmdModels(args: string[], verifyOptions: ModelVerifyOption
     const report = await checkModels({ ...verifyOptions, diffPath: parsed.diff });
     if (parsed.json) console.log(JSON.stringify(report, null, 2));
     else for (const line of formatModelCheck(report)) console.log(line);
+    return report.ok ? 0 : 1;
+  }
+
+  if (parsed.subcommand === 'radar') {
+    const { runModelRadar } = await import('../core/fleet/model-radar.js');
+    const { homeFile } = await import('../core/fleet/model-verify.js');
+    const folder = homeFile('model-radar', parsed.from, verifyOptions);
+    // A page that fails keeps its last saved copy; the report lists every page that was not saved.
+    const fetcher = parsed.fetch && folder ? await import('../core/fleet/model-radar-fetch.js') : null;
+    // A folder that cannot be written saves nothing, and the report says so page by page.
+    const fetched = await fetcher?.fetchModelRadarDocs(folder!).catch(() => fetcher.MODEL_RADAR_SOURCES.map(({ provider, url }) => ({ provider, url, saved: false })));
+    const report = await runModelRadar({ ...verifyOptions, from: parsed.from, fetched });
+    if (parsed.json) console.log(JSON.stringify(report, null, 2));
+    else for (const line of formatModelRadar(report)) console.log(line);
     return report.ok ? 0 : 1;
   }
 

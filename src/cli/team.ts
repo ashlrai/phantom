@@ -3,16 +3,22 @@
  * Agents use the phm_team_* MCP tools; humans join, view, approve and claim here.
  */
 import { userInfo } from 'node:os';
-import { addTeamPerson, DirectoryInputError, removeTeamPerson, teamDirectory } from '../core/teams/directory.js';
+import { addTeamPerson, DirectoryInputError, DirectoryRefusedError, OWNER_ONLY, removeTeamPerson, teamDirectory } from '../core/teams/directory.js';
+import { memberRunningJobs } from '../core/teams/running-jobs.js';
+import { shareTotal, TEAM_SCHEMA, toMember } from '../shared/team-directory.js';
 import {
   inviteMember, joinWithInvite, localHumanActor, memberIdForGithubUser, DEFAULT_TEAM, acquireClaim, appendEvent, decideApproval, describeAccessAction, releaseClaim, teamState, updateWorkspace, type TeamActor,
 } from '../core/teams/index.js';
 
 const USAGE = `Usage: phm team <list|add|show|view|join|invite|remove|role|link|approve|deny|claim|release|say> [--team <id>] [--as <name>] [--json]
-  list | show <id>             People, identity evidence, declared lanes and agent seats
-  add <display-name> [--role founder|engineer|viewer] [--email address] [--slack id] [--phone +number] [--lanes a,b] [--seats a,b]
-                               Save a pending teammate; nothing is sent and no access is granted
-  remove <person:id>           Remove a pending directory record only
+  (no verb) | list | show <id> People, the pools they bring, pool shares, agent seats and running jobs
+  add <display-name> [--pools a,b] [--dry-run|--apply] [--share percent] [--repos owner/name,...] [--slack id] [--email address] [--phone +number] [--verified]
+      [--role founder|engineer|viewer] [--lanes a,b] [--seats a,b]
+                               Owner only. Saves a local record and prints a note to share yourself; nothing is sent.
+                               --dry-run checks everything and saves nothing; --apply saves (the default).
+                               Pools are lane names (phm lanes). Their other computer joins with phm node join (docs/NODES.md).
+                               --verified: you checked the sender ids yourself, so their messages route to this teammate
+  remove <id>                  Owner only. Remove a teammate by the id shown in list; the last owner cannot be removed
   view                         Members, presence, claims, handoffs and pending approvals
   join [--role admin]          Join as the local human (first human becomes owner; --as is ignored)
   join <invite>                Accept an invite on your own node (team comes from the invite; uses only this node's local auth)
@@ -45,8 +51,10 @@ export async function cmdTeam(argv: string[]): Promise<number> {
   const team = flag(args, '--team') ?? DEFAULT_TEAM;
   const name = (flag(args, '--as') ?? process.env['PHM_TEAM_USER'] ?? userInfo().username).toLowerCase().replace(/[^a-z0-9._-]/g, '');
   const me: TeamActor = { kind: 'human', id: `human:${name || 'me'}` };
-  const [sub = 'view', ...rest] = args;
+  const [sub = 'list', ...rest] = args;
   const out = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
+  // The owner is the local OS user; an agent process or a flag can never stand in.
+  const owner = () => { try { return localHumanActor(); } catch { throw new DirectoryRefusedError(OWNER_ONLY); } };
   try {
     switch (sub) {
       case 'list': case 'show': {
@@ -54,18 +62,27 @@ export async function cmdTeam(argv: string[]): Promise<number> {
         const directory = teamDirectory(team);
         const people = sub === 'show' ? directory.people.filter(p => p.id === rest[0]) : directory.people;
         if (sub === 'show' && !people.length) throw new DirectoryInputError('Teammate not found. Use phm team list.');
-        return out(sub === 'show' ? { version: 1, team, orgState: directory.orgState, person: people[0] } : directory,
-          [directory.orgState === 'unknown' ? 'Org data unavailable; showing team log.' : `Team ${team}`, ...people.map(p =>
-            `${p.displayName} (${p.role}, ${p.status}) [${p.id}]\n  Identities: ${p.identities.map(i => `${i.kind} ${i.value}: ${i.state}`).join(', ') || 'unknown'}\n  Declared lanes: ${p.lanes.join(', ') || 'none'}; seats: ${p.seats.join(', ') || 'none'}`),
-          ...(people.length ? [] : ['No teammates yet. Use phm team add <display-name>.'])].join('\n'));
+        const jobs = await memberRunningJobs(people);
+        const jobWords = (id: string) => jobs[id]!.running === null ? 'unknown' : jobs[id]!.running === 0 ? 'none' : `${jobs[id]!.running} (${jobs[id]!.jobs.join(', ')})`;
+        return out(sub === 'show' ? { schema: TEAM_SCHEMA, version: 1, team, orgState: directory.orgState, person: people[0], member: { ...toMember(people[0]!), running_jobs: jobs[people[0]!.id] } }
+          : { ...directory, members: people.map(p => ({ ...toMember(p), running_jobs: jobs[p.id] })), share_total_pct: shareTotal(people) },
+          [directory.orgState === 'unknown' ? 'Org data unavailable; showing team log.' : `Team ${team}: pool shares given out ${shareTotal(directory.people)}% of 100`, ...people.map(p =>
+            `${p.displayName} (${toMember(p).role}, ${p.role}, ${p.status}) [${p.id}]\n  Sender ids: ${p.identities.map(i => `${i.kind} ${i.value}: ${i.state}`).join(', ') || 'unknown'}\n  Pool share: ${p.poolSharePct === undefined ? 'not set' : `${p.poolSharePct}%`}; repos: ${p.allowedRepos?.join(', ') || 'none listed'}\n  Pools: ${p.lanes.join(', ') || 'none'}; seats: ${p.seats.join(', ') || 'none'}; running jobs: ${jobWords(p.id)}`),
+          ...(people.length ? [] : ['No teammates yet. Use phm team add <display-name> --pools claude --dry-run.', 'Jobs are counted by pool, not by person. Another computer joins with phm node join (docs/NODES.md).'])].join('\n'));
       }
       case 'add': {
-        if (argv.some((v, i) => v.startsWith('--') && v !== '--json' && (!argv[i + 1] || argv[i + 1]!.startsWith('--')))) throw new DirectoryInputError('Every teammate flag needs a value.');
+        const verified = rest.includes('--verified'); if (verified) rest.splice(rest.indexOf('--verified'), 1);
+        const dryRun = rest.includes('--dry-run'), apply = rest.includes('--apply');
+        if (dryRun && apply) throw new DirectoryInputError('Choose --dry-run or --apply, not both.');
+        for (const f of ['--dry-run', '--apply']) if (rest.includes(f)) rest.splice(rest.indexOf(f), 1);
+        if (argv.some((v, i) => v.startsWith('--') && !['--json', '--verified', '--dry-run', '--apply'].includes(v) && (!argv[i + 1] || argv[i + 1]!.startsWith('--')))) throw new DirectoryInputError('Every teammate flag needs a value.');
+        const share = flag(rest, '--share'), repos = flag(rest, '--repos');
         const role = flag(rest, '--role'), email = flag(rest, '--email'), slack = flag(rest, '--slack'), phone = flag(rest, '--phone');
-        const lanes = flag(rest, '--lanes'), seats = flag(rest, '--seats');
+        const lanes = [flag(rest, '--pools'), flag(rest, '--lanes')].filter(Boolean).join(','), seats = flag(rest, '--seats');
         if (rest.length !== 1 || rest[0]!.startsWith('-')) throw new DirectoryInputError('Use phm team add <display-name> with optional role, identities, lanes and seats.');
-        const r = addTeamPerson(team, { displayName: rest[0], role, email, slack, phone, lanes: lanes?.split(','), seats: seats?.split(',') });
-        return out(r, `Added ${r.person.displayName} (pending) [${r.person.id}].\n${r.next}`);
+        const r = addTeamPerson(team, owner(), { displayName: rest[0], role, email, slack, phone, lanes: lanes ? lanes.split(',') : [], seats: seats?.split(','),
+          ...(share !== undefined ? { poolSharePct: Number(share) } : {}), ...(repos ? { allowedRepos: repos.split(',') } : {}), ...(verified ? { verified } : {}) }, { dryRun });
+        return out(r, `${dryRun ? 'Dry run, nothing saved. Would add' : 'Added'} ${r.person.displayName}${dryRun ? '' : ` [${r.person.id}]`}.\n${r.next}\n\n  ${r.note}`);
       }
       case 'view': {
         const s = teamState(team);
@@ -99,7 +116,7 @@ export async function cmdTeam(argv: string[]): Promise<number> {
           return out(r, `Invited ${r.member} to ${team} (membership only; no credentials in the invite).\n${r.invite}\n${r.next}`);
         }
         if (sub === 'remove') {
-          if (rest[0]!.startsWith('person:')) { const r = removeTeamPerson(team, rest[0]!); return out(r, 'Pending teammate removed.'); }
+          if (/^(person|human):/.test(rest[0]!)) { const r = removeTeamPerson(team, owner(), rest[0]!); return out(r, 'Teammate removed.'); }
           const ev = updateWorkspace(team, localHumanActor(), { type: 'member.removed', memberId: memberIdForGithubUser(rest[0]!) });
           const p = ev.payload as { drainedClaims: string[]; reopenedHandoffs: string[] };
           return out(ev, `Removed ${rest[0]} from ${team}: drained ${p.drainedClaims.length} claims, reopened ${p.reopenedHandoffs.length} handoffs. Re-invite with: phm team invite ${rest[0]} --team ${team}`);
@@ -127,9 +144,9 @@ export async function cmdTeam(argv: string[]): Promise<number> {
       default: console.error(USAGE); return 2;
     }
   } catch (err) {
-    if (['list', 'show', 'add'].includes(sub) || (sub === 'remove' && rest[0]?.startsWith('person:'))) {
-      const error = err instanceof DirectoryInputError ? err.message : 'Team directory unavailable.';
-      console.error(json ? JSON.stringify({ version: 1, error }) : `phm team: ${error}`); return 1;
+    if (['list', 'show', 'add'].includes(sub) || (sub === 'remove' && /^(person|human):/.test(rest[0] ?? ''))) {
+      const error = err instanceof DirectoryInputError ? err.message : sub === 'remove' && err instanceof Error ? err.message : 'Team directory unavailable.';
+      console.error(json ? JSON.stringify({ schema: TEAM_SCHEMA, version: 1, error, refused: err instanceof DirectoryRefusedError }) : `phm team: ${error}`); return 1;
     }
     console.error(`phm team: ${err instanceof Error ? err.message : String(err)}`);
     return 1;

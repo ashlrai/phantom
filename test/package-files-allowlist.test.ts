@@ -50,7 +50,13 @@ function reportOutcome(packagedFiles: RuntimeReleasePackFileRecord[]) {
 }
 
 describe('package files allowlist', () => {
-  it('accepts the real package.json files declaration without packaging', () => {
+  it('accepts every reviewed files entry from the real package.json without packaging', () => {
+    expect(packageJson['files']).toEqual(expect.arrayContaining([
+      'docs/PRODUCTION-METRICS.md',
+      'docs/IMPACT-METRICS.md',
+      'docs/ECOSYSTEM-CHANGELOG.md',
+      'scripts/canonical-launcher-digests.json',
+    ]));
     expect(() => assertRuntimeReleaseRootPackagePortability(packageJson, [], inventory))
       .not.toThrow();
   });

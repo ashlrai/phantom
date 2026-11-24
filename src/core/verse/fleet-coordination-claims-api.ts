@@ -15,7 +15,7 @@ import { VERSE_FLEET_COORDINATION_RETURNS_PATH, handleFleetCoordinationReturnsAp
 export const VERSE_FLEET_COORDINATION_CLAIMS_PATH = '/api/verse/fleet/coordination-claims';
 /** Must equal VERSE_FLEET_COORDINATION_RETURNS_VERIFY_PATH; repeated here so the
  * module that shells out to gh loads only when its route is first requested. */
-const RETURNS_VERIFY_PATH = `${VERSE_FLEET_COORDINATION_RETURNS_PATH}/verify`;
+const RETURNS_VERIFY_PATH = '/api/verse/fleet/coordination-claims/returns/verify';
 const lazyReturnsVerify: ApiModule = async (...args) =>
   (await import('./fleet-coordination-returns-verify-api.js')).handleFleetCoordinationReturnsVerifyApi(...args);
 
@@ -62,8 +62,8 @@ export function createFleetCoordinationClaimsApi(deps: FleetCoordinationClaimsAp
     } catch {
       board = null;
     }
-    const { asOf, ...view } = projectCoordinationClaims(board, at.getTime());
-    sendJson(res, 200, { ...view, generatedAt: asOf });
+    const { v, asOf, ...view } = projectCoordinationClaims(board, at.getTime());
+    sendJson(res, 200, { v, generatedAt: asOf, ...view });
     return true;
   };
 }

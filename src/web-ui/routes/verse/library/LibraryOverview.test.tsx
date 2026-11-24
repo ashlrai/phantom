@@ -8,7 +8,7 @@ const auth = vi.hoisted(() => ({ token: 'test-token' as string | null, remote: f
 vi.mock('../../../data/auth-store.js', async original => ({ ...await original<object>(), getMutationToken: () => auth.token, getReadClientProof: () => 'test-read-proof' }));
 vi.mock('../../../data/remote-mode.js', () => ({ isRemoteMobileMode: () => auth.remote }));
 const asOf = '2026-11-17T12:00:00.000Z';
-const items = ['file', 'memory', 'message', 'context'].map(kind => ({ id: kind, kind, title: `${kind} title`, source: `${kind}/source`, asOf, preview: `${kind} preview` }));
+const items = ['file', 'media', 'memory', 'message', 'context'].map(kind => ({ id: kind, kind, title: `${kind} title`, source: `${kind}/source`, asOf, preview: `${kind} preview` }));
 const snapshot = { v: 1, asOf, items, unavailable: [] };
 const stub = (body: unknown = snapshot) => stubSurfaceFetch({ routes: { '/api/verse/fleet/library-files/items': body } });
 function Subject() {
@@ -22,10 +22,10 @@ it('renders every kind with source and as-of time; tabs and one search narrow th
   const list = await screen.findByRole('list', { name: 'Library items' });
   expect(fetchMock).toHaveBeenCalledWith('/api/verse/fleet/library-files/items', expect.objectContaining({ credentials: 'same-origin',
     headers: { 'x-ashlr-read-client': 'test-read-proof', 'x-ashlr-token': 'test-token' } }));
-  expect(within(list).getAllByRole('listitem')).toHaveLength(4);
+  expect(within(list).getAllByRole('listitem')).toHaveLength(5);
   for (const item of items) expect(list).toHaveTextContent(`${item.title}${item.preview}${item.source}`);
   expect(list.querySelector('time')).toHaveAttribute('datetime', asOf);
-  for (const [label, kind] of [['Files & media', 'file'], ['Memory', 'memory'], ['Messages', 'message'], ['Context', 'context']]) {
+  for (const [label, kind] of [['Files', 'file'], ['Media', 'media'], ['Memory', 'memory'], ['Messages', 'message'], ['Context', 'context']]) {
     fireEvent.click(screen.getByRole('tab', { name: label }));
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);
     expect(list).toHaveTextContent(`${kind} title`);

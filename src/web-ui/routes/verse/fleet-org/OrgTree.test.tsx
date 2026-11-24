@@ -16,14 +16,14 @@ vi.mock('../fleet/JobDetailSheet.js', () => ({ JobDetailSheet: ({ job, repo, onC
   <div role="dialog">{job} in {repo ?? 'unknown'}<button onClick={onClose}>Close</button></div> }));
 
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = '2026-11-17T12:00:00Z';
-const session = (job: string, lane: string, extra: object = {}) => ({ job, lane, repo: 'phantom', model: 'fixture-model', status: 'running',
+const session = (job: string, lane: string, extra: object = {}) => ({ job, lane, repo: 'phantom', model: 'fixture-model', status: 'running', tier: 'frontier',
   elapsedSeconds: 600, startedAt: '2026-11-17T11:50:00Z', live: 'yes', ...extra });
 const lane = (name: string, running: number, target: number, extra: object = {}) => ({ lane: name, running, target, queued: 0, held: false, heldReason: null, ...extra });
 /** The tree exactly as `phm org --json` prints it: built by the core builder, then sent as JSON. */
 function tree(sessions: object[] | null, lanes: object[] | null): FleetOrgTree {
   const map = fleetOrgMap(null, { now: NOW, sessions: sessions && { generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions } as unknown as FleetSessionsV1 });
   return JSON.parse(JSON.stringify(fleetOrgTree(map, {
-    runs: lanes && { lanes, events: [], lastTick: AT, paused: false, sources: { status: 'healthy' } } as unknown as FleetRunsDirState,
+    runs: lanes && { lanes, events: [{ at: '2026-11-17T11:57:00Z', kind: 'LEADER', text: 'planned' }], lastTick: AT, paused: false, sources: { status: 'healthy', events: 'healthy' } } as unknown as FleetRunsDirState,
     usage: { asOf: AT, sources: { status: 'healthy' }, lanes: [{ lane: 'claude', usedPct: 41.6, resetAt: null }] } as unknown as ResourceLedgerV1,
   }))) as FleetOrgTree;
 }
@@ -47,11 +47,19 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Org tree at %s', (_na
     expect(head('claude')).toHaveTextContent('Running'); expect(head('claude')).toHaveTextContent('1 of 8 running · pool 42% used');
     expect(head('claude').closest('li')!.querySelector('[data-provider-badge="Anthropic"]')).toBeTruthy();
     const job = screen.getByRole('button', { name: 'Open job RQ-A' });
-    expect(job).toHaveTextContent('Running'); expect(job).toHaveTextContent('Working in phantom'); expect(job).toHaveTextContent('fixture-model · started 10m ago');
+    expect(job).toHaveTextContent('Running'); expect(job).toHaveTextContent('Working in phantom'); expect(job).toHaveTextContent('fixture-model · phantom · frontier · age 10m · started 10m ago');
+    // Planners sit between the leader and the lanes, in a fixed order, each with its evidence or "unknown".
+    const planners = within(screen.getByRole('list', { name: 'Planners' })).getAllByRole('listitem');
+    expect(planners.map(row => row.querySelector('strong')!.textContent)).toEqual(['Executor', 'Core orchestrator', 'Main guardian', 'Comms']);
+    expect(planners[0]).toHaveTextContent('Running'); expect(planners[0]).toHaveTextContent('Active · last sign 3m ago');
+    expect(planners[1]).toHaveTextContent('Unknown: no sign in the recent dispatch log · last sign unknown');
+    expect(planners[3]).toHaveAttribute('data-state', 'unknown');
     // Held and idle lanes are folded, labelled in words and marked for styling; the published cloud job is not counted as running.
     expect(head('devin')).toHaveAttribute('aria-expanded', 'false'); expect(head('devin')).toHaveTextContent('Held');
     expect(head('devin')).toHaveTextContent('0 of 0 running · pool use unknown');
     expect(head('devin').closest('li')).toHaveAttribute('data-state', 'held');
+    // Grey lanes say why on the row, without opening them.
+    expect(head('devin')).toHaveTextContent('Held: autobackoff: usage limit'); expect(head('gemini')).toHaveTextContent('Idle, nothing queued');
     expect(head('gemini')).toHaveTextContent('Idle'); expect(head('gemini').closest('li')).toHaveAttribute('data-state', 'idle');
     expect(screen.queryByRole('button', { name: 'Open job RQ-CLOUD' })).toBeNull();
     // One column of rows at every width: no table and no sideways layout to break on a phone.
@@ -90,8 +98,8 @@ it('shows an empty fleet as idle and an unread fleet as unknown, never as zero',
 it('shows the typed Leader seat report with fallback health, headroom and unknown evidence', () => {
   const value = busy(); value.leaderSeat = buildLeaderSeat(null, null, null, NOW);
   value.leaderSeat.current = { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT };
-  value.leaderSeat.fallbacks = [{ lane: 'codex-personal', model: 'fixture-b', confirmed: true, health: 'ok', headroomPct: 72,
-    resetAt: null, recentPassMs: null, eligible: true, reason: null }];
+  value.leaderSeat.fallbacks = [{ lane: 'codex-personal', model: 'fixture-b', confirmed: true, cli: 'codex', health: 'ok', headroomPct: 72,
+    resetAt: null, recentPassMs: null, rateLimitedAt: null, eligible: true, reason: null }];
   value.leaderSeat.pick = value.leaderSeat.fallbacks[0]!;
   render(<OrgTreeView tree={value} now={NOW} />);
   const row = screen.getByLabelText('Leader seat');

@@ -41,9 +41,9 @@ DEFAULT = {"omlx": {"target": OMLX_CAP, "floor": 0, "ceiling": OMLX_CAP, "hard_c
            "devin": {"target": 6, "floor": 3, "ceiling": 10, "hard_cap": 10},   # DEVIN-LEVERAGE-20261026
            "claude-api": {"target": 4, "floor": 0, "ceiling": 8, "hard_cap": 8},   # target is re-paced every tick by claude-api.py
            "codex-local": {"target": 6, "floor": 0, "ceiling": 6, "hard_cap": 6}}   # RQ-LOCAL-LANE: oMLX on this Mac, 6 total
-import concurrency, batcher, batch_sessions, work_market, postrun_pr
+import concurrency, batcher, batch_sessions, work_market, postrun_pr, rebase_order
 from session_handoff import handoff_advice
-from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash
+from launch_precheck import classify_empty, admission_history, admission_rank, terminal_target, repair_target, repair_freshness, merged_jobs, request_hash, update_launch_state, RecutAdmission
 import fleet_controller as fc
 # ---- fleet controller (RQ-FLEET-LOADBALANCER-1). Phase A (one readings bus, one writer for lane targets and holds, one
 # ledger line per tick) always runs and decides nothing new. FLEET_CTL_MODE=enforce applies phase B (graduated shed) and
@@ -183,6 +183,7 @@ MD = R + "/metrics"; os.makedirs(MD, exist_ok=True)
 # at the parse point, metric() also mirrors this tick's own rows in memory exactly
 # as a file re-read would see them.
 JOBS_RAW, JOBS = [], []
+ACTIVE_LAUNCHES = set()
 _JOBS_LIVE = False
 def metric(d):
     # launch.sh owns the pick; carry its exact tag without treating it as a new pool.
@@ -198,8 +199,9 @@ def metric(d):
             if a: d["ab"] = a.group(1)
             if b: d["arm"] = b.group(1)
         except Exception: pass
-    if _JOBS_LIVE: JOBS_RAW.append(d); JOBS.append(d)
     with open(MD + "/jobs.jsonl", "a") as f: f.write(json.dumps(d, sort_keys=True) + "\n")
+    if _JOBS_LIVE:
+        JOBS_RAW.append(d); JOBS.append(d); update_launch_state(ACTIVE_LAUNCHES, d)
 CLS = [("credits_exhausted", re.compile(r"(?i)(credits? (are |have been )?(exhausted|depleted)|out of credits|insufficient credits|no credits remaining)")),
        ("usage_limit", re.compile(r"(?i)(usage limit|you've hit your|weekly limit)")),
        ("model_capacity", re.compile(r"(?i)(at capacity|over capacity|overloaded|\b529\b)")),
@@ -652,7 +654,7 @@ def _eval_report():
         result = _run(cmd, timeout=8)
         return json.loads(result.stdout) if result.returncode == 0 else None
     except Exception: return None
-from process_snapshot import capture as capture_process_snapshot
+from process_snapshot import capture as capture_process_snapshot, read_start_time as read_process_start_time
 # RQ-SWE5-LOOP-BENCH: these are independent read-only subprocesses; run in
 # sequence they cost ~0.5-1.5 s of every tick. Start all of them now and collect
 # each result at its original decision point. Probe behavior is unchanged.
@@ -767,7 +769,7 @@ pat_pr = re.compile(re.escape(R) + r"/([A-Za-z0-9._-]+?)\.prompt\b")
 pat_ln = re.compile(r"launch\.sh ([A-Za-z0-9._-]+) ")
 pat_pb = re.compile(r"(?:publish|reap-one)\.sh ([A-Za-z0-9._-]+)")
 pat_lj = re.compile(r"(?:launch\.sh|local_job\.py) ([A-Za-z0-9._-]+) ")   # session leaders spawned by the launch phase
-job_leaders = {}   # job -> pids of its launch wrapper (RQ-JOB-MAX-RUNTIME-1 watchdog)
+job_leaders = {}   # job -> (pid, start time) identities of its launch wrapper
 ps_result = PS_F.result()
 jsave(Q + "/process-snapshot.json", {"observed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                                     "known": ps_result.returncode == 0,
@@ -776,12 +778,15 @@ if ps_result.returncode:
     log("PROCESS_SNAPSHOT unknown; preserving every worker and queue claim")
     raise SystemExit(0)  # Unknown ownership is never permission to reap or launch.
 ps = ps_result.stdout
+process_start_times = ps_result.start_times
 for line in ps.splitlines():
     if "dispatchd.py" in line: continue
     m = pat_pb.search(line)
     if m: publishing.add(m.group(1)); continue
     m = pat_lj.search(line); f_ = line.split(None, 1)[0] if line.strip() else ""
-    if m and f_.isdigit(): job_leaders.setdefault(m.group(1), set()).add(int(f_))
+    if m and f_.isdigit():
+        pid = int(f_)
+        job_leaders.setdefault(m.group(1), set()).add((pid, process_start_times.get(pid)))
     for p in (pat_wt, pat_pr, pat_ln):
         m = p.search(line)
         if m: alive.add(m.group(1))
@@ -824,13 +829,168 @@ def _max_runtime(lane):
         if v != v or v < 0: continue
         return 0 if v == 0 else max(JOB_MAX_RUNTIME_MIN_S, v)
     return JOB_MAX_RUNTIME_S
-def _kill_leaders(pids, sig):
-    for pid in pids:   # only a real session leader's own group: never pid 1, ourselves, or a shared group
+def _kill_leaders(leaders, sig, job, expected=None):
+    signalled = []
+    for pid, start_time in sorted(leaders, key=lambda identity: identity[0]):
+        if not isinstance(start_time, str) or not start_time:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
+        if expected is not None and (pid, start_time) not in expected:
+            ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+            continue
         try:
-            if pid > 1 and pid != os.getpid() and os.getpgid(pid) == pid and pid != os.getpgrp(): os.killpg(pid, sig)
+            if pid <= 1 or pid == os.getpid() or os.getpgid(pid) != pid or pid == os.getpgrp(): continue
+            try: current_start = read_process_start_time(pid)
+            except Exception: current_start = None
+            if not current_start or current_start != start_time:
+                ev("REAP TIMEOUT %s skip identity-mismatch" % job)
+                continue
+            # PID reuse can still occur in the sub-millisecond gap before killpg.
+            os.killpg(pid, sig)
+            signalled.append((pid, start_time))
         except OSError: pass
+    return signalled
+
+def _maxruntime_identity_alive(identity):
+    pid, start_time = identity
+    try:
+        os.getpgid(pid)
+    except ProcessLookupError:
+        # The leader PID is gone, but its group may still hold workers; only
+        # an empty group (non-signalling probe) counts as gone.
+        return not _maxruntime_group_absent(pid)
+    except OSError:
+        return True
+    try: current_start = read_process_start_time(pid)
+    except Exception: current_start = None
+    return not current_start or current_start == start_time
+
+def _maxruntime_group_absent(pgid):
+    """Non-signalling group-existence check: True only when no process
+    remains in the group (signal 0 probes without delivering a signal)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+def _maxruntime_pid_absent(pid):
+    """Affirmative absence: the pid is gone AND its process group is empty.
+    An exited leader with surviving workers is not absent; a missed snapshot
+    or failed start-time probe never counts as absence either."""
+    try:
+        os.getpgid(pid)
+        return False
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    return _maxruntime_group_absent(pid)
+
+def _maxruntime_identities(marker):
+    identities = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return identities
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        if row.get("pending") is True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            identities.add((pid, start_time))
+    return identities
+def _maxruntime_escalated(marker):
+    try:
+        with open(marker) as f: return "KILL" in {line.strip() for line in f}
+    except OSError: return True
+def _maxruntime_unresolved(j):
+    """True while a timed-out job's watchdog escalation is unfinished: slot
+    accounting and the reaper must treat the job as live until group absence
+    is verified. Fails closed: an existing but unreadable marker is unresolved,
+    never escalated."""
+    mk = RUN + "/" + j + ".maxruntime"
+    try:
+        with open(mk) as f: escalated = "KILL" in {line.strip() for line in f}
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return not escalated
+def _maxruntime_done_identities(marker):
+    done = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return done
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("done") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            done.add((pid, start_time))
+    return done
+def _maxruntime_killsent_identities(marker):
+    """Identities already sent SIGKILL. Escalation must not re-signal them,
+    and they stay unresolved until group absence is confirmed."""
+    killsent = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return killsent
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("killsent") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            killsent.add((pid, start_time))
+    return killsent
+
+def _maxruntime_pending_identities(marker):
+    """TERM candidates the first pass could not verify; a later non-pending
+    row for the same identity -- or the same pid for an unknown-start
+    candidate -- supersedes them."""
+    pending, termed = set(), set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return pending
+    for line in lines:
+        if line == "KILL": continue
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict): continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1):
+            continue
+        identity = (pid, start_time if isinstance(start_time, str) and start_time else None)
+        if row.get("pending") is True: pending.add(identity)
+        elif row.get("done") is not True: termed.add(identity)
+    return {(pid, start) for pid, start in pending
+            if not any(tpid == pid and (start is None or start == tstart) for tpid, tstart in termed)}
+
+def _maxruntime_pending_identity_alive(identity, leaders):
+    pid, start_time = identity
+    if isinstance(start_time, str) and start_time:
+        return _maxruntime_identity_alive(identity)
+    # Unknown-start candidate: alive while its pid still leads the job; absent
+    # only on affirmative proof (no process group), never on a failed probe.
+    if any(leader_pid == pid for leader_pid, _ in leaders): return True
+    return not _maxruntime_pid_absent(pid)
+def _write_maxruntime_identities(marker, identities, pending=()):
+    with open(marker, "w") as f:
+        for pid, start_time in sorted(identities, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+        for pid, start_time in sorted(pending, key=lambda identity: identity[0]):
+            f.write(json.dumps({"pid": pid, "start": start_time, "pending": True}, separators=(",", ":")) + "\n")
 def job_watchdog():
-    for j, pids in sorted(job_leaders.items()):
+    jobs = set(job_leaders)
+    jobs.update(os.path.basename(path)[:-len(".maxruntime")] for path in glob.glob(RUN + "/*.maxruntime"))
+    for j in sorted(jobs):
+        leaders = job_leaders.get(j, set())
         if not JID.match(j) or j in reaping or j in publishing: continue
         try:
             ln = rd(RUN + "/" + j + ".line").strip().split("\t")
@@ -840,16 +1000,70 @@ def job_watchdog():
             src = RUN + "/" + j + (".dispatched" if os.path.exists(RUN + "/" + j + ".dispatched") else ".line")
             age = NOW - os.path.getmtime(src)
             mk = RUN + "/" + j + ".maxruntime"
-            if os.path.exists(mk):   # already terminated once: escalate if the group is still there
-                if NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S and os.path.getsize(mk) == 0:
-                    _kill_leaders(pids, signal.SIGKILL); open(mk, "w").write("KILL\n"); ev("REAP TIMEOUT %s SIGKILL" % j)
+            if os.path.exists(mk):   # marker identities are the SIGTERM set; KILL marks completed escalation
+                if not _maxruntime_escalated(mk):
+                    # Candidates the first TERM could not verify stay pending
+                    # in the marker; retry them each tick so a recovered
+                    # identity is TERM'd and recorded before escalation ends.
+                    pending_ids = sorted(_maxruntime_pending_identities(mk), key=lambda identity: (identity[0], identity[1] or ""))
+                    retry_known = [identity for identity in pending_ids if isinstance(identity[1], str) and identity[1]]
+                    retry_unknown = [identity for identity in pending_ids if identity[1] is None]
+                    termed_now = _kill_leaders(retry_known, signal.SIGTERM, j) if retry_known else []
+                    leader_pids = {pid for pid, _ in leaders}
+                    if retry_unknown:
+                        wanted = {pid for pid, _ in retry_unknown}
+                        current = [identity for identity in leaders
+                                   if identity[0] in wanted and isinstance(identity[1], str) and identity[1]]
+                        termed_now += _kill_leaders(current, signal.SIGTERM, j)
+                        gone_unknown = []
+                        for pid, _start in retry_unknown:
+                            if pid in leader_pids: continue
+                            if _maxruntime_pid_absent(pid): gone_unknown.append(pid)
+                        if gone_unknown:
+                            with open(mk, "a") as f:
+                                for pid in gone_unknown:
+                                    f.write(json.dumps({"pid": pid, "start": None}, separators=(",", ":")) + "\n")
+                    if termed_now:
+                        with open(mk, "a") as f:
+                            for pid, start_time in sorted(termed_now):
+                                f.write(json.dumps({"pid": pid, "start": start_time}, separators=(",", ":")) + "\n")
+                        ev("REAP TIMEOUT %s SIGTERM retry" % j)
+                if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
+                    expected = _maxruntime_identities(mk)
+                    done = _maxruntime_done_identities(mk)
+                    killsent = _maxruntime_killsent_identities(mk)
+                    # SIGKILL delivery is asynchronous: a successful killpg only
+                    # means the signal was sent, not that the group is gone.
+                    # Record killsent (never done) so the unresolved check
+                    # below keeps the slot until group absence is confirmed.
+                    pending = [identity for identity in sorted(expected) if identity not in done and identity not in killsent]
+                    signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
+                    if signalled:
+                        with open(mk, "a") as f:
+                            for pid, start_time in signalled:
+                                f.write(json.dumps({"pid": pid, "start": start_time, "killsent": True}, separators=(",", ":")) + "\n")
+                        ev("REAP TIMEOUT %s SIGKILL" % j)
+                    unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
+                    unresolved += [identity for identity in _maxruntime_pending_identities(mk)
+                                   if _maxruntime_pending_identity_alive(identity, leaders)]
+                    if not unresolved:
+                        with open(mk, "a") as f: f.write("KILL\n")
+                        if not signalled:
+                            ev("REAP TIMEOUT %s escalation-complete group-gone" % j)
+                    else:
+                        ev("REAP TIMEOUT %s identity-unknown retry" % j)
                 continue
             if age < limit: continue
-            open(mk, "w").close()
             if not os.path.exists(RUN + "/" + j + ".rc"):
                 t = "%s/%s.rc.tmp.%d" % (RUN, j, os.getpid()); open(t, "w").write("124\n"); os.replace(t, RUN + "/" + j + ".rc")
             ev("REAP TIMEOUT %s lane=%s age=%ds limit=%ds" % (j, lane or "?", age, limit))
-            _kill_leaders(pids, signal.SIGTERM)
+            term_identities = _kill_leaders(leaders, signal.SIGTERM, j)
+            if term_identities:
+                termed_set = set(term_identities)
+                pending = [identity for identity in leaders if identity not in termed_set]
+                _write_maxruntime_identities(mk, term_identities, pending)
+            else:
+                ev("REAP TIMEOUT %s identity-unknown retry" % j)
         except Exception as e: log("job_watchdog err %s %s" % (j, type(e).__name__))
 job_watchdog()
 
@@ -1029,6 +1243,28 @@ def retire_bundle_worktree(j, wt):
 
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []; fork_seen = []; rl_seen = []
+# RQ-QUEUERECOVERYQ8: bounded launch retries (launch_precheck.launch_failure); one ledger file, keyed per job.
+from launch_precheck import (classify_launch_failure, classify_empty_failure, launch_hold, launch_failure, launch_ok,
+                             park_key as _launch_key)
+LAUNCH_RETRY_PATH = Q + "/launch-retries.json"
+launch_state = jload(LAUNCH_RETRY_PATH, {})
+if not isinstance(launch_state, dict): launch_state = {}
+def launch_retry_key(job, pf):   # job + prompt only: a lane move or reroute must not reset the attempt count
+    return _launch_key(job, rd(pf))
+def launch_failed(j, ln, out, why_ev):
+    """Classify, bound and receipt one failed solo launch. Requeues only while the budget lasts."""
+    reason, retryable = classify_launch_failure(out, _rc(j))
+    if not ln:   # no line to retry: nothing to bound, but the reason is still recorded
+        metric({"event": "launch_failed", "job": j, "reason": reason, "action": "give_up", "attempt": 1}); return
+    receipt = launch_failure(launch_state, j, launch_retry_key(j, ln.split("\t")[4] if ln.count("\t") > 3 else ""), NOW, reason, retryable)
+    jsave(LAUNCH_RETRY_PATH, launch_state)
+    metric(dict(receipt, event="launch_failed", lane=ln.split("\t")[2] if ln.count("\t") > 1 else None))
+    if receipt["action"] == "retry":
+        requeue.append(ln); ev("%s %s reason=%s attempt=%d/%d (requeued, retry in %ds)" % (
+            why_ev, j, reason, receipt["attempt"], receipt["max_attempts"], max(0, receipt["retry_at"] - NOW)))
+    else:
+        ev("LAUNCH_GAVE_UP %s reason=%s class=%s attempts=%d (not requeued; see %s.launch)" % (
+            j, reason, receipt["class"], receipt["attempt"], j))
 # Lines a bundle reap requeued after ready.tsv was already written (the reap phase runs after launch), carried over
 # when the lock was busy at the end of the previous tick.
 _REQUEUE_PENDING = Q + "/requeue-pending.tsv"
@@ -1041,7 +1277,9 @@ for p in glob.glob(RUN + "/*.dispatched"):
     if (ps_result.returncode and j.startswith("RQ-FIX-MAIN-") and _rc(j) is None and not result(j)
             and not re.search(r"^(PAUSED|HELD|SKIPPED):", out, re.M)):
         alive.add(j); continue   # unknown liveness during a long fetch, even before .base exists
-    if "launched " in out: os.remove(p); continue
+    if "launched " in out:
+        if launch_ok(launch_state, j): jsave(LAUNCH_RETRY_PATH, launch_state)
+        os.remove(p); continue
     if re.search(r"^(PAUSED|HELD)", out, re.M):
         ln = rd(RUN + "/" + j + ".line").strip()
         if batch_manifest(j): release_batch(j, "launch held")   # members go back alone; the bundle id never requeues
@@ -1052,13 +1290,15 @@ for p in glob.glob(RUN + "/*.dispatched"):
         release_batch(j, "launch skipped")
     elif not out.strip() and not base(j):
         ln = rd(RUN + "/" + j + ".line").strip()
-        if batch_manifest(j): release_batch(j, "launch interrupted")
-        elif ln: requeue.append(ln)
-        ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        if batch_manifest(j): release_batch(j, "launch interrupted"); ev("LAUNCH_INTERRUPTED %s (requeued)" % j)
+        else: launch_failed(j, ln, out, "LAUNCH_INTERRUPTED")
     else:
+        ln = rd(RUN + "/" + j + ".line").strip()
         ev("LAUNCH_FAILED %s (see %s.launch)" % (j, j))
         if FORK_RX.search(out): fork_seen.append(NOW); ev("FORK_FAILED %s (concurrency backoff)" % j)
-        release_batch(j, "launch failed")
+        if batch_manifest(j): release_batch(j, "launch failed")
+        else: launch_failed(j, ln, out, "LAUNCH_RETRY")
+    metric(dict(event="launch_terminal", job=j, reason="launcher-exited"))
     os.remove(p)
 
 # ---- (a) reap
@@ -1068,6 +1308,7 @@ running = {l: 0 for l in LANES}; kept = []; nreap = len(reaping); local_mid = 0
 _attempts = {}; _merged_urls = set()
 _raw_rows = batcher.parse_rows(MD + "/jobs.jsonl")
 JOBS_RAW.extend(_raw_rows); JOBS.extend(batcher.project_rows(_raw_rows))
+for row in JOBS_RAW: update_launch_state(ACTIVE_LAUNCHES, row)
 _JOBS_LIVE = True
 for row in JOBS:
     if not isinstance(row, dict): continue
@@ -1172,10 +1413,12 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
-    # Completion wins over launch grace, lingering processes and fresh artifacts.
+    # Completion wins over launch grace, lingering processes and fresh artifacts —
+    # but not over an unfinished watchdog escalation: a current-attempt receipt
+    # keeps the slot until group absence is verified (KILL), like any live job.
     # Keep the worktree/receipts for the existing publisher and reconciliation.
-    if published_current_attempt(j): continue
-    if j in alive:
+    if published_current_attempt(j) and not _maxruntime_unresolved(j): continue
+    if j in alive or _maxruntime_unresolved(j):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
@@ -1220,7 +1463,7 @@ def reap_worktrees():
         j = os.path.basename(bp)[:-5]; b = base(j)
         if not b or not JID.match(j): continue
         wt, pool = b[2], b[3]
-        if j in alive or bundle_member_of(j):
+        if j in alive or _maxruntime_unresolved(j) or bundle_member_of(j):
             continue
         if not os.path.isdir(wt) or j in reaping or j in publishing: continue
         attempt = _attempts.get(j, {})
@@ -1282,6 +1525,7 @@ def reap_worktrees():
                     "exit_code": _rc(j), **usage, "cost": None,
                     "diff_files": nf, "diff_lines": diff_lines, "empty": empty,
                     "empty_class": classify_empty(empty, _rc(j), perr),
+                    "failure_reason": classify_empty_failure(empty, _rc(j), perr),
                     "failure_class": devin_failure(_rc(j), empty, tl) if pool == "devin" else None,
                     "pool_error": perr})
         except Exception as e: log("metric finish err %s %s" % (j, type(e).__name__))
@@ -1428,7 +1672,7 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
+from launch_precheck import (precheck as shared_precheck, dupcheck as shared_dupcheck, add_check_line, DUPCHECK_CODE, park_key, parked, park,
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
@@ -1436,6 +1680,9 @@ if not isinstance(park_state, dict): park_state = {}
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
+
+def dupcheck_gate(j, repo, pf):
+    return shared_dupcheck(j, repo, pf, H, R, _run)
 
 def market_metric(decision):
     # Separate event stream keeps existing lifecycle consumers compatible.
@@ -1828,6 +2075,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                              ready_ranks.get(f[1], len(ready_ranks)),
                              *_job_priority(f[0], f[1], f[4], f[4])[1:]))
     completed = merged_jobs(JOBS)
+    recuts = RecutAdmission(batcher.parse_rows(Q + '/recut-loop.jsonl'), completed, alive)
+    for recut_job in recuts.identities:
+        if bundle_member_of(recut_job) in alive: recuts.launched(recut_job, 'phantom')
     for f in cand:
         reason = ("already-merged" if (f[1], f[0]) in completed or (None, f[0]) in completed
                   else terminal_target(f[0], f[1], rd(f[4]), pr_states))
@@ -1886,13 +2136,14 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if m and re.search(r"(?i)\b(?:P0|critical)\b", r): urgent_jobs.add(m.group(1))
     def member_ok(f, lead=False):   # every check the loop below would apply to the job on its own, plus batch limits
         m = f[0]
-        return (not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
+        return (m not in recuts.identities and launch_hold(launch_state, m, launch_retry_key(m, f[4]), NOW) is None
+                and not market_specs[m].get("needs") and not market_specs[m].get("exclusive")
                 and not market_specs[m].get("min_tier") and not market_specs[m].get("max_cost_class")
                 and not market_specs[m].get("max_tier") and not market_specs[m].get("data_class")
                 and f[2] in LANES and batcher.batchable_id(m) and not drain_target(m, f[1]) and f[2] in batcher.BATCH_LANES and f[2] in BS_CFG["lanes"]
                 and (lead or m not in seen) and not retired(m)
                 and not (result(m) or "").startswith("RESULT PR") and not disk_reuse_only
-                and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
+                and m not in ACTIVE_LAUNCHES and m not in alive and m not in reaping and m not in publishing and m not in keep and m not in park_state
                 and not os.path.isdir(WTROOT + "/" + m) and not os.path.exists(RUN + "/" + m + ".batched")
                 and batch_attempts(m) < batcher.MAX_ATTEMPTS)
     _tasks = {}
@@ -1917,6 +2168,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             if digest and (digest in hashes or digest in claimed_requests): continue
             hashes.add(digest); unique.append(c)
         pool = unique
+        rebase_order.assign_areas([task_info(f)] + pool)
         size = min(batcher.size_for(batch_tuning, f[2]), BS_CFG["max_lines"])
         picked = batcher.pick_members(task_info(f), pool, size, BS_CFG["min_lines"])
         if not picked: return None
@@ -1945,10 +2197,21 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
         if j in seen: continue  # duplicate line
+        if j in ACTIVE_LAUNCHES:
+            rest.append(line); seen.add(j); continue
         why = retired(j)
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
+        recut = recuts.decide(j, repo)
+        if recut:
+            metric(dict(event="recut_admission", job=j, repo=repo, **recut))
+            if recut['action'] != 'ready':
+                if recut['action'] == 'defer': rest.append(line)
+                else:
+                    metric(dict(event="outcome", state="DONE-NOOP", job=j, repo=repo, lane=lane,
+                                reason=recut['reason'], repeatOf=recut['repeatOf'], launched=False))
+                seen.add(j); continue
         digest = request_hash(j, repo, rd(pf))
         owner = claimed_requests.get(digest)
         if owner and owner != j:
@@ -2030,6 +2293,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             rest.append(line); seen.add(j); continue   # finished worktree awaiting reap: never double up
         seen.add(j)
         key = park_key(line, rd(pf))
+        held = launch_hold(launch_state, j, launch_retry_key(j, pf), NOW)
+        if held == "wait": rest.append(line); continue
+        if held == "gave_up": continue   # budget spent on this exact line; a changed line or prompt resets it
         if parked(park_state, j, key, NOW):
             rest.append(line); continue
         # A due parked job must be checked even when optional prechecks ran out.
@@ -2062,6 +2328,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             else:
                 picked = held; lane = blane
         if batch:
+            if bid in ACTIVE_LAUNCHES:
+                for c in picked: batch_sessions.release_lease(RUN, c["job"], bid)
+                rest.append(line); continue
             tier = "work" if lane == "claude" else tier   # Sonnet orchestrates; hard lines get Opus subagents
             members = []
             for c in picked:
@@ -2094,6 +2363,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 rest.append(line); continue
             if j in park_state:
                 park_state.pop(j); jsave(PARK_PATH, park_state)
+            if not pc:   # pre-launch dupcheck (phm queue dupcheck --gate): skip a row that is already on master, warn on a likely one
+                dc = dupcheck_gate(j, repo, pf)
+                if dc and dc[0] == "skip":
+                    pc = (DUPCHECK_CODE, dc[1])
+                    metric({"event": "dupcheck_skip", "job": j, "repo": repo, "lane": lane, "reason": dc[1], "evidence": dc[2]})
+                elif dc: add_check_line(pf, dc[1])
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
                 metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})
@@ -2133,7 +2408,9 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         hashes = [h for h in hashes if h]
         # The job ledger says why a claim left its hinted lane; the full ranking stays in work-market.jsonl.
         override = decision["override"] if not batch and decision["override"] and decision["override"]["to"] == lane else None
-        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes,
+        # Tick flock covers ledger replay, reservation and spawn: even a later
+        # tick with no process/base evidence cannot launch this attempt twice.
+        metric(dict(identity, event="claim", job=j, repo=repo, lane=lane, tier=tier, request_hashes=hashes, launch_dedupe=True,
                     **({"lane_hint": override["from"], "lane_override": override["reason"],
                         "lane_hint_blocked_by": override["preferred_lane_blocked_by"]} if override else {})))
         env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG") if k in os.environ}
@@ -2144,6 +2421,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                              stdout=open("%s/%s.launch" % (R, j), "w"), stderr=subprocess.STDOUT,
                              env=env, start_new_session=True, cwd=H)
         except OSError as e:   # EAGAIN/ENOMEM: the host is past its process or memory limit. Back off now, retry later.
+            metric(dict(event="launch_terminal", job=j, reason="spawn-failed"))
             os.remove(RUN + "/" + j + ".dispatched")
             if batch: release_batch(j, "spawn failed", into=rest)   # members go back alone; the bundle id never queues
             else: rest.append(line)
@@ -2151,6 +2429,7 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
             conc_adjusted(concurrency.backoff(CONC, NOW, "backoff fork", {"fork": ("danger", len(CONC["fork_failures"]))}, CONC_FLOOR, CONC_CEILING))
             GCAP = min(GCAP, global_cap()); continue
         claimed_requests.update((h, j) for h in hashes)
+        recuts.launched(j, repo)
         if reason and "waste_reason" not in route_state[j]:
             route_state[j]["waste_reason"] = reason
             jsave(Q + "/route-state.json", route_state)

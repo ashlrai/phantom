@@ -1,0 +1,12 @@
+/* Yield card: one horizontal bar per lane, best first. Bar length is a share of the best lane; the words carry the facts. */
+.summary { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); }
+.rows, .sentences { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.sentences { color: var(--text-secondary); font-size: var(--text-sm-size); }
+.row { display: grid; grid-template-columns: minmax(5rem, 8rem) 1fr auto; gap: var(--space-1) var(--space-2); align-items: center; min-width: 0; }
+.lane { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.track { display: block; block-size: 0.5rem; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-hover); }
+.fill { display: block; block-size: 100%; background: var(--accent-500); }
+.row:not([data-paying]) .fill { background: var(--status-warning-fg); }
+.figure { color: var(--text-primary); font-variant-numeric: tabular-nums; font-weight: var(--font-weight-semibold); }
+.detail { grid-column: 1 / -1; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.warn { color: var(--status-warning-fg); }

@@ -162,9 +162,14 @@ export async function planSubagentSpawn(input: SubagentSpawnInput, options: Suba
     next_step: 'Wire child scope into the dispatch admission path (dispatchd/node-router lease carries subagent scope and the sandbox enforces write_scope) under Security review, then flip held to dispatched.' };
 }
 
-export async function listSubagents(parentId: string, options: SubagentOptions = {}) {
+/** Every valid subagent record, oldest first, at most `limit`. A missing store is an empty list. */
+export async function readSubagentRecords(options: SubagentOptions = {}, limit = 500): Promise<SubagentRecord[]> {
   const names = await readdir(store(options)).catch(() => [] as string[]);
-  const records = await Promise.all(names.filter(n => n.endsWith('.json')).map(n => readSubagentRecord(n.slice(0, -5), options)));
-  const subagents = records.filter((r): r is SubagentRecord => r !== null && r.parent_id === parentId).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const records = await Promise.all(names.filter(n => n.endsWith('.json')).slice(0, limit).map(n => readSubagentRecord(n.slice(0, -5), options)));
+  return records.filter((r): r is SubagentRecord => r !== null).sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+export async function listSubagents(parentId: string, options: SubagentOptions = {}) {
+  const subagents = (await readSubagentRecords(options, Infinity)).filter(r => r.parent_id === parentId);
   return { schema: 'subagent.list.v1' as const, parent_id: parentId, count: subagents.length, subagents };
 }

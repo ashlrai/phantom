@@ -4,7 +4,7 @@ import { checkReturnPrs, type ReturnEvidenceRow } from '../src/core/fleet/return
 const row: ReturnEvidenceRow = {
   claimId: 'fake', repo: 'example/project', result: 'VERIFIED', evidenceKind: 'pr', pr: 42, head: 'ABC1234',
 };
-const head = { sha: 'abc123456789' };
+const head = { sha: `abc1234${'0'.repeat(33)}` };
 
 async function check(body: unknown, claim = row) {
   const report = await checkReturnPrs([claim], { gh: async () => JSON.stringify(body) });

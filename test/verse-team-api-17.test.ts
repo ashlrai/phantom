@@ -61,10 +61,14 @@ describe('verse team api', () => {
     const path = `${BASE}/people`, body = { team: T, person: { displayName: 'River', email: 'river@example.test' } }, api = make();
     expect((await call(api, { path, body, token: null })).status).toBe(401);
     expect((await call(api, { path, body, allowDispatch: false })).status).toBe(404);
+    expect((await call(api, { path, body })).status).toBe(403); // no owner has joined yet
+    ownerJoined();
+    expect((await call(make({ actor: () => octo }), { path, body })).status).toBe(403);
+    expect((await call(make({ actor: () => { throw new Error('agent process'); } }), { path, body })).wire?.error).toMatch(/Only a team owner/);
     const added = await call(api, { path, body });
     expect(added).toMatchObject({ status: 201, wire: { version: 1, person: { status: 'pending', identities: [{ state: 'pending' }] } } });
-    expect((await call(api, { path: `${path}?team=${T}`, method: 'GET' })).wire?.people).toEqual([added.wire?.person]);
-    expect((await call(api, { path: `${BASE}?team=${T}`, method: 'GET' })).wire?.members).toEqual([]);
+    expect((await call(api, { path: `${path}?team=${T}`, method: 'GET' })).wire?.people.map((p: { id: string }) => p.id)).toEqual([owner.id, added.wire?.person.id]);
+    expect((await call(api, { path: `${BASE}?team=${T}`, method: 'GET' })).wire?.members.map((m: { id: string }) => m.id)).toEqual([owner.id]);
     const bad = await call(api, { path, body: { team: T, person: { displayName: 'Bad', token: 'harmless-placeholder' } } });
     expect(bad.status).toBe(400); expect(bad.raw).not.toContain('harmless-placeholder');
     expect((await call(api, { path: `${path}?team=../bad`, method: 'GET' })).status).toBe(400);

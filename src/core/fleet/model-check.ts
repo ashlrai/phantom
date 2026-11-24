@@ -1,10 +1,11 @@
 /**
  * `phm models check`: every model the router can pick, read from the one registry
- * (model-verify.ts) plus the router's choices in models.json. Read-only and offline.
+ * (model-verify.ts) plus the router's choices in models.json, compared with the confirmed
+ * list from provider docs when a docs-watch job has written one. Read-only and offline.
  * The Models card and `GET /api/verse/fleet/control/models/check` return the same report.
  */
 import { basename } from 'node:path';
-import { loadVerifiedRegistry, MODEL_ALIASES, readRouterChoices, readText, selectVerifiedModel, type ModelVerifyOptions, type VerifiedModelRegistryEntry } from './model-verify.js';
+import { checkModelsAgainstDocs, loadVerifiedRegistry, MODEL_ALIASES, readDocsRecords, readRouterChoices, readText, selectVerifiedModel, type DocsModelRecord, type DocsVerdict, type ModelVerifyOptions, type VerifiedModelRegistryEntry } from './model-verify.js';
 
 export const MODEL_CHECK_STALE_DAYS = 14;
 export type ModelCheckState = 'confirmed' | 'stale' | 'unconfirmed';
@@ -17,6 +18,10 @@ export interface ModelCheckRow {
   source_url: string | null; confirmed_on: string | null; state: ModelCheckState;
   /** The router's own answer (selectVerifiedModel). Always false for unconfirmed. */
   routable: boolean;
+  /** What provider docs say. "unknown": no docs list, none for this provider, or the id is not an active registry entry. */
+  docs: DocsVerdict;
+  /** The model the docs say to move to, for a deprecated or retired one. */
+  replacement: string | null;
   reason: string | null;
 }
 export interface ModelCheckDiff {
@@ -33,24 +38,39 @@ export interface ModelCheckDiff {
 }
 export interface ModelCheckReport {
   schema: 'models.check.v1'; version: 1;
-  /** True only when nothing needs doing: no stale or unconfirmed model, and an empty diff. */
+  /** The top line, in plain words. */
+  summary: string;
+  /** True only when nothing needs doing: no stale or unconfirmed model, nothing the docs flag or add, and an empty diff. */
   ok: boolean;
   /** "unknown": the registry could not be read, so no model is listed and none is routable. */
   registry: 'ok' | 'unknown';
   /** "unknown": models.json could not be read, so lanes come from the registry alone. */
   router_choices: 'ok' | 'unknown';
+  /** "unknown": no confirmed list from provider docs could be read, so models are checked against the registry only. */
+  docs: 'ok' | 'unknown';
+  /** The newest seen_at in the docs list. */
+  docs_as_of: string | null;
   stale_after_days: typeof MODEL_CHECK_STALE_DAYS;
   counts: Record<ModelCheckState, number>;
   models: ModelCheckRow[];
+  /** Models the docs call current that the registry lacks. */
+  missing: DocsModelRecord[];
   diff: ModelCheckDiff | null;
   error: string | null;
 }
 export interface ModelCheckOptions extends ModelVerifyOptions { /** A provider release-notes page saved to disk. */ diffPath?: string }
 
 const DAY = 86_400_000;
+const NO_REGISTRY = 'The model registry could not be read, so every model is unknown and none is routable.';
+const DOCS_REASON: Partial<Record<DocsVerdict, (use: string | null) => string>> = {
+  retired: use => `Retired in provider docs. The router will not use it.${use ? ` Use ${use}.` : ''}`,
+  unconfirmed: () => 'Not in provider docs. The router will not use it.',
+  deprecated: use => `Deprecated in provider docs.${use ? ` Move to ${use}.` : ''}`,
+};
 const sorted = (ids: Iterable<string>) => [...new Set(ids)].sort();
 const family = (id: string) => /^[a-z]+/.exec(id)?.[0] ?? '';
-const canonical = (id: string) => id.toLowerCase().replace(/[.:]/g, '-').replace(/-(?:\d{8}|latest)$/, '');
+/** One spelling for ids that differ only by dots, colons or a date suffix. */
+export const canonical = (id: string) => id.toLowerCase().replace(/[.:]/g, '-').replace(/-(?:\d{8}|latest)$/, '');
 
 /** Model ids in saved page text: lower-case tokens with a digit that start with a family the registry knows (claude, gpt, ...). */
 export function parseReleaseNoteIds(text: string, families: Iterable<string>): string[] {
@@ -87,9 +107,8 @@ export function diffReleaseNotes(text: string, registry: readonly VerifiedModelR
 export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCheckReport> {
   const now = (opts.now ?? Date.now)();
   const report: ModelCheckReport = {
-    schema: 'models.check.v1', version: 1, ok: false, registry: 'unknown', router_choices: 'unknown', stale_after_days: MODEL_CHECK_STALE_DAYS,
-    counts: { confirmed: 0, stale: 0, unconfirmed: 0 }, models: [], diff: null,
-    error: 'The model registry could not be read, so every model is unknown and none is routable.',
+    schema: 'models.check.v1', version: 1, summary: NO_REGISTRY, ok: false, registry: 'unknown', router_choices: 'unknown', docs: 'unknown', docs_as_of: null,
+    stale_after_days: MODEL_CHECK_STALE_DAYS, counts: { confirmed: 0, stale: 0, unconfirmed: 0 }, models: [], missing: [], diff: null, error: NO_REGISTRY,
   };
   let registry: VerifiedModelRegistryEntry[];
   try { registry = await loadVerifiedRegistry({ ...opts, now: () => now }); } catch { return report; }
@@ -100,18 +119,24 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
     report.router_choices = 'ok';
   } catch { /* stays unknown */ }
   const entries = new Map(registry.map(entry => [entry.id, entry]));
+  // Docs are judged against the models we route to; a model the registry already retired is neither checked nor "missing".
+  const records = await readDocsRecords(opts);
+  const check = records && checkModelsAgainstDocs(registry.filter(entry => entry.status !== 'retired'), records.filter(record => entries.get(record.id)?.status !== 'retired'));
+  const verdicts = new Map(check?.models.map(row => [row.id, row]));
   // A retired model is listed only while a lane still points at it.
   for (const id of sorted([...registry.filter(entry => entry.status !== 'retired').map(entry => entry.id), ...used.keys()])) {
-    const entry = entries.get(id), confirmed = entry?.status === 'verified';
+    const entry = entries.get(id), confirmed = entry?.status === 'verified', docs = verdicts.get(id);
     const state: ModelCheckState = !confirmed ? 'unconfirmed' : now - Date.parse(entry.verified_at!) > MODEL_CHECK_STALE_DAYS * DAY ? 'stale' : 'confirmed';
     report.counts[state]++;
     report.models.push({
       id, provider: entry?.provider ?? null, lanes: sorted([...entry?.lanes ?? [], ...used.get(id) ?? []]),
       source_url: entry?.verified_source ?? null, confirmed_on: entry?.verified_at ?? null, state,
-      routable: selectVerifiedModel([id], registry).model === id,
+      routable: selectVerifiedModel([id], registry, records).model === id,
+      docs: docs?.verdict ?? 'unknown', replacement: docs?.replacement ?? null,
       reason: !entry ? 'Not in the registry. The router will not use it.'
         : entry.status === 'retired' ? 'Retired. The router will not use it.'
         : !confirmed ? 'Not confirmed by official docs. The router will not use it.'
+        : docs && DOCS_REASON[docs.verdict] ? DOCS_REASON[docs.verdict]!(docs.replacement)
         : state === 'stale' ? `Confirmed over ${MODEL_CHECK_STALE_DAYS} days ago. Check the docs again.` : null,
     });
   }
@@ -123,6 +148,8 @@ export async function checkModels(opts: ModelCheckOptions = {}): Promise<ModelCh
   const { diff } = report;
   report.registry = 'ok';
   report.error = null;
-  report.ok = !report.counts.stale && !report.counts.unconfirmed && (!diff || !diff.error && !diff.new.length && !diff.renamed.length && !diff.retired.length);
+  report.summary = check?.summary ?? 'Provider docs are unknown: no confirmed list yet, so models are checked against the registry only.';
+  if (check) Object.assign(report, { docs: 'ok', docs_as_of: records.reduce<string | null>((max, record) => max !== null && max > record.seen_at ? max : record.seen_at, null), missing: check.missing });
+  report.ok = !report.counts.stale && !report.counts.unconfirmed && !(check && (check.counts.unconfirmed || check.counts.retired || check.counts.deprecated || check.missing.length)) && (!diff || !diff.error && !diff.new.length && !diff.renamed.length && !diff.retired.length);
   return report;
 }

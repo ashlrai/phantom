@@ -8,8 +8,9 @@ import { readFleetRunsDirState, type FleetRunsDirState } from '../src/core/fleet
 import type { ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import type { FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 
-const mocks = vi.hoisted(() => ({ read: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), groups: vi.fn() }));
 vi.mock('../src/core/verse/fleet-org-map-api.js', () => ({ readFleetOrgMap: mocks.read }));
+vi.mock('../src/core/verse/fleet-org-groups-api.js', () => ({ readFleetOrgGroups: mocks.groups }));
 import { cmdOrg } from '../src/cli/org.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z'), AT = '2026-11-17T12:00:00Z';
@@ -40,23 +41,23 @@ describe('fleetOrgTree', () => {
     expect(find(tree, 'claude')).toMatchObject({ provider: 'Anthropic', model: null, state: 'running', doing: '2 jobs running', heldReason: null, running: 2, target: 8, queued: 3, held: false,
       usage: { usedPct: 41.6, asOf: '2026-11-17T11:59:00Z', resetAt: null } });
     expect(find(tree, 'claude').jobs).toEqual([
-      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working in phantom',
-        startedAt: '2026-11-17T11:50:00Z', lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
+      { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working in phantom',
+        startedAt: '2026-11-17T11:50:00Z', prUrl: null, lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
       // RQ-A's events never attach to RQ-AB, and its missing facts stay null.
-      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', state: 'running', doing: 'Working', startedAt: null, lastEvent: null, lastActivityAt: null },
+      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working', startedAt: null, prUrl: null, lastEvent: null, lastActivityAt: null },
     ]);
     expect(orgLive(AT, NOW)).toBe(true); expect(orgLive('2026-11-17T11:54:59Z', NOW)).toBe(false); expect(orgLive(null, NOW)).toBeNull();
     const text = renderOrgTreeText(tree, NOW);
     expect(text).toContain('claude (Anthropic, model unknown): running. 2 running of 8, 3 queued, usage 42% (measured 1m ago)');
-    expect(text).toContain('* RQ-A | running | Working in phantom | claude-fable-5-2 | started 10m ago | last event PUBLISH_START 2m ago');
-    expect(text).toContain('- RQ-AB | running | Working | model unknown | started unknown | last event unknown');
+    expect(text).toContain('* RQ-A | running | Working in phantom | claude-fable-5-2 | started 10m ago | last event PUBLISH_START 2m ago | tier unknown | goal unknown');
+    expect(text).toContain('- RQ-AB | running | Working | model unknown | started unknown | last event unknown | tier unknown | goal unknown');
   });
 
   it('says idle for an empty lane, and unknown when no job source answered', () => {
     const tree = fleetOrgTree(map([]), { runs: runs([lane('gemini', 0, 1, 0)]) });
     expect(find(tree, 'gemini')).toMatchObject({ running: 0, target: 1, queued: 0, jobs: [] });
     expect(tree.jobsKnown).toBe(true);
-    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
+    expect(renderOrgTreeText(tree, NOW)).toMatch(/gemini \(Google, model unknown\): idle\. Idle, nothing queued\. 0 running of 1, 0 queued, usage unknown\n {4}idle/);
     const dark = fleetOrgTree(fleetOrgMap(null));
     expect(dark.jobsKnown).toBe(false); expect(dark.messages).toBeNull();
     expect(renderOrgTreeText(dark, NOW)).toContain('jobs unknown'); expect(renderOrgTreeText(dark, NOW)).not.toMatch(/\bidle\b/);
@@ -96,10 +97,23 @@ describe('fleetOrgTree', () => {
       { runs: runs(flip ? [...laneRows].reverse() : laneRows) }));
     expect(build(true)).toBe(build(false));
     const tree = JSON.parse(build(false)) as FleetOrgTree;
-    expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
+    expect(Object.keys(tree)).toEqual(['schema', 'version', 'generatedAt', 'leader', 'planners', 'lanes', 'jobsKnown', 'messages', 'messageWindowMinutes', 'unmappedMessages', 'sources']);
     expect(tree.lanes.map(row => row.lane)).toEqual(['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor', 'aa-custom', 'zz-custom']);
     expect(find(tree, 'claude').jobs.map(job => job.id)).toEqual(['RQ-C', 'RQ-A']);
-    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3 }, { from: 'Leader (CEO)', to: 'devin', count: 1 }]);
+    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 3, lastAt: '1970-01-01T00:00:00.001Z' }, { from: 'Leader (CEO)', to: 'devin', count: 1, lastAt: '1970-01-01T00:00:00.002Z' }]);
+  });
+});
+
+describe('fleetOrgTree health and message times', () => {
+  it('carries each lane health badge, null for a lane with no reading, and the last message time', () => {
+    const edges = { source: 'available', edges: [{ from: { address: 'leader', provider: null }, to: { address: 'claude', provider: null }, messages: 2, messagesLastHour: 2, lastAt: Date.parse('2026-11-17T11:55:00Z') }] } as unknown as Parameters<typeof fleetOrgMap>[1]['messages'];
+    const tree = fleetOrgTree(map([session('RQ-A', 'claude')], edges), { runs: runs([lane('claude', 1, 8, 0)]),
+      laneHealth: [{ lane: 'claude', health: { state: 'starved', reason: 'starved: 5 free slots', number: 5 } }, { lane: 'devin' }] });
+    expect(find(tree, 'claude').health).toEqual({ state: 'starved', reason: 'starved: 5 free slots', number: 5 });
+    expect(find(tree, 'devin').health).toBeNull();
+    expect(find(tree, 'zai').health).toBeNull();
+    expect(fleetOrgTree(map([]), {}).lanes.every(row => row.health === null)).toBe(true);
+    expect(tree.messages).toEqual([{ from: 'Leader (CEO)', to: 'claude', count: 2, lastAt: '2026-11-17T11:55:00.000Z' }]);
   });
 });
 
@@ -107,11 +121,17 @@ describe('phm org', () => {
   it('prints the tree as JSON by default and as text with --text, and rejects stray input', async () => {
     const tree = fleetOrgTree(map([session('RQ-A', 'claude')]), { runs: runs([lane('claude', 1, 8, 0)]) });
     mocks.read.mockResolvedValue({ tree });
+    const groups = { schema: 'fleet.org-groups.v1', root: 'leader', nodes: [{ id: 'leader' }] };
+    mocks.groups.mockResolvedValue(groups);
     const out: string[] = [], log = vi.spyOn(console, 'log').mockImplementation(line => { out.push(String(line)); });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       expect(await cmdOrg([])).toBe(0);
-      expect(JSON.parse(out.pop()!)).toEqual(JSON.parse(JSON.stringify(tree)));
+      expect(JSON.parse(out.pop()!)).toEqual({ ...JSON.parse(JSON.stringify(tree)), groups });
+      // An unreadable live map is null, and the rest of the tree still prints.
+      mocks.groups.mockRejectedValueOnce(new Error('fixture failure'));
+      expect(await cmdOrg(['--json'])).toBe(0);
+      expect(JSON.parse(out.pop()!)).toEqual({ ...JSON.parse(JSON.stringify(tree)), groups: null });
       expect(mocks.read).toHaveBeenLastCalledWith(60);
       expect(await cmdOrg(['--text', '--minutes', '15'])).toBe(0);
       expect(out.pop()).toContain('claude (Anthropic, claude-fable-5-2): running. 1 running of 8, 0 queued, usage unknown');

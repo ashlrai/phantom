@@ -1125,6 +1125,8 @@ export interface AshlrConfig {
    * consensus stores and cannot provide execution authority.
    */
   fleet?: {
+    /** Settings ▸ Live build limits: how far behind master the running build may be before the `build-stale` alert. Unset = 50 commits / 24 hours. */
+    buildStale?: { commits?: number; hours?: number };
     sharedQueue?: {
       /**
        * 'off'        - single-machine mode (default, no shared file).
@@ -1198,6 +1200,12 @@ export interface AshlrConfig {
      * would send.
      */
     leaderRepliesSend?: boolean;
+    /**
+     * Path of the leader's plan log, which `phm leader replies` and the Home
+     * "From your leader" cards read. Unset by default: PHANTOM_PLAN_LOG, then
+     * leader/PLAN-LOG.md under the runs dir, is used.
+     */
+    leaderPlanLogPath?: string;
     /** iMessage service name. Default 'iMessage'. */
     service?: 'iMessage';
     /**

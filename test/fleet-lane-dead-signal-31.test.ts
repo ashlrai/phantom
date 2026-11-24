@@ -23,4 +23,16 @@ describe('lane dead signal', () => {
   it('counts malformed rows, skips other events, and returns no lanes without finishes', () => {
     expect(laneDeadSignals([null, { event: 'finish', lane: 'x' }, { event: 'start' }])).toEqual({ lanes: [], malformedRows: 2 });
   });
+  it('reads finish rows through the jobs-ledger field dialect', () => {
+    const dialect = [
+      { job_id: 'J1', type: 'finish', pool: 'any-lane', empty: false, exit_code: 0, recordedAt: new Date(8_000).toISOString() },
+      { id: 'J1', kind: 'finish', lane: 'any-lane', empty: true, exit_code: 1, timestamp: new Date(9_000).toISOString() },
+      { jobId: 'J1', event: 'finish', pool: 'any-lane', at: new Date(10_000).toISOString(), empty: true, exit_code: 1 },
+      { job_id: 'J2', type: 'outcome', lane: 'other', empty: true, exit_code: 1, ts: new Date(9_500).toISOString() }, // not a finish
+    ];
+    expect(laneDeadSignals(dialect)).toEqual({
+      lanes: [{ lane: 'any-lane', lastFinishes: 3, emptyFailures: 2, state: 'ok' }],
+      malformedRows: 0,
+    });
+  });
 });

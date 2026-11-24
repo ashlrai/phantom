@@ -128,6 +128,21 @@ describe('auditBets', () => {
     });
     expect(rows[0]!.status).toBe('launched');
   });
+
+  it('reads metrics evidence through the jobs-ledger field dialect', () => {
+    const dialectMetrics = [
+      JSON.stringify({ jobId: 'RQ-DIALMQ8', type: 'publish', prUrl: 'https://github.com/ashlrai/phantom/pull/80', recordedAt: '2026-11-01T09:30:00Z' }),
+      JSON.stringify({ id: 'RQ-DIALMQ8', kind: 'outcome', status: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/80', mergedAt: '2026-11-01T10:30:00Z' }),
+      JSON.stringify({ job_id: 'RQ-DIAL2Q8', type: 'finish', at: '2026-11-01T08:30:00Z', pr_url: 'https://github.com/ashlrai/phantom/pull/81' }),
+    ].join('\n');
+    const rows = auditBets({
+      outputs: [{ name: 'out.20261101T0800.txt', text: 'BET phantom codex work DIALM task\nBET phantom codex work DIAL2 task' }],
+      queue: null, metrics: dialectMetrics, now: NOW, hours: 24,
+    });
+    const byId = new Map(rows.map(row => [row.id, row]));
+    expect(byId.get('RQ-DIALMQ8')).toMatchObject({ status: 'merged', url: 'https://github.com/ashlrai/phantom/pull/80' });
+    expect(byId.get('RQ-DIAL2Q8')).toMatchObject({ status: 'published', url: 'https://github.com/ashlrai/phantom/pull/81' });
+  });
 });
 
 describe('readBetAudit', () => {

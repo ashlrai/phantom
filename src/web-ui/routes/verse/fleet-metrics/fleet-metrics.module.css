@@ -1,23 +1,66 @@
-.root { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; font-size: var(--text-xs-size); }
+/* The Metrics board: headline, one line of when, four numbers, two charts, then one card per subject. One column that wraps the same at 390 px. */
+.board { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.title { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.meta { margin: calc(var(--space-2) * -1) 0 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.root { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; font-size: var(--text-xs-size); }
+.card { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); font-size: var(--text-xs-size); }
 /* Four tiles in one row on a wide pane; they fold to two by two in a 390 px column. */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2); min-width: 0; }
-.heading { margin: var(--space-2) 0 0; font-size: var(--text-sm-size); }
-.note { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+/* The two hourly charts sit side by side when there is room for both and stack when there is not. */
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: var(--space-3); min-width: 0; }
+.charts > * { min-width: 0; }
+.heading { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.card h4.heading { margin-top: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.note, .legend { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.note[data-warn] { color: var(--status-warning-fg); }
+.list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); }
 /* The table keeps its columns and scrolls sideways only if a lane name is very long. */
 .scroll { overflow-x: auto; min-width: 0; }
 .table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .table caption { text-align: left; color: var(--text-secondary); padding-bottom: var(--space-1); }
-.table th, .table td { padding: 2px var(--space-1); text-align: right; border-bottom: 1px solid var(--border-subtle); font-weight: 400; }
-.table th:first-child { text-align: left; overflow-wrap: anywhere; }
-.table thead th { color: var(--text-secondary); }
-.table tr[data-empty-high='true'] { background: var(--status-warning-bg); }
-.pools { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.table th, .table td { padding: var(--space-1); text-align: right; border-bottom: 1px solid var(--border-subtle); font-weight: var(--font-weight-regular); vertical-align: top; }
+.table tbody tr:last-child :is(th, td) { border-bottom: 0; }
+.table th:first-child { text-align: left; overflow-wrap: anywhere; color: var(--text-primary); }
+.table thead th { color: var(--text-secondary); font-size: var(--text-2xs-size); }
+.table tr[data-empty-high='true'], .table tr[data-verdict='stop'], .table tr[data-due='true'] { background: var(--status-warning-bg); }
+/* A card's heading with its one control on the same line; the control drops below when the card is narrow. */
+.cardHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1) var(--space-2); min-width: 0; }
+/* 24 hours / 7 days: two joined buttons, the pressed one raised. */
+.window { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-hover); }
+.window button { padding: 2px var(--space-2); border: 1px solid transparent; border-radius: calc(var(--radius-sm) - 1px); background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.window button:hover { color: var(--text-primary); }
+.window button[aria-pressed='true'] { border-color: var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); }
+.window button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+/* A stage's median under its name; the slowest stage is the one in the warning colour. */
+.bar[data-stage] { display: block; flex: none; width: 100%; min-width: 4rem; height: 4px; margin-top: 2px; }
+.table tr[data-slowest='true'] .used { background: var(--status-warning-solid); }
+.table tr[data-slowest='true'] th:first-child { font-weight: var(--font-weight-semibold); }
+/* A provider mark, then the name it belongs to. */
+.named { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+/* Under a lane's merge rate: how its finished jobs ended. Solid is merged, striped changed nothing, the bare track is the rest. */
+.outcome { display: flex; width: 100%; min-width: 4rem; height: 4px; margin-top: 2px; border-radius: var(--radius-full); background: var(--border-subtle); overflow: hidden; }
+.outcomeMerged, .swatch[data-kind='merged'] { background: var(--accent-500); }
+.outcomeEmpty, .swatch[data-kind='empty'] { background: repeating-linear-gradient(135deg, var(--status-warning-solid) 0 2px, transparent 2px 4px); }
+.outcomeMerged, .outcomeEmpty { transition: width var(--duration-slow) var(--ease-standard); }
+.outcome[data-unknown], .swatch[data-kind='unknown'], .bar[data-unknown] { background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 6px); }
+.swatch { display: inline-block; width: 0.75rem; height: 4px; margin-inline: var(--space-2) var(--space-1); border-radius: var(--radius-full); background: var(--border-subtle); vertical-align: middle; }
+.swatch:first-child { margin-inline-start: 0; }
+/* One family per line; a long name or reason wraps inside a 390 px column instead of scrolling. */
+.stopped { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+.pools, .repos { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 /* Name and bar share a line; the facts wrap underneath, so nothing is cut off at 390 px. */
 .pool { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-2); min-width: 0; }
-.poolName { flex: none; width: 8.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
-.bar { position: relative; flex: 1; min-width: 80px; height: 8px; border-radius: var(--radius-sm); background: var(--border-subtle); overflow: hidden; }
-.used, .projected { position: absolute; inset: 0 auto 0 0; background: var(--accent-500); }
+.poolName { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; width: 9.5rem; min-width: 0; color: var(--text-primary); font-family: var(--font-mono); }
+.poolName > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { position: relative; flex: 1; min-width: 80px; height: 8px; border-radius: var(--radius-full); background: var(--border-subtle); overflow: hidden; }
+.used, .projected { position: absolute; inset: 0 auto 0 0; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
 .projected { opacity: 0.35; }
 .pool[data-risk='true'] .used, .pool[data-risk='true'] .projected { background: var(--status-warning-solid); }
 .poolFacts { flex-basis: 100%; color: var(--text-secondary); overflow-wrap: anywhere; }
 .pool[data-risk='true'] .poolFacts { color: var(--status-warning-fg); }
+/* Where the merges landed: repo, a bar against the busiest repo, then the count and its share. */
+.repos li { display: grid; grid-template-columns: minmax(5rem, 10rem) minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); min-width: 0; }
+.repoName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-family: var(--font-mono); }
+.repoFacts { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .used, .projected, .outcomeMerged, .outcomeEmpty, .window button { transition: none; } }

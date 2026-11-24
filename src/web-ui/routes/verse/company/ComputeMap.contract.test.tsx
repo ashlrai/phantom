@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 /** Run the production readers against disk receipts, then cross the JSON wire unchanged. */
-async function serveProjection() {
+async function serveProjection(published = false) {
   const now = Date.now(), at = new Date(now).toISOString();
   const root = await mkdtemp(join(tmpdir(), 'viz-surface-')); roots.push(root);
   const save = async (name: string, content: unknown) => {
@@ -43,6 +43,9 @@ async function serveProjection() {
   await save('RQ-LOCAL.base', 'abc123 work/contract /private/worktree\n');
   await save('RQ-LOCAL.log', 'Checking fleet integration\n');
   await save('RQ-LOCAL.publish', 'RESULT PR https://github.com/ashlrai/phantom/pull/42\n');
+  // The live fixture retains a PR link from an older attempt, not a terminal
+  // RESULT for this attempt. The published variant below keeps a fresh receipt.
+  if (!published) await utimes(join(root, 'RQ-LOCAL.publish'), new Date(now - 120_000), new Date(now - 120_000));
   await save('metrics/jobs.jsonl', JSON.stringify({ job: 'RQ-LOCAL', event: 'launch', ts: new Date(now - 60_000).toISOString(), model: 'contract-model' }) + '\n');
   const compute = await readFleetCompute({ home: join(root, 'home'), runsDir: root, now, sample: () => ({
     sampledAtMs: now, uptimeSeconds: 500, load: [1, 2, 3], ramTotal: 16 * 1024 ** 3,
@@ -99,4 +102,23 @@ it('renders the same disk-backed payloads on Control Fleet without mutations', a
   expect(screen.getByRole('dialog')).toHaveTextContent('work/contract');
   expect(screen.getByRole('link', { name: 'Open PR' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/42');
   expect(fetcher.mock.calls.map(([url]) => String(url)).sort()).toEqual(['/api/verse/fleet/control/compute', '/api/verse/fleet/control/sessions']);
+});
+
+
+it('keeps a fresh publish receipt terminal despite a stale node claim, with recent detail intact', async () => {
+  const { sessions } = await serveProjection(true);
+  expect(sessions.mapSessions.filter(s => s.job === 'RQ-LOCAL')).toEqual([]);
+  expect(sessions.mapRecent.filter(s => s.job === 'RQ-LOCAL')).toEqual([expect.objectContaining({
+    status: 'finished', mapState: 'unknown', model: 'contract-model', branch: 'work/contract',
+    prUrl: 'https://github.com/ashlrai/phantom/pull/42', activity: 'Checking fleet integration',
+  })]);
+  render(<MemoryRouter><FleetMap /></MemoryRouter>);
+  const recent = await screen.findByText('Recently finished · 1');
+  fireEvent.click(recent);
+  const token = await screen.findByRole('button', { name: 'Inspect session RQ-LOCAL' });
+  expect(token).toHaveTextContent('finished');
+  expect(token).toHaveTextContent('contract-model');
+  fireEvent.click(token);
+  expect(screen.getByRole('dialog')).toHaveTextContent('work/contract');
+  expect(screen.getByRole('link', { name: 'Open PR' })).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/42');
 });

@@ -99,7 +99,7 @@ describe('digest Node runs line', () => {
       mergeFacts: async () => ({ shipped: [], mergeCountUnavailable: false }),
       runsState: async () => ({ lanes: [], sources: { status: 'healthy' }, runsDirPresent: true }),
       needs: () => ({ status: 'missing', items: [] }), inbox: async () => ({ sourceState: 'ok', entries: [] }),
-      workClaims: undefined, peers: undefined,
+      workClaims: undefined, peers: undefined, mergeLatency: undefined,
     };
     const thrown = await gatherStatusDigestInput(root, new Date(NOW), { ...stubs, nodeRuns: () => { throw new Error(`boom ${FAKE_TOKEN}`); } } as never);
     const line = buildStatusDigest(thrown)[5]!;

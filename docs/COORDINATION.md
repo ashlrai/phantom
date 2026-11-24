@@ -103,6 +103,15 @@ on a fresh branch and verify it; it closes the superseded PR only after the
 recut merges. It does not itself merge the PR. Check the plan and ownership
 before choosing to act.
 
+For stale fleet PRs in `ashlrai/phantom`, run `phm fleet merge-recover --json`
+to preview recovery, then add `--apply` to queue the recut. Both GitHub conflict
+signals (`DIRTY` and `CONFLICTING`) count. A request is keyed on the source PR
+and its head: repeating it finds the queued job or published replacement; a
+changed head gets a new request. Clean, closed and merged sources are left alone.
+After publication, repeat the command to request head-pinned auto-merge for a
+replacement without conflicts. Existing required checks and merge queue rules
+remain enforced, including when the replacement reports `BLOCKED`.
+
 ## Mason's response to an overlap
 
 - Open the collision's job log and compare the named paths with the outside PR.

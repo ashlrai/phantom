@@ -115,6 +115,13 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.guardian) {
+    const { age, service, log } = s.guardian;
+    lines.push(`Guardian: ${age.status}; age: ${age.ageSeconds === null ? 'unknown' : `${Math.floor(age.ageSeconds)} seconds`}; limit: ${age.maxAgeSeconds} seconds.`);
+    lines.push(`  Launch service: ${service.state}; last exit code: ${service.lastExitCode ?? 'unknown'}.`);
+    lines.push(`  Log: ${log.source}; errors in last 24 hours (tail only): ${log.recentErrors ?? 'unknown'}; errors without usable time: ${log.unparseableErrors ?? 'unknown'}.`);
+    lines.push(`  ${s.guardian.reason} Next: ${s.guardian.nextStep}`);
+  } else lines.push('Guardian: unavailable. Next: phm fleet health-age --diagnose --json');
   if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
@@ -842,6 +849,17 @@ export function formatFleetStatus(s: FleetStatus): string {
       } else if (skillObservation.sampleState === 'none') {
         lines.push('  skill observations: none');
       }
+    }
+    const skillOutcomes = trajectoryLearning.skillOutcomes;
+    const topSkillOutcome = skillOutcomes?.perSkill?.[0];
+    if (skillOutcomes && topSkillOutcome) {
+      const outcomeText = Object.entries(topSkillOutcome.outcomes)
+        .map(([outcome, count]) => `${outcome} ${count}`)
+        .join(', ');
+      lines.push(
+        `  skill outcomes: ${skillOutcomes.skills} skill(s), ${skillOutcomes.selections} selection(s); ` +
+          `top ${topSkillOutcome.skillId} r${topSkillOutcome.skillRevision}: ${topSkillOutcome.selections} (${outcomeText})`,
+      );
     }
     const gap = trajectoryLearning.gaps[0];
     if (gap) lines.push(`  top gap:      ${gap.kind} missing on ${gap.count} trajector${gap.count === 1 ? 'y' : 'ies'}`);
@@ -1877,6 +1895,11 @@ export function formatFleetLanes(snapshot: FleetLaneSnapshot): string {
       lane.mergesPerHour === null ? '—' : String(lane.mergesPerHour),
     ].join(' '));
   }
+  const unhealthy = snapshot.lanes.filter(lane => lane.health && lane.health.state !== 'ok');
+  if (unhealthy.length > 0) {
+    lines.push('');
+    for (const lane of unhealthy) lines.push(`  ${lane.lane} ${lane.health.reason}`);
+  }
   lines.push('');
   const src = snapshot.sources;
   const state = (s: { state: string }, detail: string): string =>
@@ -2239,10 +2262,12 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   const { fleetReadiness } = await import('../core/fleet/engine-readiness.js');
   const results = fleetReadiness(cfg ?? undefined);
+  const { readGuardianDoctorCheck } = await import('../core/fleet/guardian-doctor.js');
+  const guardian = await readGuardianDoctorCheck();
 
   if (jsonMode) {
-    process.stdout.write(JSON.stringify(results) + '\n');
-    return 0;
+    process.stdout.write(JSON.stringify([...results, guardian]) + '\n');
+    return guardian.level === 'red' ? 1 : 0;
   }
 
   const readyCount = results.filter((r) => r.ready).length;
@@ -2311,7 +2336,7 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
   // Summary line
   const notReadyEngines = results.filter((r) => !r.ready).map((r) => r.engine);
   if (readyCount === total) {
-    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(' All systems go.'));
+    console.log('  ' + green(`${readyCount}/${total} engines ready.`) + dim(guardian.level === 'ok' ? ' All systems go.' : ''));
   } else {
     const needsAction = notReadyEngines.join(', ');
     console.log(
@@ -2326,7 +2351,8 @@ async function cmdFleetDoctor(jsonMode: boolean): Promise<number> {
 
   // Exit 1 when any engine is definitively not ready (authed:false + installed)
   const hardBlocked = results.some((r) => !r.ready && r.installed && r.authed === false);
-  return hardBlocked ? 1 : 0;
+  console.log(`${guardian.level} guardian: ${guardian.reason} Next: ${guardian.nextStep}`);
+  return hardBlocked || guardian.level === 'red' ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2730,7 +2756,8 @@ function printFleetHelp(): void {
   console.log(`    ashlr fleet grok-usage status|record [--help] ${cyan('# Grok Ultra points and runway')}`);
   console.log(`    ashlr fleet events --json [--follow] [--cursor <cursor>] [--queue-dir <abs>]`);
   console.log('    phm fleet usage [--json] | usage add <pool> <pct> --at <timestamp>');
-  console.log(`    phm fleet spend [--json]   ${cyan('# spend-down per pool: on pace, behind or unknown before reset')}`);
+  console.log(`    phm fleet spend [--json]   ${cyan('# same as phm spend: on-pace, behind, exhausted or unknown per pool')}`);
+  console.log(`    phm fleet pulse [--json]   ${cyan('# is the fleet doing well: five numbers with a 24 hour trend each')}`);
   console.log(`    ashlr fleet watch  [--json]   ${cyan('# glanceable monitoring summary (actions + errors)')}`);
   console.log(`    ashlr fleet session <job> --json [--follow] [--queue-dir <abs>]`);
   console.log(`    phantom fleet graph [--json] [--queue-dir <abs>]`);

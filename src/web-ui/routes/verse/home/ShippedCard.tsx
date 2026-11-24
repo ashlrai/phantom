@@ -9,7 +9,8 @@ import type { QueryDef } from '../../../data/queries.js';
 import styles from './home.module.css';
 
 export const SHIPPED_PATH = '/api/verse/shipped';
-const query: QueryDef<ShippedReport> = { key: 'shipped', fetch: signal => apiGet(SHIPPED_PATH, signal) };
+/** One cached read per window: the week on desktop Home, one day ("today") on the phone. */
+export const shippedQuery = (days: number): QueryDef<ShippedReport> => ({ key: `shipped-${days}`, fetch: signal => apiGet(`${SHIPPED_PATH}?days=${days}`, signal) });
 /** The card is a glance; `phm shipped` and the docs page hold the longer list. */
 const LINES_PER_AREA = 2;
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
@@ -21,13 +22,14 @@ function reportOf(data: unknown): ShippedReport | null {
   return report.schema === 'shipped.v1' && Array.isArray(report.areas) ? report as ShippedReport : null;
 }
 
-export function ShippedCard({ visible = true }: { visible?: boolean }) {
-  const read = useQuery(query, { enabled: visible });
+export function ShippedCard({ visible = true, days = 7 }: { visible?: boolean; days?: number }) {
+  const read = useQuery(shippedQuery(days), { enabled: visible });
   const report = reportOf(read.data);
+  const today = (report?.days ?? days) === 1;
   const failed = Boolean(read.error) || read.status === 'error';
   const stale = failed && report !== null;
   const lastSuccess = typeof read.updatedAt === 'number' ? new Date(read.updatedAt).toISOString() : null;
-  const window = `the last ${plural(report?.days ?? 7, 'day')}`;
+  const window = today ? 'the last 24 hours' : `the last ${plural(report?.days ?? days, 'day')}`;
   let body;
   if (failed && !report) body = <p role="status">What shipped is unavailable right now. Try again.</p>;
   // Before the first read, or any other payload (an older server), the card stays hidden.
@@ -37,7 +39,8 @@ export function ShippedCard({ visible = true }: { visible?: boolean }) {
   else {
     const maintenance = report.maintenance ?? 0;
     body = <>
-      <p>{plural(report.total - maintenance, 'change')} in {window}.</p>
+      {/* The report's own top line; a server from before it existed still gets the plain count. */}
+      <p>{report.headline ?? `${plural(report.total - maintenance, 'change')} in ${window}.`}</p>
       {report.areas.map(area => <ul key={area.id} aria-label={area.label}>
         <li><strong>{area.label}: {area.count}</strong></li>
         {area.lines.slice(0, LINES_PER_AREA).map(line => <li key={`${line.mergedAt} ${line.number} ${line.text}`}>{line.text}</li>)}
@@ -45,11 +48,11 @@ export function ShippedCard({ visible = true }: { visible?: boolean }) {
       </ul>)}
       {maintenance > 0 && <p>Maintenance: {plural(maintenance, 'change')} (tests and chores).</p>}
       {report.note && <p data-unknown>{report.note}</p>}
-      <p>For the full list, run <code className={styles.command}>phm shipped</code></p>
+      <p>For the full list, run <code className={styles.command}>phm shipped{today ? ' --since 1d' : ''}</code></p>
     </>;
   }
-  return <section className={styles.card} aria-label="Shipped">
-    <h3>Shipped</h3>
+  return <section className={styles.card} aria-label={today ? 'Shipped today' : 'Shipped'}>
+    <h3>{today ? 'Shipped today' : 'Shipped'}</h3>
     {stale ? <p role="status">Refresh failed; showing the last shipped report, which may be stale. Last successful update:{' '}
       {lastSuccess === null ? 'time unavailable' : <time dateTime={lastSuccess}>{lastSuccess}</time>}.</p> : null}
     {body}

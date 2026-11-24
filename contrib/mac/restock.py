@@ -11,6 +11,27 @@ from launch_precheck import (precheck, park, parked as precheck_parked, park_key
                              admission_history, terminal_target, merged_jobs)
 import queue_gate
 
+# External cycle generators also enter here. Use the CLI's shared pause decision.
+family_yield = None
+family_skip_logged = set()
+def family_paused(job):
+    global family_yield
+    if not re.search(r"LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN", job): return False
+    if family_yield is None:
+        try:
+            report = json.loads(subprocess.run(["phm", "fleet", "yield", "--json", "--metrics", R + "/metrics/jobs.jsonl"],
+                capture_output=True, text=True, timeout=15, check=True).stdout)
+            family_yield = {r["family"]: r.get("pausedReason") or "recent workers found no source or made no changes"
+                            for r in report["launch_families"] if r.get("paused") is True}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+            family_yield = {}  # Unknown evidence never suppresses work.
+    family = re.sub(r"\d+[A-Za-z]?$", "", job)
+    if family not in family_yield: return False
+    if family not in family_skip_logged:
+        print("skip %s: %s" % (re.sub(r"^RQ-(?:PHX-)?", "", family), family_yield[family]), file=sys.stderr)
+        family_skip_logged.add(family)
+    return True
+
 def semantic_dedupe(lines):
     """Pure admission plan; keep in parity with core/queue/semantic-dedupe.ts."""
     rows, unknown, repeats, marked = [], [], [], {}
@@ -339,6 +360,7 @@ for line in ready_raw:
     ids = gate_ids(rd(pf))
     if not ids: parked_diagnostics["empty_gate"] += 1; continue
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    if family_paused(j): continue
     try:
         fields = line.split("\t")
         spec = work_market.requirements([j, repo, lane, tier, pf] + fields[6 if PARK_DEP.match(fields[0]) else 5:])
@@ -367,7 +389,7 @@ for line in ready_raw:
             and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
             and os.path.isfile(pf) and rd(pf).strip()):
         parked_seen.add(j)
-        rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
+        if not family_paused(j): rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
 def rate_count(now):
     try:
         stamp, count = rd(R + "/phantom-open-prs").split()
@@ -463,6 +485,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
+    if family_paused(j): skip(j, "family-paused"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
     if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default

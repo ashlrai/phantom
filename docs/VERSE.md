@@ -9,7 +9,9 @@ every account and local model is costing you.
 
 The primary CLI is `phm`; `ashlr` and `ashlr verse` remain compatible, as do
 `/verse/` routes. The current repository is `ashlrai/phantom` and the source
-package is the published `@ashlr/phantom@3.26.0`.
+package is `@ashlr/phantom`, first published under that name in canonical 3.26.0.
+The `@ashlr/phantom/universe` export also began with that release. The source
+version in `package.json` and dated entries in the [changelog](https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md) describe source and release history; neither proves npm promotion, desktop signing, or the installed version.
 The earlier published compatibility release is 3.25.3, distributed as `@ashlr/hub`
 and `Phantom.app`. The historical 3.25.0 release used `Ashlr.app`; older
 screenshots and references retain their captured names. See
@@ -66,6 +68,27 @@ the leader plan log reply reader. `sources` reports each of the three as `ok`
 or `unknown` with a reason; rows from an unknown source are absent, not zero.
 `entries` keeps the per-event ledger records with model and merge timing.
 PR opened requires recorded PR evidence; a finish alone stays Finished.
+
+**Log** (`#/work/jobs`) is the same ledger folded to one row per job: when,
+lane, model, repo, goal, the result in plain words and time to merge, under a
+one-line summary. Lane and repo are chips, and jobs that made no change fold
+into one group. Agents read it with `phm log --json --since 6h` or
+`GET /api/log?since=6h&lane=<lane>&repo=<repo>`. The `joblog.v1` report has
+`version`, `hours`, `headline`, `summary` (jobs, merged, noChange,
+noChangeRate, medianMergeSeconds, and the same counts per lane), `jobs`,
+`sources` and `malformedLines`. Each job has `job`, `at`, `lane`, `model`,
+`repo`, `goal`, `result` (merged, closed, open, no-change, failed, finished or
+running), `text`, `pr`, `url` and `mergeSeconds`. A field that was not recorded
+is null and shown as unknown. Each entry of `worklog.v3` also carries `goal`
+and `detail`, and a PR closed without merging is a `closed` entry.
+
+The **Work log** pane (`fleet-worklog`) counts that ledger: one sentence and
+one hourly trend line per number, today against yesterday ("186 merged today,
+240 yesterday"), then a table by lane and by repo. Agents read it with
+`phm fleet worklog --json` or `GET /api/fleet/worklog?hours=24&by=hour`. The
+`fleet.worklog.v1` report has `hourly` and `daily` buckets, `totals` and
+`compare`; a PR counts once however often its job launched, and a value that
+was not measured is null and shown as unknown.
 
 ## Workspaces and resources
 
@@ -1106,7 +1129,9 @@ and [GitHub release assets](https://docs.github.com/en/rest/releases/assets).
 ### Lessons: retros and approved knowledge (3.15)
 
 Every way a task ends now produces a short **retro**: a merge, a gate refusal,
-an owner-lane PR, a failed verify, a revert, a closed PR, a cloud task that
+an owner-lane PR, a failed verify, a revert — including a red merge whose
+revert failed or was refused and so stays on the default branch under owner
+hold — a closed PR, a cloud task that
 merged, blocked, failed or expired, the same for Devin tasks, and a Leader
 action you vetoed or that was refused. A Devin chat that ends without a PR is
 not a failed task end. Retros come from a sweep over the last 30 days of what
@@ -1145,6 +1170,30 @@ Lessons shows recurring failure causes (stacked by fleet, cloud and Leader),
 the suggested-knowledge queue, recent retros (each expandable to its cause,
 next steps and better prompt), approved knowledge with hit counts, and Leader
 veto lessons. It loads separately, so Growth's first paint never waits on it.
+
+Each approved note also carries **trajectory outcome evidence** once enough
+fleet runs have seen it: how many distinct dispatches it was injected into,
+how many of those resolved to a trajectory record, and — past a small sample
+floor — how those runs ended (merged, failed, reverted and the like). The
+correlation is recorded when a real dispatch starts, keyed by the run's
+trajectory id, so refused previews and quota refusals never count. These are
+descriptive tallies of what happened to runs that saw the note, not proof the
+note caused the outcome — that causal question stays with the cloud lesson
+holdout. When the trajectory journals or the run ledger are degraded,
+truncated or simply absent, the tallies stay unknown rather than reading as
+zero.
+
+The holdout's answer is shown here too. Approved cloud launches are randomly
+split: most get the lessons block, a fixed share runs without it, and both
+arms record which notes applied. **Approved knowledge** carries a one-line
+read of that experiment — landed rates with and without lessons overall, and
+per note once enough finished runs exist in each arm, with the point effect
+and a 95% interval (`helps`, `hurts`, `no clear effect`, or still
+`measuring`). Launch failures and unfinished runs are named as not counted.
+Below three finished runs in either arm the effect stays unknown; when the
+task store or revert evidence cannot be read, every trial line stays absent
+rather than reading as zero. `ashlr improve lessons [--json]` prints the
+same numbers.
 
 **When sweeps run.** `ashlr verse` sweeps in the background: first 5 minutes
 after start, then hourly, skipping a tick while a sweep is running or when the

@@ -1,5 +1,8 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildLeverageMix, classifyLeverage } from '../src/core/metrics/leverage-mix.js';
+import { buildLeverageMix, classifyLeverage, readLeverageMix } from '../src/core/metrics/leverage-mix.js';
 import { renderDashboard } from '../src/core/metrics/dashboard.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 import { rollup } from '../src/core/metrics/scoring.js';
@@ -22,11 +25,11 @@ describe('merged PR leverage mix', () => {
   it('classifies ten representative PRs with explicit precedence', () => {
     for (const fixture of fixtures) expect(classifyLeverage(fixture.paths, fixture.job)).toBe(fixture.expected);
   });
-  it('exposes the report through the metrics CLI', () => {
+  it('exposes the report through the metrics CLI', async () => {
     const output: string[] = [];
-    expect(cmdMetrics(['leverage-mix', '--json'], { out: s => output.push(s), err: s => output.push(s) })).toBe(0);
+    expect(await cmdMetrics(['leverage-mix', '--json'], { out: s => output.push(s), err: s => output.push(s) })).toBe(0);
     expect(JSON.parse(output[0]!).schema).toBe('metrics.leverage-mix.v1');
-    expect(cmdMetrics(['leverage-mix', '--bad'], { out: () => {}, err: () => {} })).toBe(2);
+    expect(await cmdMetrics(['leverage-mix', '--bad'], { out: () => {}, err: () => {} })).toBe(2);
   });
   it('joins fleet merges to file evidence, includes unknowns and renders the share', () => {
     const now = Date.parse('2026-11-09T12:00:00Z');
@@ -42,6 +45,25 @@ describe('merged PR leverage mix', () => {
     expect(buildLeverageMix(null, prs, now).total).toBeNull();
     expect(buildLeverageMix('', null, now).improvedShare).toBeNull();
     expect(buildLeverageMix(JSON.stringify({ event: 'outcome', state: 'MERGED', ts: '2026-11-09T11:00:00Z', job: 'RQ-OTHER' }), null, now).improvedShare).toBeNull();
+  });
+  it('reports jobsTruncated only for a bounded tail read', () => {
+    const jobs = JSON.stringify({ event: 'outcome', state: 'MERGED', ts: '2026-11-09T11:00:00Z', job: 'RQ-FIX-BUG', url: 'https://github.com/ashlrai/phantom/pull/1' });
+    const now = Date.parse('2026-11-09T12:00:00Z');
+    expect(buildLeverageMix(jobs, null, now).sources.jobsTruncated).toBe(false);
+    expect(buildLeverageMix({ text: jobs, truncated: true }, null, now).sources).toMatchObject({ jobs: 'available', jobsTruncated: true });
+    expect(buildLeverageMix(null, null, now).sources.jobsTruncated).toBe(false);
+  });
+  it('reads the newest bounded tail of an oversized jobs ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'leverage-mix-tail-'));
+    mkdirSync(join(dir, 'metrics'));
+    const limit = 16 * 1024 * 1024;
+    const now = Date.now();
+    const recent = JSON.stringify({ event: 'outcome', state: 'MERGED', job: 'RQ-FIX-BUG', ts: new Date(now - 60_000).toISOString(), url: 'https://github.com/ashlrai/phantom/pull/902' });
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), 'HEAD-SENTINEL\n' + 'A'.repeat(limit) + '\n' + recent + '\n');
+    const report = await readLeverageMix({ runsDir: dir, now });
+    expect(report.sources).toMatchObject({ jobs: 'available', jobsTruncated: true });
+    expect(report.total).toBe(1);
+    expect(report.classes.find(c => c.name === 'fix')?.count).toBe(1);
   });
 });
 

@@ -29,6 +29,15 @@ describe('fleet waiting', () => {
       JSON.stringify({ event: 'launch', jobId: 'RQ-C-RETRY' }), JSON.stringify({ event: 'finish', job: 'RQ-D' })].join('\n');
     expect(explainFleetWaiting(queue, jobs, '', now).map(row => row.id)).toEqual(['RQ-C', 'RQ-D']);
   });
+  it('drops ids declined under the live skipped_empty+code spelling but keeps empty-gate declines waiting', () => {
+    const queue = ['RQ-A', 'RQ-B', 'RQ-C'].map(id => ready(id)).join('\n');
+    const jobs = [
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-A', code: 10, ts: '2026-11-04T11:00:00Z' }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-B', reason: 'task_empty_repeat_24h', ts: '2026-11-04T11:00:00Z' }),
+      JSON.stringify({ event: 'skipped_empty', job: 'RQ-C', code: 14, applied: false, ts: '2026-11-04T11:00:00Z' }),
+    ].join('\n');
+    expect(explainFleetWaiting(queue, jobs, '', now).map(row => row.id)).toEqual(['RQ-B', 'RQ-C']);
+  });
   it('considers only the last 3000 metric lines', () => {
     const launch = JSON.stringify({ event: 'launch', job: 'RQ-A' });
     expect(explainFleetWaiting(ready('RQ-A'), [launch, ...Array<string>(3000).fill('{}')].join('\n') + '\n', '', now)).toHaveLength(1);

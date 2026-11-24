@@ -9,10 +9,11 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock('../../../data/hooks.js', () => ({ useQuery: () => state.read }));
 
-const line = (text: string, number: number | null) => ({ text, number, mergedAt: '2026-11-16T10:00:00.000Z' });
+const line = (text: string, number: number | null) => ({ text, number, mergedAt: '2026-11-16T10:00:00.000Z', repo: null, prs: number === null ? [] : [number] });
+const HEADLINE = 'This week: 5 user-facing changes across 1 repo; biggest: Add a Shipped card to Home.';
 const REPORT: ShippedReport = {
   schema: 'shipped.v1', version: 1, generatedAt: '2026-11-17T00:00:00.000Z', since: '2026-11-10T00:00:00.000Z', days: 7,
-  source: 'ok', note: null, total: 7, maintenance: 2,
+  source: 'ok', note: null, repo: null, headline: HEADLINE, repos: 1, biggest: 'Add a Shipped card to Home', total: 7, maintenance: 2,
   areas: [
     { id: 'desktop', label: 'Desktop app', count: 4, lines: [line('Add a Shipped card to Home.', 108), line('Restore the window size after restart.', 102), line('Third.', 99)] },
     { id: 'cli', label: 'CLI', count: 1, lines: [line('Add phm shipped.', 103)] },
@@ -30,7 +31,7 @@ describe.each([['390 px', 390], ['desktop width', 1440]])('Shipped card at %s', 
   it('shows the count, two plain sentences per area, the rest as a number, and the maintenance count', () => {
     show(REPORT, width);
     const card = within(screen.getByRole('region', { name: 'Shipped' }));
-    expect(card.getByText('5 changes in the last 7 days.')).toBeTruthy();
+    expect(card.getByText(HEADLINE)).toBeTruthy();
     expect(within(card.getByRole('list', { name: 'Desktop app' })).getAllByRole('listitem').map(item => item.textContent)).toEqual([
       'Desktop app: 4', 'Add a Shipped card to Home.', 'Restore the window size after restart.', 'and 2 more',
     ]);

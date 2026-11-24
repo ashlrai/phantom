@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-14T12:00:00Z');
 const raw = (over: object = {}) => ({ v: 1, source: 'ok', bindings: 2,
   sent: { total: 5, recent: [{ state: 'VERIFIED', claimId: 'claim-fake-1', at: NOW - 120_000 }] },
   pending: [{ state: 'ASSIGNED', threadKey: 'T00000000/C00000000/1700000000.000100', text: 'ASSIGNED: fake-owner claim claim-fake-2' }],
-  slackConfigured: true, ...over });
+  slackConfigured: true, pendingObservation: { state: 'known' }, ...over });
 const view = (over?: object) => narrowClaimNotices(raw(over))!;
 
 it('renders counts, state chips, sent rows and would-post rows', () => {

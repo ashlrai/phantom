@@ -7,11 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { lastUsedText } from '../src/core/apps-last-used.js';
 import { cmdApps } from '../src/cli/apps-control.js';
 import type { AppsControlDeps, AppsFeedEntry } from '../src/core/apps-control.js';
 import { formatComputerPermissionReport } from '../src/core/verse/verse-mcp-computer.js';
 import {
-  KNOWN_APPS, PROBE_MISSING_REASON, findKnownApp, formatMacApps, parseLsBundlePath, parsePsRows, readMacApps, type MacAppsProbe,
+  KNOWN_APPS, PROBE_MISSING_REASON, findKnownApp, formatMacApps, parseLsBundlePath, parseLsLastActivation, parsePsRows, readMacApps, type MacAppsProbe,
 } from '../src/core/apps-known.js';
 
 const HOME = '/Users/fixture';
@@ -22,7 +23,7 @@ const BUNDLE_IDS: Record<string, string> = {
 };
 
 /** A fixture Mac: which bundles exist, which run (with helpers), which is in front. */
-function fixtureProbe(opts: { installed: string[]; running?: string[]; front?: string | null; failPs?: boolean; failFront?: boolean; failLocate?: boolean }): MacAppsProbe & { located: string[][] } {
+function fixtureProbe(opts: { installed: string[]; running?: string[]; front?: string | null; failPs?: boolean; failFront?: boolean; failLocate?: boolean; focus?: Record<string, number | null | 'bad'>; noLsappinfo?: boolean }): MacAppsProbe & { located: string[][] } {
   const at = (bundle: string) => bundle === 'Safari.app' ? '/System/Cryptexes/App/System/Applications/Safari.app' : `/Applications/${bundle}`;
   const located: string[][] = [];
   return {
@@ -43,6 +44,12 @@ function fixtureProbe(opts: { installed: string[]; running?: string[]; front?: s
         ]),
       ];
     },
+    ...(opts.focus || opts.noLsappinfo ? { async lastFocused(bundleId: string) {
+      if (opts.noLsappinfo) throw new Error('lsappinfo failed: ENOENT');
+      const v = opts.focus?.[bundleId];
+      if (v === 'bad') throw new Error('lsappinfo gave an unreadable time');
+      return v ?? null;
+    } } : {}),
     async frontmost() {
       if (opts.failFront) throw new Error('lsappinfo failed');
       return opts.front ? at(opts.front) : null;
@@ -52,10 +59,55 @@ function fixtureProbe(opts: { installed: string[]; running?: string[]; front?: s
 
 const ALL = Object.keys(BUNDLE_IDS);
 
+describe('last used', () => {
+  const NOW = Date.parse('2026-11-20T12:00:00Z');
+  const run = (focus: Record<string, number | null | 'bad'> | undefined, extra: { noLsappinfo?: boolean } = {}) =>
+    readMacApps({ probe: fixtureProbe({ installed: ['Claude.app', 'Codex.app'], running: ['Claude.app', 'Codex.app'], focus, ...extra }), home: HOME })
+      .then(r => ({ r, claude: r.apps.find(a => a.id === 'claude')!, codex: r.apps.find(a => a.id === 'codex')! }));
+
+  it('a running focused app gets its time; one never focused says never', async () => {
+    const at = NOW - 5 * 60_000;
+    const { r, claude, codex } = await run({ 'com.anthropic.claudefordesktop': at, [BUNDLE_IDS['Codex.app']!]: null });
+    expect(r.schema).toBe('phm.apps/2');
+    expect(claude).toMatchObject({ lastFocus: 'known', lastFocusedAt: new Date(at).toISOString() });
+    expect(codex).toMatchObject({ lastFocus: 'never', lastFocusedAt: null });
+    expect(formatMacApps(r, NOW)).toContain('last used 5 min ago');
+    expect(formatMacApps(r, NOW)).toContain('last used not yet');
+  });
+
+  it('lsappinfo missing or a malformed line is unknown, never 0 or now', async () => {
+    const missing = await run(undefined, { noLsappinfo: true });
+    expect(missing.claude).toMatchObject({ lastFocus: 'unknown', lastFocusedAt: null });
+    expect(missing.r.probe).toBe('partial');
+    expect(missing.claude.reason).toContain('last used');
+    const bad = await run({ 'com.anthropic.claudefordesktop': 'bad' });
+    expect(bad.claude).toMatchObject({ lastFocus: 'unknown', lastFocusedAt: null });
+    expect(formatMacApps(bad.r, NOW)).toContain('last used unknown');
+  });
+
+  it('a probe without lastFocused, a stopped app and no probe at all stay unknown', async () => {
+    const none = await readMacApps({ probe: fixtureProbe({ installed: ['Claude.app'], running: [] }), home: HOME });
+    expect(none.apps.find(a => a.id === 'claude')).toMatchObject({ lastFocus: 'unknown', lastFocusedAt: null });
+    expect((await readMacApps({ probe: null })).apps.every(a => a.lastFocus === 'unknown' && a.lastFocusedAt === null)).toBe(true);
+  });
+
+  it('parses lsappinfo lines strictly', () => {
+    expect(parseLsLastActivation('"lastActivationTime"=[ NULL ] \n')).toEqual({ state: 'never' });
+    expect(parseLsLastActivation('"lastActivationTime"="2026/11/18 14:12:42 ( 5 minutes ago )"')).toEqual({ state: 'at', ms: new Date(2026, 10, 18, 14, 12, 42).getTime() });
+    for (const bad of ['', 'nonsense', '"lastActivationTime"=banana', '"lastActivationTime"="2026/13/45 99:99:99"']) expect(parseLsLastActivation(bad)).toEqual({ state: 'unknown' });
+  });
+
+  it('relative words', () => {
+    const t = (ms: number) => lastUsedText({ lastFocus: 'known', lastFocusedAt: new Date(NOW - ms).toISOString() }, NOW);
+    expect([t(10_000), t(5 * 60_000), t(3 * 3_600_000), t(86_400_000), t(3 * 86_400_000)]).toEqual(['just now', '5 min ago', '3 hr ago', '1 day ago', '3 days ago']);
+    expect(lastUsedText({ lastFocus: 'unknown', lastFocusedAt: null }, NOW)).toBe('unknown');
+  });
+});
+
 describe('readMacApps', () => {
   it('all running: one row per known app in catalog order, memory summed with helpers, one obvious action', async () => {
     const report = await readMacApps({ probe: fixtureProbe({ installed: ALL, running: ALL, front: 'Cursor.app' }), home: HOME });
-    expect(report.schema).toBe('phm.apps/1');
+    expect(report.schema).toBe('phm.apps/2');
     expect(report.probe).toBe('ok');
     expect(report.apps.map(a => a.name)).toEqual(['Phantom', 'Claude', 'Codex', 'ChatGPT', 'Cursor', 'Grok', 'Devin', 'Safari']);
     for (const row of report.apps) expect(row).toMatchObject({ installed: true, running: true, memoryMb: 150, reason: null });
@@ -72,10 +124,11 @@ describe('readMacApps', () => {
     const a = JSON.stringify(await read());
     expect(JSON.stringify(await read())).toBe(a);
     const row = JSON.parse(a).apps[1];
-    expect(Object.keys(row)).toEqual(['id', 'name', 'role', 'installed', 'running', 'frontmost', 'pid', 'memoryMb', 'path', 'bundleId', 'quit', 'action', 'reason']);
+    expect(Object.keys(row)).toEqual(['id', 'name', 'role', 'installed', 'running', 'frontmost', 'pid', 'memoryMb', 'path', 'bundleId', 'lastFocusedAt', 'lastFocus', 'quit', 'action', 'reason', 'kind', 'processName', 'lastAction']);
     expect(row).toEqual({
       id: 'claude', name: 'Claude', role: 'Assistant', installed: true, running: true, frontmost: true, pid: expect.any(Number), memoryMb: 150,
-      path: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', quit: 'protected', action: null, reason: null,
+      path: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', lastFocusedAt: null, lastFocus: 'unknown', quit: 'protected', action: null, reason: null,
+      kind: 'agent-app', processName: 'Claude', lastAction: null,
     });
   });
 
@@ -145,7 +198,7 @@ describe('phm apps (CLI)', () => {
   it('bare `phm apps --json` prints the stable report and exits 0, even with no probe', async () => {
     expect(await cmdApps(['--json'], deps(fixtureProbe({ installed: ALL, running: ALL })))).toBe(0);
     expect(last().apps).toHaveLength(8);
-    expect(last()).toMatchObject({ schema: 'phm.apps/1', version: 1 });
+    expect(last()).toMatchObject({ schema: 'phm.apps/2', version: 2 });
     // `phm apps status` with no name is the same list.
     expect(await cmdApps(['status', '--json'], deps(fixtureProbe({ installed: ALL, running: ['Devin.app'] })))).toBe(0);
     expect(last().apps.find((a: { id: string }) => a.id === 'devin')).toMatchObject({ running: true, pid: 100, memoryMb: 150, frontmost: false });
