@@ -518,11 +518,14 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
-cutoff, so `--since` and `--before` read one closed `[since, before)` window. `from` and `to` are routing labels and `summary` is one plain
+cutoff, so `--since` and `--before` read one closed `[since, before)` window.
+Every other flag is the `phm messages` filter vocabulary `phm agents messages`
+forwards — the matching rules `phm messages --help` describes — so one
+filtered question reads the same on this digest. `from` and `to` are routing labels and `summary` is one plain
 line of at most 100 characters (the scrubbed summary, never the message
 body). An empty bus prints "No messages yet."; `messages` is null when the bus
 could not be read. The Fleet map pulses the same lines, and clicking a line
@@ -664,21 +667,31 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
 `group.presence` heartbeats are observations, not messages, and never list.
+Every other flag is the `phm messages` filter vocabulary — `--agent` with
+`--with` keeps only what those two said to each other, `--kind` one
+classified kind, `--priority` one envelope band, `--job` the traffic naming
+one job, `--thread` note/context bodies carrying that v2 thread label,
+`--channel` posts addressed to `group:<name>:*`, `--contains` summaries
+carrying that text, `--from`/`--exclude-from` one sender's mail kept or
+dropped, `--in-reply-to` envelopes citing that id — with the same matching
+rules and registered-identity resolution `phm messages --help` describes, so
+`matched` and `pairs` count exactly the rows every filter accepts.
 `--json` prints `agents.messages.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50]` serves the
-same read with a current read session.
+`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
+same read with a current read session; dashed flags arrive camelCase
+(`excludeFrom`, `inReplyTo`), each param once.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and
   `toName`. `from` and `to` are map node ids (`leader`, `lane:<name>`,
   `job:<id>`), or `unknown` when the map does not draw that agent.
-- `pairs[]`: one per direction between two node ids over the whole window:
-  `count`, `lastAt` and `recent` (the last 5 summaries).
+- `pairs[]`: one per direction between two node ids over every message the
+  filters kept: `count`, `lastAt` and `recent` (the last 5 summaries).
 
 On the Map pane, hovering a message line or its row shows a card with that
 line's count and last 5 messages. The Messages switch above the map hides
