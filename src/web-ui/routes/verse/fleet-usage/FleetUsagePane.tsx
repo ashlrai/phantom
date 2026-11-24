@@ -202,7 +202,7 @@ function AccountRow({ row, nowMs, incident }: { row: UsageRow; nowMs: number; in
   const hasFacts = row.observedAt != null || row.credits != null || row.reconnectCommand != null;
   const standing = accountStanding(row);
   return (
-    <li className={styles.row} data-standing={standing}>
+    <li className={styles.row} data-board-card data-standing={standing}>
       <div className={styles.head}>
         <BrandMark brand={row.provider} size={16} />
         <span className={styles.account}>
@@ -315,7 +315,7 @@ export function FleetUsagePane({ visible }: PaneProps) {
             return <AccountRow key={row.id} row={row} nowMs={nowMs} incident={incident} />;
           })}
           {personal !== null && (
-            <li className={styles.row}>
+            <li className={styles.row} data-board-card>
               <div className={styles.head}>
                 <BrandMark brand="codex" size={16} />
                 <span className={styles.account}>Codex personal</span>

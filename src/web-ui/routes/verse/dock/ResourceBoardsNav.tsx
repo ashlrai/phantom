@@ -18,8 +18,14 @@
  * with it through the cache (use-board-readings.ts lists the reads). A board
  * with nothing worth a word, or whose read has not answered or last failed,
  * shows its name alone.
+ *
+ * Inside a board, J and K step through its cards (a pool, an account, a seat,
+ * a model, a lane), G and Shift+G jump to the first and last; the row shows
+ * which card holds the keyboard ("3 of 9"). The cards are the elements a
+ * board marks `data-board-card` (board-cards.ts), so no board handles a key.
  */
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { boardCards, cardMove, cardOf, cardTarget, focusCard } from './board-cards.js';
 import { getPane, usePanes } from '../panes/pane-registry.js';
 import { swapDockPane } from './dock-store.js';
 import { RESOURCE_BOARD_GROUPS, neighbourBoard, resourceBoards } from './resource-boards.js';
@@ -67,16 +73,45 @@ export function ResourceBoardsNav({ current, visible, primary }: ResourceBoardsN
     if (!visible || !listed) return;
     function onKeyDown(event: globalThis.KeyboardEvent): void {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key !== '[' && event.key !== ']') return;
+      const board = event.key === '[' || event.key === ']';
+      const move = board ? null : cardMove(event);
+      if (!board && move === null) return;
       const target = event.target instanceof Element ? event.target : null;
-      const inBoard = target !== null && navRef.current?.parentElement?.contains(target) === true;
+      const root = navRef.current?.parentElement ?? null;
+      const inBoard = target !== null && root?.contains(target) === true;
       if (!(inBoard || (primary && target === document.body)) || (target !== null && typingIn(target))) return;
+      if (board) { event.preventDefault(); step(event.key === ']' ? 1 : -1); return; }
+      if (root === null || move === null) return;
+      const cards = boardCards(root);
+      if (cards.length === 0) return;
+      // The key is the board's even at an end, where nothing moves: it must not fall through to another handler.
       event.preventDefault();
-      step(event.key === ']' ? 1 : -1);
+      const card = cardTarget(cards, cardOf(root, document.activeElement), move, navRef.current?.getBoundingClientRect().bottom ?? 0);
+      if (card) focusCard(card);
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   });
+
+  // Which card holds the keyboard, counted when focus moves: a card, or a control inside one.
+  const [held, setHeld] = useState<{ index: number; count: number } | null>(null);
+  useEffect(() => {
+    const root = navRef.current?.parentElement ?? null;
+    if (!visible || !listed || root === null) { setHeld(null); return; }
+    const board = root;
+    function read(focused: EventTarget | null): void {
+      const card = cardOf(board, focused instanceof Element ? focused : null);
+      const cards = card === null ? [] : boardCards(board);
+      const index = card === null ? -1 : cards.indexOf(card);
+      setHeld((was) => index < 0 ? null : was?.index === index + 1 && was.count === cards.length ? was : { index: index + 1, count: cards.length });
+    }
+    const onFocusIn = (event: FocusEvent) => read(event.target);
+    const onFocusOut = (event: FocusEvent) => read(event.relatedTarget);
+    board.addEventListener('focusin', onFocusIn);
+    board.addEventListener('focusout', onFocusOut);
+    read(document.activeElement);
+    return () => { board.removeEventListener('focusin', onFocusIn); board.removeEventListener('focusout', onFocusOut); };
+  }, [visible, listed, current]);
 
   if (!listed) return null;
 
@@ -109,6 +144,10 @@ export function ResourceBoardsNav({ current, visible, primary }: ResourceBoardsN
           );
         })}
       </ul>
+      <span className={styles.keys} data-keys="cards" title="J and K move to the next and previous card of this board. G goes to the first, Shift+G to the last.">
+        {held ? <span className={styles.position} data-card-position><span className="visually-hidden">Card </span>{held.index} of {held.count}</span> : null}
+        <kbd>J</kbd><kbd>K</kbd><span className="visually-hidden">Press J or K for the next or previous card, G for the first, Shift+G for the last.</span>
+      </span>
       <span className={styles.keys} title="[ and ] move to the previous and next resource board"><kbd>[</kbd><kbd>]</kbd><span className="visually-hidden">Press [ or ] for the previous or next board.</span></span>
     </nav>
   );
