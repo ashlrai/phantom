@@ -160,6 +160,12 @@ describe('lanes, capacity and hints', () => {
     expect(h).toMatchObject({ advisory: true, bets_share: { reserved: 2, usable: 1 }, top_constraint: { name: 'idea-to-merge' } });
     expect(isMissing(selectionHints(report(), null).bets_share)).toBe(true);
   });
+  it('carries the loop-wait summary into the hints when stage times are collected', () => {
+    const wait = { headline: 'Biggest wait: PR to merged, p50 2.5 h', slowest: { stage: 'pr_to_merged', p50_minutes: 150 }, since: iso(1440), jobs_truncated: true };
+    expect(selectionHints(report(), null, wait).loop_wait).toEqual({ headline: wait.headline, slowest: wait.slowest, since: wait.since, jobs_truncated: true });
+    expect(isMissing(selectionHints(report(), null).loop_wait)).toBe(true);
+    expect(isMissing(selectionHints(report(), null, null).loop_wait)).toBe(true);
+  });
   it('names the binding constraint', () => {
     expect(topConstraint(report({ throughput: { missing: 'x' } })).name).toBe('measurement');
     expect(topConstraint(report({ throughput: { merges_per_hour: { '1h': 0, '6h': 0 }, opens_per_hour: { '1h': 1, '6h': 1 }, merged_6h: 0, opened_6h: 6 } })).name).toBe('merge');
@@ -259,6 +265,7 @@ describe('collectLoop and writeLoop', () => {
     expect(r.resources.find(x => x.resource === 'grok')).toMatchObject({ kind: 'lane', measured: false });
     expect(c.share).toMatchObject({ freeSlots: 16, reserved: 1, readyBetRows: 2, usable: 1 });
     expect(c.hints.lanes[0]!.lane).toBe('claude');
+    expect(c.hints.loop_wait).toEqual({ headline: c.stages.headline, slowest: c.stages.slowest, since: c.stages.since, jobs_truncated: c.stages.jobs_truncated });
     expect(r.truncated_sources).toEqual([]);
     expect(c.stages.jobs_truncated).toBe(false);
   });
@@ -282,6 +289,7 @@ describe('collectLoop and writeLoop', () => {
     expect(r.resources.filter(x => x.kind === 'peer').every(x => !x.measured)).toBe(true);
     expect(c.share).toMatchObject({ reserved: 0, freeSlots: null });
     expect(c.hints.top_constraint.name).toBe('measurement');
+    expect(c.hints.loop_wait).toMatchObject({ headline: 'Biggest wait: unknown (job ledger unreadable)', slowest: null });
   });
   it('writes loop, hints and share files and merges the morning file', async () => {
     const runs = mkdtempSync(join(tmpdir(), 'loop-write-'));
@@ -293,6 +301,7 @@ describe('collectLoop and writeLoop', () => {
     const w = await writeLoop(runs, c, at);
     expect(JSON.parse(readFileSync(w.loop, 'utf8')).schema).toBe('metrics.loop.v1');
     expect(JSON.parse(readFileSync(w.hints, 'utf8')).schema).toBe('metrics.selection-hints.v1');
+    expect(JSON.parse(readFileSync(w.hints, 'utf8')).loop_wait.headline).toBe(c.stages.headline);
     expect(JSON.parse(readFileSync(w.share, 'utf8'))).toMatchObject({ schema: 'bets.share.v1', at: iso(0) });
     const morning = JSON.parse(readFileSync(join(runs, 'reports', `morning-${day}.json`), 'utf8'));
     expect(morning).toMatchObject({ headline: 'keep me', cost_per_merged_pr: 3, feedback_loop_minutes: 280, bets: { launched: 0 } });

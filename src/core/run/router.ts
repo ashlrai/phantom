@@ -270,6 +270,8 @@ export interface RoutingContext {
    * autonomous/fail-closed. So an unset flag there cannot launch an engine.
    */
   autonomous?: boolean;
+  /** Model names with observed usage caps supplied by the caller. */
+  cappedModels?: readonly string[];
 }
 
 // Thresholds (mirror fleet/router.ts so they stay in sync)
@@ -691,7 +693,7 @@ function routeTaskBandit(
   try {
     const registry = loadArmRegistry();
     const banditCtx = banditContextFor(item);
-    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg));
+    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg, ctx.cappedModels));
     const selection = selectArm(
       registry,
       banditCtx,
@@ -802,7 +804,7 @@ function routeTaskUnenforced(
     // picked entry to the string dispatched to the engine CLI: Claude 5 entries
     // carry the full API id ('claude-sonnet-5' — the bare 'sonnet-5' tag is not
     // a documented CLI alias); legacy entries keep their tags unchanged.
-    const c5Excludes = claude5ExcludeIds(cfg);
+    const c5Excludes = claude5ExcludeIds(cfg, ctx.cappedModels);
 
     // ── M240: Learned-bias score map ──────────────────────────────────────
     // Build once per routeTask call. Only an explicit true enables learned
@@ -966,7 +968,10 @@ function routeTaskUnenforced(
           excludeIds: c5Excludes,
         });
         if (!entry) return { engine, model: null, catalogEntry: null, reason };
-        return { engine, model: decisionModelFor(entry), catalogEntry: entry, reason };
+        const capReason = engine === 'claude' && ctx.cappedModels?.includes('fable')
+          && !claude5ExcludeIds(cfg).has('claude:fable-5')
+          ? ' (Fable skipped: observed model cap)' : '';
+        return { engine, model: decisionModelFor(entry), catalogEntry: entry, reason: reason + capReason };
       };
 
       // Primary frontier engine

@@ -1,5 +1,6 @@
 /** The `phm releases` report: which repo is due a release, and the one to release next. */
 import type { ReleasesReport } from '../../../../core/release/status.js';
+import { ReleaseRepoRows } from './ReleaseRepoRows.js';
 import styles from './fleet-metrics.module.css';
 
 const shown = (value: number | string | null): string => value === null ? 'unknown' : String(value);
@@ -9,7 +10,7 @@ export function ReleasesCard({ report }: { report: ReleasesReport | undefined })
   const known = report?.schema === 'phantom.releases.v1' && Array.isArray(report.repos) ? report : undefined;
   return <section className={styles.card} aria-label="Releases">
     <h3 className={styles.heading}>Releases</h3>
-    {!known ? <p className={styles.note}>Releases: unknown</p>
+    {known?.releaseRepos ? <ReleaseRepoRows rows={known.releaseRepos} checkedAt={known.checkedAt} /> : !known ? <p className={styles.note}>Releases: unknown</p>
       : !known.repos.length ? <p className={styles.note}>No repos to check.</p> : <>
         <p className={styles.note}>{known.next ? `Release next: ${known.next.suggestion}.` : 'No release is due.'} Due means over {known.dueWhen.days} days or over {known.dueWhen.mergedPrs} merged PRs since the latest tag.</p>
         <div className={styles.scroll}>

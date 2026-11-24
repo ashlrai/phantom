@@ -22,6 +22,7 @@ import { flatTree, sessionAge, spoke, type LiveSessionRow, type LiveSessionsV1 }
 import type { InboxEntry } from './mason-inbox.js';
 import { replyTime, type LeaderRepliesV1 } from './mason-outbox.js';
 import type { OrderTraceJob, OrderTraceV1 } from './order-trace.js';
+import { prSentence, sessionPr, type SessionThreadPr } from './session-pr.js';
 import type { FleetJobActivityV1 } from './runs-job-activity.js';
 import type { JobLogScan } from './runs-job-detail.js';
 import { sessionReply, type SessionThreadReply } from './session-reply.js';
@@ -100,6 +101,8 @@ export interface SessionThreadSession {
 export interface SessionThreadControl { action: JobControlAction; lane: string | null; status: 'requested' | 'applied'; at: string }
 /** What a session's job has done, as values: the ones the summary's "commands seen, files changed" and "Latest step" sentences state in words. */
 export interface SessionThreadWork {
+  /** What the ledger records became of the job's pull request (session-pr.ts). Null when no outcome is recorded for it: unknown, not "open". */
+  pr: SessionThreadPr | null;
   /** Commands seen in the job's log; null when the log's commands could not be read. */
   commands: number | null;
   /** The job's changed files; `partial` when the change read was degraded. Null when no change read answered. */
@@ -188,6 +191,7 @@ export function sessionWork(activity: FleetJobActivityV1 | null | undefined): Se
   const files = activity.entries.find(entry => entry.kind === 'files');
   const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
   return {
+    pr: sessionPr(activity),
     commands: activity.sources.commands === 'healthy' ? activity.counts.commands : null,
     files: !files || files.state === 'missing' ? null
       : { count: files.totals.files, added: files.totals.added, removed: files.totals.removed, partial: files.state === 'degraded' },
@@ -212,6 +216,8 @@ function summaryOf(session: SessionThreadSession, node: SessionNode, row: LiveSe
     lines.push(`${activity.sources.commands === 'healthy' ? `${plural(activity.counts.commands, 'command')} seen` : 'Commands unknown'}, ${changed}.`);
     const last = activity.entries.filter(entry => entry.kind === 'event').at(-1);
     if (last) lines.push(`Latest step: ${[last.event, last.summary].filter(Boolean).join(' ')}${when(last.at) ? ` at ${last.at}` : ''}.`);
+    const pr = sessionPr(activity);
+    if (pr) lines.push(prSentence(pr));
   }
   // The inbox is the Leader's: an aimed message is on record there, and nothing records the worker reading it.
   if (session.kind === 'worker' && aimed.length > 0) {

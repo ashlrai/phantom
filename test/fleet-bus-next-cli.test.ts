@@ -37,11 +37,41 @@ it('returns priority-ordered real receipts and leases through JSON', async () =>
   expect(await run()).toEqual({ code: 0, status: 'empty', candidates: 2, held: 2 });
 }, 120_000);
 
+it('applies contains, since and priority filters to the claimable scan', async () => {
+  for (const [id, priority, body] of [
+    ['flt-old', 'P0', { kind: 'work', text: 'deploy alpha' }],
+    ['flt-chore', 'P3', { kind: 'work', text: 'unrelated chore' }],
+    ['flt-alpha', 'P1', { kind: 'work', text: 'ship ALPHA build' }],
+  ] as const) {
+    expect(appendBusInbox({ id, from: 'fake', to: 'worker-a', priority, ttl: 120_000, body }, { root }).status).toBe('posted');
+  }
+  // --priority keeps only the exact band.
+  const byPriority = await run([...args(), '--priority', 'P1']);
+  expect(byPriority).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'flt-alpha' } } });
+  // --contains matches the scrubbed one-line summary case-insensitively; with
+  // --priority P0 only the older alpha receipt qualifies.
+  const byContains = await run([...args(), '--contains', 'alpha', '--priority', 'P0']);
+  expect(byContains).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'flt-old' } } });
+  // --since past every receipt's arrival empties the filtered scan honestly —
+  // unfiltered, the two live leases would read as held candidates instead.
+  const future = String(Date.now() + 3_600_000);
+  expect(await run([...args(), '--since', future]))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  // --before is the exclusive receivedAt ceiling: a cutoff before every
+  // receipt's arrival empties the same filtered scan.
+  expect(await run([...args(), '--before', '1']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+});
+
 it('validates all flags without returning bodies or tokens', async () => {
   for (const bad of [[], ['--help', '--json'], args().slice(0, -1), [...args(), '--json'],
     [...args(), '--owner', 'duplicate'], args().map(x => x === '60000' ? '0' : x),
     args().map(x => x === '60000' ? '3e3' : x), args().map(x => x === root ? 'relative' : x),
-    args().map(x => x === 'worker-a' ? 'bad label' : x), [...args(), '--unknown']]) {
+    args().map(x => x === 'worker-a' ? 'bad label' : x), [...args(), '--unknown'],
+    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'],
+    [...args(), '--contains', '   ']]) {
     expect(await run(bad)).toEqual({ code: 2, status: 'invalid' });
   }
 });

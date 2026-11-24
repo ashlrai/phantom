@@ -101,6 +101,20 @@ The private cache binds readings to the account, selected native profile, and a 
 
 Dollar references are not invoices, purchased-credit prices, or attributed task costs. Subscription percentages are not token counts. Different accounts remain independent, including accounts from the same provider. No account-count truncation is introduced by these views.
 
+In the left rail each of these rows draws the same bar as the boards
+(`components/primitives/WindowBar.tsx`), not a battery: the fill is the share
+**used**, left to right, so the rail and the Resources drawer read the same
+way. An account row draws its binding window, with the reserve hatched at the
+window's end and a mark for the time gone where the seat reports when the
+window began; the hover card carries the same reading in words. A row with
+nothing left is a full red bar with no percentage. No reading, or a reading
+that is no longer current, is a hatched bar whatever it last said; the dated
+value stays in the text beside it. The Devin tracked budget draws reported use
+solid and the exposure held for running sessions lighter after it, so held is
+never read as used. The cloud estimate draws the share of the estimate spent.
+Local models are not metered and get a readiness dot instead of a bar. The
+collapsed rail draws the bar as a thin rule under each provider mark.
+
 ## Grok Build and Grok Bot
 
 Grok Build's native account reading, Grok Bot's included allowance and xAI API
@@ -352,3 +366,12 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
   it never borrows the API weekly reading's org, so free previews stay unproven.
 - The Devin budget row has no account scope: `readDevinUsage` returns usage
   fields only. Its ACU pool covers all models, so it also omits model.
+
+### One spend-down view
+
+`phm fleet pools --json` returns `fleet.pools.v1`: `used_percent`, `reset_at`,
+`hours_to_reset`, `burn_pct_per_hour`, `projected_percent_at_reset`, and a plain
+`verdict` for each budget pool. Gift burn is normalized to percent of its grant;
+without a grant or fresh reading the projection is unknown. Home's Pools card
+uses these same rows (also on the phone) through the existing runway refresh.
+Solid is used, light is projected use, and the right mark is reset or expiry.

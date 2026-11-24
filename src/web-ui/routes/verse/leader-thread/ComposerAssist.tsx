@@ -74,7 +74,8 @@ export function useComposerAssist({ draft, setDraft, inputRef, enabled, sent }: 
   }
   // The `@` list wins when both apply (`/thread @`); Esc closes whichever is open.
   const args = useCommandArgs({ id, draft, caret, enabled: enabled && !closed && !open, selected, setSelected,
-    onChoose: text => { setClosed(true); place(text, text.length); } });
+    // After /hold's lane the minutes list opens in the same place, from its first row.
+    onChoose: (text, more) => { setClosed(!more); setSelected(0); place(text, text.length); } });
 
   function onKeyDown(event: KeyboardEvent<Box>): boolean {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return false;

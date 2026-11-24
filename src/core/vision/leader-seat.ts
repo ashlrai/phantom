@@ -25,6 +25,7 @@ import type { NativeRoleEngine, RoleCompletionMetrics } from '../run/role-comple
 import type { AgentActionEvent } from '../fleet/agent-action-ledger.js';
 import type { LocalLeaderCompletionMetrics, LocalLeaderBinding } from './local-leader-transport.js';
 import { subscriptionOnlyCurrent } from '../routing/subscription-only.js';
+import { learnedSeatRouteEvidence } from '../routing/learned-seat-evidence.js';
 import { devinCliIdentityCurrent, peekDevinCliExecutionBinding, refreshDevinCliExecutionBindings, type DevinCliExecutionBinding } from '../devin/cli-admission.js';
 import type { EffectivePolicy } from '../authority/types.js';
 import type { VerseSeat } from '../verse/types.js';
@@ -865,7 +866,13 @@ export async function loadDefaultLeaderSeatDeps(cfg: AshlrConfig): Promise<Leade
     budgetPolicy: () => budgetStore.loadBudgetPolicy(),
     standingPolicy: () => effective.currentStandingPolicy(),
     clampBudget: (policy, standing) => effective.clampBudgetPolicy(policy, standing),
-    route: (req, capacity, policy, nowMs) => router.routeSeat(req, capacity, policy, { nowMs }),
+    route: (req, capacity, policy, nowMs) => router.routeSeat(req, capacity, policy, {
+      nowMs,
+      // The fleet's own outcome record, pooled per seat and cached for
+      // LEARNED_SEAT_EVIDENCE_TTL_MS; {} when the ledgers have no usable
+      // evidence, which leaves the ranking exactly as the weights alone.
+      ...learnedSeatRouteEvidence(nowMs),
+    }),
     capacityFromSeat: (seat) => headroom.capacityFromSeat(seat),
     recordDecision: (req, decision) => budgetStore.recordShadowDecision({ source: 'leader', request: req, decision, actual: null }),
     transports: defaultLeaderTransports(cfg),

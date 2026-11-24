@@ -27,7 +27,7 @@ async function scratch(): Promise<string> {
   dirs.push(dir);
   return dir;
 }
-const input = (over: Partial<StarvedInput> = {}): StarvedInput => ({ lane: 'claude', floor: 8, running: 0, ready: 0, held: false, drained: false, ...over });
+const input = (over: Partial<StarvedInput> = {}): StarvedInput => ({ lane: 'claude', target: 8, running: 0, ready: 0, held: false, drained: false, ...over });
 
 describe('readStarved', () => {
   it('marks a lane with free slots and no ready rows, with the plain line', () => {
@@ -39,13 +39,13 @@ describe('readStarved', () => {
   });
 
   it('leaves the age out until a first sighting is recorded and uses singular words', () => {
-    const read = readStarved([input({ floor: 1 })], {}, NOW);
+    const read = readStarved([input({ target: 1 })], {}, NOW);
     expect(read.lanes.claude!.starved_since).toBeNull();
     expect(read.lanes.claude!.line).toBe('claude: 1 free slot, 0 ready rows; next step: add work for claude');
   });
 
   it('does not call a held lane starved, and counts its ready rows as waiting elsewhere', () => {
-    const read = readStarved([input(), input({ lane: 'devin', floor: 4, ready: 3, held: true })], {}, NOW);
+    const read = readStarved([input(), input({ lane: 'devin', target: 4, ready: 3, held: true })], {}, NOW);
     expect(read.lanes.devin).toEqual({ free_slots: 0, ready_rows: 3, starved: false, starved_since: null, line: null });
     expect(read.waiting_elsewhere).toBe(3);
   });
@@ -56,7 +56,7 @@ describe('readStarved', () => {
   });
 
   it('does not call a full lane starved', () => {
-    const read = readStarved([input({ lane: 'codex', floor: 2, running: 2 })], {}, NOW);
+    const read = readStarved([input({ lane: 'codex', target: 2, running: 2 })], {}, NOW);
     expect(read.lanes.codex).toMatchObject({ free_slots: 0, ready_rows: 0, starved: false });
     expect(read.waiting_elsewhere).toBe(0);
   });
@@ -64,11 +64,11 @@ describe('readStarved', () => {
   it('does not call a lane with ready rows, a drained lane or an unreadable lane starved', () => {
     const read = readStarved([
       input({ lane: 'busy', ready: 2 }), input({ lane: 'dry', drained: true }),
-      input({ lane: 'blind', ready: null }), input({ lane: 'nofloor', floor: null }),
+      input({ lane: 'blind', ready: null }), input({ lane: 'notarget', target: null }),
     ], {}, NOW);
     expect(Object.values(read.lanes).some(row => row.starved)).toBe(false);
     expect(read.lanes.blind!.ready_rows).toBeNull();
-    expect(read.lanes.nofloor!.free_slots).toBeNull();
+    expect(read.lanes.notarget!.free_slots).toBeNull();
   });
 
   it('counts rows waiting on a drained pool only while some lane is starved', () => {
@@ -126,6 +126,17 @@ describe('lanes read: starved object', () => {
     expect(snap.starved.waiting_elsewhere).toBe(2);
   });
 
+  it('judges against the slot target, not the reserve floor', async () => {
+    const root = await scratch();
+    const queueDir = join(root, 'queue');
+    await mkdir(queueDir, { recursive: true });
+    await writeFile(join(queueDir, 'ready.tsv'), ['id\tstatus\tpool', 'j1\tRUNNING\tclaude', 'j2\tRUNNING\tclaude'].join('\n'));
+    // floor 1 is already met by two running jobs, but the lane should run 8.
+    await writeFile(join(queueDir, 'slots.json'), JSON.stringify({ claude: { target: 8, floor: 1, ceiling: 12 } }), { mode: 0o600 });
+    const snap = await getFleetLaneSnapshot({ queueDir, budgetsDir: join(root, 'budgets'), usageLogPaths: [], now: () => new Date(NOW), starvedStateDir: root });
+    expect(snap.starved.lanes.claude).toMatchObject({ free_slots: 6, ready_rows: 0, starved: true });
+  });
+
   it('leaves every lane unjudged when the targets file is missing', async () => {
     const root = await scratch();
     const queueDir = join(root, 'queue');
@@ -165,7 +176,7 @@ describe('lanes read: starved object', () => {
 
 describe('phm fleet starved', () => {
   const status = JSON.stringify({ admission: { cap: 48, running: 4, reason: null }, lanes: { claude: { running: 0, target: 8, queued: 0, held: false } } });
-  const read = readStarved([input(), input({ lane: 'devin', floor: 4, ready: 3, held: true })], { claude: minutesAgo(42) }, NOW);
+  const read = readStarved([input(), input({ lane: 'devin', target: 4, ready: 3, held: true })], { claude: minutesAgo(42) }, NOW);
 
   it('prints the line, the waiting count and the typed JSON with a schema id', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -196,7 +207,7 @@ describe('phm fleet starved', () => {
 
   it('stays quiet and exits 0 for a held or full fleet, and survives an unreadable lanes read', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const calm = readStarved([input({ held: true }), input({ lane: 'codex', floor: 2, running: 2 })], {}, NOW);
+    const calm = readStarved([input({ held: true }), input({ lane: 'codex', target: 2, running: 2 })], {}, NOW);
     expect(await cmdFleetStarved(['--json'], async () => status, async () => calm)).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]![0])).starved_lanes).toEqual([]);
     expect(await cmdFleetStarved(['--json'], async () => status, async () => { throw new Error('nope'); })).toBe(0);

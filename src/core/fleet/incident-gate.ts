@@ -44,6 +44,7 @@ import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { localTimestamp, readSource } from './runs-parked-queue.js';
+import { isPrecheckSkipRow } from './jobs-ledger-dialect.js';
 import { LANE_ID_RE } from './runs-lane-targets.js';
 import { NAME_WITH_OWNER_RE } from './quarantine.js';
 import { FLEET_OWNER } from './fleet-truth.js';
@@ -259,7 +260,7 @@ function jobRows(text: string): RawRow[] {
         at: tsMs(r.ts ?? r.at ?? r.timestamp ?? r.time ?? r.mergedAt ?? r.closedAt ?? r.recordedAt ?? r.updatedAt),
         event,
         job: jobIdOf(r),
-        lane: laneOf(r.lane ?? r.pool),
+        lane: laneOf(r.lane ?? r.pool ?? r.arm),
         repo: qualifyIncidentRepo(r.repo ?? r.repository ?? r.nameWithOwner ?? r.name_with_owner),
         prRepo: prRepoOf(r),
         raw: r,
@@ -364,7 +365,7 @@ export function mineIncidentSignals(input: IncidentGateInput): IncidentMineResul
       const code = `${AB_EVENTS[r.event]}-${pattern}`;
       observed++;
       push('lane-error', `lane-error:${lane}:${code}`, lane, r.repo, null, code, r.at, `${detail} pattern=${pattern}`);
-    } else if (PRECHECK_EVENTS.has(r.event)) {
+    } else if (PRECHECK_EVENTS.has(r.event) || isPrecheckSkipRow(r.raw)) {
       const code = `precheck-${normCode(r.raw.code)}`;
       observed++;
       workFailure(code, laneFor(r), repoFor(r),

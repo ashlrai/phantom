@@ -198,17 +198,19 @@ export function jobsGoalTally(now: number) {
       if (at === null || at > now) return;
       if (at >= since24) latestAt = Math.max(latestAt ?? at, at);
       if (typeof job !== 'string' || !job) return;
-      const state = String(r.state ?? r.outcome ?? r.status ?? '').toUpperCase();
-      if (typeof r.lane === 'string' && /^[\w.-]{1,40}$/.test(r.lane) && (r.event === 'launch' || !lanes.has(job))) lanes.set(job, r.lane);
-      if (r.event === 'outcome' && state && state !== 'OPEN') {
+      const state = String([r.state, r.outcome, r.status, r.phase, r.result, r.conclusion].find(v => typeof v === 'string') ?? '').toUpperCase();
+      const event = [r.event, r.type, r.kind].find((v): v is string => typeof v === 'string') ?? '';
+      const lane = [r.lane, r.pool, r.arm].find((v): v is string => typeof v === 'string' && /^[\w.-]{1,40}$/.test(v));
+      if (lane && (event === 'launch' || !lanes.has(job))) lanes.set(job, lane);
+      if (event === 'outcome' && state && state !== 'OPEN') {
         const old = finished.get(job);
         if (!old || at < old.at) finished.set(job, { at, empty: state === 'EMPTY' });
       }
-      if (r.event === 'launch') keepFirst(launched, job, at);
-      else if (r.event === 'publish') keepFirst(published, job, at);
-      else if (r.event === 'outcome' && state === 'MERGED') {
+      if (event === 'launch') keepFirst(launched, job, at);
+      else if (event === 'publish') keepFirst(published, job, at);
+      else if (event === 'outcome' && state === 'MERGED') {
         keepFirst(merged, job, at);
-        const url = r.url ?? r.prUrl ?? r.pr_url ?? r.pr;
+        const url = [r.url, r.prUrl, r.pr_url, r.pr, r.html_url].find((v): v is string => typeof v === 'string');
         const m = typeof url === 'string' ? PR_URL.exec(url) : null;
         keepFirst(mergedPrs, m ? `${m[1]!.toLowerCase()}/pull/${m[2]}` : `job:${job}`, at);
       }

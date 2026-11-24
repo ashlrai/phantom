@@ -26,16 +26,14 @@ account metadata, never billing; a passing `phm doctor` does not prove provider 
 
 ## Install
 
-### From npm
+From npm:
 
 ```sh
 npm install -g @ashlr/phantom
 phm --version
 ```
 
-### From source
-
-[`install.sh`](https://github.com/ashlrai/phantom/blob/master/install.sh)
+From source, [`install.sh`](https://github.com/ashlrai/phantom/blob/master/install.sh)
 checks Node, installs dependencies, builds `dist/` and symlinks `phm` and
 `ashlr` into `~/.local/bin`:
 
@@ -81,25 +79,20 @@ check. First-chat checklist: [Quickstart](QUICKSTART.md); console tour:
 | `daemon.json`, `logs/`, `fleet/mirrors/` | daemon state, runtime output, fleet clones |
 
 `~/.local/bin/phm` and `~/.local/bin/ashlr` are the PATH shims for a source
-install. The full state map is in
-[RELIABILITY](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md#where-state-lives).
+install; the full state map is in [RELIABILITY](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md#where-state-lives).
 
 ## Connect Claude Code and Codex over MCP
 
 `phm mcp` is one stdio gateway: it serves Phantom's own tools plus every
 server registered in `~/.ashlr/settings.json`, each tool prefixed with its
-server name. Register detected companions, then probe them:
+server name. Register detected companions and probe them, then register the
+gateway as the `ashlr-hub` server in each agent. `phm wire` backs the target
+config up first and is idempotent; `phm wire status` reports detection and
+registration without writing:
 
 ```sh
 phm mcp ecosystem --write
 phm mcp doctor
-```
-
-Then register the gateway as the `ashlr-hub` server in each agent. `phm wire`
-backs the target config up first and is idempotent; `phm wire status` reports
-detection and registration without writing:
-
-```sh
 phm wire claude     # merges "ashlr-hub" into ~/.claude.json
 phm wire codex      # runs codex mcp add ashlr-hub -- ashlr mcp
 phm wire all        # every detected client (claude, codex, cursor)
@@ -118,13 +111,13 @@ combined tool surface: [one connection for every agent](COMPANIONS.md#one-connec
 
 ## Upgrade
 
-- Release directory (`~/.local/share/ashlr/releases/<sha>`): run `phm update`.
-  It verifies the npm tarball's SHA-512 integrity and, when installed, GitHub CLI
-  attestation, smoke-tests the candidate, and swaps `current`. Running launchd
-  services are paused and restarted automatically. Failures restore changed links;
-  the previous release stays on disk. `phm update --json` returns `from`, `to`,
-  `verified`, `rolled_back`, and `log_line`; the line is appended to
-  `~/.ashlr-runs/installs.log`. `--check` leaves the installation unchanged.
+- Release directory (`~/.local/share/ashlr/releases/<sha>`): `phm update`
+  verifies the npm tarball's SHA-512 integrity (and GitHub CLI attestation when
+  `gh` is installed), smoke-tests the candidate and swaps `current`, pausing and
+  restarting running launchd services. Failures restore changed links; the
+  previous release stays on disk. `phm update --json` returns `from`, `to`,
+  `verified`, `rolled_back` and `log_line` (appended to
+  `~/.ashlr-runs/installs.log`); `--check` leaves the installation unchanged.
 - Source checkout: `phm update` (alias `phm upgrade`) fast-forwards with
   `git pull --ff-only`, runs `npm install` and `npm run build`, then checks
   the `~/.local/bin` symlink and a `help` smoke test. It aborts on a dirty

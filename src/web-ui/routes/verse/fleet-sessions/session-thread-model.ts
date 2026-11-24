@@ -13,6 +13,7 @@ import { SESSION_TASK_FROM, type SessionTaskFrom } from '../../../../core/fleet/
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { wantsEarlier } from './thread-depth.js';
+import { SESSION_PR_STATES, type SessionPrState } from '../../../../core/fleet/session-pr.js';
 
 export const SESSION_THREAD_API = '/api/verse/fleet/control/session-thread';
 /** The server shares one session map for 5 s; the open thread asks every 10 s while visible. */
@@ -39,8 +40,12 @@ export interface ThreadSession {
   /** The helpers below it, as the session list counts them; null (or absent, in a thread built by hand) when the read did not say. */
   helpers?: { below: number; running: number; failed: number } | null;
 }
+/** What the job ledger records became of the job's pull request: `mergeSeconds` is opened to merged, `at` the record's own time. */
+export interface ThreadPr { state: SessionPrState; mergeSeconds: number | null; at: string | null }
 /** What a session's job has done, as the read's `work` key gives it. A part that could not be read is null: unknown, not zero. */
 export interface ThreadWork {
+  /** Null when no outcome is recorded for its pull request (unknown, not "open"); absent from a server that does not say. */
+  pr?: ThreadPr | null;
   commands: number | null;
   files: { count: number; added: number; removed: number; partial: boolean } | null;
   /** The newest recorded step; `at` is null when it carried no time that parses. */
@@ -108,12 +113,21 @@ export function narrowHelpers(raw: unknown): { below: number; running: number; f
   return below === null || running === null || failed === null ? null : { below, running, failed };
 }
 
+/** The read's `work.pr` as a key to spread: no key from a server that sends none, null for one that names no state this build knows. */
+function narrowPr(raw: unknown): { pr?: ThreadPr | null } {
+  if (raw === undefined) return {};
+  const state = object(raw) ? SESSION_PR_STATES.find(known => known === raw.state) : undefined;
+  if (!object(raw) || state === undefined) return { pr: null };
+  return { pr: { state, mergeSeconds: state === 'merged' ? count(raw.mergeSeconds) : null, at: time(raw.at) } };
+}
+
 /** Null when the read carries no work for the session. Each part is narrowed on its own, so one malformed part reads unknown and the rest stand. */
 export function narrowWork(raw: unknown): ThreadWork | null {
   if (!object(raw)) return null;
   const f = object(raw.files) ? raw.files : null, files = f ? { count: count(f.count), added: count(f.added), removed: count(f.removed) } : null;
   const s = object(raw.step) ? raw.step : null, event = s ? text(s.event) : null;
   return {
+    ...narrowPr(raw.pr),
     commands: count(raw.commands),
     files: files && files.count !== null && files.added !== null && files.removed !== null
       ? { count: files.count, added: files.added, removed: files.removed, partial: f!.partial === true } : null,

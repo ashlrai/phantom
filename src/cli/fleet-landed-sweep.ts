@@ -9,8 +9,11 @@
  * title, SHA, OPEN-at-head re-read, ledger-before-continue) stay the only
  * write path. Without --apply landed-close plans and closes nothing.
  */
+import { sanitizePublicJson } from '../core/util/public-json.js';
+import { gitOnlyLanded, type BranchEvidence } from '../core/fleet/landed-git-only.js';
 import { isAbsolute } from 'node:path';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
+import { landedReposFromEnv, readLandedFromGit, type LandedFromGit } from '../core/fleet/landed-from-git.js';
 import { cmdFleetDirtyLanded } from './fleet-dirty-landed.js';
 import { MAX_LIMIT, cmdFleetLandedClose, type LandedCloseRunner } from './fleet-landed-close.js';
 
@@ -24,6 +27,9 @@ export interface FleetLandedSweepDeps {
   remote?: string;
   /** gh runner for landed-close's re-read and close. */
   runner?: LandedCloseRunner;
+  /** git-only landed reader used when the gh report is missing (tests inject). */
+  landedFromGit?: (nowMs: number) => LandedFromGit;
+  branchEvidence?: (refresh: boolean) => Promise<BranchEvidence>;
   now?: () => number;
   output?: (text: string) => void;
   error?: (text: string) => void;
@@ -34,6 +40,9 @@ interface SweepResult {
   closed: number; skipped: number; failed: number; error?: string;
   /** Plain reason the sweep did nothing because its input was not there (exit 0). */
   skippedReason?: string;
+  /** Where inspected/landed came from when gh could not answer. */
+  source?: 'git';
+  branchEvidence?: BranchEvidence;
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -89,7 +98,18 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   // The report is built here from `gh pr list`. When gh cannot answer (not installed, signed out,
   // offline) there is nothing to sweep: say so and let the tick go on. Bad data still fails.
   if (inputGap !== undefined) {
-    result.skippedReason = `no landed report yet: it is built from gh pr list, which could not be read (${inputGap})`;
+    // gh is out: plain git still says which jobs reached the default branch in the last 24 h.
+    const git = (deps.landedFromGit ?? (nowMs => readLandedFromGit({ now: nowMs, repos: landedReposFromEnv() })))((deps.now ?? Date.now)());
+    result.source = 'git';
+    try { result.branchEvidence = sanitizePublicJson(await (deps.branchEvidence ?? (refresh => gitOnlyLanded({ fetch: refresh })))(apply)) as BranchEvidence; }
+    catch { result.branchEvidence = { state: 'unknown', reason: 'branch evidence unavailable' }; }
+    if (git.ok) {
+      const here = git.jobs.filter(j => j.repo === git.repo).length;
+      result.inspected = result.landed = here;
+      result.skippedReason = `gh pr list could not be read (${inputGap}); from git, ${here} jobs landed on ${git.repo} in the last ${git.sinceHours} h. No PRs closed`;
+    } else {
+      result.skippedReason = `no landed report yet: gh pr list could not be read (${inputGap}) and ${git.reason ?? 'git could not be read'}`;
+    }
     return finish(0);
   }
   const report = inspectCode === 0 ? parseJson(reportText) : null;

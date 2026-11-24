@@ -90,7 +90,7 @@ export interface RetroSweepResult {
 export const RETRO_SWEEP_WINDOW_DAYS = 30;
 export const RETRO_SWEEP_MAX_NEW = 40;
 
-const LEDGER_KINDS = ['gate:result', 'pr:opened', 'pr:closed', 'merge:landed', 'post-merge:result', 'revert:landed'] as const;
+const LEDGER_KINDS = ['gate:result', 'pr:opened', 'pr:closed', 'merge:landed', 'post-merge:result', 'revert:landed', 'revert:failed'] as const;
 
 function localDay(ms: number): string {
   const d = new Date(ms);
@@ -117,6 +117,10 @@ export function fleetEndsFromLedger(entries: readonly LedgerEntry[], load: (id: 
   const postMerge = new Map<string, Extract<LedgerEntry, { kind: 'post-merge:result' }>['data']>();
   const lastRefusal = new Map<string, Extract<LedgerEntry, { kind: 'gate:result' }>>();
   const firstOwnerLane = new Map<string, Extract<LedgerEntry, { kind: 'gate:result' }>>();
+  // Landings whose revert landed are the 'reverted' end; a `revert:failed`
+  // row for the same landing must not also read as an un-reverted failure.
+  const revertedIds = new Set<string>();
+  const revertFailed = new Map<string, Extract<LedgerEntry, { kind: 'revert:failed' }>>();
   const cache = new Map<string, SweepProposal | null>();
   const facts = (id: string | null) => {
     if (!id) return proposalFacts(null);
@@ -132,6 +136,8 @@ export function fleetEndsFromLedger(entries: readonly LedgerEntry[], load: (id: 
     if (e.kind === 'pr:opened' && e.data.proposalId) prToProposal.set(`${e.data.repo.toLowerCase()}#${e.data.number}`, e.data.proposalId);
     else if (e.kind === 'merge:landed') landings.set(e.data.id, e.data);
     else if (e.kind === 'post-merge:result') postMerge.set(e.data.landingId, e.data);
+    else if (e.kind === 'revert:landed' && typeof e.data.revertsLandingId === 'string') revertedIds.add(e.data.revertsLandingId);
+    else if (e.kind === 'revert:failed') revertFailed.set(e.data.landingId, e);
     else if (e.kind === 'gate:result') {
       if (e.data.verdict === 'refuse') lastRefusal.set(e.data.proposalId, e);
       else if (e.data.verdict === 'owner-lane' && !firstOwnerLane.has(e.data.proposalId)) firstOwnerLane.set(e.data.proposalId, e);
@@ -185,6 +191,27 @@ export function fleetEndsFromLedger(entries: readonly LedgerEntry[], load: (id: 
         close: { reason: e.data.reason, actor: e.data.actor },
       });
     }
+  }
+  // A red post-merge landing whose revert failed or was refused stays on the
+  // default branch under owner hold — the worst fleet outcome, and until now
+  // invisible to the lessons pipeline (only 'merged' was recorded). The
+  // revert:failed row is terminal, so this cannot race an in-flight revert;
+  // a landing that DID get reverted keeps its 'reverted' end instead.
+  for (const [landingId, e] of revertFailed) {
+    if (revertedIds.has(landingId)) continue;
+    const landing = landings.get(landingId) ?? null;
+    const pm = postMerge.get(landingId) ?? null;
+    const f = facts(landing?.proposalId ?? null);
+    out.push({
+      proposalId: landing?.proposalId ?? landingId,
+      repo: landing?.repo ?? e.data.repo,
+      endKind: 'revert-failed',
+      endedAt: e.at,
+      ...f,
+      engine: landing?.producer?.engine ?? f.engine,
+      postMerge: pm ? { ci: pm.ci, suite: pm.suite, detail: pm.detail } : null,
+      revertFailure: { reason: e.data.reason },
+    });
   }
   return out;
 }

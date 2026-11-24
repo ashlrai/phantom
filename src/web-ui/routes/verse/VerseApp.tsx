@@ -625,7 +625,7 @@ export function PhantomApp() {
               <ResourcesRailButton expanded={expanded} buttonClass={styles.railButton} iconClass={styles.railIcon} labelClass={styles.railLabel} />
             </Suspense>
           )}
-          {/* 3.11.1: the always-on resource bar (logos + batteries) replaces the
+          {/* 3.11.1: the always-on resource bar (logos + usage bars) replaces the
               single capacity ring while it is on; off brings the ring back. */}
           {compact ? null : resources.bar ? (
             <Suspense fallback={null}>

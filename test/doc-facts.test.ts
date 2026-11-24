@@ -3,7 +3,7 @@
  * inline code must exist in the CLI.
  *
  * Every `phm …` / `ashlr …` code span, and every fenced line that starts with
- * the CLI, in the listed docs is checked against
+ * the CLI, in the listed docs and website pages is checked against
  * the sources of truth: the top-level command must be in TOP_LEVEL_COMMANDS
  * (itself pinned to the dispatch switch by cli-registry-drift.test.ts), a
  * literal second word must be one of the verbs shell completion offers for
@@ -46,7 +46,198 @@ const DOCS = [
   'docs/SUBAGENTS.md',
   // The first-pull-request guide README.md and AGENTS.md send contributors to.
   'docs/CONTRIBUTE-WITH-AN-AGENT.md',
+  // Community and policy pages the contributor path links to: where to get
+  // help and report bugs, how to report vulnerabilities, and the authority
+  // agents work under, plus the FAQ and glossary newcomers read first.
+  'SUPPORT.md',
+  'SECURITY.md',
+  'docs/FAQ.md',
+  'docs/GLOSSARY.md',
+  'CONSTITUTION.md',
+  'docs/STANDING-AUTHORITY.md',
+  'docs/AGENTS-MD-AUDIT.md',
+  // Pages CONTRIBUTING.md, the contributor guide, AGENT-OPERATIONS.md and
+  // AGENT-TOOLCHAIN.md link a contributor to next. Linked pages still missing:
+  // CLI-REFERENCE is generated from src/cli/help.ts and names `fleet verbs`,
+  // whose --help exits 2; RESIDENT-RUNTIME names deleted commands on purpose;
+  // desktop/README.md documents its own package.json scripts.
+  'docs/ARCHITECTURE.md',
+  'docs/BUN-SHARDS.md',
+  'docs/CLOUD.md',
+  'docs/DELETION-SWEEP.md',
+  'docs/DEPENDENCY-SECURITY.md',
+  'docs/DEVIN.md',
+  'docs/FOUNDRY-CONFIG.md',
+  'docs/LOCAL-FLEET.md',
+  'docs/OWNER-ASSIST.md',
+  'docs/RELIABILITY.md',
+  'docs/RESOURCE-POOLS.md',
+  'docs/contracts/CONTRACT-SELECTOR.md',
+  'docs/verify-changed.md',
+  // Operating guides AGENTS.md and README.md link to. Linked guides that are
+  // missing here name a verb completions SUBCOMMANDS does not offer: QUEUE
+  // (`queue yield`, whose --help exits 2, and a `phm foo bar` example),
+  // AGENT-BUS (`agents mesh status`, whose --help exits 2) and FLEET-API
+  // (`fleet merge-recover`, whose -h exits 2).
+  'docs/AGENT-APPS.md',
+  'docs/AGENT-NETWORK-CHANNELS.md',
+  'docs/AGENT-PROFILES.md',
+  'docs/APP-DRIVE.md',
+  'docs/APP-RESTART.md',
+  'docs/BOT-SEATS.md',
+  'docs/CI-BASELINE.md',
+  'docs/COMMS-AGENT.md',
+  'docs/CONNECTORS.md',
+  'docs/DESKTOP-OPERATOR.md',
+  'docs/DESKTOPCTL.md',
+  'docs/DRAFTS.md',
+  'docs/EVAL-PASSK.md',
+  'docs/FLEET-LANE-FRESHNESS.md',
+  'docs/LANE-HEALTH.md',
+  'docs/MEMORY.md',
+  'docs/NODES.md',
+  'docs/NODE-ROUTER.md',
+  'docs/PAGES.md',
+  'docs/RADAR.md',
+  'docs/REPO-RANK.md',
+  'docs/RESEARCH-LOOP.md',
+  'docs/ROUTE-HYSTERESIS.md',
+  'docs/ROUTER-CATALOG.md',
+  'docs/ROUTER-GATEWAY.md',
+  'docs/SKILLS.md',
+  'docs/TEAM.md',
+  'docs/lanes.md',
+  'docs/strategy/spawn-fleet-model.md',
+  // Operating guides and runbooks the docs index (docs/README.md) and
+  // docs/llms.txt route agents to. Dated audits, specs, roadmaps, versioned
+  // contracts and the generated CLI pages (cli.md, CODEMAP.md) stay out: they
+  // record a point in time or are rebuilt by docs-sync from src/cli/help.ts.
+  'docs/AGENT-NATIVE-QUICKSTART.md',
+  'docs/AMPLIFY.md',
+  'docs/APP-STEER.md',
+  'docs/ASHLR-UNIVERSE.md',
+  'docs/AUTOFIX.md',
+  'docs/BOTS.md',
+  'docs/BRIDGE-WORKTREES.md',
+  'docs/BUS-THREADS.md',
+  'docs/CAPABILITY-REGISTRY.md',
+  'docs/CLOUD-LANES.md',
+  'docs/COMPANY-CONTEXT.md',
+  'docs/CROSS-REVIEW.md',
+  'docs/DONE-CONTRACT.md',
+  'docs/DRIVE.md',
+  'docs/DRIVER.md',
+  'docs/FLEET-MERGE-BATCH.md',
+  'docs/FLEET-USAGE-PACING.md',
+  'docs/GROUP-CHAT.md',
+  'docs/GROWTH.md',
+  'docs/IDEATION.md',
+  'docs/IMPACT-METRICS.md',
+  'docs/JEV-INTEGRATION.md',
+  'docs/JOB-COST.md',
+  'docs/LOCAL-CONTEXT-STRATEGY.md',
+  'docs/LOCUS-FIRM-FLEET.md',
+  'docs/METRICS-ROUTER-FEED.md',
+  'docs/MILESTONE-CONTRACT.md',
+  'docs/OMLX-SMALL-MACS.md',
+  'docs/OPENAI-AGENTS-INTEGRATION.md',
+  'docs/PERSONAL-METER-PROVENANCE.md',
+  'docs/PHANTOM-BRAND.md',
+  'docs/PLUGINS.md',
+  'docs/PR-CONFLICT-RESOLVER.md',
+  'docs/PROVIDER-CARDS.md',
+  'docs/PULSE-BRIDGE.md',
+  'docs/REMOTE-PHONE.md',
+  'docs/ROUTINES.md',
+  'docs/SEAMS.md',
+  'docs/SECRETS-FOR-ENROLLED-REPOS.md',
+  'docs/SELF-SWAP.md',
+  'docs/STIGMERGY.md',
+  'docs/USAGE-SIGNALS.md',
+  'docs/VERSE-CONTEXT.md',
+  'docs/WORKER.md',
+  'docs/WORKTREE-PRUNE.md',
+  'docs/WORLD.md',
+  // Fleet operating guides, held out until completion offered the fleet verbs
+  // they document. COS.md and IMESSAGE.md wait on `fleet cos` and
+  // `fleet imessage-acks`, whose --help does not yet pass
+  // test/cli-help-no-side-effects.
+  'docs/BRIEF-SEND.md',
+  'docs/DISK-MAINT.md',
+  'docs/FLEET-EMPTIES.md',
+  'docs/FLEET-MERGE-LATENCY.md',
+  'docs/FLEET-MERGE-PLAN.md',
+  'docs/FLEET-REBASE-PLAN.md',
+  'docs/FLEET-REBASE-STATUS.md',
+  'docs/GROK-ULTRA-RUNWAY.md',
+  'docs/MACHINERY-MIGRATION.md',
+  'docs/REBASE-ORDERING.md',
+  'docs/RESOURCE-EVIDENCE.md',
+  'docs/VERSE.md',
+  'docs/fleet-health.md',
+  'docs/fleet/pr-hygiene.md',
+  // Guides held out until completion offered the job, leader, node, notify,
+  // release, inbox, apps, mcp, daemon and authority verbs they document.
+  'docs/APPS-CONTROL.md',
+  'docs/AUTHORITY.md',
+  'docs/CHANNELS.md',
+  'docs/CONSOLE-LAYOUT.md',
+  'docs/FLEET-COORDINATION.md',
+  'docs/FLEET-MCP-ONRAMP.md',
+  'docs/LEADER.md',
+  'docs/OWNER-THREAD.md',
+  'docs/RELEASE-AUTONOMY.md',
+  'docs/RELEASING.md',
+  'docs/ROUTING.md',
+  'docs/RUN-THE-FLEET.md',
+  'docs/SESSIONS.md',
+  'docs/daemon-tick-phases.md',
+  // The hand-written source of docs/llms.txt, the agent map the docs index
+  // links to. The generated docs/llms.txt adds every doc's first line, so the
+  // source is checked instead.
+  'docs/llms-source.txt',
+  // The website's maintainer notes (regeneration commands for its pages).
+  'site/README.md',
 ];
+
+/**
+ * Hand-written website pages, held to the same rules: each `<code>` element is
+ * an inline span and each `<pre>` block a fence. site/shipped.html is left
+ * out because `phm shipped --site` renders it from merged pull request titles.
+ */
+const SITE_PAGES = [
+  'site/index.html',
+  'site/connect.html',
+  'site/ecosystem.html',
+  'site/compare/agent-clis.html',
+  'site/use-cases/local-models.html',
+  'site/use-cases/own-accounts.html',
+  'site/use-cases/review-agent-work.html',
+  'site/use-cases/signed-autonomy.html',
+];
+
+const PRE_LINE = '\u0001';
+
+/** A doc's text; HTML is reduced to markdown-style code spans and marked <pre> lines. */
+function docText(file: string): string {
+  const raw = readFileSync(join(ROOT, file), 'utf8');
+  if (!file.endsWith('.html')) return raw;
+  return raw
+    // Blank out scripts and styles but keep their newlines, so reported line
+    // numbers match the page; the same holds for every replacement below.
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, (block) => block.replace(/[^\n]/g, ''))
+    // Each <pre> line gets a PRE_LINE mark (line numbers stay true) and loses
+    // its inline tags so it reads as plain shell.
+    .replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (_m, body: string) =>
+      body.split('\n').map((l) => PRE_LINE + l.replace(/<[^>]+>/g, '')).join('\n'))
+    .replace(/<\/?code\b[^>]*>/gi, '`')
+    .replace(/<[^>]+>/g, (tag) => (tag.includes('\n') ? tag.replace(/[^\n]/g, '') : ' '))
+    .replace(/&hellip;/g, '…')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
 
 /** Every `--flag` spelled anywhere in src/ (code, help text, comments). */
 function sourceFlags(): Set<string> {
@@ -95,17 +286,19 @@ interface Invocation {
 /** `phm`/`ashlr` invocations in a doc's inline code spans. */
 function invocations(file: string): Invocation[] {
   const out: Invocation[] = [];
-  const lines = readFileSync(join(ROOT, file), 'utf8').split('\n');
+  const lines = docText(file).split('\n');
   let fenced = false;
   lines.forEach((text, i) => {
     if (/^\s*(```|~~~)/.test(text)) {
       fenced = !fenced;
       return;
     }
-    // Inside a fence, a line that starts with the CLI is one invocation (a
-    // trailing `# comment` dropped); outside, every inline code span is.
-    const spans = fenced
-      ? [text.replace(/\s+#.*$/, '').trim()]
+    // Inside a fence or an HTML <pre>, a line that starts with the CLI is one
+    // invocation (a trailing `# comment` dropped); outside, every inline code
+    // span is.
+    const pre = text.lastIndexOf(PRE_LINE);
+    const spans = fenced || pre >= 0
+      ? [text.slice(pre + 1).replace(/\s+#.*$/, '').trim()]
       : // Table cells escape `|` as `\|`; inside code it still means "or".
         [...text.replace(/\\\|/g, '|').matchAll(/`([^`]+)`/g)].map((m) => m[1]!.trim());
     for (const span of spans) {
@@ -133,7 +326,7 @@ afterEach(() => {
 });
 
 describe('agent docs name only real CLI commands, verbs and flags', () => {
-  const all = DOCS.flatMap(invocations);
+  const all = [...DOCS, ...SITE_PAGES].flatMap(invocations);
 
   it('keeps companion server lists aligned with repo configuration', () => {
     // Read names only: never include server environment or credential values in diagnostics.

@@ -1866,6 +1866,135 @@ describe('Trajectory records', () => {
     expect(summary.skillObservation).not.toHaveProperty('conflicting');
   });
 
+  it('attributes shadow skill selections to per-skill trajectory outcomes', () => {
+    const outcomeFor = (
+      id: string,
+      action: 'merged' | 'rejected',
+      ts: string,
+      postMerge?: OutcomeRecord['postMergeObservations'],
+    ): OutcomeRecord => {
+      const base = outcomeRecord();
+      return outcomeRecord({
+        proposal: {
+          ...base.proposal,
+          id: `prop-${id}`,
+          runId: `run-${id}`,
+          trajectoryId: `traj-${id}`,
+          workItemId: `item-${id}`,
+          createdAt: ts,
+        },
+        decisions: [{
+          ts,
+          proposalId: `prop-${id}`,
+          action,
+          verdict: action === 'merged' ? 'ship' : 'reject',
+          workItemId: `item-${id}`,
+          workSource: 'goal',
+          runId: `run-${id}`,
+          trajectoryId: `traj-${id}`,
+        }],
+        ...(postMerge ? { postMergeObservations: postMerge } : {}),
+      });
+    };
+    const revertedObservation: NonNullable<OutcomeRecord['postMergeObservations']>[number] = {
+      schemaVersion: 1,
+      eventId: 'e'.repeat(64),
+      observedAt: TS4,
+      authority: 'observation-only',
+      outcome: 'reverted',
+      basis: 'git-revert-reference',
+      confidence: 'deterministic',
+      repo: REPO,
+      proposalId: 'prop-d',
+      runId: 'run-d',
+      trajectoryId: 'traj-d',
+      workItemId: 'item-d',
+      mergeCommit: 'a'.repeat(40),
+      observedHead: 'b'.repeat(40),
+      baselineHead: 'c'.repeat(40),
+      commandKinds: ['test'],
+      labelBasis: 'post-merge-regression',
+      attestation: 'd'.repeat(64),
+    };
+    const records = listTrajectoryRecords({
+      windowHours: 1000,
+      deps: deps({
+        readDispatchProductionEvents: () => [
+          dispatch({ itemId: 'item-a', proposalId: 'prop-a', runId: 'run-a', trajectoryId: 'traj-a' }),
+          dispatch({ ts: TS1, itemId: 'item-b', proposalId: 'prop-b', runId: 'run-b', trajectoryId: 'traj-b' }),
+          dispatch({ ts: TS2, itemId: 'item-c', proposalId: 'prop-c', runId: 'run-c', trajectoryId: 'traj-c' }),
+          dispatch({ ts: TS3, itemId: 'item-d', proposalId: 'prop-d', runId: 'run-d', trajectoryId: 'traj-d' }),
+        ],
+        listOutcomeRecords: () => [
+          outcomeFor('a', 'merged', TS2),
+          outcomeFor('b', 'rejected', TS2),
+          outcomeFor('c', 'merged', TS2),
+          outcomeFor('d', 'merged', TS2, [revertedObservation]),
+        ],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => [
+          skillUse({ eventId: 'use-a-alpha', skillId: 'skill.alpha', skillRevision: 1, trajectoryId: 'traj-a', runId: 'run-a', proposalId: 'prop-a' }),
+          skillUse({ eventId: 'use-a-beta', skillId: 'skill.beta', skillRevision: 1, trajectoryId: 'traj-a', runId: 'run-a', proposalId: 'prop-a' }),
+          skillUse({ eventId: 'use-b-alpha', skillId: 'skill.alpha', skillRevision: 1, ts: TS1, trajectoryId: 'traj-b', runId: 'run-b', proposalId: 'prop-b' }),
+          skillUse({ eventId: 'use-c-alpha-sel', skillId: 'skill.alpha', skillRevision: 1, ts: TS2, trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
+          skillUse({ eventId: 'use-c-alpha-outcome', skillId: 'skill.alpha', skillRevision: 1, ts: TS3, selectedAt: TS2, stage: 'outcome', outcome: 'merged', trajectoryId: 'traj-c', runId: 'run-c', proposalId: 'prop-c' }),
+          skillUse({ eventId: 'use-d-beta2', skillId: 'skill.beta', skillRevision: 2, contentHash: 'b'.repeat(64), ts: TS3, trajectoryId: 'traj-d', runId: 'run-d', proposalId: 'prop-d' }),
+        ],
+      }),
+    });
+
+    expect(records).toHaveLength(4);
+    const summary = summarizeTrajectoryLearning(records);
+    expect(summary.skillObservation.sampleState).toBe('observed');
+    expect(summary.skillOutcomes).toEqual({
+      skills: 2,
+      selections: 5,
+      perSkill: [
+        {
+          skillId: 'skill.alpha',
+          skillRevision: 1,
+          selections: 3,
+          outcomes: { merged: 2, rejected: 1 },
+        },
+        {
+          skillId: 'skill.beta',
+          skillRevision: 1,
+          selections: 1,
+          outcomes: { merged: 1 },
+        },
+        {
+          skillId: 'skill.beta',
+          skillRevision: 2,
+          selections: 1,
+          outcomes: { merged: 1 },
+          realized: { reverted: 1 },
+        },
+      ],
+    });
+  });
+
+  it('withholds per-skill outcomes below the observed sample gate', () => {
+    const records = listTrajectoryRecords({
+      windowHours: 1000,
+      deps: deps({
+        readDispatchProductionEvents: () => [
+          dispatch({ proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+          dispatch({ ts: TS1, itemId: 'item-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+        ],
+        listOutcomeRecords: () => [],
+        readAgentActions: () => [],
+        readSkillUseEvents: () => [
+          skillUse({ eventId: 'use-a', proposalId: undefined, runId: 'run-a', trajectoryId: 'traj-a' }),
+          skillUse({ eventId: 'use-b', proposalId: undefined, runId: 'run-b', trajectoryId: 'traj-b' }),
+        ],
+      }),
+    });
+
+    const summary = summarizeTrajectoryLearning(records);
+    expect(summary.skillObservation.sampleState).toBe('insufficient-sample');
+    expect(summary.skillOutcomes).toBeUndefined();
+  });
+
   it('quarantines contradictory alias bridges without erasing either existing mapping', () => {
     const records = listTrajectoryRecords({
       windowHours: 1000,
@@ -2321,13 +2450,16 @@ describe('Trajectory records', () => {
     });
     const published = summarizeTrajectoryLearning(records);
     expect(published.skillObservation.sampleState).toBe('observed');
+    expect(published.skillOutcomes).toBeDefined();
 
     const suppressed = suppressDegradedSkillObservation(published, 'present');
     expect(suppressed.skillObservation).toEqual({ eventState: 'present', sampleState: 'unavailable' });
+    expect(suppressed.skillOutcomes).toBeUndefined();
     expect(suppressed.coverage).not.toHaveProperty('skillUse');
     expect(suppressed.recent.every((record) => !('skillUse' in record.coverage))).toBe(true);
     expect(JSON.stringify(suppressed)).not.toContain('modeCounts');
     expect(JSON.stringify(suppressed)).not.toContain('stageCounts');
+    expect(JSON.stringify(suppressed)).not.toContain('perSkill');
   });
 
   it('projects semantic decision events onto the existing decision timeline row', () => {
