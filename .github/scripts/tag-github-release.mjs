@@ -65,12 +65,14 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
   }
   const existing = await releaseForTag(read, base, tag);
   if (existing !== null) return { tag, sha: target, release: 'exists', releaseId: existing.id };
-  const latest = await read(`${base}/releases/latest`);
+  // GitHub's create-release API honors generate_release_notes. The previous
+  // generate_notes field is not a documented parameter, so GitHub ignored it
+  // and left draft bodies empty. When generate_release_notes is true, GitHub
+  // fills the body from commits since the previous published tag.
   const fields = {
     tag_name: tag, target_commitish: target, name: `Phantom ${version}`,
-    draft: true, prerelease: false, generate_notes: true,
+    draft: true, prerelease: false, generate_release_notes: true,
   };
-  if (object(latest) && TAG.test(latest.tag_name ?? '')) fields.notes_start_tag = latest.tag_name;
   let created;
   try {
     created = await write('POST', `${base}/releases`, fields);
