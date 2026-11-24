@@ -53,3 +53,19 @@ it('bounds the thread by an exclusive before ceiling on the same grammar', async
   expect(unbounded.body.items.map((i: { text: string }) => i.text)).toEqual(['older note', 'newer note']);
   expect((await call('?before=soon')).status).toBe(400);
 });
+
+it('slices the thread by channel, direction and contains query params', async () => {
+  const owner = { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } } };
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'alpha note', idempotencyKey: 'desk-slice-a', at: NOW - 300_000 }, owner);
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'beta note', idempotencyKey: 'desk-slice-b', at: NOW - 200_000 }, owner);
+  const texts = (body: { items: { text: string }[] } | null) => body!.items.map(i => i.text);
+  expect(texts((await call('?contains=ALPHA')).body)).toEqual(['alpha note']);
+  expect(texts((await call('?channel=desktop')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?channel=slack')).body)).toEqual([]);
+  expect(texts((await call('?direction=inbound')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?direction=outbound')).body)).toEqual([]);
+  expect((await call('?channel=Bad Channel')).status).toBe(400);
+  expect((await call('?direction=sideways')).status).toBe(400);
+  expect((await call('?contains=%20%20%20')).status).toBe(400);
+});
