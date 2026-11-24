@@ -1037,7 +1037,7 @@ export async function cmdMcp(args: string[]): Promise<number> {
 
   if (sub === 'fleet') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
-      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}, fleet_bus_hops {limit?: 1..50}, fleet_host_runs {}, fleet_bus_inbox {after?: >=0, limit?: 1..100, to?: <label>, from?: <label>}.');
+      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}, fleet_bus_hops {limit?: 1..50, from?: <label>, to?: <label>, excludeFrom?: <label>, id?: <id>}, fleet_host_runs {}, fleet_bus_inbox {after?: >=0, limit?: 1..100, to?: <label>, from?: <label>}.');
       return 0;
     }
     if (args.length !== 1) {

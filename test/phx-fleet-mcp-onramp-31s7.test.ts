@@ -55,7 +55,7 @@ describe('standalone fleet MCP onramp', () => {
       });
       expect(readers.status).toHaveBeenCalledWith();
       expect(readers.loop).toHaveBeenCalledWith(5);
-      expect(readers.bus).toHaveBeenCalledWith(5);
+      expect(readers.bus).toHaveBeenCalledWith({ limit: 5 });
       expect(stdout).not.toHaveBeenCalled();
     } finally {
       stdout.mockRestore();
