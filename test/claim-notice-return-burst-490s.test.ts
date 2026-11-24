@@ -51,9 +51,12 @@ it('delivers all 55 bound VERIFIED returns beyond the UI cap, once across durabl
     expect(appendClaimThreadBinding(paths.bindings, binding, now)).toMatchObject({ ok: true, status: 'bound' });
     return { ...owned, ...binding };
   });
-  const keys = (state: string) => claims.map(c => JSON.stringify([state, c.claim.id, c.head]));
+  const key = (state: string, c: (typeof claims)[number]) => JSON.stringify(state === 'ASSIGNED'
+    ? [state, c.repo, c.claim.id, c.claim.agent, c.claim.claimedAt, c.head]
+    : [state, c.claim.id, c.head]);
+  const keys = (state: string) => claims.map(c => key(state, c));
   const identities = (state: string) => claims.map(c =>
-    JSON.stringify([c.threadKey, JSON.stringify([state, c.claim.id, c.head])])).sort();
+    JSON.stringify([c.threadKey, key(state, c)])).sort();
   const sentIdentities = (rows: typeof sends) => rows.map(s => JSON.stringify([s.threadKey, s.dedupeKey])).sort();
   const assigned = await pass();
   const assignedAt = now;

@@ -57,7 +57,7 @@ it('keeps real cross-repository transitions in their source threads across reloa
   expect(sent()).toHaveLength(2);
   for (let i = 0; i < claims.length; i++) {
     const claim = claims[i]!;
-    const key = JSON.stringify(['ASSIGNED', claim.id, 'abcdef1234567']);
+    const key = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, 'abcdef1234567']);
     const id = `claim-notice-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
     const row = initial.find(item => item.envelope.id === id)!;
     expect(row.envelope).toMatchObject({ id, channel_ref: refs[i], body: { thread: canonical[i], inReplyTo: key } });

@@ -48,7 +48,7 @@ function setup() {
     const binding = { claimId: claim.id, repo: 'fake/alpha', threadKey: thread, pr: 7, head: 'abcdef1234567' };
     expect(appendClaimThreadBinding(paths.bindings, binding, now).ok).toBe(true);
     expect(JSON.parse(readFileSync(paths.bindings, 'utf8').trim())).toMatchObject(binding);
-    return { claim, key: JSON.stringify(['ASSIGNED', claim.id, binding.head]) };
+    return { claim, key: JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]) };
   };
   return { paths, thread, receipt, calls, pass, seed, acquire,
     setFailSend: (value: boolean) => { failSend = value; }, clock: () => now };
@@ -61,7 +61,7 @@ it('fences a successful source-thread notice when snapshot persistence fails and
   const baseline = readFileSync(s.paths.prev);
   const { claim, key } = s.acquire();
   const first = await s.pass(true);
-  expect(first).toMatchObject({ status: 'completed', planned: 1, sent: 1, failed: 0, skipped: 0,
+  expect(first).toMatchObject({ status: 'completed', planned: 1, sent: 1, failed: 1, reason: 'snapshot-write-failed', skipped: 0,
     deliveries: [{ threadKey: s.thread, state: 'ASSIGNED', dedupeKey: key, result: 'sent', receipt: s.receipt }] });
   expect(s.calls).toHaveLength(1);
   expect(s.calls[0]).toMatchObject({ thread: s.thread, key, outcome: { ok: true, receipt: s.receipt } });

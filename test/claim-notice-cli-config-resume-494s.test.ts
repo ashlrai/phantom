@@ -14,7 +14,7 @@ const canonicalThread = `slack:${team}:${channel}:1700000000.000001`;
 const head = 'abcdef1234567890';
 const claim = { id: 'claim-fake-494', repo: 'ashlrai/phantom', task: 'fake task', agent: 'fake-owner',
   claimedAt: now - 1000, expiresAt: now + 3_600_000 };
-const key = JSON.stringify(['ASSIGNED', claim.id, head]);
+const key = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, head]);
 const board: FleetBoard = { schema: 'fleet.coordination.v1', state: 'known', claims: [claim],
   messages: [], proposals: [], expiredClaims: 0 };
 const config = (teamId: string, map: { topic: string; channel: string }[]): AgentNetworkConfig => ({
