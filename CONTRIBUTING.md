@@ -289,7 +289,10 @@ cases. Running `gate:full` or repeating these full suites immediately beforehand
 adds duplicate work rather than release coverage.
 
 Preserve meaningful coverage. Backend tests live under `test/`; DOM tests live
-beside the web features under `src/web-ui/`. Report skipped or unavailable
+beside the web features under `src/web-ui/`. A backend suite colocated beside
+its source under `src/` must register through a one-line `test/` wrapper that
+imports the suite, and `test/test-file-collection.test.ts` fails on any
+test-looking file no runner collects. Report skipped or unavailable
 platform checks separately. A passing source suite is not installed-artifact,
 provider, production or user-acceptance evidence. Release work also follows the
 [qualified release handoff](docs/RELEASING.md#qualified-ci-build-handoff).

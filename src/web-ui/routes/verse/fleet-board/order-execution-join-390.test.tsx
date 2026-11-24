@@ -5,9 +5,9 @@ import '@testing-library/jest-dom/vitest';
 import { createElement } from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { evictAll } from '../src/web-ui/data/cache.js';
-import { OrderStateStrip } from '../src/web-ui/routes/verse/fleet-board/OrderStateStrip.js';
-import { orderExecutionText } from '../src/web-ui/routes/verse/fleet-board/order-execution-join.js';
+import { evictAll } from '../../../data/cache.js';
+import { OrderStateStrip } from './OrderStateStrip.js';
+import { orderExecutionText } from './order-execution-join.js';
 
 afterEach(() => { cleanup(); evictAll(); vi.unstubAllGlobals(); });
 

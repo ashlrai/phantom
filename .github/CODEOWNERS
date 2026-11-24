@@ -581,6 +581,7 @@
 /test/harness-dispatch-api-model-311.test.ts @masonwyatt23
 /test/harness-dispatch-threading-311.test.ts @masonwyatt23
 /test/harness-store-hardening-310.test.ts @masonwyatt23
+/test/health-api-recut-loop.test.ts @masonwyatt23
 /test/helpers/authority-310b.ts @masonwyatt23
 /test/helpers/fixture-custody.ts @masonwyatt23
 /test/helpers/fleet-github-310b.ts @masonwyatt23
@@ -1229,6 +1230,7 @@
 /test/release-path-policy-v2.test.ts @masonwyatt23
 /test/release-pr-merge-recut-31.test.ts @masonwyatt23
 /test/remote-gateway-policy-job-detail-nov01.test.ts @masonwyatt23
+/test/remote-gateway-policy-phone-bus-drop.test.ts @masonwyatt23
 /test/remote-gateway-policy-phone-routes-31.test.ts @masonwyatt23
 /test/repo-holds-310b.test.ts @masonwyatt23
 /test/repo-lease-transient-unavailable.test.ts @masonwyatt23

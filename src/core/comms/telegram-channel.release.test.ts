@@ -25,6 +25,10 @@ beforeEach(async () => {
   await mkdir(join(root, 'queue'));
   slots = join(root, 'queue', 'slots.json');
   await writeFile(slots, JSON.stringify({ 'codex-personal': { target: 4, floor: 0, ceiling: 8, held: true, held_reason: 'autobackoff usage limit', held_by: 'autobackoff', held_until: '2026-11-01T00:00:00Z', last_change: 1793448000 } }));
+  // The comms cycle drops unpaired senders before any command; pair the
+  // configured owner under the relocated home's .ashlr-runs.
+  await mkdir(join(root, '.ashlr-runs', 'queue'), { recursive: true });
+  await writeFile(join(root, '.ashlr-runs', 'queue', 'telegram-pair.json'), JSON.stringify({ v: 1, userId: chat }));
   updates = [];
   sent = [];
   let now = 0;
