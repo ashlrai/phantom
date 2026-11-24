@@ -13,6 +13,7 @@ import {
   type UnifiedInboxFilter,
 } from './unified-inbox.js';
 import { parseSince } from '../fleet/agent-messages.js';
+import { agentChannelNameSchema } from '../agents/bus-identity.js';
 
 /** Largest `limit` the endpoint accepts; the same bound `fleet_comms_inbox` applies to its `limit` arg. */
 export const UNIFIED_INBOX_QUERY_LIMIT_MAX = 200;
@@ -20,7 +21,7 @@ export const UNIFIED_INBOX_QUERY_LIMIT_DEFAULT = 50;
 
 /** The query keys the read accepts — the CLI/MCP filter dimensions plus `limit`. */
 export const UNIFIED_INBOX_QUERY_PARAMS = [
-  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains',
+  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'channel',
 ] as const;
 
 export interface UnifiedInboxQuery {
@@ -48,7 +49,9 @@ const invalid = (error: string): UnifiedInboxQueryResult => ({ ok: false, error 
  * 1d, epoch ms or an ISO time, resolved against `options.now`) — `since`
  * the inclusive lower bound, `before` the exclusive upper bound composing
  * into one `[since, before)` window — and `contains` a
- * non-empty needle of at most `UNIFIED_INBOX_CONTAINS_MAX` characters.
+ * non-empty needle of at most `UNIFIED_INBOX_CONTAINS_MAX` characters —
+ * `channel` the strict bus channel-name grammar every bus read's
+ * `--channel` shares (`agentChannelNameSchema`, no registry dependence).
  * Repeated keys are the caller's concern: this parser sees `URLSearchParams`
  * values one key at a time and takes the first, so callers enforcing
  * once-each semantics check `getAll` themselves — the same split
@@ -125,6 +128,13 @@ export function parseUnifiedInboxQuery(
       return invalid(`contains takes a non-empty search text of at most ${UNIFIED_INBOX_CONTAINS_MAX} characters.`);
     }
     filter.contains = contains;
+  }
+  const channel = params.get('channel');
+  if (channel !== null) {
+    if (!agentChannelNameSchema.safeParse(channel).success) {
+      return invalid('channel takes a bus channel name.');
+    }
+    filter.channel = channel;
   }
   return { ok: true, query: { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) } };
 }
