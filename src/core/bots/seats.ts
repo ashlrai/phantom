@@ -231,7 +231,7 @@ export async function seatParticipants(o: SeatOptions = {}): Promise<Participant
   return (await listSeats(o)).seats.map(s => s.participant);
 }
 
-/** What `inspectSeatStore` reports about the three files under
+/** What `inspectSeatStore` reports about the four files under
  * `<home>/.phantom/bots` — retained counts only, never seat contents. */
 export interface SeatStoreInspection {
   /** 'missing' when the bots directory itself is absent — a verified-empty
@@ -251,6 +251,12 @@ export interface SeatStoreInspection {
    * read or holds a line `snapshot()` cannot parse — `null` parses but
    * throws on the `.seatId`/`.handoffId` lookups downstream. */
   handoffs: number | null;
+  /** handoff-notices.json receipt-map entries; null when the file could not
+   * be read or does not parse to the plain object `applySeatHandoff` indexes
+   * and rewrites — every other JSON shape throws on a receipt lookup or
+   * silently drops receipts on the next `saveReceipts`, so applies would
+   * fail or resend while a seats/states/handoffs-only probe stayed green. */
+  notices: number | null;
 }
 
 type SeatFileInspection = { kind: 'absent' } | { kind: 'unsafe' } | { kind: 'text'; text: string };
@@ -271,18 +277,20 @@ function inspectSeatFile(dir: string, name: string): SeatFileInspection {
 }
 
 /**
- * Read-only probe of the seat store `planSeatHandoffs`, `listSeats` and the
- * unified bus's seats surfaces share — the synchronous counterpart of the
- * file half of `snapshot()`. Never throws and never writes: an absent bots
+ * Read-only probe of the seat store `planSeatHandoffs`, `listSeats`, the
+ * unified bus's seats surfaces and the apply path's notice receipts share —
+ * the synchronous counterpart of the file half of `snapshot()` plus the
+ * `handoff-notices.json` map `applySeatHandoff` indexes and rewrites.
+ * Never throws and never writes: an absent bots
  * directory is a verified-empty store (real zeros); a directory or file
  * failing the `safe()` checks, or a file whose contents `roster()`/
- * `snapshot()` would reject, reports `unavailable` with that file's count
- * null while the other files still report what they really hold. Seat
- * contents, live claims and quota evidence are never read here — this
- * names store health only.
+ * `snapshot()`/the receipts read would reject, reports `unavailable` with
+ * that file's count null while the other files still report what they
+ * really hold. Seat contents, live claims and quota evidence are never
+ * read here — this names store health only.
  */
 export function inspectSeatStore(home?: string): SeatStoreInspection {
-  const unavailable: SeatStoreInspection = { source: 'unavailable', seats: null, states: null, handoffs: null };
+  const unavailable: SeatStoreInspection = { source: 'unavailable', seats: null, states: null, handoffs: null, notices: null };
   const phantomDir = join(home ?? homedir(), '.phantom');
   const dir = join(phantomDir, 'bots');
   // The same directory rule safe() enforces on every read: each existing
@@ -299,7 +307,7 @@ export function inspectSeatStore(home?: string): SeatStoreInspection {
     if (!stat.isDirectory()) return unavailable;
     if (path === dir) dirPresent = true;
   }
-  if (!dirPresent) return { source: 'missing', seats: 0, states: 0, handoffs: 0 };
+  if (!dirPresent) return { source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 };
 
   let degraded = false;
 
@@ -338,7 +346,26 @@ export function inspectSeatStore(home?: string): SeatStoreInspection {
     } catch { handoffs = null; degraded = true; }
   }
 
-  return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs };
+  const noticesFile = inspectSeatFile(dir, 'handoff-notices.json');
+  let notices: number | null = 0;
+  if (noticesFile.kind === 'unsafe') { notices = null; degraded = true; }
+  else if (noticesFile.kind === 'text') {
+    try {
+      const parsed: unknown = JSON.parse(noticesFile.text);
+      // applySeatHandoff keeps this file as a receipts map it indexes by
+      // handoff id and rewrites through saveReceipts: only a plain object
+      // survives that round trip. `null` throws on the lookup, primitives
+      // throw on the write and an array silently drops the string-keyed
+      // receipts on stringify — all three leave applies failing or
+      // resending notices the file was meant to suppress.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Invalid handoff notices.');
+      }
+      notices = Object.keys(parsed).length;
+    } catch { notices = null; degraded = true; }
+  }
+
+  return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs, notices };
 }
 function handoff(seatId: string, kind: SeatHandoff['work']['kind'], ref: string, identity: string, now: string, claim?: CoordinationView): SeatHandoff {
   return { schema: 'phantom-bot-handoff.v1', handoffId: createHash('sha256').update(JSON.stringify([seatId, kind, ref, identity])).digest('hex'), seatId,

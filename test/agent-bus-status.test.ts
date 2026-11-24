@@ -8,7 +8,7 @@ import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
 import { acquireCoordination, releaseLiveClaimByOwner } from '../src/core/agents/claim-store.js';
-import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
@@ -32,7 +32,7 @@ describe('readUnifiedBusStatus', () => {
   it('reports every dependency missing or empty on a fresh root, never zeroing unknowns', () => {
     const status = readUnifiedBusStatus(setup());
     expect(status.store).toMatchObject({ source: 'missing', retainedCount: null, retainedBytes: null,
-      liveCount: null, expiredCount: null, maxMessages: 1024, maxBytes: 1024 * 1024 });
+      liveCount: null, expiredCount: null, maxMessages: BUS_INBOX_MAX_MESSAGES, maxBytes: 1024 * 1024 });
     // A verifiably absent registry holds no identities: 0 is the real count.
     expect(status.registry).toEqual({ source: 'missing', identities: 0, channels: 0 });
     // A verifiably absent queue holds no hints: 0 is the real count, and
@@ -54,7 +54,7 @@ describe('readUnifiedBusStatus', () => {
     expect(status.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
       pendingDeliveries: 0, claims: 'readable' });
     // A verifiably absent seat store holds no roster, states or records.
-    expect(status.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    expect(status.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     // A verifiably absent dispatch journal holds no receipts: 0 is proven.
     expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     // A verifiably absent coordination ledger holds no live rows: 0 is proven.
@@ -389,13 +389,13 @@ describe('seats section', () => {
     writeFileSync(join(dir, 'handoffs.jsonl'), JSON.stringify(handoffRecord) + '\n');
 
     const status = readUnifiedBusStatus(options);
-    expect(status.seats).toEqual({ source: 'available', seats: 1, states: 1, handoffs: 1 });
+    expect(status.seats).toEqual({ source: 'available', seats: 1, states: 1, handoffs: 1, notices: 0 });
     expect(status.store.source).toBe('missing');
 
     // Read-only: a fresh probe over a never-written home reports missing and
     // leaves no bots directory behind.
     const fresh = setup();
-    expect(readUnifiedBusStatus(fresh).seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    expect(readUnifiedBusStatus(fresh).seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     expect(existsSync(join(fresh.seats!.home!, '.phantom'))).toBe(false);
   });
 
@@ -410,7 +410,7 @@ describe('seats section', () => {
     const status = readUnifiedBusStatus(options);
     // The same corrupt roster that makes planSeatHandoffs throw is named
     // here; the two healthy files still report their real counts.
-    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: 1, handoffs: 1 });
+    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: 1, handoffs: 1, notices: 0 });
     expect(status.feed.status).toBe('ok');
   });
 
@@ -420,7 +420,7 @@ describe('seats section', () => {
     writeFileSync(join(options.seats!.home!, '.phantom', 'bots'), 'not a directory', { mode: 0o600 });
 
     const status = readUnifiedBusStatus(options);
-    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: null, handoffs: null });
+    expect(status.seats).toEqual({ source: 'unavailable', seats: null, states: null, handoffs: null, notices: null });
     expect(status.store.source).toBe('missing');
   });
 
@@ -435,7 +435,32 @@ describe('seats section', () => {
     writeFileSync(join(dir, 'handoffs.jsonl'), 'null\n' + JSON.stringify(handoffRecord) + '\n');
 
     const status = readUnifiedBusStatus(options);
-    expect(status.seats).toEqual({ source: 'unavailable', seats: 1, states: null, handoffs: null });
+    expect(status.seats).toEqual({ source: 'unavailable', seats: 1, states: null, handoffs: null, notices: 0 });
+  });
+
+  it('counts handoff-notices receipt rows and nulls only a receipts file apply could not use', () => {
+    const options = setup();
+    const dir = botsDir(options);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'seats.json'), JSON.stringify({ schema: 'phantom-bot-seats.v1', seats: [seatRecord] }));
+    writeFileSync(join(dir, 'handoff-notices.json'),
+      JSON.stringify({ 'h-1': { bus: { id: 'm-1' }, owner: { id: 'o-1' } }, 'h-2': { bus: null, owner: null } }), { mode: 0o600 });
+
+    expect(readUnifiedBusStatus(options).seats)
+      .toEqual({ source: 'available', seats: 1, states: 0, handoffs: 0, notices: 2 });
+
+    // A receipts file applySeatHandoff cannot round-trip: `null` throws on
+    // the receipt lookup and an array silently drops string-keyed receipts
+    // on saveReceipts — either way applies fail or resend while a
+    // seats/states/handoffs-only probe would have stayed green.
+    for (const bad of ['null', '[]', '"x"']) {
+      writeFileSync(join(dir, 'handoff-notices.json'), bad, { mode: 0o600 });
+      expect(readUnifiedBusStatus(options).seats)
+        .toEqual({ source: 'unavailable', seats: 1, states: 0, handoffs: 0, notices: null });
+    }
+    writeFileSync(join(dir, 'handoff-notices.json'), '{not json', { mode: 0o600 });
+    expect(readUnifiedBusStatus(options).seats)
+      .toEqual({ source: 'unavailable', seats: 1, states: 0, handoffs: 0, notices: null });
   });
 });
 
@@ -652,7 +677,7 @@ describe('phm agents bus status', () => {
     expect(json.ownerChat).toEqual({ source: 'missing', receipts: 0 });
     expect(json.board).toEqual({ source: 'missing', threads: 0, tasks: 0,
       pendingDeliveries: 0, claims: 'readable' });
-    expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
+    expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 });
     expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
     expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
     expect(json.sendGate).toEqual({ state: 'open',

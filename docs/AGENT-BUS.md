@@ -1283,13 +1283,16 @@ counts — deliveries no receipt acknowledges — and a `claims` flag for the
 queue claim index's readability, which `work mine` reports as `unknown`
 holds when unreadable; 0 counts on a verified-missing board, null when
 unreadable), the bot-seat store `work mine`'s seats section, `id list`'s
-seat participants and the unified inbox seats source read (`source` plus
-retained `seats` roster-row, `states` seat-state-entry and `handoffs`
-journaled-record counts under `<home>/.phantom/bots` — the same files
-`planSeatHandoffs` reads, so a corrupt roster or journal is named here
-instead of leaving status green while those reads report unavailable; 0
-counts on a verified-missing store, null for a file that cannot be read or
-validated, never a plan verdict, seat contents or quota evidence), the
+seat participants, the unified inbox seats source read and the
+`bots handoff(s) --apply` notice receipts (`source` plus retained
+`seats` roster-row, `states` seat-state-entry, `handoffs`
+journaled-record and `notices` receipt-map-entry counts under
+`<home>/.phantom/bots` — the files `planSeatHandoffs` and
+`applySeatHandoff` read and rewrite, so a corrupt roster, journal or
+receipts file is named here instead of leaving status green while those
+reads report unavailable; 0 counts on a verified-missing store, null for
+a file that cannot be read or validated, never a plan verdict, seat
+contents or quota evidence), the
 agentnet peer work-dispatch journal `phm agentnet peers dispatch` consumes
 and the unified inbox peer-dispatch source lists (`<busRoot>/agentnet/
 work-dispatch.json` under the same root `consumePeerWork` resolves —
