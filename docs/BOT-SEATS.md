@@ -167,6 +167,11 @@ thread, honor KILL and comms pause, and are local desktop notices, not proof of
 external-channel delivery. Journal uniqueness does not imply exactly-once
 execution or delivery across independent systems.
 
+`agents bus status`'s seats section probes the same store files — roster,
+state map, handoff journal and this receipts map — so a corrupt
+`handoff-notices.json` is named there (`notices: null`) instead of leaving
+status green while every apply fails or resends notices.
+
 ## Bus and console participation
 
 `phm agents bus id list --json` adds a `participants` array from the seat roster

@@ -614,7 +614,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `tasks=${result.board.tasks ?? unknown} pending=${result.board.pendingDeliveries ?? unknown} ` +
           `claims=${result.board.claims ?? unknown}`,
         `seats ${result.seats.source} seats=${result.seats.seats ?? unknown} ` +
-          `states=${result.seats.states ?? unknown} handoffs=${result.seats.handoffs ?? unknown}`,
+          `states=${result.seats.states ?? unknown} handoffs=${result.seats.handoffs ?? unknown} ` +
+          `notices=${result.seats.notices ?? unknown}`,
         `peerDispatch ${result.peerDispatch.source} receipts=${result.peerDispatch.receipts ?? unknown} ` +
           `unpublished=${result.peerDispatch.unpublished ?? unknown}`,
         `peerLedger ${result.peerLedger.source} liveRows=${result.peerLedger.liveRows ?? unknown}`,

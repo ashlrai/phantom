@@ -79,11 +79,15 @@ Exports:
   owner-thread notice). Unknown seats/secret-shaped text are refused.
 - `inspectSeatStore(home?: string): SeatStoreInspection` is the synchronous,
   never-throwing file probe behind `agents bus status`'s seats section — the
-  file half of the same `snapshot()` `planSeatHandoffs` reads. It reports
+  file half of the same `snapshot()` `planSeatHandoffs` reads plus the
+  `handoff-notices.json` receipts map `applySeatHandoff` indexes and
+  rewrites. It reports
   `source` (`missing` for an absent bots directory with real zero counts,
   `unavailable` when the directory or any present file fails the `safe()`
-  checks or roster/journal validation, `available` otherwise) plus retained
-  `seats`/`states`/`handoffs` counts, each null only for the file that cannot
+  checks or roster/journal/receipts-map validation, `available` otherwise)
+  plus retained
+  `seats`/`states`/`handoffs`/`notices` counts, each null only for the file
+  that cannot
   be read or validated. It reads no seat contents, claims or quota evidence
   and writes nothing.
 
