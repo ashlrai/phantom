@@ -1,5 +1,5 @@
 /** `phm agents messages`: thin argv adapter for core/fleet/agents-messages.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit N] [--json]
+export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit N] [--json]
 
 Recent agent-to-agent messages from the agent bus (default: the last hour,
 newest 50): time, from, to, kind, a summary of at most 160 characters and the
@@ -27,7 +27,7 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
   let json = false;
   const values: { since?: string; before?: string; limit?: string; agent?: string; with?: string; kind?: string;
     priority?: string; job?: string; thread?: string; channel?: string; contains?: string; from?: string;
-    excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {};
+    excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
@@ -35,7 +35,7 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
       : arg === '--with' ? 'with' : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority'
       : arg === '--job' ? 'job' : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel'
       : arg === '--contains' ? 'contains' : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom'
-      : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind'
+      : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind'
       : arg === '--limit' ? 'limit' : null;
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(AGENTS_MESSAGES_USAGE); return 2; }
     values[key] = value; i++;

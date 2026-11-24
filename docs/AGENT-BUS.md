@@ -39,7 +39,14 @@ identity-label match `comms bus read|watch --from`, `agents bus inbox --from`,
 bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each
 row's `from` only so rows merely addressed to that agent stay out —
 `--exclude-from <name|lane>` for only the mail
-one sender did not write, `--in-reply-to <id>` for only the envelopes whose
+one sender did not write, `--to <name|lane|label>` for only the mail
+addressed to that routing label — a handle, `agent:` address, stable id or
+alias of one registered identity matches every label of that identity, an
+unresolvable ref keeps exact-label matching, decided on each row's raw `to`
+label — the same addressed-to rule `comms bus read|watch --to` and
+`fleet_bus_inbox`'s `to` apply through `agentRefAddressMatcher`, so
+"everything addressed to leaders" or "everything addressed to agent X" is
+one filtered read of the whole fleet timeline — `--in-reply-to <id>` for only the envelopes whose
 object body cites that envelope id through its own `inReplyTo` field — the
 same own-property exact match `comms bus read|watch --in-reply-to`,
 `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`,
@@ -63,7 +70,7 @@ never matches and an unrecognized but printable value is an honest empty
 page — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind` and `limit` params. Both return `agent-messages.v1`: newest
+`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind`, `to` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line

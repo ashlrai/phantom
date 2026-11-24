@@ -662,6 +662,66 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ from: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('keeps only the mail addressed to one routing label, across every registered label of that identity', () => {
+    const root = store();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['devin-cloud'] }, { root }).status).toBe('created');
+    // Mail addressed to atlas under three of its labels: agent: address,
+    // alias and bare handle — one identity, three raw `to` labels.
+    post(root, T0, { id: 't1', from: 'agent:claude-1', to: 'agent:atlas', body: { kind: 'note', text: 'agent address' } });
+    post(root, T0 + 1_000, { id: 't2', from: 'agent:claude-1', to: 'devin-cloud', body: { kind: 'note', text: 'alias label' } });
+    post(root, T0 + 2_000, { id: 't3', from: 'agent:grok-3', to: 'atlas', body: { kind: 'note', text: 'bare handle' } });
+    // Mail sent BY atlas is not addressed to it: the filter decides on the
+    // recipient only, the same addressed-to rule the flat bus reads apply.
+    post(root, T0 + 3_000, { id: 't4', from: 'agent:atlas', to: 'agent:claude-1', body: { kind: 'note', text: 'atlas sending stays out' } });
+    // A bare routing label that resolves to no identity matches literally —
+    // the work feed's default sink is exactly this kind of address.
+    post(root, T0 + 4_000, { id: 't5', from: 'agent:planner', to: 'leaders', body: { kind: 'note', text: 'leaders digest' } });
+    post(root, T0 + 5_000, { id: 't6', from: 'agent:claude-1', to: 'agent:grok-3', body: { kind: 'note', text: 'other recipient' } });
+    // A handle, an alias or an agent: address of the one identity keeps every
+    // label it is addressed under; every other recipient's rows stay out.
+    for (const ref of ['atlas', 'devin-cloud', 'agent:atlas']) {
+      expect(read(root, { to: ref }).messages.map(m => m.id)).toEqual(['t3', 't2', 't1']);
+    }
+    expect(read(root, { to: 'atlas' })).toMatchObject({ matched: 3 });
+    // --to decides on the recipient only: t4 is sent by atlas but addressed to
+    // claude-1, so to atlas keeps atlas's three inbound rows. agent claude-1
+    // narrows that to the two rows claude-1 sent atlas — under both the agent:
+    // address and the alias label.
+    expect(read(root, { agent: 'claude-1', to: 'atlas' }).messages.map(m => m.id)).toEqual(['t2', 't1']);
+    // An unregistered agent: ref keeps literal address matching: only t4's own
+    // agent:claude-1 label answers, never the identity-less name claude-1.
+    expect(read(root, { to: 'agent:claude-1' }).messages.map(m => m.id)).toEqual(['t4']);
+    // The literal non-identity label matches only its own address.
+    expect(read(root, { to: 'leaders' }).messages.map(m => m.id)).toEqual(['t5']);
+    // It composes with the other filters; matched counts only accepted rows
+    // and limit caps the page, not the count.
+    expect(read(root, { to: 'atlas', contains: 'alias label' })).toMatchObject({ matched: 1, messages: [{ id: 't2' }] });
+    expect(read(root, { to: 'atlas', from: 'grok-3' }).messages.map(m => m.id)).toEqual(['t3']);
+    expect(read(root, { to: 'atlas', limit: 1 })).toMatchObject({ matched: 3, messages: [{ id: 't3' }] });
+    // An unresolvable ref matches only its literal address — none here, so
+    // the page is empty, not an error.
+    expect(read(root, { to: 'nobody' })).toMatchObject({ matched: 0, messages: [] });
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // it keeps only the literal address match — 'Atlas' and 'DEVIN-CLOUD'
+    // name no registered label, so both pages are empty.
+    expect(read(root, { to: 'Atlas' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { to: 'DEVIN-CLOUD' })).toMatchObject({ matched: 0, messages: [] });
+    // A damaged registry reads unavailable: the filter falls back to strict
+    // label matching — the literal address decides, never the identity's set.
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), '{"broken"', { mode: 0o600 });
+    expect(read(root, { to: 'atlas' }).messages.map(m => m.id)).toEqual(['t3']);
+    expect(read(root, { to: 'agent:atlas' }).messages.map(m => m.id)).toEqual(['t1']);
+    expect(read(root, { to: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['t2']);
+  });
+
+  it('parses --to as a printable routing label and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ to: 'atlas' })).toEqual({ ok: true, query: { to: 'atlas' } });
+    expect(parseAgentMessagesQuery({ to: 'leaders', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { kind: 'ask', to: 'leaders', limit: 5 } });
+    expect(parseAgentMessagesQuery({ to: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ to: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ to: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('filters to envelopes citing one id through their own inReplyTo field', () => {
     const root = store();
     post(root, T0, { id: 'q1', from: 'a', to: 'b', body: { kind: 'note', text: 'can you review the parser?' } });

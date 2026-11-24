@@ -2,7 +2,7 @@
 import { formatMapMessagesText, MAP_MESSAGES_MAX_LIMIT, readMapMessages,
   type MapMessagesFlags } from '../core/fleet/map-messages.js';
 
-export const MAP_MESSAGES_USAGE = `Usage: phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit <1-${MAP_MESSAGES_MAX_LIMIT}>]
+export const MAP_MESSAGES_USAGE = `Usage: phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit <1-${MAP_MESSAGES_MAX_LIMIT}>]
 
 The last agent-to-agent messages (default: the last 15 minutes, newest 20),
 one line each: who to whom, what kind, and a short redacted summary. Never the
@@ -26,7 +26,7 @@ const FLAG_KEYS: Record<string, keyof MapMessagesFlags> = {
   '--since': 'since', '--before': 'before', '--agent': 'agent', '--with': 'with',
   '--kind': 'kind', '--priority': 'priority', '--job': 'job', '--thread': 'thread',
   '--channel': 'channel', '--contains': 'contains', '--from': 'from',
-  '--exclude-from': 'excludeFrom', '--in-reply-to': 'inReplyTo', '--id': 'id',
+  '--exclude-from': 'excludeFrom', '--to': 'to', '--in-reply-to': 'inReplyTo', '--id': 'id',
   '--body-kind': 'bodyKind', '--limit': 'limit',
 };
 
