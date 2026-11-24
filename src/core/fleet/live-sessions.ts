@@ -7,8 +7,10 @@
  * runs-sessions.ts joined with the computers in compute-view.ts), so the job
  * list, PR links and computer placement match every other fleet view.
  *
- * One row per running session (launching, running, publishing, or a job a
- * computer claims that this computer cannot see). A field no source reported
+ * `sessions` has one row per running session (launching, running, publishing,
+ * or a job a computer claims that this computer cannot see); `tree` holds the
+ * same sessions under the leader, with subagents and sessions that finished in
+ * the last hour (session-tree.ts). A field no source reported
  * reads "unknown" (or null for times) and `unknown` says why in plain words.
  * Stable: rows sort by lane order, then start, then job id, and every row has
  * the same keys in the same order, so the same inputs and clock print
@@ -20,6 +22,8 @@
 import { ORG_LANES } from './org-map.js';
 import type { FleetSessionMap, MapSession } from './sessions-view.js';
 import type { FleetSessionV1 } from './runs-sessions.js';
+import type { SubagentRecord } from '../subagent/spawn.js';
+import { buildSessionTree, leaderPassFresh, sessionRecords, type LeaderSessionFacts, type SessionNode, type SessionTreeV1 } from './session-tree.js';
 
 export const LIVE_SESSIONS_SCHEMA = 'fleet.live-sessions.v1';
 /** A running session with no new output for longer than this is "quiet". */
@@ -64,8 +68,31 @@ export interface LiveSessionsV1 {
   sessions: LiveSessionRow[];
   /** Plain words for every fact the list could not show. */
   gaps: string[];
+  /** True when only running sessions were asked for (`phm sessions --live`). */
+  live: boolean;
+  /** Every session as one tree: leader, workers, subagents. Finished ones stay for an hour unless `live`. */
+  tree: SessionTreeV1;
 }
-export interface LiveSessionsFilter { lane?: string | null; repo?: string | null }
+export interface LiveSessionsFilter {
+  lane?: string | null; repo?: string | null; live?: boolean; subagents?: readonly SubagentRecord[] | null;
+  /** What the leader's own files record; null or absent when they were not read. */
+  leader?: LeaderSessionFacts | null;
+}
+
+/** Plain words for what the leader's row could not show. With no fact at all it is the one line older readers print. */
+export function leaderGaps(facts: LeaderSessionFacts | null | undefined, now: number): string[] {
+  if (!facts || (facts.lastPassAt === null && facts.lastReply === null)) return ['Leader state, model and messages unknown: no source records the leader session yet.'];
+  const gaps: string[] = [];
+  if (!leaderPassFresh(facts, now)) {
+    const passed = facts.lastPassAt === null ? NaN : Date.parse(facts.lastPassAt);
+    gaps.push(Number.isFinite(passed) && passed <= now
+      ? `Leader state unknown: its last recorded pass ended ${sessionAge(Math.floor((now - passed) / 1000))} ago.`
+      : 'Leader state unknown: its plan log records no pass with a readable time.');
+  }
+  if (facts.lastReply === null) gaps.push('Leader messages unknown: no reply to you is recorded yet.');
+  gaps.push('Leader model unknown: no source records the model its passes run on.');
+  return gaps;
+}
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const valid = (at: string | null | undefined): at is string => !!at && Number.isFinite(Date.parse(at));
@@ -122,12 +149,15 @@ export function buildLiveSessions(map: FleetSessionMap | null, now: number, filt
     }
     if (map.truncated) gaps.push('The list was cut at its size limit; some sessions are not shown.');
   }
+  if (filter.subagents === null) gaps.push('Subagents unknown: the subagent records could not be read.');
+  const tree = buildSessionTree(sessionRecords(sessions, map, filter.subagents ?? [], now, { live: filter.live, lane, repo, leader: filter.leader }), now);
+  if (tree.roots.some(node => node.id === 'leader')) gaps.push(...leaderGaps(filter.leader, now));
   const quiet = sessions.filter(session => session.quiet).length;
   return { schema: LIVE_SESSIONS_SCHEMA, generatedAt: new Date(now).toISOString(), quietAfterMinutes: SESSION_QUIET_MINUTES,
     filter: { lane, repo },
     counts: { sessions: sessions.length, quiet, lanes: new Set(sessions.map(session => session.lane)).size,
       otherComputers: sessions.filter(session => session.thisComputer === false).length },
-    sessions, gaps };
+    sessions, gaps, live: filter.live === true, tree };
 }
 
 /** "45s", "12m", "3h 5m". */
@@ -138,31 +168,26 @@ export function sessionAge(value: number | null): string {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** Rows grouped by lane, in list order. */
-export function sessionsByLane(list: LiveSessionsV1): { lane: string; sessions: LiveSessionRow[] }[] {
-  const groups: { lane: string; sessions: LiveSessionRow[] }[] = [];
-  for (const session of list.sessions) {
-    const last = groups.at(-1);
-    if (last?.lane === session.lane) last.sessions.push(session);
-    else groups.push({ lane: session.lane, sessions: [session] });
-  }
-  return groups;
+/** Every row of the tree with its depth, top to bottom. */
+export function flatTree(nodes: readonly SessionNode[], depth = 0): { node: SessionNode; depth: number }[] {
+  return nodes.flatMap(node => [{ node, depth }, ...flatTree(node.children, depth + 1)]);
 }
+/** "spoke 2m ago", or "last spoke unknown". */
+export const spoke = (node: SessionNode): string => (node.lastMessageAgeSeconds === null ? 'last spoke unknown' : `spoke ${sessionAge(node.lastMessageAgeSeconds)} ago`);
 
-/** `phm sessions` for people: one block per lane. */
+/** `phm sessions` for people: the top line, then one indented row per session. */
 export function renderLiveSessionsText(list: LiveSessionsV1): string {
   const scope = [list.filter.lane && `lane ${list.filter.lane}`, list.filter.repo && `repo ${list.filter.repo}`].filter(Boolean).join(', ');
-  const lines: string[] = [];
-  if (!list.sessions.length) lines.push(`No agent sessions running${scope ? ` for ${scope}` : ''}.`);
-  else lines.push(`${list.counts.sessions} running${scope ? ` for ${scope}` : ''}, ${list.counts.quiet} quiet (no output for ${list.quietAfterMinutes}+ min).`);
-  for (const group of sessionsByLane(list)) {
-    lines.push(`${group.lane}:`);
-    for (const s of group.sessions) {
-      const output = s.lastOutputAgeSeconds === null ? 'output unknown' : `output ${sessionAge(s.lastOutputAgeSeconds)} ago${s.quiet ? ' QUIET' : ''}`;
-      const where = s.computer === 'unknown' ? 'computer unknown' : s.thisComputer ? `on ${s.computer} (this computer)` : `on ${s.computer}`;
-      lines.push(`  ${s.job} | ${s.repo} | ${s.tier} | ${s.model} | ${s.status} ${sessionAge(s.ageSeconds)} | ${output} | ${where}${s.prUrl ? ` | ${s.prUrl}` : ''}`);
-      for (const field of SESSION_FIELDS) if (s.unknown[field]) lines.push(`    ${field} unknown: ${s.unknown[field]}`);
-    }
+  const rows = new Map(list.sessions.map(row => [row.job, row]));
+  const lines = [`${list.tree.line}${scope ? ` (${scope})` : ''}${list.counts.quiet ? `; ${list.counts.quiet} quiet (no output for ${list.quietAfterMinutes}+ min)` : ''}`];
+  for (const { node, depth } of flatTree(list.tree.roots)) {
+    const pad = '  '.repeat(depth), s = node.jobId === null ? undefined : rows.get(node.jobId);
+    if (node.kind === 'unknown-parent') { lines.push(`${pad}unknown parent:`); continue; }
+    const where = !s ? null : s.computer === 'unknown' ? 'computer unknown' : s.thisComputer ? `on ${s.computer} (this computer)` : `on ${s.computer}`;
+    const named = (word: string, value: string) => (value === 'unknown' ? `${word} unknown` : value);
+    lines.push(pad + [node.id, node.agent !== node.id && named('lane', node.agent), named('model', node.model), named('repo', node.repo), named('state', node.state),
+      `${spoke(node)}${s?.quiet ? ' QUIET' : ''}`, where, s?.prUrl, node.lastMessage].filter(Boolean).join(' | '));
+    for (const field of SESSION_FIELDS) if (s?.unknown[field]) lines.push(`${pad}  ${field} unknown: ${s.unknown[field]}`);
   }
   for (const gap of list.gaps) lines.push(`note: ${gap}`);
   lines.push(`Live log: phm fleet job <id> --log. Pause or stop: phm job pause|stop <id>. Updated ${list.generatedAt}.`);

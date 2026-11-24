@@ -1,14 +1,50 @@
-.root { padding: var(--space-3); min-width: 0; overflow-x: auto; }
-.tableScroll { max-width: 100%; overflow-x: auto; }
-.table { width: 100%; min-width: 52rem; border-collapse: collapse; font-size: var(--text-xs-size); color: var(--text-secondary); }
-.table th, .table td { padding: var(--space-1) var(--space-2); border-top: 1px solid var(--border-subtle); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-.table thead th { border-top: 0; font-weight: 600; }
-.table tbody th { color: var(--text-primary); font-weight: 500; }
-.table tr[data-blocked] td:nth-child(4) { color: var(--status-danger, var(--text-primary)); }
-.url { width: 100%; min-width: 16ch; }
-.action { white-space: nowrap; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: transparent; padding: 0 var(--space-2); color: var(--text-primary); font-size: var(--text-xs-size); cursor: pointer; }
-.action:hover { background: var(--bg-hover); }
-.action:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
+/* The Models board: headline, counts, the state switch, then one group per provider. One column; everything wraps, so 390 px needs no sideways scroll. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.meta, .message { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.message[data-unknown] { color: var(--status-warning-fg); }
+.counts { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; }
+.counts > div { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
+.counts dd { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.counts dt { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.counts [data-state='unconfirmed'] dd { color: var(--status-danger-fg); }
+.counts [data-state='stale'] dd { color: var(--status-warning-fg); }
+.counts dd[data-zero] { color: var(--text-secondary); }
+/* A provider: its mark and name, then how many of its models the router would launch. */
+.group { display: grid; gap: var(--space-2); min-width: 0; }
+.groupHead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); color: var(--text-primary); }
+.groupHead h3 { margin: 0; font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.groupHead span { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.row { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); font-size: var(--text-sm-size); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-3); }
+.head strong { color: var(--text-primary); font-family: var(--font-mono); font-weight: var(--font-weight-medium); }
+/* The state mark sits before the words that say the same thing. Unknown is a hollow ring, never a green dot. */
+.state { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.state::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-1); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+.row[data-tone='ok'] .state::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.row[data-tone='warn'] .state::before { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
+.row[data-tone='bad'] .state::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.row[data-tone='warn'] .state { color: var(--status-warning-fg); }
+.row[data-tone='bad'] .state { color: var(--status-danger-fg); }
+.reason { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+/* Labelled readings: as many columns as fit, each a small label over its value. */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
+.fact { display: flex; flex-direction: column; min-width: 0; }
+.fact dt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.fact dd { margin: 0; color: var(--text-primary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.fact dd[data-unknown] { color: var(--text-secondary); font-style: italic; }
+.fact a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.verify { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-xs-size); }
+.url { flex: 1 1 14rem; min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); font: inherit; }
+.action { white-space: nowrap; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: transparent; padding: var(--space-1) var(--space-2); color: var(--text-primary); font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard); }
+.action:hover:not(:disabled) { background: var(--bg-hover); }
+.action:focus-visible, .url:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
 .action:disabled { opacity: 0.5; cursor: default; }
 .note { color: var(--text-secondary); }
-.bad { color: var(--status-danger, var(--text-primary)); }
+.bad { color: var(--status-danger-fg); }
+/* Models the docs name that the registry lacks: one quiet line each. */
+.missing { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.missing li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.missing strong { color: var(--text-primary); font-family: var(--font-mono); font-weight: var(--font-weight-medium); }
+@media (prefers-reduced-motion: reduce) { .action { transition: none; } }

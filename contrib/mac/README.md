@@ -290,6 +290,19 @@ characters. These never batch: release (`RQ-REL-`), desktop (`RQ-DESK-`), main-r
 `CONSOLIDATE`, `CLOSE`), plus `codex-local`, `claude-api` (API credits), parked, kept
 and retired jobs.
 
+Rebase jobs are the exception to directory grouping (RQ-SWE3-REBASEORDER-1):
+queuegen stamps each REBASE line with `cluster=clu-<lowest PR>`, the
+touched-file-overlap cluster of the repo's open PRs
+(`src/core/fleet/rebase-order.ts`), and `rebase_order.assign_areas` replaces
+each `RQ-REBASE-*` task's area with that `rebase:<key>` — falling back to the
+line's `conflicts="…"`/`file=` file set when no stamp is present. Eligible cluster
+siblings batch together within size, prompt and configured minimum limits,
+while disjoint PRs spread: `rebase:` areas never
+absorb orphans and orphans never absorb them, so a singleton rebase launches
+solo. A cluster batches at 2 members (`MIN_REBASE_BATCH`); restock likewise
+lets two rebase lines claim the same `file=` target in one pass. See
+[docs/REBASE-ORDERING.md](../../docs/REBASE-ORDERING.md).
+
 Every line keeps its own single-claim lease, `queue/run/<job>.batched`, created with
 `O_EXCL` and released only by the bundle that owns it. A duplicate ready line is
 dropped as `SKIP_BATCHED`; a lease whose bundle manifest is gone is released as
@@ -358,7 +371,7 @@ branches.
 
 ## Installing the dispatcher
 
-`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `batch_sessions.py`, `batch-launch.sh`,
+`install.sh` diffs `dispatchd.py`, `concurrency.py`, `batcher.py`, `rebase_order.py`, `batch_sessions.py`, `batch-launch.sh`,
 `batch-sessions.json`, `install-gate.py` and `launch-gate.sh` against
 `~/.ashlr-runs/bin` (or `$ASHLR_RUNS_BIN`, or `--bin DIR`) and installs the ones that
 differ, copying each replaced file to `<file>.bak-macdispatch-<YYYYmmdd-HHMMSS>`

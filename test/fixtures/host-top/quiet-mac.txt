@@ -1,0 +1,4 @@
+  PID  PPID  %CPU      RSS COMM
+    1     0   0.5    20480 /sbin/launchd
+  430     1   3.0   512000 /Applications/Cursor.app/Contents/MacOS/Cursor
+  600     1   1.0    51200 /usr/local/bin/syncer

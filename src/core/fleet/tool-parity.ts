@@ -1,7 +1,7 @@
 /**
  * Lane tool parity: which lane declares which tool, and which lanes can take a
  * job that needs a given set of tools. Backs `phm tools`, `phm tools parity|requires`
- * and the desktop Tools panel (GET /api/tools), so every surface reads one source.
+ * and the desktop Tools pane (GET /api/verse/fleet/runs/tools[/parity]), so every surface reads one source.
  *
  * Declarations only, never a live probe. A capability no source declares is
  * `unknown`, and unknown is never shown or counted as missing: only an explicit
@@ -13,13 +13,15 @@
  *   2. connectors: ~/.phantom/connectors/profile.toml MCP, CLI and plugin connectors
  *      with an explicit lane list (an empty list is discovery, not a grant, so it is skipped)
  *   3. lane-tools.json: `<runs>/queue/lane-tools.json`, the host's own declarations
- * Lanes come from `<runs>/queue/slots.json` plus any lane a source names.
+ * Lanes come from `<runs>/queue/slots.json` plus any lane a source names; the
+ * parity matrix also lists every lane in ORG_LANES, so an undeclared lane shows as unknown.
  */
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { DECLARED_LANE_CAPABILITIES } from './lane-capabilities.js';
+import { ORG_LANES } from './org-map.js';
 
 /** Fixed column order; JSON output follows it. github-write means through the bridge publish path, not gh in the worker. */
 export const TOOL_CAPABILITIES = ['github-read', 'github-write', 'web-search', 'browser', 'computer-use', 'shell', 'package-install'] as const;
@@ -37,7 +39,7 @@ export interface ToolSource { name: 'router' | 'connectors' | 'lane-tools.json';
 export type SourceState = 'healthy' | 'missing' | 'degraded';
 
 export type ToolParityLane = { lane: string; capabilities: Record<ToolCapability, ToolValue> } & { [K in NamedToolKind]: string[] | null } & {
-  /** Per need, the source a yes or no was read from. Unknown needs have no entry. */
+  /** Per need, the source a yes or no was read from; per kind (`mcp`), the source of the lane's list. Unknown has no entry. */
   from: Record<string, string>;
 };
 export interface ToolParityReport {
@@ -62,6 +64,8 @@ const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 export function routerToolSource(): ToolSource {
   const lanes: Record<string, LaneToolDeclaration> = {};
   for (const [lane, caps] of Object.entries(DECLARED_LANE_CAPABILITIES)) {
+    // Parity takes the router's proven gaps only; a lane's "yes" comes from its own declaration (connectors, lane-tools.json).
+    if (caps.gh !== false && caps.browser !== false) continue;
     lanes[lane] = { capabilities: { 'github-read': caps.gh ?? null, browser: caps.browser ?? null } };
   }
   return { name: 'router', lanes };
@@ -90,7 +94,7 @@ export function buildToolParity(input: { lanes?: readonly string[]; sources: rea
         if (!Array.isArray(list)) continue;
         const set = named.get(kind) ?? new Set<string>();
         named.set(kind, set);
-        listed[kind] = source.name;
+        listed[kind] = from[kind] = source.name;
         for (const item of list) if (MCP_RE.test(item)) { set.add(item); from[`${kind}:${item}`] = source.name; }
       }
     }
@@ -167,31 +171,6 @@ export function toolRequires(report: ToolParityReport, needs: readonly ToolNeed[
     else out.can.push(lane.lane);
   }
   return out;
-}
-
-const SHORT: Record<ToolCapability, string> = { 'github-read': 'gh-read', 'github-write': 'gh-write', 'web-search': 'search', browser: 'browser', 'computer-use': 'computer', shell: 'shell', 'package-install': 'install' };
-const cell = (v: ToolValue): string => (v === 'unknown' ? '?' : v);
-const MAX_ROWS = 14;
-
-/** At most 20 lines: summary, header, up to 14 lanes, overflow, gaps, unreadable sources, legend. */
-export function formatToolParity(report: ToolParityReport): string {
-  const width = Math.max(4, ...report.lanes.map(l => l.lane.length)) + 2;
-  const cols = report.capabilities.map(c => SHORT[c]);
-  const summary = report.parity === 'full' ? 'every lane declares every tool'
-    : report.parity === 'gaps' ? `${report.gaps.length} tool(s) missing on some lane` : 'no gaps declared, but some tools are unknown';
-  const lines = [`Tool parity: ${report.parity} (${summary}).`, ['lane'.padEnd(width), ...cols.map(c => c.padEnd(c.length + 1)), 'mcp'].join('')];
-  for (const lane of report.lanes.slice(0, MAX_ROWS)) {
-    const mcp = lane.mcp === null ? '?' : lane.mcp.length ? lane.mcp.join(',') : 'none';
-    lines.push([lane.lane.padEnd(width), ...report.capabilities.map((c, i) => cell(lane.capabilities[c]).padEnd(cols[i]!.length + 1)), mcp.length > 40 ? `${mcp.slice(0, 39)}…` : mcp].join('').trimEnd());
-  }
-  if (report.lanes.length > MAX_ROWS) lines.push(`… ${report.lanes.length - MAX_ROWS} more lane(s); use JSON for all.`);
-  if (!report.lanes.length) lines.push('No lanes found.');
-  const gaps = report.gaps.map(g => `${g.need} (${g.lanes.join(', ')})`).join('; ');
-  lines.push(gaps ? `Missing: ${gaps.length > 160 ? `${gaps.slice(0, 159)}…` : gaps}` : 'Missing: none declared.');
-  const unread = report.sources.filter(s => s.state === 'degraded').map(s => s.name);
-  if (unread.length) lines.push(`Could not read: ${unread.join(', ')}; their lanes and tools are not shown.`);
-  lines.push('? = not declared, never counted as missing. Declare in <runs>/queue/lane-tools.json.');
-  return lines.join('\n');
 }
 
 export function formatToolRequires(r: ToolRequiresReport): string {
@@ -383,5 +362,98 @@ export function formatToolMatrix(m: ToolMatrix, lane?: string): string {
   const unread = m.sources.filter(s => s.state === 'degraded').map(s => s.name);
   if (unread.length) lines.push(`Could not read: ${unread.join(', ')}.`);
   lines.push(lane ? '? = not declared. Full matrix: phm tools --json' : 'One lane: phm tools --lane <lane>. Full matrix: phm tools --json');
+  return lines.join('\n');
+}
+
+/** The columns of `phm tools parity`, in order. `need` is the capability or named-tool kind the family reads. */
+export const TOOL_FAMILIES = [
+  { id: 'mcp', label: 'MCP servers', need: 'mcp' }, { id: 'cli', label: 'CLI on PATH', need: 'cli' },
+  { id: 'skills', label: 'Skills', need: 'skill' }, { id: 'plugins', label: 'Plugins', need: 'plugin' },
+  { id: 'web-search', label: 'Web search', need: 'web-search' }, { id: 'browser', label: 'Browser', need: 'browser' },
+  { id: 'computer-use', label: 'Computer use', need: 'computer-use' }, { id: 'gh', label: 'gh', need: 'github-read' },
+] as const satisfies ReadonlyArray<{ id: string; label: string; need: ToolCapability | NamedToolKind }>;
+export type ToolFamily = typeof TOOL_FAMILIES[number]['id'];
+export type ParityState = 'present' | 'missing' | 'unknown';
+export interface ParityCell {
+  state: ParityState;
+  /** Where the answer was read from; null when no source declares it. */
+  source: string | null;
+  /** Named families only: what the lane lists, and what other lanes list that it does not. */
+  has?: string[];
+  lacks?: string[];
+  /** Missing cells only: the one line to add once the lane has the tool. Advice, never applied. */
+  fix?: string;
+}
+/** `phm tools parity --json`: one row per lane, one cell per tool family. */
+export interface LaneParityMatrix {
+  schema: 'tools.parity.v2';
+  version: 2;
+  /** full: every cell present; gaps: some cell is missing; unknown: no gaps, but not everything is declared. */
+  parity: ToolParityReport['parity'];
+  families: Array<{ id: ToolFamily; label: string }>;
+  lanes: Array<{ lane: string; cells: Record<ToolFamily, ParityCell> }>;
+  counts: Record<ParityState, number>;
+  sources: ToolParityReport['sources'];
+}
+
+const LANE_TOOLS_FILE = '<runs>/queue/lane-tools.json';
+
+/**
+ * Pure projection of a parity report: `roster` lanes first (the org's lanes), then any other lane a source names.
+ * A named family is present when the lane lists every tool of that kind any lane lists, missing when its list
+ * lacks one or is empty, unknown when it declares no list. `lane` narrows to one row; a lane nobody names yields null.
+ */
+export function buildLaneParity(report: ToolParityReport, lane?: string, roster: readonly string[] = ORG_LANES): LaneParityMatrix | null {
+  const declared = new Map(report.lanes.map(l => [l.lane, l]));
+  const all = [...roster, ...report.lanes.map(l => l.lane).filter(l => !roster.includes(l))];
+  const picked = lane === undefined ? all : all.filter(l => l === lane);
+  if (lane !== undefined && !picked.length) return null;
+  const counts: Record<ParityState, number> = { present: 0, missing: 0, unknown: 0 };
+  const cellFor = (name: string, family: typeof TOOL_FAMILIES[number]): ParityCell => {
+    const row = declared.get(name);
+    const source = row?.from[family.need] ?? null;
+    const missing = (what: string, line: string, extra: Partial<ParityCell> = {}): ParityCell => ({
+      state: 'missing', source, ...extra, fix: `Give ${name} ${what}, then add ${line} under "${name}" in ${LANE_TOOLS_FILE}.`,
+    });
+    const kind = (NAMED_TOOL_KINDS as readonly string[]).includes(family.need) ? family.need as NamedToolKind : null;
+    if (kind) {
+      const has = row?.[kind];
+      if (!has) return { state: 'unknown', source: null };
+      const fleet = report.needs.filter(n => n.startsWith(`${kind}:`)).map(n => n.slice(kind.length + 1));
+      const lacks = fleet.filter(n => !has.includes(n));
+      if (has.length && !lacks.length) return { state: 'present', source, has };
+      return missing(lacks.length ? `${KIND_LABEL[kind]} ${lacks.join(', ')}` : `a ${KIND_LABEL[kind]}`, `"${kind}": ${JSON.stringify(fleet.length ? fleet : ['<name>'])}`, { has, lacks });
+    }
+    const value = row?.capabilities[family.need as ToolCapability] ?? 'unknown';
+    if (value === 'unknown') return { state: 'unknown', source: null };
+    return value === 'yes' ? { state: 'present', source } : missing(family.label, `"${family.need}": true`);
+  };
+  const lanes = picked.map(name => {
+    const cells = Object.fromEntries(TOOL_FAMILIES.map(f => { const c = cellFor(name, f); counts[c.state]++; return [f.id, c]; })) as Record<ToolFamily, ParityCell>;
+    return { lane: name, cells };
+  });
+  return {
+    schema: 'tools.parity.v2', version: 2, parity: counts.missing ? 'gaps' : counts.unknown || !lanes.length ? 'unknown' : 'full',
+    families: TOOL_FAMILIES.map(({ id, label }) => ({ id, label })), lanes, counts, sources: report.sources,
+  };
+}
+
+const MAX_FIXES = 12;
+
+/** Human view of `phm tools parity`: one line per lane, one column per family, then one fix per missing cell. */
+export function formatLaneParity(m: LaneParityMatrix): string {
+  const first = Math.max(4, ...m.lanes.map(l => l.lane.length)) + 2;
+  const widths = m.families.map(f => Math.max(f.id.length, 7) + 2);
+  const lines = [
+    `Tool parity: ${m.parity}. ${m.lanes.length} lane(s): ${m.counts.present} present, ${m.counts.missing} missing, ${m.counts.unknown} unknown.`,
+    ['lane'.padEnd(first), ...m.families.map((f, i) => f.id.padEnd(widths[i]!))].join('').trimEnd(),
+    ...m.lanes.map(l => [l.lane.padEnd(first), ...m.families.map((f, i) => l.cells[f.id].state.padEnd(widths[i]!))].join('').trimEnd()),
+  ];
+  const fixes = m.lanes.flatMap(l => m.families.filter(f => l.cells[f.id].fix).map(f => `  ${l.lane} ${f.id} (from ${l.cells[f.id].source ?? 'unknown'}): ${l.cells[f.id].fix}`));
+  if (fixes.length) lines.push('Fix:', ...fixes.slice(0, MAX_FIXES));
+  if (fixes.length > MAX_FIXES) lines.push(`  … ${fixes.length - MAX_FIXES} more; see phm tools parity --json.`);
+  const unread = m.sources.filter(s => s.state === 'degraded').map(s => s.name);
+  if (unread.length) lines.push(`Could not read: ${unread.join(', ')}.`);
+  lines.push(`unknown = no source declares it; it is never counted as missing. Declare a lane's tools in ${LANE_TOOLS_FILE}.`);
   return lines.join('\n');
 }

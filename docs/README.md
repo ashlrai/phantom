@@ -4,14 +4,11 @@
 
 # Phantom documentation
 
-- [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md): provider-neutral metadata, dry-run plans and route explanations.
-- [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md): unified roster, quota-driven draining, write-ahead handoffs and the Devin Bot advisory API gap.
-
-- [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md): discovery, review-only patches and weekly scheduling.
-
-- [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) — dry-run conflict proof, verified merge bundles, and sanctioned publish plans.
-
 Phantom is an open-source workbench for running coding agents, coordinating a fleet, and reviewing their work. Start with one local session, then add fleet operation and more computers as needed.
+
+**Mission:** chasing open-source RSI (recursive self-improvement). Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments. See [the mission](https://github.com/ashlrai/phantom/blob/master/README.md#mission), [how agents work on Phantom](https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom) and the [agent constitution](https://github.com/ashlrai/phantom/blob/master/AGENTS.md).
+
+**Ecosystem:** Phantom is the hub. Separately installed companions add secrets (phantom-secrets), token-efficient agent tools (ashlr-plugin), identity scoping (Locus), vocabulary (lexicon), Markdown review (ashlr-md) and backend provisioning (ashlr-stack). See [companion setup](COMPANIONS.md) and the [ecosystem map](https://github.com/ashlrai/phantom/blob/master/docs/ECOSYSTEM-MAP.md).
 
 | Start here | What you will do |
 | --- | --- |
@@ -25,8 +22,6 @@ Phantom is an open-source workbench for running coding agents, coordinating a fl
 The canonical package is `@ashlr/phantom`; `phm` and compatible `ashlr` commands use the same runtime. Historical Ashlr Verse and Universe names remain in research and compatibility guides. See [product naming](PHANTOM-BRAND.md). The [North Star](NORTH-STAR.md) describes a target, not deployed capability.
 
 ## Agents, start here
-
-- [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md): read-only failure grouping and guarded fix/update plans.
 
 Agents are first-class users. Install, read the command list as JSON, then register the MCP gateway. Follow [Use Phantom from an agent](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) verbatim. Short index: [llms.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt). Copy-paste reference: [llms-full.txt](https://github.com/ashlrai/phantom/blob/master/docs/llms-full.txt).
 
@@ -63,6 +58,11 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 
 | Your task | Canonical guide |
 |-----------|-----------------|
+| Read provider-neutral bot metadata, dry-run plans and route explanations | [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) |
+| Manage external bot seats: unified roster, quota-driven draining and write-ahead handoffs | [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) |
+| Refresh the router catalog with discovery, review-only patches and weekly scheduling | [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md) |
+| Resolve append-union PR conflicts with dry-run proof, verified merge bundles and sanctioned publish plans | [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) |
+| Group CI failures read-only and plan guarded fixes or updates | [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md) |
 | Run tests for changed files | [Test changed files](https://github.com/ashlrai/phantom/blob/master/docs/TEST-CHANGED.md) |
 | Use organization, personal, Phantom hero, and social artwork | [Brand media kit](https://github.com/ashlrai/phantom/blob/master/docs/brand/README.md) |
 | Review the proposed risk-based CI path and savings model | [Frictionless merge path](https://github.com/ashlrai/phantom/blob/master/docs/ci/FRICTIONLESS-PATH.md) |
@@ -144,6 +144,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Install or roll back an exact trusted local package | [Pinned runtime](ASHLR-UNIVERSE.md#install-a-pinned-local-runtime) |
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
+| Open a first pull request with a coding agent, from fork to auto-merge | [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md) |
 | Queue Mac bridge builds and tests within a shared memory budget | [Memory admission — source guide](https://github.com/ashlrai/phantom/blob/master/scripts/mac-bridge/MEMORY.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Preview or remove finished job worktrees | [Worktree prune](https://github.com/ashlrai/phantom/blob/master/docs/WORKTREE-PRUNE.md) |
@@ -200,7 +201,8 @@ the command surface in the exact binary you are running. A source guide may
 describe features not present in an older registry or desktop release.
 
 The generated [CLI reference](https://github.com/ashlrai/phantom/blob/master/docs/CLI-REFERENCE.md)
-records the source checkout's overview and full command table.
+records every registered usage, summary, flag and JSON example. Run `phm docs cli`
+to regenerate it or `phm docs cli --check` to check for drift without writing.
 
 ## For coding agents
 
@@ -416,3 +418,4 @@ canonical release guide for required hosted qualification and publication.
 - [Typed routing decisions](https://github.com/ashlrai/phantom/blob/master/docs/ROUTING.md): local-first typed route advice, bounded schema retry and dispatcher audit records.
 
 - [App restart](https://github.com/ashlrai/phantom/blob/master/docs/APP-RESTART.md): Held restart command, process ownership audit, and remaining zero-downtime acceptance work.
+- [Rebase batch ordering](https://github.com/ashlrai/phantom/blob/master/docs/REBASE-ORDERING.md) — file-overlap clusters group eligible sibling rebase jobs within batch limits.

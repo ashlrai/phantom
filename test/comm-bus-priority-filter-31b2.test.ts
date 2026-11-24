@@ -99,3 +99,40 @@ it('documents the filter, scan limit, and routing-only meaning of priority', asy
   expect(help).toContain('Expired records advance the cursor but do not count toward the limit');
   expect(help).toContain('Priority is a routing attribute; it does not establish identity or authority.');
 });
+
+it('filters read and watch pages by the v2 thread label on note/context bodies', async () => {
+  const options = setup(), log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const note = (id: string, thread?: string, kind = 'note') => ({
+    id, from: 'alice', to: 'worker', priority: 'P1' as const, ttl: 1000,
+    body: { kind, text: `fake-${id}`, ...(thread === undefined ? {} : { thread }) },
+  });
+  for (const row of [note('n1', 'rq-1'), note('n2', 'rq-2'), note('n3'), message('s1', 'P1'),
+    { ...note('c1', 'rq-1'), body: { kind: 'context', text: 'fake-c1', thread: 'rq-1' } },
+    note('w1', 'rq-1', 'work.post')]) {
+    expect(appendBusInbox(row, options).status).toBe('posted');
+  }
+  const read = async (...args: string[]) => {
+    expect(await cmdCommsBus(['read', ...args], options)).toBe(0);
+    return JSON.parse(String(log.mock.calls.at(-1)?.[0])) as
+      { messages: { envelope: { id: string } }[]; nextCursor: number };
+  };
+  const ids = (page: { messages: { envelope: { id: string } }[] }) => page.messages.map(row => row.envelope.id);
+  const all = await read();
+  const thread = await read('--thread', 'rq-1');
+  // Only note/context bodies carrying the label match: the string body, the
+  // untagged note and the work.post kind all stay out even naming the thread.
+  expect(ids(thread)).toEqual(['n1', 'c1']);
+  expect(thread.nextCursor).toBe(all.nextCursor);
+  expect(ids(await read('--thread', 'rq-2'))).toEqual(['n2']);
+  expect(ids(await read('--thread', 'missing'))).toEqual([]);
+  expect(await cmdCommsBus(['read', '--thread', 'has space'], options)).toBe(2);
+  expect(log.mock.calls.at(-1)?.[0]).toBe('{"status":"invalid"}');
+
+  vi.useFakeTimers();
+  const abort = new AbortController(), pages: { messages: { envelope: { id: string } }[] }[] = [];
+  const watching = cmdCommsBus(['watch', '--thread', 'rq-1', '--interval-ms', '100', '--timeout-ms', '1000'], options,
+    { signal: abort.signal, emit: json => pages.push(JSON.parse(json)) });
+  expect(pages[0]!.messages.map(row => row.envelope.id)).toEqual(['n1', 'c1']);
+  abort.abort();
+  expect(await watching).toBe(0);
+});

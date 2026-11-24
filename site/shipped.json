@@ -1,0 +1,65 @@
+{
+  "schema": "shipped.v1",
+  "version": 1,
+  "generatedAt": "2026-11-18T08:05:58.161Z",
+  "since": "2026-11-11T08:05:58.161Z",
+  "days": 7,
+  "source": "partial",
+  "note": "This checkout has shortened git history, so some changes may be missing.",
+  "repo": null,
+  "headline": "This week: 3 user-facing changes across 1 repo; biggest: Update daemon runtime release dependency inventory.",
+  "repos": 1,
+  "biggest": "Update daemon runtime release dependency inventory",
+  "total": 3,
+  "maintenance": 0,
+  "areas": [
+    {
+      "id": "desktop",
+      "label": "Desktop app",
+      "count": 1,
+      "lines": [
+        {
+          "text": "Update daemon runtime release dependency inventory.",
+          "number": 6916,
+          "mergedAt": "2026-11-18T07:51:17.000Z",
+          "repo": "ashlrai/phantom",
+          "prs": [
+            6916
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fleet",
+      "label": "Fleet",
+      "count": 1,
+      "lines": [
+        {
+          "text": "Update fleet merge latency.",
+          "number": 6914,
+          "mergedAt": "2026-11-18T07:48:42.000Z",
+          "repo": "ashlrai/phantom",
+          "prs": [
+            6914
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unknown",
+      "label": "Area unknown",
+      "count": 1,
+      "lines": [
+        {
+          "text": "Update project internals.",
+          "number": 6912,
+          "mergedAt": "2026-11-18T07:40:47.000Z",
+          "repo": "ashlrai/phantom",
+          "prs": [
+            6912
+          ]
+        }
+      ]
+    }
+  ]
+}

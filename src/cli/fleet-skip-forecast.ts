@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 
-const usage = 'Usage: ashlr fleet skip-forecast [--hours 6] [--json]\nList the top 10 repo and file pairs with code 13 skips. Reads local records only.';
+const usage = 'Usage: ashlr fleet skip-forecast [--hours 6] [--json]\nList the top 10 repo and file pairs with code 13 skips and parks. Reads local records only.';
 export interface SkipForecastReaders {
   readJobs: () => Promise<string>;
   readQueue: () => Promise<string>;
@@ -36,7 +37,10 @@ export async function readSkipForecast(hours: number, readers: SkipForecastReade
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       row = value as Record<string, unknown>;
     } catch { continue; }
-    if (row.event !== 'precheck_skip' || row.code !== 13) continue;
+    // Code 13 is the covered-work verdict: precheck_skip is the candidate
+    // spelling, skipped_empty+code the live decline spelling, and
+    // precheck_parked the live park the dispatcher writes instead of a skip.
+    if (row.code !== 13 || !(isPrecheckSkipRow(row) || row.event === 'precheck_parked')) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
     if (!Number.isFinite(at) || at < now - hours * 3_600_000 || at > now) continue;
     const path = typeof row.job === 'string' ? paths.get(row.job) : undefined;

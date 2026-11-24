@@ -9,9 +9,10 @@
 // tests that import a changed module directly, capped at MAX_RELATED_TESTS.
 // The exhaustive import graph stays on the master schedule.
 //
-// Modes: docs (typecheck only), related (selected tests), fallback (a bounded
-// broader set, used when a global input changed or selection failed). Nothing
-// ever skips tests silently: every uncertain input resolves to fallback.
+// Modes: docs (doc-reading tests, see selectDocs), related (selected tests),
+// fallback (a bounded broader set, used when a global input changed or
+// selection failed). Nothing ever skips tests silently: every uncertain input
+// resolves to fallback.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -44,12 +45,36 @@ export const TIER1_TESTS = Object.freeze([
   'test/authority-codeowners-310b.test.ts',
   'test/authority-tier1-closure-310b.test.ts',
 ]);
+const PACKAGE_FILES_TEST = 'test/package-files-allowlist.test.ts';
+// The recorded Tier-1 authority import closure. Any member — or the snapshot
+// itself — can grow the closure the guard test protects without touching a
+// Tier-1 path, and no test file imports it, so selection names it directly.
+export const TIER1_CLOSURE_SNAPSHOT = 'test/fixtures/authority/tier1-closure.json';
+export const TIER1_CLOSURE_TEST = 'test/authority-tier1-closure-310b.test.ts';
+// Prefixes where a brand-new file becomes a closure root (the `/**` and `*`
+// entries of TIER1_SOURCE_PATTERNS in src/core/authority/protected-paths.ts;
+// src/core/authority/ itself is already a TIER1_PATH). Every existing file
+// under them is already a recorded member, so these only fire on new files —
+// exactly the diffs that can grow the closure without touching a member.
+// New exact-file roots require editing protected-paths.ts, itself Tier-1.
+const CLOSURE_ROOT_PATH = [
+  /^src\/core\/(?:memory|desktop|website|sandbox|policy|routing|improve|autopilot)\//,
+  /^src\/core\/local-eval\/memory-/,
+  /^src\/core\/daemon\/outcome-/,
+  /^src\/core\/goals\/outcome-/,
+  /^src\/core\/verse\/outcomes-/,
+  /^src\/core\/resources\/pool-commissioning/,
+];
 const TIER1_PATH = [
   /^\.github\/CODEOWNERS$/,
   /^src\/core\/authority\//,
   /^test\/authority-[^/]*310b[^/]*\.test\.ts$/,
   /^\.github\/tests\/secret-shape\//,
 ];
+// The three files test/cli-registry-drift.test.ts diffs against each other:
+// the dispatch switch it parses as text, plus the two registries it imports.
+const CLI_REGISTRY_TEST = 'test/cli-registry-drift.test.ts';
+const CLI_REGISTRY_PATH = /^src\/cli\/(?:index|completions|help)\.ts$/;
 
 // Slow lanes stay out of the derived and fallback sets: real-io suites spawn git,
 // npm and daemons (a 34-file related run measured over two minutes locally) and
@@ -113,12 +138,30 @@ export function domainTests(paths, existing) {
   const node = new Set();
   if (paths.some((p) => TIER1_PATH.some((re) => re.test(p)))) for (const t of TIER1_TESTS) tests.add(t);
   if (paths.includes('.github/workflows/ci.yml') && existing.has('test/m30.ci.test.ts')) tests.add('test/m30.ci.test.ts');
+  // The CLI registry anti-drift suite parses src/cli/index.ts's dispatch
+  // switch as text — deliberately no import edge — so a diff that only
+  // touches the switch gives related selection nothing to follow. Name it
+  // for the whole registry surface it guards; an unregistered dispatch once
+  // reached master and held every release-gate run red for hours.
+  if (paths.some((p) => CLI_REGISTRY_PATH.test(p)) && existing.has(CLI_REGISTRY_TEST)) tests.add(CLI_REGISTRY_TEST);
   for (const p of paths) {
     const m = /^\.github\/(?:scripts\/([^/]+)\.mjs|tests\/([^/]+)\.test\.mjs)$/.exec(p);
     const stem = m?.[1] ?? m?.[2];
     if (stem && existing.has(`.github/tests/${stem}.test.mjs`)) node.add(`.github/tests/${stem}.test.mjs`);
   }
   return { tests: [...tests], node: [...node] };
+}
+
+// Members of the recorded Tier-1 closure, read from the committed snapshot.
+// An unreadable snapshot yields an empty set: the diff's own paths still
+// decide, and the full lane keeps the invariant regardless.
+export function tier1ClosureMembers(cwd) {
+  try {
+    const parsed = JSON.parse(git(cwd, ['show', `HEAD:${TIER1_CLOSURE_SNAPSHOT}`]));
+    return new Set(Array.isArray(parsed?.closure) ? parsed.closure.filter((p) => typeof p === 'string') : []);
+  } catch {
+    return new Set();
+  }
 }
 
 // Direct importers of a module, found without building a graph: any test file
@@ -158,6 +201,14 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
   for (const p of alive) if (TEST_FILE.test(p)) add(p); // changed tests first
   const domain = domainTests(paths, existing);
   for (const t of domain.tests) add(t); // named Tier-1 tests are never capped away
+  // A diff touching a recorded closure member — the snapshot itself, or a
+  // prefix where a new file becomes a root — can grow the authority import
+  // closure without touching a Tier-1 path, and no test file imports it, so
+  // the invariant runs by name on exactly those diffs.
+  const closure = tier1ClosureMembers(cwd);
+  if (paths.some((p) => p === TIER1_CLOSURE_SNAPSHOT || closure.has(p) || CLOSURE_ROOT_PATH.some((re) => re.test(p)))) {
+    add(TIER1_CLOSURE_TEST);
+  }
   const pinned = ranked.length;
   const sources = alive.filter((p) => SOURCE_FILE.test(p) && !TEST_FILE.test(p));
   for (const p of sources) {
@@ -178,15 +229,52 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
   return { tests: ranked.slice(0, limit), capped: Math.max(0, ranked.length - limit), deferred, node: domain.node };
 }
 
+// A docs diff has no import edges, so related selection finds nothing — but
+// suites that read pages as text can still fail. The whole-tree link guard
+// always runs; every other suite whose source names a changed path (full
+// repo-relative path first, then bare basename for join()-style readers) is
+// added through the same dist/slow filters and cap as related selection.
+export const DOCS_TREE_TESTS = Object.freeze(['test/docs-repo-links.test.ts']);
+
+function docReaderTests(cwd, needles) {
+  if (needles.length === 0) return [];
+  let out = '';
+  try {
+    out = git(cwd, ['grep', '-l', '-F', ...needles.flatMap((n) => ['-e', n]), 'HEAD', '--', 'test']);
+  } catch (error) {
+    if (error.status !== 1) throw error; // 1 = no match
+  }
+  return out.split('\n').filter(Boolean).map((f) => f.replace(/^HEAD:/, '')).filter((f) => TEST_FILE.test(f)).sort();
+}
+
+export function selectDocs({ cwd, paths }) {
+  const testFiles = new Set(git(cwd, ['ls-files', '-z', '--', 'test']).split('\0').filter((f) => TEST_FILE.test(f)));
+  const ranked = [];
+  const deferred = [];
+  const add = (f, derived = false) => {
+    if (!testFiles.has(f) || ranked.includes(f) || deferred.includes(f)) return;
+    if (needsDist(cwd, f) || (derived && SLOW.has(f))) { deferred.push(f); return; }
+    ranked.push(f);
+  };
+  for (const t of DOCS_TREE_TESTS) add(t);
+  const pinned = ranked.length;
+  const full = [...new Set(paths)].sort();
+  const base = [...new Set(full.map((p) => p.split('/').pop()).filter((b) => b && !full.includes(b)))].sort();
+  for (const f of docReaderTests(cwd, full)) add(f, true);
+  for (const f of docReaderTests(cwd, base)) add(f, true);
+  const limit = Math.max(MAX_RELATED_TESTS, pinned);
+  return { tests: ranked.slice(0, limit), capped: Math.max(0, ranked.length - limit), deferred, node: [] };
+}
+
 // Bounded broader set: every Tier-1 test plus an even, deterministic spread of
 // the repository's test files, split round-robin so shards have equal counts.
-export function selectFallback({ cwd }) {
+export function selectFallback({ cwd, requiredTests = [] }) {
   const dist = distBoundFiles(cwd);
   const all = git(cwd, ['ls-files', '-z', '--', 'test']).split('\0')
     .filter((f) => TEST_FILE.test(f) && !SLOW.has(f) && (dist ? !dist.has(f) : !needsDist(cwd, f))).sort();
   const budget = FALLBACK_SHARDS * FALLBACK_TESTS_PER_SHARD;
   const step = Math.max(1, Math.ceil(all.length / budget));
-  const picked = new Set(TIER1_TESTS.filter((t) => all.includes(t)));
+  const picked = new Set([...TIER1_TESTS, ...requiredTests].filter((t) => all.includes(t)));
   for (let i = 0; i < all.length && picked.size < budget; i += step) picked.add(all[i]);
   const list = [...picked].sort();
   const shards = Array.from({ length: FALLBACK_SHARDS }, () => []);
@@ -198,8 +286,18 @@ export { changedPaths };
 
 export function plan({ cwd, paths, graph = null }) {
   const verdict = classifyPaths(paths);
-  if (verdict.mode === 'docs') return { ...verdict, tests: [], node: [], shards: [], capped: 0 };
-  if (verdict.mode === 'fallback') return { ...verdict, ...selectFallback({ cwd }), capped: 0 };
+  if (verdict.mode === 'docs') {
+    if (paths.length === 0) return { ...verdict, tests: [], node: [], shards: [], capped: 0, deferred: [] };
+    const sel = selectDocs({ cwd, paths });
+    if (sel.tests.length === 0) {
+      return { mode: 'fallback', reason: 'docs diff maps to no test', ...selectFallback({ cwd }), capped: 0 };
+    }
+    return { mode: 'related', reason: `${verdict.reason}: ${sel.tests.length} doc-reading test(s)`, ...sel, shards: [] };
+  }
+  if (verdict.mode === 'fallback') {
+    const requiredTests = paths.includes('package.json') ? [PACKAGE_FILES_TEST] : [];
+    return { ...verdict, ...selectFallback({ cwd, requiredTests }), capped: 0 };
+  }
   const sel = selectRelated({ cwd, paths, graph });
   if (sel.tests.length === 0 && sel.node.length === 0) {
     // Code changed but nothing maps to a test: never skip, run the bounded set.

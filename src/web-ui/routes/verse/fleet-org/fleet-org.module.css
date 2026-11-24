@@ -27,9 +27,14 @@
 .lanes, .jobs { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
 .lanes { margin-left: var(--space-2); padding-left: var(--space-2); border-left: 1px solid var(--border-subtle); }
 .lane { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
-.lane[data-state='held'] { border-color: var(--status-warning-solid); }
-.lane[data-state='idle'], .lane[data-state='unknown'] { border-style: dashed; }
-.lane[data-state='idle'] .laneHead strong, .lane[data-state='unknown'] .laneHead strong { color: var(--text-secondary); }
+.lane[data-state='held'], .lane[data-state='idle'], .lane[data-state='unknown'] { border-style: dashed; color: var(--text-secondary); }
+.lane[data-state='held'] .laneHead strong, .lane[data-state='idle'] .laneHead strong, .lane[data-state='unknown'] .laneHead strong { color: var(--text-secondary); }
+/* Grey lanes say why on the row itself, so nobody has to open one to learn it is off. */
+.why { flex-basis: 100%; color: var(--text-tertiary); }
+.planners { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: var(--space-1); list-style: none; margin: 0 0 0 var(--space-2); padding-left: var(--space-2); border-left: 1px solid var(--border-subtle); }
+.planner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-2); min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.planner small { flex-basis: 100%; color: var(--text-tertiary); }
+.planner[data-state='idle'], .planner[data-state='unknown'] { border-style: dashed; color: var(--text-secondary); }
 .laneHead, .job { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); width: 100%; min-height: 44px; padding: var(--space-1) var(--space-2); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .laneHead:hover, .job:hover, .all:hover { background: var(--bg-hover); }
 .laneHead:focus-visible, .job:focus-visible, .all:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
@@ -39,7 +44,7 @@
 .jobs li { border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
 .state { display: inline-flex; align-items: center; flex: none; color: var(--text-secondary); }
 .state[data-state='running'] { color: var(--status-success-solid); }
-.state[data-state='held'] { color: var(--status-warning-solid); font-weight: 600; }
+.state[data-state='held'] { color: var(--text-secondary); font-weight: 600; }
 .state[data-state='unknown'] .dot, .state[data-state='idle'] .dot { background: transparent; border: 1px solid currentColor; }
 .state[data-state='unknown'] .dot { border-style: dashed; }
 
@@ -57,3 +62,8 @@
 .avatar[data-color='teal'] { --avatar: color-mix(in srgb, var(--status-success-solid) 55%, var(--status-info-solid)); }
 .avatar[data-color='pink'] { --avatar: color-mix(in srgb, var(--status-danger-solid) 50%, var(--accent-500)); }
 .avatar[data-color='slate'] { --avatar: var(--text-secondary); }
+
+.machines { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.machine { padding: 4px 10px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.85em; opacity: 0.9; }
+.machine[data-state='offline'] { opacity: 0.5; }
+.machine[data-state='busy'], .machine[data-state='held'] { border-style: dashed; }

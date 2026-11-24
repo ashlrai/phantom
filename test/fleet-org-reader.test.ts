@@ -19,7 +19,7 @@ const lane = (name: string, running: number, target: number, extra: object = {})
 function fleet(parts: { sessions?: object[]; lanes?: object[]; paused?: boolean; usage?: object[]; launches?: Record<string, string> }): Partial<FleetOrgReaders> {
   const missing = async (): Promise<never> => { throw new Error('fixture: source missing'); };
   return {
-    now: () => NOW, live: missing, messages: () => null,
+    now: () => NOW, live: missing, messages: () => null, registry: missing,
     sessions: parts.sessions ? async () => ({ generatedAt: AT, sourceState: 'healthy', truncated: false, recent: [], sessions: parts.sessions }) as unknown as FleetSessionsV1 : missing,
     runs: parts.lanes ? async () => ({ lanes: parts.lanes, events: [], lastTick: AT, paused: parts.paused ?? false, sources: { status: 'healthy' } }) as unknown as FleetRunsDirState : missing,
     ledger: parts.usage ? async () => ({ asOf: AT, lanes: parts.usage, sources: { status: 'healthy' } }) as unknown as ResourceLedgerV1 : missing,
@@ -30,11 +30,20 @@ const org = async (readers: Partial<FleetOrgReaders>) => (await readFleetOrgMap(
 const find = (tree: FleetOrgTree, name: string) => tree.lanes.find(row => row.lane === name)!;
 
 describe('phm org reader', () => {
+  it('uses the same status read for the leader seat row and reports a missing registry honestly', async () => {
+    const readers = fleet({ lanes: [lane('claude', 0, 1, { healthy: true })] });
+    const read = readers.runs!; let calls = 0;
+    readers.runs = async clock => { calls++; return { ...await read(clock), leader: { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT } }; };
+    const result = await org(readers);
+    expect(calls).toBe(1);
+    expect(result.leaderSeat).toMatchObject({ schema: 'leader.seat.v1', version: 1,
+      current: { lane: 'claude', model: 'fixture-model', lastSuccessAt: AT }, pick: null, reason: 'No eligible confirmed leader seat.' });
+  });
   it('shows an empty fleet as idle lanes under an idle leader, with a versioned schema', async () => {
     const tree = await org(fleet({ sessions: [], lanes: [lane('claude', 0, 8), lane('gemini', 0, 1, { queued: 2 })] }));
     expect(tree).toMatchObject({ schema: 'fleet.org.v1', version: 1, jobsKnown: true });
     expect(tree.leader).toMatchObject({ state: 'idle', doing: 'No jobs running', provider: 'unknown', model: null });
-    expect(find(tree, 'claude')).toMatchObject({ state: 'idle', doing: 'Idle', running: 0, target: 8, model: null, jobs: [] });
+    expect(find(tree, 'claude')).toMatchObject({ state: 'idle', doing: 'Idle, nothing queued', running: 0, target: 8, model: null, jobs: [] });
     expect(find(tree, 'gemini')).toMatchObject({ state: 'idle', doing: 'Idle, 2 queued' });
     expect(tree.lanes.every(row => row.state === 'idle')).toBe(true);
   });
@@ -76,8 +85,8 @@ describe('phm org reader', () => {
     // Held is not idle: the held lane's running job still counts for the leader once dispatch resumes.
     const resumed = await org(fleet({ sessions: [session('RQ-D', 'devin')], lanes: [lane('devin', 1, 0, { held: true })] }));
     expect(resumed.leader).toMatchObject({ state: 'running', doing: 'Directing 1 running job across 1 lane' });
-    expect(find(resumed, 'devin')).toMatchObject({ state: 'held', doing: 'Held' });
-    expect(renderOrgTreeText(tree, NOW)).toContain('devin (Cognition, fixture-model): held. autobackoff: usage limit. 1 running of 0, 0 queued, held');
+    expect(find(resumed, 'devin')).toMatchObject({ state: 'held', doing: 'Held, reason not reported' });
+    expect(renderOrgTreeText(tree, NOW)).toContain('devin (Cognition, fixture-model): held. Held: autobackoff: usage limit. 1 running of 0, 0 queued, held');
   });
 
   it('shows a published cloud job as done and does not count it as running', async () => {

@@ -21,6 +21,7 @@ import {
   listDropJobs,
   resolveDropJobRoot,
   validateDropJob,
+  composeDropJobFile,
   writeDropJob,
   type DropJobInput,
 } from '../src/core/fleet/drop-job-writer.js';
@@ -140,6 +141,15 @@ describe('dropJobExists', () => {
 // ---------------------------------------------------------------------------
 // writeDropJob
 // ---------------------------------------------------------------------------
+
+describe('drop job repo header', () => {
+  it('defaults to phantom, writes a named repo, and refuses an unknown one', async () => {
+    expect(composeDropJobFile(GOOD).split('\n')[0]).toBe('#job repo=phantom lane=claude tier=work');
+    expect(composeDropJobFile({ ...GOOD, repo: 'locus' }).split('\n')[0]).toBe('#job repo=locus lane=claude tier=work');
+    expect(validateDropJob({ ...GOOD, repo: 'locus' })).toEqual({ ok: true });
+    expect(validateDropJob({ ...GOOD, repo: 'nowhere' })).toEqual({ ok: false, reasons: ['repo'] });
+  });
+});
 
 describe('writeDropJob', () => {
   it('publishes the file with the exact header and matching byte count', async () => {

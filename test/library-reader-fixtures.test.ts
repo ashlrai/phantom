@@ -20,6 +20,7 @@ const empty: LibrarySources = {
   memory: async () => [],
   handoffs: async () => ({ state: 'absent', handoffs: [] }),
   bus: () => ({ status: 'ok', messages: [], nextCursor: 0 }),
+  agentMemory: async () => [],
 };
 const full: LibrarySources = {
   leaderFiles: async () => [{ name: 'VISION.md', size: 20, modifiedAt: '2026-11-17T11:00:00.000Z', preview: 'Ship safely' }],
@@ -28,6 +29,7 @@ const full: LibrarySources = {
   handoffs: async () => ({ state: 'complete', handoffs: [{ folder: 'review', name: 'NOTES.md', size: 10, modifiedAt: '2026-11-17T08:00:00.000Z', preview: 'Ready for review' }] }),
   bus: after => ({ status: 'ok', nextCursor: 7, messages: after ? [] : [{ cursor: 7, receivedAt: Date.parse(asOf),
     envelope: { id: 'msg-7', from: 'claude-3', to: 'leader', priority: 'P2', ttl: 1000, body: 'Reviewed context' } }] }),
+  agentMemory: async () => [],
 };
 const deps = (sources: Partial<LibrarySources>): LibraryDeps => ({ runsDir: join(root, 'runs'), home: join(root, 'home'), now: () => new Date(asOf), sources });
 
@@ -42,7 +44,7 @@ describe('readLibrary with fixture sources', () => {
     expect(snapshot.v).toBe(1);
     for (const item of snapshot.items) {
       expect(Object.keys(item).sort()).toEqual(['asOf', 'id', 'kind', 'owner', 'preview', 'size', 'source', 'title']);
-      expect(item.id).toMatch(/^(file|memory|message|context):[0-9a-f]{16}$/);
+      expect(item.id).toMatch(/^(file|media|memory|message|context):[0-9a-f]{16}$/);
     }
     expect(snapshot.items.map(i => i.asOf)).toEqual([...snapshot.items.map(i => i.asOf)].sort().reverse());
   });
@@ -59,7 +61,7 @@ describe('readLibrary with fixture sources', () => {
   });
 
   it('shows media with unknown owner and its byte size', async () => {
-    const media = (await readLibrary({ kind: 'file' }, deps(full))).items.find(row => row.title === 'Screenshot');
+    const media = (await readLibrary({ kind: 'media' }, deps(full))).items.find(row => row.title === 'Screenshot');
     expect(media).toMatchObject({ owner: null, size: 16, source: 'inbox-attachments/0123456789abcdef.png' });
   });
 

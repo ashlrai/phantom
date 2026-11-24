@@ -14,6 +14,8 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 
 Chasing open-source RSI (recursive self-improvement) is Phantom's mission. We're building Phantom into an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute. The [strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md) explains how we'll test improvements and open the fleet without sharing credentials.
 
+Agents run the factory; the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow. The owner sets direction and is needed only for passwords, 2FA, device approvals and payments. See [how agents work on Phantom](#how-agents-work-on-phantom).
+
 ![Phantom fleet console showing sample worker assignments and lane capacity; labeled demo data, no live execution.](https://github.com/ashlrai/phantom/blob/master/docs/images/phantom-fleet-demo.png)
 
 *Current source UI with synthetic demo data, captured at 2× resolution. No provider or fleet ran. [Capture details](https://github.com/ashlrai/phantom/blob/master/docs/images/CAPTURES.md).*
@@ -54,7 +56,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.36; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.72; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
@@ -73,6 +75,16 @@ See [fleet coordination](https://github.com/ashlrai/phantom/blob/master/docs/FLE
 for observation tools and advisory assignment previews, and
 [iMessage teammate tasks](https://github.com/ashlrai/phantom/blob/master/docs/IMESSAGE.md#fleet-teammate-tasks-and-evidence)
 for scoped peer work and local delivery evidence.
+
+## Commands by goal
+
+One line per goal. Add `--json` for typed output; `phm commands` lists every command.
+
+- **Watch the fleet:** `phm log`, `phm host load`, `phm merges latency`, `phm self drift`
+- **Steer work:** `phm plan check <file>`, `phm plan dup "<bet>"`, `phm recut plan`, `phm pr resolve-conflicts`, `phm subagent list`
+- **Spend plans:** `phm spend`, `phm pools`, `phm pools waste`, `phm browser doctor`
+- **Talk to the leader:** `phm needs-you`, `phm asks`, `phm decisions`, `phm decide --question <text> --options <a,b>`, `phm mason thread`, `phm outbox from-log`, `phm bots list`
+- **Release:** `phm releases`, `phm publish orphans`, `phm publish resume --branch <job>`
 
 ## See the work
 
@@ -111,15 +123,16 @@ Every top-level `phm` command, grouped by what it is for. `ashlr` runs the same 
 
 | Group | Commands |
 | --- | --- |
-| Core | `index`, `go`, `status`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `update`, `upgrade`, `orient`, `docs`, `commands`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
-| Run | `run`, `runs`, `eval`, `skills`, `models`, `local-runtime` |
+| Core | `index`, `go`, `status`, `today`, `ls`, `open`, `tidy`, `config`, `doctor`, `tune`, `init`, `setup`, `app`, `desktop`, `apps`, `desktopctl`, `desktop-update`, `self-swap`, `self-update`, `update`, `upgrade`, `orient`, `docs`, `commands`, `completions`, `plugins`, `x`, `runtime`, `version`, `help`, `land`, `approvals` |
+| Run | `run`, `runs`, `work`, `local`, `eval`, `skills`, `models`, `local-runtime` |
 | Swarm | `spec`, `swarm`, `swarms` |
 | Memory | `recall`, `learn`, `genome`, `memory` |
 | Knowledge | `graph`, `ask`, `knowledge`, `wiki`, `library` |
-| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `agentnet`, `amplify`, `routines`, `bets`, `messages`, `map`, `admission`, `tools` |
-| Observability | `feed`, `wb`, `worklog`, `home`, `job`, `throughput`, `empties`, `autonomy`, `ci`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage` |
+| Owner | `owner`, `owner-live` |
+| Autonomy | `route`, `metrics`, `trail`, `issues`, `select`, `pool`, `benchmark`, `enroll`, `backlog`, `inbox`, `daemon`, `drive`, `worker`, `prs`, `fleet`, `bus`, `recovery`, `manager`, `vision`, `goal`, `loop`, `conductor-permit`, `roadmap`, `reflect`, `health`, `goals`, `sweep`, `digest`, `release-articles`, `release`, `drafts`, `comms`, `comms-agent`, `imessage`, `connectors`, `channels`, `director`, `best-of-n`, `invent`, `universe`, `website`, `authority`, `org`, `leader`, `mirror`, `cloud`, `playbook`, `jev`, `devin`, `openai-agents`, `agents`, `automations`, `ideas`, `agentnet`, `amplify`, `routines`, `bets`, `messages`, `map`, `admission`, `tools`, `inventory`, `plan`, `recut`, `pr`, `publish`, `subagent`, `needs-you`, `asks`, `decisions`, `decide`, `mason`, `outbox`, `bots` |
+| Observability | `feed`, `wb`, `worklog`, `home`, `job`, `throughput`, `empties`, `shipped`, `mobile`, `autonomy`, `ci`, `chain`, `router`, `context`, `claim`, `router-calibration`, `jobs`, `lanes`, `queue`, `incident`, `daily-fix`, `pulse`, `pulse-export`, `pulse-test`, `telemetry`, `audit`, `repos`, `receipt`, `radar`, `observe`, `growth`, `world`, `resource`, `resources`, `capacity`, `estates`, `signals`, `friction`, `budget`, `ci-metrics`, `main`, `usage`, `log`, `host`, `merges`, `spend`, `pools`, `releases`, `self` |
 | Integrations | `autopilot`, `improve`, `steward`, `team`, `companions`, `caps`, `mcp`, `checkpoint`, `sessions`, `gh`, `vercel`, `wire`, `notify`, `stack`, `ecosystem` |
-| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `nodes`, `autofix`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo` |
+| Safety | `worktrees`, `disk`, `disk-maint`, `node`, `nodes`, `autofix`, `sandbox`, `seams`, `test`, `check`, `constitution`, `verify`, `engineering-receipt`, `verify-safety`, `verify-pr`, `preflight`, `onboard`, `demo`, `browser` |
 | Web | `top`, `tui`, `dash`, `dashboard`, `serve`, `verse`, `console`, `pages`, `settings` |
 | Scaffold | `new`, `ship` |
 
@@ -167,18 +180,29 @@ The repo's `.mcp.json` declares six companion MCP servers: `phantom-secrets`, `l
 
 | Project | Purpose |
 | --- | --- |
+| [Phantom](https://github.com/ashlrai/phantom) (this repo) | The factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work. |
 | [Phantom Secrets](https://github.com/ashlrai/phantom-secrets) | Local vault, placeholders and a proxy for supported API credential use. |
 | [Locus](https://github.com/ashlrai/locus) | Account and tenant bindings for agent tools. |
-| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger. |
+| [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin) | Compact tool results and a local usage ledger; the `ashlr` server above. |
 | [Lexicon](https://github.com/ashlrai/lexicon) | Correct recurring speech-to-text errors before agents read them. |
 | [Ashlr MD](https://github.com/ashlrai/ashlr-md) | Markdown editing with CLI and MCP interfaces. |
 | [Ashlr Stack](https://github.com/ashlrai/ashlr-stack) | Configure supported development services through CLI and MCP. |
+
+## How agents work on Phantom
+
+Phantom is built mostly by coding agents, including Phantom's own fleet. The rules they follow are in [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md):
+
+- **Agents may** branch, commit, open pull requests, enable auto-merge, merge to master and dispatch releases through the repository's sanctioned workflow. They fix CI, tests, docs and dependencies forward.
+- **Kept limits** stay with the owner or are refused outright: secret values, force-pushes and admin bypass, spending and billing, and messages to people outside the organization.
+- **Evidence over claims**: a completed run, a merged PR and a published release are recorded separately, and unknown readings stay unknown.
+
+To watch it work, run `phm org --text` for the live leader, lanes and running jobs, or `phm improve propose --json` for evidence-backed improvement proposals.
 
 ## Documentation and contributing
 
 [Documentation map](docs/README.md) · [User guide](docs/VERSE.md) · [Product direction](https://github.com/ashlrai/phantom/blob/master/docs/VISION.md) · [Fleet lanes](docs/lanes.md) · [Self-hosting](docs/SELF-HOSTING.md) · [Agent index](https://github.com/ashlrai/phantom/blob/master/docs/llms.txt) · [Kernel reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md) · [Changelog](CHANGELOG.md).
 
-Contributors: start with [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md). Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
+Contributors: start with [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md), or follow [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md) from clone to auto-merge. Coding agents also follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and the [agent toolchain](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-TOOLCHAIN.md).
 
 If Phantom helps you coordinate your agents, [star the repository](https://github.com/ashlrai/phantom) so others can find it.
 

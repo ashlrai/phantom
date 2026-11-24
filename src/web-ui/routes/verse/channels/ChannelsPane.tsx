@@ -19,6 +19,7 @@ import { CopyPill } from '../apps/CopyPill.js';
 import { formatRelative } from '../autonomy/format.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { RulesCard } from './RulesCard.js';
 import styles from './channels.module.css';
 
 export const channelsQuery: QueryDef<ChannelsOverview> = {
@@ -93,5 +94,6 @@ export function ChannelsPane({ visible }: PaneProps) {
     {read.status === 'error' ? <p className={styles.message} role="alert">Could not refresh. Showing the last reading.</p> : null}
     <ul className={styles.grid}>{view.channels.map((row) => <ChannelCard key={row.channel} row={row} nowMs={nowMs} />)}</ul>
     <p className={styles.message}>Addresses are masked. Same data: <code>phm channels --json</code>.</p>
+    <RulesCard visible={visible} />
   </section>;
 }

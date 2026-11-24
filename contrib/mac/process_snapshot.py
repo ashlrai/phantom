@@ -54,6 +54,45 @@ def _rows(text):
     return rows
 
 
+# pid, lstart (the fixed-width ps timestamp), comm.
+START_ROW = re.compile(r'\s*(\d+)\s+(.{24})\s+(.*?)\s*')
+
+
+def _rows_with_start(text):
+    rows, starts = {}, {}
+    for line in text.splitlines():
+        match = START_ROW.fullmatch(line)
+        if match:
+            pid = int(match.group(1))
+            rows[pid] = match.group(3).strip()
+            starts[pid] = match.group(2).strip() or None
+            continue
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0].isdigit():
+            pid = int(fields[0])
+            rows[pid] = fields[1]
+            starts[pid] = None
+    return rows, starts
+
+
+def read_start_time(pid, timeout=5):
+    """Return ps's process start identity, or None when the PID cannot be identified."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 1:
+        return None
+    try:
+        result = _bounded(['ps', '-p', str(pid), '-o', 'lstart='], timeout)
+    except OSError:
+        return None
+    if result.returncode:
+        return None
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return lines[0] if len(lines) == 1 else None
+
+
 # pid, ppid, %cpu (one-core percent), comm (may contain spaces).
 CPU_ROW = re.compile(r'\s*(\d+)\s+(\d+)\s+(\d+(?:\.\d+)?)\s+(\S.*?)\s*')
 
@@ -81,10 +120,11 @@ def _inventory(text, cpu):
     return rows, table if complete else None
 
 
-def _snapshot(args, rows, table):
-    """The `pid name` stdout every caller reads, plus `.cpu` = {pid: (ppid, pcpu)} or None."""
+def _snapshot(args, rows, table, starts=None):
+    """The `pid name` stdout every caller reads, plus CPU and process-start metadata."""
     result = subprocess.CompletedProcess(args, 0, ''.join(f'{pid} {name}\n' for pid, name in rows.items()), '')
     result.cpu = None if table is None else {pid: table[pid] for pid in rows}
+    result.start_times = {pid: (starts or {}).get(pid) for pid in rows}
     return result
 
 
@@ -98,15 +138,20 @@ def capture(timeout=5, cpu=False):
     cpu=True reads the parent and %CPU columns in the same single inventory call and sets `.cpu` (see _snapshot).
     The inventory and the argument probe are unchanged otherwise.
     """
-    names = _bounded(['ps', '-axo', 'pid=,ppid=,pcpu=,comm=' if cpu else 'pid=,comm='], timeout)
+    names = _bounded(['ps', '-axo', 'pid=,ppid=,pcpu=,comm=' if cpu else 'pid=,lstart=,comm='], timeout)
     if names.returncode:
         return names
-    rows, table = _inventory(names.stdout, cpu)
+    if cpu:
+        rows, table = _inventory(names.stdout, cpu)
+        starts = {}
+    else:
+        rows, starts = _rows_with_start(names.stdout)
+        table = None
     if not rows:
         return subprocess.CompletedProcess(names.args, 124, '', 'empty process inventory')
     targets = [pid for pid, name in rows.items() if os.path.basename(name) in WORKER_NAMES]
     if not targets:
-        return _snapshot(names.args, rows, table)
+        return _snapshot(names.args, rows, table, starts)
     args = ['ps', '-ww', '-p', ','.join(str(pid) for pid in targets), '-o', 'pid=,command=']
     commands = _bounded(args, timeout)
     if commands.returncode not in (0, 1):
@@ -124,4 +169,4 @@ def capture(timeout=5, cpu=False):
         except OSError:
             pass
         return subprocess.CompletedProcess(args, 124, '', 'live worker ownership unknown')
-    return _snapshot(args, rows, table)
+    return _snapshot(args, rows, table, starts)

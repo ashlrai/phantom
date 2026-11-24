@@ -39,6 +39,8 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
     return created;
   };
   for (const ev of events) {
+    // Directory drafts cannot create membership or presence for their writer.
+    if (ev.type === 'person.added' || ev.type === 'person.removed') continue;
     const p = ev.payload;
     if (removed.has(ev.actor.id)) continue;
     const m = touch(ev.actor, ev.ts);

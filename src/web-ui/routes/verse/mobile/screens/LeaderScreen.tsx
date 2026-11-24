@@ -18,6 +18,9 @@ import { formatLeaderDisplayText } from '../../../../../core/vision/leader-displ
  *     confirmation (a message is cheap), Approve now and Retire WITH one.
  *     A failed send keeps the words in the box.
  */
+import { AsksCard } from '../AsksCard.js';
+import { LaneSupplyLine } from '../../leader/LaneSupplyLine.js';
+import { MasonThreadCard } from '../../mason-thread/MasonThreadCard.js';
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { LeaderAction } from '../../../../../core/vision/leader-types.js';
 import { refetchQuery } from '../../../../data/cache.js';
@@ -598,6 +601,9 @@ export function LeaderScreen() {
           })}
         </Section></div>
       ) : null}
+      <LaneSupplyLine className={styles.laneSupply} />
+      <AsksCard />
+      <MasonThreadCard />
       <LeaderPasses />
       {reachability === 'offline' ? (
         <Banner>This phone is offline. Showing the last conversation ({sinceText(thread.updatedAt).toLowerCase()}).</Banner>

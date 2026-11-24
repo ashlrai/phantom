@@ -446,10 +446,13 @@ describe('ResourcesDrawer — accounts', () => {
     fireEvent.click(claude.getByText('Usage details'));
     expect(claude.getByText('92%')).toBeInTheDocument();
     expect(claude.getByText('85%')).toBeInTheDocument();
-    expect(claude.getByRole('img', { name: /weekly window: 85% used/ })).toBeInTheDocument();
-    expect(claude.queryByRole('img', { name: /5-hour window/ })).not.toBeInTheDocument();
-    // The binding window carries the reserve in its sentence.
-    expect(claude.getAllByRole('img').some((m) => /40% kept for you/.test(m.getAttribute('aria-label') ?? ''))).toBe(true);
+    expect(claude.getByRole('meter', { name: 'Claude Max weekly window' }).getAttribute('aria-valuetext')).toMatch(/^85% used/);
+    expect(claude.queryByRole('meter', { name: /5-hour window/ })).not.toBeInTheDocument();
+    // The binding window carries the reserve in its sentence, as a band on its bar, and in words beside the band's mark.
+    const reserved = claude.getAllByRole('meter').filter((m) => /40% kept for you/.test(m.getAttribute('aria-valuetext') ?? ''));
+    expect(reserved).toHaveLength(1);
+    expect((reserved[0]!.querySelector('[data-part="kept"]') as HTMLElement).style.width).toBe('40%');
+    expect(claude.getByText('40% kept for you')).toBeInTheDocument();
     expect(within(cardOf('Personal Codex')).getByText('limit reached')).toBeInTheDocument();
   });
 
@@ -784,7 +787,9 @@ describe('shared resource observation clock', () => {
     roster = [{ ...seat, capacity: { ...seat.capacity!, windows: [staleWindow], binding: staleWindow } }]; pair();
     await screen.findByRole('heading', { name: 'Synthetic Alpha' });
     const card = within(cardOf('Synthetic Alpha'));
-    expect(card.getByRole('img', { name: /Recorded reset.*last reading, current usage unconfirmed/ })).toBeInTheDocument();
+    const retained = card.getByRole('meter', { name: /^Synthetic Alpha / });
+    expect(retained.getAttribute('aria-valuetext')).toMatch(/Recorded reset.*last reading, current usage unconfirmed/);
+    expect(retained).toHaveAttribute('data-unread');
     expect(card.getByTitle(/Recorded reset/)).toBeInTheDocument();
     expect(card.queryByTitle(/^resets /)).toBeNull();
     expect(evidence('synthetic-alpha').bar[0]).toBe('retained');
@@ -1222,7 +1227,7 @@ describe('ResourcesDrawer — weekly-only Claude', () => {
     render(<ResourcesDrawer mode="docked" now={NOW} />);
     const heading = await screen.findByRole('heading', { name: /^Claude weekly/ });
     const card = within(heading.closest('li')!);
-    expect(card.getAllByRole('img', { name: /weekly window/ })).toHaveLength(1);
+    expect(card.getAllByRole('meter', { name: /weekly window/ })).toHaveLength(1);
     expect(card.getByText('Anthropic removed the 5-hour limit on this plan. Only the weekly window applies.')).toBeInTheDocument();
     expect(card.queryByText(/5-hour window|rolling 5h/)).toBeNull();
   });

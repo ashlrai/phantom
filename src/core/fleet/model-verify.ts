@@ -16,38 +16,44 @@ export interface ModelVerifyOptions {
   runsDir?: string; registryPath?: string | URL; now?: () => number;
   /** This machine's verification records. Default: $ASHLR_HOME/model-registry.json, or none when registryPath is set. */
   localRegistryPath?: string | null;
+  /** The confirmed list from provider docs. Default: $ASHLR_HOME/model-docs.json, or none when registryPath is set. */
+  docsPath?: string | null;
 }
-const ALIASES = new Set(['haiku', 'sonnet', 'opus', 'auto', 'fast', 'strong']);
+/** Launcher shorthands that are not model IDs. */
+export const MODEL_ALIASES: ReadonlySet<string> = new Set(['haiku', 'sonnet', 'opus', 'auto', 'fast', 'strong']);
 const DAY = 86_400_000;
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** Refuse pipes/symlinks and cap reads even if a file grows during inspection. */
-async function readJson(path: string | URL): Promise<unknown> {
+export async function readText(path: string | URL, max = 1024 * 1024): Promise<string> {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const info = await file.stat(), max = 1024 * 1024;
+    const info = await file.stat();
     if (!info.isFile() || info.size > max) throw new Error('invalid source');
     const buffer = Buffer.alloc(max + 1);
     let size = 0, count: number;
     do { count = (await file.read(buffer, size, buffer.length - size, null)).bytesRead; size += count; }
     while (count && size <= max);
     if (size > max) throw new Error('source too large');
-    return JSON.parse(buffer.subarray(0, size).toString('utf8'));
+    return buffer.subarray(0, size).toString('utf8');
   } finally { await file.close(); }
+}
+const readJson = async (path: string | URL): Promise<unknown> => JSON.parse(await readText(path));
+/** The router's choices in models.json, in file order. Effort and mode rows are launcher settings, not model IDs. Throws when unreadable. */
+export async function readRouterChoices(opts: ModelVerifyOptions = {}): Promise<Array<{ key: string; model: string | null }>> {
+  const models = await readJson(join(opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'models.json'));
+  if (!object(models)) throw new Error('invalid model sources');
+  return Object.keys(models).filter(key => key !== 'effort' && !key.startsWith('effort.') && !key.startsWith('mode.'))
+    .map(key => ({ key, model: typeof models[key] === 'string' ? models[key].trim() : null }));
 }
 
 export async function verifyFleetModels(opts: ModelVerifyOptions = {}): Promise<ModelVerifyReport> {
-  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
-  const models = await readJson(join(root, 'models.json'));
-  if (!object(models)) throw new Error('invalid model sources');
+  const choices = await readRouterChoices(opts);
   const now = (opts.now ?? Date.now)();
   const entries = new Map((await loadVerifiedRegistry({ ...opts, now: () => now })).map(row => [row.id, row]));
   const issues: ModelVerifyIssue[] = [];
-  for (const [key, value] of Object.entries(models)) {
-    // The launcher reserves these rows for reasoning effort, not model IDs.
-    if (key === 'effort' || key.startsWith('effort.') || key.startsWith('mode.')) continue;
-    if (typeof value !== 'string' || !value.trim()) { issues.push({ key, model: null, reason: 'invalid-model' }); continue; }
-    const model = value.trim();
-    if (ALIASES.has(model)) continue;
+  for (const { key, model } of choices) {
+    if (!model) { issues.push({ key, model: null, reason: 'invalid-model' }); continue; }
+    if (MODEL_ALIASES.has(model)) continue;
     const entry = entries.get(model);
     if (!entry) issues.push({ key, model, reason: 'unregistered' });
     else if (entry.status !== 'verified') issues.push({ key, model, reason: entry.status });
@@ -86,12 +92,14 @@ function parseEntry(row: unknown, now: number): VerifiedModelRegistryEntry {
   return row as unknown as VerifiedModelRegistryEntry;
 }
 const byId = (a: { id: string }, b: { id: string }) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-function localPath(opts: ModelVerifyOptions): string | null {
-  if (opts.localRegistryPath !== undefined) return opts.localRegistryPath;
+/** A path under $ASHLR_HOME. Null when a test registry is injected and no path was set, so tests never read the real home. */
+export function homeFile(name: string, set: string | null | undefined, opts: ModelVerifyOptions): string | null {
+  if (set !== undefined) return set;
   if (opts.registryPath) return null;
   const home = process.env.ASHLR_HOME;
-  return join(home && isAbsolute(home) ? home : join(homedir(), '.ashlr'), 'model-registry.json');
+  return join(home && isAbsolute(home) ? home : join(homedir(), '.ashlr'), name);
 }
+const localPath = (opts: ModelVerifyOptions) => homeFile('model-registry.json', opts.localRegistryPath, opts);
 /** Verified records written by `phm models verify`. A missing or damaged file adds nothing; bad rows are dropped. */
 async function readLocalRecords(path: string | null, now: number): Promise<VerifiedModelRegistryEntry[]> {
   const raw = path === null ? [] : await readJson(path).catch(() => []);
@@ -182,11 +190,99 @@ export async function markModelVerified(input: MarkModelVerifiedInput, opts: Mod
   return (await listModelRegistry({ ...opts, now: () => now })).entries.find(row => row.id === id)!;
 }
 
-/** Preserve the lane's offered order. Stale evidence requests review, not retirement. */
-export function selectVerifiedModel(models: readonly string[], registry: readonly VerifiedModelRegistryEntry[]): { model: string | null; reason: string | null } {
+export type DocsModelStatus = 'current' | 'deprecated' | 'retired';
+/** One model as a provider's docs or changelog describe it. A docs-watch job writes these; nothing here fetches them. */
+export interface DocsModelRecord {
+  provider: string; id: string; status: DocsModelStatus;
+  /** The model the docs say to move to, when they name one. */
+  replacement?: string | null;
+  source_url: string;
+  /** ISO date or timestamp. The newest record for a model wins. */
+  seen_at: string;
+}
+/** A registry entry as the docs check reads it. Lanes, capabilities and added_at are carried, never judged. */
+export interface RegistryModelInput { provider: string; id: string; lanes?: readonly string[]; capabilities?: readonly string[]; added_at?: string | null }
+/** "unknown": the docs list has no record at all for this provider, so nothing can be said. */
+export type DocsVerdict = 'confirmed' | 'deprecated' | 'retired' | 'unconfirmed' | 'unknown';
+export interface DocsCheckRow { provider: string; id: string; lanes: string[]; verdict: DocsVerdict; replacement: string | null; source_url: string | null; seen_at: string | null }
+export interface DocsCheckResult {
+  /** One plain sentence, for the top of `phm models check` and the Models card. */
+  summary: string;
+  counts: Record<DocsVerdict, number>;
+  /** One row per registry entry, sorted by provider then id. */
+  models: DocsCheckRow[];
+  /** Current models in the docs that the registry lacks. */
+  missing: DocsModelRecord[];
+}
+const docsKey = (row: { provider: string; id: string }) => `${row.provider}\n${row.id}`;
+const byProviderId = (a: { provider: string; id: string }, b: { provider: string; id: string }) => docsKey(a) < docsKey(b) ? -1 : docsKey(a) > docsKey(b) ? 1 : 0;
+const some = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+/**
+ * Compare the registry with what provider docs confirm. Pure: both lists are passed in,
+ * and equal inputs give equal output. The CLI, the Models card and the router all use it.
+ */
+export function checkModelsAgainstDocs(registry: readonly RegistryModelInput[], docs: readonly DocsModelRecord[]): DocsCheckResult {
+  const latest = new Map<string, DocsModelRecord>();
+  for (const record of docs) if (record.seen_at > (latest.get(docsKey(record))?.seen_at ?? '')) latest.set(docsKey(record), record);
+  const covered = new Set(docs.map(record => record.provider));
+  const counts: Record<DocsVerdict, number> = { confirmed: 0, deprecated: 0, retired: 0, unconfirmed: 0, unknown: 0 };
+  const models = [...registry].sort(byProviderId).map((entry): DocsCheckRow => {
+    const record = latest.get(docsKey(entry));
+    const verdict: DocsVerdict = !record ? covered.has(entry.provider) ? 'unconfirmed' : 'unknown' : record.status === 'current' ? 'confirmed' : record.status;
+    counts[verdict]++;
+    return { provider: entry.provider, id: entry.id, lanes: [...entry.lanes ?? []].sort(), verdict, replacement: record?.replacement ?? null, source_url: record?.source_url ?? null, seen_at: record?.seen_at ?? null };
+  });
+  const have = new Set(registry.map(docsKey));
+  const missing = [...latest.values()].filter(record => record.status === 'current' && !have.has(docsKey(record))).sort(byProviderId);
+  const routed = (count: number) => some(count, 'model we route to is', 'models we route to are');
+  const parts = [
+    counts.unconfirmed ? `${routed(counts.unconfirmed)} not in any provider's docs` : '',
+    counts.retired ? `${routed(counts.retired)} retired` : '',
+    counts.deprecated ? `${routed(counts.deprecated)} deprecated` : '',
+    counts.unknown ? `${some(counts.unknown, 'model', 'models')} could not be checked (no docs list for the provider)` : '',
+    missing.length ? `${some(missing.length, 'new model shipped and is', 'new models shipped and are')} missing` : '',
+  ].filter(Boolean);
+  const summary = parts.length ? parts.join('; ') : registry.length ? `${registry.length === 1 ? 'The 1 model we route to is' : `All ${registry.length} models we route to are`} confirmed by provider docs` : 'No models are registered';
+  return { summary: `${summary}.`, counts, models, missing };
+}
+
+export const MODEL_DOCS_SCHEMA = 'models.docs.v1';
+/**
+ * The confirmed list a docs-watch job writes: {schema: "models.docs.v1", version: 1, records: DocsModelRecord[]}.
+ * Null means unknown (no file, or another shape), and callers then skip the docs check. A row that is
+ * malformed or whose source is not on the provider's own doc site is dropped.
+ */
+export async function readDocsRecords(opts: ModelVerifyOptions = {}): Promise<DocsModelRecord[] | null> {
+  const path = homeFile('model-docs.json', opts.docsPath, opts);
+  const raw = path === null ? null : await readJson(path).catch(() => null);
+  if (!object(raw) || raw.schema !== MODEL_DOCS_SCHEMA || raw.version !== 1 || !Array.isArray(raw.records)) return null;
+  return raw.records.flatMap((row): DocsModelRecord[] => {
+    if (!object(row)) return [];
+    const { provider, id, status, replacement = null, source_url, seen_at } = row;
+    return typeof provider === 'string' && typeof id === 'string' && MODEL_ID.test(id)
+      && (status === 'current' || status === 'deprecated' || status === 'retired')
+      && (replacement === null || typeof replacement === 'string' && MODEL_ID.test(replacement))
+      && typeof source_url === 'string' && !sourceHostError(provider, source_url)
+      && typeof seen_at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(seen_at) && Number.isFinite(Date.parse(seen_at))
+      ? [{ provider, id, status, replacement, source_url, seen_at }] : [];
+  });
+}
+
+/**
+ * Preserve the lane's offered order. Stale evidence requests review, not retirement.
+ * With a docs list, a verified model that provider docs call retired, or do not name, is skipped too;
+ * docs can only take a model away, never make an unverified one routable.
+ */
+export function selectVerifiedModel(models: readonly string[], registry: readonly VerifiedModelRegistryEntry[], docs?: readonly DocsModelRecord[] | null): { model: string | null; reason: string | null } {
   const skipped: string[] = [];
+  const refused = new Map<string, string>();
+  for (const row of docs?.length ? checkModelsAgainstDocs(registry, docs).models : []) {
+    if (row.verdict === 'retired') refused.set(row.id, 'retired in provider docs');
+    else if (row.verdict === 'unconfirmed') refused.set(row.id, 'not in provider docs');
+  }
   for (const model of [...new Set(models)]) {
-    const status = registry.find(entry => entry.id === model)?.status ?? 'unverified';
+    const listed = registry.find(entry => entry.id === model)?.status ?? 'unverified';
+    const status = listed === 'verified' ? refused.get(model) ?? listed : listed;
     if (status === 'verified') return { model, reason: skipped.length ? `${skipped.join(' ')} Using verified model ${model} on the same lane.` : null };
     skipped.push(`Skipped ${model}: ${status}.`);
   }
@@ -203,12 +299,8 @@ export async function verifyModelRegistry(opts: ModelVerifyOptions = {}) {
   }));
   const report = { schema: 'models.verify.v1' as const, results, current_choices: [] as Array<{ key: string; model: string | null; status: ModelStatus }>, ok: false, error: null as string | null };
   try {
-    const models = await readJson(join(opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'models.json'));
-    if (!object(models)) throw new Error('Invalid choices');
-    report.current_choices = Object.keys(models).sort().filter(key => key !== 'effort' && !key.startsWith('effort.') && !key.startsWith('mode.')).map(key => {
-      const model = typeof models[key] === 'string' ? models[key].trim() : null;
-      return { key, model, status: entries.find(entry => entry.id === model)?.status ?? 'unverified' };
-    });
+    report.current_choices = (await readRouterChoices(opts)).sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+      .map(({ key, model }) => ({ key, model, status: entries.find(entry => entry.id === model)?.status ?? 'unverified' }));
     report.ok = report.current_choices.every(choice => choice.status === 'verified');
   } catch { report.error = 'Cannot read or validate models.json; current router choices are unknown.'; }
   return report;

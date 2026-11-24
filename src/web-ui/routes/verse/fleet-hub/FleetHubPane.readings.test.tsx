@@ -32,3 +32,17 @@ it('fills live readings on the usage and host tiles', async () => {
   expect(await screen.findByText('93% personal')).toBeInTheDocument();
   expect(screen.getByText('41.3 GB free · 12% mem')).toBeInTheDocument();
 });
+
+it.each([
+  ['blocked', 'starts blocked: host busy (load 77, fleet owns 0.7) · pacing window in ~4 min · 10 of 48 running'],
+  ['settling', 'starts settling: waiting between starts · next start in ~4 min · 10 of 48 running'],
+  ['open', 'starts open: guard allows a start · 10 of 48 running'],
+  ['unknown', 'starts unknown: admission file older than 5 min'],
+])('shows the shared API summary for %s starts in the Fleet overview', async (state, summary) => {
+  const fetcher = vi.fn(async (input: string) => Response.json(input.includes('/api/verse/fleet/admission') ? { state, summary } : fixture));
+  vi.stubGlobal('fetch', fetcher);
+  render(<FleetHubPane visible />);
+  expect(await screen.findByText(summary)).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Job starts' })).toHaveTextContent(summary);
+  expect(fetcher.mock.calls.some(([path]) => path.includes('/api/verse/fleet/admission'))).toBe(true);
+});

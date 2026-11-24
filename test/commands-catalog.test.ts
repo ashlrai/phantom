@@ -122,3 +122,14 @@ describe('GET /api/verse/commands', () => {
     expect(result.run).not.toHaveBeenCalled();
   });
 });
+
+
+it('an optional-only command alternative stays bare without hiding required input', () => {
+  const rows = buildCommandCatalog([
+    { cmd: 'map [--json] | map edges [--since 10m]', desc: 'Read the map.' },
+    { cmd: 'inspect <path> | <id>', desc: 'Inspect an item.' },
+  ]);
+  expect(rows[0]).toMatchObject({ name: 'map', changesState: false, needsInput: false });
+  expect(commandLine(rows[0]!)).toBe('phm map');
+  expect(rows[1]).toMatchObject({ name: 'inspect', changesState: true, needsInput: true });
+});

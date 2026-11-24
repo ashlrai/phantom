@@ -17,9 +17,15 @@
  * a timed-out scan reports partial bytes with complete=false, never a fake
  * exact total.
  */
-import { readdirSync, statfsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { readdirSync, statSync, statfsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { buildDiskPlanReport, formatDiskPlan, type DiskPlanReportV1, type WorktreeRecord, type WorktreeResult } from '../core/disk-maint/removal-plan.js';
+import { ledgerPhase } from '../core/fleet/empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../core/fleet/jobs-ledger-dialect.js';
+import { HOST_DISK_FLOOR_GB, diskTrend, type HostDiskTrend } from '../core/fleet/host-top-view.js';
+import { readDiskSamples } from '../core/fleet/host-top.js';
 import { readSource, type Source } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import {
@@ -35,7 +41,7 @@ const TEMP_WORKTREE_NAME = /^(vwt|mwt|mergewt|wt)-[0-9a-f]+$/;
 const SKIP_DIR = (name: string): boolean =>
   name.startsWith('.') || name.startsWith('guardian-') || name === '..' ||
   name.includes('/') || name.includes('\\');
-const USAGE = 'usage: phm disk [--wt-dir <abs>] [--runs-dir <abs>] [--tmp-dir <abs>] [--json]';
+const USAGE = 'usage: phm disk [--plan] [--min-age-hours <n>] [--wt-dir <abs>] [--runs-dir <abs>] [--tmp-dir <abs>] [--json]';
 
 type Output = { log: (message: string) => void; error: (message: string) => void };
 type JobsSource = { state: Source; text: string };
@@ -67,6 +73,8 @@ export interface DiskEntry {
   /** false when the size scan bounded out: bytes is then a partial floor. */
   complete: boolean;
   state: WorktreeState;
+  /** The ledger's own outcome word, lowercased; null when there is no record or the ledger is unread. */
+  ledgerState: string | null;
   /** Hours since the job's last finish row; null when unprovable. */
   ageHours: number | null;
   /** Pinned in kept-worktrees.json, or kept because the pin file was unreadable. */
@@ -103,36 +111,44 @@ const round1 = (n: number): number => Math.round(n * 10) / 10;
 const HOUR_MS = 3_600_000;
 
 /**
- * Latest outcome and finish rows after the last launch per job id: the last row
- * of each event type wins, outcome.state (or .outcome) lowercased, finish.ts
- * parsed for age, finish.empty for an empty run. Torn lines are skipped,
- * never echoed.
+ * Latest outcome and finish rows after the last launch per job id, read in the
+ * jobs-ledger dialect (job|job_id|jobId|id, event|type|kind, phase aliases,
+ * timestamp aliases and eventless reconciler rows). The last resolved outcome
+ * wins — a phase-less outcome row records nothing rather than overwriting a
+ * merge — and finish.empty marks an empty run. Publish claims and other
+ * operational rows are not lifecycle rows. Torn lines are skipped, never
+ * echoed.
  */
 export function parseJobLedger(
   text: string,
 ): Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }> {
-  const latest = new Map<string, { outcome?: Record<string, unknown>; finish?: Record<string, unknown> }>();
+  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
   for (const line of text.split(/\r?\n/)) {
     try {
       const row = JSON.parse(line) as Record<string, unknown> | null;
       if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-      const id = row.job ?? row.job_id ?? row.id;
-      if (typeof id !== 'string') continue;
-      if (row.event === 'launch') { latest.delete(id); continue; }
-      if (row.event !== 'outcome' && row.event !== 'finish') continue;
-      const entry = latest.get(id) ?? {};
-      entry[row.event] = row;
+      const id = ledgerJobId(row);
+      if (id === null) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (event === 'launch') { latest.delete(id); continue; }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (event !== 'finish' && state === null) continue;
+      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
+      if (event === 'finish') {
+        entry.finishMs = ledgerEventTs(row, phase);
+        entry.finishEmpty = row['empty'] === true;
+      }
+      if (state !== null) entry.outcome = state.toLowerCase();
       latest.set(id, entry);
     } catch { /* skip damaged rows; never echo their contents */ }
   }
   const records = new Map<string, { state: string | null; finishMs: number | null; finishEmpty: boolean }>();
-  for (const [id, { outcome, finish }] of latest) {
-    const state = outcome ? String(outcome.state ?? outcome.outcome ?? '').toLowerCase() : null;
-    const at = typeof finish?.ts === 'string' ? Date.parse(finish.ts) : NaN;
+  for (const [id, entry] of latest) {
     records.set(id, {
-      state: state || null,
-      finishMs: Number.isFinite(at) ? at : null,
-      finishEmpty: finish?.empty === true,
+      state: entry.outcome ?? null,
+      finishMs: entry.finishMs,
+      finishEmpty: entry.finishEmpty,
     });
   }
   return records;
@@ -221,7 +237,7 @@ export async function readDiskReport(deps: DiskDeps = {}): Promise<DiskReportV1>
       const pinned = kept(dir);
       const reclaimable = (state === 'merged' || state === 'empty') &&
         ageHours !== null && ageHours > DISK_REAPABLE_AGE_HOURS && !pinned;
-      entries.push({ name, bytes: measured.bytes, complete: measured.complete, state, ageHours, kept: pinned, reclaimable });
+      entries.push({ name, bytes: measured.bytes, complete: measured.complete, state, ledgerState: ledger === null ? null : record?.state ?? null, ageHours, kept: pinned, reclaimable });
     }
     // Biggest first: the folder that frees the most disk reads first.
     entries.sort((a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name));
@@ -296,6 +312,91 @@ export async function readDiskReport(deps: DiskDeps = {}): Promise<DiskReportV1>
       reclaimableBytes: reclaimable.reduce((sum, e) => sum + e.bytes, 0),
     },
   };
+}
+
+/** Facts git and the file system give about one folder; any that cannot be read stay unknown. */
+export interface FolderFacts { modifiedMs: number | null; uncommitted: 'yes' | 'no' | 'unknown'; commitsAhead: number | null }
+
+const git = (dir: string, args: string[]): Promise<string | null> => new Promise(resolveText => {
+  try {
+    execFile('git', ['-C', dir, ...args], { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) =>
+      resolveText(error ? null : stdout));
+  } catch { resolveText(null); }
+});
+
+/** Read-only: stat plus `git status` and `git rev-list`. Never writes to the folder. */
+export async function inspectFolder(dir: string): Promise<FolderFacts> {
+  let modifiedMs: number | null = null;
+  try { modifiedMs = statSync(dir).mtimeMs; } catch { /* unknown */ }
+  const status = await git(dir, ['status', '--porcelain']);
+  let commitsAhead: number | null = null;
+  for (const base of ['origin/master', 'origin/main', 'master', 'main']) {
+    if (await git(dir, ['rev-parse', '--verify', '--quiet', base]) === null) continue;
+    const count = Number((await git(dir, ['rev-list', '--count', `${base}..HEAD`]))?.trim());
+    commitsAhead = Number.isSafeInteger(count) && count >= 0 ? count : null;
+    break;
+  }
+  return { modifiedMs, uncommitted: status === null ? 'unknown' : status.trim() === '' ? 'no' : 'yes', commitsAhead };
+}
+
+/** The ledger's words as plan results. A word this does not know stays unknown, never guessed. */
+export function planResultOf(entry: Pick<DiskEntry, 'state' | 'ledgerState'>): WorktreeResult {
+  if (entry.state === 'merged') return 'pr-merged';
+  if (entry.state === 'empty') return 'empty';
+  if (entry.state === 'open') return 'pr-open';
+  const word = entry.ledgerState ?? '';
+  if (word === 'closed') return 'pr-closed';
+  if (word === 'running') return 'running';
+  if (word.includes('abort')) return 'publish-aborted';
+  return 'unknown';
+}
+
+export interface DiskPlanDeps extends DiskDeps {
+  minAgeHours?: number;
+  /** Injected per-folder facts; default reads the folder with stat and git. */
+  inspect?: (dir: string) => FolderFacts | Promise<FolderFacts>;
+  /** Injected free-disk trend; default reads the sampler history plus one live reading. */
+  trend?: () => HostDiskTrend | Promise<HostDiskTrend>;
+}
+
+/** Where the disk is going and which finished folders are safe to remove. Reads only. */
+export async function readDiskPlan(deps: DiskPlanDeps = {}): Promise<DiskPlanReportV1> {
+  const nowMs = deps.now ?? Date.now();
+  const disk = await readDiskReport(deps);
+  const inspect = deps.inspect ?? inspectFolder;
+  const gaps: string[] = [];
+  if (disk.worktrees === null || disk.runsWorktrees === null) gaps.push('A worktree folder could not be listed, so its jobs are missing here.');
+  if (disk.jobsSource !== 'healthy') gaps.push('The jobs ledger could not be read, so every result is unknown.');
+  if (!disk.totals.complete) gaps.push('Some sizes are partial or unmeasured.');
+  const items = [
+    ...(disk.worktrees ?? []).map(entry => ({ entry, dir: join(disk.roots.worktrees, entry.name) })),
+    ...(disk.runsWorktrees ?? []).map(entry => ({ entry, dir: join(disk.roots.runsWorktrees, entry.name) })),
+  ];
+  const records: WorktreeRecord[] = [];
+  for (let i = 0; i < items.length; i += 4) {
+    records.push(...await Promise.all(items.slice(i, i + 4).map(async ({ entry, dir }): Promise<WorktreeRecord> => {
+      let facts: FolderFacts;
+      try { facts = await inspect(dir); } catch { facts = { modifiedMs: null, uncommitted: 'unknown', commitsAhead: null }; }
+      return {
+        jobId: entry.name,
+        bytes: entry.complete ? entry.bytes : null,
+        modifiedMs: facts.modifiedMs,
+        result: planResultOf(entry),
+        uncommitted: facts.uncommitted,
+        // A pinned folder is never offered: say it is unknown rather than guess the pin away.
+        commitsAhead: entry.kept ? null : facts.commitsAhead,
+      };
+    })));
+  }
+  let trend: HostDiskTrend;
+  try {
+    trend = await (deps.trend ?? (async () => diskTrend(
+      await readDiskSamples(deps.runsRoot ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs')),
+      HOST_DISK_FLOOR_GB, nowMs)))();
+  } catch {
+    trend = diskTrend([], HOST_DISK_FLOOR_GB, nowMs);
+  }
+  return buildDiskPlanReport(records, trend, { nowMs, minAgeHours: deps.minAgeHours, gaps });
 }
 
 /** Collapse the operator's home to `~` for display; the JSON side uses sanitizePublicJson. */
@@ -384,16 +485,25 @@ export function formatDiskReport(report: DiskReportV1): string[] {
 export async function cmdDisk(args: string[], deps: DiskDeps = {}): Promise<number> {
   const output = deps.output ?? { log: console.log, error: console.error };
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    output.log('phm disk [--wt-dir <abs>] [--runs-dir <abs>] [--tmp-dir <abs>] [--json]\n' +
+    output.log('phm disk [--plan] [--min-age-hours <n>] [--wt-dir <abs>] [--runs-dir <abs>] [--tmp-dir <abs>] [--json]\n' +
       'Read-only disk report for agent worktrees: each folder\'s size, its\n' +
       'lifecycle state from the jobs ledger and a plain safe-to-clean-up\n' +
       'verdict, plus quarantine, leftover temp folders and free space.\n' +
       'Merged (or empty-finished) worktrees older than one hour count as\n' +
       'reclaimable unless pinned in ~/.ashlr/kept-worktrees.json. Unread\n' +
-      'sources print unknown and keep every worktree. Deletes nothing.');
+      'sources print unknown and keep every worktree. Deletes nothing.\n' +
+      '--plan opens with one sentence: free disk, how fast it falls, hours to\n' +
+      'the floor and how much finished job folders could free. It lists the\n' +
+      'ten largest folders and a removal plan: merged, closed or empty, no\n' +
+      'uncommitted changes, nothing ahead of base, not running, older than\n' +
+      '--min-age-hours (default 6). Anything with an unknown field is listed\n' +
+      'as not sure and kept; folders whose publish aborted after a push are\n' +
+      'listed as needing recovery first. The plan only prints; it removes nothing.');
     return 0;
   }
   let json = false;
+  let plan = false;
+  let minAgeHours: number | undefined;
   let wtRoot = deps.wtRoot;
   let runsRoot = deps.runsRoot;
   let tmpRoot = deps.tmpRoot;
@@ -403,7 +513,12 @@ export async function cmdDisk(args: string[], deps: DiskDeps = {}): Promise<numb
     if (seen.has(arg)) { output.error(`error: duplicate option\n${USAGE}`); return 2; }
     seen.add(arg);
     if (arg === '--json') json = true;
-    else if (arg === '--wt-dir' || arg === '--runs-dir' || arg === '--tmp-dir') {
+    else if (arg === '--plan') plan = true;
+    else if (arg === '--min-age-hours') {
+      const value = Number(args[++i]);
+      if (!Number.isFinite(value) || value < 0) { output.error(`error: --min-age-hours needs a number of hours\n${USAGE}`); return 2; }
+      minAgeHours = value;
+    } else if (arg === '--wt-dir' || arg === '--runs-dir' || arg === '--tmp-dir') {
       const value = args[++i];
       if (!value || !isAbsolute(value)) {
         output.error(`error: ${arg} needs an absolute path\n${USAGE}`);
@@ -416,6 +531,13 @@ export async function cmdDisk(args: string[], deps: DiskDeps = {}): Promise<numb
       output.error(`error: ${arg.startsWith('-') ? 'unknown option' : 'unexpected argument'}: ${arg}\n${USAGE}`);
       return 2;
     }
+  }
+  if (minAgeHours !== undefined && !plan) { output.error(`error: --min-age-hours goes with --plan\n${USAGE}`); return 2; }
+  if (plan) {
+    const report = await readDiskPlan({ ...deps, wtRoot, runsRoot, tmpRoot, minAgeHours });
+    if (json) output.log(JSON.stringify(sanitizePublicJson(report)));
+    else for (const line of formatDiskPlan(report)) output.log(line);
+    return 0;
   }
   const report = await readDiskReport({ ...deps, wtRoot, runsRoot, tmpRoot });
   if (json) output.log(JSON.stringify(sanitizePublicJson(report)));

@@ -56,6 +56,8 @@
   .intro h1 { font:700 clamp(48px,7.5vw,94px)/.97 var(--font-display); letter-spacing:-.065em; max-width:11ch; margin:13px 0 24px; text-wrap:balance; }
   .intro p { max-width:62ch; margin:0; color:var(--muted); font-size:18px; }
   .intro strong { color:var(--ink); }
+  .intro p.mission { margin-top:18px; font-size:16px; }
+  .intro p.mission a { color:var(--accent); }
   .intro .intro-actions { display:flex; flex-wrap:wrap; gap:14px 24px; margin-top:28px; font-size:14px; font-weight:600; }
   .intro-actions a:first-child { color:var(--accent); }
   .total { border-top:2px solid var(--ink); padding-top:14px; align-self:end; }
@@ -99,6 +101,7 @@
   .project h3 a:hover { color:var(--accent); text-decoration:underline; }
   .project .role { display:block; margin-top:6px; color:var(--muted); font:500 11px var(--font-mono); text-transform:uppercase; letter-spacing:.06em; }
   .project p { margin:0; color:var(--muted); max-width:53ch; }
+  .project p .contribute { white-space:nowrap; }
   .project .stars { font:700 25px var(--font-display); text-align:right; white-space:nowrap; }
   .project .stars small { display:block; color:var(--muted); font:500 11px var(--font-mono); }
   .project[data-repo="phantom"] { border-top:3px solid var(--accent); padding-top:29px; }
@@ -139,7 +142,7 @@
     <img src="/assets/phantom-mark.svg" width="26" height="26" alt="" />
     Phantom
   </a>
-  <nav class="header-links" aria-label="Site"><a href="/">Product</a><a href="#projects">Projects</a><a href="https://github.com/ashlrai">GitHub organization</a></nav>
+  <nav class="header-links" aria-label="Site"><a href="/">Product</a><a href="#projects">Projects</a><a href="#companions">Companions</a><a href="https://github.com/ashlrai">GitHub organization</a></nav>
 </div></header>
 <main id="main">
   <section class="wrap intro" aria-labelledby="page-title">
@@ -147,6 +150,7 @@
       <div class="eyebrow">Phantom / open engineering</div>
       <h1 id="page-title">Tools that make agents useful.</h1>
       <p><strong>Phantom is the command center.</strong> The other repositories solve specific parts of the work: keeping secrets out of model context, binding the right account, turning voice into usable instructions, coding across providers, and moving a web app to native SwiftUI. Each is its own public project.</p>
+      <p class="mission"><strong>The mission: chasing open-source RSI (recursive self-improvement).</strong> Together these tools form an autonomous, code-first software factory run by agents. Agents pick work, open pull requests, merge them and ship releases through each repository's sanctioned workflow. The human owner acts as a passive board member, setting direction and stepping in only for passwords, 2FA, device approvals and payments. <a href="https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md">Read the strategy</a> · <a href="https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom">How agents work on Phantom</a></p>
       <div class="intro-actions"><a href="/">Explore Phantom</a><a href="https://github.com/ashlrai/phantom">Star Phantom on GitHub</a></div>
     </div>
     <div class="total" aria-label="Star snapshot"><strong id="total-stars">—</strong><span>sum of repository stars across the six projects below</span><small>GitHub snapshot: <span id="snapshot-date">loading</span></small></div>
@@ -186,21 +190,29 @@
 
   <section class="wrap projects" id="projects" aria-labelledby="projects-title">
     <div class="section-top"><div><div class="eyebrow">The six selected repositories</div><h2 id="projects-title">Pick the right tool.</h2></div><p>Independent projects with different jobs. Start with the one that solves your immediate problem.</p></div>
-    <article class="project" data-repo="phantom"><span class="number">01</span><div><h3><a href="https://github.com/ashlrai/phantom">Phantom</a></h3><span class="role">Command center</span></div><p>One workbench for coding-agent seats, local models, a Leader, and a fleet bounded by signed authority.</p><span class="stars"><span data-repo-stars="phantom">—</span><small>stars</small></span></article>
-    <article class="project" data-repo="phantom-secrets"><span class="number">02</span><div><h3><a href="https://github.com/ashlrai/phantom-secrets">Phantom Secrets</a></h3><span class="role">Secret boundary</span></div><p>Keep real secrets out of agent prompts by giving tools local, replaceable handles instead.</p><span class="stars"><span data-repo-stars="phantom-secrets">—</span><small>stars</small></span></article>
-    <article class="project" data-repo="locus"><span class="number">03</span><div><h3><a href="https://github.com/ashlrai/locus">Locus</a></h3><span class="role">Account identity</span></div><p>Bind agent tools to the intended account and tenant before a command can act.</p><span class="stars"><span data-repo-stars="locus">—</span><small>stars</small></span></article>
-    <article class="project" data-repo="lexicon"><span class="number">04</span><div><h3><a href="https://github.com/ashlrai/lexicon">Lexicon</a></h3><span class="role">Voice vocabulary</span></div><p>Correct the names and technical words speech recognition gets wrong before they reach an agent.</p><span class="stars"><span data-repo-stars="lexicon">—</span><small>stars</small></span></article>
+    <article class="project" data-repo="phantom"><span class="number">01</span><div><h3><a href="https://github.com/ashlrai/phantom">Phantom</a></h3><span class="role">Command center</span></div><p>One workbench for coding-agent seats, local models, a Leader, and a fleet bounded by signed authority. <a class="contribute" href="https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md">How to contribute</a></p><span class="stars"><span data-repo-stars="phantom">—</span><small>stars</small></span></article>
+    <article class="project" data-repo="phantom-secrets"><span class="number">02</span><div><h3><a href="https://github.com/ashlrai/phantom-secrets">Phantom Secrets</a></h3><span class="role">Secret boundary</span></div><p>Keep real secrets out of agent prompts by giving tools local, replaceable handles instead. <a class="contribute" href="https://github.com/ashlrai/phantom-secrets/blob/main/CONTRIBUTING.md#contribute-with-an-agent">How to contribute</a></p><span class="stars"><span data-repo-stars="phantom-secrets">—</span><small>stars</small></span></article>
+    <article class="project" data-repo="locus"><span class="number">03</span><div><h3><a href="https://github.com/ashlrai/locus">Locus</a></h3><span class="role">Account identity</span></div><p>Bind agent tools to the intended account and tenant before a command can act. <a class="contribute" href="https://github.com/ashlrai/locus/blob/main/CONTRIBUTING.md#contribute-with-an-agent">How to contribute</a></p><span class="stars"><span data-repo-stars="locus">—</span><small>stars</small></span></article>
+    <article class="project" data-repo="lexicon"><span class="number">04</span><div><h3><a href="https://github.com/ashlrai/lexicon">Lexicon</a></h3><span class="role">Voice vocabulary</span></div><p>Correct the names and technical words speech recognition gets wrong before they reach an agent. <a class="contribute" href="https://github.com/ashlrai/lexicon/blob/main/CONTRIBUTING.md#contribute-with-an-agent">How to contribute</a></p><span class="stars"><span data-repo-stars="lexicon">—</span><small>stars</small></span></article>
     <article class="project" data-repo="ashlrcode"><span class="number">05</span><div><h3><a href="https://github.com/ashlrai/ashlrcode">AshlrCode</a></h3><span class="role">Coding agent CLI</span></div><p>Work in the terminal with a coding agent that can use tools, skills, and multiple model providers.</p><span class="stars"><span data-repo-stars="ashlrcode">—</span><small>stars</small></span></article>
     <article class="project" data-repo="morphkit"><span class="number">06</span><div><h3><a href="https://github.com/ashlrai/morphkit">Morphkit</a></h3><span class="role">Web to SwiftUI</span></div><p>Translate a TypeScript or React app into a native SwiftUI starting point for iOS.</p><span class="stars"><span data-repo-stars="morphkit">—</span><small>stars</small></span></article>
+  </section>
+
+  <section class="wrap projects" id="companions" aria-labelledby="companions-title">
+    <div class="section-top"><div><div class="eyebrow">More agent tooling</div><h2 id="companions-title">Companions for agent sessions.</h2></div><p>Also independent and installed separately. They are not in the star chart above; open each repository for its current state.</p></div>
+    <article class="project" data-companion="ashlr-plugin"><span class="number">07</span><div><h3><a href="https://github.com/ashlrai/ashlr-plugin">Ashlr Plugin</a></h3><span class="role">Compact tool results</span></div><p>Give coding agents compact tool results and keep a local usage ledger. <a class="contribute" href="https://github.com/ashlrai/ashlr-plugin/blob/main/CONTRIBUTING.md#contribute-from-a-fork-with-your-own-agent">How to contribute</a></p></article>
+    <article class="project" data-companion="ashlr-md"><span class="number">08</span><div><h3><a href="https://github.com/ashlrai/ashlr-md">Ashlr MD</a></h3><span class="role">Markdown</span></div><p>Edit Markdown through CLI and MCP interfaces. <a class="contribute" href="https://github.com/ashlrai/ashlr-md/blob/main/CONTRIBUTING.md#contribute-with-an-agent">How to contribute</a></p></article>
+    <article class="project" data-companion="ashlr-stack"><span class="number">09</span><div><h3><a href="https://github.com/ashlrai/ashlr-stack">Ashlr Stack</a></h3><span class="role">Service setup</span></div><p>Configure supported development services through CLI and MCP. <a class="contribute" href="https://github.com/ashlrai/ashlr-stack/blob/main/CONTRIBUTING.md#contribute-with-an-agent">How to contribute</a></p></article>
+    <p class="method">Phantom can reach companions through its MCP gateway; registration alone does not prove a tool is ready or authorized. See the <a href="https://github.com/ashlrai/phantom/blob/master/docs/COMPANIONS.md">companion setup guide</a>.</p>
   </section>
 
   <section class="wrap next" aria-label="Get involved">
     <div><h2>Start building in Phantom.</h2><p>Install the CLI, open the console, and follow the guide for your first seat.</p><a href="/#start">Install and get started</a></div>
     <div><h2>Pick a use-case guide.</h2><p>Own accounts, local models, signed autonomy and review workflows, each claim linked to its source.</p><a href="/use-cases/own-accounts">Browse the guides</a></div>
-    <div><h2>Make a project better.</h2><p>Each repository has its own source, issues, and contribution path. Pick one that matters to you.</p><a href="https://github.com/orgs/ashlrai/repositories">Browse all public repositories</a></div>
+    <div><h2>Make a project better.</h2><p>Each repository has its own source, issues, and contribution path. A card's "How to contribute" link opens that repository's guide for working with an agent. For Phantom, <a href="https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md">contribute with an agent</a> from a fork. The same guide <a href="https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md#8-the-other-ecosystem-repositories">compares the other six repositories</a>: toolchain, pre-push check and required check.</p><a href="https://github.com/orgs/ashlrai/repositories">Browse all public repositories</a></div>
   </section>
 </main>
-<footer><div class="wrap"><span>Ashlr engineering ecosystem · six selected public repositories</span><span><a href="/">Phantom</a> · <a href="https://github.com/ashlrai">GitHub</a></span></div></footer>
+<footer><div class="wrap"><span>Ashlr engineering ecosystem · six charted repositories and three companions</span><span><a href="/">Phantom</a> · <a href="https://github.com/ashlrai">GitHub</a></span></div></footer>
 <script src="assets/star-history.js"></script>
 <script src="assets/ecosystem.js"></script>
 </body>

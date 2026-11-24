@@ -9,6 +9,6 @@ function PoolsGlyph({ size = 16 }: { size?: number }) {
 
 registerPane({
   id: 'fleet-pools', title: 'Pools', icon: PoolsGlyph, needsSession: false,
-  description: 'What would go unused at reset, most at risk first.',
+  description: 'Every pool on one board: used, left, reset, burn, running jobs and per-model windows, most at risk of going unused first.',
   component: lazyPane(() => import('./FleetPoolsPane.js').then(m => m.FleetPoolsPane)),
 });

@@ -15,7 +15,9 @@ describe('fleet health guide', () => {
     expect(readFileSync(join(root, 'docs/README.md'), 'utf8'))
       .toContain('](https://github.com/ashlrai/phantom/blob/master/docs/fleet-health.md)');
     expect(page).toContain('Unknown does not mean healthy');
-    expect(page).toContain('not an `ok`/`warn`/`red` report');
+    expect(page).toContain('a `name: "guardian"` row with `level`, `reason` and one');
+    expect(page).toContain('`nextStep`');
+    expect(page).toContain('over 30 minutes old');
     expect(examples).toEqual([
       'fleet doctor --json', 'fleet status --json', 'fleet lanes --json',
       'fleet idle-lanes --json', 'fleet api-pools --json', 'fleet load --json',

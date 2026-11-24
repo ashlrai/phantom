@@ -31,3 +31,5 @@
 .facts dt { color: var(--text-secondary); }
 .facts dd { margin: 0; }
 .detailText { margin: 0; white-space: pre-wrap; }
+/* Phone width: every control is a 44 px thumb target (held by `phm mobile check`). */
+@media (max-width: 479.98px) { .root button, .root input, .root select, .root textarea { min-height: 2.75rem; } }

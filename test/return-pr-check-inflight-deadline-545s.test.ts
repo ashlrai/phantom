@@ -4,7 +4,7 @@ import { checkReturnPrs, type ReturnEvidenceRow } from '../src/core/fleet/return
 const rows: ReturnEvidenceRow[] = [1, 2, 3].map(pr => ({
   claimId: `fake-${pr}`, repo: 'example/demo', result: 'VERIFIED', evidenceKind: 'pr', pr, head: `abc123${pr}`,
 }));
-const body = JSON.stringify({ state: 'open', head: { sha: 'abc1234' } });
+const body = JSON.stringify({ state: 'open', head: { sha: 'abc1234000000000000000000000000000000000' } });
 function deferred() {
   let resolve!: (value: string) => void;
   let reject!: (reason: Error) => void;
@@ -14,6 +14,16 @@ function deferred() {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('in-flight return check deadline', () => {
+  it.each([100, 101])('rejects a read settling at clock deadline %s before the timer runs', async elapsed => {
+    let clock = 0;
+    const gh = vi.fn(async () => { clock = elapsed; return body; });
+    const report = await checkReturnPrs(rows, { gh, now: () => clock, timeoutMs: 100 });
+    expect(report.checked.map(row => [row.verdict, row.reason])).toEqual([
+      ['unknown', 'deadline'], ['unknown', 'deadline'], ['unknown', 'deadline'],
+    ]);
+    expect(gh).toHaveBeenCalledTimes(1);
+  });
+
   it('returns all selected provenance at the deadline and ignores a late success', async () => {
     vi.useFakeTimers();
     const pending = deferred();

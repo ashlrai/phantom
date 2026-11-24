@@ -76,7 +76,7 @@ describe('claim notice binding outage replay (RQ-PHX-BINDINGOUTAGEREPLAY488S)', 
     const f = fixture();
     await f.baseline();
     const claim = f.claim(true);
-    const key = JSON.stringify(['ASSIGNED', claim.id, HEAD]);
+    const key = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, HEAD]);
     const original = readFileSync(f.paths.bindings);
     const prevBefore = readFileSync(f.paths.prev);
 

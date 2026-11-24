@@ -15,6 +15,9 @@ const BUNDLE = /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$/;
 const OPEN_BIN = '/usr/bin/open';
 const TIMEOUT_MS = 15_000;
 
+/** The exact command the launcher runs, for `--dry-run`. */
+export const openCommand = (bundleId: string): string => `${OPEN_BIN} -b ${bundleId}`;
+
 export type ExecFileFn = (
   file: string,
   args: readonly string[],
