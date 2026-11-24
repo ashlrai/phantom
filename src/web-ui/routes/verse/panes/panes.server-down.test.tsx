@@ -8,10 +8,6 @@
  *
  * Sibling of panes.absent.test.tsx (same bar, same registry walk, helpers
  * copied rather than imported).
- *
- * A pane that fails is NOT a waiver: it goes in KNOWN_FAILURES (an it.todo
- * naming pane id and reason) and is recorded in BRIDGE_NOTES.md. An entry
- * is a bug report; keep the list as short as the truth allows.
  */
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -53,17 +49,6 @@ const SCENARIOS = [
   { id: 'network', label: 'every read fails at the network', install: () => stubFetch(() => { throw new TypeError('Failed to fetch'); }) },
 ] as const;
 
-/**
- * Panes that do not meet the bar yet — `${paneId}/${scenarioId}` → the
- * failure. An entry is a bug report, not a waiver.
- */
-const KNOWN_FAILURES = new Map<string, string>([
-  // ChecksPanel prints the raw refusal body: with a 500 { error: 'internal' }
-  // the whole pane is the 8-char string "internal" (ChecksPanel →
-  // describeContextError prefers ApiError.detail). Owned by another job.
-  ['checks/all-500', 'pane renders only the raw server string "internal" (8 visible chars) — BRIDGE_NOTES.md'],
-]);
-
 /** Visible text, skipping anything hidden by attribute or computed style (every-pane-sweep's measure). */
 function visibleText(container: HTMLElement): string {
   return Array.from(container.querySelectorAll('*'))
@@ -95,12 +80,7 @@ describe('every registered dock pane, local server down', () => {
 
   for (const pane of PANES) {
     for (const scenario of SCENARIOS) {
-      const known = KNOWN_FAILURES.get(`${pane.id}/${scenario.id}`);
       const name = `"${pane.id}" stays honest with ${scenario.label}`;
-      if (known !== undefined) {
-        it.todo(`${name} — ${known}`);
-        continue;
-      }
       it(name, async () => {
         vi.useFakeTimers();
         const consoleError = vi.spyOn(console, 'error');

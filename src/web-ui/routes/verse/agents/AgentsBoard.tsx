@@ -332,11 +332,19 @@ export function AgentsBoard() {
       ) : null}
 
       <div className={styles.body} data-details={details ? 'open' : undefined}>
-        {read.data && allCards.length === 0 ? (
+        {!read.data ? (
+          read.error ? null : <p className={styles.panelNote} role="status" aria-busy="true">Loading agents…</p>
+        ) : allCards.length === 0 ? (
           <EmptyState
             title="No agents yet"
             body="Start one with ⌘N: it gets its own worktree and branch, runs the repo’s setup, and shows up here while it works."
             action={<Button variant="primary" size="sm" onClick={() => openNewAgent(false)}>New agent</Button>}
+          />
+        ) : cards.length === 0 ? (
+          <EmptyState
+            title="No agents match these filters"
+            body="Clear the repository, text and Done history filters to see all saved agents and chats."
+            action={<Button variant="subtle" size="sm" onClick={() => setFilter({ repo: null, query: '', doneWithinMs: null })}>Clear filters</Button>}
           />
         ) : (
           <div className={styles.board} ref={boardRef} onKeyDown={onKey} aria-label="Agent board" aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space x e r s">
@@ -415,6 +423,13 @@ interface ColumnProps {
   onToggleSelect: (id: string) => void;
 }
 
+const EMPTY_COLUMN_HINT: Record<AgentColumn, string> = {
+  working: 'Running agents appear here. Start one with New agent.',
+  'needs-you': 'Approvals and blocked agents appear here when they need your input.',
+  review: 'Finished work appears here when it is ready for your review.',
+  done: 'Reviewed and idle chats appear here. Use Done history to see older work.',
+};
+
 function BoardColumn({ column, cards, now, cursorId, selected, onFocusCard, onOpen, onDetails, onToggleSelect }: ColumnProps) {
   return (
     <section className={styles.column} data-column={column} aria-label={`${AGENT_COLUMN_LABEL[column]}, ${cards.length}`}>
@@ -437,7 +452,7 @@ function BoardColumn({ column, cards, now, cursorId, selected, onFocusCard, onOp
             />
           </li>
         ))}
-        {cards.length === 0 ? <li className={styles.emptyColumn}>{column === 'needs-you' ? 'Nothing is waiting on you.' : '—'}</li> : null}
+        {cards.length === 0 ? <li className={styles.emptyColumn}>{EMPTY_COLUMN_HINT[column]}</li> : null}
       </ul>
     </section>
   );
