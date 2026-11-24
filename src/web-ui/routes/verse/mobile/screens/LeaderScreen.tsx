@@ -19,6 +19,7 @@ import { formatLeaderDisplayText } from '../../../../../core/vision/leader-displ
  *     A failed send keeps the words in the box.
  */
 import { AsksCard } from '../AsksCard.js';
+import { LaneSupplyLine } from '../../leader/LaneSupplyLine.js';
 import { MasonThreadCard } from '../../mason-thread/MasonThreadCard.js';
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { LeaderAction } from '../../../../../core/vision/leader-types.js';
@@ -600,6 +601,7 @@ export function LeaderScreen() {
           })}
         </Section></div>
       ) : null}
+      <LaneSupplyLine className={styles.laneSupply} />
       <AsksCard />
       <MasonThreadCard />
       <LeaderPasses />

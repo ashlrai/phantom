@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildJobsCost, buildJobsTokens, jobsCostLines, JOB_COST_SCHEMA, JOB_TOKENS_SCHEMA, parseClaudeUsage, parseCodexUsage, parseJobUsage } from '../src/core/fleet/job-tokens.js';
+import { buildJobsCost, buildJobsCoverage, JOB_COVERAGE_SCHEMA, buildJobsTokens, jobsCostLines, JOB_COST_SCHEMA, JOB_TOKENS_SCHEMA, parseClaudeUsage, parseCodexUsage, parseJobUsage } from '../src/core/fleet/job-tokens.js';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/job-tokens/${name}`, import.meta.url), 'utf8');
 const now = Date.parse('2026-11-19T12:00:00Z');
@@ -129,6 +129,40 @@ describe('phm jobs tokens', () => {
       expect(await cmdJobsTokens(['--lane', 'claude', '--json', '--metrics', join(root, 'metrics', 'jobs.jsonl')], undefined, now)).toBe(0);
       expect(JSON.parse(out[0]!)).toMatchObject({ schema: 'jobs.tokens.v1', lane: 'claude', jobs: 1, measured: 1, coverage: 1, tokens_total: 1350, tokens_per_merged_pr: 1350 });
       expect(await cmdJobsTokens(['--json'])).toBe(2);
+    } finally { spy.mockRestore(); err.mockRestore(); }
+  });
+});
+
+describe('phm jobs tokens --coverage', () => {
+  const logs: Record<string, string> = { A1: fixture('json-result.json'), A3: fixture('no-usage.txt'), C2: fixture('codex-usage.txt') };
+  const read = async (path: string): Promise<string | null> => logs[path.split('/').pop()!.replace('.log', '')] ?? null;
+  const lines = [...job('A1', 'claude'), ...job('A3', 'claude'), ...job('C2', 'codex'), ...job('L1', 'local')];
+
+  it('counts measured and unknown jobs per lane', async () => {
+    const report = await buildJobsCoverage(lines, '/runs', 24, now, read);
+    expect(report).toMatchObject({ schema: JOB_COVERAGE_SCHEMA, version: 1, known: true });
+    const by = Object.fromEntries(report.lanes.map(r => [r.lane, r]));
+    expect(by.claude).toMatchObject({ jobs: 2, measured: 1, unknown: 1, coverage: 0.5 });
+    expect(by.codex).toMatchObject({ jobs: 1, measured: 1, unknown: 0, coverage: 1 });
+    expect(by.local).toMatchObject({ jobs: 1, measured: 0, unknown: 1, coverage: 0 });
+    expect(report.total).toMatchObject({ lane: 'all', jobs: 4, measured: 2, unknown: 2 });
+  });
+  it('prints typed JSON and rejects --coverage with --lane', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { cmdJobsTokens } = await import('../src/cli/jobs-tokens.js');
+    const root = mkdtempSync(join(tmpdir(), 'job-cov-'));
+    mkdirSync(join(root, 'metrics'));
+    writeFileSync(join(root, 'metrics', 'jobs.jsonl'), job('A1', 'claude').join('\n') + '\n');
+    writeFileSync(join(root, 'A1.log'), fixture('json-result.json'));
+    const out: string[] = [];
+    const spy = (await import('vitest')).vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    const err = (await import('vitest')).vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await cmdJobsTokens(['--coverage', '--json', '--metrics', join(root, 'metrics', 'jobs.jsonl')], undefined, now)).toBe(0);
+      expect(JSON.parse(out[0]!)).toMatchObject({ schema: 'jobs.coverage.v1', lanes: [{ lane: 'claude', jobs: 1, measured: 1, unknown: 0 }] });
+      expect(await cmdJobsTokens(['--coverage', '--lane', 'claude'])).toBe(2);
     } finally { spy.mockRestore(); err.mockRestore(); }
   });
 });

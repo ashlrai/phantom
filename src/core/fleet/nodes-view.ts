@@ -51,7 +51,12 @@ export interface NodeRow {
   stateCode: NodeStateCode;
   /** The same state in plain words. */
   state: string;
+  /** True for this computer and any computer registered in the node list. False: seen on Tailscale only ("not joined"). */
+  joined: boolean;
+  /** The one command that joins this computer; run it on that computer. Null once joined. */
+  joinCommand: string | null;
 }
+export const JOIN_COMMAND = 'phm node join';
 export const NODES_SCHEMA = 'phantom.nodes-view.v1';
 /** A Phantom heartbeat older than this means the computer is offline. */
 export const HEARTBEAT_OFFLINE_MS = 5 * 60_000;
@@ -158,6 +163,7 @@ export function buildNodesView(
       ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
     const held = live.map(record => record.capacity?.held).find(Boolean);
     const newest = [...live].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
+    const joined = machine.isSelf || machine.records.length > 0;
     const where = machine.isSelf ? 'here' : 'there';
     const newestBeat = machine.records.reduce((max, record) => Math.max(max, record.heartbeatAt), Number.NEGATIVE_INFINITY);
     const heartbeatAgeSeconds = Number.isFinite(newestBeat) && Number.isFinite(nowMs) ? Math.max(0, Math.round((nowMs - newestBeat) / 1000)) : UNKNOWN;
@@ -186,6 +192,7 @@ export function buildNodesView(
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
       lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
+      joined, joinCommand: joined ? null : JOIN_COMMAND,
     };
   });
   nodes.sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

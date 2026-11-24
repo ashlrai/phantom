@@ -42,8 +42,16 @@ export interface StatusDigestSources {
   /** The single biggest cost in the last hour (asleep, host load, empty queue, drained pool, low disk); lanes are the ones the digest already read. */
   /** The `supply_low` line when a pool at risk of waste has under an hour of work queued; null when none or unknown. */
   supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Worst judged source yield, or null for unknown/low sample. */
+  yieldLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   /** The top `pools.waste.v1` alert as one line; also raises the Asks card when the fix needs Mason. Null when none. */
   wasteLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Sign-in state for the most-wasted blocked lane; also raises its Asks card. */
+  authLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The `Not live yet` line from `fleet.drift.v1` when merged fleet files are not installed; null when all live or unreadable. */
+  notLiveLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Read-only warning for a lane still cut after its cause cleared. */
+  adaptLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
   blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
@@ -79,10 +87,32 @@ const defaults: StatusDigestSources = {
     return supplyLowLine(await readQueueSupply({ runsDir, now: () => nowMs }));
   },
   wasteLine: async (runsDir, nowMs) => {
-    const { readPoolsWaste, raiseWasteAsk, wasteDigestLine } = await import('../fleet/pools-waste.js');
+    const { readPoolsWaste, wasteDigestLine } = await import('../fleet/pools-waste.js');
     const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
-    await raiseWasteAsk(waste, { runsDir, now: () => nowMs });
+    await (await import('../fleet/asks-sync.js')).syncAsks({ runsDir, now: () => nowMs }).catch(() => null);
     return wasteDigestLine(waste);
+  },
+  authLine: async (runsDir, nowMs) => {
+    const { readLaneAuth, raiseLaneAuthAsks, laneAuthDigestLine } = await import('../fleet/lane-auth.js');
+    const auth = await readLaneAuth({ runsDir, now: () => nowMs });
+    await raiseLaneAuthAsks(auth, { runsDir, now: () => nowMs });
+    return laneAuthDigestLine(auth);
+  },
+  notLiveLine: async runsDir => {
+    const { findFleetRepo, fleetDrift, notLiveLine } = await import('../fleet/drift.js');
+    const { access } = await import('node:fs/promises');
+    const bin = process.env.ASHLR_RUNS_BIN || join(runsDir, 'bin');
+    const repo = await findFleetRepo();
+    // No runtime directory means this is not a fleet host: nothing to compare, so no line.
+    return repo && await access(bin).then(() => true, () => false) ? notLiveLine(await fleetDrift(repo, bin)) : null;
+  },
+  yieldLine: async (runsDir, nowMs) => {
+    const { readYieldBy, yieldDigestLine } = await import('../fleet/yield-by.js');
+    return yieldDigestLine(await readYieldBy({ by: 'source', now: nowMs, metrics: join(runsDir, 'metrics', 'jobs.jsonl'), queue: join(runsDir, 'queue', 'router-queue.md') }));
+  },
+  adaptLine: async (runsDir, nowMs) => {
+    const { readLaneAdapt, laneAdaptDigestLine } = await import('../fleet/lane-adapt.js');
+    return laneAdaptDigestLine(await readLaneAdapt({ runsDir, now: () => nowMs }));
   },
   blocker: readBlocker,
 };
@@ -192,9 +222,13 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
 
   const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
   const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
+  const yieldFact = await fact(() => src.yieldLine?.(runsDir, nowMs) ?? null, 'yield check failed');
   const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
   const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
+  const auth = await fact(() => src.authLine?.(runsDir, nowMs) ?? null, 'sign-in check failed');
+  const notLive = await fact(() => src.notLiveLine?.(runsDir, nowMs) ?? null, 'drift check failed');
+  const adapt = await fact(() => src.adaptLine?.(runsDir, nowMs) ?? null, 'adapt check failed');
   const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(auth.ok && auth.value ? { authLine: auth.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(adapt.ok && adapt.value ? { adaptLine: adapt.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

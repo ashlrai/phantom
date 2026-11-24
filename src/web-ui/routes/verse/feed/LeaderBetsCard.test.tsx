@@ -8,11 +8,11 @@ import { LeaderBetsCard, LeaderBetsCardView } from './LeaderBetsCard.js';
 const batch = (over: Partial<LeaderBatch> = {}): LeaderBatch => ({
   batch: 'N21I', at: '2026-11-19T11:00:00.000Z',
   bets: [
-    { id: 'RQ-ONEN21IQ8', stage: 'merged', reason: null, url: 'https://github.com/ashlrai/phantom/pull/12', at: null },
-    { id: 'RQ-TWON21IQ8', stage: 'empty', reason: 'already on main', url: null, at: null },
-    { id: 'RQ-THREEN21IQ8', stage: 'running', reason: null, url: 'javascript:alert(1)', at: null },
+    { id: 'RQ-ONEN21IQ8', stage: 'merged', reason: null, ended_rule: null, url: 'https://github.com/ashlrai/phantom/pull/12', at: null },
+    { id: 'RQ-TWON21IQ8', stage: 'empty', reason: 'already on main', ended_rule: null, url: null, at: null },
+    { id: 'RQ-THREEN21IQ8', stage: 'running', reason: null, ended_rule: null, url: 'javascript:alert(1)', at: null },
   ],
-  counts: { queued: 0, running: 1, pr_open: 0, merged: 1, empty: 1 }, judged: 2, hit_rate: 0.5, ...over,
+  counts: { queued: 0, running: 1, pr_open: 0, merged: 1, empty: 1, ended: 0 }, judged: 2, hit_rate: 0.5, ...over,
 });
 const report = (batches: LeaderBatch[], known = true): LeaderBetsReport =>
   ({ schema: 'fleet.leader-bets.v1', version: 1, window_hours: 24, known, queue_known: true, batches, summary: '' });
@@ -34,7 +34,7 @@ describe('LeaderBetsCard', () => {
   });
 
   it('says unknown, never 0%, when nothing is judged yet', () => {
-    render(<LeaderBetsCardView report={report([batch({ hit_rate: null, judged: 0, counts: { queued: 3, running: 0, pr_open: 0, merged: 0, empty: 0 }, bets: [] })])} />);
+    render(<LeaderBetsCardView report={report([batch({ hit_rate: null, judged: 0, counts: { queued: 3, running: 0, pr_open: 0, merged: 0, empty: 0, ended: 0 }, bets: [] })])} />);
     expect(screen.getByText('Hit rate unknown: nothing judged yet')).toBeTruthy();
     expect(screen.queryByText(/0%/)).toBeNull();
   });

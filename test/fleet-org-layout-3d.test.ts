@@ -40,12 +40,12 @@ describe('layoutOrgGroups3D', () => {
     expect(labels.map(label => label.text)).toEqual(['lane:a: 1 running', 'lane:b: 0 running, 1 unknown']);
   });
 
-  it('a node with no owner goes in a cluster named "unassigned", never dropped', () => {
+  it('a node with no owner goes in a cluster named "Other", never dropped', () => {
     const layout = orgLayoutOf(map([node('leader', 'leader'), node('lane', 'lane:a'), node('job', 'job:x'), node('job', 'job:y')], [reports('lane:a', 'leader')]));
     expect(layout.positions.map(row => row.id)).toEqual(expect.arrayContaining(['job:x', 'job:y', UNASSIGNED_GROUP]));
     expect(at(layout, 'job:x').parent).toBe(UNASSIGNED_GROUP);
-    expect(at(layout, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'unassigned' });
-    expect(layout.labels.find(label => label.id === UNASSIGNED_GROUP)!.text).toBe('unassigned: 2 running');
+    expect(at(layout, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'Other' });
+    expect(layout.labels.find(label => label.id === UNASSIGNED_GROUP)!.text).toBe('Other: 2 running');
     expect(new Set(layout.positions.map(spot)).size).toBe(layout.positions.length);
   });
 

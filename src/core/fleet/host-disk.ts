@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { createConfigReader, PINNED_DEFAULTS } from './dynconfig.js';
 import { parseDiskHistory, readLiveDiskSample } from './host-top.js';
 import type { HostDiskSample } from './host-top-view.js';
-import { WORKTREES_SAFE_AGE_HOURS, defaultRunsRoot } from './worktrees.js';
+import { WORKTREES_PLAN_COMMAND, WORKTREES_SAFE_AGE_HOURS, defaultRunsRoot } from './worktrees.js';
 import { readWtAudit, type WtAuditDeps, type WtAuditEntry, type WtAuditReport } from './wt-audit.js';
 
 export const HOST_DISK_SCHEMA = 'host.disk.v1';
@@ -22,7 +22,7 @@ export const BURN_WINDOW_HOURS = 6;
 /** Under this many hours left, the digest carries a `disk_low` warning. */
 export const DISK_LOW_HOURS = 24;
 export const HOST_DISK_SAMPLES_FILE = join('queue', 'host-disk-samples.json');
-const SAMPLER_FILE = join('queue', 'disk-growth-history.json');
+export const DISK_GROWTH_HISTORY_FILE = join('queue', 'disk-growth-history.json');
 const MIN_SAMPLE_GAP_S = 5 * 60;
 const KEEP_SAMPLES_S = 48 * 3600;
 /** The window must span this long before a rate is believed. */
@@ -79,7 +79,7 @@ function readRows(path: string): HostDiskSample[] {
 /** Sampler rows plus this module's own rows, one per timestamp, oldest first. Junk and future rows are dropped. */
 export function readDiskSampleRows(runsDir: string, nowMs: number, extra: readonly HostDiskSample[] = []): HostDiskSample[] {
   const byAt = new Map<number, number>();
-  for (const { at, freeGb } of [...readRows(join(runsDir, SAMPLER_FILE)), ...readRows(join(runsDir, HOST_DISK_SAMPLES_FILE)), ...extra]) {
+  for (const { at, freeGb } of [...readRows(join(runsDir, DISK_GROWTH_HISTORY_FILE)), ...readRows(join(runsDir, HOST_DISK_SAMPLES_FILE)), ...extra]) {
     if (at >= 0 && freeGb >= 0 && at * 1000 <= nowMs) byAt.set(at, freeGb);
   }
   return [...byAt].map(([at, freeGb]) => ({ at, freeGb })).sort((a, b) => a.at - b.at);
@@ -175,7 +175,7 @@ export function summarizeWorktrees(audit: WtAuditReport | null): HostDiskWorktre
   const folders = audit.worktrees.filter((w: WtAuditEntry) => w.state !== 'excluded');
   // The reaper takes merged or empty folders over the safe age; its own clean check can only lower this.
   const take = folders.filter(w => w.reapable && (w.state === 'merged' || w.state === 'empty')
-    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS);
+    && w.ageHours !== null && w.ageHours >= WORKTREES_SAFE_AGE_HOURS[w.state]);
   const largest = folders.filter(w => w.bytes !== null && w.bytes > 0).sort((a, b) => b.bytes! - a.bytes!).slice(0, LARGEST)
     .map(w => ({ job: w.name, gb: gb(w.bytes!), ageHours: w.ageHours === null ? null : round1(w.ageHours), finished: finishedOf(w.state) }));
   return {
@@ -193,7 +193,7 @@ export function fixLine(worktrees: HostDiskWorktrees, status: HostDiskStatus): s
   const lead = `${worktrees.folders} job folders, ${worktrees.finished ?? 0} of them finished.`;
   if (!worktrees.reapable) return `${lead} None are ready to reap yet.${status === 'falling' || status === 'below-threshold' ? ' Free disk is falling for another reason; check `phm host top`.' : ''}`;
   const size = `${worktrees.sizesComplete ? 'about' : 'at least'} ${worktrees.reapableGb} GB`;
-  return `${lead} \`phm worktrees --reap --apply\` removes ${worktrees.reapable} and frees ${size}.`;
+  return `${lead} \`${WORKTREES_PLAN_COMMAND}\` lists the ${worktrees.reapable} ready to remove, freeing ${size}.`;
 }
 
 // ── the report ───────────────────────────────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@
  * never offered.
  */
 import { flatTree, sessionAge, spoke, type LiveSessionsV1 } from '../../../../core/fleet/live-sessions.js';
-import { targetsOf } from '../fleet/interject-target-model.js';
+import { canAim } from './leader-roster-model.js';
 
 export interface MentionOption {
   /** The job id written after `@`. */
@@ -38,11 +38,6 @@ export interface MentionOptions {
 
 export const MENTION_LIMIT = 6;
 
-/** Whether `@id` is a name the leaders' inbox understands (the parser the thread reads sent messages with). */
-function aimable(id: string): boolean {
-  return targetsOf(`@${id} `)[0] === id;
-}
-
 /**
  * The running workers and helpers matching what was typed after `@`. A match
  * on the job id outranks one on the lane, agent, repo or last message; quiet
@@ -53,7 +48,7 @@ export function mentionOptions(list: LiveSessionsV1, query: string, limit = MENT
   const needle = query.toLowerCase();
   const crew = flatTree(list.tree.roots).map(({ node }) => node)
     .filter(node => (node.kind === 'worker' || node.kind === 'subagent') && node.state === 'running');
-  const named = crew.filter(node => aimable(node.jobId ?? node.id));
+  const named = crew.filter(node => canAim(node.jobId ?? node.id));
   const ranked = named.flatMap((node, index) => {
     const id = node.jobId ?? node.id;
     const onId = id.toLowerCase().includes(needle);

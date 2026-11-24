@@ -36,7 +36,9 @@ describe('fleet launchable', () => {
       row('good', 'alpha', prompt), row('A123456Q8', 'alpha', prompt),
       row('A12345Q8', 'alpha', prompt), row('missing', 'alpha', join(root, 'missing')),
       row('drop', 'alpha', prompt), row('defer', 'alpha', prompt), row('other', 'alpha', prompt),
-      row('parked', 'PARKEDx', prompt), row('beta', 'beta', prompt), '# comment',
+      row('parked', 'PARKEDx', prompt), row('RQ-PD8', 'PARKED-DEP.alpha', prompt),
+      'PARKED-DEP.alpha\tRQ-PD9\talpha\twork\t' + prompt,
+      row('beta', 'beta', prompt), '# comment',
     ].join('\n'));
     writeFileSync(join(queue, 'skipped-empty.tsv'), 'time\tdrop\tdrop\treason\ntime\tdefer\tdefer\treason\ntime\tother\tobserve\treason\n');
     writeFileSync(join(queue, 'FILLER_HOLD'), '');

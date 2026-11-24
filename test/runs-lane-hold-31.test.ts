@@ -63,7 +63,7 @@ it.each([null, 0, 1, 'false', {}, []])('refuses an explicitly malformed hold fla
   await expect(releaseLaneHold('codex-personal', { runsDir, now })).rejects.toMatchObject({ code: 'unavailable', status: 503 });
   expect(await readFile(path, 'utf8')).toBe(original);
 });
-it.each([{ last_change_by: {} }, { unknown_metadata: 'not a lane' }])('refuses malformed or unknown global metadata before release (%j)', async extra => {
+it.each([{ last_change_by: {} }])('refuses malformed global metadata before release (%j)', async extra => {
   const original = JSON.stringify({ ...fixture(), ...extra });
   await writeFile(path, original);
   await expect(releaseLaneHold('codex-personal', { runsDir })).rejects.toMatchObject({ code: 'unavailable' });

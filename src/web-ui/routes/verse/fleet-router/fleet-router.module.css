@@ -1,0 +1,90 @@
+/* One readable column: the route table, the chosen cell's answer under it, the recorded decisions below. Wraps the same at 390 px. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.head h2, .sub { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.headline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
+.headline[data-route='none'] { color: var(--status-warning-fg); }
+.chip { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-unknown-bg); color: var(--status-unknown-fg); font-size: var(--text-xs-size); font-weight: var(--font-weight-regular); }
+.meta, .note { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.meta { margin-top: calc(var(--space-2) * -1); }
+.note[data-stale] { color: var(--status-warning-fg); }
+.note code { font-size: inherit; }
+
+/* The route table: one cell per kind of work, the first-choice seat with its mark and the next seat under it. */
+.shares { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; color: var(--text-primary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.shares li { display: inline-flex; align-items: center; gap: var(--space-1); }
+.shares li[data-none] { color: var(--status-warning-fg); }
+.shares .of { color: var(--text-secondary); }
+.table { width: 100%; border-collapse: separate; border-spacing: var(--space-1); table-layout: fixed; font-size: var(--text-xs-size); }
+.table th { color: var(--text-secondary); font-weight: var(--font-weight-regular); text-align: start; }
+.table th[scope='row'], .table thead td { width: 4.5rem; }
+.table td { padding: 0; }
+.cell { display: flex; flex-direction: column; justify-content: center; gap: 0.125rem; box-sizing: border-box; width: 100%; min-height: 2.75rem; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-secondary); font: inherit; text-align: start; cursor: pointer; transition: background var(--duration-fast) var(--ease-decelerate), border-color var(--duration-fast) var(--ease-decelerate); }
+button.cell:hover { background: var(--bg-hover); }
+.cell[aria-pressed='true'] { border-color: var(--accent-500); background: var(--bg-selected); }
+.cell[data-route='none'] .name { color: var(--status-warning-fg); }
+.cell[data-route='unknown'] { border-style: dashed; cursor: default; }
+.then { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The try order: a numbered rail, the first seat drawn solid, the rest outlined; held-back seats dashed. */
+.route, .bars, .recent { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.route { gap: 0; }
+.seat { position: relative; display: grid; grid-template-columns: 1.5rem minmax(7rem, 12rem) minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-2); padding: var(--space-2) 0; font-size: var(--text-xs-size); animation: enter var(--duration-fast) var(--ease-decelerate) both; }
+.seat + .seat { border-top: 1px solid var(--border-subtle); }
+/* The rail joins one tried seat to the next; held-back seats are not a sequence, so they get none. */
+.seat:not([data-held]) + .seat:not([data-held])::before { content: ''; position: absolute; left: 0.75rem; top: calc(var(--space-2) * -1); width: 1px; height: calc(var(--space-2) * 2); background: var(--border-strong); }
+.rank { display: inline-grid; place-items: center; box-sizing: border-box; width: 1.5rem; height: 1.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius-full); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.seat[data-first] .rank { border-color: var(--accent-500); background: var(--accent-500); color: var(--text-on-accent); }
+.seat[data-held] .rank { border-style: dashed; }
+.seat[data-held] .name { color: var(--text-secondary); }
+.seat[data-held] .usage + .usage { grid-column: 3; }
+.name { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.usage { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+.track { position: relative; display: block; flex: 0 0 6rem; height: 0.375rem; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+/* A seat's usage window is the shared WindowBar, held to the width the old track had. */
+.meter { flex: 0 0 6rem; width: 6rem; }
+.fill { display: block; height: 100%; border-radius: inherit; background: var(--accent-500); transition: width var(--duration-base) var(--ease-decelerate); }
+.fill[data-none] { background: var(--status-unknown-solid); }
+
+.bars { gap: var(--space-2); }
+.bar { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 5.5rem; align-items: center; gap: var(--space-2); font-size: var(--text-xs-size); }
+.bar .track { flex: none; height: 0.5rem; }
+.count { color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: end; }
+/* Decisions over time: each seat's row holds a lane of columns, one per equal slice of the span read, with the time axis under them on the same grid. */
+.timeline { display: flex; flex-direction: column; gap: var(--space-1); }
+.bins, .scrub { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1px; min-width: 0; }
+.bins { height: 1.5rem; }
+.bin { display: flex; align-items: flex-end; box-sizing: border-box; height: 100%; border-bottom: 1px solid var(--border-subtle); cursor: pointer; }
+.bin[data-picked] { background: var(--bg-selected); }
+.stem { display: block; box-sizing: border-box; width: 100%; min-height: 2px; border-radius: 1px 1px 0 0; background: var(--accent-500); transition: height var(--duration-base) var(--ease-decelerate); }
+.stem[data-none] { background: var(--status-unknown-solid); }
+/* Work that ran on another seat than the one chosen caps the column. */
+.bin[data-moved] .stem { border-top: 2px solid var(--status-warning-solid); }
+.axis { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 5.5rem; column-gap: var(--space-2); row-gap: 0.125rem; }
+.scrub, .ends { grid-column: 2; }
+.scrub { height: 0.625rem; border-radius: var(--radius-sm); cursor: pointer; }
+.scrub:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.tick { box-sizing: border-box; border-top: 2px solid var(--border-strong); }
+.tick[data-empty] { border-top-color: var(--border-subtle); }
+.tick[data-moved] { border-top-color: var(--status-warning-solid); }
+.tick[data-picked] { border-top-color: var(--accent-500); background: var(--bg-selected); }
+.ends { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.caption { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.recent { gap: var(--space-1); }
+.recent li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.when { flex: 0 0 4.5rem; }
+.ran { color: var(--status-warning-fg); }
+
+@keyframes enter { from { opacity: 0; transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .seat { animation: none; } .fill, .cell, .stem { transition: none; } }
+@media (max-width: 30rem) {
+  .table th[scope='row'], .table thead td { width: 3rem; }
+  .cell { padding: var(--space-1); }
+  .seat { grid-template-columns: 1.5rem minmax(0, 1fr); }
+  .seat .usage, .seat[data-held] .usage + .usage { grid-column: 2; }
+  .bar { grid-template-columns: minmax(0, 1fr) 5.5rem; }
+  .bar .track, .bar .bins { grid-column: 1 / -1; grid-row: 2; }
+  .axis { grid-template-columns: minmax(0, 1fr); }
+  .scrub, .ends { grid-column: 1; }
+}

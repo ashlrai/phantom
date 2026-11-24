@@ -5,13 +5,14 @@
  * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
-import { MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
+import { MASON_THREAD_CHANNEL, MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
 import { parseSince } from '../fleet/agent-messages.js';
-import { readReceipts } from '../leader/delivery-receipts.js';
+import type { LeaderBriefV1 } from '../fleet/leader-job-brief.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
-import { acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
+import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../comms/leader-mailbox.js';
+import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, isOwnerThreadKey, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 /** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
@@ -20,6 +21,8 @@ export const VERSE_OWNER_STATUS_PATH = `${VERSE_OWNER_THREAD_PATH}/status`;
 export const VERSE_OWNER_COMMS_LIMITS_PATH = `${VERSE_OWNER_THREAD_PATH}/comms-limits`;
 /** Read-only one-timeline view for the Mason panel: same data as `phm mason thread --json`. */
 export const VERSE_MASON_THREAD_PATH = '/api/verse/comms/mason-thread';
+/** Read-only twin of `phm leader brief --json` for the Leader card: the typed brief, nothing reshaped. */
+export const VERSE_LEADER_BRIEF_PATH = '/api/verse/comms/leader-brief';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
@@ -35,6 +38,8 @@ export interface OwnerThreadApiDeps {
   mailbox?: OwnerThreadOptions['mailbox'];
   /** Status brief seam for tests; default is the Leader's instant brief. */
   statusBrief?: () => Promise<string>;
+  /** Leader job brief seam for tests; default is the same read `phm leader brief` makes. */
+  jobBrief?: () => Promise<LeaderBriefV1>;
   /** Clock seam for tests. */
   now?: () => number;
 }
@@ -62,7 +67,7 @@ function parseLimit(raw: string | null): number | null {
 
 export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
   return async (ctx, req, res, path, method) => {
-    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH && path !== VERSE_MASON_THREAD_PATH) return false;
+    if (path !== VERSE_OWNER_THREAD_PATH && path !== VERSE_OWNER_STATUS_PATH && path !== VERSE_OWNER_COMMS_LIMITS_PATH && path !== VERSE_MASON_THREAD_PATH && path !== VERSE_LEADER_BRIEF_PATH) return false;
     if (method !== 'GET') {
       sendJson(res, 405, { error: 'The owner thread is read only here.' });
       return true;
@@ -73,17 +78,62 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     if (path === VERSE_MASON_THREAD_PATH) {
       const now = deps.now?.() ?? Date.now();
+      const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       let sinceMs: number | null = null;
-      try { sinceMs = parseSince(new URL(req.url ?? path, 'http://localhost').searchParams.get('since') ?? '1d', now); } catch { /* 400 below */ }
+      let beforeMs: number | undefined;
+      let channel: string | undefined;
+      let direction: 'inbound' | 'outbound' | undefined;
+      let contains: string | undefined;
+      try {
+        sinceMs = parseSince(params.get('since') ?? '1d', now);
+        const beforeRaw = params.get('before');
+        if (beforeRaw !== null) {
+          const parsed = parseSince(beforeRaw, now);
+          if (parsed === null) { sendJson(res, 400, { error: 'before takes 15m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
+          beforeMs = parsed;
+        }
+        const channelRaw = params.get('channel');
+        if (channelRaw !== null) {
+          if (!MASON_THREAD_CHANNEL.test(channelRaw)) { sendJson(res, 400, { error: 'channel takes a lowercase channel name (letters, digits, ".", "_" or "-").' }); return true; }
+          channel = channelRaw;
+        }
+        const directionRaw = params.get('direction');
+        if (directionRaw !== null) {
+          if (directionRaw !== 'inbound' && directionRaw !== 'outbound') { sendJson(res, 400, { error: 'direction must be inbound or outbound.' }); return true; }
+          direction = directionRaw;
+        }
+        const containsRaw = params.get('contains');
+        if (containsRaw !== null) {
+          if (containsRaw.trim() === '' || containsRaw.length > OWNER_THREAD_CONTAINS_MAX) {
+            sendJson(res, 400, { error: `contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.` });
+            return true;
+          }
+          contains = containsRaw;
+        }
+      } catch { /* 400 below */ }
       if (sinceMs === null) {
         sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
         return true;
       }
       try {
         const options = runtime(deps);
-        sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now }));
+        sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now,
+          ...(beforeMs === undefined ? {} : { beforeMs }),
+          ...(channel === undefined ? {} : { channel }),
+          ...(direction === undefined ? {} : { direction }),
+          ...(contains === undefined ? {} : { contains }) }));
       } catch {
         sendJson(res, 200, { schema: MASON_THREAD_SCHEMA, unavailable: true });
+      }
+      return true;
+    }
+    if (path === VERSE_LEADER_BRIEF_PATH) {
+      try {
+        // Loaded on first ask: it reads the queue, ledger and pools, which only this route needs.
+        const brief = await (deps.jobBrief ? deps.jobBrief() : (await import('../fleet/leader-job-brief.js')).readJobBrief({ ...(deps.now ? { now: deps.now() } : {}) }));
+        sendJson(res, 200, brief);
+      } catch {
+        sendJson(res, 200, { schema: 'leader.brief.v1', unavailable: true });
       }
       return true;
     }
@@ -109,8 +159,65 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       return true;
     }
     let limit: number | null;
+    let channel: OwnerChannel | undefined;
+    let direction: OwnerThreadMessage['direction'] | undefined;
+    let since: number | undefined;
+    let beforeAt: number | undefined;
+    let contains: string | undefined;
+    let replyTo: string | undefined;
     try {
-      limit = parseLimit(new URL(req.url ?? path, 'http://localhost').searchParams.get('limit'));
+      const params = new URL(req.url ?? path, 'http://localhost').searchParams;
+      limit = parseLimit(params.get('limit'));
+      const channelRaw = params.get('channel');
+      if (channelRaw !== null) {
+        if (!isOwnerChannel(channelRaw)) {
+          sendJson(res, 400, { error: `channel must be one of: ${OWNER_CHANNELS.join(', ')}.` });
+          return true;
+        }
+        channel = channelRaw;
+      }
+      const directionRaw = params.get('direction');
+      if (directionRaw !== null) {
+        if (directionRaw !== 'inbound' && directionRaw !== 'outbound') {
+          sendJson(res, 400, { error: 'direction must be inbound or outbound.' });
+          return true;
+        }
+        direction = directionRaw;
+      }
+      const sinceRaw = params.get('since');
+      if (sinceRaw !== null) {
+        const parsed = parseSince(sinceRaw);
+        if (parsed === null) {
+          sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+          return true;
+        }
+        since = parsed;
+      }
+      const beforeAtRaw = params.get('beforeAt');
+      if (beforeAtRaw !== null) {
+        const parsed = parseSince(beforeAtRaw);
+        if (parsed === null) {
+          sendJson(res, 400, { error: 'beforeAt takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+          return true;
+        }
+        beforeAt = parsed;
+      }
+      const containsRaw = params.get('contains');
+      if (containsRaw !== null) {
+        if (containsRaw.trim() === '' || containsRaw.length > OWNER_THREAD_CONTAINS_MAX) {
+          sendJson(res, 400, { error: `contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.` });
+          return true;
+        }
+        contains = containsRaw;
+      }
+      const replyToRaw = params.get('replyTo');
+      if (replyToRaw !== null) {
+        if (!isOwnerThreadKey(replyToRaw)) {
+          sendJson(res, 400, { error: 'replyTo takes an owner-thread message key.' });
+          return true;
+        }
+        replyTo = replyToRaw;
+      }
     } catch {
       limit = null;
     }
@@ -120,11 +227,13 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const thread = readOwnerThread(options, limit);
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined || replyTo !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}), ...(replyTo !== undefined ? { replyTo } : {}) }
+        : undefined;
+      const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);
       sendJson(res, 200, {
         ...thread,
-        receipts: readReceipts(options.runsDir, thread.messages.filter(m => m.direction === 'outbound').map(m => m.id)),
         status: {
           kill,
           paused,

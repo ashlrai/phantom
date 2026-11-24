@@ -64,6 +64,8 @@ const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 export function routerToolSource(): ToolSource {
   const lanes: Record<string, LaneToolDeclaration> = {};
   for (const [lane, caps] of Object.entries(DECLARED_LANE_CAPABILITIES)) {
+    // Parity takes the router's proven gaps only; a lane's "yes" comes from its own declaration (connectors, lane-tools.json).
+    if (caps.gh !== false && caps.browser !== false) continue;
     lanes[lane] = { capabilities: { 'github-read': caps.gh ?? null, browser: caps.browser ?? null } };
   }
   return { name: 'router', lanes };

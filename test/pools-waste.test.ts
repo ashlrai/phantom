@@ -5,9 +5,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdPools } from '../src/cli/pools.js';
 import { buildPoolsView } from '../src/core/fleet/pools-view.js';
-import { buildPoolsWaste, formatPoolsWasteText, raiseWasteAsk, wasteDigestLine, POOLS_WASTE_SCHEMA } from '../src/core/fleet/pools-waste.js';
+import { buildPoolsWaste, formatPoolsWasteText, wasteDigestLine, POOLS_WASTE_SCHEMA } from '../src/core/fleet/pools-waste.js';
 import { buildQueueSupply } from '../src/core/fleet/queue-supply.js';
-import { listAsks } from '../src/core/fleet/asks.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import { buildStatusDigest } from '../src/core/leader/status-digest.js';
 
@@ -85,18 +84,6 @@ describe('digest and Asks card', () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'waste-')); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'NEEDS-MASON.md'), ''); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  it('raises one open ask for a sign-in alert, once, and none for other fixes', async () => {
-    const signIn = check([lane('gemini', { usedPct: 12, held: true })], {}, { gemini: 'needs sign-in' });
-    const id = await raiseWasteAsk(signIn, { runsDir: dir, now: () => NOW });
-    expect(id).not.toBeNull();
-    expect(await raiseWasteAsk(signIn, { runsDir: dir, now: () => NOW })).toBe(id);
-    const asks = listAsks({ runsDir: dir, now: () => NOW }).asks;
-    expect(asks).toHaveLength(1);
-    expect(asks[0]).toMatchObject({ kind: 'password', subject: 'gemini' });
-    expect(asks[0]!.request).toMatch(/^Sign in to Gemini once: run gemini in a terminal\./);
-    expect(await raiseWasteAsk(check([lane('claude', { usedPct: 40, burnPctPerHour: 6 })], { claude: 0 }), { runsDir: dir })).toBeNull();
-  });
 
   it('puts the top alert in the hourly digest', () => {
     const lines = buildStatusDigest({

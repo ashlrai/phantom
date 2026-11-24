@@ -76,12 +76,17 @@ const SIGN_IN_STEP: Readonly<Record<string, string>> = {
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
 
+/** The one rule for "this lane waits on a sign-in": held, and the held reason says sign in. Shared by the waste check and the spend-down chart. */
+export function signInFix(row: Pick<PoolRow, 'id' | 'held'>, heldReasons: Readonly<Record<string, string | null>> | undefined): string | null {
+  if (row.held !== true || !SIGN_IN_REASON.test(oneLine(heldReasons?.[row.id] ?? ''))) return null;
+  const step = SIGN_IN_STEP[row.id];
+  return `sign in to ${poolLabel(row.id)} once${step ? `: ${step}` : ''}`;
+}
+
 function fixFor(row: PoolRow, label: string, input: PoolsWasteInput): { kind: WasteFixKind; fix: string } {
   const reason = row.held === true ? oneLine(input.heldReasons?.[row.id] ?? '') : '';
-  if (row.held === true && SIGN_IN_REASON.test(reason)) {
-    const step = SIGN_IN_STEP[row.id];
-    return { kind: 'sign-in', fix: `sign in to ${label} once${step ? `: ${step}` : ''}` };
-  }
+  const signIn = signInFix(row, input.heldReasons);
+  if (signIn !== null) return { kind: 'sign-in', fix: signIn };
   if (row.held === true) return { kind: 'lane-held', fix: `lane held: ${reason || 'no reason recorded'}` };
   const queued = input.supply?.pools.find(p => p.id === row.id);
   if (queued && queued.ready !== null && queued.ready > 0 && queued.state === 'healthy') {
@@ -137,11 +142,6 @@ export function formatPoolsWasteText(data: PoolsWasteV1): string {
 /** The digest line for the top alert, or null when nothing is about to be wasted. */
 export const wasteDigestLine = (data: PoolsWasteV1): string | null => data.top?.summary ?? null;
 
-/** The phone Asks card text for an alert that needs Mason. */
-export function wasteAskRequest(alert: WasteAlert): string {
-  return `${upperFirst(alert.fix)}. ${alert.label} will waste about ${Math.round(alert.projected_unused_pct)}% of its included usage at its reset in ${Math.max(1, Math.round(alert.hours_to_reset))} h.`;
-}
-
 /** Reads the ledger, usage history, queue and held reasons, then builds the waste check. Read-only. */
 export async function readPoolsWaste(opts: { runsDir?: string; now?: () => number } = {}): Promise<PoolsWasteV1> {
   const nowMs = (opts.now ?? Date.now)();
@@ -156,16 +156,4 @@ export async function readPoolsWaste(opts: { runsDir?: string; now?: () => numbe
   ]);
   const heldReasons = Object.fromEntries((state?.lanes ?? []).filter(l => l.held).map(l => [l.lane, l.heldReason]));
   return buildPoolsWaste({ view, supply, heldReasons });
-}
-
-/**
- * Puts a sign-in alert on the phone Asks card (an open `password` ask about the pool). Idempotent: the same open ask is
- * returned, not duplicated. Returns the ask id, or null when the top alert needs no one or the ledger is unwritable.
- */
-export async function raiseWasteAsk(data: PoolsWasteV1, options: { runsDir?: string; now?: () => number } = {}): Promise<string | null> {
-  const alert = data.alerts.find(a => a.needs_mason);
-  if (!alert) return null;
-  const { raiseAsk } = await import('./asks.js');
-  const raised = raiseAsk('password', wasteAskRequest(alert), options, { subject: alert.pool, unblocks: `${alert.label} usage that would otherwise expire` });
-  return raised.ok ? raised.id : null;
 }

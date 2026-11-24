@@ -60,6 +60,11 @@ when ready. JSON adds `placement` with `lane`, `node` (null when none is ready),
 or slots, stale mirrors and expired lane advertisements cannot qualify a node.
 The typed `chooseNodeForLane` API also accepts `{ localOnly: true }` to keep
 explicitly local work here. This is advice; it does not reserve or launch work.
+`phm nodes --discover` also lists Tailscale computers that have not joined, each
+marked "not joined" with its one join command (`phm node join`, run on that
+computer); `--json` adds `discovered` with the same rows, and every row carries
+`joined` and `joinCommand`. The desktop Computers pane draws not-joined computers
+grey and joined ones in color from the same JSON.
 It is read only: it reads `tailscale status` and the node list already on
 this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
 the node list on another computer) is `unknown` with the reason. The desktop

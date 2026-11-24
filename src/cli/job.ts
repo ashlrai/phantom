@@ -3,12 +3,16 @@ import { isFleetJobId } from '../core/fleet/runs-job-detail.js';
 import { getFleetJobCost, type FleetJobCostV1 } from '../core/fleet/runs-job-cost.js';
 import { followFleetJobTail, getFleetJobTail, type FleetJobTailEvent } from '../core/fleet/runs-job-tail.js';
 import { isJobControlAction, jobControlText, type JobControlAction } from '../core/fleet/job-control-types.js';
+import { JOB_NOTE_MAX, jobNotesLines, jobSayText } from '../core/fleet/job-notes-types.js';
 import { LANE_ID_RE } from '../core/fleet/runs-lane-targets.js';
 import { STRAY_ID_PATTERN } from '../core/fleet/stray-slots.js';
 
 const controlTail = 'pause|resume|stop|move <id> [--lane <lane>] [--dry-run] [--json] [--runs-dir <abs>]';
 const controlUsage = `phm job ${controlTail}`;
-const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       phm job show <id> [--tail N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}`;
+const sayUsage = 'phm job say <id> "<text>" [--dry-run] [--json] [--runs-dir <abs>]';
+const notesUsage = 'phm job notes <id> [--json] [--runs-dir <abs>]';
+const sayHelp = `Send one note to a running job, e.g. phm job say <id> "also update the docs". Notes are timestamped and kept on the job; a worker reads new notes between steps where its runner supports it, and every note shows as "Notes sent" in the job window. A finished job refuses the note. Up to ${JOB_NOTE_MAX} characters. The same note twice in a row is sent once. --json emits fleet.job.say.v1 with status sent, refused or unknown. Exit 0 sent, 1 refused, unknown or unavailable, 2 bad usage. \`phm job notes <id>\` lists the notes sent (fleet.job.notes.v1).`;
+const usage = `Usage: phm job cost <id> [--json] [--runs-dir <abs>] [--help]\n       phm job tail <id> [--lines N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       phm job show <id> [--tail N] [--follow] [--json] [--runs-dir <abs>] [--help]\n       ${controlUsage}\n       ${sayUsage}\n       ${notesUsage}`;
 const controlHelp = 'Steer one fleet job. move needs --lane and refuses a lane that is held or full. ' +
   'Repeating a request changes nothing and returns the first receipt. --json emits fleet.job.control.v1 ' +
   'with status requested, applied, refused or unknown. Exit 0 requested or applied, 1 refused, unknown or unavailable, 2 bad usage.';
@@ -53,6 +57,60 @@ export async function cmdJobControl(action: JobControlAction, rest: string[], no
     return receipt.status === 'requested' || receipt.status === 'applied' ? 0 : 1;
   } catch {
     console.error('error: job control unavailable');
+    return 1;
+  }
+}
+/**
+ * `phm job say <id> "<text>"` and `phm job notes <id>`: send a note to one job
+ * and list the notes sent (core/fleet/job-notes.ts), the same calls the job
+ * window's note box makes. The text is one argument; quote it.
+ */
+export async function cmdJobNote(verb: 'say' | 'notes', rest: string[]): Promise<number> {
+  const say = verb === 'say';
+  const usageLine = say ? sayUsage : notesUsage;
+  const invalid = (extra?: string): number => {
+    console.error(`${extra ? `${extra}\n` : ''}Usage: ${usageLine}`);
+    return 2;
+  };
+  const positional: string[] = [];
+  let runsDir: string | undefined;
+  const flags = new Set<string>();
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]!;
+    if (arg === '--help' || arg === '-h') {
+      console.log(say ? `Usage: ${sayUsage}\n${sayHelp}` : `Usage: ${notesUsage}\nList the notes sent to one job, oldest first (the newest 50). --json emits fleet.job.notes.v1. Exit 0 listed, 1 unreadable, 2 bad usage.`);
+      return 0;
+    }
+    if (positional.length < (say ? 2 : 1) && !arg.startsWith('--')) { positional.push(arg); continue; }
+    if (flags.has(arg)) return invalid();
+    if (arg === '--json' || (say && arg === '--dry-run')) flags.add(arg);
+    else if (arg === '--runs-dir') {
+      flags.add(arg);
+      const value = rest[++i];
+      if (!value || value.startsWith('--')) return invalid();
+      runsDir = value;
+    } else return invalid();
+  }
+  const [job, noteText] = positional;
+  if (!job || !STRAY_ID_PATTERN.test(job) || (say && noteText === undefined)) return invalid(say && job && noteText === undefined ? 'Say what? Put the note in quotes.' : undefined);
+  if (runsDir !== undefined && !isAbsolute(runsDir)) return invalid();
+  const json = flags.has('--json');
+  try {
+    if (!say) {
+      const { readJobNotes } = await import('../core/fleet/job-notes.js');
+      const notes = await readJobNotes(job, { runsDir });
+      if (json) console.log(JSON.stringify(notes));
+      else if (notes.count === 0) console.log(`No notes sent to ${job}.`);
+      else console.log([`Notes sent to ${job} (${notes.count}):`, ...jobNotesLines(notes.notes).map((line) => `  ${line}`)].join('\n'));
+      return 0;
+    }
+    const { sayToJob } = await import('../core/fleet/job-notes.js');
+    const receipt = await sayToJob(job, noteText!, { runsDir, by: 'cli', dryRun: flags.has('--dry-run') });
+    console.log(json ? JSON.stringify(receipt) : jobSayText(receipt));
+    return receipt.status === 'sent' ? 0 : 1;
+  } catch (error) {
+    if (error instanceof TypeError) return invalid(error.message.charAt(0).toUpperCase() + error.message.slice(1) + '.');
+    console.error(`error: job ${say ? 'note' : 'notes'} unavailable`);
     return 1;
   }
 }
@@ -102,12 +160,13 @@ export async function cmdJob(args: string[]): Promise<number> {
   };
   const [verb, ...rest] = args;
   if (verb === undefined || verb === '--help' || verb === '-h' || verb === 'help') {
-    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.\n${tailHelp}\n${showHelp}\n${controlHelp}`);
+    console.log(`${usage}\nPer-model-call cost for a fleet job: tokens in/out, model and cost (or 'unknown'), from the runs metrics ledgers. --json emits fleet.job.cost.v1.\n${tailHelp}\n${showHelp}\n${controlHelp}\n${sayHelp}`);
     return 0;
   }
   if (verb === 'tail') return cmdJobTail(rest);
   if (verb === 'show') return (await import('./job-show.js')).cmdJobShow(rest);
   if (isJobControlAction(verb)) return cmdJobControl(verb, rest);
+  if (verb === 'say' || verb === 'notes') return cmdJobNote(verb, rest);
   if (verb !== 'cost') return invalid(`unknown job command: ${verb}`);
   let id: string | undefined;
   let json = false;

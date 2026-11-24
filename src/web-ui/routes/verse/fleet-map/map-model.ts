@@ -7,6 +7,7 @@
 import type { FleetLiveMap, LiveMapEdge, LiveMapEdgeKind, LiveMapNode, LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
 import type { MapEdge, MapEdgeAgent, MapEdgeRole } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
+import { MAP_REPLAY_SCHEMA, type MapReplay, type MapReplayFrame, type ReplayFrameState } from '../../../../core/fleet/map-replay.js';
 import { MAP_STATES, type MapFilter, type MapState } from '../../../../core/fleet/map-filter.js';
 import { narrowLaneHealth } from '../../../../core/fleet/lane-badge.js';
 import { apiGet } from '../../../data/client.js';
@@ -16,7 +17,7 @@ export const LIVE_MAP_API = '/api/verse/fleet/control/live-map';
 /** The pane polls no faster than the server rebuilds the graph. */
 export const MAP_POLL_MS = 5_000;
 const MAX_NODES = 400, MAX_EDGES = 1200, MAX_TEXT = 160;
-const NODE_KINDS: readonly LiveMapNodeKind[] = ['leader', 'lane', 'job', 'computer', 'resource'];
+const NODE_KINDS: readonly LiveMapNodeKind[] = ['leader', 'lane', 'job', 'computer', 'resource', 'planner'];
 const EDGE_KINDS: readonly LiveMapEdgeKind[] = ['reports-to', 'runs-on', 'uses-resource', 'messaged-in-last-15-min'];
 
 type Obj = Record<string, unknown>;
@@ -38,6 +39,7 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
       ...(kind === 'lane' && narrowLaneHealth(row.health) ? { health: narrowLaneHealth(row.health) } : {}),
       ...(kind === 'lane' && (row.mergedPerHour === null || typeof row.mergedPerHour === 'number') ? { mergedPerHour: row.mergedPerHour } : {}),
       ...(kind === 'job' ? { lane: text(row.lane), repo: text(row.repo), ...(MAP_STATES.includes(row.state as MapState) ? { state: row.state as MapState } : {}) } : {}),
+      ...(kind === 'job' && 'ageMinutes' in row ? { ageMinutes: count(row.ageMinutes) } : {}),
       ...(kind === 'computer' && row.remote === true ? { remote: true } : {}),
       ...(kind === 'resource' && (row.usedPct === null || typeof row.usedPct === 'number') ? { usedPct: row.usedPct } : {}) });
   }
@@ -67,6 +69,39 @@ export function narrowLiveMap(raw: unknown): FleetLiveMap | null {
 export const liveMapQuery: QueryDef<FleetLiveMap | null> = {
   key: 'verse-fleet-live-map',
   fetch: async signal => narrowLiveMap(await apiGet<unknown>(LIVE_MAP_API, signal)),
+};
+
+const FRAME_STATES: readonly ReplayFrameState[] = ['known', 'partly-unknown', 'unknown'];
+const MAX_FRAMES = 288;
+const list = (v: unknown): unknown[] | null => Array.isArray(v) ? v.slice(0, MAX_NODES) : null;
+const jobs = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.job) ? [{ job: text(row.job)!, lane: text(row.lane), repo: text(row.repo), url: text(row.url) }] : []) ?? null;
+const replayLanes = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.lane) && count(row.running) !== null ? [{ lane: text(row.lane)!, running: count(row.running)! }] : []) ?? null;
+const replayPools = (v: unknown) => list(v)?.flatMap(row => object(row) && text(row.pool) ? [{ pool: text(row.pool)!, usedPct: typeof row.usedPct === 'number' && Number.isFinite(row.usedPct) ? row.usedPct : null }] : []) ?? null;
+/** A fleet.map-replay.v1 read. Malformed frames are dropped and a missing part stays null (unknown); null when this is not a replay or has no frames. */
+export function narrowMapReplay(raw: unknown): MapReplay | null {
+  if (!object(raw) || raw.schema !== MAP_REPLAY_SCHEMA || raw.version !== 1 || !Array.isArray(raw.frames)) return null;
+  const frames: MapReplayFrame[] = raw.frames.slice(0, MAX_FRAMES).flatMap(row => {
+    const at = object(row) ? text(row.at) : null, from = object(row) ? text(row.from) : null;
+    if (!object(row) || !at || !from || !Number.isFinite(Date.parse(at)) || !FRAME_STATES.includes(row.state as ReplayFrameState)) return [];
+    const plain = (rows: ReturnType<typeof jobs>) => rows?.map(({ job, lane, repo }) => ({ job, lane, repo })) ?? null;
+    return [{ from, at, state: row.state as ReplayFrameState, running: plain(jobs(row.running)), launched: plain(jobs(row.launched)),
+      prsOpened: jobs(row.prsOpened), merged: jobs(row.merged), messages: row.messages === null ? null : narrowMapEdges({ schema: 'fleet.map-edges.v1', version: 1, edges: row.messages }),
+      lanes: replayLanes(row.lanes), pools: replayPools(row.pools) }];
+  });
+  const sources = object(raw.sources) ? raw.sources : {};
+  const step = count(raw.stepSeconds);
+  if (!frames.length || !step) return null;
+  return { schema: MAP_REPLAY_SCHEMA, version: 1, generatedAt: text(raw.generatedAt) ?? 'unknown', since: text(raw.since) ?? frames[0]!.from, until: text(raw.until) ?? frames.at(-1)!.at,
+    stepSeconds: step, sources: { jobs: sources.jobs === 'available' ? 'available' : 'unknown', pools: sources.pools === 'available' ? 'available' : 'unknown',
+      messages: sources.messages === 'available' || sources.messages === 'missing' ? sources.messages : 'unavailable' },
+    frames, gaps: (list(raw.gaps) ?? []).flatMap(gap => text(gap) ? [text(gap)!] : []) };
+}
+export const MAP_REPLAY_API = '/api/verse/fleet/control/map-replay';
+/** Refreshed once a minute: frames are history, not a live feed. */
+export const MAP_REPLAY_POLL_MS = 60_000;
+export const mapReplayQuery: QueryDef<MapReplay | null> = {
+  key: 'verse-fleet-map-replay',
+  fetch: async signal => narrowMapReplay(await apiGet<unknown>(MAP_REPLAY_API, signal)),
 };
 
 const ROLES: readonly MapEdgeRole[] = ['leader', 'lane', 'worker'];
@@ -219,4 +254,11 @@ export function readMapFilter(): MapFilter {
 }
 export function saveMapFilter(filter: MapFilter): void {
   try { globalThis.sessionStorage?.setItem(MAP_FILTER_KEY, JSON.stringify(filter)); } catch { /* storage blocked: the filter lasts until the page closes */ }
+}
+
+/** Live overlays use the same nodes and renderers as retained message lines. */
+export const MESSAGE_EDGE_TTL_MS = 10_000;
+export function transientMessageEdges(messages: readonly import('../../../../core/fleet/map-messages.js').MapMessage[], now: number): LiveMapEdge[] {
+  return messages.filter(m => m.fromNode && m.toNode && now >= Date.parse(m.at) && now - Date.parse(m.at) < MESSAGE_EDGE_TTL_MS)
+    .map(m => ({ id: `live:${m.id}`, from: m.fromNode!, to: m.toNode!, kind: 'messaged-in-last-15-min', messages: 1, lastMessageAt: m.at, pulse: true }));
 }

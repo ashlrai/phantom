@@ -13,7 +13,7 @@ export const EMPTY_RATE_ALERT = 0.15;
 
 const TAG: Record<FinalEmptyReason, EmptyTag> = {
   'already-shipped': 'already_done', 'usage-out': 'pool_cap', 'no-change-needed': 'no_change_needed',
-  'repo-rule': 'blocked', 'blocked-dependency': 'blocked', 'tool-missing': 'blocked',
+  'repo-rule': 'blocked', 'sign-in-failed': 'blocked', 'lane-held': 'pool_cap', 'blocked-dependency': 'blocked', 'tool-missing': 'blocked',
   // A timeout is not a statement about the work; leave it unknown rather than guess.
   timeout: 'unknown', unknown: 'unknown',
 };
@@ -74,23 +74,6 @@ export function summarizeEmptyTags(jobs: readonly TaggedEmptyJob[], finished: nu
 export function emptyDigestLine(report: EmptyTagsReport): string | null {
   if (report.rate === null || report.rate <= EMPTY_RATE_ALERT || !report.top) return null;
   return `${Math.round(report.rate * 100)}% of jobs ended empty; top reason: ${EMPTY_TAG_LABELS[report.top]} (${report.counts[report.top]} of ${report.empty}).`;
-}
-
-/** Plain text lines for the CLI. `by` picks the grouping. */
-export function formatEmptyTags(report: EmptyTagsReport, by: 'reason' | 'lane', hours: number): string[] {
-  if (report.empty === 0) return ['No empty jobs.'];
-  const pct = report.rate === null ? '' : ` (${Math.round(report.rate * 100)}% of ${report.finished})`;
-  const lines = [`${report.empty} empty jobs in the last ${hours} hours${pct}`];
-  if (by === 'lane') {
-    for (const row of report.lanes) lines.push(`${row.lane}: ${row.empty} empty; ${EMPTY_TAGS.filter(t => row.counts[t]).map(t => `${t} ${row.counts[t]}`).join(', ')}`);
-    return lines;
-  }
-  for (const tag of [...EMPTY_TAGS].sort((a, b) => report.counts[b] - report.counts[a])) {
-    if (!report.counts[tag]) continue;
-    const ex = report.examples[tag];
-    lines.push(`${tag}: ${report.counts[tag]} (${EMPTY_TAG_LABELS[tag]})${ex ? `; newest ${ex.id} on ${ex.lane}` : ''}`);
-  }
-  return lines;
 }
 
 /**

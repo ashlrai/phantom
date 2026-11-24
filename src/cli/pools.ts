@@ -10,9 +10,9 @@ A stale or missing reading is unknown with a reason, never zero.
 
 Usage: phm pools spenddown [--text]
 One row per plan for a spend-down chart: used_frac, reset_at, even_pace_frac (where a straight line
-from the last reset would be now), projected_at_reset and a verdict in plain words ("on pace",
-"will leave 12% unused: add work", "drained until Fri 6 PM", "no reading"). JSON (pools.spenddown.v1)
-by default; --text for people.
+from the last reset would be now), projected_at_reset and a verdict in plain words ("spending on pace",
+"behind: will waste ~12%", "exhausted until Fri 6 PM", "refilled, lane idle", "unknown: no reading"). Also running
+jobs against the slot target and rows queued for the lane. JSON (pools.spenddown.v1) by default; --text for people.
 
 Usage: phm pools waste [--json]
 Which pool is about to waste included usage, and the one fix, in plain words: "Gemini: 85% will go unused in 5 h.
@@ -26,9 +26,9 @@ export async function cmdPools(args: string[]): Promise<number> {
   if (args[0] === 'waste') {
     const flags = args.slice(1);
     if (flags.some(a => a !== '--text' && a !== '--json')) { console.error(POOLS_USAGE); return 2; }
-    const { readPoolsWaste, formatPoolsWasteText, raiseWasteAsk } = await import('../core/fleet/pools-waste.js');
+    const { readPoolsWaste, formatPoolsWasteText } = await import('../core/fleet/pools-waste.js');
     const waste = await readPoolsWaste();
-    await raiseWasteAsk(waste);
+    await (await import('../core/fleet/asks-sync.js')).syncAsks().catch(() => null);
     console.log(flags.includes('--json') ? JSON.stringify(waste, null, 2) : formatPoolsWasteText(waste));
     return 0;
   }
@@ -38,10 +38,11 @@ export async function cmdPools(args: string[]): Promise<number> {
     import('../core/fleet/runs-resource-ledger.js'), import('../core/fleet/pools-view.js'), import('../core/fleet/usage-history.js'),
   ]);
   const now = Date.now();
-  const view = buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }));
+  const { readLiveCaps } = await import('../core/fleet/model-caps.js');
+  const view = buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now));
   if (spenddown) {
-    const { buildSpendDown, formatSpendDownText } = await import('../core/fleet/pools-spenddown.js');
-    const chart = buildSpendDown(view);
+    const { readSpendDown, formatSpendDownText } = await import('../core/fleet/pools-spenddown.js');
+    const chart = await readSpendDown(view, { nowMs: now });
     console.log(flags.includes('--text') ? formatSpendDownText(chart) : JSON.stringify(chart, null, 2));
     return 0;
   }

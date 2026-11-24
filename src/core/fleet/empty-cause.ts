@@ -8,6 +8,7 @@
  * Read-only; bounded, no-follow reads through readSource.
  */
 import { join } from 'node:path';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { readSource } from './runs-parked-queue.js';
 
 export const EMPTY_CAUSES = ['sandbox_denied', 'no_candidate', 'precheck_skip', 'tool_missing', 'timeout', 'model_error', 'unknown'] as const;
@@ -81,6 +82,95 @@ const seconds = (value: unknown): number | null => typeof value === 'number' && 
 export interface LedgerRow { row: Record<string, unknown>; id: string; lane: string; at: number }
 
 /**
+ * jobs.jsonl field dialects, the same sets dispatchd `_vc_pick`,
+ * metrics/loop and queue/job-outcomes accept: job ids take
+ * job|job_id|jobId|id, the lane alias pool and timestamps
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt. `at` stays
+ * the row's own stamp in dialect order — consumers that need the PR's own
+ * mergedAt read that field themselves (merge-latency, throughput).
+ */
+const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/**
+ * The rest of the jobs-ledger dialect the finish/outcome readers share with
+ * dispatchd `_vc_pick`, metrics/loop and queue/job-outcomes: the event name
+ * takes event|type|kind ('published' folds to 'publish'), the terminal
+ * phase/state takes phase|state|outcome|status|result|conclusion, and the PR
+ * link takes url|pr_url|prUrl|pr. Reconciler rows keep a publish-shaped event
+ * while carrying the terminal phase, so the phase — not the event name — is
+ * the authoritative outcome signal.
+ */
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
+
+const pickString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
+/** First parseable stamp (epoch ms) among the ledger's timestamp fields, in dialect order. */
+export function ledgerAtMs(row: Record<string, unknown>): number | null {
+  for (const field of TS_KEYS) {
+    const at = parseLedgerTs(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+}
+
+/** Job id across job|job_id|jobId|id — first non-empty string. */
+export function ledgerJobId(row: Record<string, unknown>): string | null {
+  return pickString(row, JOB_ID_KEYS);
+}
+
+/** Raw first stamp string across ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt, unvalidated. */
+export function ledgerStamp(row: Record<string, unknown>): string | null {
+  return pickString(row, TS_KEYS);
+}
+
+/** Normalized lowercase event name across event|type|kind; 'published' folds to 'publish'. */
+export function ledgerEventName(row: Record<string, unknown>): string | null {
+  const name = pickString(row, EVENT_KEYS)?.toLowerCase() ?? null;
+  return name === 'published' ? 'publish' : name;
+}
+
+/** Uppercased terminal phase/state — first non-empty of phase|state|outcome|status|result|conclusion. */
+export function ledgerPhase(row: Record<string, unknown>): string | null {
+  const phase = pickString(row, PHASE_KEYS);
+  return phase === null ? null : phase.toUpperCase();
+}
+
+/**
+ * Every state-ish string the row carries — the event name plus each phase
+ * field — uppercased. Empty-kind markers (EMPTY_DONE and kin) may sit in any
+ * of these dialect fields, so membership is checked across all of them.
+ */
+export function ledgerStateTokens(row: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const event = ledgerEventName(row);
+  if (event !== null) out.push(event.toUpperCase());
+  for (const key of PHASE_KEYS) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') out.push(value.trim().toUpperCase());
+  }
+  return out;
+}
+
+/** First PR-link string across url|pr_url|prUrl|pr. */
+export function ledgerPrUrl(row: Record<string, unknown>): string | null {
+  return pickString(row, URL_KEYS);
+}
+
+/** Lane across lane|pool — the same pair ledgerRows already normalizes into LedgerRow.lane. */
+export function ledgerLane(row: Record<string, unknown>): string | null {
+  return pickString(row, LANE_KEYS);
+}
+
+/**
  * Pure: in-window ledger rows that name a safe job id. `malformed` counts non-blank lines that are not JSON objects.
  * `anyJob` also keeps rows with no job id (PR outcome rows are keyed by URL) under the id ''.
  */
@@ -95,12 +185,12 @@ export function ledgerRows(ledger: string, now: number, hours: number, anyJob = 
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const id = typeof row.job === 'string' ? row.job : row.id ?? (anyJob ? '' : null);
+    const id = ledgerJobId(row) ?? (anyJob ? '' : null);
     // The id names a log file, so refuse anything that could leave the runs dir.
-    if (typeof id !== 'string' || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
-    if (!Number.isFinite(at) || at > now || at < now - hours * 3_600_000) continue;
-    rows.push({ row, id, lane: text(row.lane), at });
+    if (id === null || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
+    const at = ledgerAtMs(row);
+    if (at === null || at > now || at < now - hours * 3_600_000) continue;
+    rows.push({ row, id, lane: text(pickString(row, LANE_KEYS)), at });
   }
   return { rows, malformed };
 }
@@ -109,8 +199,9 @@ export function ledgerRows(ledger: string, now: number, hours: number, anyJob = 
 export function emptyFinishes(ledger: string, now: number, hours: number): EmptyFinish[] {
   const jobs = new Map<string, EmptyFinish>();
   for (const { row, id, lane } of ledgerRows(ledger, now, hours).rows) {
-    const empty = row.empty === true && (row.event === 'finish' || row.event === 'outcome')
-      || [row.event, row.outcome, row.state].includes('EMPTY_DONE');
+    const eventName = ledgerEventName(row);
+    const empty = row.empty === true && (eventName === 'finish' || eventName === 'outcome')
+      || ledgerStateTokens(row).includes('EMPTY_DONE');
     if (!empty) continue;
     const seen = jobs.get(id);
     jobs.set(id, {

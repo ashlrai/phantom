@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runway } from '../../../../core/usage/runway.js';
+import { poolShareSnapshot, poolSpendLine, runway } from '../../../../core/usage/runway.js';
 import { evictAll } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
 import { mockViewport } from '../shell/viewport.test-support.js';
@@ -33,7 +33,7 @@ describe('Pools card', () => {
     expect(screen.getAllByRole('button')).toHaveLength(8);
     expect(screen.getByRole('button', { name: 'Local: free, limited by memory' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'CMP Codex: usage unknown, runway unknown, reset unknown' })).not.toHaveAttribute('data-warn');
-    expect(calls.calls.map(call => call.path)).toEqual(['/api/usage/runway']);
+    expect(calls.calls.map(call => call.path).sort()).toEqual(['/api/fleet/local-capacity', '/api/usage/runway']);
     // The bar repeats the row's own reading: 97% used is drawn, an unread pool is unknown (never 0), and Local has no window to draw.
     expect(screen.getByRole('meter', { name: 'Claude used' })).toHaveAttribute('aria-valuenow', '97');
     const unread = screen.getByRole('meter', { name: 'CMP Codex used' });
@@ -63,4 +63,32 @@ describe('Pools card', () => {
     expect(screen.queryByText(/% left|Next reset|^Read /)).toBeNull();
     for (const meter of screen.getAllByRole('meter')) expect(meter.getAttribute('aria-valuenow')).toBeNull();
   });
+  it('shows the room for local workers on the Local tile, on desktop and phone', async () => {
+    const room = 'Room for 3 local workers (41 GB free, about 6 GB each, keeping 23 GB spare)';
+    for (const width of [1440, 390]) {
+      const viewport = mockViewport(width);
+      installFetch(({ path }) => path === '/api/fleet/local-capacity' ? json({ schema: 'local.capacity.v1', workers: 3, summary: room })
+        : json({ schema: 'pool.runway.v1', v: 1, asOf: null, headline: 'Ready', pools: [row(50, 0, 10)] }));
+      const { unmount } = render(<PoolsCard onOpenJob={vi.fn()} />);
+      expect(await screen.findByRole('button', { name: `Local: ${room}` })).toBeVisible();
+      unmount(); evictAll(); viewport.restore?.();
+    }
+  });
+});
+
+
+it.each([1440, 390])('renders CLI spend-down rows with used, projected and reset marks at %s px', async width => {
+  const viewport = mockViewport(width);
+  const shares = poolShareSnapshot([{ pool: 'claude-api', unit: 'usd', usedPercent: 50, burnPerHour: 1, hoursToReset: 20, resetAt: '2026-11-19T08:00:00Z' },
+    { pool: 'zai', usedPercent: null, burnPerHour: null, hoursToReset: null }], null);
+  installFetch(({ path }) => path === '/api/usage/runway' ? json({ schema: 'pool.runway.v1', v: 1, headline: '', pools: [], shares }) : json({ summary: 'Free local slots' }));
+  render(<PoolsCard onOpenJob={vi.fn()} />);
+  expect(await screen.findByRole('button', { name: poolSpendLine(shares.pools[0]!) })).toBeVisible();
+  const meter = screen.getByRole('meter', { name: 'Claude API gift used' });
+  expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '50%' });
+  expect(meter.querySelector('[data-part="more"]')).toHaveStyle({ width: '20%' });
+  expect(screen.getByLabelText('Claude API gift expiry: 2026-11-19T08:00:00Z')).toBeVisible();
+  expect(screen.getByRole('meter', { name: 'Zai used' })).not.toHaveAttribute('aria-valuenow');
+  expect(screen.getByRole('button', { name: /Zai: unknown: no reading/ })).not.toHaveTextContent('0%');
+  viewport.restore();
 });

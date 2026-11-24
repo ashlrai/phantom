@@ -54,7 +54,7 @@ describe('buildPoolsView', () => {
 
   it('reports an on-pace pool with every field measured', () => {
     expect(one(FIXTURE[1]!)).toEqual({
-      id: 'on-pace', kind: 'subscription', usedPct: 60, resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
+      id: 'on-pace', kind: 'subscription', usedPct: 60, state: 'measured', resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
       burnBasis: 'reported', burn: { samples: 1, window_h: 0, method: 'reported' }, projectedUnusedPct: 0, projectedEmptyAt: at(60 + 0) === '' ? null : expect.any(String), verdict: 'on pace', wasteRisk: 'low', creditsRemaining: null, held: false,
       running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'On pace: on pace',
     });
@@ -85,6 +85,26 @@ describe('buildPoolsView', () => {
   it('shows an expired window as unknown, never as the old percentage', () => {
     expect(one(FIXTURE[4]!)).toMatchObject({ usedPct: null, hoursLeft: null, projectedUnusedPct: null, wasteRisk: 'unknown',
       reason: `window reset at ${at(-3)}; no reading for the new window`, summary: `Expired: unknown: window reset at ${at(-3)}; no reading for the new window` });
+  });
+
+  it('counts a pool whose reset passed after its reading as refilled, not exhausted', () => {
+    const row = buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW).pools[0]!;
+    expect(row).toMatchObject({ state: 'refilled', usedPct: 0, verdict: 'add work', hoursLeft: 167, reason: 'reset passed; treating as refilled until the next sensor reading' });
+    expect(row.resetAt).toBe(at(167));
+    expect(row.summary).toMatch(/^Claude: refilled at .*, waiting for first reading$/);
+    expect(formatPoolsText({ ...buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW) })).toContain('waiting for first reading');
+    expect(row.summary).not.toMatch(/ask|Mason/i);
+  });
+
+  it('lets a newer sensor reading replace the refill assumption', () => {
+    const samples = [{ pool: 'claude', used_pct: 5, observed_at: at(-0.2), reset_at: at(167) }];
+    const view = buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW, samples);
+    expect(view.pools[0]).toMatchObject({ state: 'measured', usedPct: 5, asOf: at(-0.2), resetAt: at(167) });
+  });
+
+  it('marks a normal reading measured and an unreadable one unknown', () => {
+    expect(one(lane('ok'))).toMatchObject({ state: 'measured', usedPct: 50 });
+    expect(one(lane('none', { usedPct: null }))).toMatchObject({ state: 'unknown' });
   });
 
   it('shows a stale reading as unknown with the time of the last reading', () => {

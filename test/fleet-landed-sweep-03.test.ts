@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DirtyRow } from '../src/core/fleet/dirty-landed-inspect.js';
 import { cmdFleetLandedSweep } from '../src/cli/fleet-landed-sweep.js';
+import { readLandedFromGit } from '../src/core/fleet/landed-from-git.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
 // The git-backed inspection is faked: PR 11 is fully on master (landed),
@@ -24,6 +25,8 @@ vi.mock('../src/core/fleet/dirty-landed-inspect.js', async importOriginal => {
   };
 });
 
+// Hermetic: when gh is out the sweep reads git; never let these tests touch a real checkout.
+const gitDown = () => readLandedFromGit({ git: () => { throw new Error('offline'); } });
 const H11 = 'a'.repeat(40);
 const H12 = 'b'.repeat(40);
 const dirs: string[] = [];
@@ -102,12 +105,31 @@ describe('fleet landed-sweep', () => {
     expect(calls).toEqual([]);
   });
 
-  it('exits 1 with an error when the gh list read fails', async () => {
+  it('skips with a plain reason, exit 0, when gh cannot list PRs', async () => {
     const code = await cmdFleetLandedSweep(['--json'], {
-      gh: async () => ({ ok: false, stdout: '', stderr: 'nope' }), output: t => out.push(t), error: t => errs.push(t),
+      gh: async () => ({ ok: false, stdout: '', stderr: 'nope' }), output: t => out.push(t), error: t => errs.push(t), landedFromGit: gitDown,
+    });
+    expect(code).toBe(0);
+    const result = JSON.parse(out[0]!);
+    expect(result).toMatchObject({ v: 1, inspected: 0, closed: 0, failed: 0 });
+    expect(result.skippedReason).toContain('no landed report yet');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('skips the same way when gh is not installed', async () => {
+    const code = await cmdFleetLandedSweep([], {
+      gh: async () => { throw new Error('spawn gh ENOENT'); }, output: t => out.push(t), error: t => errs.push(t), landedFromGit: gitDown,
+    });
+    expect(code).toBe(0);
+    expect(out[0]).toContain('skipped, no landed report yet');
+  });
+
+  it('fails, naming gh pr list output, when the list is malformed', async () => {
+    const code = await cmdFleetLandedSweep(['--json'], {
+      gh: async () => ({ ok: true, stdout: '{"not":"a list"}', stderr: '' }), output: t => out.push(t), error: t => errs.push(t),
     });
     expect(code).toBe(1);
-    expect(JSON.parse(out[0]!)).toMatchObject({ v: 1, closed: 0, error: 'dirty-landed report unreadable' });
+    expect(JSON.parse(out[0]!)).toMatchObject({ v: 1, closed: 0, error: expect.stringContaining('gh pr list output') });
   });
 
   it('exits 2 on usage errors', async () => {

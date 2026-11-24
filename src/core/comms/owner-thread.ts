@@ -8,7 +8,7 @@
  * KILL and the comms pause halt every adapter before a transport is called.
  */
 import { teammateReplyGapFromInbox, type TeammateReplyGap } from './teammate-reply-gap.js';
-import { recordDelivery } from '../leader/delivery-receipts.js';
+import { readReceipts, recordDelivery, type MessageReceipts } from '../leader/delivery-receipts.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { linkSync, lstatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -114,10 +114,15 @@ export interface OwnerCommsStatus {
   threadId: typeof OWNER_THREAD_ID;
   kill: boolean;
   paused: boolean;
-  messages: number;
+  /** Live plus archived-base message count; null when the thread is unreadable — unknown stays unknown, never 0. */
+  messages: number | null;
   adapters: OwnerAdapterStatus[];
   /** Additive: how long teammate texts have waited for a reply (metadata only). */
   replyGap: TeammateReplyGap[];
+  /** Additive: live inbound messages no recorded outbound reply cites; null when the thread is unreadable. */
+  awaitingReply: number | null;
+  /** Additive: recorded replies with at least one fanout destination not confirmed delivered; null when the thread is unreadable. */
+  undeliveredReplies: number | null;
 }
 
 function clock(options: OwnerThreadOptions): number {
@@ -149,7 +154,7 @@ function paused(options: OwnerThreadOptions): boolean {
   return options.paused === true || isPaused();
 }
 
-function threadDir(options: OwnerThreadOptions): string {
+function threadDir(options: { runsDir: string }): string {
   return join(options.runsDir, 'leader');
 }
 
@@ -163,7 +168,7 @@ function validMessage(value: OwnerThreadMessage, seq: number): boolean {
     typeof value.at === 'string' && typeof value.text === 'string' && typeof value.senderId === 'string';
 }
 
-function readState(options: OwnerThreadOptions): ThreadState {
+function readState(options: { runsDir: string }): ThreadState {
   const file = join(threadDir(options), 'owner-thread.json');
   try { lstatSync(file); } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return blank();
@@ -547,26 +552,291 @@ export async function sendOwnerHello(options: OwnerThreadOptions): Promise<Owner
   }
 }
 
-export function readOwnerThread(options: OwnerThreadOptions, limit = 200): { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[] } | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; unavailable: true } {
+/** Per-channel delivery receipts keyed by outbound message id; a channel with no record is unknown. */
+export type OwnerThreadReceipts = Record<string, MessageReceipts>;
+
+/**
+ * Live inbound messages no recorded outbound reply cites. `sendOwnerReply`
+ * stores the answered inbound's idempotency key in `replyTo`, so a proactive
+ * notice never clears the mark and a reply recorded but undelivered still
+ * counts as answered — channel delivery stays with the receipts. Archived
+ * inbound messages are outside the live window and are not reported.
+ */
+function awaitingReplyMessages(state: ThreadState): OwnerThreadMessage[] {
+  const answered = new Set(
+    state.messages.filter(message => message.direction === 'outbound' && message.replyTo !== undefined)
+      .map(message => message.replyTo!),
+  );
+  return state.messages
+    .filter(message => message.direction === 'inbound' && !answered.has(message.idempotencyKey));
+}
+
+function awaitingReplyIds(state: ThreadState): string[] {
+  return awaitingReplyMessages(state).map(message => message.id);
+}
+
+/** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
+export const OWNER_THREAD_CONTAINS_MAX = 512;
+
+/** The idempotency-key grammar every stored message key — and every `replyTo` citation of one — satisfies. */
+export function isOwnerThreadKey(value: string): boolean {
+  return KEY.test(value);
+}
+
+/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time window, a text needle and/or one reply exchange. */
+export interface OwnerThreadReadFilter {
+  /** Keep only messages recorded on this channel. */
+  channel?: OwnerChannel;
+  /** Keep only messages in this direction — what the owner sent (`inbound`) or what we answered (`outbound`). */
+  direction?: OwnerThreadMessage['direction'];
+  /** Epoch ms; keeps messages whose `at` parses at or after it. An unparseable `at` never satisfies a `since` filter. */
+  since?: number;
+  /**
+   * Epoch ms; keeps messages whose `at` parses strictly before it — the
+   * exclusive recorded-time ceiling that pairs with `since`'s inclusive
+   * floor, the same `[since, before)` window every other comms and bus
+   * read applies. Named `beforeAt` rather than `before` because the
+   * archive page already spends `before` on its seq cursor. An
+   * unparseable `at` never satisfies a `beforeAt` filter.
+   */
+  beforeAt?: number;
+  /**
+   * Case-insensitive substring over the stored message text, whitespace
+   * collapsed on both sides — the same `--contains` rule every other comms
+   * and bus read applies. This is the only text search the thread offers:
+   * iMessage bodies are redacted on the bus mirror, so the private thread is
+   * the one place they can be found.
+   */
+  contains?: string;
+  /**
+   * Keep only the exchange rooted at one message key: the message carrying
+   * that `idempotencyKey` plus every recorded reply whose `replyTo` cites it —
+   * the same key `send-owner --reply-to` takes, so "what did we already say
+   * about this inbound" is one filtered read across every channel the reply
+   * fanned out to. An outbound key matches only the message carrying it (no
+   * `replyTo` ever cites an outbound key), and a key nothing carries is an
+   * honest empty slice.
+   */
+  replyTo?: string;
+}
+
+/**
+ * The one slice predicate the live `readOwnerThread` view and the archive
+ * `readOwnerThreadHistory` read share: a message stays when it passes every
+ * supplied dimension — its recorded channel, its direction, the `since`
+ * recorded-time floor and `beforeAt` recorded-time ceiling (an unparseable
+ * `at` never satisfies either bound) and the
+ * `contains` needle as a case-insensitive substring over the stored text
+ * with whitespace collapsed on both sides, and `replyTo` the one-key
+ * exchange — the message carrying that `idempotencyKey` plus every reply
+ * citing it. Exported so the archived pages
+ * `phm fleet owner-history` and `fleet_owner_history` apply the identical
+ * rule `phm comms thread` does — the two reads can never disagree about
+ * what a filter keeps.
+ */
+export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (message: OwnerThreadMessage) => boolean {
+  const needle = filter?.contains === undefined ? undefined
+    : filter.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  return message => {
+    if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
+    if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
+    if (filter?.replyTo !== undefined && message.idempotencyKey !== filter.replyTo && message.replyTo !== filter.replyTo) return false;
+    if (filter?.since !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at < filter.since) return false;
+    }
+    if (filter?.beforeAt !== undefined) {
+      const at = Date.parse(message.at);
+      if (!Number.isFinite(at) || at >= filter.beforeAt) return false;
+    }
+    if (needle !== undefined && needle !== '' &&
+        !message.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)) return false;
+    return true;
+  };
+}
+
+/**
+ * The ordered owner thread, capped to the newest `limit` messages that pass
+ * `filter` (receipt joins and the awaiting-reply mark follow the same slice,
+ * so a filtered view never shows marks for rows it hid). `direction` keeps
+ * only what the owner sent or only what we answered; the awaiting-reply mark
+ * only ever applies to inbound rows, so an outbound slice reports none.
+ * `contains` keeps
+ * only messages whose stored text carries the needle as a case-insensitive
+ * substring with whitespace collapsed on both sides — intake already refuses
+ * secret-shaped text, so the match runs over the same scrubbed content the
+ * row prints. `replyTo` keeps only the exchange rooted at one message key —
+ * the message carrying that `idempotencyKey` plus every reply citing it —
+ * across every channel the reply fanned out to. An unreadable thread still
+ * reports `unavailable` with
+ * `awaitingReply: null` — unknown stays unknown, never an empty filtered
+ * list passed off as fact.
+ */
+export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter?: OwnerThreadReadFilter):
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: OwnerThreadMessage[]; receipts: OwnerThreadReceipts; awaitingReply: string[] }
+  | { schema: 'comms.owner-thread.v1'; threadId: typeof OWNER_THREAD_ID; messages: []; receipts: OwnerThreadReceipts; awaitingReply: null; unavailable: true } {
   const cap = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 200) : 200;
+  const inView = ownerThreadViewPredicate(filter);
   try {
     const state = readState(options);
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: state.messages.slice(-cap) };
+    const messages = state.messages.filter(inView).slice(-cap);
+    return {
+      schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
+      receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),
+      awaitingReply: awaitingReplyMessages(state).filter(inView).map(message => message.id),
+    };
   } catch {
-    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], unavailable: true };
+    return { schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages: [], receipts: {}, awaitingReply: null, unavailable: true };
+  }
+}
+
+/** One live inbound owner message no recorded outbound reply cites. */
+export interface OwnerAwaitingReply {
+  /** Thread message id (`m<seq>`). */
+  id: string;
+  /** The inbound's idempotency key — the value `send-owner --reply-to` accepts. */
+  idempotencyKey: string;
+  channel: OwnerChannel;
+  /** ISO time the owner message landed. */
+  at: string;
+  /** Stored message text; scrubbed at intake, never a secret value. */
+  text: string;
+}
+
+export type OwnerAwaitingReplies =
+  | { status: 'ok'; items: OwnerAwaitingReply[] }
+  | { status: 'unavailable' };
+
+/**
+ * The item-level form of the awaiting-reply mark `readOwnerThread` reports as
+ * ids and `readOwnerCommsStatus` reports as a count: every live inbound owner
+ * message in thread order, with the fields a pending-comms surface needs. An
+ * unreadable thread reports `unavailable` — never an empty list passed off as
+ * fact. Archived inbound messages stay outside the live window.
+ */
+export function readOwnerAwaitingReplies(options: { runsDir: string }): OwnerAwaitingReplies {
+  try {
+    const state = readState(options);
+    return {
+      status: 'ok',
+      items: awaitingReplyMessages(state).map(message => ({
+        id: message.id,
+        idempotencyKey: message.idempotencyKey,
+        channel: message.channel,
+        at: message.at,
+        text: message.text,
+      })),
+    };
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
+/** One fanout destination of a recorded reply that delivery evidence cannot confirm reached the owner. */
+export interface OwnerUndeliveredDestination {
+  channel: OwnerChannel;
+  /** The latest recorded attempt state; 'unknown' when neither the thread nor the bounded receipt journal proves an outcome. */
+  state: 'failed' | 'pending' | 'unknown';
+  /** The scrubbed receipt reason on a failed attempt; null otherwise. */
+  reason: string | null;
+}
+
+/** A recorded outbound reply (`replyTo` set, `fanout` declared) with at least one destination not confirmed delivered. */
+export interface OwnerUndeliveredReply {
+  /** Thread message id (`m<seq>`). */
+  id: string;
+  /** The reply's idempotency key — resending the same text under it retries only unconfirmed destinations. */
+  idempotencyKey: string;
+  /** Idempotency key of the inbound owner message this reply answers — the `--reply-to` value a resend needs. */
+  replyTo: string;
+  /** ISO time the reply was recorded. */
+  at: string;
+  /** Stored reply text; scrubbed at intake, never a secret value. */
+  text: string;
+  /** Fanout destinations without confirmed delivery, in fanout order. */
+  destinations: OwnerUndeliveredDestination[];
+}
+
+export type OwnerUndeliveredReplies =
+  | { status: 'ok'; items: OwnerUndeliveredReply[] }
+  | { status: 'unavailable' };
+
+/**
+ * Recorded replies whose fanout is not fully delivered — the delivery side of
+ * the awaiting-reply mark. `awaitingReplyMessages` counts an inbound answered
+ * once any outbound reply cites it, even when every channel refused the send;
+ * this read is where that gap stays visible. A destination counts as
+ * delivered when the thread's own sent-mark (`deliveries[<key>:<channel>]`)
+ * or the latest receipt journal row says so — the sent-mark survives receipt
+ * journal rotation, and a rotated or crashed-away row reads 'unknown',
+ * never delivered. Notices and hellos carry no `replyTo` and stay out: they
+ * were never replies to a waiting owner message. An unreadable thread
+ * reports `unavailable` — never an empty list passed off as fact.
+ */
+function undeliveredReplyItems(state: ThreadState, runsDir: string): OwnerUndeliveredReply[] {
+  const replies = state.messages.filter(message =>
+    message.direction === 'outbound' && typeof message.replyTo === 'string' &&
+    Array.isArray(message.fanout) && message.fanout.length > 0);
+  if (replies.length === 0) return [];
+  const receipts = readReceipts(runsDir, replies.map(message => message.id));
+  const items: OwnerUndeliveredReply[] = [];
+  for (const message of replies) {
+    const channels = [...new Set(message.fanout!.filter(isOwnerChannel))];
+    if (channels.length === 0) continue;
+    const perChannel = receipts[message.id] ?? {};
+    const destinations: OwnerUndeliveredDestination[] = [];
+    for (const channel of channels) {
+      const receipt = perChannel[channel];
+      if (state.deliveries[`${message.idempotencyKey}:${channel}`] === 'sent' || receipt?.state === 'delivered') continue;
+      destinations.push({
+        channel,
+        state: receipt?.state === 'failed' || receipt?.state === 'pending' ? receipt.state : 'unknown',
+        reason: receipt?.state === 'failed' && typeof receipt.reason === 'string' ? receipt.reason : null,
+      });
+    }
+    if (destinations.length > 0) {
+      items.push({
+        id: message.id, idempotencyKey: message.idempotencyKey,
+        replyTo: message.replyTo!, at: message.at, text: message.text, destinations,
+      });
+    }
+  }
+  return items;
+}
+
+/**
+ * The item-level form of the undelivered-reply read: every live recorded
+ * reply with at least one unconfirmed fanout destination, in thread order.
+ * Resending the same text with `--reply-to <replyTo>` and
+ * `--idempotency-key <idempotencyKey>` reproduces the reply identity —
+ * explicit or derived key alike — and retries only the destinations still
+ * unconfirmed.
+ */
+export function readOwnerUndeliveredReplies(options: { runsDir: string }): OwnerUndeliveredReplies {
+  try {
+    return { status: 'ok', items: undeliveredReplyItems(readState(options), options.runsDir) };
+  } catch {
+    return { status: 'unavailable' };
   }
 }
 
 export function readOwnerCommsStatus(options: OwnerThreadOptions): OwnerCommsStatus {
   const kill = halted(options);
   const hold = paused(options);
-  let messages = 0;
-  try { const state = readState(options); messages = (state.base ?? 0) + state.messages.length; } catch { messages = 0; }
+  let messages: number | null = null;
+  let awaitingReply: number | null = null;
+  let undeliveredReplies: number | null = null;
+  try {
+    const state = readState(options);
+    messages = (state.base ?? 0) + state.messages.length;
+    awaitingReply = awaitingReplyIds(state).length;
+    undeliveredReplies = undeliveredReplyItems(state, options.runsDir).length;
+  } catch { /* unreadable thread: all counts stay null, never a fabricated 0 */ }
   return {
     schema: 'comms.owner-thread.status.v1',
     claimKey: OWNER_THREAD_CLAIM_KEY,
     threadId: OWNER_THREAD_ID,
-    kill, paused: hold, messages,
+    kill, paused: hold, messages, awaitingReply, undeliveredReplies,
     adapters: listAdapterStatus(options.settings, kill, hold),
     replyGap: teammateReplyGapFromInbox(clock(options), options.runsDir),
   };
@@ -597,7 +867,14 @@ export async function pullOwnerChannel(channel: OwnerChannel, options: OwnerThre
   return results;
 }
 
-/** Record a local-only notice in the owner thread, without invoking transports. */
+/**
+ * Record a local-only notice in the owner thread, without invoking transports.
+ * The record lands on the desktop surface — the channel `postOwnerNotice`
+ * already uses for leader-originated local posts — never a phone channel it
+ * was not delivered on: an `imessage` (or any remote) outbound here would
+ * claim a send that never happened and read as proof that channel already
+ * carried an outbound.
+ */
 export async function postOwnerThreadNotice(text: string, idempotencyKey: string, options: OwnerThreadOptions): Promise<OwnerThreadResult> {
   const clean = cleanText(text);
   if (!clean || !KEY.test(idempotencyKey)) return { status: 'refused' };
@@ -606,7 +883,7 @@ export async function postOwnerThreadNotice(text: string, idempotencyKey: string
       if (state.archivedKeys?.includes(keyDigest(idempotencyKey)) || state.messages.some(m => m.idempotencyKey === idempotencyKey)) {
         return { status: 'duplicate' as const };
       }
-      const stored = appendMessage(state, { idempotencyKey, channel: 'imessage', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean });
+      const stored = appendMessage(state, { idempotencyKey, channel: 'desktop', senderId: 'leader', direction: 'outbound', at: new Date(clock(options)).toISOString(), text: clean, fanout: ['desktop'] });
       return { status: 'accepted' as const, seq: stored.seq };
     });
   } catch { return { status: 'unavailable' }; }

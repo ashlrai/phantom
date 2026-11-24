@@ -73,18 +73,27 @@ export function leaderRows(replies: ReadonlyArray<{ at: string; text: string }>)
 }
 const str = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v : null;
 type Row = Record<string, unknown>;
-const timestamp = (row: Row) => str(row.ts ?? row.timestamp ?? row.at);
-const jobId = (row: Row) => str(row.job ?? row.job_id ?? row.jobId);
+/**
+ * jobs.jsonl field dialects: ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
+ * job|job_id|jobId|id, url|prUrl|pr_url|pr|html_url, event|type|kind and
+ * phase|state|outcome|status|result|conclusion — the aliases dispatchd `_vc_*`
+ * and the fleet metrics readers accept.
+ */
+const timestamp = (row: Row) => str(row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt);
+const jobId = (row: Row) => str(row.job ?? row.job_id ?? row.jobId ?? row.id);
+const eventName = (row: Row) => str(row.event ?? row.type ?? row.kind);
+const phaseName = (row: Row) => str(row.phase ?? row.state ?? row.outcome ?? row.status ?? row.result ?? row.conclusion);
 function prUrl(row: Row): string | null {
-  const value = str(row.url ?? row.prUrl ?? row.pr_url);
+  const value = str(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? row.html_url);
   return value && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*\/?$/i.test(value) ? value.replace(/\/$/, '') : null;
 }
 function eventKind(row: Row): WorklogEntry['kind'] | null {
-  if (row.event === 'launch') return 'launch';
-  if (row.event === 'merged' || (row.event === 'outcome' && row.state === 'MERGED')) return 'merged';
-  if (row.event === 'outcome' && row.state === 'CLOSED' && prUrl(row)) return 'closed';
-  if (row.event === 'publish' && prUrl(row)) return 'pr';
-  if (row.event !== 'finish') return null;
+  const event = eventName(row), phase = phaseName(row);
+  if (event === 'launch') return 'launch';
+  if (event === 'merged' || (event === 'outcome' && phase === 'MERGED')) return 'merged';
+  if (event === 'outcome' && phase === 'CLOSED' && prUrl(row)) return 'closed';
+  if (event === 'publish' && prUrl(row)) return 'pr';
+  if (event !== 'finish') return null;
   if (typeof row.exit_code === 'number' && Number.isFinite(row.exit_code) && row.exit_code !== 0) return 'failed';
   if (prUrl(row)) return 'pr';
   return row.empty === true ? 'empty' : 'finished';
@@ -116,9 +125,9 @@ export function worklog(text: string, since: number, now: number, extra: Worklog
   const publications = new Map<string, Row>();
   for (const row of rows) {
     const id = jobId(row);
-    if (id && row.event === 'launch') launches.set(id, [...(launches.get(id) ?? []), row]);
+    if (id && eventName(row) === 'launch') launches.set(id, [...(launches.get(id) ?? []), row]);
     const url = prUrl(row);
-    if (id && url && row.event === 'publish') publications.set(url.toLowerCase(), row);
+    if (id && url && eventName(row) === 'publish') publications.set(url.toLowerCase(), row);
   }
   const entries: WorklogEntry[] = [];
   const texts = new Map<WorklogEntry, string>();

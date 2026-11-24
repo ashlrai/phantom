@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import type { TidyPlan } from '../src/core/types.js';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -52,9 +53,9 @@ describe('CLI: ashlr tidy --json', () => {
   beforeAll(() => {
     // Fail fast instead of building: see the header for why tests must not
     // write the shared dist/ concurrently with the files that read it.
-    if (!existsSync(cliEntry)) {
-      throw new Error(`${cliEntry} is missing; run \`npm run build\` before this suite`);
-    }
+    // Importing require-built-dist also marks the suite as dist-bound, so the
+    // pull-request fast gate leaves it to the scheduled master run.
+    requireBuiltDist(['dist/cli/index.js'], repoRoot);
   });
 
   beforeEach(() => {

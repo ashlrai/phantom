@@ -99,6 +99,23 @@ describe('fleet work-board api', () => {
     expect(long.status).toBe(400);
   });
 
+  it('passes a valid state filter through and rejects unknown states with 400', async () => {
+    let state: string | undefined;
+    const api = createFleetWorkBoardApi({
+      read: (opts) => { state = opts.state; return board([], { state: 'BLOCKED', matched: 0 }); },
+      now: () => NOW,
+    });
+    const r = await call(api, 'GET', `${PATH}?state=BLOCKED`);
+    expect(r.status).toBe(200);
+    expect(state).toBe('BLOCKED');
+    expect(r.body).toMatchObject({ state: 'BLOCKED', matched: 0, inbox: 'ok' });
+    for (const bad of ['bogus', 'running', 'blocked', '']) {
+      const res = await call(api, 'GET', `${PATH}?state=${bad}`);
+      expect(res.status, `state=${bad}`).toBe(400);
+      expect(res.body).toEqual({ error: 'state must be one of RECEIVED, ASSIGNED, RUNNING, BLOCKED, VERIFIED.' });
+    }
+  });
+
   it('rejects non-GET with 405 and ignores other paths', async () => {
     const api = createFleetWorkBoardApi({ read: () => board([]), now: () => NOW });
     const post = await call(api, 'POST');

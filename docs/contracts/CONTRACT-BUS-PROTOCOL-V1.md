@@ -43,12 +43,22 @@ status.
   but not `fleetx.deploy`. Patterns must be a valid name or a namespace
   prefix. Anything else exits 2.
 - `--kind <task|result|review|status|question>` matches `protocol.kind`.
+- `--thread <label>` matches the v2 `thread` field on `note`/`context`
+  bodies only; every other body kind never matches. The label is printable
+  ASCII, 1 to 128 characters; anything else exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an
   unresolvable label or an unreadable identity registry keeps exact-label
   matching. `--id`, `--in-reply-to` and `--priority` keep their exact,
   case-sensitive meaning. Filters combine with AND.
+- `--contains <text>` keeps only envelopes whose scrubbed one-line summary
+  carries the needle as a case-insensitive substring, whitespace collapsed
+  on both sides — the same `busReadContainsMatch` rule `agents bus inbox
+  --contains` and `channel read --contains` apply. Matching runs over the
+  rendered summary, never the raw body, so a secret-shaped value stays
+  unfindable and protocol-v1 payloads stay opaque. The value is bounded
+  free text, up to 512 characters; a blank or longer value exits 2.
 - Filtered reads keep the cursor, limit and checkpoint semantics documented in
   `phm comms bus --help`. Checkpoints bind the new filters into their identity.
 
@@ -58,13 +68,41 @@ status.
 engine (`src/core/fleet/bus-work-claims.ts`, `bus-next-claim.ts`). They add no
 new state:
 
-- `next --to <address|topic> --owner <label> --lease-ms <1..3600000>` claims
+- `next --to <address|topic> --owner <label> --lease-ms <1..3600000>
+  [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>]
+  [--priority <P0|P1|P2|P3>] [--channel <name>] [--from <agent>]
+  [--exclude-from <agent>]`
+  claims
   the oldest highest-priority live task addressed to `--to`. When `--to`
   resolves to a registered agent identity, work addressed under any routing
-  label of that identity (handle, `agent:` address, stable id or alias) is
-  eligible; a `--to` that names no identity, or an unreadable registry,
-  keeps exact-label matching. It returns
-  `{status:'acquired', receipt, token, leaseUntil}` or `{status:'empty'}`.
+  label of that identity (handle, `agent:` address, stable id or alias) — or
+  to a `group:<channel>:<topic>` address of a registry channel the identity
+  belongs to, minus the identity's own channel posts — is eligible; a `--to`
+  that names no identity, membership in no channel, or an unreadable registry,
+  keeps exact-label matching. `--contains`, `--since`, `--before`,
+  `--priority`, `--channel`, `--from` and `--exclude-from` apply
+  the same rules every bus read's filters do — the scrubbed one-line summary
+  substring, the inclusive `receivedAt` cutoff, the exclusive `receivedAt`
+  ceiling composing with `--since` into one `[since, before)` window, the
+  exact P0..P3 band, the `group:<name>:*` room prefix on the raw `to` label,
+  and the sender identity-label match `agentRefAddressMatcher` shares
+  (a sender ref resolving through the registry matches every label of that
+  identity; an unresolvable ref or unreadable registry keeps exact-label
+  matching) —
+  inside the claim scan, so the claimable set is exactly what the matching
+  read would list; a malformed value is `invalid`, never a widened claim. It
+  returns
+  `{status:'acquired', receipt, token, leaseUntil}` or
+  `{status:'empty', candidates, held}`. `candidates` counts every live
+  claimable receipt the bounded scan found addressed to `--to` and matching
+  the request's filters, and `held`
+  counts how many answered `conflict` — a live claim on the message id or an
+  overlapping coordination key, possibly the requester's own. `candidates -
+  held` failed acquire for other reasons (completed, expired, lost, missing,
+  or a receipt that changed mid-claim); expired receipts never reach the
+  scan. Both are observed counts over the filtered scan, so `empty`
+  distinguishes a dry well
+  (`candidates: 0`) from work that exists but is held, without a second read.
 - `claim acquire --id <message-id> --owner <label> --lease-ms <n>` claims one
   message by ID. A live lease answers `conflict` to every other claimant.
 - `claim renew|release|complete --id <message-id> --token <token>` act only

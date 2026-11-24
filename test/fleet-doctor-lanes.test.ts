@@ -5,6 +5,7 @@ const NOW = Date.parse('2026-11-02T12:00:00Z');
 function fixtures(readLaneStatus: () => Promise<string>): FleetDoctorOptions {
   return {
     now: () => NOW,
+    readGuardian: async () => ({ name: 'guardian', level: 'ok', reason: 'Healthy.', nextStep: 'No action needed.' }),
     leader: { readEvents: async () => '', now: NOW },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: new Date(NOW).toISOString() }), supervisorStatuses: async () => [] },
     readJobs: async () => '',

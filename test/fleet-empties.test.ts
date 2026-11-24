@@ -200,7 +200,9 @@ describe('why runs ended empty', () => {
 
   it('serves the same report at GET /api/fleet/empties', async () => {
     const root = await mkdtemp(join(tmpdir(), 'empties-why-api-')); roots.push(root); await mkdir(join(root, 'metrics'));
-    await writeFile(join(root, 'metrics', 'jobs.jsonl'), JSON.stringify(ev('RQ-APIJOB1', { event: 'finish', empty: true, tokens_total: 3 }, 60)));
+    // The API server reads the real clock, so this row must be stamped relative to it
+    // (the shared `ev` helper uses the suite's fixed `now`, which drifts out of the window).
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), JSON.stringify({ ...ev('RQ-APIJOB1', { event: 'finish', empty: true, tokens_total: 3 }, 60), ts: new Date(Date.now() - 60_000).toISOString() }));
     await writeFile(join(root, 'RQ-APIJOB1.log'), 'work is already on main\n');
     vi.stubEnv('ASHLR_RUNS_DIR', root);
     const h = await startServer(makeCfg(), { port: 0, open: false, allowDispatch: false });

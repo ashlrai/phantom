@@ -19,8 +19,10 @@ import { join } from 'node:path';
 
 import { generateLeaderReply, type LeaderReplySeatModule } from '../src/core/agents/leader-network-runtime.js';
 import { cleanLeaderReplyText } from '../src/core/comms/leader-status-snapshot.js';
+// Compile the lazy production dependency before timing individual reply tests.
+import '../src/core/vision/leader-run-chain.js';
 
-const NOW_MS = Date.parse('2026-11-12T12:00:00Z');
+const NOW_MS = Date.parse('2026-11-12T12:00:00');
 const seats = { prompts: [] as string[], raw: '' as string | null, planOk: true };
 const seat = {
   loadDefaultLeaderSeatDeps: async () => ({}),

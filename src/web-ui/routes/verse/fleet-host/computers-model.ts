@@ -15,6 +15,9 @@ export interface ComputerCard {
   lanes: string[] | Unknown;
   jobsRunning: number | Unknown;
   freeSlots: number | Unknown;
+  /** False: seen on Tailscale only. Shown grey with its join command. */
+  joined: boolean;
+  joinCommand: string | null;
 }
 export interface ComputersView { computers: ComputerCard[]; reasons: string[] }
 
@@ -43,6 +46,9 @@ export function narrowComputers(raw: unknown): ComputersView | null {
       lanes: strings(row.lanes) ?? 'unknown',
       jobsRunning: strings(row.jobsRunning)?.length ?? 'unknown',
       freeSlots: count(row.freeSlots),
+      // Older servers send no flag: treat as joined so nothing turns grey by guesswork.
+      joined: row.joined !== false,
+      joinCommand: row.joined === false && typeof row.joinCommand === 'string' ? row.joinCommand.slice(0, MAX_TEXT) : null,
     });
   }
   return { computers, reasons: strings(raw.reasons) ?? [] };

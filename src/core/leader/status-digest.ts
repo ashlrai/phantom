@@ -47,8 +47,16 @@ export interface StatusDigestInput {
   blocker?: DigestBlocker;
   /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
   supplyLine?: string;
+  /** Worst source yield over 24 hours; absent when no source can be judged. */
+  yieldLine?: string;
   /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
   wasteLine?: string;
+  /** Sign-in state and the fix for the blocked lane with the most unused plan. */
+  authLine?: string;
+  /** `Not live yet: 2 merged fleet files (...)` when merged fleet scripts differ from the installed copies; absent when all are live or the check cannot run. */
+  notLiveLine?: string;
+  /** Warning for a lane still cut after its cause cleared; absent when unknown. */
+  adaptLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -84,6 +92,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   const lines = [
     ...(blocker ? [blocker.sentence] : []),
     ...(input.wasteLine ? [input.wasteLine] : []),
+    ...(input.authLine ? [input.authLine] : []),
     `App: installed ${show(input.installedVersion, v => v)} · published ${show(input.publishedVersion, v => v)}${pending}`,
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
     ...(input.mergeTime ? [`Time to merge: ${show(input.mergeTime, t => t.medianSeconds === null ? `unknown (${t.merged} merged, none with GitHub's own created and merged times recorded)` : `median ${spanText(t.medianSeconds)} open to merge (${t.known} of ${t.merged} PRs known)`)}`] : []),
@@ -112,6 +121,9 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   if (input.supplyLine) lines.push(input.supplyLine);
+  if (input.yieldLine) lines.push(input.yieldLine);
+  if (input.notLiveLine) lines.push(input.notLiveLine);
+  if (input.adaptLine) lines.push(truncateP0(input.adaptLine));
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
