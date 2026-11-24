@@ -47,7 +47,8 @@ async function routeDecide(args: string[]): Promise<number> {
     if (!request.success) { console.error(JSON.stringify({ error: 'Invalid route request' })); return 2; }
     const { loadRouteSources } = await import('../core/routing/decision-candidates.js');
     const { decideRoute } = await import('../core/routing/decision.js');
-    console.log(JSON.stringify(await decideRoute(request.data, await loadRouteSources(root))));
+    const { withRunwayYield } = await import('../core/queue/route-yield.js');
+    console.log(JSON.stringify(await decideRoute(request.data, await withRunwayYield(root, await loadRouteSources(root)))));
     return 0;
   } catch {
     console.error(JSON.stringify({ error: 'Route input or decision unavailable' })); return 1;
@@ -91,13 +92,45 @@ async function routeFit(args: string[]): Promise<number> {
 }
 
 export async function cmdRoute(args: string[]): Promise<number> {
+  if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
     return 2;
   }
   const report = await explainRoutes();
   console.log(args.includes('--json') ? JSON.stringify(report) : JSON.stringify(report, null, 2));
   return 0;
+}
+
+async function routeFailover(args: string[]): Promise<number> {
+  const values = new Map<string, string>();
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg) || !['--input', '--failed-lane', '--failure', '--attempted', '--root', '--record', '--json'].includes(arg)) return 2;
+    seen.add(arg);
+    if (arg === '--record' || arg === '--json') continue;
+    const value = args[++i];
+    if (!value || value.startsWith('--')) return 2;
+    values.set(arg, value);
+  }
+  if (!seen.has('--json') || !values.has('--input') || !values.has('--failed-lane') || !values.has('--failure')) return 2;
+  try {
+    const { routeRequestSchema, routeFailureKindSchema, routeIdSchema } = await import('../core/routing/decision-schema.js');
+    const { loadRouteSources } = await import('../core/routing/decision-candidates.js');
+    const { runFailover } = await import('../core/router/fallback.js');
+    const request = routeRequestSchema.parse(await routeInput(values.get('--input')!));
+    const failed_lane = routeIdSchema.parse(values.get('--failed-lane'));
+    const failure = routeFailureKindSchema.parse(values.get('--failure'));
+    const attempted = values.get('--attempted')?.split(',').map(lane => routeIdSchema.parse(lane)) ?? [];
+    const root = values.get('--root') ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+    const result = await runFailover(request, await loadRouteSources(root), { failed_lane, failure, attempted },
+      { root, record: seen.has('--record'), nowMs: Date.now() });
+    console.log(JSON.stringify(result));
+    return result.lane === null ? 2 : 0;
+  } catch {
+    console.error(JSON.stringify({ error: 'Route failover input or ledger unavailable' })); return 2;
+  }
 }

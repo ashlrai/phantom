@@ -1,4 +1,4 @@
 { "v": 1, "lanes": {
-  "claude": { "github-read": true, "github-write": true, "web-search": true, "browser": true, "shell": true, "package-install": true, "mcp": ["fetch", "context7"] },
-  "codex-cmp": { "github-read": true, "github-write": true, "web-search": true, "browser": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"] }
+  "claude": { "github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["fetch", "context7"] },
+  "codex-cmp": { "github-read": true, "github-write": true, "web-search": true, "browser": true, "computer-use": true, "shell": true, "package-install": true, "mcp": ["context7", "fetch"] }
 } }

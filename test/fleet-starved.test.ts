@@ -48,7 +48,7 @@ async function fixture(contents: unknown) {
 async function run(contents: unknown, args: string[]) {
   const file = await fixture(contents);
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const code = await cmdFleetStarved(args, file.reader);
+  const code = await cmdFleetStarved(args, file.reader, async () => ({ lanes: {}, waiting_elsewhere: 0 }));
   expect(file.reader).toHaveBeenCalledExactlyOnceWith(join(homedir(), '.ashlr-runs', 'queue', 'status.json'));
   expect(await readFile(file.path, 'utf8')).toBe(file.text);
   const printed = String(output.mock.calls[0]?.[0] ?? '');
@@ -109,6 +109,20 @@ describe('explainFleetStarved', () => {
     expect(view.lanes).toEqual([
       { lane: 'full', running: 2, target: 2, queued: 9, starved: false, backlogged: false },
       { lane: 'zero', running: 0, target: 0, queued: 3, starved: false, backlogged: false },
+    ]);
+  });
+
+  it('measures starved against the launch target after an effective_target shed', () => {
+    const view = explainFleetStarved(status({
+      reason: 'at_cap running 18 >= cap 18',
+      lanes: {
+        shedFull: { ...lane(2, 4, 9), effective_target: 2 },
+        shedRoom: { ...lane(1, 4, 9), effective_target: 2 },
+      },
+    }));
+    expect(view.lanes).toEqual([
+      { lane: 'shedFull', running: 2, target: 2, queued: 9, starved: false, backlogged: false },
+      { lane: 'shedRoom', running: 1, target: 2, queued: 9, starved: true, backlogged: false },
     ]);
   });
 });
@@ -178,6 +192,9 @@ describe('ashlr fleet starved', () => {
         { lane: 'codex', running: 0, target: 4, queued: 15, starved: true, backlogged: true },
         { lane: 'devin', running: 2, target: 2, queued: 1, starved: false, backlogged: false },
       ],
+      starved_lanes: [],
+      waiting_elsewhere: 0,
+      open_rows: null,
     });
   });
 

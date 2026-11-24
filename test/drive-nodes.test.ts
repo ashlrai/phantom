@@ -124,16 +124,38 @@ describe('drive node leases', () => {
     expect(f.a.claim(leader, f.bob, 'job')!.token).toBeGreaterThan(claim.token);
   });
 
-  it('a declining release is keyed by session, bounded, and does not duplicate', () => {
+  it('a declining release fences that session out of claim; another session still can', () => {
     const f = fixture();
     const leader = f.a.heartbeat(f.alice)!.leader!;
     f.a.enqueue('job', { owner: 'o' });
     const c1 = f.a.claim(leader, f.bob, 'job')!;
     expect(f.a.release(c1, true)).toBe(true);
     expect(f.a.snapshot().jobs[0]).toMatchObject({ state: 'pending', declined: [f.bob.session] });
-    const c2 = f.a.claim(leader, f.bob, 'job')!;
+    // claim applies the same fence pull does: the declined session is never re-offered the job.
+    expect(f.a.claim(leader, f.bob, 'job')).toBeNull();
+    // A different session still can; its own decline appends, keyed by session.
+    const c2 = f.a.claim(leader, f.alice, 'job')!;
     expect(f.a.release(c2, true)).toBe(true);
-    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session]);
+    expect(f.a.snapshot().jobs[0].declined).toEqual([f.bob.session, f.alice.session]);
+  });
+
+  it('claim applies the routing capability fences: caps and gh auth', () => {
+    const f = fixture();
+    const leader = f.a.heartbeat(f.alice)!.leader!;
+    f.a.enqueue('needs-codex', { owner: 'o', requires: ['codex'] });
+    f.a.enqueue('needs-gh', { owner: 'o', requires: ['gh'] });
+    // alice and bob advertise no caps and report no auth.
+    expect(f.a.claim(leader, f.bob, 'needs-codex')).toBeNull();
+    expect(f.a.claim(leader, f.bob, 'needs-gh')).toBeNull();
+    const worker = f.b.join('worker', { owners: ['o'], caps: ['codex', 'gh'] })!;
+    f.b.heartbeat(worker, { auth: 'ok' });
+    expect(f.a.claim(leader, worker, 'needs-codex')!.jobId).toBe('needs-codex');
+    // gh work also needs the auth heartbeat; the cap alone is not enough.
+    const noauth = f.a.join('noauth', { owners: ['o'], caps: ['gh'] })!;
+    f.a.heartbeat(noauth);
+    expect(f.a.claim(leader, noauth, 'needs-gh')).toBeNull();
+    f.a.heartbeat(noauth, { auth: 'ok' });
+    expect(f.a.claim(leader, noauth, 'needs-gh')!.jobId).toBe('needs-gh');
   });
 
   it('does not re-route a released job to the session that declined it', () => {
@@ -220,6 +242,48 @@ describe('drive node leases', () => {
       { ...emptyState(), leader: {} }, { ...emptyState(), jobs: [{ id: 'j', state: 'running' }] }]) {
       expect(() => parseState(value)).toThrow('Invalid');
     }
+  });
+
+  it('persists an explicit marker for producer withdrawals', () => {
+    const f = fixture();
+    f.a.enqueue('withdrawn-job', { owner: 'o' });
+    expect(f.a.withdraw('withdrawn-job', 'o')).toEqual({ state: 'withdrawn' });
+    expect(parseState(f.store.state).jobs[0]).toMatchObject({
+      state: 'completed',
+      result: 'withdrawn',
+      producerWithdrawn: true,
+    });
+  });
+
+  it('a rejoined session frees the slot its fenced claim held, while the job stays fenced', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader = f.a.heartbeat(worker)!.leader!;
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    const first = f.a.claim(leader, worker, 'job1')!;
+    expect(first.jobId).toBe('job1');
+    expect(f.a.claim(leader, worker, 'job2')).toBeNull();
+    f.a.leave(worker);
+    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    const leader2 = f.a.heartbeat(again)!.leader!;
+    const second = f.a.claim(leader2, again, 'job2')!;
+    expect(second.jobId).toBe('job2');
+    expect(f.a.renewClaim(first)).toBeNull();
+    expect(f.a.snapshot().jobs.find(j => j.id === 'job1')!.state).toBe('running');
+  });
+
+  it('pull plans past a claim fenced by a rejoined session', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job1', { owner: 'o' });
+    f.a.enqueue('job2', { owner: 'o' });
+    expect(f.a.pull(worker)!.claim.jobId).toBe('job1');
+    f.a.leave(worker);
+    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    f.a.heartbeat(again);
+    expect(f.a.pull(again)!.claim.jobId).toBe('job2');
   });
 });
 

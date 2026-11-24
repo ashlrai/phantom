@@ -2,6 +2,8 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { rejectUnknownOptions } from './args.js';
+import { formatWorktreeReapStatus, readWorktreeReapStatus } from '../core/fleet/worktree-reap-tick.js';
+import { defaultRunsRoot, defaultWtRoot, formatWorktrees, readWorktrees, worktreeRemoveCommands, type WorktreesDeps, type WorktreesPlan, type WorktreesReport } from '../core/fleet/worktrees.js';
 
 export interface WorktreeReport {
   name: string;
@@ -44,35 +46,93 @@ export function reportWorktrees(root: string, now = Date.now()): WorktreeReport[
     });
 }
 
-const USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
+const REPORT_USAGE = 'Usage: phm worktrees report [--dir <worktrees-dir>] [--json]';
+const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --plan | --status]]
+       phm worktrees report [--dir <worktrees-dir>] [--json]
+       phm worktrees prune [--dry-run | --apply] [--json]
 
-export function cmdWorktrees(args: string[]): number {
+List every job worktree with its job, repo, state (live job, merged PR, empty
+result, open PR, kept on purpose, unknown), age, size and whether it is safe to
+remove. Safe means: merged or empty, over 2 hours old, no uncommitted changes,
+no live job and not kept on purpose. A worktree with no publish record at all is
+removable as stale-no-publish when it is also clean, has no unpushed commits and
+has been quiet for 24 hours: that launch died and nothing will pick it up.
+  --reap            Preview removal of the safe worktrees (a dry run).
+  --reap --plan     Print only the git worktree remove commands, one per line, for a script to run.
+  --reap --apply    Remove them with git worktree remove (never --force).
+  --stale-hours <n> With --reap: also remove worktrees that never published once quiet for n hours (default 24).
+  --reap --status   Show the scheduled reap: on or off, last run, removed, skipped, freed.
+The fleet self-tick runs this reap on its own when there are more than 40
+worktrees: up to 40 removals, once per 30 minutes. Create queue/worktree-reap.off
+in the runs directory to turn it off.`;
+
+type Output = { log: (text: string) => void; error: (text: string) => void };
+
+export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { output?: Output } = {}): Promise<number> {
+  const out = deps.output ?? { log: console.log, error: console.error };
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(USAGE);
+    out.log(args[0] === 'report' ? REPORT_USAGE : USAGE);
     return 0;
   }
-  if (args[0] !== 'report') {
-    console.error(USAGE);
-    return 1;
+  if (args[0] === 'report') return cmdWorktreesReport(args.slice(1), out);
+  // --stale-hours <n> sets how long a never-published worktree must be quiet before it is reaped.
+  const staleAt = args.indexOf('--stale-hours');
+  if (staleAt >= 0) {
+    const hours = Number(args[staleAt + 1]);
+    if (!Number.isFinite(hours) || hours < 1) { out.error(`--stale-hours needs a number of hours, 1 or more.\n${USAGE}`); return 2; }
+    deps = { ...deps, staleHours: hours };
+    args = [...args.slice(0, staleAt), ...args.slice(staleAt + 2)];
   }
-  const options = args.slice(1);
+  const modes = ['--dry-run', '--apply', '--plan', '--status'];
+  const allowed = ['--json', '--reap', ...modes];
+  const bad = args.find(arg => !allowed.includes(arg));
+  if (bad !== undefined || new Set(args).size !== args.length || modes.filter(flag => args.includes(flag)).length > 1
+    || (modes.some(flag => args.includes(flag)) && !args.includes('--reap'))) {
+    out.error(bad !== undefined ? `Unknown argument: ${bad}\n${USAGE}` : USAGE);
+    return 2;
+  }
+  if (args.includes('--status')) {
+    try {
+      const status = await readWorktreeReapStatus(deps.runsRoot ?? defaultRunsRoot());
+      if (args.includes('--json')) out.log(JSON.stringify(status));
+      else for (const line of formatWorktreeReapStatus(status)) out.log(line);
+      return 0;
+    } catch { out.error('Cannot read the reap status.'); return 1; }
+  }
+  const plan = args.includes('--plan');
+  const mode = !args.includes('--reap') ? 'list' : args.includes('--apply') ? 'apply' : 'dry-run';
+  let report: WorktreesReport;
+  try { report = await readWorktrees(mode, deps); }
+  catch { out.error('Cannot read worktrees.'); return 1; }
+  if (plan) {
+    const commands = worktreeRemoveCommands(report, deps.wtRoot ?? defaultWtRoot());
+    if (args.includes('--json')) out.log(JSON.stringify({ schema: 'worktrees.plan.v1', commands } satisfies WorktreesPlan));
+    else for (const command of commands) out.log(command);
+    return 0;
+  }
+  if (args.includes('--json')) out.log(JSON.stringify(report));
+  else for (const line of formatWorktrees(report)) out.log(line);
+  return (report.removals ?? []).every(removal => removal.status === 'removed') ? 0 : 1;
+}
+
+function cmdWorktreesReport(options: string[], out: Output): number {
   const error = rejectUnknownOptions(options, { flags: ['--json'], values: ['--dir'] });
   const dirIndex = options.indexOf('--dir');
   if (error || (dirIndex >= 0 && options[dirIndex + 1]?.startsWith('-')) || options.some((arg, index) => !arg.startsWith('-') && (dirIndex < 0 || index !== dirIndex + 1))) {
-    console.error(error?.message ?? 'unexpected argument');
+    out.error(error?.message ?? 'unexpected argument');
     return 1;
   }
   const root = resolve(dirIndex >= 0 ? options[dirIndex + 1]! : join(homedir(), 'Projects', 'ashlrai', 'wt'));
   try {
     const rows = reportWorktrees(root);
-    if (options.includes('--json')) console.log(JSON.stringify(rows, null, 2));
+    if (options.includes('--json')) out.log(JSON.stringify(rows, null, 2));
     else {
-      console.log('WORKTREE\tAGE (hours)\tSIZE (bytes)\tLAST LOG MTIME\tJOB STATE');
-      for (const row of rows) console.log(`${row.name}\t${(row.ageMs / 3_600_000).toFixed(1)}\t${row.sizeBytes}\t${row.lastLogMtime ?? '-'}\t${row.jobState ?? '-'}`);
+      out.log('WORKTREE\tAGE (hours)\tSIZE (bytes)\tLAST LOG MTIME\tJOB STATE');
+      for (const row of rows) out.log(`${row.name}\t${(row.ageMs / 3_600_000).toFixed(1)}\t${row.sizeBytes}\t${row.lastLogMtime ?? '-'}\t${row.jobState ?? '-'}`);
     }
     return 0;
   } catch (error) {
-    console.error(`Cannot report worktrees: ${error instanceof Error ? error.message : String(error)}`);
+    out.error(`Cannot report worktrees: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
 }

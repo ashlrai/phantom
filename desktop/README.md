@@ -46,6 +46,73 @@ system Python and macOS Gatekeeper acceptance remain fresh-Mac prerequisites.
 The app is locally signed, not Developer ID notarized; this command never bypasses
 Gatekeeper or changes system security settings.
 
+### Upgrade an existing managed install
+
+On macOS arm64, use a CLI containing the upgrade verb to inspect the newest
+qualified paired release. An owner whose installed release lacks this verb runs
+it from a newer installed CLI, for example the npm package containing it. This
+does not convert an unmanaged npm install into a managed installation: the
+existing managed current pointer and both managed command links must verify.
+
+```sh
+phm desktop install --upgrade                       # dry-run plan, default
+phm authority stop --json                           # engage Stop and drain work
+phm desktop install --upgrade --apply               # fresh inspection and switch
+phm desktop install --upgrade --require-app         # require a verified existing app
+phm desktop install --upgrade --to 3.30.35           # select a qualified version
+phm desktop install --rollback                     # inspect journaled previous CLI
+phm desktop install --rollback --apply              # explicitly switch back
+```
+
+Flags may appear in any order. `--require-app` and `--to` require `--upgrade`;
+rollback accepts only optional `--apply`. Inspection downloads and verifies
+signed app and CLI artifacts into the private staging directory but changes no
+installation and never stops the resident. Equal versions report `current`;
+older candidates are refused. Apply requires Stop/drain and normal Quit of
+Phantom, verifies and smoke-tests the new CLI, then uses resident stop before an
+atomic managed-pointer switch. It keeps the previous release and records a
+private rollback journal. Rollback requires that journal's current release still
+matches the managed pointer; a successful rollback swaps the journal entries.
+Neither operation writes to `/Applications`, builds, signs or edits shell setup.
+
+The JSON `app.state` is `current` for the manifest's signed inventory,
+`update-available` for a different verified signed inventory (`native-signed-update`),
+`needs-owner` for an unverified identity (`app-identity-unverified`, including an
+ad-hoc signature), `absent` when no app is found, or `unknown` when not inspected.
+An owner must reinstall the signed Phantom.app for `needs-owner`; by default
+this does not block the CLI switch. `--require-app` holds on `needs-owner` or
+`absent` instead of silently treating an unverified app as updated.
+
+Resident restart and any Touch ID grant stay with the owner. The plan includes
+`phm authority grant (Touch ID)` if the authority surface changed, before
+`phm authority resident start (owner confirmation)`. These are owner-action plan
+labels, not automatically executed commands: use `phm authority grant` for the
+Touch ID ceremony and `phm authority resident start` only after owner confirmation.
+Upgrade uses resident stop with no confirmation and never grants or starts
+authority. A successful CLI switch does not claim native-app update or restart.
+
+Common `reason` codes (and `stop.reason` for drain state):
+
+| Reason | Meaning / owner action |
+| --- | --- |
+| `not-installed` | No managed current pointer; use consumer first install. |
+| `unmanaged-current` | Current is unsafe, incomplete or not an owned release; preserve it for explicit recovery. |
+| `unmanaged-links` | Both command links must already be managed; resolve collisions explicitly. |
+| `downgrade-refused` | Candidate is older; use journaled rollback rather than `--to` to downgrade. |
+| `already-current` | Candidate equals the installed version; no switch needed. |
+| `release-exists` | Candidate release directory already exists; preserve it for explicit recovery. |
+| `artifact-mismatch` | Downloaded size, digest or signature failed verification. |
+| `app-artifact` | Signed app verification, inventory or paired release record failed. |
+| `launcher-identity` | Candidate launcher differs from the running package's canonical launcher. |
+| `app-needs-owner` | `--require-app` found an absent or unverified app; install the signed app. |
+| `stop-required` / `drain-required` | Engage Stop, drain work and close Phantom normally before applying. |
+| `smoke-failed` | Previous/candidate CLI version smoke failed; no pointer switch accepted. |
+| `resident-stop-failed` | Resident stop failed; current pointer was not switched. |
+| `post-switch-smoke` | Post-switch verification failed; pointer restored, state `rolled-back`. |
+| `rollback-held` | Pointer restoration failed; state `held`. Preserve both releases and resolve pointer ownership explicitly; do not restart. |
+| `no-rollback` | No usable rollback journal/previous release; preserve existing installation. |
+| `current-changed` | Current no longer matches the inspected or journaled release; inspect again and resolve the change. |
+
 ### Historical DMG: 3.27.0
 
 The published canonical 3.27.0 release includes `Phantom.app`, with
@@ -87,7 +154,7 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.35; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.72; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
@@ -309,7 +376,9 @@ the item is simply inert — nothing breaks.
 window.__ASHLR_DESKTOP__?.reportTheme(resolvedTheme); // 'light' | 'dark'
 ```
 
-Call it once the theme resolves and on every change. The native window stores it
+Call it once the theme resolves and on every change, including the OS flipping
+light/dark while the preference is System (`trackThemeForShell` in
+`app/desktop-shell.ts` does both). The native window stores it
 next to the window geometry and paints the window background with the matching
 canvas colour (`#0b0b0d` dark / `#fafafa` light) **before the webview has
 painted** on the next launch. Without this call the app falls back to the macOS
@@ -331,6 +400,14 @@ fails if one is ever added, and the web catalog's key test parses `app_menu.rs`
 for the same reason. The one system-wide key, ⌃⌥Space, is registered by the app
 (`hotkey.rs`), never by the page; a vitest checks it equals the catalog's
 `app.summon`.
+
+**⌘K also lists every CLI command.** The palette's Commands group is the same
+catalog `phm commands --json` prints (name, description, argument forms,
+whether it changes state), so the two cannot drift. Return on a command shows
+its CLI line (⌘C copies it). A read-only command that needs no input runs
+right there and shows its output. One that changes state asks first; Return
+then puts the line in the Terminal, where you run it. The server never runs a
+state-changing command for the palette.
 
 ### 6. Desktop state (Settings ▸ Desktop)
 

@@ -24,6 +24,7 @@ export interface DailyJobSpec {
   description: string;
   /** Minute inside the chosen hour; staggers jobs sharing an hour. */
   minute: number;
+  weekday?: number;
   /** Stdout/stderr sink, a file path under the user's own state dir. */
   log: string;
 }
@@ -33,6 +34,7 @@ export function dailyUserSchedule(spec: DailyJobSpec, opts: { phmPath: string; n
   const platform = opts.platform ?? process.platform;
   if (platform !== 'darwin' && platform !== 'linux') throw new Error('Scheduling supports macOS and Linux only.');
   const hour = opts.hour ?? 3;
+  if (spec.weekday !== undefined && (!Number.isInteger(spec.weekday) || spec.weekday < 0 || spec.weekday > 6)) throw new Error('weekday must be an integer from 0 to 6.');
   if (!Number.isInteger(hour) || hour < 0 || hour > 23) throw new Error('hour must be an integer from 0 to 23.');
   if (!Number.isInteger(spec.minute) || spec.minute < 0 || spec.minute > 59) throw new Error('minute must be an integer from 0 to 59.');
   const nodePath = opts.nodePath ?? process.execPath;
@@ -51,7 +53,7 @@ export function dailyUserSchedule(spec: DailyJobSpec, opts: { phmPath: string; n
 <plist version="1.0"><dict>
   <key>Label</key><string>${spec.label}</string>
   <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${spec.minute}</integer></dict>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${spec.minute}</integer>${spec.weekday === undefined ? '' : `<key>Weekday</key><integer>${spec.weekday}</integer>`}</dict>
   <key>StandardOutPath</key><string>${xml(log)}</string>
   <key>StandardErrorPath</key><string>${xml(log)}</string>
   <key>LowPriorityIO</key><true/><key>Nice</key><integer>10</integer>
@@ -70,7 +72,7 @@ export function dailyUserSchedule(spec: DailyJobSpec, opts: { phmPath: string; n
   const output = `append:${log.replace(/%/g, '%%')}`;
   return [
     { path: join(dir, `${spec.fileStem}.service`), contents: `[Unit]\nDescription=${spec.description}\n\n[Service]\nType=oneshot\nNice=10\nIOSchedulingClass=idle\nExecStart=${args.map(q).join(' ')}\nStandardOutput=${output}\nStandardError=${output}\n`, activate: ['systemctl', '--user', 'daemon-reload'] },
-    { path: join(dir, `${spec.fileStem}.timer`), contents: `[Unit]\nDescription=Daily ${spec.description}\n\n[Timer]\nOnCalendar=*-*-* ${String(hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`, activate: ['systemctl', '--user', 'enable', '--now', `${spec.fileStem}.timer`] },
+    { path: join(dir, `${spec.fileStem}.timer`), contents: `[Unit]\nDescription=${spec.weekday === undefined ? 'Daily' : 'Weekly'} ${spec.description}\n\n[Timer]\nOnCalendar=${spec.weekday === undefined ? '' : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][spec.weekday] + ' '}*-*-* ${String(hour).padStart(2, '0')}:${String(spec.minute).padStart(2, '0')}:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`, activate: ['systemctl', '--user', 'enable', '--now', `${spec.fileStem}.timer`] },
   ];
 }
 

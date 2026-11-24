@@ -1,3 +1,4 @@
+import './helpers/local-memory.js';
 /**
  * local-only-dispatch-paths.test.ts — OWNER L: prove NO dispatch path bypasses
  * the local-only predicate.

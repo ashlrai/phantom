@@ -41,7 +41,7 @@ export interface ReturnPrCheckReport {
   checked: ReturnPrChecked[];
   /** Input rows with no check row of their own: filtered, deduped or truncated. */
   skipped: number;
-  /** More eligible repo#pr pairs existed than the limit allowed. */
+  /** More distinct eligible repo#pr/head evidence existed than the limit allowed. */
   truncated: boolean;
 }
 
@@ -71,8 +71,38 @@ async function checkOne(gh: Gh, row: { claimId: string; repo: string; pr: number
   } catch {
     return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'read-failed' };
   }
-  const observedHead = str(obj(raw['head'])['sha']);
+  // Identity fields are optional for older injected readers, but a supplied
+  // identity must bind this response to the requested pull and base repo.
+  const responseBase = raw['base'];
+  const baseRepo = obj(responseBase)['repo'];
+  const fullName = obj(baseRepo)['full_name'];
+  if (('number' in raw && raw['number'] !== row.pr)
+    || ('base' in raw && (responseBase === null || typeof responseBase !== 'object' || Array.isArray(responseBase)))
+    || ('repo' in obj(responseBase) && (baseRepo === null || typeof baseRepo !== 'object' || Array.isArray(baseRepo)))
+    || ('full_name' in obj(baseRepo) && (typeof fullName !== 'string' || fullName.toLowerCase() !== repo.toLowerCase()))) {
+    return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'invalid-response-identity' };
+  }
+  const head = obj(raw['head']);
+  const observedHead = str(head['sha']);
   const mergedAt = str(raw['merged_at']);
+  const validHead = (value: unknown): boolean => typeof value === 'string' && /^[a-f0-9]+$/i.test(value);
+  const timestamp = raw['merged_at'];
+  const invalidTimestamp = timestamp !== undefined && timestamp !== null
+    && (typeof timestamp !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(timestamp)
+      || !Number.isFinite(Date.parse(timestamp))
+      || new Date(timestamp).toISOString().slice(0, 19) !== timestamp.slice(0, 19));
+  const invalidResponse = invalidTimestamp
+    || (row.head !== null && !validHead(row.head))
+    || ('head' in raw && (raw['head'] === null || typeof raw['head'] !== 'object' || Array.isArray(raw['head'])))
+    || ('sha' in head && (typeof head['sha'] !== 'string' || !/^[a-f0-9]{40}$/i.test(head['sha'])))
+    || ('merged' in raw && typeof raw['merged'] !== 'boolean')
+    || ('state' in raw && raw['state'] !== 'open' && raw['state'] !== 'closed')
+    || (raw['merged'] === false && mergedAt !== null)
+    || (raw['merged'] === true && timestamp === null)
+    || (raw['state'] === 'open' && (raw['merged'] === true || mergedAt !== null));
+  if (invalidResponse) {
+    return { ...base, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'invalid-response-evidence' };
+  }
   const merged = raw['merged'] === true || mergedAt !== null;
   if (merged) {
     if (observedHead === null) return { ...base, verdict: 'unknown', observedHead, mergedAt, reason: 'unparseable' };
@@ -106,19 +136,32 @@ export async function checkReturnPrs(
   for (const row of rows) {
     if (row.result !== 'VERIFIED' || row.evidenceKind !== 'pr'
       || typeof row.pr !== 'number' || !Number.isSafeInteger(row.pr) || row.pr < 1) continue;
-    const key = `${row.repo.toLowerCase()}#${row.pr}`;
+    // Keep conflicting heads and their original claim provenance independently visible.
+    const key = JSON.stringify([row.repo.toLowerCase(), row.pr, row.head?.toLowerCase() ?? null]);
     if (seen.has(key)) continue;
     seen.add(key);
     eligible.push({ claimId: row.claimId, repo: row.repo, pr: row.pr, head: row.head });
   }
   const truncated = eligible.length > limit;
   const checked: ReturnPrChecked[] = [];
+  let expired = false;
   for (const row of eligible.slice(0, limit)) {
-    if (now() >= deadline) {
+    const remaining = deadline - now();
+    if (expired || remaining <= 0) {
       checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
       continue;
     }
-    checked.push(await checkOne(gh, row));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), remaining);
+    });
+    const result = await Promise.race([checkOne(gh, row), timeout]).finally(() => clearTimeout(timer));
+    if (result === null || now() >= deadline) {
+      expired = true;
+      checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
+    } else {
+      checked.push(result);
+    }
   }
   const end = now();
   return { v: 1, authority: 'none', asOf: Number.isFinite(end) ? new Date(end).toISOString() : 'unknown', checked,

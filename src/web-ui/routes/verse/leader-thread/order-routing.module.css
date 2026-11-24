@@ -1,0 +1,149 @@
+/* The routing trail under one of Mason's messages: it hangs off the same left
+   rail as the message, so the eye reads "these words, then where they went". */
+.root {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+}
+
+p.root,
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.root[data-routing='unknown'] { color: var(--status-unknown-fg); }
+
+.label {
+  color: var(--text-tertiary);
+  font-family: var(--font-display);
+  font-size: var(--text-2xs-size);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--text-2xs-line);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.summary { font-variant-numeric: tabular-nums; }
+.root[data-routing='routed'] .summary { color: var(--text-secondary); }
+
+.jobs {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+/* Four steps: queued, launched, published, merged. Filled ones were reached. */
+.track {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.track span {
+  width: var(--space-2);
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--border-default);
+  transition: background-color var(--duration-base) var(--ease-standard);
+}
+
+.track span[data-on] { background: var(--status-neutral-solid); }
+.job[data-state='launched'] .track span[data-on],
+.job[data-state='published'] .track span[data-on] { background: var(--status-info-solid); }
+.job[data-state='merged'] .track span[data-on] { background: var(--status-success-solid); }
+.job[data-state='empty'] .track span[data-on] { background: var(--status-warning-solid); }
+
+/* Only work that is still running pulses; the pulse token is 0s under reduced motion. */
+.job[data-state='launched'] .track span[data-current] {
+  animation: routing-pulse var(--duration-pulse) var(--ease-standard) infinite;
+}
+
+@keyframes routing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.lane {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs-size);
+  line-height: var(--text-xs-line);
+  white-space: nowrap;
+}
+
+.lane[data-unknown] { border-style: dashed; color: var(--status-unknown-fg); }
+
+.id {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+button.id,
+.talk,
+.more {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.id { text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+button.id:hover { color: var(--text-primary); }
+
+.more { justify-self: start; color: var(--text-tertiary); font-family: inherit; }
+.more:hover { color: var(--text-primary); }
+
+/* Quiet until the row is pointed at or tabbed to: the trail stays a reading, the door is one key away. */
+.talk { color: var(--text-tertiary); font-family: inherit; text-decoration: underline; text-decoration-color: var(--border-default); text-underline-offset: 2px; }
+.talk:hover { color: var(--text-primary); }
+
+/* The session open in this pane: its row is lit and its door reads as open. */
+.job { border-radius: var(--radius-xs); transition: background var(--duration-base) var(--ease-standard); }
+.job[data-reading] { background: var(--bg-hover); }
+.talk[aria-current] { color: var(--text-primary); text-decoration-color: var(--accent-500); }
+
+button.id:focus-visible,
+.talk:focus-visible,
+.more:focus-visible,
+.word:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.word { color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.job[data-state='merged'] .word { color: var(--status-success-fg); }
+.job[data-state='published'] .word { color: var(--status-info-fg); }
+.job[data-state='empty'] .word { color: var(--status-warning-fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .track span { transition: none; animation: none; }
+  .job { transition: none; }
+}

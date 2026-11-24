@@ -568,6 +568,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'scripts/lib/docs-pages.d.mts', // PR #3060
       // Reviewed host-only install helper; the script-wide canary scan covers it.
       'scripts/local-app-transaction.mjs',
+      'scripts/canonical-launcher-digests.json',
       'scripts/scorecard-history-worker.mjs',
       'scripts/evaluators/preparation-verification-activity.mjs',
       'scripts/evaluators/preparation-verification-activity.d.mts',
@@ -580,6 +581,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/SIGNALS.md', // PR #3076
       'docs/FLEET-API.md', // PR #2899
       'docs/model-registry.json', // reviewed shipped model metadata
+      'docs/CLI-AGENT-READINESS.md',
       'docs/PHANTOM-BRAND.md',
       'docs/COMPANIONS.md',
       'docs/CONNECTORS.md', // PR #3290
@@ -590,6 +592,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/SELF-HOSTING.md',
       'docs/AUTOMATIC-OUTCOMES.md',
       'docs/VERSE.md',
+      'docs/lanes.md',
       'docs/PROACTIVE-COORDINATION.md',
       'docs/PROACTIVE-COORDINATION-BACKLOG.md',
       'docs/AUTONOMY-SETUP.md',
@@ -630,6 +633,10 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/contracts/CONTRACT-M568.md',
       'docs/contracts/CONTRACT-MISSION-RECEIPT-V1.md',
       'docs/MACHINE-TELEMETRY.md',
+      'docs/REPO-OWNERS.md',
+      'docs/PRODUCTION-METRICS.md',
+      'docs/IMPACT-METRICS.md',
+      'docs/ECOSYSTEM-CHANGELOG.md',
     ]);
     // Explicit review of newly shipped members preserves challenge isolation.
     for (const file of ['docs/model-registry.json', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {

@@ -37,16 +37,22 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/history` | days, tz | [FleetHistoryResponse](../src/core/verse/fleet-history-types.ts) | [source](../src/core/verse/fleet-history.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/history?days=30&tz=0'` |
 | GET | `/api/verse/fleet/grok-ultra` | none | [GrokUltraRunway](../src/core/fleet/grok-ultra-types.ts) | [source](../src/core/verse/grok-ultra-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/grok-ultra'` |
 | GET | `/api/verse/fleet/runs` | none | [FleetRunsV1](../src/core/verse/fleet-runs-types.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs'` |
+| GET | `/api/verse/fleet/usage/producers` | since | [UsageProducersReport](../src/core/fleet/usage-producers.ts) (`fleet.usage-producers.v1`) | [source](../src/core/verse/fleet-usage-producers-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/usage/producers?since=6h'` |
 | GET | `/api/verse/fleet/runs/glance` | none | [OperatorGlance](../src/core/fleet/operator-glance.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/glance'` |
-| GET | `/api/verse/fleet/runs/inbox` | limit, source | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
+| GET | `/api/verse/fleet/runs/inbox` | limit, source, contains, priority, after, before | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | POST | `/api/verse/fleet/runs/inbox` | none | [inline {ok, at} (201)](../src/core/verse/fleet-runs-api.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue","source":"operator"}' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
 | GET | `/api/fleet/job/activity` | id (required) | [FleetJobActivityV1](../src/core/fleet/runs-job-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/activity?id=example-job'` |
 | GET | `/api/fleet/job/text` | id, kind (required) | [FleetJobTextV1](../src/core/fleet/runs-job-texts.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/text?id=example-job&kind=notes'` |
 | GET | `/api/fleet/job/changes` | id (required) | [FleetJobChangesV1](../src/core/fleet/runs-job-changes.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/changes?id=example-job'` |
 | GET | `/api/fleet/job/cost` | id (required) | [FleetJobCostV1](../src/core/fleet/runs-job-cost.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/cost?id=example-job'` |
+| GET | `/api/fleet/job/window` | id (required), lines (1..200, default 40), after (tail cursor) | [FleetJobWindowV1](../src/core/fleet/job-window.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/window?id=example-job&lines=40'` |
+| GET | `/api/fleet/empties` | hours (default 24) | [EmptiesWhyReport](../src/core/fleet/empties-why.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/empties?hours=24'` |
+| GET | `/api/fleet/stranded` | days (default 3, up to 90), verify (1 compares pushed branches with the local main branch) | [StrandedWorkReport](../src/core/fleet/stranded-work.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/stranded?days=3'` |
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
+| GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -115,6 +121,7 @@ receipt proves coordination, not job execution.
 | GET | `/api/verse/leader` | none | [LeaderStateV1](../src/core/vision/leader-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader'` |
 | POST | `/api/verse/leader` | none | [inline action-dependent result](../src/core/verse/leader-api.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"action":"dismiss","itemId":"leader:leader-question:example"}' 'http://127.0.0.1:7777/api/verse/leader'` |
 | GET | `/api/verse/leader/resources` | none | [ResourceLedgerV1](../src/core/fleet/runs-resource-ledger.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader/resources'` |
+| GET | `/api/verse/leader/resources/usage-history` | pool | [UsageHistoryV1](../src/core/fleet/usage-history.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader/resources/usage-history?pool=claude'` |
 | GET | `/api/verse/leader/thread` (THREAD_PATH) | limit, before | [inline {messages: LeaderThreadMessage[]}](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader/thread'` |
 | POST | `/api/verse/leader/thread` (THREAD_PATH) | none | [AppendMasonMessageResult](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue"}' 'http://127.0.0.1:7777/api/verse/leader/thread'` |
 | GET | `/api/verse/leader/directives` (DIRECTIVES_PATH) | none | [inline {directives, retired}: OperatorDirective[]](../src/core/vision/leader-thread-types.ts) | [source](../src/core/verse/leader-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/leader/directives'` |
@@ -221,6 +228,12 @@ measured entry in that snapshot. Add `--apply` to queue recuts and, after a
 replacement is published, request head-pinned GitHub auto-merge. GitHub still
 enforces required checks and the merge queue. Retry the command after a failed
 request or publication; it reuses the recovery identity.
+Recovery rechecks the source before submitting work and reports work already
+present on the base. Each source PR has three recut attempts and three auto-merge
+attempts, persisted under `queue/merge-recover` in the runs directory. Failures
+and interrupted submissions consume attempts; changing heads does not reset them.
+`retry-limit` means that budget is exhausted. Preview reads the same budget
+without spending it; an unreadable store prevents submission.
 
 For a dropped auto-merge instead of a conflict, run `phm fleet merge-retry
 --events merge-events.jsonl --json` against the same ledger `phm fleet
@@ -239,6 +252,26 @@ Acceptance: keep the interface as simple and intuitive as possible, with fewer
 steps, plain words, one obvious path, and every human surface backed by a typed
 API or CLI that agents can use (code-first, agent-native).
 
+## Observed check, admission and merge delays
+
+Run `phm fleet merge-latency --events merge-events.jsonl --hours 24 --json`.
+The typed report's `queue_stage_timing` uses schema `fleet.queue-stage-timing.v1`
+and is also returned by `GET /api/verse/fleet/merge-latency?hours=24`.
+It compares merged PRs in the window; merges with unknown times remain included
+as missing samples. Open PRs stay in the existing live diagnostics.
+`required_checks` sums observed check-blocker intervals; queue entry alone
+does not prove checks were pending. `queue_admission` measures readiness to
+enqueue (zero when already queued); `merge` measures ready time inside the queue
+until merge. Readiness requires an `eligible` observation. These are observed
+intervals, not a complete partition of PR lifetime. Each stage reports measured
+and missing counts, total seconds, median, p90 and maximum. `largest_delay`
+selects the greatest observed total; ties, all-zero and unmeasured totals return
+null. Missing, repeated, reversed or invalidated readiness boundaries stay
+unmeasured. Required checks remain in place; the report grants no merge authority.
+
+Acceptance: as simple and intuitive as possible, fewer steps, plain words, one
+obvious path, with every human surface backed by a typed API or CLI for agents.
+
 ## Queue latency by stage and automatic recut
 
 Run `phm fleet queue-latency --input snapshot.json` to see where PRs lose time
@@ -252,6 +285,17 @@ recuts and no recut for that head yet gets a `recut` recommendation with the
 same idempotency key the recut loop uses; anything else is `needs_person`.
 This only reads the supplied file; required checks stay in place and nothing
 is merged or requeued.
+
+`phm fleet queue-latency --live [--repos phantom,lexicon] [--json]` skips the
+snapshot: it reads open PRs itself through the shared GitHub reader (default:
+the seven ashlrai repos), runs the same attribution and ends with one line such
+as `41 open PRs: 30 waiting on checks, 8 conflicting (8 recuts planned), 3 behind`.
+Add `--recover` to preview recuts for conflicting `ashlrai/phantom` heads through
+`phm fleet merge-recover` (dry run); `--recover --apply` queues them with
+merge-recover's keyed, budget-bounded retries and its pinned
+`gh pr merge --auto --match-head-commit` submit. Agents get the same data under
+`live` in the `--json` report. Without `gh` installed and signed in, `--live`
+exits 2 with a plain message.
 
 Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
@@ -310,30 +354,700 @@ Session evidence preserves exact lanes and stale jobs; missing model/provider/he
 is `unknown`. The 2D map opens the existing job detail sheet. The 3D view retains
 machine placement and reads shared job labels and message counts.
 Message edges count retained, unexpired local bus receipts in the window, exclude
-human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately. This is
+human/external messages, broadcasts to `leaders`, and bodies; unmatched peers are counted separately.
+Each message edge also carries `lastAt`, the time of its newest message. This is
 not a complete historical ledger. Leader, guardian and channel health remain unknown.
 
 #### Org tree
 
-`phm org` prints the same facts as one `fleet.org.v1` tree, and the Fleet map
-draws that tree: the leader, one card per lane, one chip per running job.
+`phm org` prints the same facts as one `fleet.org.v1` tree, and the Org pane
+and the Fleet world's Org tab draw that tree top down: the leader, its
+planners, each lane, each job under it.
 JSON is the default; `phm org --text` prints it for people.
 The map endpoint above carries the tree in its `tree` field.
 
-- `leader`: `label`, `status` and the dispatcher's `lastTick` and `paused`.
-- `lanes[]`: `lane`, `provider`, `running`, `target`, `queued`, `held`, and
-  `usage` (`usedPct`, `asOf`, `resetAt`). Fleet lanes come first in a fixed
-  order, then any other lane by name.
-- `lanes[].jobs[]`: `id`, `repo`, `model`, `provider`, `status`, `startedAt`,
-  `lastEvent` (`at`, `kind`) and `lastActivityAt`. Oldest first.
+The tree carries `version: 1`; it changes only when a field is removed or
+changes meaning. Every node has `provider`, `model`, `state` (`running`,
+`idle`, `held`, `done` or `unknown`) and `doing`, a plain sentence.
+
+- `leader`: `label`, `status`, and the dispatcher's `lastTick` and `paused`.
+  Its `state` and `doing` describe the dispatcher; the leader's own process,
+  provider and model are not reported and stay `unknown` and `null`.
+- `planners[]`: `executor` (Executor), `orchestrator` (Core orchestrator),
+  `guardian` (Main guardian) and `comms` (Comms), always in that order, each
+  with `label`, `role`, `state`, `doing` and `lastActivityAt`. Executor and
+  orchestrator read the newest `LEADER` and `ORCH-*` dispatch events (the same
+  attribution as `phm fleet brains`); guardian and comms read the newest agent
+  message touching the guardian or a channel. A sign within 90 minutes is
+  `running`, an older one `idle`, none in the short window read `unknown`.
+  Optional: older servers do not send it.
+- `lanes[]`: `lane`, `running`, `target`, `queued`, `held`, `heldReason` and
+  `usage` (`usedPct`, `asOf`, `resetAt`). `model` is the model its jobs share,
+  else the lane's newest launch. Fleet lanes come first in a fixed order, then
+  any other lane by name.
+- `lanes[].jobs[]`: `id`, `repo`, `tier`, `ageSeconds`, `goal` (the task
+  title as one line; `null` for session rows, which never carry the prompt),
+  `status`, `startedAt`, `lastEvent` (`at`,
+  `kind`) and `lastActivityAt`. Oldest first. A job whose publish record has a
+  `RESULT` line is `done` and is left out of its lane's `running` count, even
+  when no exit code reached this computer (cloud jobs).
 - `messages[]`: `from`, `to`, `count` for the message window, or `null` when
   the bus could not be read.
 
 A fact no source reported is `null` in JSON and "unknown" in text and on
-screen, never 0. A lane with no jobs reads "idle"; when no job source answered
+screen, never 0. Idle and held lanes are grey and say why on the row: the held
+reason, "Turned off (0 seats)", or what is queued. A lane with no jobs reads "idle"; when no job source answered
 (`jobsKnown` is false) it reads "jobs unknown" instead. The dot beside a job is
 on when `lastActivityAt` is within the last 5 minutes. Selecting a job opens
 its detail sheet.
+
+#### Org groups
+
+`phm fleet org [--json]` prints who reports to whom: the leader, then each lane,
+then its jobs. `--json` is `fleet.org-groups.v1` and `GET
+/api/verse/fleet/control/org-groups` serves the same tree to a current read
+session. It groups the live map below and reads nothing else.
+
+- `nodes[]`: `id`, `role` (`leader`, `group`, `lane`, `job`, `planner`), `label`, `parent`
+  (null for the root), `children` (ids) and `counts` (`running`, `queued`,
+  `idle`, `unknown`, summed over the leaves below). Parents come before children.
+- Branches under the leader: one per lane, `Guardian` (`group:guardian`, the main
+  guardian planner), `Loops` (`group:loops`: executor, Core orchestrator and comms)
+  and `Other` (id `group:unassigned`) for anything with no known parent. The guardian and loops
+  branches come from the live map's `planners` and appear only when it has them;
+  their counts stay out of the leader's and the headline, which count jobs.
+  `phm org --json` adds this tree as `groups` (null when the live map could not be
+  read) next to the `fleet.org.v1` fields; the Map's "Group: by lane | by org"
+  toggle draws it, with the newest agent message on each parent link.
+- `headline`: the one line a phone shows first: `running`, `queued`, `stuck` (running
+  jobs with no activity in 5 minutes), `mergedLastHour` (null when no lane reported)
+  and `text` ("6 running, 2 stuck, 14 merged in the last hour", or "Nothing running.").
+- Lane nodes also carry `status`, `health` (the lane badge), `mergedPerHour` and
+  `usedPct` (plan used, 0 to 100; null reads "Usage unknown"). Job nodes carry
+  `status` and `live`. The phone Org layout draws exactly this and nothing more.
+- A node with no known parent sits under the group `group:unassigned`. A repeated
+  id keeps its first row and is listed in `duplicates`. Computers and pools are not
+  part of the org.
+- The Map pane's "Group: by lane | by org" toggle switches to this tree and remembers the choice.
+
+#### Live map
+
+`phm map` shows the whole fleet as one graph: the leader, lanes, running jobs,
+computers and the pools lanes draw on. `phm map --json` prints it as
+`fleet.live-map.v1`. `GET /api/verse/fleet/control/live-map` serves the same
+graph to the desktop Map pane with a current read session. The graph adds no
+source of its own. It joins the org map and tree above, `phm nodes` (computers
+and the jobs each one holds) and the pool-usage ledger. A computer that is not
+this one carries `remote: true`; the 2D map draws those together in an
+"Other Macs" box, apart from this Mac.
+
+`phm nodes pool [--json]` shows the joined Macs as one pool, this Mac first:
+online, offline or unknown, free slots, running jobs, load, free memory and disk,
+whether offload is on, when it was last seen, and a total such as "2 Macs, 11
+free slots". `--json` is `phantom.nodes-pool.v1`, and
+`GET /api/verse/fleet/control/nodes-pool` serves the same report to the
+Machines card on the desktop and phone Home. Unknown facts say `unknown` and stay
+out of the total (`total.slotsUnknown` counts online Macs whose slots were not
+measured). The offload setting is per Mac; only this Mac's is known, so other
+Macs show `unknown`.
+
+`phm map --lane <lane> --repo <repo> --state <running|waiting|done|failed|unknown>`
+narrows it to the agents (jobs) that match every filter given, with their lane,
+computer and pool; `unknown` finds agents whose lane or repo nobody reported.
+`--json` then adds `filter {lane, repo, state, matched, total}`, and each job node
+carries `lane`, `repo` and `state`. A map with no match prints "No agents match
+these filters." and exits 0. The desktop and phone Map views use the same
+`filterLiveMap` (`src/core/fleet/map-filter.ts`), keep the choice for the
+session and offer Clear. The map has no source for failed or waiting jobs yet,
+so those filters find none until one reports; the `gaps` list says so.
+
+- `orgLayout`: where the 3D map puts each org node, grouped by who it reports
+  to (the tree `phm fleet org` prints; anything with no owner is under
+  `Other`). `positions[]` has `id`, `role`, `label`, `parent`, `depth`, `x`,
+  `y`, `z`; `labels[]` has one per lane and group with `text` such as
+  `claude: 2 running`. The same input gives the same positions.
+- `nodes[]`: `id`, `kind` (`leader`, `lane`, `job`, `computer`, `resource`),
+  `level` (0 to 4, the row in the drawing), `label`, `provider`, `status`,
+  `detail` and `live` (jobs only). Ids are stable: `leader`, `lane:<name>`,
+  `job:<id>`, `computer:<name>`, `resource:<lane>`.
+- `edges[]`: `id`, `kind` (`reports-to`, `runs-on`, `uses-resource`,
+  `messaged-in-last-15-min`), `from`, `to`, `messages`, `lastMessageAt` and
+  `pulse` (a message in the last minute).
+- `counts`, `sources`, `unmappedMessages`, and `gaps`, which lists in plain
+  words every fact the map could not show.
+
+Every node and edge has the same keys in the same order, sorted by level and
+id, so the same facts always print the same JSON. A job runs on a computer when
+that computer's pool claim names it, or when a worker process for it was seen
+on this computer. Messages to or from something not on the map, such as a
+channel, are counted in `unmappedMessages` and never assigned to a node by
+guessing. The server builds the graph at most once every 5 seconds, and the
+pane polls no faster than that while it is visible. Selecting a node opens the
+pane that already shows its details: the worker log for a job, Lanes, Computers,
+Usage for a pool, or Leader. One 2D/3D toggle (remembered) shows the same graph
+as rings stacked by org level, turning slowly until hovered and still under
+reduced motion; phones always get the 2D rows. No 3D library is used.
+
+#### Map edges
+
+`phm map edges [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` lists who
+messaged whom, read from the
+same agent bus as `phm messages`. `--json` prints `fleet.map-edges.v1`
+(`version` 1), and `GET /api/verse/fleet/control/map-edges[?since=10m&before=1h]` serves
+the same read with a current read session. The default window is the last 15
+minutes, the same as the map. `--before` keeps only messages received strictly
+before its cutoff, so `--since` and `--before` read one closed
+`[since, before)` window.
+
+`phm map replay [--json] [--since 6h] [--step 5m]` replays the fleet one frame
+per step (default: the last 6 hours, every 5 minutes; at most 288 frames).
+`--json` prints `fleet.map-replay.v1` (`version` 1) and
+`GET /api/verse/fleet/control/map-replay[?since=6h&step=5m]` serves the same
+read with a current read session. Each frame has `from`, `at`, `state`
+(`known`, `partly-unknown` or `unknown`) and `running`, `launched`,
+`prsOpened`, `merged`, `messages`, `lanes` (running jobs per lane) and `pools`
+(`{pool, usedPct}`). The jobs come from the jobs ledger, read back 7 days (and
+at most its last 32 MB) so a job launched long before the window still shows as
+running; the messages are the `map edges` lines inside the frame. Pool used %
+is the nearest reading in the usage history at or before the frame, and
+`usedPct` is `null` (unknown) when none is within 30 minutes. A part nobody
+recorded (ledger unreadable, or older than the bus keeps) is `null`, never an
+empty list; `gaps` says why in plain words. Computers are shown as they are
+now. The new fields are additions, so the schema stays `fleet.map-replay.v1`. The Map pane's time slider draws
+these frames, with a "Back to live" button.
+
+#### Recent bus messages
+
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--json]` lists
+agent-to-agent messages, newest
+first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
+summary}]}`. `--before` keeps only messages received strictly before its
+cutoff, so `--since` and `--before` read one closed `[since, before)` window.
+Every other flag is the `phm messages` filter vocabulary `phm agents messages`
+forwards — the matching rules `phm messages --help` describes — so one
+filtered question reads the same on this digest. `from` and `to` are routing labels and `summary` is one plain
+line of at most 100 characters (the scrubbed summary, never the message
+body). An empty bus prints "No messages yet."; `messages` is null when the bus
+could not be read. The Fleet map pulses the same lines, and clicking a line
+opens its messages.
+
+#### Message graph
+
+`phm fleet message-graph [--json] [--since 10m] [--before <10m|2h|1d|ISO|epoch>]` shows the same messages as
+lines between organizations: the company behind each agent's lane, or
+`unknown` when the agent's name proves no lane (the leader included). `--json`
+prints `fleet.message-graph.v1` (`version` 1), and
+`GET /api/fleet/message-graph[?since=10m&before=1h]` serves the same read; the Fleet map
+lists it under Messages. `--before` is the same exclusive upper bound `map
+edges` takes, so the two reads always describe one `[since, before)` window.
+
+| Field | Meaning |
+| --- | --- |
+| `groups[]` | One row per pair of organizations, newest first: `from`, `to`, `count`, `lastAt` and its `edges[]` (`from` agent, `to` agent, `count`, `lastAt`). |
+| `organizations[]` | Each organization on a line: `name`, its `agents`, and messages `sent` and `received`. |
+| `messages`, `since`, `source`, `skipped` | The same meaning as in map edges. |
+
+Only names, counts and times are returned, never message text. When the bus
+cannot be read, `groups` and `organizations` are `null` (unknown, not zero),
+the CLI exits 1 and the route answers 503 with that same body. A bad `since`
+or `before`, or any other query, is exit 2 or 400.
+
+- `edges[]`, newest first: `id`, `from`, `to`, `count`, `lastAt` and
+  `lastSummary` (the first 80 characters of the newest message, one scrubbed
+  line).
+- `from` and `to`: `name`, `role` (`leader`, `lane`, `worker` or `unknown`),
+  `lane` and `node`, the id of that agent on `phm map` or `null` when the map
+  does not draw it.
+- `agents`: every name on an edge, grouped by role.
+- `source`, `messages`, `skipped`, `since` and `generatedAt`.
+
+When the bus cannot be read, `edges`, `agents` and `messages` are `null` and
+the route answers 503 with that body: unknown, not zero. Notes to self,
+broadcasts and messages from people are not edges, the same rule the map's
+message lines use.
+
+On the Map pane a message line is thicker the more messages it carried and
+pulses for a minute after a new one. Selecting a line, or its row in the list
+under the map, opens the Messages pane on the last 20 messages between those
+two agents (`phm messages --agent <a> --with <b> --limit 20`). Agents that
+talk but are not drawn are listed under the map with their role. The 3D
+compute scene draws its message lines at the same thickness.
+
+#### Agent conversations
+
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
+groups the same bus read into threads by reply chain and by the declared
+conversation label a body carries, longest-waiting first and then newest
+first. `--agent` matches a participant's routing label and, through
+the agent identity registry, every other label of the same registered
+identity (handle, alias or `agent:` address) — the ref itself resolves
+exactly, so a case-variant or otherwise unregistered spelling names no
+identity; with no readable registry the
+match stays on the literal label. `--job <id>` keeps the whole threads that
+name that job — the `job:<id>` bucket itself or a member message citing it
+through the same channels `phm messages --job` honors (a `jobId`/`taskId`
+body citation or the message's reported job link) — never a partial message
+list, and it composes with `--agent` and `--waiting`. `--blocked` keeps only
+the threads a blocker or failed report left unanswered — the same
+`state:'blocked'` the unified inbox and `work mine` report — and composes
+with every other filter (a thread cannot be both waiting and blocked, so
+`--waiting --blocked` is an honest empty list). `--state <state>` keeps only
+the threads in one state — `waiting`, `answered`, `blocked` or `done` — the
+general form of `--waiting`/`--blocked`, which stay conjunctive with it (a
+thread cannot be two states, so contradictory filters are an honest empty
+list); `answered` and `done` are the states no flag reached before.
+`--waiting-on <name>`
+keeps the waiting threads that one agent owes a reply on — the same
+`work mine threads` rule over the shared conversations read: `waiting.on`
+names the agent under any of its identity labels or a
+`group:<channel>:<topic>` address of a registry channel it belongs to, and a
+thread whose waiting message the agent itself sent never counts (you cannot
+owe yourself a reply); an unresolvable ref or unreadable registry keeps the
+literal `waiting.on` label match, never a widened one. `--since <when>` keeps
+only the threads whose `lastAt` — the newest message's time — is at or after
+the cutoff, in the same grammar `phm messages --since` takes (`15m`, `2h`,
+`1d`, epoch ms or an ISO time, inclusive): "what moved lately" is one
+filtered read, whole threads like every other filter here. `--before <when>`
+keeps only the threads whose `lastAt` is strictly before its own cutoff on
+the same grammar — the exclusive upper bound composing with `--since` into
+one `[since, before)` window, the same rule every other bus read's
+`--before` applies, so a thread stamped exactly at either bound never
+matches and reaching a past slice of the thread list is one filtered read
+instead of paging forward through everything newer; an inverted or empty
+window is an honest empty list, never an error. A dormant thread
+drops out even while it still waits, so pair it with `--waiting` or `--state`
+when the question is what is still outstanding — the `waiting` count still
+reports every waiting thread on the bus, filtered or not. `--contains
+<text>` keeps only the threads where at least one member message's scrubbed
+one-line subject carries the needle as a case-insensitive substring — the
+same text search `phm messages --contains`, `agents bus inbox --contains`
+and `agents bus channel read --contains` apply, matched over the rendered
+summaries, never the raw body, so a secret-shaped value stays unfindable —
+so "which thread is about X" is one filtered read, whole threads like every
+other filter here. `--in-reply-to <id>` keeps only the threads where at
+least one member message's body cites that envelope id through its own
+`inReplyTo` field — the same own-property exact match `phm messages
+--in-reply-to`, `agents bus inbox`/`channel read --in-reply-to`, `comms bus
+read|watch --in-reply-to`, `fleet bus-follow --in-reply-to` and
+`fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias or a
+substring — so "which thread is the answer to envelope X in" is one
+filtered read. `--channel <name>` keeps only the threads where at least one
+member message is addressed to `group:<name>:*` — the room's whole traffic
+under every topic, the same raw `to`-prefix rule `phm messages --channel`,
+`agents bus inbox --channel` and `channel read --channel` match — so "which
+threads touch channel X" is one filtered read, the value taking the strict
+channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
+where at least one member message carries that exact band — the same match
+every other bus read's `--priority` applies — so "which threads have urgent
+traffic" is one filtered read, a member message with no recorded band never
+matching. `--from <name>` keeps only the threads where at least one member
+message was sent under that agent's labels — a handle, `agent:<handle>`,
+stable id or alias matching every label of that identity, the same
+sender-inclusion rule every bus read's `--from` applies, decided on each
+member message's `from` so a thread the agent only receives in never
+passes; `--exclude-from <name>` drops every thread where any member message
+was sent under that agent's labels — the same sender-exclusion rule,
+composing with `--from` so a sender both included and excluded matches
+nothing. Every one of these is a member-level test: whole threads survive,
+never partial message lists, and the matched member stays in `messages[]`.
+`--limit <1..1024>`
+caps the threads returned, longest-waiting order kept, while `matched` still
+reports the full filtered count — the same matched-before-limit convention
+`phm agents messages` uses; absent, every matched thread returns. Messages
+about one
+v2 job — a `work.post`, its `work.status`,
+`work.result`, `work.claim` and `work.release` bodies sharing a `jobId`, or a
+claim-key-only body the post lists — form one `job:<id>` thread even without
+replies, and a `failed` or `complete` outcome marks it blocked or done. Any
+body carrying a declared label — the v2 `thread` field `--thread` reads
+filter on (the same key `phm agents messages` reports as `threadId`), a
+`threadId`, or a `job:<id>` key — buckets its conversation under that label
+even without `replyTo` links, so a threaded question and its answer are one
+conversation; only the synthesized per-pair fallback stays reply-chain
+rooted. `group.presence` heartbeats are expiring observations with their own
+read (`phm comms bus group presence`), never messages: they form no thread
+and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
+serves the same read with a current read session. The isolated fleet MCP
+server's `fleet_agent_conversations` tool serves the same projection with
+the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
+`state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
+`channel`, `priority`, `from`, `excludeFrom`, `limit`), so an
+MCP-connected agent reads the fleet-wide thread view — who waits on whom,
+what is blocked, what moved lately — without shelling out to `phm`.
+
+- `conversations[]`: `id`, `participants[]` (`name`, `label`, `known`, `node`;
+  an agent no label proves has `label` "unknown agent"), `subject` (the latest,
+  scrubbed), `messageCount`, `lastAt`, `state` (`waiting`, `answered`,
+  `blocked` or `done`), `stateText`, `waiting` (`on`, `since`, `ms`; only while
+  waiting for a reply), `jobs[]` (every job id a member message names — body
+  citations, reported job links and the `job:<id>` bucket; sorted, empty when
+  the thread names none), `links[]` (the pairs that talked) and `messages[]`
+  (`id`, `at`, `from`, `to`, `kind`, `subject`, plus `priority` — the envelope
+  band — and `inReplyTo` — the body's own reply citation — when the message
+  carries them).
+- `matched`: every thread the filters kept before `--limit`/`limit` cut the
+  page; `null` when the bus could not be read, the same unknown-stays-unknown
+  rule `conversations` follows.
+- A reply to a message that is not on the bus starts its own thread. `null`
+  conversations mean the bus could not be read, not that nothing was said.
+- The Map pane draws a thicker line over each pair that talked in the last 10
+  minutes, with a marker while a reply is awaited; selecting it opens the thread
+  in the Conversations panel beside the map.
+
+#### Agent messages
+
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]` lists recent
+agent-to-agent messages from the same bus read (no new store), newest first.
+`--before` keeps only messages received strictly before its cutoff, so
+`--since` and `--before` read one closed `[since, before)` window.
+`group.presence` heartbeats are observations, not messages, and never list.
+Every other flag is the `phm messages` filter vocabulary — `--agent` with
+`--with` keeps only what those two said to each other, `--kind` one
+classified kind, `--priority` one envelope band, `--job` the traffic naming
+one job, `--thread` note/context bodies carrying that v2 thread label,
+`--channel` posts addressed to `group:<name>:*`, `--contains` summaries
+carrying that text, `--from`/`--exclude-from` one sender's mail kept or
+dropped, `--in-reply-to` envelopes citing that id — with the same matching
+rules and registered-identity resolution `phm messages --help` describes, so
+`matched` and `pairs` count exactly the rows every filter accepts.
+`--json` prints `agents.messages.v1` (`version` 1), and
+`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
+same read with a current read session; dashed flags arrive camelCase
+(`excludeFrom`, `inReplyTo`), each param once.
+
+- `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
+  characters), `threadId` when the message names a thread, then `fromName` and
+  `toName`. `from` and `to` are map node ids (`leader`, `lane:<name>`,
+  `job:<id>`), or `unknown` when the map does not draw that agent.
+- `pairs[]`: one per direction between two node ids over every message the
+  filters kept: `count`, `lastAt` and `recent` (the last 5 summaries).
+
+On the Map pane, hovering a message line or its row shows a card with that
+line's count and last 5 messages. The Messages switch above the map hides
+every message line and the list. Reduced motion (the Settings motion choice or
+the system setting) stops the pulse; lines keep their thickness.
+
+### Live sessions
+
+`phm sessions [--lane <lane>] [--repo <repo>] [--json] [--live]` shows every
+agent session as one tree: the leader, then workers, then their subagents.
+`--json` prints `fleet.live-sessions.v1`, and
+`GET /api/verse/fleet/control/live-sessions[?lane=<lane>][&repo=<repo>][&live=1]`
+serves the same document to the desktop Sessions pane with a current read
+session. It projects the session map behind
+`/api/verse/fleet/control/sessions` (the dispatch inventory joined with the
+computers in `fleet.compute.v1`) and adds the `subagent.v1` records under
+`~/.ashlr/subagents`.
+
+- `tree`: a `fleet.session-tree.v1` document with `version`, `generatedAt`,
+  `line` (for example "9 sessions running: leader, 6 workers, 2 subagents; 1
+  failed in the last hour"), `counts` and `roots[]`. Each node has `id`,
+  `parentId`, `agent`, `lane`, `model`, `repo`, `jobId`, `state` (`running`,
+  `idle`, `done`, `failed` or `unknown`), `startedAt`, `lastMessageAt`,
+  `lastMessage`, `kind` (`leader`, `worker`, `subagent` or `unknown-parent`),
+  `lastMessageAgeSeconds`, `counts` (`below`, `running`, `failed`) and
+  `children[]`. Siblings sort running first, then most recent. A session whose
+  parent is not in the list sits under the `unknown parent` row. Finished
+  sessions stay for an hour; `--live` (`live=1`) leaves them out.
+
+  The leader's row comes from the leader's own files. Its `state` is `idle`
+  (between passes) while the newest dated heading of its plan log is at most
+  two hours old, and `unknown` otherwise: no record says whether an older
+  leader is still alive. `lastMessage` is the newest reply it wrote you (the
+  same source as `phm leader replies`), on one line and cut at 240
+  characters, with `lastMessageAt` from that reply's heading. Its lane, model
+  and start time are recorded nowhere and read `unknown` or null. When a pass
+  or reply is on record and no lane or repo filter is set, the leader is
+  listed even with no worker running. `gaps[]` names what the row could not
+  show.
+
+- `sessions[]`: `job`, `lane`, `model`, `repo`, `tier`, `status` (`launching`,
+  `running`, `publishing`, or `unknown` for a job only another computer's claim
+  names), `startedAt`, `ageSeconds`, `lastOutputAt` (the worker log's last
+  write), `lastOutputAgeSeconds`, `quiet` (no output for more than 10 minutes;
+  null when unknown), `prUrl`, `computer` (node id or `unknown`),
+  `thisComputer` and `unknown`, which maps each unknown field to the reason.
+- `counts` (`sessions`, `quiet`, `lanes`, `otherComputers`), `filter`, `live`
+  and `gaps`.
+
+Rows sort by lane order, then start time, then job id, with the same keys in
+the same order. The server reads the session map at most once every 5 seconds.
+Selecting a session in the pane opens the worker log, which has the existing
+pause and stop controls.
+
+### Session threads
+
+`phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]` reads
+every session as a short conversation, and
+`GET /api/verse/fleet/control/session-threads[?lane=L][&repo=R][&live=1]`
+serves the same `fleet.session-threads.v1` document with a current read
+session. It is the read for a screen that shows every session at once: one
+request instead of one [session thread](#session-thread) per session. It adds
+no source. The session list, the agent bus, the Leader inbox and the leader's
+replies are read once, and the recorded activity once for each job shown.
+
+- `filter`: `lane`, `repo` (null when not set) and `live` (true when only
+  running sessions were asked for). They work as they do for the session list.
+- `counts`: `sessions` (every session in the list), `shown` (the ones in
+  `threads`), `states`, a count of the shown sessions under each of
+  `running`, `quiet`, `idle`, `done`, `failed` and `unknown`, and `unshown`,
+  a count of the sessions left out because the read holds 40: `running`,
+  `ended` (finished or failed) and `unknown` (any other state). All three are
+  0 when nothing was left out. The read gives up finished sessions first, the
+  longest silent before a newer one, then failed ones, so `unshown.running`
+  is above 0 only when more than 40 sessions are running.
+- `threads[]` in the order of the session tree: the leader, then each worker
+  followed by its helpers. At most 40. Each has `session` and `summary[]`
+  exactly as the session thread gives them, `messages[]` (the newest 3
+  messages of that thread, oldest of them first, each with the session thread's
+  fields plus `truncated`, true when `text` was cut at 400 characters),
+  `messageCount` (how many messages the whole thread holds), that thread's
+  own `sources` and `gaps[]`, and `reply` (`to`, `mention`, `hint`): where
+  words written to that session go, the same answer the session thread gives.
+- What Mason wrote is part of each thread, as in the session thread: the
+  leader's holds every Leader inbox message, a worker's the ones naming it as
+  `@<job>` (kind `owner`), and a helper's none. A worker's summary says how
+  many were aimed at it.
+- Where the Leader routed a message is part of each thread too, from the same
+  order trace as the session thread: a `routing` record follows each routed
+  message in the leader's thread, and a worker with a job opens with the
+  message it serves (kind `order`) and says so in its summary. Helpers get
+  none. The trace is read once for the whole document.
+- `serves` comes after `reply`. For a worker whose job serves a message
+  of Mason's it is `{key, at, source, text, truncated, jobs}`: the newest such
+  message, with a `key` every entry serving it shares, the inbox's own time
+  (`at`, Eastern, to the minute), Mason's words cut at 400 characters (`text`,
+  null when the message is not among the inbox entries read) and `jobs`, a
+  count of every job the trace ties to the message, including ones this
+  document does not show. It is null for the leader, a helper, a worker
+  without a job, a job whose prompt cites no message, and when the trace was
+  not read; `sources.orders` tells an unread trace from no citation. A screen
+  can group the sessions by `serves.key` to show who is working on what.
+- `task` follows `summary`: what the session's job was asked to do, the
+  answer the session thread gives. `{line, from, truncated}`, or null.
+  `line` is quoted from the job's brief: the first line written after the
+  fleet view the dispatcher puts in front of a prompt (`## CONTEXT` to
+  `## END CONTEXT`), cut at 160 characters (`truncated`). `from` says what
+  that line is: `title` when the brief wrote it as a markdown heading (the
+  marks, and the job's own id in brackets at its end, are dropped); `queue`
+  when the brief opens with the router's line ("Job … Task from the Ashlr
+  router queue, verbatim:") and `line` is the words of the queue row after
+  it; `opening` for any other first line, which is only how the brief opens
+  and should be labelled so. It is null for a session with no job, when the
+  job's activity was not read, and when the brief holds no line after the
+  fleet view or was cut off inside it. A `brief` message in `messages[]`
+  starts after the fleet view too, with the label "Brief, after its fleet
+  view" and `truncated` true.
+- `work` is each entry's last key: what the session's job has done, as the
+  values behind the summary's own sentences, so a screen can draw them
+  without reading prose. `{commands, files, step}`: `commands` is the count
+  of commands seen in the job's log (null when the log's commands could not
+  be read); `files` is `{count, added, removed, partial}` for the job's
+  changed files, with `partial` true when the change read was cut short
+  (null when no change read answered); `step` is the newest recorded step,
+  `{event, summary, at}`, with `at` null when the record carried no time
+  that parses (null when no step is recorded). A null part is unknown, not
+  zero. `work` itself is null for a session with no job and when the job's
+  activity was not read; the entry's `sources.activity` tells those apart.
+- `work.pr` is the first key of `work`: what the job ledger records became
+  of the job's pull request, `{state, mergeSeconds, at}`. `state` is
+  `merged`, `closed` or `open`; `mergeSeconds` is the recorded time from the
+  pull request opening to its merge (null when not recorded, and for any
+  other state); `at` is the outcome row's own time (null when it does not
+  parse). It is read from the `outcome` rows of `metrics/jobs.jsonl` written
+  since the job's newest launch: a recorded merge stands, otherwise the
+  newest row answers. `pr` is null when no row records an outcome, so a
+  published pull request is unknown, not open. The summary states it as a
+  sentence that starts "Its pull request ".
+- `control` sits just before `reply` in each entry: the pause, resume, stop
+  or move that stands for the session's job, `{action, lane, status, at}`
+  with `status` `requested` or `applied`, the same answer
+  `phm sessions thread <id>` gives. It is the newest request the dispatcher
+  did not refuse, so after a resume it reads `resume`, not null. It is null
+  when no request stands, for a session with no job, and when the control
+  file could not be read; `sources.controls` tells those apart. The requests
+  themselves are `control` messages in the thread and the summary names the
+  one that stands. The control file is read once for the whole document.
+- What a running session wrote is part of its thread: an `output` message
+  with the last 3 lines of its log (the newest 400 characters of them when
+  they are longer, `truncated` true when anything was left out). Only running
+  sessions have their log read here; a finished one's thread ends with its
+  outcome, and its single thread still shows its output.
+- `sources`: `sessions` (`available` or `unavailable`), and `bus`, `owner`,
+  `replies`, `orders` and `controls` (`available`, `none` when the read
+  answered and no shown session has any, or `unavailable`). `gaps[]` holds
+  the session list's own gaps, a line counting the sessions left out past 40,
+  and a failed bus, inbox, order trace or control file read.
+
+Each read fails on its own: a job whose activity could not be read says so in
+its own `gaps` and the other threads are whole. The route answers 503 when the
+session list cannot be read, so an unreadable list never looks like a fleet
+with no sessions, and 400 for anything but `lane`, `repo` and `live=1`, once
+each. One build per filter serves every caller for 5 seconds. The CLI exits 1
+when the list cannot be read; with `--json` it still prints the document, with
+`sources.sessions` `unavailable` and no threads. Text is scrubbed the same way
+as the session list.
+
+### Session thread
+
+`phm sessions thread <id> [--all] [--json]` reads one session as a conversation, and
+`GET /api/verse/fleet/control/session-thread?id=<id>[&depth=full]` serves the same
+`fleet.session-thread.v1` document with a current read session. The id is
+`leader`, a job id or a subagent id from the session tree. It adds no source:
+it joins the session's row in `fleet.live-sessions.v1`, the job's
+`fleet.job.activity.v1`, the agent bus messages (`phm agents messages`), the
+messages Mason wrote in the Leader inbox and, for the leader,
+`leader.replies.v1`.
+
+- `depth` and `deeper`, the last two keys: the limits below are the default
+  depth, `recent`. `--all` (or `depth=full`) reads the same records and shows
+  more of them: up to 400 bus messages, every message of Mason's in the inbox
+  entries read, 40 leader replies, 60 commands, 60 changed files, 25 served
+  messages, 40 control requests and 120 log lines. `deeper` is true for a
+  `recent` thread that left out something the `full` one would show, so a
+  client knows whether to offer the earlier entries; it is always false for
+  `full`, whose own omissions are lines in `gaps`. The route answers 400 for
+  any other `depth` value, or for `depth` given twice.
+- `session`: `id`, `kind`, `agent`, `lane`, `model`, `repo`, `jobId`,
+  `parentId` (null for the leader), `state` (`quiet` for a running session
+  with no output for 10 minutes, otherwise the tree's state), `startedAt`,
+  `ageSeconds`, `lastMessageAt`, `lastMessageAgeSeconds`, `prUrl`, `computer`
+  and `helpers` (`below`, `running`, `failed`).
+- `summary[]`: short sentences assembled from those records: what it is and
+  where, its state and when it last spoke, its helpers, its pull request,
+  commands seen and files changed, and its latest recorded step. No model
+  writes it, and a fact no record holds reads "unknown".
+- `task`, after `summary`: what the session's job was asked to do, one line
+  quoted from its brief, in the shape each
+  [session threads](#session-threads) entry carries: `{line, from,
+  truncated}`, or null when no line is known. The `brief` message itself is
+  whole here, fleet view included.
+- `work`, between `gaps` and `reply`: what the session's job has done, as
+  the values behind those summary sentences, in the shape each
+  [session threads](#session-threads) entry carries: `{commands, files,
+  step}`, where a null part is unknown, not zero. It is null for a session
+  with no job and when the job's activity was not read; `sources.activity`
+  tells those apart.
+- `work.pr`, the first key of `work`: what became of the job's pull request,
+  `{state, mergeSeconds, at}` or null when no outcome is recorded, as
+  described for a [session threads](#session-threads) entry.
+- `messages[]` in reading order: the brief it was given, each recorded step,
+  the last 8 commands, up to 6 changed files, its notes, the newest 50 bus
+  messages that name its job or were sent by or to it, the newest 10 messages
+  from Mason, the leader's last 5 replies (leader only), the last 12 lines
+  it wrote to its log, then its last
+  message. Each has `key`, `kind`
+  (`order`, `routing`, `brief`, `step`, `commands`, `files`, `notes`, `bus`,
+  `owner`, `reply`, `control`, `output`, `latest`),
+  `side` (`session` when it speaks, `other` when someone speaks to it,
+  `record` for a recorded step), `label`, `at` (null when the record has no
+  time), `text` and `format` (`plain`, `mono` or `markdown`).
+- What the session wrote (`output`) is the end of its job log, read for a
+  session with a job through the same bounded, no-follow read as
+  `phm sessions tail`, every line redacted. Blank lines are dropped, the
+  newest 12 are kept and a line is cut at 240 characters. The log has no time
+  per line, so `at` is null, and the label says whether earlier lines exist
+  ("last 12 lines of its log") and whether the log is archived. When the
+  output already ends with the session's last message, `latest` is left out
+  instead of being said twice. `sources.output` is `none` for a session that
+  wrote nothing (or has no job) and `unavailable`, with a line in `gaps`,
+  when the log could not be read.
+- Messages from Mason (`owner`) come from the Leader inbox, the newest 200
+  entries of it. The leader's thread holds every one. A worker's thread holds
+  the ones that name it as `@<job id>`, which is what the desktop reply boxes
+  write. The inbox belongs to the leader, so the label reads "Mason to the
+  Leader, aimed at <job>": the message is on record there, and no record says
+  the worker read it. A helper's thread holds none. The inbox keeps Eastern
+  time to the minute, so `at` is that minute as ISO. In the leader's thread
+  these messages and the replies are put in time order when every one of them
+  has a time; otherwise Mason's come first, then the replies.
+- Routing (`order`, `routing`) comes from the order trace behind
+  `GET /api/verse/leader/orders`, which ties a job to one of Mason's messages
+  when the job's prompt cites that message's time. A worker's thread opens
+  with the message it serves (`order`, the newest 3), labelled "Mason to the
+  Leader, served by <job>", followed by a `routing` record when other jobs
+  serve the same message. In the leader's thread a `routing` record follows
+  each of Mason's messages that has jobs. A routing record has one line per
+  job, up to 8: the job id, its lane or "lane unknown", the trace's state
+  (`queued`, `launched`, `published`, `merged`) and the pull request link
+  when there is one. A message no job cites gets no record, and a session no
+  message is tied to gets no `order`: nothing is guessed from timing. When
+  the served message is outside the inbox entries read, the `order` names
+  its time and says its text was not read. The server reads the trace at
+  most once every 15 seconds.
+- Control requests (`control`) come from the job control file that
+  `phm job pause|resume|stop|move` and
+  `POST /api/verse/fleet/runs/control` write. A thread for a session with a
+  job shows the newest 5 requests for that job, before its output, each as a
+  record: the label says what was asked and what became of it ("Pause
+  requested", "Paused", "Move to codex refused"), `at` is when it was
+  recorded, and the text names the surface that asked (`cli`, `desktop`,
+  `mobile`) and either that the dispatcher has not applied it yet, that it
+  is done, or the refusal's reason. A request reads as applied only when
+  the file holds that answer. `sources.controls` is `none` when the file
+  holds nothing for the job and `unavailable`, with a line in `gaps`, when
+  it could not be read.
+- `sources`: `sessions` (`available` or `unavailable`) and `activity`, `bus`,
+  `owner`, `replies`, `orders`, `output`, `controls` (`available`, `none` when the read answered with nothing for this
+  session, or `unavailable`). `gaps[]` says in plain words what is missing.
+- `reply`: where a message written to this session goes, so every client
+  aims it the same way. `to` is `leader` (the Leader inbox as it is), `job`
+  (the Leader inbox with `mention`, `@<job id>`, in front) or `none`.
+  `mention` is null unless `to` is `job`. `hint` is one sentence saying
+  where the message goes or why none can be sent. Only a running or quiet
+  worker whose job id fits the `@RQ-...` mention syntax gets `job`; a
+  finished session, a helper without a job and an unknown id get `none`. No
+  route writes to a worker directly: the inbox belongs to the leader, and
+  the write is `POST /api/verse/leader/inbox`.
+- `control`: the request that stands for the session's job, which is the
+  newest one not refused: `action` (`pause`, `resume`, `stop`, `move`),
+  `lane` (the target of a move, otherwise null), `status` (`requested` or
+  `applied`) and `at`. Null when none stands or the file was not read. The
+  summary says the same in one line. A client uses it to offer Resume in
+  place of Pause.
+
+Each read fails on its own, so a thread with an unreadable bus still shows the
+rest. The route answers 404 for an id the list does not hold (finished
+sessions leave after an hour), 503 when the session list cannot be read, and
+400 for anything but one `id`. The CLI exits 2 for an unknown id and 1 when
+the list cannot be read. Text is scrubbed the same way as the session list.
+
+### Session find
+
+`phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]`
+looks for words in every session's whole conversation, and
+`GET /api/verse/fleet/control/session-find?q=<words>[&lane=L][&repo=R][&live=1]`
+serves the same `fleet.session-find.v1` document with a current read session.
+It adds no source: each session is searched as the thread
+`phm sessions thread <id> --all` builds, so a word said long before a
+session's newest messages is found.
+
+- `words`: the query in lower case, split on spaces, without repeats. A word
+  is two characters or more; at most 8 are taken from at most 200 characters.
+- `filter`: `lane`, `repo` and `live`, as for the session list.
+- `counts`: `sessions` in the list, `searched` conversations read (at most
+  120, in session tree order) and `found` results.
+- `results[]`: a session is a result when every word is somewhere in its id,
+  kind, lane, model, repo, parent, summary or messages. Case is ignored.
+  - `session` and `summary`: as in a session thread.
+  - `hits`: the newest 5 messages holding at least one word, oldest of them
+    first. Each has the thread message's `key`, `kind`, `side`, `label` and
+    `at`; `text` is on one line, cut to the 240 characters around the first
+    word found, with `…` where it was cut (`truncated`). `hits` is empty when
+    the words are only in the session's facts or summary.
+  - `hitCount` and `messageCount`: messages holding a word, and messages in
+    the conversation searched.
+- `sources`: `sessions`, `bus`, `owner` and `orders`, each `available`, `none`
+  or `unavailable`. `gaps` says in words what was not searched, including
+  sessions past the 120.
+
+Each conversation is scrubbed the same way as the session list before it is
+searched, so a query can neither show nor confirm a secret. The route reads
+the fleet at most once per filter per 5 seconds, whatever the words. It
+answers 400 without a usable `q` or for an unknown parameter, and 503 when the
+session list cannot be read. The CLI exits 0 for a read (finding nothing is
+still a read), 1 when the list cannot be read and 2 for bad usage.
 
 ### Desktop workbench actions (WB-4)
 

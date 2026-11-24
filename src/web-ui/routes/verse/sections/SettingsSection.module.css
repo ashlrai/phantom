@@ -131,6 +131,13 @@
   }
   .rowControl {
     justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  /* A four-option segmented control (Theme) is ~360px of unbreakable labels;
+     on a 390px phone it wraps onto a second line instead of overflowing. */
+  .rowControl > [role='radiogroup'] {
+    flex-wrap: wrap;
+    max-width: 100%;
   }
 }
 

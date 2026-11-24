@@ -379,6 +379,8 @@ export interface DaemonTick {
     postMergeCreditReleased?: number;
     postMergeCreditSkipped?: number;
     postMergeCreditSourceComplete?: boolean;
+    /** Eligibility-reason counts from the credit sweep (release funnel). */
+    postMergeCreditSkippedByReason?: Record<string, number>;
     skippedByCadence?: boolean;
     nextAfter?: string;
   };
@@ -437,6 +439,8 @@ export interface DaemonState {
    * clean tick; absent on pre-existing state.
    */
   lastTickError?: string | null;
+  /** Retry budget-interrupted calibration on the next eligible tick. */
+  counterfactualReplayPending?: boolean;
   /** Calendar day (YYYY-MM-DD) the spend counters apply to; null until first tick. */
   todayDate: string | null;
   /** Estimated USD spent so far today; reset when todayDate rolls over. */

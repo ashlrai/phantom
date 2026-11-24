@@ -11,6 +11,8 @@ sys.path.insert(0, str(MAC))
 import work_market as market
 from test_dispatchd import build, tick, queue_job, launch_stubs, held_lanes, dispatched
 
+CAPABILITY_PROMPTS = json.loads((MAC.parents[1] / 'test/fixtures/lane-capabilities/prompts.json').read_text())
+
 node = next(n for n in ast.parse((MAC / 'dispatchd.py').read_text()).body
             if isinstance(n, ast.FunctionDef) and n.name == 'route_decision')
 scope = {}
@@ -24,6 +26,53 @@ def view(**overrides):
 
 
 class MarketUnit(unittest.TestCase):
+    def test_producer_infers_gh_without_losing_declared_requirements(self):
+        for job, prompt in CAPABILITY_PROMPTS['c499'].items():
+            with self.subTest(job=job):
+                spec = market.from_envelope('pool=claude, needs=git, max_cost_class=included', prompt)
+                self.assertEqual(spec['needs'], ['git', 'gh'])
+                self.assertEqual(spec['preferred_lane'], 'claude')
+                self.assertEqual(spec['max_cost_class'], 'included')
+        for prompt in [*CAPABILITY_PROMPTS['pureCode'].values(),
+                       'Never run gh pr merge. Rename a helper.',
+                       'Recut the local patch; inspect fixtures/failed-run.log offline.']:
+            with self.subTest(prompt=prompt[:40]):
+                self.assertEqual(market.from_envelope('pool=claude', prompt)['needs'], [])
+        self.assertEqual(market.from_envelope('needs=gh', 'Run gh pr diff 12')['needs'], ['gh'])
+
+    def test_claude_gh_requires_explicit_host_advertisement(self):
+        self.assertNotIn('gh', view()['claude']['capabilities'])
+        self.assertIn('gh', view()['codex-personal']['capabilities'])
+        lanes = view(claude={'capabilities': ['git', 'gh', 'node']})
+        self.assertEqual(self.choose({'preferred_lane': 'claude', 'needs': ['gh']}, lanes)[0]['chosen_lane'], 'claude')
+
+    def test_claude_hashed_account_scope_survives(self):
+        self.assertEqual(market._scope_names({'account_id': 'claude:0123456789abcdef'}),
+                         {'account_id': 'claude:0123456789abcdef'})
+
+    def test_provenance_only_follows_measured_posture(self):
+        provenance = dict(account_id='org-test', model='swe-2-high', window_start='1970-01-01T00:00:00Z', reset_at='1970-01-01T03:46:40Z')
+        for reading in ({}, {'used': 80}):
+            self.assertEqual(self.devin_view(reading=dict(reading, provenance=provenance))['devin']['provenance'], provenance)
+        for kwargs in ({'model': 'swe-2-flash'}, {'posture': 'preserve'}, {'free_until': 20000}):
+            self.assertNotIn('provenance', self.devin_view(reading={'provenance': provenance}, **kwargs)['devin'])
+        mismatch = self.devin_view(reading={'provenance': provenance}, model='swe-2-max')['devin']['provenance']
+        self.assertNotIn('model', mismatch)
+        self.assertEqual(mismatch['account_id'], 'org-test')
+        self.assertNotIn('provenance', self.devin_view(reading={'used': None, 'provenance': provenance})['devin'])
+
+    def test_budget_scope_normalizes_instants_and_rejects_identifiers(self):
+        reading = dict(weekly_used_pct=20, burn_pct_per_hour=0, reset_at=13600, as_of=10000,
+                       account_id='account-a', model='claude-opus', window_start='1970-01-01T00:00:00Z')
+        def entry():
+            return market.lane_view(['claude'], {'claude': {}}, {'claude': 0}, {'claude': 1}, set(), {}, {}, [],
+                                    now=10000, allowance={'claude': reading})['claude']['provenance']
+        self.assertEqual(entry(), dict(account_id='account-a', model='claude-opus',
+                                      window_start='1970-01-01T00:00:00.000Z', reset_at='1970-01-01T03:46:40.000Z'))
+        for invalid in ('name@example.com', '', '-invalid', 'a' * 129, 42):
+            reading.update(account_id=invalid, model=invalid)
+            self.assertNotIn('account_id', entry())
+            self.assertNotIn('model', entry())
     def devin_view(self, reading=None, model='swe-2-high', running=0, now=10000, **slot):
         weekly = dict(used=20, limit=100, in_flight=10, reserve=10, session_cap=10,
                       reset_at=13600, as_of=10000, burn_rate_per_hour=0, state='live')
@@ -53,8 +102,9 @@ class MarketUnit(unittest.TestCase):
         self.assertIsNone(self.devin_view({'used': None})['devin']['allowance']['used'])
 
     def test_devin_preview_is_zero_cost_only_until_expiry(self):
+        bound = dict(provenance=dict(account_id='org-test', model='swe-2-flash'))
         for model in ('swe-2-lightning', 'swe-2-flash'):
-            entry = self.devin_view({'used': None}, model=model, now=1796101199)['devin']
+            entry = self.devin_view(dict({'used': None, 'as_of': 1796101199}, **bound), model=model, now=1796101199)['devin']
             self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
             self.assertTrue(entry['zero_cost'])
             self.assertEqual(entry['cost_class_reason'], 'devin_free_preview')
@@ -66,6 +116,26 @@ class MarketUnit(unittest.TestCase):
         self.assertEqual((expired['cost_class'], expired['posture']), ('metered', 'balanced'))
         self.assertEqual(expired['cost_class_reason'], 'devin_preview_expired')
         self.assertEqual(self.devin_view(model='swe-2-high')['devin']['zero_cost'], False)
+
+    def test_devin_preview_requires_fresh_account_evidence(self):
+        for reading in ({}, {'state': None}, {'state': 'stale'}, {'as_of': 1796100000}):
+            entry = self.devin_view(reading, model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Fresh and live is not enough: the reading must be bound to the measured
+        # account and to a preview-scoped model.
+        fresh = {'used': None, 'as_of': 1796101199}
+        for provenance in (None, {}, {'account_id': 'org-test'}, {'model': 'swe-2-flash'},
+                           {'account_id': 'org-test', 'model': 'swe-2-high'},
+                           {'account_id': '', 'model': 'swe-2-flash'}):
+            entry = self.devin_view(dict(fresh, provenance=provenance), model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Account- and preview-model-bound fresh evidence verifies, across the preview family.
+        bound = dict(fresh, provenance=dict(account_id='org-test', model='swe-2-lightning'))
+        entry = self.devin_view(bound, model='swe-2-flash', now=1796101199)['devin']
+        self.assertEqual((entry['cost_class'], entry['zero_cost'], entry['cost_class_reason']),
+                         ('included', True, 'devin_free_preview'))
 
     def test_metered_api_cannot_burn_from_host_posture(self):
         entry = market.lane_view(['claude-api'], {'claude-api': {'posture': 'burn'}},
@@ -156,6 +226,37 @@ class MarketUnit(unittest.TestCase):
         reasons = {r['lane']: r['reason_codes'] for r in result['rejected_lanes']}
         self.assertIn('tier_unavailable', reasons['codex-personal'])
         self.assertIn('quota_exhausted', reasons['claude'])
+
+    def test_hard_down_evidence(self):
+        # RQ-CONSTRAINT-AUDIT-1: provider-attributed (autobackoff) holds are hard-down; manual holds are not.
+        for slot, expected in [({}, False), ({'held': True}, False), ({'held': True, 'held_by': 'manual'}, False),
+                               ({'held': False, 'held_by': 'autobackoff'}, False), ({'quota': True}, False),
+                               ({'held': True, 'held_by': 'autobackoff'}, True), ({'auth_failed': True}, True),
+                               ({'quota': 0}, True), ({'quota': 0.0}, True),
+                               ({'held': True, 'held_reason': 'auth_failure'}, True),
+                               ({'held': True, 'held_reason': 'credits exhausted (RQ-X 2026-11-16)'}, True),
+                               ({'held': False, 'held_reason': 'credits exhausted'}, False)]:
+            self.assertIs(market.hard_down(slot), expected, slot)
+        # The operator HOLD list wins over provider backoff evidence; explicit auth/quota evidence still counts.
+        self.assertIs(market.hard_down({'held': True, 'held_by': 'autobackoff'}, True), False)
+        self.assertIs(market.hard_down({'held': True, 'held_reason': 'credits exhausted'}, True), False)
+        self.assertIs(market.hard_down({'quota': 0}, True), True)
+
+    def test_autobackoff_hold_releases_residency_but_not_move_cap_or_launch(self):
+        record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}
+        lanes = view(**{'codex-personal': {'held': True, 'held_by': 'autobackoff'}})
+        result, moved = self.choose(lanes=lanes, record=record)
+        self.assertEqual(result['chosen_lane'], 'claude')
+        self.assertIn('hard_down', result['reason_codes'])
+        self.assertEqual(moved['moves'], [10000])
+        for extra, reason in [({'moves': [9900, 9950]}, 'move_cap'), ({'launched': True}, 'launched')]:
+            result, _ = self.choose(lanes=lanes, record={**record, **extra})
+            self.assertIsNone(result['chosen_lane'])
+            self.assertIn('hysteresis_' + reason, result['reason_codes'])
+        manual = view(**{'codex-personal': {'held': True, 'held_by': 'manual'}})
+        result, _ = self.choose(lanes=manual, record=record)
+        self.assertIsNone(result['chosen_lane'])
+        self.assertIn('hysteresis_minimum_residency', result['reason_codes'])
 
     def test_hysteresis_hard_down_move_cap_and_launch_fence(self):
         record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}
@@ -288,6 +389,33 @@ class MarketUnit(unittest.TestCase):
 
 
 class MarketTick(unittest.TestCase):
+    def test_weekly_provenance_and_real_tick_match_shared_receipt(self):
+        home, q = self.fixture({'devin': 1})
+        root = self.devin_accounting(home)
+        fixtures = MAC / 'tests/fixtures/posture-provenance'
+        weekly = json.loads((fixtures / 'weekly-capacity.json').read_text())
+        (root / 'config.json').write_text(json.dumps({'devin': {'weeklyAcuAllowance': 50, 'weeklyResetAt': weekly['reset_at']}}))
+        path = root / 'devin/weekly-capacity.json'
+        path.write_text(json.dumps(weekly))
+        expected = {k: weekly[k] for k in ('account_id', 'model', 'window_start', 'reset_at')}
+        self.assertEqual(market.read_devin_allowance(home)['provenance'], expected)
+        wrapper = home / 'fixed_tick.py'
+        wrapper.write_text('import time, runpy\ntime.time = lambda: 1794916800.0\nrunpy.run_path(' + repr(str(MAC / 'dispatchd.py')) + ', run_name="__main__")\n')
+        result = tick(home, script=wrapper)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        emitted = next(r for r in self.rows(home) if r['event'] == 'posture')
+        committed = json.loads((fixtures / 'work-market-posture.json').read_text())
+        self.assertEqual(emitted['lanes']['devin'], committed['lanes']['devin'])
+        for invalid in ('name@example.com', '', '-invalid', 42):
+            path.write_text(json.dumps(dict(weekly, account_id=invalid, model=invalid)))
+            provenance = market.read_devin_allowance(home)['provenance']
+            self.assertEqual(provenance, {k: expected[k] for k in ('window_start', 'reset_at')})
+        for patch, missing in [({'source': 'other'}, set(expected)), ({'window_start': '2099-01-01'}, {'window_start'}),
+                               ({'window_start': 'invalid'}, {'window_start'}), ({'reset_at': '2026-11-17T14:00:00Z'}, {'reset_at'})]:
+            path.write_text(json.dumps(dict(weekly, **patch)))
+            provenance = market.read_devin_allowance(home)['provenance']
+            self.assertEqual(provenance, {k: v for k, v in expected.items() if k not in missing})
+
     def fixture(self, targets=None):
         slots = held_lanes()
         for lane, target in (targets or {'codex-personal': 1, 'claude': 1}).items():
@@ -548,6 +676,58 @@ class MarketTick(unittest.TestCase):
         self.run_tick(home)
         self.assertEqual(self.rows(home)[0]['chosen_lane'], 'claude')
         self.assertTrue(dispatched(home, 'RQ-RESTOCK'))
+
+    def test_restock_routes_gh_repairs_to_capable_lane_through_dispatch(self):
+        from test_restock import restock, line
+        for job, prompt in CAPABILITY_PROMPTS['c499'].items():
+            with self.subTest(job=job):
+                home, q = self.fixture()
+                (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+                (q / 'router-queue.md').write_text(line(job, pool='claude', tier='frontier', repo='phantom',
+                    text=prompt.split('Task from the Ashlr router queue, verbatim:\n\n')[1].split('\n\nRules:')[0]) + '\n')
+                result = restock(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                fields = (q / 'ready.tsv').read_text().strip().split('\t')
+                self.assertEqual(fields[2], 'codex-personal')
+                self.assertEqual(json.loads(fields[5])['needs'], ['gh'])
+                self.run_tick(home)
+                route = next(r for r in self.rows(home) if r['event'] == 'route_decision')
+                self.assertEqual(route['chosen_lane'], 'codex-personal')
+                self.assertIn('missing_capability', next(r for r in route['rejected_lanes'] if r['lane'] == 'claude')['reason_codes'])
+                self.assertTrue(dispatched(home, job))
+
+    def test_restock_waits_for_gh_capacity_but_keeps_ordinary_claude_work(self):
+        from test_restock import restock, line
+        home, q = self.fixture({'claude': 2})
+        (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+        (q / 'router-queue.md').write_text('\n'.join([
+            line('RQ-PHX-REDWAIT', pool='claude', tier='frontier', repo='phantom', text='Run gh run view 7 --log-failed.'),
+            line('RQ-PHX-ORDINARY', pool='claude', tier='frontier', repo='phantom', text='Rename a helper. Never run gh pr merge.'),
+        ]) + '\n')
+        result = restock(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = (q / 'ready.tsv').read_text().strip().split('\t')
+        self.assertEqual((fields[0], fields[2], json.loads(fields[5])['needs']), ('RQ-PHX-ORDINARY', 'claude', []))
+        self.assertIn('- READY RQ-PHX-REDWAIT', (q / 'router-queue.md').read_text())
+        self.run_tick(home)
+        self.assertTrue(dispatched(home, 'RQ-PHX-ORDINARY'))
+        self.assertFalse(dispatched(home, 'RQ-PHX-REDWAIT'))
+
+    def test_deferred_repair_keeps_requirements_when_unparked(self):
+        from test_restock import restock
+        home, q = self.fixture()
+        (q / 'admission.json').write_text(json.dumps({'cap': 100}))
+        (q / 'router-queue.md').write_text('- READY RQ-PHX-RECUTDEFER (pool=claude, tier=frontier, repo=phantom, after RQ-UPSTREAM, needs=git, max_cost_class=included): Run gh pr diff 12.\n')
+        self.assertEqual(restock(home).returncode, 0)
+        self.assertIn('PARKED-DEP.claude', (q / 'ready.tsv').read_text())
+        (home / '.ashlr-runs/metrics/jobs.jsonl').write_text(json.dumps({'job': 'RQ-UPSTREAM', 'event': 'outcome', 'state': 'MERGED'}) + '\n')
+        self.assertEqual(restock(home).returncode, 0)
+        spec = json.loads((q / 'ready.tsv').read_text().strip().split('\t')[5])
+        self.assertEqual(spec['needs'], ['git', 'gh'])
+        self.assertEqual(spec['max_cost_class'], 'included')
+        self.run_tick(home)
+        self.assertTrue(dispatched(home, 'RQ-PHX-RECUTDEFER'))
+        self.assertEqual(next(r for r in self.jobs(home) if r['event'] == 'claim')['lane'], 'codex-personal')
 
     def test_advertised_executor_joins_without_a_new_lane_constant(self):
         home, q = self.fixture({'cursor': 1})

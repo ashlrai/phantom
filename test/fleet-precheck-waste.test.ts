@@ -37,6 +37,21 @@ it('keeps only ten prefixes, ordered by skips then name without truncating total
   expect(r.top_prefixes.map(g => g.name)).toEqual(['PREFIXL', ...'ABCDEFGHI'.split('').map(c => `PREFIX${c}`)]);
   expect(r.totals!.skips).toBe(13);
 });
+it('counts code-carrying skipped_empty rows as skips and ignores empty-gate declines', async () => {
+  const r = await fleetPrecheckWaste(read(
+    row('skipped_empty', 1, { code: 10 }), row('skipped_empty', 2, { code: 14, repo: 'other' }),
+    row('skipped_empty', 1, { reason: 'task_empty_repeat_24h', code: undefined }),
+    row('skipped_empty', 1, { code: 'empty' }),
+    row('skipped_empty', 1, { code: 10, applied: false }),
+    row('launch'),
+  ), now);
+  expect(r.totals).toEqual({ skips: 2, launches: 1, skip_share: 2 / 3 });
+  expect(r.by_code.map(g => [g.name, g.skips])).toEqual([['10', 1], ['14', 1]]);
+  expect(r.by_repo_code).toEqual([
+    { repo: 'other', codes: [{ code: '14', skips: 1, reason: expect.any(String), next_step: expect.any(String) }] },
+    { repo: 'phantom', codes: [{ code: '10', skips: 1, reason: expect.any(String), next_step: expect.any(String) }] },
+  ]);
+});
 it('distinguishes unreadable metrics from readable empty data', async () => {
   for (const reader of [async () => null, async () => { throw Error('denied'); }]) {
     expect(await fleetPrecheckWaste(reader, now)).toMatchObject({ known: false, totals: null });

@@ -457,6 +457,10 @@ function renderDashboard(rollup: ActivityRollup, forecast?: CostForecast | null,
  * Returns process exit code: 0 = ok/warn, 1 = budget over.
  */
 export async function cmdPulse(args: string[]): Promise<number> {
+  if (args[0] === 'merge-latency') {
+    const { cmdPulseMergeLatency } = await import('./fleet-job-latency.js');
+    return cmdPulseMergeLatency(args.slice(1));
+  }
   if (args[0] === 'memory') {
     const { cmdPulseMemory } = await import('./pulse-memory.js');
     return cmdPulseMemory(args.slice(1));
@@ -598,7 +602,9 @@ function printPulseHelp(): void {
   console.log('  ' + bold('Usage:'));
   console.log('');
   console.log(`    phm pulse [options]`);
+  console.log(`    phm pulse merge-latency [--jobs <jobs.jsonl>] [--json]  — time waiting for checks, running checks and waiting to merge`);
   console.log(`    phm pulse memory --samples <file> [--json] [--send]`);
+  console.log(`    ${dim('Is the fleet doing well right now (merges, time to merge, mains, releases, pools)? Run phm fleet pulse.')}`);
   console.log('');
   console.log('  ' + bold('Options:'));
   console.log('');

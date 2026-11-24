@@ -1,7 +1,9 @@
 /** Router gateway: one config, one routed-completion path, a loopback-only
  * OpenAI-compatible endpoint. Nothing here spawns a lane CLI or contacts a
  * model: transports are fakes, routing is the real routeSeat. */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
+import { localModelFit, memoryFit } from '../src/core/resources/local-memory-fit.js';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { request } from 'node:http';
@@ -118,6 +120,17 @@ function harness(opts: {
   return h;
 }
 
+it('withholds an unsafe local gateway model and preserves the cloud grant boundary', async () => {
+  vi.mocked(localModelFit).mockReturnValue(memoryFit('qwen3:8b', null, 8192, null));
+  const h = harness({ candidates: [LOCAL, GROK], snapshot: [paid('grok', 'grok', 10)], standing: makePolicy(), native: true });
+  const plan = await planRoutedCompletion(h.deps, { model: 'auto', system: '', prompt: 'hi' });
+  expect(plan.steps).toEqual([{ seatId: 'grok', engine: 'grok', model: 'grok-4.6' }]);
+  expect(plan.ruledOut).toEqual(expect.arrayContaining([expect.objectContaining({ reason: expect.stringContaining('memory fit is unknown') })]));
+  const local = harness({ candidates: [LOCAL] });
+  expect(await routedComplete(local.deps, { model: 'auto', system: '', prompt: 'hi' })).toMatchObject({ ok: false, status: 'no-route' });
+  expect(local.calls).toEqual([]);
+});
+
 describe('router config', () => {
   it('fills defaults and refuses unknown keys, a host, bad versions and bad aliases', () => {
     const parsed = parseRouterGatewayConfig(JSON.stringify({ version: 1, lanes: ['local', 'grok'], models: { fast: { route: 'local:qwen3:8b', difficulty: 'low' } } }));
@@ -171,6 +184,21 @@ describe('routedComplete', () => {
       expect(logged[0]).toContain(status);
       expect(logged[0]).toContain('grok-4.6-mini');
       expect((await listRouterModels(h.deps)).map(row => row.id)).toEqual(['auto', 'grok:grok-4.6-mini']);
+    }
+  });
+
+  it('skips a model provider docs retired, still picks the confirmed one, and routes as before without a docs list', async () => {
+    const seen = { provider: 'fixture', source_url: 'https://example.com/models', seen_at: '2026-09-24' };
+    const docs = [{ ...seen, id: 'grok-4.6', status: 'retired' as const, replacement: 'grok-4.6-mini' }, { ...seen, id: 'grok-4.6-mini', status: 'current' as const }];
+    for (const [modelDocs, model] of [[docs, 'grok-4.6-mini'], [null, 'grok-4.6'], [undefined, 'grok-4.6']] as const) {
+      const h = harness({ candidates: [GROK], snapshot: [paid('grok', 'grok', 20)] });
+      h.deps.modelDocs = modelDocs;
+      const logged: string[] = [];
+      h.deps.recordDecision = (_req, decision) => logged.push(decision.why);
+      expect(await routedComplete(h.deps, { model: 'auto', system: '', prompt: 'hi' })).toMatchObject({ ok: true, seatId: 'grok', model });
+      expect(h.calls).toEqual([`grok grok ${model}`]);
+      expect(logged[0]?.includes('Skipped grok-4.6: retired in provider docs.')).toBe(modelDocs === docs);
+      expect((await listRouterModels(h.deps)).map(row => row.id)).toEqual(modelDocs === docs ? ['auto', 'grok:grok-4.6-mini'] : ['auto', 'grok:grok-4.6', 'grok:grok-4.6-mini']);
     }
   });
 

@@ -52,7 +52,7 @@ describe('web compiler selection', () => {
     const spawn = vi.fn(() => ({ status: 0 }));
     const run = vi.fn();
     expect(runWebTypecheck('/fixture', 60, run, spawn, () => true)).toBe(true);
-    expect(spawn).toHaveBeenCalledWith('/fixture/node_modules/.bin/tsgo', ['--noEmit', '-p', 'src/web-ui/tsconfig.json'], expect.objectContaining({ timeout: 60_000 }));
+    expect(spawn).toHaveBeenCalledWith('/fixture/node_modules/.bin/tsgo', ['--noEmit', '-p', 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', '/fixture/.ashlr-gate/verify/web.tsbuildinfo'], expect.objectContaining({ timeout: 60_000 }));
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -61,7 +61,7 @@ describe('web compiler selection', () => {
     const run = vi.fn(() => true);
     expect(runWebTypecheck('/fixture', 60, run, spawn, () => false)).toBe(true);
     expect(spawn).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalledWith('web typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'src/web-ui/tsconfig.json'], 60);
+    expect(run).toHaveBeenCalledWith('web typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', '/fixture/.ashlr-gate/verify/web.tsbuildinfo'], 60);
   });
 
   it.each([1, 2])('does not fall back on diagnostic exit %i', (status) => {

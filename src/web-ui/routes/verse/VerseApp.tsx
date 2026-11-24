@@ -46,7 +46,7 @@
 import { FrictionFeedback } from './feedback/FrictionFeedback.js';
 import { PRODUCT_NAME } from '../../app/product-brand.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { reportThemeToShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
+import { trackThemeForShell, subscribeShellCommands, isDesktopShell } from '../../app/desktop-shell.js';
 import { RouteErrorBoundary } from '../../components/primitives/RouteErrorBoundary.js';
 import { Tooltip } from '../../components/primitives/Tooltip.js';
 import { useToast } from '../../components/primitives/Toast.js';
@@ -323,6 +323,8 @@ function openWorkbenchLink(sessionId: string | null, paneId: string | null): voi
 
 /** Pointer navigation to Fleet shares the menu's map target, including repeat visits. */
 function navigateSection(section: VerseSectionId): void {
+  // Home pressed while a landing view is already showing goes back to the Home summary.
+  if (section === 'live' && getVerseUiState().section === 'live') setHomeChoice('home');
   if (section === 'fleet') executeCatalogCommand('surface.fleet', { via: 'button' });
   else setVerseSection(section);
 }
@@ -472,7 +474,7 @@ export function PhantomApp() {
   useEffect(() => subscribeAnchorRequests(VERSE_ANCHOR_EVENT), []);
   // Report the PAINTED theme so the native window pre-paints its background
   // on the next cold launch instead of flashing white. No-op in a browser.
-  useEffect(() => { reportThemeToShell(theme.theme); }, [theme.theme]);
+  useEffect(() => trackThemeForShell(theme.theme), [theme.theme]);
 
   // ── one-time announcements ──────────────────────────────────────────────
   useEffect(() => {
@@ -518,7 +520,7 @@ export function PhantomApp() {
   // and the page's name, since one gear stands for three pages), not only
   // through the data-active styling.
   const currentPage = sectionEntry(ui.section);
-  // The landing view (Leader by default) replaces the Home section; below 720
+  // The landing view (the Home summary by default) replaces the Home section; below 720
   // the compact strip carries navigation and, above the phone layout, the rail steps aside on it.
   const homePane = home.view === 'live' ? null : HOME_PANE_IDS[home.view];
   const homeShowing = ui.section === 'live' && homePane !== null;
@@ -623,7 +625,7 @@ export function PhantomApp() {
               <ResourcesRailButton expanded={expanded} buttonClass={styles.railButton} iconClass={styles.railIcon} labelClass={styles.railLabel} />
             </Suspense>
           )}
-          {/* 3.11.1: the always-on resource bar (logos + batteries) replaces the
+          {/* 3.11.1: the always-on resource bar (logos + usage bars) replaces the
               single capacity ring while it is on; off brings the ring back. */}
           {compact ? null : resources.bar ? (
             <Suspense fallback={null}>

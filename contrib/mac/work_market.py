@@ -64,7 +64,26 @@ def requirements(fields):
     return spec
 
 
-def from_envelope(attrs):
+def needs_gh(prompt):
+    """Task reads/writes, not roster facts or prohibitions (lane-capabilities.ts)."""
+    prompt = re.sub(r"^## CONTEXT\b[\s\S]*?^## END CONTEXT\b[^\n]*", " ", prompt, flags=re.M)
+    fetch = r"check|fetch|find|read(?!-only)|inspect|pull|download|get"
+    patterns = (
+        r"\bgh\s+(?:pr\s+(?:list|view|diff|checks|status|checkout|create|merge|close|comment|edit|ready|review|reopen)\b"
+        r"|run\s+(?:list|view|watch|download|rerun|cancel)\b|issue\s+(?:list|view|create|close|comment|edit)\b"
+        r"|search\s+\w+|workflow\s+run\b|release\s+\w+|api\s+(?:/|repos\b|graphql\b|search\b|orgs\b|user\b|-X|--method|-f\b|-F\b))",
+        rf"\b(?:list|review|triage|scan|query|pick|take|recut|rebase|{fetch})\b[^.\n]{{0,80}}\bopen (?:PRs?|pull requests?)\b",
+        rf"\b(?:{fetch})\b[^.\n]{{0,60}}(?<![\w/.-])(?:failed[- ](?:runs?|jobs?)|(?:run|CI|job) logs?)(?![\w.-])",
+    )
+    forbids = r"\b(?:do not|don't|never|must not|may not|cannot|can't|instead of|rather than|not to|without (?:calling|running|using))\b"
+    for sentence in re.split(r"[.;!?]\s|\n", prompt):
+        for pattern in patterns:
+            for match in re.finditer(pattern, sentence, re.I):
+                if not re.search(forbids, sentence[:match.start()], re.I): return True
+    return False
+
+
+def from_envelope(attrs, prompt=""):
     """Router Markdown uses needs=git|gh|secrets:NAME, never secret values."""
     def field(name):
         match = re.search(r"(?:^|[,;\s])" + name + r"=([^,;\s]+)", attrs)
@@ -79,6 +98,7 @@ def from_envelope(attrs):
     match = re.search(r"\bP[0-9]+\b", attrs)
     if match: spec["priority"] = match.group()
     if field("impact") is not None: spec["impact"] = float(field("impact"))
+    if needs_gh(prompt) and "gh" not in spec.get("needs", []): spec.setdefault("needs", []).append("gh")
     return requirements(["", "", "", "", "", json.dumps(spec)])
 
 
@@ -103,6 +123,20 @@ def _epoch(value):
         if parsed.tzinfo is None: parsed = parsed.replace(tzinfo=datetime.timezone.utc)
         return parsed.timestamp()
     except (ValueError, OverflowError): return None
+
+
+def _scope_names(reading):
+    return {k: reading[k] for k in ("account_id", "model")
+            if isinstance(reading.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", reading[k])}
+
+
+def _iso_instant(value):
+    import datetime
+    epoch = _epoch(value)
+    if epoch is None: return None
+    try:
+        return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (ValueError, OverflowError, OSError): return None
 
 
 def read_devin_allowance(home, ashlr_home=None):
@@ -168,7 +202,15 @@ def read_devin_allowance(home, ashlr_home=None):
             raise ValueError("inventory changed")
         reserved = total
     except (OSError, ValueError): pass
-    return dict(used=number(weekly.get("used")), limit=limit, in_flight=reserved,
+    provenance = {}
+    if weekly.get("source") == "devin-api-v3-sessions":
+        provenance = _scope_names(weekly)
+        start = weekly.get("window_start")
+        if isinstance(start, str) and _epoch(start) is not None and observed is not None and _epoch(start) <= observed:
+            provenance["window_start"] = start
+        if measured_reset is not None and isinstance(weekly.get("reset_at"), str):
+            provenance["reset_at"] = weekly["reset_at"]
+    return dict(used=number(weekly.get("used")), limit=limit, in_flight=reserved, provenance=provenance,
                 reserve=number(budget.get("reserveAcu")), session_cap=number(budget.get("maxAcuPerSession")),
                 reset_at=measured_reset, as_of=observed,
                 state=weekly.get("state") if weekly.get("source") == "devin-api-v3-sessions" else None,
@@ -176,16 +218,23 @@ def read_devin_allowance(home, ashlr_home=None):
 
 
 def devin_cost(reading, model, running, now):
-    """Included only while a whole session fits. Free CLI previews do not reserve ACUs."""
+    """Included only while a whole session fits. Free CLI previews do not reserve ACUs, but still need fresh live account- and model-bound evidence."""
     r = reading if isinstance(reading, dict) else {}
     evidence = {key: number(r.get(key)) for key in ("used", "limit", "in_flight", "reserve", "session_cap")}
     evidence["headroom"] = None
     result = dict(cost_class="metered", zero_cost=False, allowance=evidence)
     preview = isinstance(model, str) and DEVIN_PREVIEW.fullmatch(model)
     if preview:
-        if number(now) is not None and now < _epoch(DEVIN_PREVIEW_UNTIL):
-            return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
-        return dict(result, cost_class_reason="devin_preview_expired")
+        if number(now) is None or now >= _epoch(DEVIN_PREVIEW_UNTIL):
+            return dict(result, cost_class_reason="devin_preview_expired")
+        observed = _epoch(r.get("as_of"))
+        provenance = r.get("provenance") if isinstance(r.get("provenance"), dict) else {}
+        account, scope_model = provenance.get("account_id"), provenance.get("model")
+        bound = (isinstance(account, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", account) is not None
+                 and isinstance(scope_model, str) and DEVIN_PREVIEW.fullmatch(scope_model))
+        if r.get("state") != "live" or observed is None or not 0 <= now - observed <= 900 or not bound:
+            return dict(result, cost_class_reason="devin_preview_unverified")
+        return dict(result, cost_class="included", zero_cost=True, cost_class_reason="devin_free_preview")
     limit, used, reserve, cap, flight = (evidence[k] for k in ("limit", "used", "reserve", "session_cap", "in_flight"))
     reset, observed = _epoch(r.get("reset_at")), _epoch(r.get("as_of"))
     if reset is None: reason = "devin_reset_unknown"
@@ -236,15 +285,33 @@ def serves_repo(lane_view_entry, repo):
     return repos is None or (repo is not None and repo in repos)
 
 
-def hard_down(slot):
-    return (slot.get("auth_failed") is True or number(slot.get("quota")) == 0
-            or (slot.get("held") and slot.get("held_reason") == "auth_failure"))
+def hard_down(slot, operator_hold=False):
+    """Evidence that a lane cannot run work now, so unlaunched jobs may leave it before minimum residency.
+
+    RQ-CONSTRAINT-AUDIT-1: a provider backoff hold (autobackoff usage/quota/auth, or credit exhaustion) counts,
+    matching fleet_controller.reroute_sources. A manual hold, or a lane on the operator HOLD list
+    (`operator_hold`), is an operator decision about that lane's work and never counts. The move cap and the
+    launched fence in route_decision still apply, so a job never moves after launch or more than twice in 6 h.
+    """
+    if slot.get("auth_failed") is True or number(slot.get("quota")) == 0: return True
+    if not slot.get("held"): return False
+    if slot.get("held_reason") == "auth_failure": return True
+    return not operator_hold and (slot.get("held_by") == "autobackoff"
+                                  or str(slot.get("held_reason", "")).startswith("credits exhausted"))
+
+
+def executor_capabilities(lane, slot):
+    """Claude's sandbox lacks gh; only host-owned advertisement can replace defaults."""
+    defaults = ["git", "node"] + ([] if lane == "claude" else ["gh"])
+    defaults += ["codex-cli"] if lane.startswith("codex") else ["claude-cli"] if lane == "claude" else []
+    caps = slot.get("capabilities", defaults)
+    return set(caps) if isinstance(caps, list) and all(isinstance(c, str) and CAP.fullmatch(c) for c in caps) else None
 
 
 def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, adaptive=None, now=None, allowance=None, tier=None):
     """Use configured executor capabilities; sensitive capabilities require explicit advertisement.
 
-    Existing executor contracts supply git/gh/node and their own CLI. Host-owned
+    Existing executor contracts supply git/node, gh except on Claude, and their own CLI. Host-owned
     slots capabilities replace those defaults. A name never resolves a secret.
     """
     view = {}
@@ -262,11 +329,10 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
         slot = slots[lane]
         family = "codex" if lane.startswith("codex") and lane != "codex-local" else lane
         local = lane in ("codex-local", "omlx")
-        defaults = ["git", "gh", "node"] + (["codex-cli"] if lane.startswith("codex") else ["claude-cli"] if lane == "claude" else [])
-        caps = slot.get("capabilities", defaults)
+        caps = executor_capabilities(lane, slot)
         tiers = slot.get("tiers", ["fast", "mid"] if local else list(TIERS) if lane in BUILTIN else [])
         if not isinstance(tiers, list) or any(not isinstance(t, str) or t not in TIERS for t in tiers): tiers = []
-        valid_caps = isinstance(caps, list) and all(isinstance(c, str) and CAP.fullmatch(c) for c in caps)
+        valid_caps = caps is not None
         if models and any(k == family or k.startswith(family + ".") for k in models):
             tiers = [t for t in tiers if family in models or family + "." + t in models]
         q = quota.get(lane, {})
@@ -294,7 +360,7 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
             "cost_class": slot.get("cost_class", "local" if local else "metered" if lane in ("claude-api", "devin") else "included" if lane in BUILTIN else None),
             "target": targets[lane], "running": running[lane],
             "held": bool(slot.get("held") or lane in holds),
-            "auth_failed": hard_down(slot),
+            "auth_failed": hard_down(slot, lane in holds),
             "quota": min(known_quota) if known_quota else None,
             "backoff": slot.get("backoff", False) or signal.get("backoff") is True,
             "local": local,
@@ -318,18 +384,31 @@ def lane_view(lanes, slots, running, targets, holds, models, quota, outcomes, ad
                                burn_pct_per_hour=burn / limit * 100 if burn is not None and limit is not None and limit > 0 else None,
                                reset_at=weekly.get("reset_at"), as_of=weekly.get("as_of"))
         projection = spend_down(lane, view[lane]["cost_class"], reading, now)
+        provenance = {}
+        if lane == "devin" and isinstance(weekly, dict):
+            provenance = dict(weekly.get("provenance") or {})
+            selected = model or models.get("devin")
+            if isinstance(selected, str) and selected != provenance.get("model"):
+                provenance.pop("model", None)
+        elif isinstance(reading, dict):
+            provenance = _scope_names(reading)
+            for key in ("window_start", "reset_at"):
+                instant = _iso_instant(reading.get(key))
+                if instant is not None: provenance[key] = instant
         until = _epoch(slot.get("free_until"))
         reason = projection["reason"]
         if lane == "devin" and view[lane]["zero_cost"]:
             view[lane]["posture"], reason = "burn", "devin_free_preview"
         elif lane == "devin" and view[lane]["cost_class"] == "metered":
             view[lane]["posture"], reason = "balanced", view[lane]["cost_class_reason"]
+            if reason == "devin_allowance_headroom": view[lane]["provenance"] = provenance
         elif until is not None and number(now) is not None and now < until:
             reason = "free_until"
         elif slot.get("posture") in POSTURES:
             reason = "host_declared"
         elif projection["posture"] is not None:
             view[lane]["posture"] = projection["posture"]
+            view[lane]["provenance"] = provenance
         if view[lane]["cost_class"] == "metered" and view[lane]["posture"] == "burn":
             view[lane]["posture"], reason = "balanced", "spend_down_not_subscription"
         view[lane].update(posture_reason=reason, spend_down=projection)

@@ -12,7 +12,8 @@ import { openInterjectDialog } from '../fleet/interject-dialog-store.js';
 import { steerPrefill } from '../fleet/job-sheet-actions.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
-import { JOB_ID_RE, jobOptions, logHint, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
+import { describeJob } from '../../../../core/fleet/job-tail-words.js';
+import { JOB_ID_RE, jobOptions, metaLine, pollMs, prLabel, publishFacts, safePrUrl, stateTone } from './worker-log-model.js';
 import { jobDetailQuery } from './worker-log-queries.js';
 import { workerLogMarkdown } from './worker-log-markdown.js';
 import { takeRequestedWorkerLogJob, useRequestedWorkerLogJob } from './worker-log-selection.js';
@@ -20,10 +21,12 @@ import { jobChangesQuery } from './worker-changes-queries.js';
 import { changesHeadline, sortFiles } from './worker-changes-model.js';
 import { findMatches, matchLabel, nextMatch } from './log-find-model.js';
 import { jobTextQuery } from './job-text-queries.js';
-import { jobStopEligible, STOP_CONFIRM_MS, stopConfirmLabel } from './job-stop-action.js';
-import { useJobStop } from './use-job-stop.js';
+import { jobStopEligible } from './job-stop-action.js';
+import { JobControls } from './JobControls.js';
+import { JobNoteBox } from './JobNoteBox.js';
 import { livenessText, livenessTone, newLinesLabel, trackGrowth, type TrackedLog } from './log-liveness-model.js';
 import { JobActivity } from './JobActivity.js';
+import { JobWindowCard } from './JobWindowCard.js';
 import styles from './worker-log.module.css';
 
 const EMPTY_LINES: string[] = [];
@@ -90,16 +93,6 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     tracked.current.value = { ...tracked.current.value, unseenLines: 0 };
     setLiveness(tracked.current.value);
   };
-  const [armedAt, setArmedAt] = useState<number | null>(null);
-  useEffect(() => { setArmedAt(null); }, [job]);
-  const stop = useJobStop(job);
-  const stopArmed = armedAt !== null && now - armedAt < STOP_CONFIRM_MS;
-  const pressStop = async () => {
-    if (stop.busy) return;
-    if (!stopArmed) { setArmedAt(Date.now()); stop.clear(); return; }
-    setArmedAt(null);
-    if (await stop.run()) { refreshRuns(); if (valid) refreshDetail(); }
-  };
   const [search, setSearch] = useState('');
   const [selectedMatch, setSelectedMatch] = useState<number | null>(null);
   const lines = detail.data?.log?.tail ?? EMPTY_LINES;
@@ -122,7 +115,8 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
   const backlogUnavailable = pr !== null && (backlog.data === null || backlog.data?.source === 'gh-failed' || backlog.status === 'error');
   const { testLine, sensitive } = publishFacts(detail.data?.publish);
   const meta = detail.data ? metaLine(detail.data, Date.now()).split(' · ') : [];
-  const hint = detail.data ? logHint(detail.data, Date.now()) : null;
+  // Same plain words as `phm job tail` (core/fleet/job-tail-words.ts).
+  const words = detail.data ? describeJob({ ...detail.data, job: detail.data.job ?? job }, Date.now()) : null;
   const state = detail.data?.state ?? 'unknown';
 
   return <div className={styles.pane} aria-label="Worker log">
@@ -140,10 +134,7 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
       }} /></label>
       <Button size="sm" variant="subtle" aria-label="Copy as Markdown" disabled={!valid || !detail.data} onClick={() => void copy()}>Copy as Markdown</Button><span role="status">{notice}</span>
       <Button size="sm" variant="subtle" aria-label="Steer this job" disabled={!valid} onClick={() => openInterjectDialog({ prefill: steerPrefill(job, detail.data?.lane ?? runs.data?.workers.find(worker => worker.job === job)?.lane) })}>Steer</Button>
-      {valid && jobStopEligible(state) && <>
-        <Button size="sm" variant="subtle" aria-label="Stop this job" disabled={stop.busy} onClick={() => void pressStop()}>{stopConfirmLabel(job, stopArmed)}</Button>
-        {stop.text !== '' && <span role="status">{stop.text}</span>}
-      </>}
+      {valid && jobStopEligible(state) && <JobControls job={job} lane={detail.data?.lane} onDone={() => { refreshRuns(); refreshDetail(); }} />}
       {verdict && <LogRecut key={`${job}:${url}`} job={job} prUrl={url} lane={detail.data?.lane} verdict={verdict} />}
       <span aria-live="polite">{search ? matchLabel(matches, current) : ''}</span>
       <button type="button" aria-label="Previous" disabled={matches.length === 0} onClick={() => moveMatch(-1)}>↑</button>
@@ -159,6 +150,8 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
     {valid && <JobActivity job={job} enabled={active} pollMs={pollMs(detail.data)} />}
     {valid && detail.data === null && <p>The job detail API has not landed in this build yet.</p>}
     {valid && detail.status === 'error' && <p role="status">Job detail could not refresh.</p>}
+    {valid && <JobWindowCard job={job} detail={detail.data} enabled={active} pollMs={pollMs(detail.data)} />}
+    {valid && <JobNoteBox job={job} open={jobStopEligible(state)} enabled={active} />}
     {valid && detail.data && <>
       <div className={styles.meta}><StatusBadge status={state} tone={stateTone(state)}>{state}</StatusBadge>
         {' '}<StatusBadge status="output" tone={livenessTone(liveness?.lastGrowthAt ?? null, state, now)}>{livenessText(liveness?.lastGrowthAt ?? null, state, now)}</StatusBadge>
@@ -170,16 +163,17 @@ export function WorkerLogPane({ visible }: Pick<PaneProps, 'visible'>) {
         {testLine !== null && <p>Tests: <code>{testLine}</code></p>}
         {sensitive !== null && <p role="note">Touches owner-reviewed paths: {sensitive.join(', ')}</p>}
       </section>}
-      {hint ? <p className={styles.hint}>{hint}</p> : detail.data.log?.source === 'missing' || !detail.data.log ? <p className={styles.hint}>No log yet.</p> :
+      {words?.text && <p className={styles.hint}>{words.text}</p>}
+      {words?.showLog &&
         <div className={styles.logWrap}>
           <div ref={logRef} className={styles.log} role="log" aria-live="polite" onScroll={event => {
             const log = event.currentTarget;
             if (log.scrollTop + log.clientHeight >= log.scrollHeight - 1) clearUnseen();
           }}>{truncated && <>… earlier lines not shown{'\n'}</>}{lines.map((line, index) => <div key={index} className={matchedLines.has(index) ? styles.match : undefined} aria-current={current === index ? 'true' : undefined}>{line}{index < lines.length - 1 && '\n'}</div>)}</div>
-          {!follow && (liveness?.unseenLines ?? 0) > 0 && <button type="button" className={styles.newLines} onClick={() => {
+          {!follow && <button type="button" className={styles.newLines} onClick={() => {
             if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
             clearUnseen(); setFollow(true);
-          }}>{newLinesLabel(liveness?.unseenLines ?? 0)} ↓</button>}
+          }}>{(liveness?.unseenLines ?? 0) > 0 ? newLinesLabel(liveness?.unseenLines ?? 0) : 'Jump to latest'} ↓</button>}
         </div>}
       {changes.data && <section aria-label="Changes" className={styles.changes}>
         <div>{changesHeadline(changes.data)}</div>

@@ -7,6 +7,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveDropJobRoot } from './drop-job-writer.js';
 import { readSource } from './runs-parked-queue.js';
+import { ledgerEventName, ledgerJobId, ledgerPhase, ledgerPrUrl } from './empty-cause.js';
 
 export type BetAuditStatus = 'lost' | 'queued' | 'claimed' | 'launched' | 'published' | 'merged';
 export interface BetAuditRow {
@@ -72,15 +73,16 @@ const RANK: Record<BetAuditStatus, number> =
 function metricsEvidence(line: string): { id: string; status: BetAuditStatus; url: string | null } | null {
   let row: Record<string, unknown>;
   try { row = object(JSON.parse(line)); } catch { return null; }
-  const id = row.job ?? row.job_id ?? row.id;
-  if (typeof id !== 'string' || !id.startsWith('RQ-')) return null;
-  const event = String(row.event ?? '');
-  const url = typeof row.url === 'string' ? row.url
-    : typeof row.pr_url === 'string' ? row.pr_url : null;
-  const merged = /merged/i.test(String(row.state ?? '')) || /merged/i.test(String(row.outcome ?? ''))
-    || typeof row.merged_at === 'string';
+  const id = ledgerJobId(row);
+  if (id === null || !id.startsWith('RQ-')) return null;
+  const event = ledgerEventName(row) ?? '';
+  const url = ledgerPrUrl(row);
+  const phase = ledgerPhase(row);
+  const merged = phase === 'MERGED' || event === 'merged'
+    || typeof row.merged_at === 'string' || typeof row.mergedAt === 'string';
   const status: BetAuditStatus = merged ? 'merged'
-    : event === 'publish' || event === 'outcome' || (event === 'finish' && url !== null) ? 'published'
+    : event === 'publish' || event === 'outcome' || phase === 'PUBLISHED'
+      || (event === 'finish' && url !== null) ? 'published'
     : 'launched';
   return { id, status, url };
 }

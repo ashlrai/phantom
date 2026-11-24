@@ -8,9 +8,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import { sep } from 'node:path';
+import { homedir } from 'node:os';
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), read: vi.fn(), service: vi.fn(), dashboard: vi.fn(), authorize: vi.fn() }));
-vi.mock('node:child_process', async () => ({ ...await vi.importActual<typeof import('node:child_process')>('node:child_process'), spawnSync: mocks.spawn }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), read: vi.fn(), service: vi.fn(), dashboard: vi.fn(), authorize: vi.fn(), fetch: vi.fn() }));
+vi.mock('../src/core/integrations/secrets.js', async () => ({ ...await vi.importActual<typeof import('../src/core/integrations/secrets.js')>('../src/core/integrations/secrets.js'), credentialSpawnSync: mocks.spawn }));
 vi.mock('node:fs', async () => ({ ...await vi.importActual<typeof import('node:fs')>('node:fs'), readFileSync: mocks.read }));
 vi.mock('../src/core/daemon/service.js', () => ({ serviceStatus: mocks.service }));
 vi.mock('../src/cli/dashboard.js', () => ({ queryServeService: mocks.dashboard }));
@@ -31,16 +32,22 @@ beforeEach(() => {
   mocks.service.mockReturnValue({ running: false, registrationState: 'absent' });
   mocks.dashboard.mockReturnValue({ running: false, registrationState: 'absent' });
   mocks.authorize.mockImplementation(() => { throw new Error('service mutation refused'); });
+  vi.stubGlobal('fetch', mocks.fetch);
+  mocks.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify({
+    name: decodeURIComponent(new URL(url).pathname.split('/')[1]!), version: '3.25.4',
+  })));
   mocks.spawn.mockImplementation((command: string, args: string[]) => {
-    if (command === 'npm' && args[0] === 'view') return { status: 0, stdout: '3.25.4\n' };
     if (command === 'npm' && args[0] === 'install') return { status: 0, stdout: '' };
     throw new Error('unexpected subprocess');
   });
 });
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('detectChannel', () => {
+  it('routes the per-user release layout through the release updater', () => {
+    expect(detectChannel(pathToFileURL(`${homedir()}/.local/share/ashlr/releases/releaserelease/dist/cli/update.js`).href)).toBe('release');
+  });
   it('reports git for a repo checkout path', () => {
     const url = pathToFileURL(['', 'Users', 'dev', 'ashlr-hub', 'dist', 'cli', 'update.js'].join(sep)).href;
     expect(detectChannel(url)).toBe('git');
@@ -95,6 +102,11 @@ describe('closed npm package identity', () => {
 });
 
 describe('npm channel command fidelity', () => {
+  it('emits one JSON result after installation', async () => {
+    expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({ updated: true, versionLatest: '3.25.4' });
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+  });
   it('shows phm update as primary help with the compatible alias and no effects', async () => {
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation(line => { lines.push(String(line)); });
@@ -109,9 +121,9 @@ describe('npm channel command fidelity', () => {
   it.each(['@ashlr/hub', '@ashlr/phantom'])('checks only the running %s package', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.3' }));
     expect(await cmdUpdate(['--channel', 'npm', '--check', '--json', '--yes'])).toBe(0);
-    expect(mocks.spawn.mock.calls).toHaveLength(1);
-    expect(mocks.spawn.mock.calls[0]?.slice(0, 2)).toEqual(['npm', ['view', name, 'version']]);
-    expect(mocks.spawn.mock.calls[0]?.[2]).toMatchObject({ timeout: 10_000 });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledExactlyOnceWith(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`,
+      expect.objectContaining({ credentials: 'omit', redirect: 'error', signal: expect.any(AbortSignal) }));
     expect(JSON.parse(output)).toMatchObject({ updated: false, versionLocal: '3.25.3', versionLatest: '3.25.4' });
     expect(mocks.service).not.toHaveBeenCalled();
   });
@@ -121,30 +133,33 @@ describe('npm channel command fidelity', () => {
     expect(await cmdUpdate(['--channel', 'npm'])).toBe(0);
     expect(output).toContain(`npm install -g ${name}@latest`);
     expect(output).toContain('phm update --yes');
-    expect(mocks.spawn.mock.calls).toHaveLength(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
   it.each(['@ashlr/hub', '@ashlr/phantom'])('installs only %s with explicit confirmation and a fresh identity', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.3' }));
     expect(await cmdUpdate(['--channel', 'npm', '--yes'])).toBe(0);
     expect(mocks.spawn.mock.calls.map(call => call.slice(0, 2))).toEqual([
-      ['npm', ['view', name, 'version']], ['npm', ['install', '-g', `${name}@latest`]],
+      ['npm', ['install', '-g', `${name}@latest`]],
     ]);
-    expect(mocks.spawn.mock.calls[1]?.[2]).toMatchObject({ timeout: 300_000, stdio: 'inherit' });
+    expect(mocks.spawn.mock.calls[0]?.[2]).toMatchObject({ timeout: 300_000, stdio: 'inherit' });
     expect(mocks.read).toHaveBeenCalledTimes(2);
   });
 
   it.each(['@ashlr/hub', '@ashlr/phantom'])('keeps %s up-to-date checks read-only', async name => {
     mocks.read.mockReturnValue(JSON.stringify({ name, version: '3.25.4' }));
     expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(output)).toMatchObject({ upToDate: true, updated: false });
   });
 
   it('keeps an offline registry unknown and never installs', async () => {
-    mocks.spawn.mockReturnValue({ status: 1, stdout: '' });
+    mocks.fetch.mockRejectedValueOnce(new Error('offline'));
     expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(0);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(output)).toMatchObject({ versionLatest: null, upToDate: null, updated: false });
   });
 
@@ -152,6 +167,7 @@ describe('npm channel command fidelity', () => {
     mocks.read.mockReturnValue(raw);
     expect(await cmdUpdate(['--channel', 'npm', '--yes', '--json'])).toBe(1);
     expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.service).not.toHaveBeenCalled();
     expect(mocks.dashboard).not.toHaveBeenCalled();
     expect(JSON.parse(output)).toMatchObject({ updated: false, error: 'npm-package-identity-unavailable' });
@@ -162,6 +178,7 @@ describe('npm channel command fidelity', () => {
     mocks.read.mockImplementation(() => { throw new Error('private path detail'); });
     expect(await cmdUpdate(['--channel', 'npm', '--check', '--json'])).toBe(1);
     expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
     expect(errors).not.toContain('private path detail');
   });
 
@@ -171,13 +188,15 @@ describe('npm channel command fidelity', () => {
   ])('refuses metadata drift after checking but before installing %#', async changed => {
     mocks.read.mockReturnValueOnce(JSON.stringify({ name: '@ashlr/hub', version: '3.25.3' })).mockReturnValueOnce(JSON.stringify(changed));
     expect(await cmdUpdate(['--channel', 'npm', '--yes'])).toBe(1);
-    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(output).toContain('package identity is unsupported, inconsistent or changed');
   });
 
   it('preserves the existing service mutation restriction before npm contact', async () => {
     mocks.service.mockReturnValue({ running: true, registrationState: 'present' });
     expect(await cmdUpdate(['--channel', 'npm', '--yes'])).toBe(1);
+    expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.authorize).toHaveBeenCalledTimes(1);
     expect(mocks.spawn).not.toHaveBeenCalled();
   });

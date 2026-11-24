@@ -39,6 +39,8 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
     return created;
   };
   for (const ev of events) {
+    // Directory drafts cannot create membership or presence for their writer.
+    if (ev.type === 'person.added' || ev.type === 'person.removed') continue;
     const p = ev.payload;
     if (removed.has(ev.actor.id)) continue;
     const m = touch(ev.actor, ev.ts);
@@ -155,8 +157,11 @@ export function releaseClaim(team: string, actor: TeamActor, claimId: string) {
     const c = teamState(team).claims.find((x) => x.id === claimId);
     if (!c) throw new Error('No active claim with that id.');
     if (c.holder !== actor.id) throw new Error('Only the holder can release this claim.');
-    const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
+    const released = releaseCoordinationBySource({
+      origin: 'team', sourceId: claimId, owner: c.holder,
+    });
     if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
+    if (released.status === 'stale') throw new Error('Claim lease is no longer held.');
     appendUnlocked(team, actor, 'claim.released', { claimId });
     return { released: claimId };
   });

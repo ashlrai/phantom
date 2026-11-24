@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import type { Proposal, ProposalLocalMergeIntent, SkillCard } from '../src/core/types.js';
 import {
   hashDiff,
+  loadOrCreateKey,
   signLocalMergeIntent,
   signLocalRealizedMergeReceipt,
 } from '../src/core/foundry/provenance.js';
@@ -28,6 +29,11 @@ import {
   sweepPostMergeCreditReleases,
 } from '../src/core/fleet/post-merge-credit.js';
 import { recordPostMergeObservation, postMergeObservationEventId } from '../src/core/fleet/post-merge-observations.js';
+import {
+  postMergeStabilityPartitionPath,
+  recordPostMergeStabilityCohort,
+  type PostMergeStabilityWitnessInput,
+} from '../src/core/fleet/post-merge-stability.js';
 
 const FIXED_MS = 1_750_000_000_000;
 const FIXED_ISO = new Date(FIXED_MS).toISOString();
@@ -177,7 +183,7 @@ describe('evaluatePostMergeCreditRelease', () => {
     expect(result).toMatchObject({
       eligible: false,
       label: null,
-      reason: 'report-only-no-positive-stability-witness',
+      reason: 'no-positive-stability-witness',
     });
   });
 
@@ -233,7 +239,7 @@ describe('evaluatePostMergeCreditRelease', () => {
     expect(result).toMatchObject({
       eligible: false,
       label: null,
-      reason: 'report-only-no-positive-stability-witness',
+      reason: 'no-positive-stability-witness',
     });
   });
 
@@ -270,6 +276,117 @@ describe('evaluatePostMergeCreditRelease', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Stability-witness gate — the positive "swept clean" proof
+// ---------------------------------------------------------------------------
+
+const WITNESS_WINDOW_STARTED = '2025-06-01T00:00:00.000Z';
+const WITNESS_STABLE_AT = '2025-06-08T00:00:00.000Z';
+const WITNESS_VERIFIED_AT = '2025-06-08T01:00:00.000Z';
+const WITNESS_COMPLETED_AT = '2025-06-08T01:00:00.000Z';
+const WITNESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Record a real signed, cohort-manifested stability witness bound to
+ *  `proposal`'s exact merge event (or to the overrides given). */
+function recordStabilityWitness(opts: {
+  proposal: Proposal;
+  schemaVersion?: 1 | 2;
+  cohortId?: string;
+  proposalId?: string;
+  mergeCommit?: string;
+}): void {
+  loadOrCreateKey();
+  const schemaVersion = opts.schemaVersion ?? 2;
+  const cohortId = opts.cohortId ?? `cohort-${opts.proposal.id}`;
+  const witness: PostMergeStabilityWitnessInput = {
+    schemaVersion,
+    cohortId,
+    repo,
+    proposalId: opts.proposalId ?? opts.proposal.id,
+    mergeCommit: opts.mergeCommit ?? opts.proposal.realizedMerge!.mergeCommitOid,
+    observedHead: '9'.repeat(40),
+    windowStartedAt: WITNESS_WINDOW_STARTED,
+    stableAt: WITNESS_STABLE_AT,
+    windowMs: WITNESS_WINDOW_MS,
+    verificationDigest: '2'.repeat(64),
+    ...(schemaVersion === 2 ? {
+      verifiedAt: WITNESS_VERIFIED_AT,
+      verificationIsolation: 'detached-worktree' as const,
+      workspaceClean: true as const,
+      requiredCommandCount: 3,
+    } : {}),
+  };
+  const written = recordPostMergeStabilityCohort({
+    cohortId,
+    completedAt: WITNESS_COMPLETED_AT,
+    witnesses: [witness],
+  });
+  expect(written.recorded).toBe(1);
+}
+
+describe('evaluatePostMergeCreditRelease — stability witness gate', () => {
+  function witnessedProposal(id: string): Proposal {
+    return makeMergedProposal({
+      id,
+      mergedAt: mergedAtIso(MIN_POST_MERGE_OBSERVATION_WINDOW_MS + 1),
+    });
+  }
+
+  it('a manifested v2 witness bound to the exact event still reports release-disabled while the ops flag is off', () => {
+    const proposal = witnessedProposal('witnessed-stable');
+    recordStabilityWitness({ proposal });
+    const result = evaluatePostMergeCreditRelease(proposal, { nowMs: FIXED_MS });
+    expect(result).toMatchObject({
+      eligible: false,
+      label: null,
+      reason: 'report-only-operational-release-disabled',
+    });
+  });
+
+  it('a v1 witness cannot establish the verification environment -> no positive witness', () => {
+    const proposal = witnessedProposal('witnessed-v1');
+    recordStabilityWitness({ proposal, schemaVersion: 1 });
+    const result = evaluatePostMergeCreditRelease(proposal, { nowMs: FIXED_MS });
+    expect(result).toMatchObject({ eligible: false, label: null, reason: 'no-positive-stability-witness' });
+  });
+
+  it('a witness bound to a different proposal does not release this event', () => {
+    const proposal = witnessedProposal('witnessed-self');
+    const other = witnessedProposal('witnessed-other');
+    recordStabilityWitness({ proposal: other });
+    const result = evaluatePostMergeCreditRelease(proposal, { nowMs: FIXED_MS });
+    expect(result).toMatchObject({ eligible: false, label: null, reason: 'no-positive-stability-witness' });
+  });
+
+  it('a witness bound to a different mergeCommit does not release this event', () => {
+    const proposal = witnessedProposal('witnessed-commit');
+    recordStabilityWitness({ proposal, mergeCommit: 'f'.repeat(40) });
+    const result = evaluatePostMergeCreditRelease(proposal, { nowMs: FIXED_MS });
+    expect(result).toMatchObject({ eligible: false, label: null, reason: 'no-positive-stability-witness' });
+  });
+
+  it('a degraded stability store fails closed', () => {
+    const proposal = witnessedProposal('witnessed-degraded');
+    recordStabilityWitness({ proposal });
+    // Corrupt the partition so the next read degrades (invalid-row).
+    fs.appendFileSync(
+      postMergeStabilityPartitionPath('2025-06-08'),
+      'this is not a jsonl row\n',
+    );
+    const result = evaluatePostMergeCreditRelease(proposal, { nowMs: FIXED_MS });
+    expect(result).toMatchObject({ eligible: false, label: null, reason: 'stability-ledger-degraded' });
+  });
+
+  it('an injected degraded snapshot fails closed without touching the store', () => {
+    const proposal = witnessedProposal('witnessed-injected');
+    const result = evaluatePostMergeCreditRelease(proposal, {
+      nowMs: FIXED_MS,
+      stability: { witnesses: [], sourceState: 'degraded', complete: false },
+    });
+    expect(result).toMatchObject({ eligible: false, label: null, reason: 'stability-ledger-degraded' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // sweepPostMergeCreditReleases — periodic write-back
 // ---------------------------------------------------------------------------
 
@@ -289,6 +406,24 @@ describe('sweepPostMergeCreditReleases', () => {
     expect(result.scanned).toBe(2);
     expect(result.released).toBe(0);
     expect(result.skipped).toBe(2);
+    expect(result.skippedByReason).toEqual({
+      'no-positive-stability-witness': 1,
+      'observation-window-not-elapsed': 1,
+    });
+
+    const decisionsDir = path.join(tmpHome, '.ashlr', 'decisions');
+    expect(fs.existsSync(decisionsDir)).toBe(false);
+  });
+
+  it('a witnessed-stable proposal is still report-only and counted by reason', () => {
+    const witnessed = makeMergedProposal({
+      id: 'sweep-witnessed',
+      mergedAt: mergedAtIso(MIN_POST_MERGE_OBSERVATION_WINDOW_MS + 1),
+    });
+    recordStabilityWitness({ proposal: witnessed });
+    const result = sweepPostMergeCreditReleases({ nowMs: FIXED_MS, listProposals: () => [witnessed] });
+    expect(result).toMatchObject({ scanned: 1, released: 0, skipped: 1 });
+    expect(result.skippedByReason).toEqual({ 'report-only-operational-release-disabled': 1 });
 
     const decisionsDir = path.join(tmpHome, '.ashlr', 'decisions');
     expect(fs.existsSync(decisionsDir)).toBe(false);

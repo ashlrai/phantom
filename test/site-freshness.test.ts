@@ -47,7 +47,7 @@ describe('site freshness', () => {
 
   it('renders each managed block from facts', () => {
     expect(renderBlock('node-floor', facts)).toBe(facts.nodeFloor);
-    expect(renderBlock('mcp-servers', facts)).toBe('ashlr, lexicon, locus, phantom-secrets, stack');
+    expect(renderBlock('mcp-servers', facts)).toBe('ashlr, context7, lexicon, locus, phantom-secrets, stack');
     expect(renderBlock('models-grok', facts)).toBe('Grok 4.7, 4.7 Fast, 4.6, 4.5');
     expect(renderBlock('install-commands', facts)).toContain(`npm i -g ${facts.pkgName}`);
     expect(renderBlock('release-line', facts)).toContain(facts.released);

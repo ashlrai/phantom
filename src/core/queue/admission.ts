@@ -8,6 +8,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir, loadavg, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { GLOBAL_SLOT_KEYS } from '../fleet/runs-lane-targets.js';
+import { adaptiveSettle, readAdaptiveSettle, type SettleInputs, type SettleConfig, type SettleDecision } from './adaptive-settle.js';
 
 export const LOAD_MAX = 36;
 export const PROCS_MAX = 800;
@@ -66,6 +67,8 @@ export function usageVerdict(row: Record<string, unknown>, now: number, critical
 
 export interface InstallLockHolder { pid: number; job?: string; command?: string; since?: number }
 export interface AdmissionInput {
+  settleInputs?: Pick<SettleInputs, 'memoryFreePercent' | 'swapGrowthGb' | 'launchesLast10Minutes'>;
+  settleConfig?: SettleConfig;
   load1: number; ncpu: number; procs: number;
   /** Active job worktrees (recent activity); parked ones are `worktreesParked`. */
   worktrees: number;
@@ -77,6 +80,8 @@ export interface AdmissionInput {
   adaptiveCap?: number | null;
 }
 export interface AdmissionReport {
+  /** Advisory interval only; the pinned host guard must consume the policy to enforce it. */
+  settle: SettleDecision;
   snapshot?: Record<string, unknown>;
   /** Per-lane weekly-quota pacing verdicts (RQ-PACE-TO-RESET); absent on very old hosts. */
   lanes?: Record<string, LaneAdmission>;
@@ -127,6 +132,8 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
   if (input.running >= cap) blockers.push(`at_cap running ${input.running} >= cap ${cap}`);
   const blocked = blockers.length > 0;
   return {
+    settle: adaptiveSettle({ memoryFreePercent: null, swapGrowthGb: null, launchesLast10Minutes: null,
+      ...input.settleInputs, load1: input.load1, ncpu: input.ncpu, runningJobs: input.running }, input.settleConfig),
     admit: !blocked, reason: blocked ? blockers.join('; ') : null, reasons, disabled: false,
     load: { load1: input.load1, max: loadMax }, ncpu: input.ncpu, procs: input.procs, worktrees: input.worktrees,
     worktreesMax: wtMax, ...(input.worktreesParked !== undefined ? { worktreesParked: input.worktreesParked } : {}),
@@ -136,6 +143,7 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionReport {
 }
 
 export interface ReadAdmissionOptions {
+  settleConfig?: SettleConfig;
   runsDir?: string; now?: () => number;
   load1?: () => number; ncpu?: () => number;
   countProcesses?: () => Promise<number>;
@@ -165,6 +173,13 @@ async function mtimeMs(path: string): Promise<number | null> {
 }
 
 export async function readAdmission(opts: ReadAdmissionOptions = {}): Promise<AdmissionReport> {
+  const now = (opts.now ?? Date.now)();
+  const report = await readAdmissionState({ ...opts, now: () => now });
+  const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  return { ...report, settle: await readAdaptiveSettle(root, now, report.snapshot, opts.settleConfig) };
+}
+
+async function readAdmissionState(opts: ReadAdmissionOptions): Promise<Omit<AdmissionReport, 'settle'>> {
   const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const queue = join(root, 'queue');
   // v2 is the dispatcher verdict, including starvation probes and its rolling swap window.

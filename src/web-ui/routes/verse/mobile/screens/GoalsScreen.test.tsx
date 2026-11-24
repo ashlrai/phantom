@@ -74,6 +74,33 @@ describe('GoalsScreen', () => {
     expect(screen.queryByText('An already finished goal')).not.toBeInTheDocument();
   });
 
+  it('leads with the fleet goal cards from the same scorecard as `phm goals`', async () => {
+    const fleetGoal = (id: string, current: number | null, trend: 'up' | 'unknown') => ({
+      id, title: id === 'merges-per-day' ? 'PRs merged per day' : 'Default branches green', why: `Why ${id} matters.`, metric: 'm', unit: 'u',
+      target: 1, targetText: `target for ${id}`, better: 'higher', current, currentText: current === null ? 'unknown' : `${current} now`,
+      trend, trend24h: { points: [], direction: 'unknown', target: null }, trend7d: { points: [], direction: trend, target: null },
+      updated_at: null, source: 'metrics/jobs.jsonl', status: current === null ? 'unknown' : 'on-track',
+      statusText: current === null ? 'unknown: no reading yet' : 'on track', reason: current === null ? 'No reading yet.' : 'Fine.', parts: [], evidencePane: 'fleet-metrics',
+    });
+    stubFetch({
+      'GET /api/goals': goals, 'GET /api/vision/mission': mission, 'GET /api/verse/fleet/runs': runs, 'GET /api/verse/github/fleet-backlog': backlogRead,
+      'GET /api/verse/fleet/runs/goal-scorecard': { schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date().toISOString(), malformedLines: 0, targets: {},
+        goals: [fleetGoal('merges-per-day', 120, 'up'), fleetGoal('main-green', null, 'unknown')] },
+    });
+    renderMobile(<GoalsScreen />);
+    expect(await screen.findByText('120 now')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Trend: rising' })).toHaveTextContent('↑');
+    expect(screen.getByText('Target: target for merges-per-day')).toBeInTheDocument();
+    expect(screen.getByText('Why merges-per-day matters.')).toBeInTheDocument();
+    // Missing data reads unknown, never 0.
+    expect(screen.getByText('Unknown: No reading yet.')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Trend: no trend yet' })).toHaveTextContent('?');
+    // The phone has no pane to open, so no dead evidence button.
+    expect(screen.queryByRole('button', { name: 'See evidence' })).toBeNull();
+    // The personal goals still follow.
+    expect(await screen.findByText('Merge ten PRs an hour')).toBeInTheDocument();
+  });
+
   it('shows the unavailable state when the goals read fails', async () => {
     stubFetch({ 'GET /api/goals': () => json({ error: 'boom' }, 500) });
     renderMobile(<GoalsScreen />);

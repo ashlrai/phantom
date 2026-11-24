@@ -14,6 +14,7 @@
  *   2  bad usage
  */
 
+import { readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { makeColors, isTty } from './ui.js';
 import { loadConfig } from '../core/config.js';
@@ -44,6 +45,9 @@ function printNotifyHelp(): void {
   console.log('');
   console.log(`    ${cyan('test [--json]')}     Send a test ping to configured webhook(s).`);
   console.log(`    ${cyan('session [opts]')}    Notify on a Claude Code Stop/Notification hook.`);
+  console.log(`    ${cyan('route <update.json> [--json]')} Plan where one update goes, by your rules; never sends.`);
+  console.log(`    ${cyan('rules [--json]')}    Show which channel each update type goes to.`);
+  console.log(`    ${cyan('rules set <type> <channel>')} Change one rule (channels: imessage, email, desktop).`);
   console.log(`    ${cyan('route <type> [opts]')} Preview an owner update route; never sends.`);
   console.log(`    ${dim('Types: decision, approval, digest, incident, merged, status')}`);
   console.log(`    ${dim('Route options: --text | --json (default), --dry-run (default),')}`);
@@ -383,10 +387,10 @@ async function cmdNotifyRoute(args: string[]): Promise<number> {
   const { NOTIFY_ROUTES, NOTIFY_CHANNELS, planNotifyRoute } = await import('../core/comms/owner-channel.js');
   type Channel = import('../core/comms/owner-channel.js').NotifyChannel;
   type Update = import('../core/comms/owner-channel.js').NotifyUpdateType;
-  const usage = 'usage: phm notify route <decision|approval|digest|incident|merged|status> [--text|--json] [--dry-run] [--available <channel>] [--unavailable <channel>]';
-  const invalid = (): number => { process.stderr.write(usage + '\n'); return 2; };
+  const usage = 'usage: phm notify route <update.json> [--json] | <decision|approval|digest|incident|merged|status> [--text|--json] [--dry-run] [--available <channel>] [--unavailable <channel>]';
+  const invalid = (why?: string): number => { process.stderr.write((why ? why + '\n' : '') + usage + '\n'); return 2; };
   const [type, ...flags] = args;
-  if (!type || !Object.hasOwn(NOTIFY_ROUTES, type)) return invalid();
+  if (!type || type.startsWith('--')) return invalid();
   const availability: Partial<Record<Channel, 'available' | 'unavailable'>> = {};
   let text = false;
   let json = false;
@@ -402,6 +406,23 @@ async function cmdNotifyRoute(args: string[]): Promise<number> {
     } else return invalid();
   }
   if (text && json) return invalid();
+  if (!Object.hasOwn(NOTIFY_ROUTES, type)) {
+    // An update file: classify it, apply the owner's rules, print the delivery plan. Never sends.
+    let update: unknown;
+    try {
+      if (statSync(type).size > 64 * 1024) return invalid(`${type} is larger than 64 KB.`);
+      update = JSON.parse(readFileSync(type, 'utf8'));
+    } catch { return invalid(`Could not read a JSON update from ${type}.`); }
+    if (update === null || typeof update !== 'object' || Array.isArray(update)) return invalid('The update must be a JSON object.');
+    const { planUpdateDelivery, readNotifyRules } = await import('../core/comms/notify-rules.js');
+    const { fixedOwnerConfigDir, loadOwnerThreadSettings } = await import('../core/comms/owner-channel.js');
+    const plan = planUpdateDelivery(update, { rules: readNotifyRules(), settings: loadOwnerThreadSettings(fixedOwnerConfigDir()), availability });
+    if (json) { process.stdout.write(JSON.stringify(plan, null, 2) + '\n'); return 0; }
+    console.log(`${plan.type}${plan.status ? ` (${plan.status})` : ''} → ${plan.deliveries.map(step => `${step.channel} (${step.action}, ${step.delivery === 'now' ? 'now' : 'next digest'})`).join(', ') || 'no channel'}. Nothing sent.`);
+    console.log(plan.reason);
+    console.log(`Thread: ${plan.threadId}.${plan.replyFormat ? ` Reply with one word: ${plan.replyFormat}.` : ''}`);
+    return 0;
+  }
   const plan = planNotifyRoute(type as Update, availability);
   if (!text) process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
   else {
@@ -412,6 +433,27 @@ async function cmdNotifyRoute(args: string[]): Promise<number> {
     console.log(`Owner thread: ${plan.threadId}. Verified sender check: ${plan.verifiedSenderCheck}.`);
     if (plan.replyFormat) console.log(`Reply with one word: ${plan.replyFormat}.`);
   }
+  return 0;
+}
+
+/** `phm notify rules [--json]` reads the rules; `phm notify rules set <type> <channel> [--json]` changes one. */
+async function cmdNotifyRules(args: string[]): Promise<number> {
+  const { isNotifyChannel, isNotifyRuleType, readNotifyRules, setNotifyRule } = await import('../core/comms/notify-rules.js');
+  const json = args.includes('--json');
+  const words = args.filter(arg => arg !== '--json');
+  let view: ReturnType<typeof readNotifyRules>;
+  if (words.length === 0) view = readNotifyRules();
+  else if (words.length === 3 && words[0] === 'set' && isNotifyRuleType(words[1]) && isNotifyChannel(words[2])) view = setNotifyRule(words[1], words[2]);
+  else {
+    const now = readNotifyRules();
+    process.stderr.write(`usage: phm notify rules [--json] | phm notify rules set <${now.rules.map(row => row.type).join('|')}> <${now.channels.map(c => c.id).join('|')}> [--json]\n`);
+    return 2;
+  }
+  if (json) { process.stdout.write(JSON.stringify(view, null, 2) + '\n'); return 0; }
+  for (const row of view.rules) console.log(`${row.label} → ${view.channels.find(c => c.id === row.channel)?.label ?? row.channel}. ${row.note}${row.isDefault ? '' : ' (your rule)'}`);
+  console.log('Everything is also shown in the desktop app.');
+  if (view.problem) console.log(view.problem);
+  console.log(`Change one: phm notify rules set <type> <channel>   (types: ${view.rules.map(row => row.type).join(', ')})`);
   return 0;
 }
 
@@ -437,6 +479,7 @@ export async function cmdNotify(args: string[]): Promise<number> {
   }
 
   if (sub === 'route') return cmdNotifyRoute(rest);
+  if (sub === 'rules') return cmdNotifyRules(rest);
 
   if (sub === 'test') {
     const unknown = rest.find((a) => a !== '--json');

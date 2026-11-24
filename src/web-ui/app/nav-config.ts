@@ -81,7 +81,8 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'work',
     label: 'Work',
     leaves: [
-      { path: '/work/log', label: 'Work log', description: 'Job launches, finishes and merges', implemented: true },
+      { path: '/work/jobs', label: 'Log', description: 'One row per job: what it did and how it ended', implemented: true },
+      { path: '/work/log', label: 'Work log', description: 'Every fleet event, newest first', implemented: true },
       {
         path: '/work/runs',
         label: 'Runs',

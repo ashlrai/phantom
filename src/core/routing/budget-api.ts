@@ -50,12 +50,19 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from '../verse/api-modules.js';
 import type { VerseApiContext } from '../verse/verse-api.js';
 import type { AshlrConfig } from '../types.js';
-import type { VerseSeat } from '../verse/types.js';
 import { resolveSubscriptionMaxPercent } from '../config.js';
 import { displaySurfaceTarget, evaluateStandingAuthority } from '../authority/effective-config.js';
 import type { EffectivePolicy } from '../authority/types.js';
-import { getVerseAccountCollector, verseCollectorLive, type VerseAccountCollector } from '../verse/accounts.js';
+import { getVerseAccountCollector, verseCollectorLive } from '../verse/accounts.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+import {
+  capacitySnapshotLastWrittenAt,
+  markCapacitySnapshotWrittenAt,
+  readCapacitySource,
+  setCapacitySourceForTest,
+  type CapacityReading,
+  type CapacitySource,
+} from './budget-capacity-source.js';
 import {
   BudgetPolicyUnreadableError,
   loadBudgetPolicy,
@@ -65,7 +72,7 @@ import {
   updateBudgetPolicy,
   writeCapacitySnapshotAsync,
 } from './budget-store.js';
-import { assessSeat, capacityFromSeat, HEADROOM_READING_MAX_AGE_MS, type SeatCapacity } from './headroom.js';
+import { assessSeat, HEADROOM_READING_MAX_AGE_MS } from './headroom.js';
 import {
   BudgetPolicyError,
   defaultBudgetPolicy,
@@ -91,12 +98,13 @@ import {
   type SeatDecision,
 } from './types.js';
 
+export { publishCapacitySnapshotFrom } from './budget-capacity-source.js';
+export type { CapacityReading, CapacitySource };
+
 export const VERSE_BUDGET_PREVIEW_PATH = `${VERSE_BUDGET_PATH}/preview`;
 export { VERSE_RESOURCE_READINESS_PATH };
 export const VERSE_BUDGET_DECISIONS_PATH = `${VERSE_BUDGET_PATH}/decisions`;
 
-/** Seat IDENTITY (which accounts and Ollama tags exist) changes rarely and costs HTTP round trips to learn. */
-const SEAT_IDENTITY_TTL_MS = 60_000;
 /** The capacity snapshot is rewritten at most this often by request traffic. */
 const SNAPSHOT_MIN_INTERVAL_MS = 15_000;
 /** Publisher cadence bounds: never faster than the collector itself polls. */
@@ -137,64 +145,6 @@ function resetAuthority(cfg: AshlrConfig, nowMs: number): ResetAuthorityReading 
 // Capacity source (injectable for tests)
 // ---------------------------------------------------------------------------
 
-export interface CapacityReading {
-  seats: SeatCapacity[];
-  sampledAt: string;
-}
-
-/**
- * `collector` (daemon publisher only): read telemetry from THIS collector
- * rather than the process-global Verse registration — the daemon has no
- * Verse collector registered and must not register one (the registry is the
- * Verse server's).
- */
-export type CapacitySource = (cfg: AshlrConfig, opts?: { collector?: VerseAccountCollector | null }) => Promise<CapacityReading>;
-
-let identityCache: { cfg: AshlrConfig; expiresAt: number; seats: VerseSeat[] } | null = null;
-let identityInFlight: Promise<VerseSeat[]> | null = null;
-
-/**
- * The production capacity source: seat identity from `discoverSeats` (cached
- * 60 s — it walks Ollama), live telemetry from the account collector on EVERY
- * call (cheap: in-memory readings plus small file reads), exactly the split
- * verse-api's `liveSeats` uses.
- */
-async function defaultCapacitySource(cfg: AshlrConfig, opts: { collector?: VerseAccountCollector | null } = {}): Promise<CapacityReading> {
-  const seatsMod = await import('../verse/seats.js');
-  const now = Date.now();
-  let seats: VerseSeat[];
-  if (identityCache && identityCache.cfg === cfg && now < identityCache.expiresAt) {
-    seats = identityCache.seats;
-  } else {
-    if (!identityInFlight) {
-      identityInFlight = seatsMod.discoverSeats(cfg, {
-        // Budgeting reads windows only. The Claude token scan behind the seat
-        // summary walks ~/.claude/projects and would add nothing here.
-        claudeUsage: () => ({ tokens5h: 0, tokens7d: 0, messages5h: 0, messages7d: 0, readAt: Date.now(), filesScanned: 0 }),
-      })
-        .then((discovery) => {
-          identityCache = { cfg, expiresAt: Date.now() + SEAT_IDENTITY_TTL_MS, seats: discovery.seats };
-          return discovery.seats;
-        })
-        .finally(() => { identityInFlight = null; });
-    }
-    seats = await identityInFlight;
-  }
-  const telemetry = seatsMod.buildSeatTelemetry(
-    seatsMod.resolveAccountsRoot(cfg),
-    opts.collector !== undefined ? { collector: opts.collector } : {},
-  );
-  return {
-    sampledAt: new Date().toISOString(),
-    seats: seats.map((seat) => capacityFromSeat(
-      seat,
-      seat.engine === 'local' ? undefined : telemetry.get(seat.accountId)?.capacity ?? null,
-    )),
-  };
-}
-
-let capacitySource: CapacitySource = defaultCapacitySource;
-
 /** The readiness builder's live gatherer (core/routing/readiness.ts); injectable for tests. */
 let readinessSource: (cfg: AshlrConfig) => Promise<ResourceReadinessResponse> =
   async (cfg) => (await import('./readiness.js')).gatherResourceReadiness(cfg);
@@ -203,14 +153,9 @@ let readinessSource: (cfg: AshlrConfig) => Promise<ResourceReadinessResponse> =
 export function setReadinessSourceForTest(source?: (cfg: AshlrConfig) => Promise<ResourceReadinessResponse>): void {
   readinessSource = source ?? (async (cfg) => (await import('./readiness.js')).gatherResourceReadiness(cfg));
 }
-let lastSnapshotAt = 0;
-
 /** Test hook: replace (or with no argument, restore) the capacity source; also resets caches. */
 export function setBudgetCapacitySourceForTest(source?: CapacitySource): void {
-  capacitySource = source ?? defaultCapacitySource;
-  identityCache = null;
-  identityInFlight = null;
-  lastSnapshotAt = 0;
+  setCapacitySourceForTest(source);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +219,7 @@ export function setCapacityPublishGateForTest(gate?: () => boolean): void {
 async function readCapacity(cfg: AshlrConfig, force = false): Promise<CapacityReading> {
   let reading: CapacityReading;
   try {
-    reading = await capacitySource(cfg);
+    reading = await readCapacitySource(cfg);
   } catch {
     // The cause (a collector or Ollama error) can name paths and hosts; the
     // panel only needs to know WHICH read failed.
@@ -283,8 +228,8 @@ async function readCapacity(cfg: AshlrConfig, force = false): Promise<CapacityRe
   const now = Date.now();
   let mayPublish = false;
   try { mayPublish = publishGate(); } catch { mayPublish = false; }
-  if (mayPublish && (force || now - lastSnapshotAt >= SNAPSHOT_MIN_INTERVAL_MS)) {
-    lastSnapshotAt = now;
+  if (mayPublish && (force || now - capacitySnapshotLastWrittenAt() >= SNAPSHOT_MIN_INTERVAL_MS)) {
+    markCapacitySnapshotWrittenAt(now);
     try {
       await writeCapacitySnapshotAsync(reading.seats, new Date(now));
     } catch {
@@ -564,13 +509,6 @@ export function startBudgetCapacityPublisher(cfg: AshlrConfig, opts: { intervalM
  * Throws on a failed read or write: the caller then stays cold, and readers
  * of a stale snapshot fail CLOSED.
  */
-export async function publishCapacitySnapshotFrom(cfg: AshlrConfig, collector: VerseAccountCollector): Promise<string> {
-  const reading = await capacitySource(cfg, { collector });
-  const snapshot = await writeCapacitySnapshotAsync(reading.seats, new Date());
-  lastSnapshotAt = Date.now();
-  return snapshot.publishedAt;
-}
-
 /**
  * Route `request` against the live capacity and log it as a SHADOW decision
  * (Track B's fleet calls this next to its real dispatch). Returns the

@@ -46,7 +46,7 @@ describe('readUsageSpend original preservation', () => {
     expect(spend.pools.find(row => row.pool === 'codex-personal')).toEqual({
       pool: 'codex-personal', reason: null, usedPercent: 100, resetAt: iso(NOW + 10 * HOUR_MS),
       hoursLeft: 10, burnPerHour: 0, projectedUnusedPercent: 0,
-      unit: 'percent', projectedUsedPercent: 100, remainingUsd: null, projectedUnusedUsd: null, verdict: 'used-up', summary: 'used up', resetsIn: '10h 0m',
+      unit: 'percent', projectedUsedPercent: 100, remainingUsd: null, projectedUnusedUsd: null, verdict: 'used-up', status: 'exhausted', summary: 'used up', resetsIn: '10h 0m',
     });
     expect(spend.pools.filter(row => row.pool !== 'codex-personal')
       .every(row => row.reason !== null && row.usedPercent === null)).toBe(true);
@@ -64,7 +64,7 @@ describe('readUsageSpend original preservation', () => {
     expect(spend.pools.find(row => row.pool === 'claude')).toEqual({
       pool: 'claude', reason: null, usedPercent: 20, resetAt: iso(NOW + 10 * HOUR_MS),
       hoursLeft: 10, burnPerHour: 3, projectedUnusedPercent: 50,
-      unit: 'percent', projectedUsedPercent: 50, remainingUsd: null, projectedUnusedUsd: null, verdict: 'behind', summary: 'behind: 50% would go unused', resetsIn: '10h 0m',
+      unit: 'percent', projectedUsedPercent: 50, remainingUsd: null, projectedUnusedUsd: null, verdict: 'behind', status: 'behind', summary: 'behind: 50% would go unused', resetsIn: '10h 0m',
     });
     expect(spend.pools.find(row => row.pool === 'gemini'))
       .toMatchObject({ reason: 'reading incomplete or reset passed', ...unknownRow });
