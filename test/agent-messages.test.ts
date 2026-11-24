@@ -584,6 +584,66 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ excludeFrom: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('keeps only the messages one sender wrote, across every registered label of that identity', () => {
+    const root = store();
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['devin-cloud'] }, { root }).status).toBe('created');
+    post(root, T0, { id: 'x1', from: 'agent:atlas', to: 'agent:claude-1', body: { kind: 'note', text: 'handle label' } });
+    post(root, T0 + 1_000, { id: 'x2', from: 'devin-cloud', to: 'agent:grok-3', body: { kind: 'note', text: 'alias label' } });
+    // Mail merely addressed to the sender-included identity is not that
+    // identity's own traffic: it stays out, the same sender-only rule
+    // --exclude-from keeps pointed the other way.
+    post(root, T0 + 2_000, { id: 'x3', from: 'agent:claude-1', to: 'agent:atlas', body: { kind: 'note', text: 'mail addressed to atlas stays out' } });
+    post(root, T0 + 3_000, { id: 'x4', from: 'grok-9', to: 'agent:claude-1', body: { kind: 'note', text: 'other sender' } });
+    // A handle, an alias or an agent: address of the one identity keeps every
+    // label it writes under; every other sender's rows stay out.
+    for (const ref of ['atlas', 'devin-cloud', 'agent:atlas']) {
+      expect(read(root, { from: ref }).messages.map(m => m.id)).toEqual(['x2', 'x1']);
+    }
+    expect(read(root, { from: 'atlas' })).toMatchObject({ matched: 2 });
+    // --from decides on the sender only: x3 is addressed to atlas but sent by
+    // claude-1, so agent atlas plus from atlas keeps atlas's own two rows,
+    // while agent claude-1's wider net narrows to the one row atlas sent it.
+    expect(read(root, { agent: 'atlas', from: 'atlas' }).messages.map(m => m.id)).toEqual(['x2', 'x1']);
+    expect(read(root, { agent: 'claude-1', from: 'atlas' }).messages.map(m => m.id)).toEqual(['x1']);
+    // An unregistered sender ref keeps exact name/lane matching.
+    expect(read(root, { from: 'grok-9' }).messages.map(m => m.id)).toEqual(['x4']);
+    // It composes with the other filters; matched counts only accepted rows
+    // and limit caps the page, not the count. A sender both included and
+    // excluded matches nothing.
+    expect(read(root, { from: 'atlas', contains: 'alias label' })).toMatchObject({ matched: 1, messages: [{ id: 'x2' }] });
+    expect(read(root, { from: 'atlas', limit: 1 })).toMatchObject({ matched: 2, messages: [{ id: 'x2' }] });
+    expect(read(root, { from: 'atlas', excludeFrom: 'atlas' })).toMatchObject({ matched: 0, messages: [] });
+    // An unresolvable ref matches only its literal sender label — none here,
+    // so the page is empty, not an error.
+    expect(read(root, { from: 'nobody' })).toMatchObject({ matched: 0, messages: [] });
+    // A case-variant of a registered handle or alias resolves to no identity:
+    // it keeps only the literal name match — x1 under 'Atlas', x2 under
+    // 'DEVIN-CLOUD' — never every label the identity writes under.
+    expect(read(root, { from: 'Atlas' }).messages.map(m => m.id)).toEqual(['x1']);
+    expect(read(root, { from: 'DEVIN-CLOUD' }).messages.map(m => m.id)).toEqual(['x2']);
+    // A damaged registry reads unavailable: the filter falls back to strict
+    // name/lane labels — the alias spelling itself matches, the handle's own
+    // label matches, but the alias can no longer pull the handle's rows.
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), '{"broken"', { mode: 0o600 });
+    expect(read(root, { from: 'devin-cloud' }).messages.map(m => m.id)).toEqual(['x2']);
+    expect(read(root, { from: 'atlas' }).messages.map(m => m.id)).toEqual(['x1']);
+    // No registry at all is the same strict read: the projected name decides,
+    // so every routing prefix of one label still reads as that sender.
+    const bare = store();
+    post(bare, T0, { id: 'b1', from: 'agent:atlas', to: 'a', body: { kind: 'note', text: 'prefixed' } });
+    post(bare, T0 + 1_000, { id: 'b2', from: 'atlas', to: 'a', body: { kind: 'note', text: 'bare' } });
+    post(bare, T0 + 2_000, { id: 'b3', from: 'atlas-2', to: 'a', body: { kind: 'note', text: 'different sender' } });
+    expect(read(bare, { from: 'atlas' }).messages.map(m => m.id)).toEqual(['b2', 'b1']);
+  });
+
+  it('parses --from as a printable label and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ from: 'atlas' })).toEqual({ ok: true, query: { from: 'atlas' } });
+    expect(parseAgentMessagesQuery({ from: 'agent:atlas', kind: 'ask', limit: '5' })).toEqual({ ok: true, query: { kind: 'ask', from: 'agent:atlas', limit: 5 } });
+    expect(parseAgentMessagesQuery({ from: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ from: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ from: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('filters to envelopes citing one id through their own inReplyTo field', () => {
     const root = store();
     post(root, T0, { id: 'q1', from: 'a', to: 'b', body: { kind: 'note', text: 'can you review the parser?' } });
@@ -633,19 +693,21 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&excludeFrom=atlas&inReplyTo=m-1&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', excludeFrom: 'atlas', inReplyTo: 'm-1', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', agent: 'claude', limit: 5 }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?job=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?thread=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?contains=')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?from=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?inReplyTo=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?from=a&from=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=a&excludeFrom=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);
   });
