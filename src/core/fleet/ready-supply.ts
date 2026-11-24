@@ -12,11 +12,21 @@ export interface ReadySupplyLane {
   oldestPhxId: string | null;
 }
 
+/** Lane-open supply: ready rows carrying no honest lane hint, which the market may place on any lane. */
+export interface ReadySupplyUnhinted {
+  total: number;
+  /** Of those, rows whose id marks Phantom work — the same RQ-PHX- rule `totals` uses. */
+  phantom: number;
+  filler: number;
+}
+
 export interface ReadySupplyV1 {
   v: 1;
   generatedAt: string;
   sourceState: 'healthy' | 'missing' | 'degraded';
   rows: number;
+  /** Lane-open supply; null when the caller cannot count it. */
+  unhinted: ReadySupplyUnhinted | null;
   dropped: number;
   lanes: ReadySupplyLane[];
   totals: { phxReady: number; phxParked: number; fillerReady: number; fillerParked: number };
@@ -24,7 +34,7 @@ export interface ReadySupplyV1 {
 
 export function summarizeReadySupply(
   rows: FleetLaneQueueRow[],
-  meta: { dropped: number; sourceState: ReadySupplyV1['sourceState']; now: () => Date },
+  meta: { dropped: number; unhinted?: ReadySupplyUnhinted | null; sourceState: ReadySupplyV1['sourceState']; now: () => Date },
 ): ReadySupplyV1 {
   const lanes = new Map<string, ReadySupplyLane>();
   const totals = { phxReady: 0, phxParked: 0, fillerReady: 0, fillerParked: 0 };
@@ -46,7 +56,7 @@ export function summarizeReadySupply(
   }
   return {
     v: 1, generatedAt: meta.now().toISOString(), sourceState: meta.sourceState,
-    rows: rows.length, dropped: meta.dropped,
+    rows: rows.length, unhinted: meta.unhinted ?? null, dropped: meta.dropped,
     lanes: [...lanes.values()].sort((a, b) => a.lane.localeCompare(b.lane)), totals,
   };
 }
@@ -59,7 +69,15 @@ export async function readReadySupply(opts: { runsDir?: string; now?: () => Date
     // parseReadyTsv recognizes the dispatcher's job/repo/lane/tier/prompt
     // dialect natively, including its PARKED-<reason>[.<lane>] encodings.
     const parsed = parseReadyTsv(source.text);
-    return summarizeReadySupply(parsed.rows, { ...parsed, sourceState: source.state, now });
+    // Lane-open rows are real supply the market can place anywhere; the fleet
+    // queue already counts them in `ready`. Classify them by the same RQ-PHX-
+    // id rule the lane totals use — they have no lane to attribute.
+    const unhintedPhantom = parsed.unhintedRows.filter(row => row.id.startsWith('RQ-PHX-')).length;
+    return summarizeReadySupply(parsed.rows, {
+      dropped: parsed.dropped,
+      unhinted: { total: parsed.unhinted, phantom: unhintedPhantom, filler: parsed.unhinted - unhintedPhantom },
+      sourceState: source.state, now,
+    });
   } catch {
     // Even a faulty injected clock or invalid path cannot make the reader throw.
     return summarizeReadySupply([], { dropped: 0, sourceState: 'degraded', now: () => new Date(0) });

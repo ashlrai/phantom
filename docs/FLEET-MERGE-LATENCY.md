@@ -39,6 +39,16 @@ and retry caps. Required checks, reviews and merge queue rules still apply.
 
 For each PR, `pr_stages` reports seconds from `opened` to `queued` (queue wait), `queued` to `checks_passed` (required checks), and `checks_passed` to `merged` (merge). The checks interval is elapsed time between observations, not a sum of check runtimes; record `checks_passed` only when all required checks are known to have passed. Missing or repeated boundaries are listed in `missing_or_ambiguous`; reversed timestamps set `out_of_order`. A duration with invalid boundaries is null, and `slowest_stage` is null unless all three durations are known, ordered and have a unique maximum. Open PRs and merges with unknown times remain visible; dated merges outside the selected window are excluded.
 
+Each `pr_stages` row also carries a typed `wait` object: `state` (`not_queued`,
+`queued`, `required_checks`, `conflict`, `review`, `blocked`, `merged`, `closed` or
+`unknown`), `stage_times` (`opened_at`, `queued_at`, `checks_passed_at`, `merged_at`),
+`elapsed_s` (opened to merge, or to now while open), `stage_waiting_s`, `stalled`
+(true once the current stage passes `--stalled-after`), a plain-words `diagnosis`, and
+`next` (`action`, `automatic`, `note`) naming what happens on its own: the merge queue
+merges, required checks run, the recut loop acts, or `merge_retry` re-arms a dropped
+auto-merge. A missing, repeated or reversed timestamp makes that value null, never a
+guess. It is advice only: required checks, reviews and merge-queue rules stay in force.
+
 To record a check, use the same `--record` command with `type` set to
 `check_observed`, `conclusion` to `success`, `failure`, or `pending`, and
 `required` to `true` or `false` only when known. Omit `required` when its
@@ -89,7 +99,11 @@ ordinary head-pinned GitHub auto-merge (`gh pr merge --auto
 at three requests. Required checks, reviews and the merge queue remain
 enforced; the PR merges only when they pass on their own. Rows report
 `already-armed`, `conflict`, `draft`, `held`, `capped` or `failed`, and
-`needs-person` rows carry the classifier reason. `retry_requested` is also a
+`needs-person` rows carry the classifier reason. Every row has a plain-words
+`note`, and the report adds `queue_wait` (`waiting`, `oldest_s`, `total_s`,
+`conflicts`, `finished`): how long dropped PRs have waited, with a conflict
+marked as needing a recut and an already merged or closed PR counted as
+`finished`, not waiting. `retry_requested` is also a
 `--record` type so another writer can share the same bound.
 
 Before arming, `merge-retry` lists the repo's open PRs once per run and skips a

@@ -16,7 +16,10 @@ import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
 import { Funnel } from '../../../components/charts/Funnel.js';
 import { Swimlane } from '../../../components/charts/Swimlane.js';
 import { EngineMarker } from '../../../components/primitives/Tag.js';
+import { apiGet } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
+import type { QueryDef } from '../../../data/queries.js';
+import type { FleetMachines } from '../../../../core/web/fleet-machines-route.js';
 import { formatRelative } from '../autonomy/format.js';
 import type { OptionalFleetRead } from '../autonomy/fleet-contract.js';
 import type { OvernightStatus } from '../autonomy/overnight-contract.js';
@@ -102,6 +105,39 @@ function LaneHealthRows({ health }: { health: LaneHealthV1 }) {
   );
 }
 
+const machinesQuery: QueryDef<FleetMachines> = {
+  key: 'verse-fleet-machines',
+  fetch: (signal) => apiGet<FleetMachines>('/api/fleet/machines', signal),
+};
+
+const peerState = (online: unknown): 'online' | 'offline' | 'unknown' => (online === true ? 'online' : online === false ? 'offline' : 'unknown');
+const peerAge = (age: unknown) => (typeof age === 'number' ? formatRelative(new Date(Date.now() - age * 1000).toISOString()) : 'unknown');
+
+/** Which computer answers and which tailnet peers it sees; unknown stays "unknown". */
+function MachinesRow() {
+  const { data, error } = useQuery(machinesQuery);
+  if (!data) return error ? <p className={styles.muted}>machines: unavailable</p> : null;
+  const a = data.answering;
+  return (
+    <ul className={styles.laneHealth} aria-label="Machines">
+      <li className={styles.laneHealthRow}>
+        <span className={styles.laneName}>answering: {a.host} v{a.installedVersion}</span>
+        {a.versionDrift === true ? <span className={styles.laneStuck} role="status">version drift (source v{a.sourceVersion})</span> : null}
+      </li>
+      {data.peers.map((p) => {
+        const state = peerState(p.online);
+        return (
+          <li key={p.name} className={styles.laneHealthRow}>
+            <span aria-hidden="true">{state === 'online' ? '●' : state === 'offline' ? '○' : '◌'}</span>
+            <span className={styles.laneName}>{p.name}</span>
+            <span className={styles.laneSlots}>{state} · last seen {peerAge(p.ageSeconds)}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
   const timestamp = live?.generatedAt;
   useEffect(() => {
@@ -128,6 +164,7 @@ export function LanesStrip({ live }: { live: FleetLiveSnapshotV1 | null }) {
         <CloudLaneChip classes={{ lane: styles.lane, name: styles.laneName, sep: styles.laneSep, slots: styles.laneSlots }} />
       </ul>
       <LaneHealthRows health={health} />
+      <MachinesRow />
       {notes.length > 0 ? (
         <ul className={styles.laneNotes} aria-label="Why lanes are limited">
           {notes.map((n) => (

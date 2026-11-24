@@ -575,7 +575,11 @@
         "summary": "Recent operator inbox entries (FleetInboxReadV1, or null when the inbox is missing).",
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
-          { "name": "source", "in": "query", "schema": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "description": "Optional source label filter (case-insensitive); requires `limit`." }
+          { "name": "source", "in": "query", "schema": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "description": "Optional source label filter (case-insensitive); requires `limit`." },
+          { "name": "contains", "in": "query", "schema": { "type": "string", "minLength": 1, "maxLength": 512 }, "description": "Optional case-insensitive substring filter on the scrubbed entry text; requires `limit`." },
+          { "name": "priority", "in": "query", "schema": { "type": "string", "pattern": "^P[0-3]$" }, "description": "Optional exact priority-label filter; requires `limit`." },
+          { "name": "after", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Optional exclusive lower bound (RFC3339 with zone) on the entry timestamp; entries whose timestamp reads as neither Eastern wall time nor RFC3339 are excluded while a bound is set; requires `limit`." },
+          { "name": "before", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Optional exclusive upper bound (RFC3339 with zone); must be later than `after` when both are set; requires `limit`." }
         ],
         "responses": { "200": { "$ref": "#/components/responses/FleetInboxRead" }, "default": { "$ref": "#/components/responses/Error" } }
       },

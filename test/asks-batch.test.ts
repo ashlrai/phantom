@@ -114,11 +114,13 @@ describe('answerOwnerAsk', () => {
     expect(deps.writes.map(w => w[0]).sort()).toEqual(['nm-1', 'nm-2']);
   });
 
-  it('says an unknown id is unknown and short answers are not stored', async () => {
+  it('says an unknown id is unknown, and a verified owner short answer is recorded through the ask\'s own check', async () => {
     const deps = fake([ask({ id: 'nm-s', kind: 'short-value' })]);
     expect((await answerOwnerAsk({ askId: 'nm-zz', answer: 'yes', sender: owner }, deps)).status).toBe('unknown');
-    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: owner }, deps)).status).toBe('unavailable');
+    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: stranger }, deps)).status).toBe('refused');
     expect(deps.writes).toEqual([]);
+    expect((await answerOwnerAsk({ askId: 'nm-s', answer: '42', sender: owner }, deps)).status).toBe('answered');
+    expect(deps.writes).toEqual([['nm-s', '42']]);
   });
 });
 
@@ -158,7 +160,7 @@ describe('phm asks list --json', () => {
     const out = JSON.parse(log.mock.calls[0]![0] as string);
     expect(Object.keys(out).sort()).toEqual(['asks', 'count', 'ledger', 'schema']);
     expect(Object.keys(out.asks[0]).sort()).toEqual(
-      ['askedAt', 'choices', 'hardLimit', 'id', 'ids', 'kind', 'number', 'question', 'whatHappens']);
+      ['askedAt', 'choices', 'expires', 'fleetDid', 'hardLimit', 'id', 'ids', 'kind', 'number', 'question', 'type', 'whatHappens']);
     expect(out.schema).toBe('asks.batch.v1');
   });
   it('shows an unreadable ledger as unknown, not as zero', async () => {

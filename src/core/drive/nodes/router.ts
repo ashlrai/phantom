@@ -46,13 +46,22 @@ function activeClaims(state: NodesState, node: NodeRecord, now: number): number 
     j.claim.nodeId === node.nodeId && j.claim.session === node.session).length;
 }
 
+/** Capability fences every assignment path honors: a session that released the
+ * job unrun is never offered it again, advertised caps must cover `requires`,
+ * and `gh` work needs a live local auth heartbeat. Owner scope is routing's
+ * concern; a leader's direct claim still honors these. */
+export function jobBlockers(node: NodeRecord, job: QueueJobV1): string[] {
+  const reasons: string[] = [];
+  if (job.declined?.includes(node.session)) reasons.push('declined');
+  const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
+  if (missing.length) reasons.push(`caps:${missing.join(',')}`);
+  if ((job.requires ?? []).includes('gh') && node.auth !== 'ok') reasons.push('auth');
+  return reasons;
+}
+
 function shortfall(node: NodeRecord, job: QueueJobV1): string | null {
   if (!node.owners?.includes(job.owner!)) return 'owner';
-  if (job.declined?.includes(node.session)) return 'declined';
-  const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
-  if (missing.length) return `caps:${missing.join(',')}`;
-  if ((job.requires ?? []).includes('gh') && node.auth !== 'ok') return 'auth';
-  return null;
+  return jobBlockers(node, job)[0] ?? null;
 }
 
 /** Shared capacity slice of fleet.awareness.v1. Pool dispatch recomputes it inside the
@@ -77,7 +86,9 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
     const known = !unplacedClaims && measured.length > 0 && measured.length === live.length;
     const slots = held ? 0 : known ? Math.min(...measured.map(n => n.capacity!.slots)) : null;
     const running = state === null ? 0 : state.jobs.filter(j => actionableClaim(state, j, now) && onHost(j)).length;
-    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && onHost(j) &&
+    // A producer withdrawal completes without executing: its startedAt→completedAt
+    // span is claim-hold plus detection lag, not runner time, so it is no latency evidence.
+    const durations = (state?.jobs ?? []).filter(j => j.state === 'completed' && j.claim && j.producerWithdrawn !== true && onHost(j) &&
       j.startedAt !== undefined && j.completedAt !== undefined && j.startedAt <= j.completedAt &&
       j.completedAt <= now && now - j.completedAt <= 86_400_000).map(j => j.completedAt! - j.startedAt!).sort((a, b) => a - b);
     const median = durations.length ? (durations[Math.floor((durations.length - 1) / 2)]! + durations[Math.floor(durations.length / 2)]!) / 2 : null;

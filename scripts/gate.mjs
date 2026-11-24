@@ -13,10 +13,13 @@
  * Phase A (parallel): root build (tsc, then the static-asset copy from `npm run build` — see
  * GATE_BUILD_ASSET_SCRIPTS), the native-compiler typecheck (`npm run typecheck:fast`, tsgo on
  * both projects — cold tsc in a fresh worker tree can take tens of minutes, so tsgo reports the
- * same diagnostics in seconds), web typecheck, eslint (cached), the real-io lane guard, the
+ * same diagnostics in seconds), eslint (cached), the real-io lane guard, the
  * Verse route sync-I/O guard (scripts/check-verse-sync-io.mjs), the quarantine-ledger verifier
  * (scripts/check-quarantine-ledger.mjs: every added test skip needs a live ledger row),
- * the docs check. Then the web build + first-paint budget. Phase B runs the
+ * the docs check. Both tsconfig projects are typechecked inside typecheck-fast — the same
+ * check `npm run typecheck` and hosted fast-gate run — so there is no separate web step.
+ * `--check` typechecks the same two projects with the native compiler directly. Then the
+ * web build + first-paint budget. Phase B runs the
  * focused backend and web suites in parallel; a full gate runs them serially
  * so load-sensitive UI timing assertions measure the UI rather than backend work.
  *
@@ -496,6 +499,7 @@ function tail(path, count) {
 const node = process.execPath;
 const bin = {
   tsc: join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
+  tsgo: join(repoRoot, 'node_modules', '@typescript', 'native-preview', 'bin', 'tsgo'),
   eslint: join(repoRoot, 'node_modules', 'eslint', 'bin', 'eslint.js'),
   vitest: join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs'),
 };
@@ -522,21 +526,42 @@ export function buildCommands({ nodeBin, tscBin, tsBuildInfoFile }) {
   ];
 }
 
+/**
+ * Phase A step specs, run in parallel by runStatic. The web-ui project is
+ * typechecked inside `typecheck-fast` — `npm run typecheck:fast` runs tsgo on
+ * both tsconfig projects, the same compiler `npm run typecheck` and hosted
+ * fast-gate use — so there is no separate web step here.
+ */
+export function phaseASpecs({ nodeBin, npmCmd, tscBin, eslintBin, gateDir }) {
+  const gate = (file) => join(gateDir, file);
+  const [tsc, ...assets] = buildCommands({ nodeBin, tscBin, tsBuildInfoFile: gate('tsc.tsbuildinfo') });
+  return [
+    { name: 'build', ...tsc, then: assets },
+    { name: 'typecheck-fast', cmd: npmCmd, args: ['run', '--silent', 'typecheck:fast'] },
+    { name: 'eslint', cmd: nodeBin, args: [eslintBin, '--cache', '--cache-location', gate('eslintcache'), '.'] },
+    { name: 'realio-lane', cmd: npmCmd, args: ['run', '--silent', 'lint:realio-lane'] },
+    { name: 'verse-sync-io', cmd: npmCmd, args: ['run', '--silent', 'lint:verse-sync-io'] },
+    { name: 'docs', cmd: npmCmd, args: ['run', '--silent', 'check:docs'] },
+    { name: 'test-names', cmd: nodeBin, args: ['scripts/check-test-names.mjs'] },
+  ];
+}
+
 /** Phase A: independent static checks, run in parallel. */
 function staticSteps() {
   const gate = (file) => join(GATE_DIR, file);
   // A tsbuildinfo whose outputs are gone would skip re-emitting them; start clean then.
   if (!existsSync(join(repoRoot, 'dist'))) rmSync(join(repoRoot, gate('tsc.tsbuildinfo')), { force: true });
-  const [tsc, ...assets] = buildCommands({ nodeBin: node, tscBin: bin.tsc, tsBuildInfoFile: gate('tsc.tsbuildinfo') });
+  return phaseASpecs({ nodeBin: node, npmCmd: npm, tscBin: bin.tsc, eslintBin: bin.eslint, gateDir: GATE_DIR });
+}
+
+/**
+ * `--check` typecheck steps: the canonical native compiler on each tsconfig
+ * project, in parallel — `npm run typecheck`'s coverage at native speed.
+ */
+export function checkTypeSpecs({ nodeBin, tsgoBin }) {
   return [
-    { name: 'build', ...tsc, then: assets },
-    { name: 'typecheck-fast', cmd: npm, args: ['run', '--silent', 'typecheck:fast'] },
-    { name: 'typecheck-web', cmd: node, args: [bin.tsc, '--noEmit', '-p', 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', gate('tsc-web.tsbuildinfo')] },
-    { name: 'eslint', cmd: node, args: [bin.eslint, '--cache', '--cache-location', gate('eslintcache'), '.'] },
-    { name: 'realio-lane', cmd: npm, args: ['run', '--silent', 'lint:realio-lane'] },
-    { name: 'verse-sync-io', cmd: npm, args: ['run', '--silent', 'lint:verse-sync-io'] },
-    { name: 'docs', cmd: npm, args: ['run', '--silent', 'check:docs'] },
-    { name: 'test-names', cmd: node, args: ['scripts/check-test-names.mjs'] },
+    { name: 'typecheck', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'tsconfig.json'] },
+    { name: 'typecheck-web', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
   ];
 }
 
@@ -660,11 +685,11 @@ async function main() {
   };
 
   if (args.check) {
-    // Development feedback only: full release checks remain in gate. Each compiler
-    // owns its cache, and tests have isolated homes just as in the gate.
+    // Development feedback only: full release checks remain in gate. The native
+    // compiler covers both projects at `npm run typecheck` parity, and tests
+    // have isolated homes just as in the gate.
     const checkSteps = [
-      { name: 'typecheck', cmd: node, args: [bin.tsc, '--noEmit', '--incremental', '--tsBuildInfoFile', join(GATE_DIR, 'check-backend.tsbuildinfo'), '-p', 'tsconfig.json'] },
-      { name: 'typecheck-web', cmd: node, args: [bin.tsc, '--noEmit', '--incremental', '--tsBuildInfoFile', join(GATE_DIR, 'check-web.tsbuildinfo'), '-p', 'src/web-ui/tsconfig.json'] },
+      ...checkTypeSpecs({ nodeBin: node, tsgoBin: bin.tsgo }),
       { name: 'eslint', cmd: node, args: [bin.eslint, '--cache', '--cache-location', join(GATE_DIR, 'eslintcache'), '.'] },
     ];
     const workers = Math.max(1, Math.min(6, Math.floor(availableParallelism() / 3)));
@@ -684,7 +709,7 @@ async function main() {
     return ok ? 0 : 1;
   }
 
-  say('phase A: build, typecheck-fast, typecheck-web, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
+  say('phase A: build, typecheck-fast, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
   const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
   const buildFailed = phaseA.find((step) => step.name === 'build').status === 'fail';
   const phaseAFailed = phaseA.some((step) => step.status === 'fail');

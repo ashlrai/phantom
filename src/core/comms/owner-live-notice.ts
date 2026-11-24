@@ -12,6 +12,9 @@
  */
 import { OWNER_CHANNELS, type OwnerChannel } from './leader-mailbox.js';
 import type { OwnerAdapterStatus } from './owner-channel.js';
+import type { LeaderReply } from '../fleet/mason-outbox.js';
+import { sendLeaderReplyToPhone, type OwnerLiveReplyReport } from './owner-live-reply.js';
+import { readOwnerLiveStatus, type PhoneChannel } from './owner-live-status.js';
 import {
   readOwnerCommsStatus,
   readOwnerThread,
@@ -35,7 +38,10 @@ export interface OwnerLiveNoticePlan {
  * Pure plan over the recorded thread and adapter status. A channel earns one
  * notice when its adapter is enabled, the owner has written at least once on
  * it, and no outbound has landed there yet (an existing outbound means the
- * channel already proved itself live). Desktop is never planned.
+ * channel already proved itself live). "Landed" is the send paths' own
+ * evidence — the message's declared `fanout` destinations — so a local-only
+ * record filed under a channel without one never counts as proof the channel
+ * carried an outbound. Desktop is never planned.
  */
 export function planOwnerLiveNotices(
   messages: readonly OwnerThreadMessage[],
@@ -47,7 +53,7 @@ export function planOwnerLiveNotices(
     if (channel === 'desktop' || adapter.enabled !== true) continue;
     const inbound = messages.find(message => message.direction === 'inbound' && message.channel === channel);
     if (!inbound) continue;
-    if (messages.some(message => message.direction === 'outbound' && message.channel === channel)) continue;
+    if (messages.some(message => message.direction === 'outbound' && message.fanout?.includes(channel))) continue;
     plans.push({ channel, replyTo: inbound.idempotencyKey, idempotencyKey: `leader-live-${channel}` });
   }
   return plans;
@@ -59,6 +65,8 @@ export type OwnerLiveNoticeReason =
 export interface OwnerLiveNoticeSkip {
   channel: OwnerChannel;
   reason: OwnerLiveNoticeReason;
+  /** Plain words: why, and the one step that changes it. Ids and tokens never appear. */
+  detail?: string;
 }
 
 export interface OwnerLiveNoticeReport {
@@ -73,6 +81,8 @@ export interface OwnerLiveNoticeReport {
   failed: OwnerLiveNoticeSkip[];
   /** Channels never planned, with why. Carries no owner message text. */
   skipped: OwnerLiveNoticeSkip[];
+  /** The hourly newest-leader-reply send; absent when the caller passed no replies. */
+  reply?: OwnerLiveReplyReport;
 }
 
 /**
@@ -82,7 +92,7 @@ export interface OwnerLiveNoticeReport {
  */
 export async function sendOwnerLiveNotices(
   options: OwnerThreadOptions,
-  send: { apply: boolean },
+  send: { apply: boolean; replies?: readonly LeaderReply[] },
 ): Promise<OwnerLiveNoticeReport> {
   const status = readOwnerCommsStatus(options);
   const messages = readOwnerThread(options).messages;
@@ -106,14 +116,17 @@ export async function sendOwnerLiveNotices(
   const planned = new Set(plans.map(plan => plan.channel));
   const adapters = new Map(status.adapters.map(adapter => [adapter.id, adapter]));
   const skipped: OwnerLiveNoticeSkip[] = [];
+  const live = new Map(readOwnerLiveStatus(options.settings, { halted: status.kill, paused: status.paused }).channels.map(c => [c.channel as OwnerChannel, c]));
   for (const channel of OWNER_CHANNELS) {
     if (channel === 'desktop' || planned.has(channel)) continue;
     const adapter = adapters.get(channel);
     // A comms pause disables every adapter without flagging `halted`; report
     // both holds as 'halted' so the skip reason matches the report's `halted`.
     const held = adapter?.halted === true || status.paused;
+    const why = live.get(channel as PhoneChannel);
     skipped.push({
       channel,
+      ...(adapter?.enabled !== true && why ? { detail: why.nextStep ? `${why.reason} Next: ${why.nextStep}` : why.reason } : {}),
       reason: adapter?.enabled !== true
         ? (held ? 'halted' : 'disabled')
         : messages.some(message => message.direction === 'inbound' && message.channel === channel)
@@ -121,6 +134,8 @@ export async function sendOwnerLiveNotices(
           : 'no-inbound',
     });
   }
+  const reply = send.replies === undefined ? undefined
+    : await sendLeaderReplyToPhone(options, { apply: send.apply, replies: send.replies, halted: status.kill, paused: status.paused });
   return {
     v: 1,
     halted: status.kill || status.paused,
@@ -128,5 +143,6 @@ export async function sendOwnerLiveNotices(
     sent,
     failed,
     skipped,
+    ...(reply ? { reply } : {}),
   };
 }

@@ -10,8 +10,18 @@ and `readPeerInbox(session: PeerSession, after?: number, options?: PeerBusOption
 Requests contain exactly one of `toAgent` (callsign) or `channel` (C/G Slack ID),
 `kind: task|review|handoff|query|social`, `text` (1–12000 chars), optional `refs`
 (max 32), `threadId`, and `replyTo`. Directed tasks may carry optional `work`
-validated by `workPostBodySchema`; this becomes the authenticated bus body and
-uses the same audience, enrollment and rate gates. The bounded queue consumer
+validated by `workPostBodySchema` or `workStatusBodySchema`; this becomes the
+authenticated bus body and uses the same audience, enrollment and rate gates.
+Because the body joins the shared work-feed projection — which refuses its
+whole read on an unattributable provider, a duplicate job id, or a foreign
+owner's status — the send verifies the live feed first: a `work.post` proposal
+must name `provider` or resolve one through the sender callsign's registered
+identity runtime and its `jobId` must not already be announced; a `work.status`
+must name a job the feed shows and only its owner — by label or shared
+registered identity, the projection's own rule — may move it. An unreadable
+feed refuses the send (`work-provider-required`, `work-job-exists`,
+`work-job-unknown`, `work-status-not-owner`, `work-feed-<status>`). The bounded
+queue consumer
 and result contract are defined in [CONTRACT.md](../../CONTRACT.md#bounded-peer-work-dispatch-rq-agentnet-dispatch-1).
 The service derives sender, ID, origin and hops.
 The existing bus stores `{kind: "peer.message", peer: {fromAgent, toAgent|channel,

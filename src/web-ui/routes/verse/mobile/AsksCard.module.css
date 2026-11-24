@@ -6,4 +6,4 @@
 .choice { flex: 1 1 6rem; min-height: 3rem; }
 .input { flex: 1 1 8rem; min-height: 3rem; padding: 0 var(--space-4); font: inherit; border-radius: var(--radius-md, 0.5rem); }
 .result { margin: 0; font-weight: 600; }
-.error { margin: 0; color: var(--danger, #c0392b); }
+.error { margin: 0; color: var(--status-danger-fg); }

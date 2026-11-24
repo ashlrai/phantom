@@ -162,7 +162,7 @@ export function parseDiskHistory(text: string | null): HostDiskSample[] {
   return samples;
 }
 
-async function readLiveDiskSample(): Promise<HostDiskSample | null> {
+export async function readLiveDiskSample(): Promise<HostDiskSample | null> {
   try {
     const { bavail, bsize } = await statfs(homedir());
     if (!Number.isFinite(bavail) || !Number.isFinite(bsize) || bavail < 0 || bsize <= 0) return null;
@@ -199,7 +199,7 @@ export interface HostTopDeps {
   totalBytes?: number; selfPid?: number; now?: () => number;
 }
 
-const runRead = (file: string, args: string[]): Promise<string | null> => new Promise(resolve => {
+export const runRead = (file: string, args: string[]): Promise<string | null> => new Promise(resolve => {
   if (process.platform !== 'darwin') { resolve(null); return; }
   try {
     execFile(file, args, { timeout: 5000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } }, (error, stdout) => resolve(error ? null : stdout));
@@ -224,6 +224,6 @@ export async function readHostTopReport(deps: HostTopDeps = {}): Promise<HostTop
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention fleet-runs-api uses. */
-function defaultRunsDir(): string {
+export function defaultRunsDir(): string {
   return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 }

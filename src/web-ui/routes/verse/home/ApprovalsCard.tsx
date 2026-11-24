@@ -22,7 +22,7 @@ import styles from './approvals.module.css';
 export const APPROVALS_PATH = '/api/verse/agent-bus/needs-mason/approvals';
 export const APPROVALS_ANSWER_PATH = `${APPROVALS_PATH}/answer`;
 export const approvalAsksQuery: QueryDef<ApprovalsList> = { key: 'approval-asks', fetch: signal => apiGet(APPROVALS_PATH, signal) };
-const KIND: Record<Approval['kind'], string> = { approval: '', password: 'Password', '2fa': '2FA code', device: 'Device approval', payment: 'Payment', outreach: 'Message outside the team' };
+const KIND: Record<Approval['kind'], string> = { approval: '', password: 'Password', '2fa': '2FA code', device: 'Device approval', payment: 'Payment', outreach: 'Message outside the team', usage: 'Your usage number' };
 export const DECISIONS_EMPTY = 'Nothing needs you';
 
 const label = (option: string): string => option.charAt(0).toUpperCase() + option.slice(1);

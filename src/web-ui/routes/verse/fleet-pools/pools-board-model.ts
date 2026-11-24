@@ -4,21 +4,23 @@
  */
 import type { PoolRow, PoolScope, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 
-export type PoolFilter = 'all' | 'behind' | 'pace' | 'unknown';
+export type PoolFilter = 'all' | 'fast' | 'behind' | 'pace' | 'unknown';
 export type PoolGroup = Exclude<PoolFilter, 'all'>;
-export const poolGroup = (row: PoolRow): PoolGroup => row.wasteRisk === 'unknown' ? 'unknown' : row.wasteRisk === 'low' ? 'pace' : 'behind';
+/** `fast` is a pool that runs empty before its reset ("slow down"); `behind` would leave usage unused ("add work"). */
+export const poolGroup = (row: PoolRow): PoolGroup => row.verdict === 'slow down' ? 'fast' : row.wasteRisk === 'unknown' ? 'unknown' : row.wasteRisk === 'low' ? 'pace' : 'behind';
 
 export function poolCounts(pools: readonly PoolRow[]): Record<PoolFilter, number> {
-  const counts = { all: pools.length, behind: 0, pace: 0, unknown: 0 };
+  const counts = { all: pools.length, fast: 0, behind: 0, pace: 0, unknown: 0 };
   for (const row of pools) counts[poolGroup(row)] += 1;
   return counts;
 }
 
 export function poolsHeadline(pools: readonly PoolRow[]): string {
-  const { all, behind, unknown } = poolCounts(pools);
+  const { all, fast, behind, unknown } = poolCounts(pools);
   if (all === 0) return 'No resources reported.';
   if (unknown === all) return 'No current reading for any resource. Nothing here is known to be on pace.';
-  return `${behind === 0 ? 'Nothing is behind' : `${behind} behind`}${unknown ? `, ${unknown} unknown` : ''}.`;
+  const flagged = [fast ? `${fast} too fast` : '', behind ? `${behind} behind` : ''].filter(Boolean).join(', ');
+  return `${flagged || 'Nothing is behind'}${unknown ? `, ${unknown} unknown` : ''}.`;
 }
 
 /** A length of time in the two largest units that matter: "2 d 12 h", "5 h 30 min", "40 min". */
@@ -52,8 +54,33 @@ export function projectedEndPct(row: PoolRow): number | null {
   return row.usedPct === null || row.projectedUnusedPct === null ? null : Math.max(row.usedPct, Math.round((100 - row.projectedUnusedPct) * 10) / 10);
 }
 
+/** `dry`: empty early enough that the view says slow down. `unused`: resets with usage left. `even`: used up by its reset. */
+export type PoolBarEnding = 'unread' | 'unprojected' | 'dry' | 'unused' | 'even';
+export interface PoolBarShares {
+  /** Further share this burn uses by the reset, and the share left after it; null when nothing is projected. */
+  more: number | null;
+  unused: number | null;
+  ending: PoolBarEnding;
+  /** The bar read aloud. */
+  words: string;
+}
+
+/** A card's bar as shares of the window: the row's own usage, time elapsed and projected unused share, nothing derived beyond their difference. */
+export function poolBar(row: PoolRow): PoolBarShares {
+  if (row.usedPct === null) return { more: null, unused: null, ending: 'unread', words: 'usage unknown' };
+  const end = projectedEndPct(row);
+  const words = `${row.usedPct}% used${row.elapsedPct === null ? '' : `, ${row.elapsedPct}% of the window elapsed`}`;
+  if (end === null) return { more: null, unused: null, ending: 'unprojected', words };
+  const round = (value: number): number => Math.round(Math.max(0, Math.min(100, value)) * 10) / 10;
+  const unused = round(100 - end);
+  return {
+    more: round(end - row.usedPct), unused, ending: row.verdict === 'slow down' ? 'dry' : unused > 0 ? 'unused' : 'even',
+    words: `${words}, ${end}% by reset at this burn${unused > 0 ? `, ${unused}% left unused` : ''}`,
+  };
+}
+
 export const KIND_WORD: Readonly<Record<PoolRow['kind'], string>> = { subscription: 'weekly plan', credits: 'credit balance', unmetered: 'no usage window' };
-const BASIS_WORD: Readonly<Record<NonNullable<PoolRow['burnBasis']>, string>> = { reported: 'reported', 'window-average': 'average over the window', held: 'lane is held' };
+const BASIS_WORD: Readonly<Record<NonNullable<PoolRow['burnBasis']>, string>> = { reported: 'reported', 'least-squares': 'trend of recent readings', held: 'lane is held' };
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
 const pct = (value: number | null): string | null => value === null ? null : `${value}%`;
 
@@ -71,8 +98,9 @@ export function poolFacts(row: PoolRow, view: Pick<PoolsViewV1, 'generatedAt'>, 
     { label: 'Used', value: pct(row.usedPct) },
     { label: 'Left', value: pct(row.usedPct === null ? null : Math.round((100 - row.usedPct) * 10) / 10) },
     { label: 'Resets', value: until === null ? null : until > 0 ? `in ${span(until)}` : 'passed', note: row.resetAt === null || until === null ? undefined : localTime(row.resetAt) },
-    { label: 'Burn', value: row.burnPctPerHour === null ? null : `${row.burnPctPerHour}%/h`, note: row.burnBasis ? BASIS_WORD[row.burnBasis] : undefined },
+    { label: 'Burn', value: row.burnPctPerHour === null ? null : `${row.burnPctPerHour}%/h`, note: row.burnBasis ? `${BASIS_WORD[row.burnBasis]}${row.burnBasis === 'least-squares' ? `, ${row.burn.samples} readings over ${row.burn.window_h} h` : ''}` : undefined },
     { label: 'Unused at reset', value: pct(row.projectedUnusedPct) },
+    { label: 'Empty', value: row.projectedEmptyAt !== null ? localTime(row.projectedEmptyAt) : row.burnPctPerHour === null ? null : 'not before reset' },
     jobs,
     read,
   ];

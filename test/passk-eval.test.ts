@@ -9,6 +9,7 @@ import {
   derivePassKAlerts,
   laneScoresPath,
   loadLastPassKReport,
+  loadLatestPassKReport,
   loadPassKAlerts,
   materializeTaskWorkspace,
   parsePassKDataset,
@@ -260,6 +261,27 @@ describe('publish + alerts + lane-scores', () => {
     expect(journal.state).toBe('healthy');
     expect(journal.alerts).toHaveLength(regressed.alerts.length);
     expect(journal.alerts[0]!.report).toBe(regressed.id);
+  });
+
+  it('loadLatestPassKReport reads only the pointed-at report, never throwing', async () => {
+    const rootDir = tmp();
+    expect(loadLatestPassKReport({ rootDir })).toBeUndefined();
+    const first = await runGood();
+    publishPassKReport(first, { rootDir });
+    expect(loadLatestPassKReport({ rootDir })?.id).toBe(first.id);
+    // A second publish moves the pointer; the O(1) read follows it.
+    const second = await runPassKEval(parse([task]), lane(badRunner), { trials: 2, k: 2 });
+    publishPassKReport(second, { rootDir });
+    expect(loadLatestPassKReport({ rootDir })?.id).toBe(second.id);
+    // A corrupt pointer or a missing pointed-at report degrades to undefined.
+    writeFileSync(join(passkDir({ rootDir }), 'latest.json'), 'not json');
+    expect(loadLatestPassKReport({ rootDir })).toBeUndefined();
+    publishPassKReport(first, { rootDir });
+    rmSync(join(passkDir({ rootDir }), 'reports', `${first.id}.json`));
+    expect(loadLatestPassKReport({ rootDir })).toBeUndefined();
+    // A pointer id that could escape reports/ is refused.
+    writeFileSync(join(passkDir({ rootDir }), 'latest.json'), JSON.stringify({ schema: 'eval.passk.v1', id: '../x', generatedAt: 'x' }));
+    expect(loadLatestPassKReport({ rootDir })).toBeUndefined();
   });
 
   it('readLaneScores degrades, never throws, on corrupt state', () => {

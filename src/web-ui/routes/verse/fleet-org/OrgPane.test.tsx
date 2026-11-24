@@ -78,3 +78,46 @@ it('rebuilds the tree from the graph when the server sends a tree this build can
   expect(within(tree).getByRole('button', { name: 'Open job RQ-A' })).toBeInTheDocument();
   expect(within(tree).getByRole('button', { name: /^claude,/ })).toHaveTextContent('unknown of unknown running');
 });
+
+it('Machines row: one chip per computer with its free slots (two machines, one offline)', async () => {
+  const row = (name: string, o: Record<string, unknown>) => ({ name, isSelf: false, stateCode: 'ready', state: 'ready for work', freeMemoryBytes: 'unknown', cpuHeadroomPercent: 'unknown', lanes: ['claude'], jobsRunning: [], freeSlots: 2, ...o });
+  stub({ '/runtime-identity/nodes': { nodes: [row('mac-one', { isSelf: true }), row('mac-two', { stateCode: 'offline', state: 'offline since 10:42', freeSlots: 'unknown' })], reasons: [] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  const machines = within(await screen.findByRole('region', { name: 'Machines' }));
+  expect(await machines.findByText(/mac-one/)).toBeTruthy();
+  expect(machines.getAllByRole('listitem').map(li => li.textContent)).toEqual(['mac-one (this Mac) · 2 free', 'mac-two · offline']);
+});
+
+it('Machines row says "Only this Mac." with one computer', async () => {
+  stub({ '/runtime-identity/nodes': { nodes: [{ name: 'mac-one', isSelf: true, stateCode: 'ready', state: 'ready for work', freeSlots: 1 }], reasons: [] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  expect(await within(await screen.findByRole('region', { name: 'Machines' })).findByText('Only this Mac.')).toBeTruthy();
+});
+
+it('shows the Leader chip with the model and warns above 95%', async () => {
+  const state = (used: number) => ({ v: 1, timeline: [], actions: [], hitRate: {}, seat: { ok: true, line: 'x',
+    chip: { model: 'Opus 5.5', lane: 'claude', used_pct: used, reset_at: '2026-11-21T00:00:00Z', warn: used > 95 } } });
+  stub({ '/api/verse/leader': state(40), [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('Leader: Opus 5.5 on claude · 40% used');
+  expect(screen.getByRole('status', { name: 'Leader' })).not.toHaveTextContent('nearly full');
+  cleanup(); evictAll();
+  stub({ '/api/verse/leader': state(99), [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('plan nearly full, resets 2026-11-21T00:00:00Z');
+});
+
+it('shows the Leader chip as unknown when the leader read is down', async () => {
+  stub({ [MAP]: orgMap() });
+  render(<OrgPane {...props} />);
+  expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('Leader: unknown');
+});
+
+it('shows a Team row with each teammate and the pools they bring', async () => {
+  stub({ '/api/verse/team/people': { schema: 'phantom.team.v1', version: 1, team: 'default', orgState: 'absent', people: [
+    { id: 'person:sam', displayName: 'Sam', role: 'founder', identities: [], lanes: ['claude'], seats: ['sam-agent'], status: 'pending', poolSharePct: 30 }] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  const row = await screen.findByRole('region', { name: 'Team' });
+  expect(await within(row).findByText('Sam')).toBeInTheDocument();
+  expect(row).toHaveTextContent('pools: claude · 30% share');
+});

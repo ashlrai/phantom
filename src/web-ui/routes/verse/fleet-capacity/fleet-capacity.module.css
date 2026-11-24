@@ -1,22 +1,69 @@
-.pane { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: var(--space-4); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
-.header, .controls, .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.headline { flex: 1 1 12rem; margin: 0; color: var(--text-secondary); }
-.button { min-height: var(--control-h-sm); padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+/* The Capacity board: headline and window switch, fleet totals, one card per lane, the watched strip, worker counts. Cards sit side by side when the pane is wide and stack at 390 px. */
+.pane { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 72rem; margin: 0 auto; min-width: 0; padding: var(--space-4); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; }
+.header, .controls, .line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.heading { display: flex; flex: 1 1 14rem; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.big { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); line-height: 1.25; }
+.headline { margin: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.controls { gap: 0; }
+.button { min-height: var(--control-h-sm); padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard); }
+/* The window switch reads as one control: joined buttons, the chosen one filled. */
+.controls .button { border-radius: 0; }
+.controls .button + .button { margin-left: -1px; }
+.controls .button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.controls .button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .button:hover, .button[aria-pressed='true'] { background: var(--bg-hover); }
-.button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
-.section { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
-.title { margin: 0 0 var(--space-3); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
-.list, .gaps { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-.gaps { margin-top: var(--space-2); }
-.lane, .gaps, .headline { overflow-wrap: anywhere; }
-.line span { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.chart { display: block; width: 100%; height: 3rem; margin-top: var(--space-2); overflow: visible; }
+.button[aria-pressed='true'] { font-weight: var(--font-weight-semibold); }
+.button:focus-visible { position: relative; outline: none; box-shadow: var(--shadow-focus-ring); }
+.section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0; color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.gaps { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.lane { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); }
+/* A lane that waited with work queued carries a warning edge; the Stalled reading says how long. */
+.lane[data-tone='warning'] { border-color: var(--status-warning-solid); }
+.line strong { min-width: 0; font-size: var(--text-sm-size); }
+.figureValue { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.figureValue b { color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.figure { margin: 0; min-width: 0; }
+.plot { position: relative; }
+.chart { display: block; width: 100%; height: 3.5rem; overflow: visible; }
+/* The sample being read: a rule down every chart at the same moment and a ring on this chart's running count. They glide
+   between samples so the eye can follow a step; the motion tokens drop to nothing when reduced motion is asked for. */
+.rule, .ring { position: absolute; pointer-events: none; transition: left var(--duration-instant) var(--ease-standard), bottom var(--duration-instant) var(--ease-standard); }
+.rule { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; background: var(--text-primary); opacity: .7; }
+.ring { width: 9px; height: 9px; margin: 0 0 -4.5px -4.5px; border: 2px solid var(--data-seq-4); border-radius: var(--radius-full); background: var(--bg-surface); }
+/* Takes the pointer and the keyboard for the whole plot. Vertical swipes still scroll the board on a touch screen. */
+.scrub { position: absolute; inset: 0; border-radius: var(--radius-sm); cursor: crosshair; touch-action: pan-y; }
+.scrub:focus { outline: none; }
+.scrub:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .running, .target { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .running { stroke: var(--data-seq-4); }
+.area { fill: var(--data-seq-4); opacity: .14; }
 .target { stroke: var(--text-secondary); stroke-dasharray: 4 3; }
 .dot { fill: var(--data-seq-4); }
 .paused { fill: var(--text-tertiary); opacity: .12; }
 .held { fill: var(--status-unknown-solid); opacity: .2; }
+.axis { display: flex; justify-content: space-between; gap: var(--space-2); margin: var(--space-1) 0 0; color: var(--text-tertiary); font-size: var(--text-2xs-size); font-variant-numeric: tabular-nums; }
+.axis span { text-align: center; }
+/* A sample's own line under its chart: when it was taken, then what the chart held. Same height as the scale it replaces. */
+.axis[data-reading] { color: var(--text-primary); }
+.axis[data-reading] time { color: var(--text-secondary); white-space: nowrap; }
+.axis[data-reading] span { text-align: right; font-weight: var(--font-weight-medium); }
+.moment { margin: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.moment time { margin-right: var(--space-1); color: var(--text-secondary); }
+/* Labelled readings: as many columns as fit, a small label over its value and, under it, what the value counts. */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
+.fact { display: flex; flex-direction: column; min-width: 0; }
+.fact dt { color: var(--text-secondary); font-size: var(--text-2xs-size); }
+.fact dd { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-medium); font-variant-numeric: tabular-nums; }
+.fact[data-tone='warning'] dd { color: var(--status-warning-fg); }
+.fact dd.note { color: var(--text-secondary); font-size: var(--text-2xs-size); font-weight: var(--font-weight-regular); }
+/* The window as one strip. Empty track is time nobody sampled, so it is hatched like every other unknown. */
+.strip { position: relative; height: 10px; border-radius: var(--radius-full); background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 6px); overflow: hidden; }
+.watched, .gap { position: absolute; top: 0; bottom: 0; min-width: 2px; }
+.watched { background: var(--data-seq-4); }
+.gap { background: var(--status-warning-solid); }
+.stripRule { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text-primary); pointer-events: none; }
 .muted { margin: 0; color: var(--text-tertiary); }
 .stall { margin: 0; color: var(--status-warning-fg); }
 .truth { margin: 0; color: var(--text-tertiary); }
@@ -27,3 +74,4 @@
 .laneButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
 .laneButton:hover { text-decoration: underline; }
 .laneButton:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+@media (prefers-reduced-motion: reduce) { .button { transition: none; } }

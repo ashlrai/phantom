@@ -28,43 +28,35 @@ const FIXTURE = [
   lane('behind-later', { usedPct: 20, resetAt: at(48), burnPctPerHour: 0.5 }),
   lane('expired', { usedPct: 90, resetAt: at(-3) }),
   lane('behind-sooner', { usedPct: 20, resetAt: at(24), burnPctPerHour: 0.5 }),
-  lane('average', { usedPct: 40, resetAt: at(84) }),
+  lane('average', { usedPct: 40, resetAt: at(84), burnPctPerHour: 0.4 }),
   lane('devin', { window: 'credits', usedPct: null, creditsRemaining: 120, resetAt: null }),
 ];
 
 describe('buildPoolsView', () => {
-  it('calculates the window average from unrounded usage', () => {
-    expect(one(lane('small', { usedPct: 0.04, resetAt: at(167.9) }, 0))).toMatchObject({
-      usedPct: 0, burnPctPerHour: 0.4, projectedUnusedPct: 32.8, wasteRisk: 'medium',
-    });
-  });
-
   it('uses unrounded reported burn and usage for the projection and risk', () => {
     expect(one(lane('reported', { usedPct: 20.049, resetAt: at(24), burnPctPerHour: 0.5005 }))).toMatchObject({
       usedPct: 20, burnPctPerHour: 0.5, projectedUnusedPct: 67.9,
     });
     expect(one(lane('threshold', { usedPct: 85.04, held: true }))).toMatchObject({
-      projectedUnusedPct: 15, wasteRisk: 'low', summary: 'on pace',
+      projectedUnusedPct: 15, wasteRisk: 'low', summary: 'Threshold: on pace',
     });
-    expect(one(lane('almost-used', { usedPct: 99.96, held: true })).summary).toBe('on pace');
+    expect(one(lane('almost-used', { usedPct: 99.96, held: true })).summary).toBe('Almost used: on pace');
   });
 
-  it('anchors the fallback burn and projection to the captured observation, not the request', () => {
+  it('never falls back to the window average: with no readings and no reported burn it says so', () => {
     const data = ledger(lane('average', { usedPct: 40, resetAt: at(84) }, 0));
-    const first = buildPoolsView(data, NOW).pools[0]!;
-    const later = buildPoolsView(data, NOW + 30 * 60_000).pools[0]!;
-    expect(first).toMatchObject({ burnPctPerHour: 0.48, projectedUnusedPct: 20 });
-    expect(later.burnPctPerHour).toBe(first.burnPctPerHour);
-    expect(later.projectedUnusedPct).toBe(first.projectedUnusedPct);
-    expect(later.hoursLeft).toBe(83.5);
-    expect(buildPoolsView(data, NOW + 61 * 60_000).pools[0]!.wasteRisk).toBe('unknown');
+    expect(buildPoolsView(data, NOW).pools[0]!).toMatchObject({
+      burnPctPerHour: null, burnBasis: null, projectedUnusedPct: null, projectedEmptyAt: null, wasteRisk: 'unknown',
+      verdict: 'not enough readings', summary: 'Average: not enough readings (1 of 3 in the last 6 h)',
+      burn: { samples: 1, window_h: 0, method: 'least-squares-6h' },
+    });
   });
 
   it('reports an on-pace pool with every field measured', () => {
     expect(one(FIXTURE[1]!)).toEqual({
-      id: 'on-pace', kind: 'subscription', usedPct: 60, resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
-      burnBasis: 'reported', projectedUnusedPct: 0, wasteRisk: 'low', creditsRemaining: null, held: false,
-      running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'on pace',
+      id: 'on-pace', kind: 'subscription', usedPct: 60, state: 'measured', resetAt: at(60), hoursLeft: 60, elapsedPct: 64.3, burnPctPerHour: 0.7,
+      burnBasis: 'reported', burn: { samples: 1, window_h: 0, method: 'reported' }, projectedUnusedPct: 0, projectedEmptyAt: at(60 + 0) === '' ? null : expect.any(String), verdict: 'on pace', wasteRisk: 'low', creditsRemaining: null, held: false,
+      running: 1, target: 2, source: 'claude-native-usage', scopes: [], asOf: at(-0.1), reason: null, summary: 'On pace: on pace',
     });
   });
 
@@ -82,27 +74,43 @@ describe('buildPoolsView', () => {
   });
 
   it('says how much a behind pool would leave unused', () => {
-    expect(one(FIXTURE[5]!)).toMatchObject({ projectedUnusedPct: 68, wasteRisk: 'high', summary: 'behind: 68% would go unused', reason: null });
-  });
-
-  it('falls back to the window average when the ledger reports no burn, and says so', () => {
-    expect(one(FIXTURE[6]!)).toMatchObject({ burnPctPerHour: 0.48, burnBasis: 'window-average', projectedUnusedPct: 19.9, wasteRisk: 'medium', summary: 'behind: 20% would go unused' });
+    expect(one(FIXTURE[5]!)).toMatchObject({ projectedUnusedPct: 68, wasteRisk: 'high', verdict: 'add work', summary: 'Behind sooner: 68% will go unused: add work', reason: null });
   });
 
   it('treats a held lane as spending nothing', () => {
-    expect(one(lane('held', { held: true, usedPct: 30, burnPctPerHour: 2 }))).toMatchObject({ burnPctPerHour: 0, burnBasis: 'held', projectedUnusedPct: 70, wasteRisk: 'high', summary: 'behind: 70% would go unused (lane is held)' });
-    expect(one(lane('spent', { held: true, usedPct: 100 }))).toMatchObject({ wasteRisk: 'low', summary: 'fully used' });
+    expect(one(lane('held', { held: true, usedPct: 30, burnPctPerHour: 2 }))).toMatchObject({ burnPctPerHour: 0, burnBasis: 'held', projectedUnusedPct: 70, wasteRisk: 'high', summary: 'Held: 70% will go unused: add work (lane is held)' });
+    expect(one(lane('spent', { held: true, usedPct: 100 }))).toMatchObject({ wasteRisk: 'low', summary: 'Spent: fully used' });
   });
 
   it('shows an expired window as unknown, never as the old percentage', () => {
     expect(one(FIXTURE[4]!)).toMatchObject({ usedPct: null, hoursLeft: null, projectedUnusedPct: null, wasteRisk: 'unknown',
-      reason: `window reset at ${at(-3)}; no reading for the new window`, summary: `unknown: window reset at ${at(-3)}; no reading for the new window` });
+      reason: `window reset at ${at(-3)}; no reading for the new window`, summary: `Expired: unknown: window reset at ${at(-3)}; no reading for the new window` });
+  });
+
+  it('counts a pool whose reset passed after its reading as refilled, not exhausted', () => {
+    const row = buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW).pools[0]!;
+    expect(row).toMatchObject({ state: 'refilled', usedPct: 0, verdict: 'add work', hoursLeft: 167, reason: 'reset passed; treating as refilled until the next sensor reading' });
+    expect(row.resetAt).toBe(at(167));
+    expect(row.summary).toMatch(/^Claude: refilled at .*, waiting for first reading$/);
+    expect(formatPoolsText({ ...buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW) })).toContain('waiting for first reading');
+    expect(row.summary).not.toMatch(/ask|Mason/i);
+  });
+
+  it('lets a newer sensor reading replace the refill assumption', () => {
+    const samples = [{ pool: 'claude', used_pct: 5, observed_at: at(-0.2), reset_at: at(167) }];
+    const view = buildPoolsView(ledger(lane('claude', { usedPct: 100, resetAt: at(-1) }, -2.5)), NOW, samples);
+    expect(view.pools[0]).toMatchObject({ state: 'measured', usedPct: 5, asOf: at(-0.2), resetAt: at(167) });
+  });
+
+  it('marks a normal reading measured and an unreadable one unknown', () => {
+    expect(one(lane('ok'))).toMatchObject({ state: 'measured', usedPct: 50 });
+    expect(one(lane('none', { usedPct: null }))).toMatchObject({ state: 'unknown' });
   });
 
   it('shows a stale reading as unknown with the time of the last reading', () => {
-    expect(one(FIXTURE[2]!)).toMatchObject({ usedPct: null, wasteRisk: 'unknown', asOf: at(-2), summary: `unknown: no reading since ${at(-2)}` });
+    expect(one(FIXTURE[2]!)).toMatchObject({ usedPct: null, wasteRisk: 'unknown', asOf: at(-2), summary: `Stale: unknown: no reading since ${at(-2)}` });
     const edge = -POOLS_STALE_AFTER_MINUTES / 60;
-    expect(one(lane('edge', {}, edge)).wasteRisk).not.toBe('unknown');
+    expect(one(lane('edge', { burnPctPerHour: 0.5 }, edge)).wasteRisk).not.toBe('unknown');
   });
 
   it('shows missing readings, capture times, reset times and percentages as unknown with a reason', () => {
@@ -114,7 +122,7 @@ describe('buildPoolsView', () => {
     expect(one(lane('local', { window: 'none', usedPct: null, resetAt: null }))).toMatchObject({ kind: 'unmetered', reason: 'no usage window reported' });
     for (const row of buildPoolsView(ledger(...FIXTURE), NOW).pools) {
       if (row.wasteRisk === 'unknown') expect(row.projectedUnusedPct).toBeNull();
-      expect(row.summary.startsWith('unknown: ')).toBe(row.wasteRisk === 'unknown');
+      expect(['unknown', 'not enough readings'].includes(row.verdict)).toBe(row.wasteRisk === 'unknown');
     }
   });
 
@@ -150,10 +158,10 @@ describe('buildPoolsView', () => {
   it('prints the same rows in the same order as text', () => {
     const text = formatPoolsText(buildPoolsView(ledger(...FIXTURE), NOW)).split('\n');
     expect(text[0]).toBe(`Pools as of ${at(0)} (most at risk of waste first)`);
-    expect(text[1]).toBe('behind-sooner: behind: 68% would go unused');
-    expect(text[2]).toBe(`  risk high; used 20%; resets ${at(24)} (24h left); burn 0.5%/h (reported); unused at reset 68%; as of ${at(-0.1)}`);
-    expect(text).toContain('missing: unknown: no reading');
-    expect(text).toContain(`  risk unknown; used unknown; resets ${at(84)} (unknown left); burn unknown; unused at reset unknown; as of ${at(-0.1)}`);
+    expect(text[1]).toBe('Behind sooner: 68% will go unused: add work');
+    expect(text[2]).toBe(`  risk high; used 20%; resets ${at(24)} (24h left); burn 0.5%/h (reported); unused at reset 68%; empty not before reset; as of ${at(-0.1)}`);
+    expect(text).toContain('Missing: unknown: no reading');
+    expect(text).toContain(`  risk unknown; used unknown; resets ${at(84)} (unknown left); burn unknown; unused at reset unknown; empty unknown; as of ${at(-0.1)}`);
     expect(formatPoolsText(buildPoolsView(ledger(), NOW))).toContain('No resources reported.');
   });
 });
@@ -192,7 +200,7 @@ describe('pools over a runs directory', () => {
     expect(json).toMatchObject({ schema: 'pools.v1', pools: [{ id: 'codex-cmp', wasteRisk: 'high', projectedUnusedPct: 68, asOf: at(0) }] });
     expect(json.gaps).toHaveLength(1);
     expect(await cmdPools(['--text'])).toBe(0);
-    expect(String(out.mock.calls[1]![0])).toMatch(/^Pools as of 2026-11-17T12:00:00.000Z .*\ncodex-cmp: behind: 68% would go unused/);
+    expect(String(out.mock.calls[1]![0])).toMatch(/^Pools as of 2026-11-17T12:00:00.000Z .*\nCodex cmp: 68% will go unused: add work/);
     expect(await cmdPools(['--help'])).toBe(0);
     expect(String(out.mock.calls[2]![0])).toContain('Usage: phm pools [--text]');
     expect(await cmdPools(['--watch'])).toBe(2);

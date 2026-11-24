@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fleetOrgGroups, UNASSIGNED_GROUP } from '../src/core/fleet/org-groups.js';
+import { fleetOrgGroups, GUARDIAN_GROUP, LOOPS_GROUP, UNASSIGNED_GROUP } from '../src/core/fleet/org-groups.js';
 import type { FleetLiveMap, LiveMapEdge, LiveMapNode } from '../src/core/fleet/live-map.js';
 import { cmdFleetOrg, formatOrgGroupsText } from '../src/cli/fleet-org.js';
 import { createFleetOrgGroupsApi } from '../src/core/verse/fleet-org-groups-api.js';
@@ -29,14 +29,34 @@ describe('fleetOrgGroups', () => {
     expect(tree.duplicates).toEqual([]);
   });
 
-  it('puts a node with no known parent under "unassigned" instead of dropping it', () => {
+  it('puts a node with no known parent under "Other" instead of dropping it', () => {
     const tree = fleetOrgGroups(map(
       [node('leader', 'leader'), node('lane', 'lane:a'), node('job', 'job:orphan'), node('job', 'job:lost'), node('job', 'job:loop1'), node('job', 'job:loop2')],
       [reports('lane:a', 'leader'), reports('job:lost', 'lane:missing'), reports('job:loop1', 'job:loop2'), reports('job:loop2', 'job:loop1')]));
-    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'unassigned', parent: 'leader',
+    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'Other', parent: 'leader',
       children: ['job:orphan', 'job:lost', 'job:loop1', 'job:loop2'] });
     expect(get(tree, 'job:orphan').parent).toBe(UNASSIGNED_GROUP);
     expect(get(tree, UNASSIGNED_GROUP).counts.running).toBe(4);
+  });
+
+  it('places a leader, 2 lanes, 3 workers and 1 orphan, with the guardian and loops as their own branches', () => {
+    const tree = fleetOrgGroups({ ...map(
+      [node('leader', 'leader'), node('lane', 'lane:a'), node('lane', 'lane:b', 'idle'), node('job', 'job:1'), node('job', 'job:2'), node('job', 'job:3', 'queued'), node('job', 'job:orphan')],
+      [reports('lane:a', 'leader'), reports('lane:b', 'leader'), reports('job:1', 'lane:a'), reports('job:2', 'lane:a'), reports('job:3', 'lane:b')]),
+    planners: [{ id: 'executor', label: 'Executor', state: 'running', doing: 'Active' }, { id: 'guardian', label: 'Main guardian', state: 'idle', doing: 'Quiet' },
+      { id: 'comms', label: 'Comms', state: 'unknown', doing: 'Unknown' }] });
+    expect(tree.nodes.map(row => [row.id, row.parent])).toEqual([
+      ['leader', null], ['lane:a', 'leader'], ['job:1', 'lane:a'], ['job:2', 'lane:a'], ['lane:b', 'leader'], ['job:3', 'lane:b'],
+      [GUARDIAN_GROUP, 'leader'], ['planner:guardian', GUARDIAN_GROUP], [LOOPS_GROUP, 'leader'], ['planner:executor', LOOPS_GROUP], ['planner:comms', LOOPS_GROUP],
+      [UNASSIGNED_GROUP, 'leader'], ['job:orphan', UNASSIGNED_GROUP]]);
+    expect(get(tree, GUARDIAN_GROUP)).toMatchObject({ role: 'group', label: 'Guardian', counts: { idle: 1, running: 0 } });
+    expect(get(tree, LOOPS_GROUP).counts).toEqual({ running: 1, queued: 0, idle: 0, unknown: 1 });
+    expect(get(tree, 'planner:guardian')).toMatchObject({ role: 'planner', status: 'idle' });
+    // The leader and the headline count jobs only.
+    expect(get(tree, 'leader').counts).toEqual({ running: 3, queued: 1, idle: 0, unknown: 0 });
+    expect(tree.headline.running).toBe(3);
+    // Without planners from the server there are no extra branches.
+    expect(fleetOrgGroups(map([node('leader', 'leader')])).nodes.map(row => row.id)).toEqual(['leader']);
   });
 
   it('keeps a parent with no children as its own leaf, and omits the group when nothing is unassigned', () => {
@@ -62,6 +82,22 @@ describe('fleetOrgGroups', () => {
   });
 });
 
+describe('headline', () => {
+  const fleet = (jobs: LiveMapNode[], lanes: Partial<LiveMapNode>[]) => fleetOrgGroups(map(
+    [node('leader', 'leader'), ...lanes.map((extra, i) => ({ ...node('lane', `lane:${i}`, 'idle'), ...extra })), ...jobs, node('resource', 'resource:1', 'available')].map(row => row.id === 'resource:1' ? { ...row, usedPct: 70 } : row),
+    [...lanes.map((_, i) => reports(`lane:${i}`, 'leader')), ...jobs.map(job => reports(job.id, 'lane:0'))])).headline;
+  it('counts running and stuck jobs and sums merges per hour over lanes that reported', () => {
+    expect(fleet([node('job', 'job:a'), { ...node('job', 'job:b'), live: false }, { ...node('job', 'job:c', 'queued'), live: false }], [{ mergedPerHour: 3 }, { mergedPerHour: 11.4 }, {}]))
+      .toEqual({ running: 2, queued: 1, stuck: 1, mergedLastHour: 14, text: '2 running, 1 stuck, 14 merged in the last hour' });
+  });
+  it('says "Nothing running." when idle, and gives each lane its usage or null', () => {
+    expect(fleet([], [{ mergedPerHour: 0 }]).text).toBe('Nothing running.');
+    const tree = fleetOrgGroups(map([node('leader', 'leader'), node('lane', 'lane:1', 'idle'), node('lane', 'lane:2', 'idle'), { ...node('resource', 'resource:1', 'available'), usedPct: 70 }],
+      [reports('lane:1', 'leader'), reports('lane:2', 'leader')]));
+    expect([get(tree, 'lane:1').usedPct, get(tree, 'lane:2').usedPct]).toEqual([70, null]);
+  });
+});
+
 describe('phm fleet org', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   const tree = fleetOrgGroups(map([node('leader', 'leader', 'unknown', 'Leader'), node('lane', 'lane:a', 'running', 'alpha'), node('job', 'job:1')],
@@ -76,9 +112,12 @@ describe('phm fleet org', () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetOrg(['--json'], async () => tree)).toBe(0);
     const body = JSON.parse(String(out.mock.calls[0]![0]));
-    expect(Object.keys(body)).toEqual(['schema', 'generatedAt', 'root', 'nodes', 'duplicates']);
+    expect(Object.keys(body)).toEqual(['schema', 'generatedAt', 'root', 'nodes', 'duplicates', 'headline']);
     expect(body.schema).toBe('fleet.org-groups.v1');
-    expect(Object.keys(body.nodes[1])).toEqual(['id', 'role', 'label', 'parent', 'children', 'counts']);
+    expect(Object.keys(body.nodes[1])).toEqual(['id', 'role', 'label', 'parent', 'children', 'counts', 'status', 'mergedPerHour', 'usedPct']);
+    expect(Object.keys(body.headline)).toEqual(['running', 'queued', 'stuck', 'mergedLastHour', 'text']);
+    expect(body.headline).toEqual({ running: 1, queued: 0, stuck: 0, mergedLastHour: null, text: '1 running, 0 stuck, merged unknown' });
+    expect(body.nodes[1].usedPct).toBeNull();
     expect(Object.keys(body.nodes[1].counts)).toEqual(['running', 'queued', 'idle', 'unknown']);
   });
 
@@ -87,7 +126,8 @@ describe('phm fleet org', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdFleetOrg([], async () => tree)).toBe(0);
     expect(String(out.mock.calls[0]![0])).toBe(formatOrgGroupsText(tree));
-    expect(String(out.mock.calls[0]![0]).split('\n')[1]).toBe('  alpha (lane): 1 running, 0 queued, 0 idle, 0 unknown');
+    expect(String(out.mock.calls[0]![0]).split('\n')[0]).toBe('1 running, 0 stuck, merged unknown');
+    expect(String(out.mock.calls[0]![0]).split('\n')[2]).toBe('  alpha (lane): 1 running, 0 queued, 0 idle, 0 unknown');
     expect(await cmdFleetOrg(['--nope'], async () => tree)).toBe(2);
     expect(err).toHaveBeenCalled();
     expect(await cmdFleetOrg(['--help'], async () => tree)).toBe(0);

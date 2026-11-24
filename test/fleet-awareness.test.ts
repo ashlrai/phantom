@@ -37,9 +37,9 @@ test('pool dispatch prefers measured free slots and shares one host budget acros
   const node = f.state.nodes[0]!;
   expect(f.run('pull', ['--node', node.nodeId, '--session', String(node.session)]).pulled).toBe(true);
   const report = projectFleetAwareness(f.state, f.now(), { schema: 'dispatchd.status.v1', last_tick: new Date(f.now()).toISOString(), paused: null,
-    lanes: { codex: { running: 2, target: 5, floor: 1, queued: 6, held: false } } });
+    lanes: { codex: { running: 2, target: 5, effective_target: 4, floor: 1, queued: 6, held: false } } });
   expect(report.hosts.find(h => h.hostId === 'mbp')).toMatchObject({ slots: 3, running: 1, freeSlots: 2 });
-  expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, floor: 1, queued: 6, available: 3 });
+  expect(report.lanes[0]).toMatchObject({ running: 2, target: 5, effectiveTarget: 4, floor: 1, queued: 6, available: 2 });
   expect(report.queue).toEqual({ nodePending: 5, laneQueued: 6 });
   expect(f.plan().filter(r => r.nodeId)).toHaveLength(3);
 });
@@ -94,6 +94,23 @@ test('accepted witness boundaries weight observed latency and discard expired or
   expect(projectFleetAwareness(f.state, f.now()).hosts.map(h => h.latency.medianMs)).toEqual([4000, 1000]);
   delete f.state.jobs[1]!.startedAt; expect(projectFleetAwareness(f.state, f.now()).hosts[1]!.latency.medianMs).toBeNull();
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
+});
+
+test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'mac', slots: 4 });
+  f.enqueue('fenced');
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  expect(nodes.pull(worker)!.claim.jobId).toBe('fenced');
+  f.advance(31_000); // claim, node and leader leases all lapse
+  expect(f.run('withdraw', ['--job', 'fenced'])).toMatchObject({ state: 'withdrawn' });
+  const rejoined = f.add('worker', { hostId: 'mac', slots: 4 });
+  f.enqueue('real');
+  const second = nodes.pull(rejoined)!;
+  f.advance(2000);
+  expect(nodes.complete(second.claim, 'result:real')).toBe(true);
+  const host = projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac')!;
+  expect(host.latency).toEqual({ samples: 1, medianMs: 2000, windowMs: 86_400_000 });
 });
 
 test('capacity cannot bypass owner/capability/auth fences and status stays scoped', () => {

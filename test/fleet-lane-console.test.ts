@@ -19,7 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import * as http from 'node:http';
 
 import {
@@ -144,6 +144,58 @@ describe('parseReadyTsv', () => {
     expect(rows.every(r => r.status !== 'READY')).toBe(true);
   });
 
+  it('counts lane-open dispatcher rows as unhinted instead of guessing a lane', () => {
+    // An empty lane cell is the market's open hint (work_market.requirements
+    // maps fields[2] or None). The generic positional reader used to steal
+    // these rows and surface the repo name as a lane — or drop owner/name
+    // repos outright. The requirements' preferred_lane is the only honest
+    // lane left; a row naming none is lane-open work, counted as unhinted.
+    // Rows the market itself rejects — an invalid preferred_lane or an
+    // invalid spec-less lane cell — are invalid_requirements: dropped dead
+    // work, never open supply.
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
+      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
+      'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
+      'RQ-OPEN-E\tphantom\tnot a lane!\twork\tprompts/e.md',
+    ].join('\n'));
+    expect(dropped).toBe(2);
+    expect(invalid).toBe(2);
+    expect(unhinted).toBe(2);
+    // Lane-open rows keep their validated id and repo for supply counts; the
+    // row that resolved a preferred_lane and the invalid rows are not among them.
+    expect(unhintedRows).toEqual([
+      { id: 'RQ-OPEN-A', repo: 'phantom' },
+      { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
+    expect(rows.map(r => r.pool)).not.toContain('phantom');
+    expect(rows.map(r => r.pool)).not.toContain('ashlrai/phantom');
+  });
+
+  it('resolves the requirements preferred_lane ahead of the lane cell like the market', () => {
+    // work_market.requirements setdefaults preferred_lane from the lane cell
+    // only when the spec does not name one: restock's sixth column is
+    // authoritative, explicit null reopens the row to any lane, and a spec
+    // without the key leaves the legacy lane-cell hint in place.
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-SPEC-A\tphantom\tdevin\twork\tprompts/a.md\t{"preferred_lane":"claude"}',
+      'RQ-SPEC-B\tphantom\tdevin\twork\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-SPEC-C\tphantom\tdevin\twork\tprompts/c.md\t{"needs":["git"]}',
+      'RQ-SPEC-D\tphantom\tdevin\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
+      'RQ-SPEC-E\tphantom\tdevin\twork\tprompts/e.md\tnot json',
+    ].join('\n'));
+    expect(dropped).toBe(2);
+    expect(invalid).toBe(2);
+    expect(unhinted).toBe(1);
+    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom' }]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
+  });
+
   it('keeps generic positional rows on the generic contract', () => {
     // A row whose third cell is not a queue tier stays on the generic
     // id/pool/tier/repo/title reading — the dialect never steals it.
@@ -206,6 +258,12 @@ describe('parseJobsJsonl', () => {
     expect(events).toHaveLength(5);
     expect(events.map(e => e.merge)).toEqual([true, false, true, true, true]);
     expect(events[2]!.pool).toBeNull(); // pool unresolved here — the snapshot layer maps it
+  });
+  it('reads the job_id spelling from the jobs-ledger dialect', () => {
+    const { events, dropped } = parseJobsJsonl('{"job_id":"RQ-9","pool":"devin","to":"LAND","at":"2026-10-28T01:40:00Z"}');
+    expect(dropped).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ job: 'RQ-9', merge: true });
   });
 });
 
@@ -348,6 +406,32 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(JSON.stringify(snapshot)).not.toContain(scratch);
   });
 
+  it('attaches injected emptyNotes to lane health tooltips', async () => {
+    const seen: Array<readonly [string, number]> = [];
+    const snapshot = await getFleetLaneSnapshot({
+      ...fixtureOptions,
+      emptyNotes: async (runsDir, nowMs) => {
+        seen.push([runsDir, nowMs]);
+        return new Map([['devin', 'top empty reason: timeout (2 of 3 empty jobs)']]);
+      },
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('devin')!.health?.emptyNote).toBe('top empty reason: timeout (2 of 3 empty jobs)');
+    expect(byLane.get('grok-ultra')!.health?.emptyNote).toBeUndefined();
+    expect(seen).toEqual([[dirname(FIXTURE_QUEUE), ANCHOR.getTime()]]);
+  });
+
+  it('leaves emptyNote absent without a provider and survives a throwing one', async () => {
+    const bare = await getFleetLaneSnapshot(fixtureOptions);
+    expect(bare.lanes.every(l => l.health?.emptyNote === undefined)).toBe(true);
+    const broken = await getFleetLaneSnapshot({
+      ...fixtureOptions,
+      emptyNotes: async () => { throw new Error('provider exploded'); },
+    });
+    expect(broken.lanes.every(l => l.health?.emptyNote === undefined)).toBe(true);
+    expect(broken.schema).toBe('fleet.lanes.v1');
+  });
+
   it('degrades cleanly when the queue directory does not exist', async () => {
     const snapshot = await getFleetLaneSnapshot({
       queueDir: join(scratch, 'no-such-queue'),
@@ -414,6 +498,27 @@ describe('getFleetLaneSnapshot (fixture)', () => {
     expect(byLane.has('weyv')).toBe(false);
     // Parked rows (PARKED-DEP.* encodings) are not READY queue depth.
     expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 5, dropped: 0 });
+    expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
+  });
+
+  it('surfaces lane-open ready.tsv rows as unhinted, never as a lane', async () => {
+    const dir = join(scratch, 'queue');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'ready.tsv'), [
+      'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
+      'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
+      'RQ-LANED\tphantom\tdevin\twork\t/Users/x/prompts/d.md',
+    ].join('\n'));
+    const snapshot = await getFleetLaneSnapshot({
+      queueDir: dir, budgetsDir: join(scratch, 'budgets'), usageLogPaths: [], now: () => ANCHOR,
+    });
+    const byLane = new Map(snapshot.lanes.map(l => [l.lane, l]));
+    expect(byLane.get('claude')!.queueDepth).toBe(1);  // declared preferred_lane is the honest lane
+    expect(byLane.get('devin')!.queueDepth).toBe(1);
+    expect(byLane.has('phantom')).toBe(false);         // repo name, not a lane
+    expect(snapshot.sources.queue).toMatchObject({ state: 'healthy', rows: 2, dropped: 0, unhinted: 2 });
+    expect(snapshot.starved.open_rows).toBe(2);
     expect(JSON.stringify(snapshot)).not.toContain('/Users/x/prompts');
   });
 

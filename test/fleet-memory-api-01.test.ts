@@ -82,3 +82,24 @@ describe('fleet memory read route', () => {
     expect(result.body.memory.engine_admission).toMatchObject({ gated: true, allowed: true, pressure_level: 1, free_pct: 61 });
   });
 });
+
+
+it('serves the same typed yield as the CLI, with unknown reads and exact GET-only routing', async () => {
+  const { cmdFleetYield } = await import('../src/cli/fleet-yield.js');
+  const lines = [JSON.stringify({ event: 'launch', job: 'RQ-PHX-SCRIPTSLAND793B', ts: new Date(NOW - 1000).toISOString() }),
+    JSON.stringify({ event: 'finish', job: 'RQ-PHX-SCRIPTSLAND793B', empty: true, tokens_total: 1500000 })];
+  const readYieldLines = vi.fn(async (_path: string, add: (line: string) => void) => { lines.forEach(add); return true; });
+  const api = createFleetMemoryApi({ runsDir: '/fixture', now: () => NOW, readYieldLines });
+  const result = await call(api, '/api/verse/fleet/yield');
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    expect(await cmdFleetYield(['--json'], readYieldLines, NOW)).toBe(0);
+    expect(result.body).toEqual(JSON.parse(String(log.mock.calls[0]![0])));
+    expect(result.body.launch_families[0].empty_tokens).toBe(1500000);
+  } finally { log.mockRestore(); }
+  readYieldLines.mockClear();
+  expect(await call(api, '/api/verse/fleet/yield', 'POST')).toMatchObject({ status: 405 });
+  expect(readYieldLines).not.toHaveBeenCalled();
+  const missing = await call(createFleetMemoryApi({ readYieldLines: async () => false }), '/api/verse/fleet/yield');
+  expect(missing.body).toMatchObject({ known: false, launch_families: [], launches: null });
+});

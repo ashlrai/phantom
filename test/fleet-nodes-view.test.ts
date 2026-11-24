@@ -43,11 +43,12 @@ describe('readNodesView', () => {
   it('local only: one row for this computer, measured here, told how to join', () => {
     const view = readNodesView(deps(tailnet([]), NO_POOL));
     expect(view).toEqual({
-      schemaVersion: 1, asOf: '2026-11-17T12:00:00.000Z', self: 'node-a', registry: 'none',
+      schema: 'phantom.nodes-view.v1', schemaVersion: 1, asOf: '2026-11-17T12:00:00.000Z', self: 'node-a', registry: 'none',
       nodes: [{
         name: 'node-a', isSelf: true, reachable: true, lastSeen: '2026-11-17T12:00:00.000Z', phantom: 'not-running',
-        freeMemoryBytes: 12 * GIB, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
+        heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 12 * GIB, freeMemoryPercent: 38, load: 2, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
         stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join` here',
+        joined: true, joinCommand: null,
       }],
       reasons: ['no node pool on this computer: run `phm node join` on each computer to pool them'],
     });
@@ -200,6 +201,29 @@ describe('chooseNodeForLane', () => {
   });
 });
 
+describe('machines: one, two with one offline, none', () => {
+  it('two machines, one silent for over 5 minutes: offline, with heartbeat age; stale stats stay unknown', () => {
+    const view = readNodesView(deps(tailnet([]), registry([
+      node('node-a'), node('mac-two', { heartbeatAt: NOW - 6 * 60_000, expiresAt: NOW - 5 * 60_000, hostStats: stats(8, 1.5) }),
+    ])));
+    expect(view.schema).toBe('phantom.nodes-view.v1');
+    expect(view.nodes.map(row => [row.name, row.stateCode, row.heartbeatAgeSeconds])).toEqual([['node-a', 'ready', 2], ['mac-two', 'offline', 360]]);
+    expect(view.nodes[1]).toMatchObject({ reachable: false, freeSlots: 'unknown', freeMemoryPercent: 'unknown', load: 'unknown' });
+    expect(view.nodes[0]).toMatchObject({ freeMemoryPercent: 38, load: 2, freeSlots: 2 });
+  });
+
+  it('a fresh heartbeat is not offline', () => {
+    const view = readNodesView(deps(tailnet([]), registry([node('node-a'), node('mac-two', { heartbeatAt: NOW - 60_000 })])));
+    expect(view.nodes[1]?.stateCode).not.toBe('offline');
+  });
+
+  it('none: the view lists only this computer', () => {
+    const view = readNodesView(deps(tailnet([]), NO_POOL));
+    expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0]?.isSelf).toBe(true);
+  });
+});
+
 describe('phm nodes', () => {
   const run = async (args: string[], d = deps(tailnet([peer('node-b', true)]), registry([node('node-a'), node('node-b', { caps: ['codex'] })]))) => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -213,9 +237,9 @@ describe('phm nodes', () => {
     vi.restoreAllMocks();
     expect((await run(['--json'])).out).toBe(first.out);
     const view = JSON.parse(first.out);
-    expect(Object.keys(view)).toEqual(['schemaVersion', 'asOf', 'self', 'registry', 'nodes', 'reasons']);
-    expect(Object.keys(view.nodes[0])).toEqual(['name', 'isSelf', 'reachable', 'lastSeen', 'phantom', 'freeMemoryBytes', 'cpuHeadroomPercent',
-      'lanes', 'jobsRunning', 'freeSlots', 'stateCode', 'state']);
+    expect(Object.keys(view)).toEqual(['schema', 'schemaVersion', 'asOf', 'self', 'registry', 'nodes', 'reasons']);
+    expect(Object.keys(view.nodes[0])).toEqual(['name', 'isSelf', 'reachable', 'lastSeen', 'heartbeatAgeSeconds', 'phantom', 'freeMemoryBytes', 'freeMemoryPercent',
+      'load', 'cpuHeadroomPercent', 'lanes', 'jobsRunning', 'freeSlots', 'stateCode', 'state', 'joined', 'joinCommand']);
   });
 
   it('--can-take lists only computers ready for that lane', async () => {
@@ -234,6 +258,13 @@ describe('phm nodes', () => {
     vi.restoreAllMocks();
     expect(JSON.parse((await run(['--can-take', 'gemini', '--json'])).out).placement)
       .toMatchObject({ node: null, target: 'none', reason: 'no-ready-node' });
+  });
+
+  it('says "Only this Mac." when no other computer is known', async () => {
+    const solo = await run([], deps(tailnet([]), NO_POOL));
+    expect(solo.out.split('\n')).toContain('Only this Mac.');
+    expect((await run([])).out).not.toContain('Only this Mac.');
+    expect(JSON.parse((await run(['--json'], deps(tailnet([]), NO_POOL))).out).schema).toBe('phantom.nodes-view.v1');
   });
 
   it('prints one plain row per computer and refuses bad flags', async () => {

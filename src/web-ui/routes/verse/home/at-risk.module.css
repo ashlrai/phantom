@@ -1,0 +1,12 @@
+/* Home's "Most at risk of going unused" card: who, when it resets, one figure, one bar, and the key to the bar. */
+.body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 var(--space-2); min-width: 0; }
+.who { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+/* The share that would expire is the one thing to read at a glance; the words beside it say what the number is. */
+.figure { display: flex; align-items: baseline; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); }
+.figure strong { color: var(--text-primary); font-family: var(--font-display); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; line-height: 1.1; letter-spacing: var(--tracking-display); }
+/* The bar is the design system's WindowBar; the key under it uses the bar's own swatches. */
+.key { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin: 0; padding: 0; list-style: none; }
+.key li { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }

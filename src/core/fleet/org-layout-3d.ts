@@ -8,7 +8,7 @@
  *  - the leader sits on the axis; each group or lane is a cluster on a ring round it;
  *  - children sit on a ring round their parent, one level lower; ring room comes from the subtree size,
  *    so no two nodes share a spot;
- *  - a node with no known owner is under the "unassigned" group, never dropped.
+ *  - a node with no known owner is under the "Other" group, never dropped.
  * A collapsed group shows only itself; its label says how many nodes are hidden.
  */
 import { fleetOrgGroups, type FleetOrgGroups, type OrgGroupCounts, type OrgGroupRole } from './org-groups.js';

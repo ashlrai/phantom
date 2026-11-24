@@ -34,9 +34,15 @@ export interface NodeRow {
   isSelf: boolean;
   reachable: boolean | Unknown;
   lastSeen: string | Unknown;
+  /** Seconds since the newest Phantom heartbeat from that computer; "unknown" when none is on record. */
+  heartbeatAgeSeconds: number | Unknown;
   /** A Phantom node on that computer has a live heartbeat in the registry. */
   phantom: 'running' | 'not-running' | Unknown;
   freeMemoryBytes: number | Unknown;
+  /** Free memory as a whole percent of the total. */
+  freeMemoryPercent: number | Unknown;
+  /** One-minute load average. */
+  load: number | Unknown;
   cpuHeadroomPercent: number | Unknown;
   lanes: string[] | Unknown;
   /** IDs of jobs that computer holds a running claim on. */
@@ -45,8 +51,17 @@ export interface NodeRow {
   stateCode: NodeStateCode;
   /** The same state in plain words. */
   state: string;
+  /** True for this computer and any computer registered in the node list. False: seen on Tailscale only ("not joined"). */
+  joined: boolean;
+  /** The one command that joins this computer; run it on that computer. Null once joined. */
+  joinCommand: string | null;
 }
+export const JOIN_COMMAND = 'phm node join';
+export const NODES_SCHEMA = 'phantom.nodes-view.v1';
+/** A Phantom heartbeat older than this means the computer is offline. */
+export const HEARTBEAT_OFFLINE_MS = 5 * 60_000;
 export interface NodesView {
+  schema: typeof NODES_SCHEMA;
   schemaVersion: 1;
   asOf: string;
   self: string;
@@ -86,11 +101,13 @@ function clock(iso: string, now: Date, timeZone?: string): string | null {
   return day(at) === day(now) ? time : `${day(at)} ${time}`;
 }
 
-function headroom(stats: HostStats | undefined): Pick<NodeRow, 'freeMemoryBytes' | 'cpuHeadroomPercent'> {
-  if (!stats || !isHostStats(stats)) return { freeMemoryBytes: UNKNOWN, cpuHeadroomPercent: UNKNOWN };
+function headroom(stats: HostStats | undefined): Pick<NodeRow, 'freeMemoryBytes' | 'freeMemoryPercent' | 'load' | 'cpuHeadroomPercent'> {
+  if (!stats || !isHostStats(stats)) return { freeMemoryBytes: UNKNOWN, freeMemoryPercent: UNKNOWN, load: UNKNOWN, cpuHeadroomPercent: UNKNOWN };
   const load = stats.load[0];
   return {
     freeMemoryBytes: Math.round(stats.ramTotal - stats.ramUsed),
+    freeMemoryPercent: stats.ramTotal > 0 ? Math.round((stats.ramTotal - stats.ramUsed) / stats.ramTotal * 100) : UNKNOWN,
+    load: load === null || load === undefined ? UNKNOWN : Math.round(load * 100) / 100,
     cpuHeadroomPercent: load === null || load === undefined || stats.cores.length === 0 ? UNKNOWN
       : Math.round(Math.max(0, Math.min(1, 1 - load / stats.cores.length)) * 100),
   };
@@ -146,9 +163,14 @@ export function buildNodesView(
       ? Math.max(0, live.reduce((sum, record) => sum + (record.slots ?? 0), 0) - jobs.length) : UNKNOWN;
     const held = live.map(record => record.capacity?.held).find(Boolean);
     const newest = [...live].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
+    const joined = machine.isSelf || machine.records.length > 0;
     const where = machine.isSelf ? 'here' : 'there';
+    const newestBeat = machine.records.reduce((max, record) => Math.max(max, record.heartbeatAt), Number.NEGATIVE_INFINITY);
+    const heartbeatAgeSeconds = Number.isFinite(newestBeat) && Number.isFinite(nowMs) ? Math.max(0, Math.round((nowMs - newestBeat) / 1000)) : UNKNOWN;
+    // A remote computer seen only through the registry, whose last heartbeat is over 5 minutes old, is offline.
+    const silent = !machine.isSelf && machine.reachable === UNKNOWN && heartbeatAgeSeconds !== UNKNOWN && heartbeatAgeSeconds * 1000 > HEARTBEAT_OFFLINE_MS;
     let stateCode: NodeStateCode, words: string;
-    if (machine.reachable === false) {
+    if (machine.reachable === false || silent) {
       stateCode = 'offline';
       const since = machine.lastSeen === UNKNOWN ? null : clock(machine.lastSeen, now, options.timeZone);
       words = since === null ? 'offline' : `offline since ${since}`;
@@ -166,14 +188,15 @@ export function buildNodesView(
       words = machine.reachable === true ? 'reachable; Phantom status unknown' : 'unknown';
     }
     return {
-      name: machine.name, isSelf: machine.isSelf, reachable: machine.reachable, lastSeen: machine.lastSeen, phantom,
+      name: machine.name, isSelf: machine.isSelf, reachable: silent ? false : machine.reachable, lastSeen: machine.lastSeen, heartbeatAgeSeconds, phantom,
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
       lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
+      joined, joinCommand: joined ? null : JOIN_COMMAND,
     };
   });
   nodes.sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { schemaVersion: 1, asOf, self: selfName, registry: registry?.source ?? UNKNOWN, nodes, reasons };
+  return { schema: NODES_SCHEMA, schemaVersion: 1, asOf, self: selfName, registry: registry?.source ?? UNKNOWN, nodes, reasons };
 }
 
 /** Require confirmed reachability, free slots and a live advertisement for the lane. */

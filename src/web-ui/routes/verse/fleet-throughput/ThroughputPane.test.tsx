@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ThroughputCounts, ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { ThroughputPane } from './ThroughputPane.js';
@@ -22,14 +22,15 @@ function report(kind: 'busy' | 'quiet' | 'unreadable'): ThroughputReport {
   };
 }
 const state = vi.hoisted(() => ({ status: 'success', data: undefined as unknown, key: '', fetch: null as null | ((signal: AbortSignal) => unknown) }));
-vi.mock('../../../data/hooks.js', () => ({ useQuery: (def: { key: string; fetch: (signal: AbortSignal) => unknown }) => { state.key = def.key; state.fetch = def.fetch; return state; }, useRefetch: () => vi.fn() }));
+const refetch = vi.hoisted(() => vi.fn());
+vi.mock('../../../data/hooks.js', () => ({ useQuery: (def: { key: string; fetch: (signal: AbortSignal) => unknown }) => { state.key = def.key; state.fetch = def.fetch; return state; }, useRefetch: () => refetch }));
 const get = vi.hoisted(() => vi.fn());
 vi.mock('../../../data/client.js', () => ({ apiGet: get }));
 const show = (data: unknown, status = 'success') => {
   state.data = data; state.status = status;
   return render(<ThroughputPane {...({ visible: true } as Parameters<typeof ThroughputPane>[0])} />);
 };
-beforeEach(() => { state.data = undefined; state.status = 'success'; });
+beforeEach(() => { state.data = undefined; state.status = 'success'; refetch.mockClear(); });
 
 it('shows the headline, the delivery flow, both hourly lines and the empty rate bar by lane', () => {
   show(report('busy'));
@@ -43,12 +44,47 @@ it('shows the headline, the delivery flow, both hourly lines and the empty rate 
   expect(screen.getByText('Merged PRs with no publish time, left out of the median: 2.')).toBeTruthy();
   expect(screen.getByRole('img', { name: 'PRs merged per hour' })).toBeTruthy();
   expect(screen.getByRole('img', { name: 'Median minutes from publish to merge per hour' })).toBeTruthy();
-  expect(screen.getByRole('img', { name: 'Empty rate by lane' })).toBeTruthy();
-  expect(screen.getByRole('img', { name: 'grok: 100%' })).toBeTruthy();
-  expect(screen.getByRole('img', { name: 'claude: 3%' })).toBeTruthy();
+  // One card per lane, the lane that merged most first, each rate in words and as a bar.
+  const lanes = within(screen.getByRole('list', { name: 'Lanes, most merged first' })).getAllByRole('listitem');
+  expect(lanes.map(lane => lane.getAttribute('data-lane'))).toEqual(['claude', 'grok', 'idle']);
+  expect(within(lanes[0]!).getByText('38')).toBeTruthy();
+  expect(within(lanes[0]!).getByRole('slider', { name: 'claude jobs launched, a bar per hour: most in one bar 50' })).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'grok: 5 of 5 finished jobs changed nothing (100%)' })).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'claude: 1 of 40 finished jobs changed nothing (3%)' })).toBeTruthy();
   // No job finished on the idle lane: its rate is not drawn as 0%.
-  expect(screen.getByRole('img', { name: 'idle: no data' })).toBeTruthy();
+  expect(within(lanes[2]!).getByText('none finished')).toBeTruthy();
+  expect(screen.queryByRole('img', { name: /^idle: .*changed nothing/ })).toBeNull();
   expect(screen.getAllByRole('row', { hidden: true }).some(row => row.textContent === 'grok5005100%unknown')).toBe(true);
+});
+
+it('leads with a figure per count, each over its own hours, and names the busiest hour', () => {
+  show(report('busy'));
+  const tiles = within(screen.getByRole('list', { name: 'Figures for the last 6 hours' })).getAllByRole('listitem');
+  expect(tiles.map(tile => tile.getAttribute('data-figure'))).toEqual(['launched', 'published', 'merged', 'empty', 'median']);
+  expect(tiles[2]!.textContent).toMatch(/^Merged38Most in one hour: 38, from /);
+  expect(within(tiles[2]!).getByRole('img', { name: 'PRs merged each hour: from 0 to 38, range 0 to 38' })).toBeTruthy();
+  expect(tiles[3]!.textContent).toBe('Changed nothing13%6 of 48 finished jobs');
+  expect(tiles[4]!.textContent).toBe('Median to merge2m 50sFrom publish to merge');
+});
+
+it('writes unknown on every figure of an unreadable file, and words a quiet window as measured', () => {
+  const unread = show(report('unreadable'));
+  const figure = () => within(screen.getByRole('list', { name: 'Figures for the last 6 hours' })).getAllByRole('listitem').map(tile => tile.textContent);
+  expect(figure()).toEqual(['Launchedunknown', 'Publishedunknown', 'Mergedunknown', 'Changed nothingunknown', 'Median to mergeunknown']);
+  unread.unmount();
+  show(report('quiet'));
+  expect(figure()).toEqual(['Launched0', 'Published0', 'Merged0', 'Changed nothingno rateNo job finished in this window.', 'Median to mergeunknownNo PR merged in this window.']);
+});
+
+it('shows the figure row as placeholders while reading, and offers another read when the report cannot be read', () => {
+  const reading = show(undefined, 'loading');
+  expect(reading.container.querySelectorAll('[data-stat-tile-skeleton]')).toHaveLength(5);
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  reading.unmount();
+  const failed = show(undefined, 'error');
+  expect(failed.container.querySelector('[data-stat-tile-skeleton]')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(refetch).toHaveBeenCalledTimes(1);
 });
 
 it('shows a readable but quiet window as an empty state, not as missing data', () => {

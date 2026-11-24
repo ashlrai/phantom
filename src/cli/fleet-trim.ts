@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export const FLEET_TRIM_SCHEMA = 'fleet.trim.v1';
@@ -35,7 +36,7 @@ export type FleetTrimReader = (path: string) => Promise<string>;
 
 const USAGE = `Usage: ashlr fleet trim [--json]
 Read queue/status.json and flag lanes that are starved or waste slots. Read-only.
-STARVED: queued work, nothing running, target above 0, not held, and global running at the cap.
+STARVED: queued work, nothing running, launch target above 0 (the configured target tightened by the controller's effective_target shed), not held, and global running at the cap.
 WASTES: ${FLEET_TRIM_MIN_JOBS} or more jobs in 24 hours with a merge rate under ${FLEET_TRIM_MERGE_RATE_MIN} or an empty rate over ${FLEET_TRIM_EMPTY_RATE_MAX}.
 Each suggestion is a line "SLOTS <lane> <from> -> <to>" that takes one slot from a wasting lane. Nothing is applied.
 Related: ashlr fleet admission, ashlr fleet lane-idle.`;
@@ -50,6 +51,11 @@ function record(value: unknown): Record<string, unknown> {
 function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid count');
   return value;
+}
+
+/** A count that stays unknown (null) instead of failing the whole report. */
+function maybeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function rate(value: unknown): number {
@@ -82,7 +88,11 @@ export function trimFleet(value: unknown): FleetTrimReport {
     const target = count(fields.target);
     const queued = count(fields.queued);
     if (typeof fields.held !== 'boolean') throw new Error('Invalid hold');
-    if (queued > 0 && running === 0 && target > 0 && !fields.held && atCap) {
+    // Starved means room the lane may actually launch into: a lane the
+    // controller shed to a zero launch target is parked, not starved. The
+    // SLOTS suggestion below keeps the configured target it would retune.
+    const launchTarget = laneLaunchTarget(target, maybeCount(fields.effective_target));
+    if (queued > 0 && running === 0 && launchTarget > 0 && !fields.held && atCap) {
       flagged.push({ lane, flag: 'starved', line: `${lane} is starved: ${queued} queued, none running, the global cap is full.` });
     }
     const rollup = byLane[name];

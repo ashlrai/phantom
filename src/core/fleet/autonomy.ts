@@ -18,15 +18,34 @@ export const isSelfImprovementPath = (path: string): boolean => !path.split('/')
 type Row = Record<string, unknown>;
 const record = (v: unknown): Row => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Row : {};
 const time = (v: unknown): number => typeof v === 'string' ? Date.parse(v) : NaN;
+/**
+ * jobs.jsonl field dialects: job|job_id|jobId|id, event|type|kind,
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
+ * phase|state|outcome|status|result|conclusion and
+ * url|prUrl|pr_url|pr|html_url — the aliases dispatchd `_vc_*` and the
+ * fleet metrics readers accept.
+ */
+const pick = (r: Row, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const v = r[key];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+};
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+const PR_KEYS = ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const;
 const repoOf = (r: Row): string => r.repo === 'phantom' ? 'ashlrai/phantom' : typeof r.repo === 'string' ? r.repo.toLowerCase() : '';
 function identity(r: Row): string | null {
-  const url = r.url ?? r.prUrl ?? r.pr_url ?? r.pr;
+  const url = pick(r, PR_KEYS);
   const m = typeof url === 'string' ? /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)\/?$/i.exec(url) : null;
   if (m) return `${m[1]!.toLowerCase()}/pull/${m[2]}`;
   const repo = repoOf(r); const n = r.number ?? r.pr;
   if (repo && Number.isSafeInteger(n) && Number(n) > 0) return `${repo}/pull/${n}`;
-  const job = r.job ?? r.jobId ?? r.job_id ?? r.id;
-  return typeof job === 'string' && job ? JSON.stringify([repo, job]) : null;
+  const job = pick(r, JOB_KEYS);
+  return job ? JSON.stringify([repo, job]) : null;
 }
 function actor(v: unknown): boolean | null {
   const r = record(v); const kinds = [r.__typename, r.type];
@@ -81,9 +100,10 @@ export function autonomyTally(now: number, hours = 24) {
       if (!line.trim()) return;
       let r: Row;
       try { r = record(JSON.parse(line)); if (!Object.keys(r).length) throw new Error('row'); } catch { malformedLines++; return; }
-      const at = time(r.ts ?? r.at); if (at > now) return;
-      if (at >= since && ['launch', 'claim', 'finish', 'publish', 'outcome'].includes(String(r.event))) recent = true;
-      if ((r.event ?? (r.source === 'metrics-outcomes-reconciler' ? 'outcome' : '')) !== 'outcome' || (r.state ?? r.outcome ?? r.status) !== 'MERGED') return;
+      const at = time(pick(r, TS_KEYS)); if (at > now) return;
+      if (at >= since && ['launch', 'claim', 'finish', 'publish', 'outcome'].includes(pick(r, EVENT_KEYS) ?? '')) recent = true;
+      if ((pick(r, EVENT_KEYS) ?? (r.source === 'metrics-outcomes-reconciler' ? 'outcome' : '')) !== 'outcome'
+        || (pick(r, PHASE_KEYS) ?? '').toUpperCase() !== 'MERGED') return;
       const key = identity(r); const mergedAt = r.mergedAt === undefined ? at : time(r.mergedAt);
       if (!key || !Number.isFinite(mergedAt)) { malformedLines++; return; }
       if (mergedAt > now) return;

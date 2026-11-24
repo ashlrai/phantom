@@ -11,6 +11,7 @@ import {
   GATE_BUILD_ASSET_SCRIPTS,
   MAX_BASENAME_EXTRA_READERS,
   buildCommands,
+  checkTypeSpecs,
   corpusGuardTests,
   discoverTextReads,
   evaluateVitest,
@@ -22,6 +23,7 @@ import {
   lockfileDependencyChanged,
   packageDependencyChanges,
   parseArgs,
+  phaseASpecs,
   planTests,
   renderTable,
 } from '../scripts/gate.mjs';
@@ -404,6 +406,25 @@ describe('gate data files', () => {
     const positions = GATE_BUILD_ASSET_SCRIPTS.map((script) => buildSteps.indexOf(`node ${script}`));
     for (const [i, pos] of positions.entries()) expect(pos, GATE_BUILD_ASSET_SCRIPTS[i]).toBeGreaterThan(1);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  it('phase A typechecks both projects once, inside typecheck-fast — no duplicate web pass', () => {
+    const specs = phaseASpecs({ nodeBin: 'node', npmCmd: 'npm', tscBin: 'TSC', eslintBin: 'ESLINT', gateDir: '.ashlr-gate' });
+    // Exactly one typecheck step: the npm script that runs tsgo on both projects.
+    expect(specs.filter((spec) => spec.name.includes('typecheck')).map((spec) => spec.name)).toEqual(['typecheck-fast']);
+    // No step invokes a compiler on the web tsconfig directly.
+    for (const spec of specs) expect(spec.args.join(' ')).not.toContain('src/web-ui/tsconfig.json');
+    // And typecheck:fast itself still names the web project, matching `npm run typecheck`.
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    expect(pkg.scripts['typecheck:fast']).toContain('tsgo');
+    expect(pkg.scripts['typecheck:fast']).toContain('src/web-ui/tsconfig.json');
+  });
+
+  it('--check typechecks both tsconfig projects with the native compiler', () => {
+    expect(checkTypeSpecs({ nodeBin: 'node', tsgoBin: 'TSGO' })).toEqual([
+      { name: 'typecheck', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'tsconfig.json'] },
+      { name: 'typecheck-web', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
+    ]);
   });
 
   it('npm scripts point at the gate and ship scripts', () => {

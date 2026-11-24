@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetHandoffReceive } from '../src/cli/fleet-handoff-receive.js';
 import { cmdFleetHandoffSend } from '../src/cli/fleet-handoff-send.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { CONTEXT_END, CONTEXT_START } from '../src/core/fleet/context-worker-run.js';
-import { HANDOFF_RECEIVE_BEGIN, HANDOFF_RECEIVE_END } from '../src/core/fleet/handoff-bus-receive.js';
+import { HANDOFF_RECEIVE_BEGIN, HANDOFF_RECEIVE_END, handoffRecipientMatches } from '../src/core/fleet/handoff-bus-receive.js';
 import type { WorkerHandoff } from '../src/core/verse/handoff.js';
 
 let root: string, tmp: string, busRoot: string, file: string, snapshot: string, out: string, err: string;
@@ -104,6 +105,46 @@ describe('fleet handoff-receive', () => {
     expect(err).toContain('not addressed');
     expect(existsSync(spawned())).toBe(false);
     expect(await tmpFiles()).toEqual([]);
+  });
+
+  it('accepts a handoff addressed to any label of the recipient identity', async () => {
+    expect(registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-alias'] }, { root: busRoot }).status).toBe('created');
+    expect(registerAgentIdentity({ handle: 'worker-8' }, { root: busRoot }).status).toBe('created');
+    // The unified bus addresses handoffs to agent:<handle>; the worker may
+    // name its bare handle, the agent: address, an alias or the stable id.
+    expect(await send('msg-1', 'agent:worker-9')).toBe(0);
+    const run = (to: string) => cmdFleetHandoffReceive(
+      ['--id', 'msg-1', '--to', to, '--snapshot', snapshot, ...spawnArgs()], { root: busRoot }, io());
+    for (const to of ['worker-8', 'SNOOPER-1']) {
+      err = '';
+      expect(await run(to)).toBe(1);
+      expect(err).toContain('not addressed');
+      expect(existsSync(spawned())).toBe(false);
+    }
+    for (const to of ['worker-9', 'agent:worker-9', 'w9-alias', stableAgentId('worker-9')]) {
+      err = '';
+      expect(await run(to)).toBe(0);
+    }
+    expect(await tmpFiles()).toEqual([]);
+  }, 30000);
+
+  it('handoffRecipientMatches keeps exact matching for unknown refs and unreadable registries', () => {
+    const options = { root: busRoot };
+    expect(handoffRecipientMatches('WORKER-9', 'WORKER-9', options)).toBe(true);
+    expect(handoffRecipientMatches('agent:worker-9', 'worker-9', options)).toBe(false);
+    expect(registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-alias'] }, options).status).toBe('created');
+    expect(handoffRecipientMatches('agent:worker-9', 'w9-alias', options)).toBe(true);
+    expect(handoffRecipientMatches('worker-9', stableAgentId('worker-9'), options)).toBe(true);
+    expect(handoffRecipientMatches('agent:worker-9', 'agent:worker-8', options)).toBe(false);
+    expect(handoffRecipientMatches('group:ops:general', 'worker-9', options)).toBe(false);
+    // A case-variant of the handle or alias resolves to no identity: it keeps
+    // exact-label matching, never the identity's other labels.
+    expect(handoffRecipientMatches('agent:worker-9', 'Worker-9', options)).toBe(false);
+    expect(handoffRecipientMatches('agent:worker-9', 'W9-ALIAS', options)).toBe(false);
+    expect(handoffRecipientMatches('Worker-9', 'Worker-9', options)).toBe(true);
+    writeFileSync(join(busRoot, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+    expect(handoffRecipientMatches('agent:worker-9', 'worker-9', options)).toBe(false);
+    expect(handoffRecipientMatches('agent:worker-9', 'agent:worker-9', options)).toBe(true);
   });
 
   it('refuses a missing receipt and an expired receipt before spawning', async () => {

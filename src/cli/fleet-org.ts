@@ -4,14 +4,15 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm fleet org [--json]
 
-Who reports to whom: the leader, then each lane, then its jobs. A node with no
-known parent sits under "unassigned". Read only.
+The headline ("6 running, 2 stuck, 14 merged in the last hour"), then who reports to whom:
+the leader, then each lane, then its jobs. A node with no
+known parent sits under "Other". Read only.
 --json prints fleet.org-groups.v1, the same read as GET /api/verse/fleet/control/org-groups.`;
 
 /** One indented line per node: "claude (lane): 2 running, 1 queued, 0 idle, 0 unknown". */
 export function formatOrgGroupsText(tree: FleetOrgGroups): string {
   const byId = new Map(tree.nodes.map(node => [node.id, node]));
-  const lines: string[] = [];
+  const lines: string[] = [tree.headline.text];
   const walk = (node: OrgGroupNode, depth: number) => {
     const { running, queued, idle, unknown } = node.counts;
     lines.push(`${'  '.repeat(depth)}${node.label} (${node.role}): ${running} running, ${queued} queued, ${idle} idle, ${unknown} unknown`);

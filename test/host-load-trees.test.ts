@@ -1,9 +1,9 @@
 /** `phm host load --by-tree`: fixture text in, whole-tree attribution out. Nothing here runs ps or reads the real home. */
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cmdHost } from '../src/cli/host.js';
-import { attributeProcessTrees, parseProcessList, readHostLoadReport, type ProcessRow, type TreeRootMatcher } from '../src/core/fleet/host-load.js';
+import { attributeProcessTrees, parseProcessList, readHostOrphans, type HostOrphansReport, readHostLoadReport, type ProcessRow, type TreeRootMatcher } from '../src/core/fleet/host-load.js';
 import { createFleetMemoryApi, VERSE_FLEET_HOST_LOAD_PATH } from '../src/core/verse/fleet-memory-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
@@ -19,11 +19,19 @@ describe('attributeProcessTrees', () => {
       row(13, 10, 20, 'vitest run'), row(14, 13, 5, 'node child'),
     ], [job('one', 10)]);
     expect(by(trees, 'job one')).toEqual({
-      name: 'job one', fleet: true, cpuPercent: 227, memoryMb: 5, descendants: 4,
-      topCommands: [{ command: 'tsgo --noEmit', cpuPercent: 150 }, { command: 'npm run typecheck', cpuPercent: 50 }, { command: 'vitest run', cpuPercent: 20 }],
+      name: 'job one', fleet: true, cpuPercent: 227, memoryMb: 5, descendants: 4, processes: 5,
+      topCommands: [{ command: 'tsgo', cpuPercent: 150 }, { command: 'npm (typecheck)', cpuPercent: 50 }, { command: 'vitest', cpuPercent: 20 }],
     });
     expect(trees).toMatchObject({ fleetCpuPercent: 227, totalCpuPercent: 228, fleetShare: 0.996 });
     expect(trees.summary).toBe("The fleet's own jobs and their children use 100% of CPU; the top tree is job one (tsgo).");
+  });
+
+  it('never shows argv: only the program name and a fixed work word', () => {
+    const trees = attributeProcessTrees([
+      row(10, 1, 2, 'worker run'), row(11, 10, 50, '/usr/local/bin/node /tmp/job/vitest run --password=hunter2 --out /secret/place'),
+    ], [job('one', 10)]);
+    expect(by(trees, 'job one').topCommands).toEqual([{ command: 'node (vitest)', cpuPercent: 50 }]);
+    expect(JSON.stringify(trees)).not.toMatch(/hunter2|secret|place/);
   });
 
   it('puts an orphan, and everything else outside a root, under unattributed', () => {
@@ -113,5 +121,58 @@ describe('host load --by-tree', () => {
     };
     expect((await call(`${VERSE_FLEET_HOST_LOAD_PATH}?by=tree`)).trees?.fleetShare).toBe(0.99);
     expect((await call(VERSE_FLEET_HOST_LOAD_PATH)).trees).toBeUndefined();
+  });
+});
+
+describe('phm host orphans', () => {
+  const fixture = `1 0 0 100 /sbin/launchd
+10 1 2 100 /usr/bin/node private-argument
+11 1 3 100 node
+12 10 90 100 child
+20 1 4 100 python3
+30 1 5 100 node
+31 1 6 100 node`;
+  const leftovers = { worktreeRoot: '/synthetic/wt', liveJobs: new Map<string, boolean | null>(),
+    cwds: new Map([[10, '/synthetic/wt/RQ-ONE/src'], [11, '/synthetic/wt/RQ-ONE'], [20, '/synthetic/wt/RQ-TWO'], [30, '/synthetic/wt-other/RQ-FALSE']]) };
+  const watcherPs = async () => 'p10\ntKQUEUE\ntKQUEUE\np11\ntKQUEUE\np20\ntREG\np30\ntKQUEUE';
+  const read = (out: string[]) => ({ ps: async () => fixture, leftovers, watcherPs, write: (s: string) => out.push(s) });
+
+  it('groups by command and job, sums CPU and counts, and preserves unknown ownership and partial watchers', async () => {
+    const out: string[] = [], watcher = vi.fn(watcherPs);
+    expect(await cmdHost(['orphans', '--json'], { ...read(out), watcherPs: watcher })).toBe(0);
+    const report = JSON.parse(out.join('')) as HostOrphansReport;
+    expect(watcher).toHaveBeenCalledWith([10, 11, 20, 30, 31]);
+    expect(report).toMatchObject({ schema: 'host.orphans.v1', state: 'partial', processes: 5, cpuPercent: 20, watcherKind: 'kqueue-descriptors' });
+    expect(report.groups).toEqual([
+      { command: 'node', job: null, processes: 2, cpuPercent: 11, watchers: null },
+      { command: 'node', job: 'RQ-ONE', processes: 2, cpuPercent: 5, watchers: 3 },
+      { command: 'python3', job: 'RQ-TWO', processes: 1, cpuPercent: 4, watchers: 0 },
+    ]);
+    expect(JSON.stringify(report)).not.toMatch(/private-argument|synthetic|RQ-FALSE|child/);
+    const human: string[] = [];
+    expect(await cmdHost(['orphans'], read(human))).toBe(0);
+    expect(human.join('')).toContain('node / unknown / 2 / 11 / unknown');
+    expect(human.join('')).toContain('Watchers count macOS kqueue descriptors, not watched files.');
+  });
+
+  it.each([null, 'throw'] as const)('reports unavailable watcher data (%s) without discarding processes', async mode => {
+    const report = await readHostOrphans({ ...read([]), watcherPs: async () => { if (mode === 'throw') throw new Error('private-argument'); return null; } });
+    expect(report.processes).toBe(5);
+    expect(report.groups.every(group => group.watchers === null)).toBe(true);
+    expect(report.notes).toContain('Some watcher information is unavailable.');
+    expect(JSON.stringify(report)).not.toContain('private-argument');
+  });
+
+  it('distinguishes no adopted processes from an unavailable census and rejects unsupported flags before reading', async () => {
+    const watcher = vi.fn(watcherPs), out: string[] = [];
+    expect(await readHostOrphans({ ps: async () => '1 0 0 100 launchd', watcherPs: watcher })).toMatchObject({ state: 'known', processes: 0, cpuPercent: 0, groups: [] });
+    expect(watcher).not.toHaveBeenCalled();
+    expect(await cmdHost(['orphans', '--json'], { ps: async () => { throw new Error('private-argument'); }, write: s => out.push(s) })).toBe(1);
+    expect(JSON.parse(out.join(''))).toMatchObject({ state: 'unknown', processes: null, cpuPercent: null, groups: [] });
+    const ps = vi.fn(async () => fixture), error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (const flags of [['--json', '--json'], ['--apply'], ['extra']]) expect(await cmdHost(['orphans', ...flags], { ps })).toBe(2);
+      expect(ps).not.toHaveBeenCalled();
+    } finally { error.mockRestore(); }
   });
 });

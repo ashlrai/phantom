@@ -3,6 +3,9 @@ import { readdirSync } from 'node:fs';
 import { cpus, homedir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
+import { scrubSecrets } from '../util/scrub.js';
+import { readLoadOwnerInputs, summarizeLoadOwners, type LoadOwnerInputs, type LoadOwners } from './load-owners.js';
+import { findHostLeftovers, leftoverJob, processTool, readLeftoverEvidence, type LeftoverEvidence } from './host-leftovers.js';
 
 export interface HostLoad {
   load1: number | null; load5: number | null; load15: number | null;
@@ -71,6 +74,8 @@ export interface HostLoadReport {
   gaps: string[];
   /** Present only in by-tree mode (`phm host load --by-tree`, `?by=tree`). */
   trees?: HostLoadTrees;
+  /** Who owns the load, by producer, with the admission guard's state and any idle-but-busy job. */
+  owners?: LoadOwners;
 }
 
 // ── By tree: every process counted under the root it descends from ─────────────────────────────────────────────
@@ -81,6 +86,7 @@ export interface ProcessRow { pid: number; ppid: number; cpu: number; memoryKb: 
 export interface TreeRootMatcher { name: string; fleet: boolean; pid?: number; command?: RegExp }
 export interface TreeRow {
   name: string; fleet: boolean; cpuPercent: number; memoryMb: number;
+  processes: number;
   /** Processes in the tree other than the root process itself. */
   descendants: number;
   /** The three busiest descendant commands, busiest first. */
@@ -97,7 +103,12 @@ export interface HostLoadTrees {
 export const UNATTRIBUTED = 'unattributed';
 const NAMED_APPS = ['Codex', 'Claude', 'ChatGPT', 'Cursor', 'Grok', 'Chrome', 'Docker'];
 const WORK_WORDS = /\b(typecheck|tsgo|tsc|vitest|jest|eslint|lint|build|test|install)\b/i;
-const shortCommand = (command: string): string => command.replace(/\s+/g, ' ').trim().slice(0, 80);
+/** Never the full command line: argv can hold secrets. Only the program name, plus a fixed work word ("npm (typecheck)") when one is present. */
+const shortCommand = (command: string): string => {
+  const program = plainName(baseName(command.trim().split(/\s+/)[0] ?? ''));
+  const work = WORK_WORDS.exec(command)?.[1]?.toLowerCase();
+  return work && work !== program.toLowerCase() ? `${program} (${work})` : program;
+};
 /** "typecheck", "vitest" ... when the command names the work; otherwise the program name. */
 const workWord = (command: string): string =>
   WORK_WORDS.exec(command)?.[1]?.toLowerCase() ?? plainName(baseName(command.trim().split(/\s+/)[0] ?? ''));
@@ -115,9 +126,10 @@ export function defaultTreeMatchers(jobRoots: readonly HostLoadJobRoot[] | null)
  * Pure: puts every process under one root, the topmost ancestor (or itself) that a matcher names; fleet roots win
  * over apps. Anything else, including a process whose parent is missing from the list, goes under "unattributed",
  * so the rows always add up to the whole list. A repeated pid counts once (the first row); a parent loop stops at
- * the first repeat.
+ * the first repeat. Callers may name unmatched rows by executable instead of combining them as unattributed.
+ * The optional visitor observes the same deduplicated rows and ownership decisions.
  */
-export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: readonly TreeRootMatcher[]): HostLoadTrees {
+export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: readonly TreeRootMatcher[], unattributedName?: (row: ProcessRow) => string, onAttributed?: (row: ProcessRow, root: TreeRootMatcher | undefined) => void): HostLoadTrees {
   const rows = new Map<number, ProcessRow>();
   for (const row of rowsIn) if (!rows.has(row.pid)) rows.set(row.pid, row);
   const match = (row: ProcessRow, fleet: boolean) =>
@@ -132,7 +144,8 @@ export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: r
       if (fleetHit) { found = fleetHit; foundAt = at; foundFleet = true; }
       else if (!foundFleet) { const appHit = match(at, false); if (appHit) { found = appHit; foundAt = at; } }
     }
-    const name = found?.name ?? UNATTRIBUTED;
+    onAttributed?.(row, found);
+    const name = found?.name ?? unattributedName?.(row) ?? UNATTRIBUTED;
     const tree = trees.get(name) ?? { fleet: found?.fleet ?? false, rootPids: new Set<number>(), members: [] };
     if (found) tree.rootPids.add(foundAt.pid);
     tree.members.push(row);
@@ -141,7 +154,7 @@ export function attributeProcessTrees(rowsIn: readonly ProcessRow[], matchers: r
   const out: TreeRow[] = [...trees].map(([name, tree]) => {
     const below = tree.members.filter(row => !tree.rootPids.has(row.pid)).sort((a, b) => b.cpu - a.cpu || a.pid - b.pid);
     return {
-      name, fleet: tree.fleet, descendants: below.length,
+      name, fleet: tree.fleet, descendants: below.length, processes: tree.members.length,
       cpuPercent: round1(tree.members.reduce((sum, row) => sum + row.cpu, 0)),
       memoryMb: Math.round(tree.members.reduce((sum, row) => sum + row.memoryKb, 0) / 1024),
       topCommands: below.slice(0, 3).map(row => ({ command: shortCommand(row.command), cpuPercent: round1(row.cpu) })),
@@ -266,12 +279,15 @@ export function groupHostLoad(
 }
 
 export interface HostLoadDeps {
+  leftovers?: LeftoverEvidence;
   /** Returns the text of `ps -axo pid,ppid,pcpu,rss,comm`, or null when it cannot be read. Tests inject text. */
   ps?: (full?: boolean) => Promise<string | null>;
   /** Returns the fleet's job roots, or null when they cannot be read. */
   jobRoots?: () => HostLoadJobRoot[] | null;
   load?: () => HostLoad;
   now?: () => number;
+  /** Admission state and job log times; tests inject them. */
+  owners?: (report: HostLoadReport) => LoadOwnerInputs;
 }
 
 export const readHostPs = (full = false): Promise<string | null> => new Promise(resolve => execFile('/bin/ps', full ? HOST_LOAD_TREE_PS_ARGS : HOST_LOAD_PS_ARGS,
@@ -300,8 +316,68 @@ export async function readHostLoadReport(deps: HostLoadDeps = {}, opts: { byTree
   let psText: string | null = null, roots: HostLoadJobRoot[] | null = null;
   try { psText = await (deps.ps ?? readHostPs)(opts.byTree === true); } catch { /* Unknown process list. */ }
   try { roots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
+  const rows = parseProcessList(psText);
+  const evidence = deps.leftovers ?? (deps.ps ? undefined : await readLeftoverEvidence(rows).catch(() => undefined));
+  const leftoverRoots = findHostLeftovers(rows, evidence).items.map(row => ({ jobId: row.job, pid: row.pid }));
+  const attributedRoots = roots === null && !leftoverRoots.length ? null : [...(roots ?? []), ...leftoverRoots];
   const load = (deps.load ?? readHostLoad)();
-  const report = groupHostLoad(psText, roots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
-  if (opts.byTree) report.trees = attributeProcessTrees(parseProcessList(psText), defaultTreeMatchers(roots));
+  const report = groupHostLoad(psText, attributedRoots, { load1: load.load1, cores: load.cores, now: (deps.now ?? Date.now)() });
+  report.jobRoots = roots?.length ?? null;
+  if (roots === null && leftoverRoots.length) { report.state = rows.length ? 'partial' : 'unknown'; report.gaps.push('Live job roots are unknown; confirmed leftovers count as fleet work.'); }
+  try { report.owners = summarizeLoadOwners(report, { ...(deps.owners ?? readLoadOwnerInputs)(report), now: (deps.now ?? Date.now)() }); } catch { /* Owners are optional. */ }
+  if (opts.byTree) report.trees = attributeProcessTrees(rows, defaultTreeMatchers(attributedRoots));
   return report;
+}
+
+export interface HostOrphanGroup { command: string; job: string | null; processes: number; cpuPercent: number; watchers: number | null }
+export interface HostOrphansReport {
+  schema: 'host.orphans.v1'; state: 'known' | 'partial' | 'unknown';
+  processes: number | null; cpuPercent: number | null; groups: HostOrphanGroup[];
+  watcherKind: 'kqueue-descriptors'; notes: string[];
+}
+export type HostOrphansDeps = HostLoadDeps & { runsDir?: string; watcherPs?: (pids: number[]) => Promise<string | null> };
+
+/** kqueue descriptors are observable on macOS; they are not a count of watched files. No paths or argv. */
+const readWatcherPs = (pids: number[]): Promise<string | null> => new Promise(resolve => {
+  if (process.platform !== 'darwin' || !pids.length) { resolve(null); return; }
+  execFile('/usr/sbin/lsof', ['-nP', '-a', '-p', pids.join(','), '-Fpt'],
+    { timeout: 5000, maxBuffer: 8 * 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } },
+    (error, stdout) => resolve(error ? null : stdout));
+});
+
+/** Adopted processes are candidates, not proof of a leak: PID 1 also parents services. Never signals anything. */
+export async function readHostOrphans(deps: HostOrphansDeps = {}): Promise<HostOrphansReport> {
+  let text: string | null = null;
+  try { text = await (deps.ps ?? readHostPs)(false); } catch { /* Unknown process list. */ }
+  const rows = parseProcessList(text), candidates = rows.filter(row => row.pid > 1 && row.ppid === 1);
+  const evidence = deps.leftovers ?? (deps.ps ? undefined : await readLeftoverEvidence(rows, deps.runsDir).catch(() => undefined));
+  let watcherText: string | null = null;
+  if (candidates.length) try { watcherText = await (deps.watcherPs ?? (deps.ps ? async () => null : readWatcherPs))(candidates.map(row => row.pid)); } catch { /* Unknown watchers. */ }
+  const watchers = new Map<number, number>();
+  let pid = 0;
+  for (const line of (watcherText ?? '').split('\n')) {
+    if (/^p\d+$/.test(line)) { pid = Number(line.slice(1)); watchers.set(pid, 0); }
+    else if (line === 'tKQUEUE' && watchers.has(pid)) watchers.set(pid, watchers.get(pid)! + 1);
+  }
+  const groups = new Map<string, HostOrphanGroup>();
+  for (const row of candidates) {
+    const cwd = evidence?.cwds.get(row.pid), job = cwd && evidence ? leftoverJob(cwd, evidence.worktreeRoot) : undefined;
+    const command = processTool(row.command), owner = job ? scrubSecrets(job) : null, key = JSON.stringify([command, owner]);
+    const group = groups.get(key) ?? { command, job: owner, processes: 0, cpuPercent: 0, watchers: 0 };
+    group.processes++; group.cpuPercent += row.cpu;
+    const count = watchers.get(row.pid);
+    group.watchers = group.watchers === null || count === undefined ? null : group.watchers + count;
+    groups.set(key, group);
+  }
+  const round = (n: number) => Math.round(n * 10) / 10;
+  const ranked = [...groups.values()].sort((a, b) => b.cpuPercent - a.cpuPercent || a.command.localeCompare(b.command) || (a.job ?? '').localeCompare(b.job ?? ''));
+  for (const group of ranked) group.cpuPercent = round(group.cpuPercent);
+  const notes = ['Processes with parent 1; services can also appear. This is not proof of a leak.',
+    'Watchers count macOS kqueue descriptors, not watched files. CPU 100% means one busy core.'];
+  if (!rows.length) notes.push('The process list is unavailable.');
+  if (ranked.some(group => group.job === null)) notes.push('Some jobs are unknown; no matching worktree was readable.');
+  if (ranked.some(group => group.watchers === null)) notes.push('Some watcher information is unavailable.');
+  return { schema: 'host.orphans.v1', state: !rows.length ? 'unknown' : notes.length > 2 ? 'partial' : 'known',
+    processes: rows.length ? candidates.length : null, cpuPercent: rows.length ? round(candidates.reduce((sum, row) => sum + row.cpu, 0)) : null,
+    groups: ranked, watcherKind: 'kqueue-descriptors', notes };
 }

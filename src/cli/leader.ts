@@ -2,6 +2,7 @@
  * `ashlr leader` — V3.10 Track B (unit U8). Registered by B-U1 in src/cli/index.ts.
  *
  *   ashlr leader show [--json]               the latest memo, actions, hit-rate
+ *   ashlr leader brief [--since 2h] [--stale-after 3h] [--json]  one read of what the last bets did and what to queue next
  *   ashlr leader run [--force]               run the Leader now (waits for the memo)
  *   ashlr leader tick [--wait]               apply due class-B actions, grade moves,
  *                                            and start a run if one is due
@@ -13,7 +14,7 @@
  * 3.14 — talk to the Leader (vision/leader-thread.ts; the same thread Verse
  * and Telegram use):
  *   ashlr leader say "<text>" [--text]        send through the verified inbox writer; prints the id
- *   ashlr leader thread [--limit n] [--text]  inbox + leader replies, oldest first, with state (JSON default)
+ *   ashlr leader thread [--since hours|time] [--before hours|time] [--limit n] [--json]  merged conversation, oldest first
  *   ashlr leader answer <questionId> "<text>" answer one of the memo's questions
  *   ashlr leader approve <actionId>           approve a pending action (class B
  *                                            applies now only if the grant
@@ -37,6 +38,7 @@ import { loadConfig } from '../core/config.js';
 import { hasLeaderNetworkConfig } from '../core/agents/leader-network-config.js';
 import { rejectUnknownOptions, type AllowedOptions } from './args.js';
 import type { LeaderAction, LeaderMemo, LeaderStateV1 } from '../core/vision/leader-types.js';
+import { parseStaleAfter } from '../core/fleet/leader-batches.js';
 
 const USAGE = `Phantom Leader — memo, actions and veto
 
@@ -44,10 +46,12 @@ Compatible alias: ashlr leader <command>
 
 Usage:
   phm leader show [--json]
+  phm leader brief [--json] [--write <path>]  compact fleet snapshot; --since 2h or --stale-after 3h selects the detailed bets view
   phm leader status [--json]
   phm leader ask "<text>" [--json]
   phm leader org [--json]
   phm leader assign --rq <RQ-KEY> --owner <role> --summary "<text>" [--due YYYY-MM-DD] [--status assigned|in_progress|blocked|done|proposed] [--outcome "<text>"] [--json]
+  phm leader seat --pick  print only the lane and model to launch the leader on now (exit 3: none)
   phm leader seat [pick] [--json]  where the leader runs now and where it moves next (read-only; exit 3: no seat)
   phm leader seat --tier elite|workhorse|fast|local [--json]  inspect legacy task-tier admission
   phm leader inbox [--json] [--limit n] [--text "message"]
@@ -60,8 +64,8 @@ Usage:
   phm leader say "<text>" [--text]   send to the leader; prints its id (JSON, or one line with --text)
   phm leader replies [--json] [--limit n] [--file PATH]  show the last 10 (or n) PLAN-LOG replies, one line each, newest first (JSON: leader.replies.v1; path from comms.leaderPlanLogPath)
   phm leader replies sync [--json]  copy new PLAN-LOG replies to the Leader thread
-  phm leader thread [--limit n] [--text]  your messages and the leader's replies, oldest first, with received/answered (JSON, --text for people)
-  phm leader thread [--since <hours>] [--json]  the whole conversation, inbox + outbox + plan-log replies, with the channel of each message
+  phm leader thread [--since <hours|time>] [--before <hours|time>] [--limit <n>] [--json|--text]  the whole conversation, inbox + outbox + plan-log replies, with channel and PR refs of each message
+  phm leader thread --legacy [--limit n] [--json|--text]  chat with ids and received/answered state (JSON default)
   phm leader thread --follow [--since messageId] [--json]  stream the in-process Leader conversation
   phm leader answer <questionId> "<text>"
   phm leader approve <actionId>
@@ -414,7 +418,7 @@ async function sayToLeader(message: string, text: boolean): Promise<number> {
   return 0;
 }
 
-/** `thread`: MASON-INBOX entries and the leader's replies as one list (core/fleet/leader-chat.ts). */
+/** `thread --legacy`: MASON-INBOX entries and the leader's replies with ids and state. */
 async function printLeaderChat(limit: number, text: boolean): Promise<number> {
   const { readLeaderChat } = await import('../core/fleet/leader-chat.js');
   const { leaderChatLine } = await import('../core/fleet/leader-chat-text.js');
@@ -440,16 +444,17 @@ async function runThreadCli(sub: string, args: string[]): Promise<number> {
     }
     args.push(...tail);
   }
-  // `thread --since <hours>` is the merged inbox + outbox + plan-log thread (leader-thread.ts); `--follow --since <id>` keeps its meaning.
-  if (sub === 'thread' && args.includes('--since') && !args.includes('--follow')) return (await import('./leader-thread.js')).runLeaderThreadCli(args);
+  // One-shot reads share the merged reader; legacy chat and the live follow stream are explicit.
+  if (sub === 'thread' && !args.includes('--legacy') && !args.includes('--follow')) return (await import('./leader-thread.js')).runLeaderThreadCli(args);
   const thread = await import('../core/vision/leader-thread.js');
   if (sub === 'thread') {
     const text = flag(args, '--text');
     const json = flag(args, '--json');
     const limitOpt = option(args, '--limit');
     const follow = flag(args, '--follow');
+    const legacy = flag(args, '--legacy');
     const sinceId = option(args, '--since');
-    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || (text && (json || follow)) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
+    if (limitOpt === undefined || sinceId === undefined || (sinceId !== null && !follow) || (legacy && follow) || (text && (json || follow)) || args.length > 0 || (limitOpt !== null && !/^\d{1,3}$/.test(limitOpt))) {
       console.error(USAGE);
       return 2;
     }
@@ -631,10 +636,17 @@ async function runOfficeCli(sub: 'status' | 'ask' | 'org' | 'assign', args: stri
 async function runCeoCli(sub: 'seat' | 'inbox', args: string[]): Promise<number> {
   const json = flag(args, '--json');
   if (sub === 'seat' && !args.includes('--tier')) {
+    const onlyPick = flag(args, '--pick');
     if (args.length > 1 || (args.length === 1 && args[0] !== 'pick')) { console.error(USAGE); return 2; }
-    const { readLeaderSeat, leaderSeatText } = await import('../core/fleet/leader-seat.js');
+    const { readLeaderSeat, leaderSeatText, launcherSeat } = await import('../core/fleet/leader-seat.js');
     const { sanitizePublicJson } = await import('../core/util/public-json.js');
     const result = await readLeaderSeat();
+    if (onlyPick) {
+      const chosen = launcherSeat(result);
+      if (!chosen) { console.error(result.fallback_reason ?? result.reason ?? 'No seat available.'); return 3; }
+      console.log(sanitizePublicJson(`${chosen.lane} ${chosen.model}`));
+      return 0;
+    }
     console.log(json ? JSON.stringify(sanitizePublicJson(result), null, 2) : sanitizePublicJson(leaderSeatText(result, args[0] === 'pick')));
     return result.pick ? 0 : 3;
   }
@@ -701,6 +713,22 @@ async function runSeatDryRun(args: string[]): Promise<number> {
   return 0;
 }
 
+/** `leader brief [--since 2h] [--stale-after 3h] [--json]`: thin; the reading and rendering live in core/fleet/leader-job-brief.ts. */
+async function runBrief(args: string[]): Promise<number> {
+  if (!args.includes('--since') && !args.includes('--stale-after')) return (await import('./leader-brief.js')).cmdLeaderBrief(args);
+  const json = flag(args, '--json');
+  const since = option(args, '--since');
+  const m = since === null ? null : /^(\d+(?:\.\d+)?)([hd])$/.exec(since ?? '');
+  const stale = option(args, '--stale-after');
+  const staleHours = stale === null ? undefined : stale === undefined ? NaN : parseStaleAfter(stale) ?? NaN;
+  const core = await import('../core/fleet/leader-job-brief.js');
+  const hours = since === null ? core.BRIEF_DEFAULT_HOURS : m ? Number(m[1]) * (m[2] === 'd' ? 24 : 1) : NaN;
+  if (args.length || since === undefined || Number.isNaN(staleHours) || !(hours > 0 && hours <= core.BRIEF_MAX_HOURS)) { console.error(USAGE); return 2; }
+  const brief = await core.readJobBrief({ hours, staleAfterHours: staleHours });
+  console.log(json ? JSON.stringify(brief) : core.jobBriefLines(brief).join('\n'));
+  return 0;
+}
+
 export async function runLeaderCli(argv: string[]): Promise<number> {
   const args = [...argv];
   const sub = args.shift();
@@ -740,6 +768,7 @@ export async function runLeaderCli(argv: string[]): Promise<number> {
       return 1;
     }
   }
+  if (sub === 'brief') return runBrief(args);
   if (sub === 'oversight-plist') return runOversightPlist(args);
   if (sub === 'status' || sub === 'ask' || sub === 'org' || sub === 'assign') return runOfficeCli(sub, args);
   if (sub === 'seat' || sub === 'inbox') return runCeoCli(sub, args);

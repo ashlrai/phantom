@@ -17,12 +17,23 @@ export interface RemoteFleetTransport {
 }
 
 export interface RemoteFleetReadOptions { limit?: number }
-export interface RemoteFleetInboxOptions extends RemoteFleetReadOptions { source?: string }
+export interface RemoteFleetInboxOptions extends RemoteFleetReadOptions {
+  source?: string;
+  contains?: string;
+  priority?: string;
+  after?: string;
+  before?: string;
+}
 
 // These match the remote gateway's body grammar; the Hub also checks known
 // switches, known lanes, and each lane's current bounds.
 const FLEET_LANE_ID = /^[a-z][a-z0-9-]{1,40}$/;
 const FLEET_SWITCH_ID = /^[A-Za-z][A-Za-z0-9_-]{1,40}$/;
+// The inbox read filters mirror the gateway's grammar; the Hub re-validates.
+const INBOX_PRIORITY = /^P[0-3]$/;
+const INBOX_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+const INBOX_CONTAINS_MAX = 512;
+const INBOX_FILTER_KEYS = new Set(['source', 'contains', 'priority', 'after', 'before']);
 
 function validateLane(lane: string): void {
   if (typeof lane !== 'string' || !FLEET_LANE_ID.test(lane)) throw new TypeError('invalid lane');
@@ -32,9 +43,9 @@ function rejectExtraArguments(extra: never[]): void {
   if (extra.length > 0) throw new TypeError('unsupported fleet action options');
 }
 
-function validateOptions(options: RemoteFleetInboxOptions, allowSource: boolean): void {
+function validateOptions(options: RemoteFleetInboxOptions, inboxFilters: boolean): void {
   if (options === null || typeof options !== 'object' || Array.isArray(options)
-    || Object.keys(options).some((key) => key !== 'limit' && !(allowSource && key === 'source'))) {
+    || Object.keys(options).some((key) => key !== 'limit' && !(inboxFilters && INBOX_FILTER_KEYS.has(key)))) {
     throw new TypeError('invalid fleet read options');
   }
   if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 200)) {
@@ -43,11 +54,31 @@ function validateOptions(options: RemoteFleetInboxOptions, allowSource: boolean)
   if (options.source !== undefined && (typeof options.source !== 'string' || !/^[A-Za-z0-9 ._-]{1,40}$/.test(options.source))) {
     throw new TypeError('invalid inbox source');
   }
+  if (options.contains !== undefined && (typeof options.contains !== 'string' || options.contains.trim() === '' || options.contains.length > INBOX_CONTAINS_MAX)) {
+    throw new TypeError('invalid inbox contains');
+  }
+  if (options.priority !== undefined && (typeof options.priority !== 'string' || !INBOX_PRIORITY.test(options.priority))) {
+    throw new TypeError('invalid inbox priority');
+  }
+  for (const key of ['after', 'before'] as const) {
+    const value = options[key];
+    if (value !== undefined && (typeof value !== 'string' || !INBOX_INSTANT.test(value))) throw new TypeError(`invalid inbox ${key}`);
+  }
 }
 
 function limitedPath(path: string, options: RemoteFleetReadOptions): string {
   validateOptions(options, false);
   return options.limit === undefined ? path : `${path}?limit=${options.limit}`;
+}
+
+function inboxPath(options: RemoteFleetInboxOptions): string {
+  validateOptions(options, true);
+  const parts = [`limit=${options.limit ?? 50}`];
+  for (const key of ['source', 'contains', 'priority', 'after', 'before'] as const) {
+    const value = options[key];
+    if (value !== undefined) parts.push(`${key}=${encodeURIComponent(value)}`);
+  }
+  return `/api/verse/fleet/runs/inbox?${parts.join('&')}`;
 }
 
 // Same grammar the Hub applies in runs-job-detail `isFleetJobId` and the
@@ -93,11 +124,8 @@ export function createRemoteFleetFeed(transport: RemoteFleetTransport) {
       return transport.mutate<LaneTargetsV1>('POST', '/api/verse/fleet/control/holds',
         reason === undefined ? { lane, action: 'release' } : { lane, action: 'release', reason });
     },
-    inbox: (options: RemoteFleetInboxOptions = {}) => {
-      validateOptions(options, true);
-      const source = options.source === undefined ? '' : `&source=${encodeURIComponent(options.source)}`;
-      return transport.get<FleetInboxReadV1 | null>(`/api/verse/fleet/runs/inbox?limit=${options.limit ?? 50}${source}`);
-    },
+    inbox: (options: RemoteFleetInboxOptions = {}) =>
+      transport.get<FleetInboxReadV1 | null>(inboxPath(options)),
     job: (id: string) => {
       if (!validJobId(id)) throw new TypeError('invalid fleet job id');
       return transport.get<FleetJobDetailV1>(`/api/fleet/job?id=${encodeURIComponent(id)}`);

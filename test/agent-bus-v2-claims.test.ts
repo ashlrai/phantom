@@ -1,11 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { executeBusClaimBody, type BusClaimResult } from '../src/core/agents/bus-claims.js';
-import { listCoordination } from '../src/core/agents/claim-store.js';
+import { claimBusWorkJob, executeBusClaimBody, listBusClaims, type BusClaimResult } from '../src/core/agents/bus-claims.js';
+import { acquireCoordination, listCoordination, teamClaimKey } from '../src/core/agents/claim-store.js';
+import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
+import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import { handleAgentBusApi } from '../src/core/verse/agent-bus-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
@@ -75,6 +77,95 @@ describe('executeBusClaimBody', () => {
     expect(tokenOf(retry)).not.toBe(token);
   });
 
+  it('binds a retried operation id to its owner instead of replacing a live lease', () => {
+    const root = tempDir('v2claim-');
+    const token = tokenOf(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root));
+    // A different owner reusing the operation id conflicts with the live holder —
+    // never a silent replacement that kills dot-main's fencing token.
+    const stolen = acquire('repo:ashlrai/phantom', 'other-seat', 600_000, 'op-1', root);
+    expect(stolen).toEqual({ v: 2, status: 'conflict', holder: { owner: 'dot-main', claimKey: 'repo:ashlrai/phantom', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(stolen)).not.toContain(token);
+    // The holder's token still works and the same owner retrying the id re-acquires.
+    expect(renew('repo:ashlrai/phantom', token, 600_000, root, NOW))
+      .toEqual({ v: 2, status: 'renewed', claim: { claimKey: 'repo:ashlrai/phantom', leaseUntil: NOW + 600_000 } });
+    expect(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
+    // Once the lease expires the operation id is free for any owner to reuse.
+    expect(acquire('repo:ashlrai/phantom', 'other-seat', 600_000, 'op-1', root, NOW + 600_001))
+      .toMatchObject({ status: 'acquired', claim: { owner: 'other-seat' } });
+  });
+
+  it('refuses wildcard path claims that share a concrete path', () => {
+    const root = tempDir('v2claim-');
+    // '**/*.ts' and 'src/*.ts' both match src/x.ts; the literal-prefix rule missed this.
+    expect(acquire('path:ashlrai/phantom:**/*.ts', 'dot-main', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
+    const second = acquire('path:ashlrai/phantom:src/*.ts', 'other-seat', 600_000, 'op-2', root);
+    expect(second).toMatchObject({ status: 'conflict', holder: { owner: 'dot-main', claimKey: 'path:ashlrai/phantom:**/*.ts' } });
+    // Provably disjoint globs still coordinate independently.
+    expect(acquire('path:ashlrai/phantom:docs/*.md', 'third-seat', 600_000, 'op-3', root)).toMatchObject({ status: 'acquired' });
+  });
+
+  it('conflicts with a live team claim whose concrete path covers the glob subtree', () => {
+    const root = tempDir('v2claim-');
+    // A team lease on path 'src' is a prefix claim — it covers 'src' and
+    // everything beneath it — so a bus glob matching any of those paths must
+    // conflict even though 'src/**' cannot match the bare 'src' string.
+    const team = acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW });
+    expect(team.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('path:ashlrai/phantom:**/*.ts', 'bus-lane', 600_000, 'op-2', root))
+      .toMatchObject({ status: 'conflict' });
+    // The reverse order conflicts the same way: the bus glob blocks the team claim.
+    const root2 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:src/**', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-2',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW }).status).toBe('conflict');
+    // Provably disjoint scopes still coordinate independently.
+    const root3 = tempDir('v2claim-');
+    expect(acquireCoordination({ root: root3, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-3',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW }).status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:docs/**', 'bus-lane', 600_000, 'op-1', root3)).toMatchObject({ status: 'acquired' });
+    expect(acquire('path:ashlrai/phantom:src2/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
+  });
+
+  it('conflicts with a live team claim whose wildcard path covers the glob subtree', () => {
+    const root = tempDir('v2claim-');
+    // A team lease on 'src/*/foo' is still a prefix claim — `*`/`?` are legal
+    // filename characters — so a bus glob matching anything beneath it must
+    // conflict even though the two bare globs' languages never intersect.
+    const team = acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW });
+    expect(team.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/*/foo/bar', 'bus-lane', 600_000, 'op-1', root))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('path:ashlrai/phantom:src/*/foo/**', 'bus-lane', 600_000, 'op-2', root))
+      .toMatchObject({ status: 'conflict' });
+    // The reverse order conflicts the same way: the bus glob blocks the team claim.
+    const root2 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:src/*/foo/bar', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w2',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW }).status).toBe('conflict');
+    // Provably disjoint scopes still coordinate independently.
+    const root3 = tempDir('v2claim-');
+    expect(acquireCoordination({ root: root3, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w3',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW }).status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:docs/**', 'bus-lane', 600_000, 'op-1', root3)).toMatchObject({ status: 'acquired' });
+    expect(acquire('path:ashlrai/phantom:src/*/bar/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
+  });
+
   it('lets non-overlapping keys coexist across claim forms', () => {
     const root = tempDir('v2claim-');
     expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });
@@ -113,6 +204,336 @@ describe('executeBusClaimBody', () => {
     ]) {
       expect(executeBusClaimBody(body, 'op-bad', { root, now: NOW })).toEqual({ v: 2, status: 'invalid' });
     }
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+});
+
+describe('listBusClaims', () => {
+  it('reports a verified-empty store as missing, then lists live claims without tokens', () => {
+    const root = tempDir('v2claim-list-');
+    expect(listBusClaims({ root, now: NOW })).toEqual({ status: 'ok', source: 'missing', claims: [], asOf: new Date(NOW).toISOString() });
+    const token = tokenOf(acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root));
+    const listed = listBusClaims({ root, now: NOW });
+    expect(listed.status).toBe('ok');
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.source).toBe('available');
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]).toMatchObject({ origin: 'resource', key: 'repo:ashlrai/phantom', owner: 'dot-main', live: true });
+    expect(JSON.stringify(listed)).not.toContain(token);
+    // Expired leases are not holds; the store stays readable.
+    expect(listBusClaims({ root, now: NOW + 600_001 })).toMatchObject({ status: 'ok', source: 'available', claims: [] });
+  });
+
+  it('narrows to claims that would block an acquire of the given key', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    acquire('queue:RQ-OTHER', 'other-seat', 600_000, 'op-2', root);
+    const blocked = listBusClaims({ root, now: NOW, key: 'path:ashlrai/phantom:src/**' });
+    expect(blocked).toMatchObject({ status: 'ok' });
+    if (blocked.status !== 'ok') throw new Error('expected ok');
+    expect(blocked.claims.map(row => row.key)).toEqual(['repo:ashlrai/phantom']);
+    expect(listBusClaims({ root, now: NOW, key: 'queue:RQ-FREE' })).toMatchObject({ status: 'ok', claims: [] });
+    // Repo claims do not cover PRs; a pr claim blocks only its own number.
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#7' })).toMatchObject({ status: 'ok', claims: [] });
+    acquire('pr:ashlrai/phantom#7', 'pr-seat', 600_000, 'op-3', root);
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#7' })).toMatchObject({ status: 'ok', claims: [{ key: 'pr:ashlrai/phantom#7' }] });
+    expect(listBusClaims({ root, now: NOW, key: 'pr:ashlrai/phantom#8' })).toMatchObject({ status: 'ok', claims: [] });
+    // A malformed key is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, key: 'bogus' })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('keeps an unreadable table unavailable rather than zero', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    writeFileSync(join(root, 'coordination', 'claims.json'), 'invalid JSON');
+    expect(listBusClaims({ root, now: NOW })).toEqual({ status: 'unavailable', asOf: new Date(NOW).toISOString() });
+    expect(listBusClaims({ root, now: NOW, key: 'repo:ashlrai/phantom' })).toMatchObject({ status: 'unavailable' });
+    expect(listBusClaims({ root, now: NOW, owner: 'dot-main' })).toMatchObject({ status: 'unavailable' });
+  });
+
+  it('filters live claims by owner, resolving every label of one identity', () => {
+    const root = tempDir('v2claim-list-');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root }).status).toBe('created');
+    const atlasId = stableAgentId('atlas');
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    acquire('pr:ashlrai/phantom#3', 'lane-atlas', 600_000, 'op-3', root);
+    acquire('queue:RQ-B', 'unregistered', 600_000, 'op-4', root);
+
+    for (const ref of ['atlas', 'agent:atlas', 'lane-atlas', atlasId]) {
+      const listed = listBusClaims({ root, now: NOW, owner: ref });
+      expect(listed).toMatchObject({ status: 'ok', source: 'available',
+        owner: { ref, identity: atlasId, registry: 'available' } });
+      if (listed.status !== 'ok') throw new Error('expected ok');
+      expect(listed.claims.map(row => row.owner).sort()).toEqual(['agent:atlas', 'atlas', 'lane-atlas']);
+    }
+    // An unregistered ref falls back to the exact owner label, and says so.
+    const labelOnly = listBusClaims({ root, now: NOW, owner: 'unregistered' });
+    expect(labelOnly).toMatchObject({ status: 'ok',
+      owner: { ref: 'unregistered', identity: null, registry: 'available' } });
+    if (labelOnly.status !== 'ok') throw new Error('expected ok');
+    expect(labelOnly.claims.map(row => row.owner)).toEqual(['unregistered']);
+    // Owner and key filters compose; a missing store stays an honest empty list.
+    expect(listBusClaims({ root, now: NOW, owner: 'atlas', key: 'repo:ashlrai/phantom' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:ashlrai/phantom' }] });
+    expect(listBusClaims({ root, now: NOW, owner: 'atlas', key: 'queue:RQ-FREE' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    expect(listBusClaims({ root: tempDir('v2claim-list-'), now: NOW, owner: 'atlas' }))
+      .toMatchObject({ status: 'ok', source: 'missing', claims: [],
+        owner: { ref: 'atlas', identity: null, registry: 'missing' } });
+    // A malformed owner is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, owner: 'bad owner' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, owner: '' })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches only the exact owner label when the registry is unreadable', () => {
+    const root = tempDir('v2claim-list-');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root });
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), 'corrupt');
+    const listed = listBusClaims({ root, now: NOW, owner: 'atlas' });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available',
+      owner: { ref: 'atlas', identity: null, registry: 'unavailable' } });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.claims.map(row => row.owner)).toEqual(['atlas']);
+  });
+
+  it('joins each claim with the announced feed jobs its keys block when jobs is set', () => {
+    const root = tempDir('v2claim-jobs-');
+    const post = { kind: 'work.post', jobId: 'RQ-JOB', title: 'T', repo: 'a/b',
+      claimKeys: ['queue:RQ-JOB', 'path:a/b:docs/**'], provider: 'devin' };
+    expect(appendBusInbox({ id: 'w-post-1', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+    acquire('repo:other/repo', 'worker-2', 600_000, 'op-2', root);
+
+    const listed = listBusClaims({ root, now: NOW, jobs: true });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'ok' });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    const byKey = new Map(listed.claims.map(row => [row.key, row]));
+    // The queue claim overlaps the job's queue key; the unrelated repo claim blocks nothing.
+    // The blocked job carries the retained post/status receipt citations.
+    expect(byKey.get('queue:RQ-JOB')?.jobs).toEqual([{ id: 'RQ-JOB', owner: 'agent-1', status: 'queued', title: 'T',
+      postId: 'w-post-1', statusId: null }]);
+    expect(byKey.get('repo:other/repo')?.jobs).toEqual([]);
+    // Without jobs the same claims carry no feed join and no feed state.
+    const plain = listBusClaims({ root, now: NOW });
+    if (plain.status !== 'ok') throw new Error('expected ok');
+    expect(plain.feed).toBeUndefined();
+    expect(plain.claims.every(row => row.jobs === undefined)).toBe(true);
+  });
+
+  it('leaves jobs absent and reports the feed state when the feed cannot be read', () => {
+    const root = tempDir('v2claim-jobs-');
+    // A work.post with no provider and no registry hint refuses the whole feed.
+    const post = { kind: 'work.post', jobId: 'RQ-BAD', title: 'T', repo: 'a/b', claimKeys: ['queue:RQ-BAD'] };
+    expect(appendBusInbox({ id: 'w-post-2', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    acquire('queue:RQ-JOB', 'worker-1', 600_000, 'op-1', root);
+
+    const listed = listBusClaims({ root, now: NOW, jobs: true });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available', feed: 'refused' });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    // Claims still list; blocked work stays unknown rather than an empty list.
+    expect(listed.claims).toHaveLength(1);
+    expect(listed.claims[0]?.jobs).toBeUndefined();
+  });
+
+  it('filters live claims by origin class and composes with owner and key', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('queue:RQ-RESOURCE-1', 'dot-main', 600_000, 'op-1', root);
+    expect(acquireCoordination({ root, origin: 'message', key: 'queue:env-msg-1',
+      owner: 'nova', leaseMs: 600_000, leaseUntil: NOW + 600_000,
+      sourceId: 'env-msg-1:1:1', now: NOW }).status).toBe('acquired');
+    expect(acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src' }), owner: 'team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src' }, now: NOW }).status).toBe('acquired');
+    expect(acquireCoordination({ root, origin: 'board', key: 'board:item-1',
+      owner: 'board-op', leaseMs: 600_000, leaseUntil: NOW + 600_000,
+      sourceId: 'item-1', now: NOW }).status).toBe('acquired');
+
+    const all = listBusClaims({ root, now: NOW });
+    expect(all).toMatchObject({ status: 'ok', source: 'available' });
+    if (all.status !== 'ok') throw new Error('expected ok');
+    expect(all.claims.map(row => row.origin).sort()).toEqual(['board', 'message', 'resource', 'team']);
+
+    for (const [origin, key] of [['resource', 'queue:RQ-RESOURCE-1'], ['message', 'queue:env-msg-1'],
+      ['team', 'team:ashlrai/phantom::src'], ['board', 'board:item-1']] as const) {
+      expect(listBusClaims({ root, now: NOW, origin }))
+        .toMatchObject({ status: 'ok', claims: [{ origin, key }] });
+    }
+    // Origin composes with the owner and key filters.
+    expect(listBusClaims({ root, now: NOW, origin: 'message', owner: 'nova' }))
+      .toMatchObject({ status: 'ok', claims: [{ origin: 'message', owner: 'nova' }] });
+    expect(listBusClaims({ root, now: NOW, origin: 'resource', owner: 'nova' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    // --key keeps its own v2 claim-key grammar, so it composes with --origin
+    // only through keys the overlap rule understands.
+    expect(listBusClaims({ root, now: NOW, origin: 'resource', key: 'queue:RQ-RESOURCE-1' }))
+      .toMatchObject({ status: 'ok', claims: [{ origin: 'resource', key: 'queue:RQ-RESOURCE-1' }] });
+    expect(listBusClaims({ root, now: NOW, origin: 'message', key: 'queue:RQ-RESOURCE-1' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    // An origin outside the stored claim classes — including 'queue', which
+    // exists only on read-only path observations — is invalid, never a
+    // silent empty list.
+    expect(listBusClaims({ root, now: NOW, origin: 'bogus' as never })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, origin: 'queue' as never })).toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('claimBusWorkJob', () => {
+  const postWork = (root: string, jobId: string, claimKeys: string[], repo = 'a/b') => {
+    const body = { kind: 'work.post', jobId, title: `Job ${jobId}`, repo, claimKeys, provider: 'devin' };
+    const posted = appendBusInbox({ id: `w-post-${jobId}`, from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body }, { root, now: () => NOW });
+    expect(posted.status).toBe('posted');
+  };
+  const postStatus = (root: string, jobId: string, status: string) => {
+    const body = { kind: 'work.status', jobId, status };
+    const posted = appendBusInbox({ id: `w-status-${jobId}-${status}`, from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body }, { root, now: () => NOW });
+    expect(posted.status).toBe('posted');
+  };
+
+  it('claims the declared queue key by default and lands it in the coordination table', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-J1', ['queue:RQ-J1', 'repo:a/b']);
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-J1', owner: 'worker-1', leaseMs: 600_000, id: 'op-j1' });
+    expect(result).toMatchObject({ status: 'acquired',
+      job: { id: 'RQ-J1', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-J1', status: 'queued' },
+      scope: { source: 'missing', holds: [] },
+      claim: { claimKey: 'queue:RQ-J1', owner: 'worker-1', leaseMs: 600_000, leaseUntil: NOW + 600_000 } });
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.claim.token).toMatch(TOKEN_RE);
+    const listed = listCoordination(root, NOW);
+    expect(listed.claims).toEqual([expect.objectContaining({ origin: 'resource', key: 'queue:RQ-J1',
+      owner: 'worker-1', live: true })]);
+  });
+
+  it('falls back to the first declared key and honors an explicit declared key', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-NQ', ['repo:a/b', 'path:a/b:src/**']);
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NQ', owner: 'w1', leaseMs: 1_000, id: 'op-nq' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:a/b' } });
+    postWork(root, 'RQ-QK', ['queue:RQ-QK', 'repo:c/d'], 'c/d');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-QK', owner: 'w2', leaseMs: 1_000, key: 'repo:c/d', id: 'op-qk' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'repo:c/d' } });
+    // The default still prefers the declared queue key over the first entry.
+    postWork(root, 'RQ-DEF', ['repo:e/f', 'queue:RQ-DEF'], 'e/f');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-DEF', owner: 'w3', leaseMs: 1_000, id: 'op-def' }))
+      .toMatchObject({ status: 'acquired', claim: { claimKey: 'queue:RQ-DEF' } });
+  });
+
+  it('refuses undeclared keys, unknown jobs, non-open jobs and keyless jobs before any lease', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-K', ['queue:RQ-K']);
+    postWork(root, 'RQ-DONE', ['queue:RQ-DONE']);
+    postStatus(root, 'RQ-DONE', 'done');
+    postWork(root, 'RQ-RUN', ['queue:RQ-RUN']);
+    postStatus(root, 'RQ-RUN', 'running');
+    postWork(root, 'RQ-EMPTY', []);
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-K', owner: 'w', leaseMs: 1_000, key: 'queue:OTHER' }))
+      .toMatchObject({ status: 'refused', reason: 'undeclared-key', job: { id: 'RQ-K' } });
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-GONE', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'invalid', reason: 'unknown-job' });
+    for (const [job, status] of [['RQ-DONE', 'done'], ['RQ-RUN', 'running']] as const) {
+      expect(claimBusWorkJob({ root, now: NOW, job, owner: 'w', leaseMs: 1_000 }))
+        .toMatchObject({ status: 'refused', reason: 'job-not-open', job: { id: job, status } });
+    }
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-EMPTY', owner: 'w', leaseMs: 1_000 }))
+      .toMatchObject({ status: 'refused', reason: 'no-claim-keys', job: { id: 'RQ-EMPTY' } });
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('reports a live conflict with the holder and never the token', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-C', ['queue:RQ-C']);
+    const first = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-1', leaseMs: 600_000, id: 'op-c1' });
+    if (first.status !== 'acquired') throw new Error('expected acquired');
+    const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-C', owner: 'worker-2', leaseMs: 600_000, id: 'op-c2' });
+    expect(second).toEqual({ status: 'conflict',
+      job: { id: 'RQ-C', owner: 'agent-1', repo: 'a/b', title: 'Job RQ-C', status: 'queued',
+        postId: 'w-post-RQ-C', statusId: null },
+      scope: { source: 'available', holds: [] },
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-C', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(second)).not.toContain(first.claim.token);
+  });
+
+  it('conflicts when a second owner reuses a live claim operation id', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-O', ['queue:RQ-O']);
+    const first = claimBusWorkJob({ root, now: NOW, job: 'RQ-O', owner: 'worker-1', leaseMs: 600_000, id: 'op-shared' });
+    if (first.status !== 'acquired') throw new Error('expected acquired');
+    // worker-2 presenting the same --id is not worker-1's retry: the live lease
+    // conflicts with its holder instead of being silently replaced.
+    const second = claimBusWorkJob({ root, now: NOW, job: 'RQ-O', owner: 'worker-2', leaseMs: 600_000, id: 'op-shared' });
+    expect(second).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-O', leaseUntil: NOW + 600_000 } });
+    expect(JSON.stringify(second)).not.toContain(first.claim.token);
+    // worker-1's fencing token still renews the untouched lease.
+    expect(executeBusClaimBody({ kind: 'work.claim', op: 'renew', claimKey: 'queue:RQ-O',
+      token: first.claim.token, leaseMs: 600_000 }, 'op-renew', { root, now: NOW }))
+      .toMatchObject({ v: 2, status: 'renewed' });
+  });
+
+  it('reports live holds on the job\'s other declared keys in the claim scope', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-S', ['queue:RQ-S', 'repo:a/b', 'pr:c/d#7'], 'a/b');
+    // Another participant already holds the repo scope; the queue key is free.
+    acquire('repo:a/b', 'other-owner', 600_000, 'op-hold', root);
+    const result = claimBusWorkJob({ root, now: NOW, job: 'RQ-S', owner: 'worker-1', leaseMs: 600_000, id: 'op-s' });
+    expect(result).toMatchObject({ status: 'acquired', claim: { claimKey: 'queue:RQ-S' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'other-owner', leaseUntil: NOW + 600_000 }] } });
+    // The targeted queue key never appears among its own sibling holds.
+    if (result.status !== 'acquired') throw new Error('expected acquired');
+    expect(result.scope.holds.some(hold => hold.claimKey === 'queue:RQ-S')).toBe(false);
+  });
+
+  it('carries sibling scope holds on a conflict and drops expired holds', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-Y', ['queue:RQ-Y', 'repo:a/b', 'repo:e/f']);
+    acquire('queue:RQ-Y', 'worker-1', 600_000, 'op-yq', root);
+    acquire('repo:a/b', 'worker-1', 600_000, 'op-yr', root);
+    // repo:e/f is held but already expired at the claim instant: not a live hold.
+    acquire('repo:e/f', 'worker-9', 1_000, 'op-ye', root);
+    const conflict = claimBusWorkJob({ root, now: NOW + 2_000, job: 'RQ-Y', owner: 'worker-2', leaseMs: 600_000, id: 'op-y2' });
+    expect(conflict).toMatchObject({ status: 'conflict',
+      holder: { owner: 'worker-1', claimKey: 'queue:RQ-Y' },
+      scope: { source: 'available',
+        holds: [{ claimKey: 'repo:a/b', owner: 'worker-1', leaseUntil: NOW + 600_000 }] } });
+  });
+
+  it('refuses malformed input before touching the feed', () => {
+    const root = tempDir('v2jobclaim-');
+    postWork(root, 'RQ-I', ['queue:RQ-I']);
+    for (const bad of [
+      { job: 'bad job', owner: 'w', leaseMs: 1 },
+      { job: 'RQ-I', owner: 'bad owner', leaseMs: 1 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 0 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 3_600_001 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 1.5 },
+      { job: 'RQ-I', owner: 'w', leaseMs: 1, key: 'bogus' },
+    ]) {
+      expect(claimBusWorkJob({ root, now: NOW, ...bad })).toMatchObject({ status: 'invalid' });
+    }
+    expect(listCoordination(root, NOW).claims).toHaveLength(0);
+  });
+
+  it('maps a refused or unreadable feed honestly instead of claiming blind', () => {
+    const root = tempDir('v2jobclaim-');
+    // A work.post with no provider and no registry hint refuses the whole feed.
+    const post = { kind: 'work.post', jobId: 'RQ-NP', title: 'T', repo: 'a/b', claimKeys: ['queue:RQ-NP'] };
+    expect(appendBusInbox({ id: 'w-noprovider', from: 'agent-1', to: 'leaders', priority: 'P2',
+      ttl: 86_400_000, body: post }, { root, now: () => NOW }).status).toBe('posted');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NP', owner: 'w', leaseMs: 1_000 }))
+      .toEqual({ status: 'refused', reason: 'work-feed-missing-provider' });
+    // A damaged inbox snapshot makes the feed unavailable, never a guessed claim.
+    writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'corrupt');
+    expect(claimBusWorkJob({ root, now: NOW, job: 'RQ-NP', owner: 'w', leaseMs: 1_000 }))
+      .toEqual({ status: 'unavailable', reason: 'work-feed-unavailable' });
     expect(listCoordination(root, NOW).claims).toHaveLength(0);
   });
 });
@@ -255,5 +676,37 @@ describe('phm agents bus claim', () => {
     expect(await cli(['claim', 'renew', '--key', 'queue:Q', '--token', 'a'.repeat(64)])).toMatchObject({ code: 2 });
     expect(await cli(['claim', 'acquire', '--key', 'bogus', '--lease-ms', '60000', '--owner', 'a'], {})).toMatchObject({ code: 2 });
     expect(await cli(['claim', 'acquire', '--key', 'queue:Q', '--lease-ms', '60000'])).toMatchObject({ code: 2 });
+  });
+
+  it('filters claim list by --origin and rejects a bad origin', async () => {
+    const now = Date.now();
+    const lease = { leaseMs: 600_000, leaseUntil: now + 600_000, now };
+    expect(acquireCoordination({ root: cliRoot, origin: 'resource', key: 'queue:RQ-CLI-RES',
+      owner: 'dot-main', sourceId: 'res-1', ...lease }).status).toBe('acquired');
+    expect(acquireCoordination({ root: cliRoot, origin: 'message', key: 'queue:cli-msg-1',
+      owner: 'nova', sourceId: 'msg-1:1:1', ...lease }).status).toBe('acquired');
+    expect(acquireCoordination({ root: cliRoot, origin: 'board', key: 'board:cli-item',
+      owner: 'board-op', sourceId: 'cli-item', ...lease }).status).toBe('acquired');
+
+    const all = await cli(['claim', 'list']);
+    expect(all.code).toBe(0);
+    expect(all.json.claims.map((row: { origin: string }) => row.origin).sort())
+      .toEqual(['board', 'message', 'resource']);
+
+    const messages = await cli(['claim', 'list', '--origin', 'message']);
+    expect(messages.code).toBe(0);
+    expect(messages.json.claims).toEqual([expect.objectContaining({ origin: 'message', key: 'queue:cli-msg-1' })]);
+
+    const resources = await cli(['claim', 'list', '--origin', 'resource']);
+    expect(resources.code).toBe(0);
+    expect(resources.json.claims).toEqual([expect.objectContaining({ origin: 'resource', key: 'queue:RQ-CLI-RES' })]);
+
+    const human = await cli(['claim', 'list', '--origin', 'board'], {}, false);
+    expect(human.code).toBe(0);
+    expect(human.text).toContain('board:cli-item owner=board-op origin=board');
+
+    // 'queue' is a read-only path-observation class, never a stored claim origin.
+    expect(await cli(['claim', 'list', '--origin', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'list', '--origin', 'queue'])).toMatchObject({ code: 2 });
   });
 });

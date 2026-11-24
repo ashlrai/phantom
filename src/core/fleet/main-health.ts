@@ -7,6 +7,7 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { parseLedgerTs } from '../metrics/loop.js';
 import { localTimestamp, readSource } from './runs-parked-queue.js';
 
 export const MAIN_HEALTH_STALE_MS = 30 * 60_000;
@@ -84,6 +85,31 @@ export function parseMainGuardianStatus(text: string, nowMs: number): Omit<Fleet
   };
 }
 
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
+ * ids job|job_id|jobId|id, events event|type|kind ('published' normalizes
+ * to publish), timestamps ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt. */
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const LEDGER_EVENTS = new Set(['launch', 'claim', 'finish', 'publish', 'outcome']);
+
+const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
+/** First parseable stamp among the ledger's timestamp fields. */
+function ledgerTs(row: Record<string, unknown>): number {
+  for (const key of LEDGER_TS_KEYS) {
+    const at = parseLedgerTs(row[key]);
+    if (at !== null) return at;
+  }
+  return NaN;
+}
+
 /**
  * Jobs whose latest attempt finished empty, with how many distinct empty finishes
  * that failure has had since its last publication or non-empty finish. An empty
@@ -100,12 +126,15 @@ function emptyFixJobs(text: string, jobs: Set<string>, now: number): Map<string,
       if (!value || typeof value !== 'object' || Array.isArray(value)) return new Map();
       row = value as Record<string, unknown>;
     } catch { return new Map(); } // Incomplete evidence cannot retire an active job.
-    if (typeof row.job !== 'string' || !jobs.has(row.job) || !['launch', 'claim', 'finish', 'publish', 'outcome'].includes(String(row.event))) continue;
-    const attempt = attempts.get(row.job) ?? { launch: -Infinity, finish: -Infinity, empty: false, published: -Infinity, invalid: false, empties: new Set<number>() };
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
+    const job = ledgerPick(row, LEDGER_JOB_KEYS);
+    let event = ledgerPick(row, LEDGER_EVENT_KEYS);
+    if (event === 'published') event = 'publish';
+    if (job === null || !jobs.has(job) || event === null || !LEDGER_EVENTS.has(event)) continue;
+    const attempt = attempts.get(job) ?? { launch: -Infinity, finish: -Infinity, empty: false, published: -Infinity, invalid: false, empties: new Set<number>() };
+    const at = ledgerTs(row);
     if (!Number.isFinite(at) || at > now) attempt.invalid = true;
-    else if (row.event === 'launch' || row.event === 'claim') attempt.launch = Math.max(attempt.launch, at);
-    else if (row.event === 'finish') {
+    else if (event === 'launch' || event === 'claim') attempt.launch = Math.max(attempt.launch, at);
+    else if (event === 'finish') {
       if (at > attempt.finish) { attempt.finish = at; attempt.empty = row.empty === true; }
       else if (at === attempt.finish) attempt.empty = attempt.empty && row.empty === true;
       // Duplicate rows share a timestamp, so one attempt counts once.
@@ -114,7 +143,7 @@ function emptyFixJobs(text: string, jobs: Set<string>, now: number): Map<string,
       attempt.published = Math.max(attempt.published, at);
       for (const t of attempt.empties) if (t < at) attempt.empties.delete(t);
     }
-    attempts.set(row.job, attempt);
+    attempts.set(job, attempt);
   }
   return new Map([...attempts]
     .filter(([, a]) => !a.invalid && a.empty && a.finish > a.launch && a.published < a.launch)

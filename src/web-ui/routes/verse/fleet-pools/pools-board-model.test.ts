@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPoolsView } from '../../../../core/fleet/pools-view.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from '../../../../core/fleet/runs-resource-ledger.js';
-import { hoursUntil, nextReset, poolCounts, poolFacts, poolsHeadline, projectedEndPct, scopeLine, scopeName, span } from './pools-board-model.js';
+import { hoursUntil, nextReset, poolBar, poolCounts, poolFacts, poolGroup, poolsHeadline, projectedEndPct, scopeLine, scopeName, span } from './pools-board-model.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00.000Z');
 const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
@@ -18,7 +18,7 @@ const facts = (row: ResourceLaneRow) => { const built = view(row); return Object
 describe('pools board model', () => {
   it('counts rows by state and words the headline', () => {
     const mixed = view(lane('behind', { usedPct: 20, resetAt: at(24), burnPctPerHour: 0.5 }), lane('pace', { usedPct: 60, resetAt: at(60), burnPctPerHour: 0.7 }), lane('none', { usedPct: null }));
-    expect(poolCounts(mixed.pools)).toEqual({ all: 3, behind: 1, pace: 1, unknown: 1 });
+    expect(poolCounts(mixed.pools)).toEqual({ all: 3, fast: 0, behind: 1, pace: 1, unknown: 1 });
     expect(poolsHeadline(mixed.pools)).toBe('1 behind, 1 unknown.');
     expect(poolsHeadline(view(lane('pace', { usedPct: 60, resetAt: at(60), burnPctPerHour: 0.7 })).pools)).toBe('Nothing is behind.');
     expect(poolsHeadline(view(lane('none', { usedPct: null })).pools)).toBe('No current reading for any resource. Nothing here is known to be on pace.');
@@ -44,14 +44,24 @@ describe('pools board model', () => {
     expect(projectedEndPct(view(lane('none', { usedPct: null })).pools[0]!)).toBeNull();
   });
 
+  it('groups a pool that runs empty before reset as too fast, not on pace', () => {
+    const fast = view(lane('fast', { usedPct: 70, resetAt: at(40), burnPctPerHour: 3.5 })).pools[0]!;
+    expect(fast).toMatchObject({ verdict: 'slow down', wasteRisk: 'low' });
+    expect(poolGroup(fast)).toBe('fast');
+    expect(poolsHeadline([fast])).toBe('1 too fast.');
+    expect(facts(lane('fast', { usedPct: 70, resetAt: at(40), burnPctPerHour: 3.5 })).Empty!.value).not.toBe('not before reset');
+  });
+
   it('lists a plan pool with every reading, its basis, its reader and its jobs', () => {
     expect(facts(lane('claude', { usedPct: 20, resetAt: at(60.5), burnPctPerHour: 0.5, running: 3, target: 4 }))).toEqual({
       Used: { label: 'Used', value: '20%' }, Left: { label: 'Left', value: '80%' },
       Resets: { label: 'Resets', value: 'in 2 d 12 h', note: `local ${at(60.5)}` },
       Burn: { label: 'Burn', value: '0.5%/h', note: 'reported' }, 'Unused at reset': { label: 'Unused at reset', value: '49.8%' },
+      Empty: { label: 'Empty', value: 'not before reset' },
       Jobs: { label: 'Jobs', value: '3 of 4 running' }, Read: { label: 'Read', value: '6 min ago', note: 'claude-native-usage' },
     });
-    expect(facts(lane('average', { usedPct: 40, running: 2, target: null })).Burn).toEqual({ label: 'Burn', value: '0.48%/h', note: 'average over the window' });
+    // No reported burn and no recent readings: the window average is not a burn, so it reads unknown.
+    expect(facts(lane('average', { usedPct: 40, running: 2, target: null })).Burn).toEqual({ label: 'Burn', value: null, note: undefined });
     expect(facts(lane('average', { usedPct: 40, running: 2, target: null })).Jobs!.value).toBe('2 running');
     expect(facts(lane('held', { usedPct: 30, held: true })).Burn).toEqual({ label: 'Burn', value: '0%/h', note: 'lane is held' });
   });
@@ -78,5 +88,19 @@ describe('pools board model', () => {
     expect(scopeLine({ id: 'a', usedPct: 41.3, resetAt: at(30), hoursLeft: 30 })).toBe('41.3% used, resets in 1 d 6 h');
     expect(scopeLine({ id: 'a', usedPct: 100, resetAt: null, hoursLeft: null })).toBe('100% used, reset unknown');
     expect(scopeLine({ id: 'a', usedPct: null, resetAt: at(-1), hoursLeft: null })).toBe('unknown: its window reset and there is no new reading');
+  });
+
+  it('splits a card\'s bar into the shares the row holds, and projects nothing the row does not', () => {
+    const bar = (row: ResourceLaneRow) => poolBar(view(row).pools[0]!);
+    // 20% used and 0.5%/h for 24 h ends at 32%: 12 more, 68 left unused.
+    expect(bar(lane('behind', { usedPct: 20, resetAt: at(24), burnPctPerHour: 0.5 })))
+      .toEqual({ more: 12, unused: 68, ending: 'unused', words: '20% used, 85.7% of the window elapsed, 32% by reset at this burn, 68% left unused' });
+    // 2%/h empties the last 40% in 20 h, 40 h before the reset: the view says slow down, so the bar is the dry one.
+    const fast = bar(lane('fast', { usedPct: 60, resetAt: at(60), burnPctPerHour: 2 }));
+    expect([fast.more, fast.unused, fast.ending]).toEqual([40, 0, 'dry']);
+    expect(fast.words).toBe('60% used, 64.3% of the window elapsed, 100% by reset at this burn');
+    // No burn: used so far is drawn and nothing after it.
+    expect(bar(lane('still', { usedPct: 50, resetAt: at(84) }))).toEqual({ more: null, unused: null, ending: 'unprojected', words: '50% used, 50% of the window elapsed' });
+    expect(bar(lane('none', { usedPct: null }))).toEqual({ more: null, unused: null, ending: 'unread', words: 'usage unknown' });
   });
 });

@@ -50,7 +50,7 @@ describe('buildGoalScorecard', () => {
   it('seeds every goal and marks the healthy ones on track', () => {
     const card = buildGoalScorecard(input());
     // codex is behind (10% + 0.5/h * 48 h = 34%), so it leads; the rest keep their natural order.
-    expect(card.goals.map(g => g.id)).toEqual(['pool-codex', 'merges-per-day', 'publish-to-merge', 'launches-merged', 'main-green', 'releases-7d', 'pool-claude']);
+    expect(card.goals.map(g => g.id)).toEqual(['pool-codex', 'merges-per-day', 'publish-to-merge', 'launches-merged', 'wasted-launch-rate', 'main-green', 'releases-7d', 'pool-claude']);
     const g = byId(card.goals);
     expect(g['merges-per-day']).toMatchObject({ current: 120, status: 'on-track', statusText: 'on track', target: 96, better: 'higher', source: 'metrics/jobs.jsonl' });
     expect(g['merges-per-day']!.trend24h.points).toHaveLength(24);
@@ -91,7 +91,7 @@ describe('buildGoalScorecard', () => {
 
   it('shows missing signals as unknown, never as zero', () => {
     const card = buildGoalScorecard({ now: NOW, jobs: null, status: null, mains: null, releaseLines: null });
-    expect(card.goals.map(g => g.id)).toEqual(['merges-per-day', 'publish-to-merge', 'launches-merged', 'main-green', 'releases-7d']);
+    expect(card.goals.map(g => g.id)).toEqual(['merges-per-day', 'publish-to-merge', 'launches-merged', 'wasted-launch-rate', 'main-green', 'releases-7d']);
     for (const g of card.goals) {
       expect(g).toMatchObject({ current: null, currentText: 'unknown', status: 'unknown', trend: 'unknown', updated_at: null, parts: [] });
       expect(g.trend24h).toMatchObject({ points: [], direction: 'unknown' });
@@ -138,7 +138,7 @@ describe('buildGoalScorecard', () => {
       releaseLines: [rel(300, 'ashlrai/locus'), rel(45, 'ashlrai/phantom')],
     }));
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(a)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'endState', 'goals']);
+    expect(Object.keys(a)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'endState', 'goals', 'end_state_text', 'bets', 'bets_source', 'bets_reason', 'as_of']);
     expect(Object.keys(a.goals[0]!)).toEqual(['id', 'title', 'why', 'metric', 'unit', 'target', 'targetText', 'better', 'current', 'currentText',
       'trend', 'trend24h', 'trend7d', 'updated_at', 'source', 'status', 'statusText', 'reason', 'parts', 'evidencePane', 'next']);
     expect(Object.keys(a.goals[0]!.trend24h)).toEqual(['points', 'direction', 'target']);
@@ -165,7 +165,7 @@ describe('goal scorecard v2: trends, targets and pools', () => {
   });
 
   it('takes targets from one typed config with defaults and per-call overrides', () => {
-    expect(DEFAULT_GOAL_TARGETS).toEqual({ mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90 });
+    expect(DEFAULT_GOAL_TARGETS).toEqual({ mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90, wastedLaunchRate: 0.2 });
     const card = buildGoalScorecard(input({ targets: { mergesPerDay: 144, releasesPerRepoPer7d: 2 } }));
     const g = byId(card.goals);
     expect(g['merges-per-day']).toMatchObject({ target: 144, targetText: '144 or more a day', status: 'behind' });
@@ -206,7 +206,7 @@ describe('goal scorecard v2: trends, targets and pools', () => {
       readReleaseLines: async () => [rel(45, 'ashlrai/phantom')],
     });
     expect(card.goals.every(g => g.status === 'on-track')).toBe(true);
-    expect(card.goals.map(g => g.id)).toEqual(['merges-per-day', 'publish-to-merge', 'launches-merged', 'main-green', 'releases-7d', 'pool-claude']);
+    expect(card.goals.map(g => g.id)).toEqual(['merges-per-day', 'publish-to-merge', 'launches-merged', 'wasted-launch-rate', 'main-green', 'releases-7d', 'pool-claude']);
   });
 });
 
@@ -260,7 +260,7 @@ describe('phm goals', () => {
   it('reads the same scorecard the route serves and rejects unknown flags', async () => {
     const dir = runsDir();
     const read = await readGoalScorecard({ runsDir: dir, now: () => NOW });
-    expect(read.goals).toHaveLength(5);
+    expect(read.goals).toHaveLength(6);
     capture();
     expect(await cmdGoals(['--bogus'], { runsDir: dir })).toBe(2);
     expect(await cmdGoals(['--json', '--text'], { runsDir: dir })).toBe(2);
