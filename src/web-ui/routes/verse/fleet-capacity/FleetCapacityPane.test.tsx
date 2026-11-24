@@ -22,7 +22,7 @@ it('shows lane readings, bands, and worker history', async () => {
   expect(await screen.findByText('24 h · 2 lanes · 3 samples · 0 launch gaps')).toBeInTheDocument();
   expect(screen.getByLabelText('codex: ran at 50% of target, 2 idle slot-minutes')).toHaveAttribute('role', 'img');
   expect(screen.getByLabelText('alpha: ran at 100% of target, 0 idle slot-minutes')).toBeInTheDocument();
-  expect(within(screen.getByText('codex').closest('li')!).getByText(/1 held min/)).toBeInTheDocument();
+  expect(within(screen.getByText('codex').closest('li')!).getByText('Held').nextElementSibling).toHaveTextContent('1 min');
   expect(screen.getByLabelText('Workers and leaders over time')).toBeInTheDocument();
   expect(screen.getByText('No launch gaps observed.')).toBeInTheDocument();
 });

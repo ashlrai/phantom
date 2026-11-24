@@ -8,8 +8,29 @@ import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
                              attempt_identity, empty_reason, read_attempts, with_prompt,
-                             admission_history, terminal_target)
+                             admission_history, terminal_target, merged_jobs)
 import queue_gate
+
+# External cycle generators also enter here. Use the CLI's shared pause decision.
+family_yield = None
+family_skip_logged = set()
+def family_paused(job):
+    global family_yield
+    if not re.search(r"LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN", job): return False
+    if family_yield is None:
+        try:
+            report = json.loads(subprocess.run(["phm", "fleet", "yield", "--json", "--metrics", R + "/metrics/jobs.jsonl"],
+                capture_output=True, text=True, timeout=15, check=True).stdout)
+            family_yield = {r["family"]: r.get("pausedReason") or "recent workers found no source or made no changes"
+                            for r in report["launch_families"] if r.get("paused") is True}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+            family_yield = {}  # Unknown evidence never suppresses work.
+    family = re.sub(r"\d+[A-Za-z]?$", "", job)
+    if family not in family_yield: return False
+    if family not in family_skip_logged:
+        print("skip %s: %s" % (re.sub(r"^RQ-(?:PHX-)?", "", family), family_yield[family]), file=sys.stderr)
+        family_skip_logged.add(family)
+    return True
 
 def semantic_dedupe(lines):
     """Pure admission plan; keep in parity with core/queue/semantic-dedupe.ts."""
@@ -186,10 +207,9 @@ for row in ready_raw:
     if f[0] in queue_seen:
         queue_diagnostics["duplicate"] += 1; continue
     queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
-merged = set(); completed = set(); recent_outcomes = {}
-for x in rd(R + "/metrics/jobs.jsonl").splitlines():
-    try: d = json.loads(x)
-    except Exception: continue
+empty_attempts = read_attempts(R); completed = merged_jobs(empty_attempts)
+merged = {job for _, job in completed}; recent_outcomes = {}
+for d in empty_attempts:
     if not isinstance(d, dict) or d.get("launched") is False: continue
     job = d.get("job")
     stamp = d.get("ts", d.get("timestamp", d.get("at")))
@@ -203,12 +223,6 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     if isinstance(job, str) and epoch is not None and 0 <= time.time() - epoch < 24 * 3600 and (empty or success):
         previous = recent_outcomes.get(job)
         if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
-    if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
-        merged.add(d["job"])
-        repo = d.get("repo")
-        if repo is None or isinstance(repo, str):
-            # Legacy outcomes omit repo; job IDs are fleet-wide identities.
-            completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
 # A merged outcome plus the original identical task is evidence for suppressing
 # a later copy. Missing or ambiguous history never proves completion.
 completed_groups = set(); group_outcomes = {}
@@ -284,7 +298,7 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
-empty_attempts = read_attempts(R); empty_bases = {}
+empty_bases = {}
 _, terminal_prs = admission_history(empty_attempts, time.time())
 def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
@@ -313,8 +327,15 @@ for line in ready_raw:
     ids = gate_ids(rd(pf))
     if not ids: parked_diagnostics["empty_gate"] += 1; continue
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    if family_paused(j): continue
+    try:
+        fields = line.split("\t")
+        spec = work_market.requirements([j, repo, lane, tier, pf] + fields[6 if PARK_DEP.match(fields[0]) else 5:])
+        if work_market.needs_gh(rd(pf)) and "gh" not in spec["needs"]: spec["needs"].append("gh")
+        spec = work_market.requirements([j, repo, lane, tier, pf, json.dumps(spec)])
+    except (ValueError, TypeError): parked_diagnostics["invalid"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
-    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
+    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf, json.dumps(spec, separators=(",", ":"))])))
 # Recover up to observed PR capacity promptly, with one hourly probe at saturation.
 # Reservations prevent repeated ticks from spending the same capacity twice.
 # Unknown evidence stays parked; the separate publish drip still applies.
@@ -335,7 +356,7 @@ for line in ready_raw:
             and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
             and os.path.isfile(pf) and rd(pf).strip()):
         parked_seen.add(j)
-        rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
+        if not family_paused(j): rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
 def rate_count(now):
     try:
         stamp, count = rd(R + "/phantom-open-prs").split()
@@ -410,7 +431,7 @@ picked_specs = {}
 for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
-    try: spec = work_market.from_envelope(attrs)
+    try: spec = work_market.from_envelope(attrs, text)
     except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
@@ -428,6 +449,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
+    if family_paused(j): skip(j, "family-paused"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
     if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
@@ -457,6 +479,7 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
         dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        picked_specs[j] = spec
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
@@ -478,9 +501,12 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
         skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
         skip(j, "duplicate-single-case-test-file"); continue
-    # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if len(picks[lane]) >= need[lane]: continue
+    # Keep capability needs in ready.tsv so dispatch cannot route a repair back to an incapable lane.
+    candidates = [pool] if pool in ("codex-local", "omlx") else GENERAL
+    capable = [l for l in candidates if len(picks[l]) < need[l]
+               and set(spec["needs"]).issubset(work_market.executor_capabilities(l, slots.get(l, {})) or set())]
+    if not capable: skip(j, "no-capable-capacity"); continue
+    lane = pool if pool in capable else max(capable, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
     reason = empty_gate(j, rm.group(1), prompt)
     if reason:
@@ -650,7 +676,7 @@ if out or unparks or dep_out or rate_candidates:
             for j, repo, l, tier, pf, p, i in out:
                 f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
-                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
+                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
 if out:
     with open(Q + "/claimed.tsv", "a") as f:

@@ -75,6 +75,19 @@ describe('recut attempt lifecycle', () => {
     mkdirSync(join(runsDir, 'metrics'), { recursive: true });
     writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), events.map(event => JSON.stringify({ event, job: 'RQ-PHX-RECUT15L1' })).join('\n'));
   };
+  it('reads in-flight lifecycle rows through the jobs-ledger field dialect', async () => {
+    prompt('RQ-PHX-RECUT15L1.md', 'git fetch origin pull/15/head');
+    mkdirSync(join(runsDir, 'metrics'), { recursive: true });
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), [
+      { job_id: 'RQ-PHX-RECUT15L1', type: 'launch' },
+      { id: 'RQ-PHX-RECUT15L1', kind: 'finish' },
+      { jobId: 'RQ-PHX-RECUT15L1', event: 'enqueue' },
+      { job: 'RQ-PHX-RECUT15L1', type: 'claim' },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    expect((await recutLoopTick(deps([item(15)]))).skipped).toEqual([{ pr: 15, reason: 'in-flight' }]);
+    writeFileSync(join(runsDir, 'metrics', 'jobs.jsonl'), JSON.stringify({ job_id: 'RQ-PHX-RECUT15L1', type: 'finish' }) + '\n');
+    expect((await recutLoopTick(deps([item(15)]))).written).toHaveLength(1);
+  });
   it('allows a completed attempt to retry, but blocks a later retry until it finishes', async () => {
     prompt('RQ-PHX-RECUT15L1.md', 'git fetch origin pull/15/head');
     metrics(['launch', 'finish', 'enqueue', 'launch']);

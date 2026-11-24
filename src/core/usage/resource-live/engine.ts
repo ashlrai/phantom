@@ -42,6 +42,8 @@ function verifiedReading(allowance: ResourceLiveAllowance, seen: ResourceLiveObs
     reset_at: seen.reset_at === null ? null : normalizeInstant(seen.reset_at),
     source: seen.source, source_tier: seen.tier ?? tier, observed_at: normalizeInstant(seen.observed_at),
     stale_after: seen.stale_after,
+    account_id: seen.account_id, model: seen.model,
+    window_start: seen.window_start === undefined ? undefined : normalizeInstant(seen.window_start),
   });
   if (!parsed.success || !usable(parsed.data)) return null;
   const row = parsed.data;

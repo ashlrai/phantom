@@ -1,5 +1,5 @@
 /** Persist caller-supplied merge tracking evidence; this does not establish merge truth. */
-import { linkMergedPull, type MergedPullNote } from './evidence.js';
+import { linkMergedPullObservation, type MergedPullNote } from './evidence.js';
 import { IntentError, validRepo, type IntentLedger } from './schema.js';
 import { readLedger, writeLedger } from './store.js';
 
@@ -8,7 +8,7 @@ export function linkMergedPulls(ledger: IntentLedger, pulls: MergedPullNote[], a
   const seen = new Set<string>();
   for (const pull of pulls) {
     if (!validRepo(pull.repo)) continue;
-    for (const item of linkMergedPull(ledger, pull, at)) seen.add(item.id);
+    for (const item of linkMergedPullObservation(ledger, pull, at)) seen.add(item.id);
   }
   return { updated: seen.size };
 }

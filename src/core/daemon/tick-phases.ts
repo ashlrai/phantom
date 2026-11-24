@@ -38,8 +38,15 @@ import { noteTickPhase, readTickProgress } from './tick-progress.js';
 export const TICK_PHASE_MAINTENANCE_MS = 5 * 60_000;
 export const TICK_PHASE_INVENT_MS = 3 * 60_000;
 export const TICK_PHASE_REFLECTION_MS = 3 * 60_000;
+export const TICK_PHASE_CI_RERUN_MS = 5 * 60_000;
+export const TICK_PHASE_REWARD_SYNC_MS = 60_000;
+export const TICK_PHASE_SKILL_NUDGE_MS = 60_000;
+export const TICK_PHASE_EMPTY_TAG_SYNC_MS = 60_000;
+export const TICK_PHASE_VISIT_SYNC_MS = 60_000;
+export const TICK_PHASE_SWAPOUT_SYNC_MS = 60_000;
 export const TICK_PHASE_CAPACITY_MS = 30_000;
 export const TICK_PHASE_DISPATCH_PLAN_MS = 60_000;
+export const TICK_PHASE_NODE_BRIDGE_MS = 30_000;
 export const TICK_PHASE_BACKLOG_REFRESH_MS = 5 * 60_000;
 /**
  * Whole-tick budget. Per-phase deadlines alone let a tick run for their sum
@@ -100,6 +107,10 @@ export function endTickPhases(): DaemonTickPhase[] {
   inFlightPhase = null;
   tickBudgetEndsAtMs = null;
   return closed;
+}
+
+export function recordTickPhase(record: DaemonTickPhase): void {
+  if (openPhases !== null && openPhases.length < MAX_TICK_PHASES) openPhases.push(record);
 }
 
 /**
@@ -163,6 +174,8 @@ export interface TickPhaseRunOptions {
   nowMs?: () => number;
   /** Not bounded by the whole-tick budget (dispatch of already admitted runs). */
   budgetExempt?: boolean;
+  /** Resident background work: no tick budget, ledger or progress ownership. */
+  detached?: boolean;
 }
 
 export interface TickPhaseRun<T> {
@@ -206,7 +219,7 @@ export async function runTickPhase<T>(
 ): Promise<TickPhaseRun<T>> {
   const now = opts.nowMs ?? Date.now;
   const phaseName = name.slice(0, MAX_PHASE_NAME_LEN);
-  const budgetLeftMs = opts.budgetExempt === true || tickBudgetEndsAtMs === null
+  const budgetLeftMs = opts.detached === true || opts.budgetExempt === true || tickBudgetEndsAtMs === null
     ? null : Math.max(0, tickBudgetEndsAtMs - now());
   if (budgetLeftMs !== null && budgetLeftMs < TICK_BUDGET_MIN_PHASE_MS) {
     const record: DaemonTickPhase = { name: phaseName, status: 'skipped', durationMs: 0, error: TICK_BUDGET_EXHAUSTED };
@@ -218,7 +231,7 @@ export async function runTickPhase<T>(
   // The ledger that was open WHEN this phase began. A phase detached past its
   // tick's ledger close (tick abandoned at the runDaemon deadline) writes to
   // its own closed list — never the next tick's fresh ledger.
-  const ledger = openPhases;
+  const ledger = opts.detached ? null : openPhases;
   const controller = new AbortController();
   const onParentAbort = (): void => controller.abort();
   if (opts.parentSignal?.aborted) controller.abort();
@@ -230,10 +243,10 @@ export async function runTickPhase<T>(
   // at entry — but only when the phase's own name is still the last write.
   // This mirrors the maintenance pass's restore contract in loop.ts: a label
   // a stage set itself (or a newer tick's session) is never overwritten.
-  const progressAtEntry = readTickProgress({ expectPid: process.pid });
-  noteTickPhase(phaseName);
+  const progressAtEntry = opts.detached ? null : readTickProgress({ expectPid: process.pid });
+  if (!opts.detached) noteTickPhase(phaseName);
   const marker = { name: phaseName, startedMs: started, nowMs: now };
-  inFlightPhase = marker;
+  if (!opts.detached) inFlightPhase = marker;
 
   let status: DaemonTickPhaseStatus;
   let value: T | undefined;
@@ -282,7 +295,7 @@ export async function runTickPhase<T>(
     if (timer) clearTimeout(timer);
     opts.parentSignal?.removeEventListener('abort', onParentAbort);
     if (inFlightPhase === marker) inFlightPhase = null;
-    const progressNow = readTickProgress({ expectPid: process.pid });
+    const progressNow = opts.detached ? null : readTickProgress({ expectPid: process.pid });
     if (
       progressAtEntry && progressNow &&
       progressNow.progress.tickStartedAt === progressAtEntry.progress.tickStartedAt &&
@@ -316,6 +329,7 @@ export async function runTickPhase<T>(
  * Fold the settled phase ledger (plus whole-tick failure signals from the
  * resident loop) into one `lastTickOutcome`. Precedence:
  * failed > timeout > degraded > ok.
+ * Off-tick entries do not contribute to this tick's outcome.
  */
 export function deriveTickOutcome(input: {
   phases: readonly DaemonTickPhase[];

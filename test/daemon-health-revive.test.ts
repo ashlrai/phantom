@@ -79,21 +79,31 @@ describe('daemon health and supervisor recommendation', () => {
       { id: 'claude', engine: 'claude', model: null, available: false, reason: 'unavailable-or-not-admitted' },
       { id: 'local', engine: 'local', model: null, available: false, reason: 'unavailable-or-not-selected' },
     ];
-    const unavailable = diagnoseFrontierClients(inventory, (bin) => bin === 'codex');
+    const unavailable = diagnoseFrontierClients(inventory, (bin) => bin === 'codex' ? { path: '/fixture/codex', source: 'well-known' } : null);
     const report = readDaemonHealth([], { nowMs }, { unavailable });
     expect(report.healthy).toBe(false);
     expect(report.frontierClientsUnavailable).toEqual([
-      { id: 'codex', engine: 'codex', reason: 'unavailable-or-not-admitted', binaryOnPath: true },
-      { id: 'grok-cli', engine: 'grok-cli', reason: 'resource-unavailable', binaryOnPath: null },
-      { id: 'claude', engine: 'claude', reason: 'unavailable-or-not-admitted', binaryOnPath: false },
-      { id: 'local', engine: 'local', reason: 'unavailable-or-not-selected', binaryOnPath: null },
+      { id: 'codex', engine: 'codex', reason: 'unavailable-or-not-admitted', binaryOnPath: false,
+        binaryPath: '/fixture/codex', binarySource: 'well-known', cause: 'auth-or-seat-not-admitted' },
+      { id: 'grok-cli', engine: 'grok-cli', reason: 'resource-unavailable', binaryOnPath: null,
+        binaryPath: null, binarySource: null, cause: 'resource-unavailable' },
+      { id: 'claude', engine: 'claude', reason: 'unavailable-or-not-admitted', binaryOnPath: false,
+        binaryPath: null, binarySource: null, cause: 'binary-not-found' },
+      { id: 'local', engine: 'local', reason: 'unavailable-or-not-selected', binaryOnPath: null,
+        binaryPath: null, binarySource: null, cause: 'not-selected' },
     ]);
     expect(report.supervisor).toMatchObject({ reason: 'frontier-unavailable', restartRecommended: false });
-    expect(report.supervisor.detail).toContain("claude: unavailable-or-not-admitted ('claude' not on PATH)");
-    expect(report.supervisor.detail).toContain('codex: unavailable-or-not-admitted;');
+    expect(report.supervisor.detail).toContain('claude: binary-not-found');
+    expect(report.supervisor.detail).toContain('codex: auth-or-seat-not-admitted (/fixture/codex)');
     const unreadable = readDaemonHealth(null, { nowMs }, { unavailable: [], error: 'config module unavailable' });
     expect(unreadable.supervisor).toMatchObject({ reason: 'unknown', detail: 'frontier inventory unreadable: config module unavailable' });
   });
+
+  it.each(['policy-refused', 'resource-unavailable', 'not-selected', 'non-loopback-refused', 'probe-timeout', 'unavailable'] as const)(
+    'preserves the inventory cause %s', (reason) => {
+      expect(diagnoseFrontierClients([{ id: 'local', engine: 'local', available: false, reason }], () => null)[0]?.cause).toBe(reason);
+      expect(diagnoseFrontierClients([], () => null)).toEqual([]);
+    });
 
   it('recommends restart when proven dead even if log was recently written', () => {
     probes.liveness.mockReturnValue(liveness(false));

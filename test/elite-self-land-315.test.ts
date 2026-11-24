@@ -324,3 +324,10 @@ it('recognizes the current exact Codex model without reinterpreting older model 
   expect(matchEliteModel('codex:gpt-6.1-sol', ['gpt-6-sol'])).toBeNull();
   expect(matchEliteModel('devin-cli:gpt-6.1-sol')).toBeNull();
 });
+
+it.each(['gpt-6.2-sol', 'gpt-6.2-astra'])('recognizes exact %s without widening older grants', model => {
+  expect(matchEliteModel(`codex:${model}`)?.entry.id).toBe(model);
+  expect(matchEliteModel(`codex:${model}`, ['gpt-6.1-sol', 'gpt-6-astra'])).toBeNull();
+  expect(matchEliteModel(`codex:${model}`, [model])?.entry.id).toBe(model);
+  expect(matchEliteModel(`devin-cli:${model}`)).toBeNull();
+});

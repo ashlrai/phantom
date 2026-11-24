@@ -25,9 +25,29 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('daemon health CLI', () => {
+  it('bounds a hanging inventory probe and keeps its inventory unknown', async () => {
+    vi.useFakeTimers();
+    effects.inventory.mockReturnValue(new Promise(() => {}));
+    const result = cmdDaemon(['health', '--json']);
+    await vi.waitFor(() => expect(effects.inventory).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await result).toBe(1);
+    expect(effects.health).toHaveBeenCalledWith(null, {}, {
+      unavailable: [], error: 'frontier probe timed out after 30 s',
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('prints each unavailable client cause in human output', async () => {
+    effects.health.mockReturnValue({ healthy: false, alive: true,
+      frontierClientsUnavailable: [{ id: 'claude', cause: 'binary-not-found', binaryPath: null }],
+      supervisor: { reason: 'frontier-unavailable', restartRecommended: false } });
+    expect(await cmdDaemon(['health'])).toBe(1);
+    expect(console.log).toHaveBeenCalledWith('Frontier claude: binary-not-found');
+  });
   it('emits one JSON object using read-only config and only resolved client metadata', async () => {
     expect(await cmdDaemon(['health', '--json'])).toBe(0);
     expect(console.log).toHaveBeenCalledTimes(1);

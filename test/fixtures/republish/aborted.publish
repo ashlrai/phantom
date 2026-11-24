@@ -1,0 +1,5 @@
+remote: Create a pull request for 'codex-bridge/RQ-EXAMPLE' on GitHub by visiting:
+remote:      https://github.com/example/phantom/pull/new/codex-bridge/RQ-EXAMPLE
+remote:
+fatal: shallow file has changed since we read it
+RESULT ABORT default-fetch

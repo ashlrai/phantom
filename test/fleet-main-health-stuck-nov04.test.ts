@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetMainHealth } from '../src/cli/fleet-main-health.js';
+import { readFleetMainHealth } from '../src/core/fleet/main-health.js';
 
 const NOW = new Date(2026, 10, 4, 12, 0, 0).getTime();
 const PR = 'https://github.com/ashlrai/phantom/pull/9999';
@@ -80,5 +81,23 @@ describe('fleet main-health stuck fix PRs', () => {
     expect(parsed).toMatchObject({ v: 1, red: 1, source: 'ok' });
     expect(parsed.stuckFixes).toMatchObject({ known: true, thresholdMinutes: 20 });
     expect(parsed.stuckFixes.stuck).toEqual([expect.objectContaining({ job: JOB, prUrl: PR, ageMinutes: 45 })]);
+  });
+
+  it('reads empty fix attempts across the jobs-ledger field dialect', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'main-health-dialect-'));
+    dirs.push(dir);
+    mkdirSync(join(dir, 'supervisor'), { recursive: true });
+    mkdirSync(join(dir, 'metrics'), { recursive: true });
+    writeFileSync(join(dir, 'supervisor', 'status-main-guardian.md'), STATUS);
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), ledger(
+      { type: 'launch', job_id: JOB, timestamp: new Date(NOW - 50 * 60_000).toISOString() },
+      { kind: 'finish', jobId: JOB, at: new Date(NOW - 40 * 60_000).toISOString(), empty: true },
+      { event: 'finish', job: JOB, recordedAt: new Date(NOW - 30 * 60_000).toISOString(), empty: true },
+    ));
+    const report = await readFleetMainHealth({ runsDir: dir, now: () => NOW });
+    const repo = report.repos.find((r) => r.repo === 'phantom');
+    expect(repo?.emptyAttempts).toBe(2);
+    expect(repo?.fixJobs).toEqual([]);
+    expect(repo?.retryHold).toBe(true);
   });
 });

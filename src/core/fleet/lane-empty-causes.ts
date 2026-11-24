@@ -81,8 +81,8 @@ export interface LaneEmptyCausesV1 {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const TIMEOUT_EXITS = new Set([124, 137, 143]);
-const REASON_LINE = /^\s*(?:[-*>]\s*)?\**EMPTY_REASON\**:\s*`?(duplicate-landed|prompt-unclear|blocked|no-change-needed)\b/im;
+export const TIMEOUT_EXITS = new Set([124, 137, 143]);
+export const REASON_LINE = /^\s*(?:[-*>]\s*)?\**EMPTY_REASON\**:\s*`?(duplicate-landed|prompt-unclear|blocked|no-change-needed)\b/im;
 const REASON_CODES: Readonly<Record<string, readonly [EmptyCause, string]>> = {
   'duplicate-landed': ['duplicate-landed', 'Agent reported the work already landed.'],
   'no-change-needed': ['duplicate-landed', 'Agent reported no change was needed.'],

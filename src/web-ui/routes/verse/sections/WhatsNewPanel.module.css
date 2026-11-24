@@ -1,0 +1,7 @@
+.notes { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 100%; }
+.summary { margin: 0; font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere; }
+.note { margin: 0; color: var(--text-muted, inherit); overflow-wrap: anywhere; }
+.section { border-top: 1px solid var(--border, rgba(128, 128, 128, 0.25)); padding: 4px 0; }
+.heading { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+.lines { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .summary { font-size: 0.95rem; } }

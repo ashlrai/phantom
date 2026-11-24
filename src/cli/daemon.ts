@@ -1047,6 +1047,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
             : null,
           // Additive: the tick in progress right now, or null.
           tickInProgress: tickProgress,
+          ciReruns: (await import('../core/fleet/ci-rerun.js')).readCiRerunStatus(),
           todayDate: stateKnown ? state.todayDate : null,
           todaySpentUsd: stateKnown ? state.todaySpentUsd : null,
           dailyBudgetUsd: dailyCap ?? null,
@@ -1151,18 +1152,29 @@ async function cmdDaemonHealth(jsonMode: boolean): Promise<number> {
   try {
     const { readDaemonHealth, diagnoseFrontierClients } = await import('../core/daemon/guard-health.js');
     const { listFrontierClients } = await import('../core/generative/invent.js');
+    const { TICK_PHASE_FRONTIER_PROBE_MS } = await import('../core/daemon/tick-phases.js');
     const loadConfig = await importConfig(true, true);
     let clients: import('../core/daemon/guard-health.js').DaemonHealthClient[] | null = null;
     let frontier: import('../core/daemon/guard-health.js').DaemonHealthFrontierDiagnostics;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
     try {
       if (!loadConfig) throw new Error('config module unavailable');
-      const inventory = await listFrontierClients(loadConfig());
+      const inventory = await Promise.race([
+        listFrontierClients(loadConfig()),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { timedOut = true; reject(new Error('frontier probe timeout')); }, TICK_PHASE_FRONTIER_PROBE_MS);
+        }),
+      ]);
       clients = inventory.filter((client) => client.available).map(({ id, engine, model }) => ({ id, engine, model }));
       frontier = { unavailable: diagnoseFrontierClients(inventory) };
     } catch {
       // Unknown configuration/availability is not an empty, healthy inventory.
       // The error text is not reported: configuration errors can quote values.
       frontier = { unavailable: [], error: clients === null && loadConfig ? 'config or frontier inventory unreadable' : 'config module unavailable' };
+      if (timedOut) frontier.error = `frontier probe timed out after ${TICK_PHASE_FRONTIER_PROBE_MS / 1000} s`;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     const health = readDaemonHealth(clients, {}, frontier);
     if (jsonMode) {
@@ -1174,6 +1186,9 @@ async function cmdDaemonHealth(jsonMode: boolean): Promise<number> {
       console.log(`Frontier clients resolved: ${health.frontierClientsResolved?.map((client) => client.id).join(', ') || 'none or unknown'}`);
       console.log(`Supervisor: ${health.supervisor.reason}; restart recommended: ${health.supervisor.restartRecommended}`);
       if (health.supervisor.detail) console.log(`Reason: ${health.supervisor.detail}`);
+      for (const client of health.frontierClientsUnavailable ?? []) {
+        console.log(`Frontier ${client.id}: ${client.cause}${client.binaryPath ? ` (${client.binaryPath})` : ''}`);
+      }
     }
     return health.healthy ? 0 : 1;
   } catch {

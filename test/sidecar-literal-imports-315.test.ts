@@ -24,11 +24,6 @@ const ROOT = join(__dirname, '..');
 const ALLOWED: Record<string, string> = {
   // A user-installed plugin lives on disk outside the binary by definition.
   'src/core/plugins/registry.ts': 'loads operator-installed plugin entry points from disk',
-  // The Tier-1 closure test follows literal dynamic imports, so the status composer's digest readers
-  // can only stay out of that closure behind a computed specifier. The CLI entry (src/cli/imessage.ts,
-  // outside the closure, so safe for the sidecar) injects the reply statically; this lazy load is only
-  // the default for in-closure callers and degrades to the generic ack when it misses.
-  'src/core/comms/imessage-inbox-bridge.ts': 'lazy status-reply default that must not join the Tier-1 import closure',
   // Playwright is an optional, operator-installed driver and not a Phantom dependency, so there is
   // nothing to bundle; a literal specifier would also fail typecheck/bundling when it is absent.
   'src/core/usage/live/browser.ts': 'loads the optional operator-installed Playwright driver by variable name',

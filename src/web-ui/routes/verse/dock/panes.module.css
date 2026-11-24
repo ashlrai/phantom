@@ -180,3 +180,6 @@
   :root:not([data-motion='full']) .taskMark { animation: none; }
 }
 :root[data-motion='reduce'] .taskMark { animation: none; }
+
+/* Phone width: a pane's action button is a 44 px thumb target (held by `phm mobile check`). */
+@media (max-width: 479.98px) { .action { min-height: 2.75rem; } }

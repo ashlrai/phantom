@@ -8,16 +8,33 @@ What happens to an allowlisted message:
 1. It is read from `~/Library/Messages/chat.db`, opened read-only (`sqlite3 -readonly`
    on a `mode=ro` URI). Nothing is ever written to that database.
 2. Only the configured owner handle is receipted through the shared channel
-   receiver into local `MASON-INBOX.md` and the chief-of-staff queue. Other
-   allowlisted handles enter the local teammate inbox with a hashed sender ID,
+   receiver into local `MASON-INBOX.md` and the chief-of-staff queue. Each
+   verified-owner receipt is also copied into the unified owner thread
+   (`phm comms thread`, `phm comms status`) as a best-effort record — the same
+   copy the Telegram, email and Slack receivers get — gated by the iMessage
+   owner-thread adapter (`bridge = "loopback"` plus the owner identity);
+   without that configuration intake is unaffected and nothing is recorded.
+   The copy writes no second inbox entry and its bus mirror stays redacted.
+   Other allowlisted handles enter the local teammate inbox with a hashed sender ID,
    and each durable teammate row also mirrors onto the local agent bus as an
    untrusted `note` envelope on the `teammate.findings` topic (see the findings
    mirror below). Owner message bodies never enter the shared agent bus.
 3. Repeats of the same words inside ten minutes are one instruction, not two.
 4. Owner acknowledgement evidence is written to
-   `~/.ashlr-runs/imessage/acks.jsonl`; nonduplicate owner acknowledgements pass
-   through the existing owner-only transport. That transport still cannot send
-   to teammates.
+   `~/.ashlr-runs/imessage/acks.jsonl` before the send attempt. Since
+   RQ-IMSG-REPLY-1 ([#3534](https://github.com/ashlrai/phantom/pull/3534)),
+   nonduplicate verified-owner acknowledgements are attempted through the
+   outbox to the original owner handle. This caller does not acknowledge
+   teammate input. The shared outbox separately supports locally registered
+   agents; that does not grant them owner acknowledgement authority.
+
+The journal's legacy `delivery: "recorded-not-sent"` label describes the
+pre-attempt record, not a final delivery result. The acknowledgement evidence
+reader always reports `deliveryProof: false`. Neither a journal row nor a
+successful native send return proves delivery; an absent result does not prove
+failure. The receiver's acknowledgement deadline does not cancel a late send,
+so a timed-out attempt may still complete. Do not infer a safe retry from this
+journal. This documentation changes no send, retry, or KILL behavior.
 
 Text that looks like a secret is refused and never stored.
 
@@ -239,7 +256,11 @@ phm fleet teammate-latency --window-hours 24 --target-minutes 5 --json
 transport and unsupported-collaborator states do not assess the separate
 teammate task transport described above. `imessage-acks` reads the
 acknowledgement journal; no match in its bounded tail does not prove a message
-was never ingested, and recorded-not-sent is not delivery. `teammates` shows
+was never ingested. Legacy journal labels such as `recorded-not-sent` are
+normalized to `delivery: "unknown"` in CLI/MCP evidence; the original journal
+remains unchanged. This source cannot prove delivery or non-delivery, even if
+a row claims a successful native return. `deliveryProof` remains false.
+`teammates` shows
 declared counterparts and masked handles with observed text times. Latency
 summarizes recorded replies and unanswered age; missing sources remain unknown.
 The read-only fleet MCP equivalents are in the

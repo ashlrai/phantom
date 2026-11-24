@@ -12,7 +12,7 @@
  *   - codex session files              (subscription rate limits)
  *   - ~/.claude/projects + .ashlr/runs (observability rollup for tokens/cost)
  *
- * With --json: prints the raw FrontierUsage JSON object.
+ * With --json: preserves FrontierUsage and adds the desktop's spend snapshot.
  */
 
 import { cmdUsageSensors } from './usage-sensors.js';
@@ -20,6 +20,11 @@ import { cmdUsageLive } from './usage-live.js';
 import { cmdUsageResourceLive } from './usage-resource-live.js';
 import { cmdUsageHistory } from './usage-history.js';
 import { makeColors, isTty } from './ui.js';
+import type { FrontierUsage } from '../core/usage/frontier-usage.js';
+import type { SpendSnapshot } from '../core/usage/spend.js';
+
+/** Additive CLI contract: legacy engine totals plus the desktop pool projection. */
+export type UsageSnapshot = FrontierUsage & { spend: SpendSnapshot };
 
 const { bold, dim, cyan, green, yellow, red } = makeColors(isTty());
 
@@ -187,12 +192,23 @@ export async function cmdUsage(args: string[]): Promise<number> {
     const { cmdFleetSpend } = await import('./fleet-spend.js');
     return cmdFleetSpend(args.slice(1));
   }
+  if (args[0] === 'limits') {
+    const { cmdUsageLimits } = await import('./usage-limits.js');
+    return cmdUsageLimits(args.slice(1));
+  }
+  if (args[0] === 'producers') {
+    const { cmdUsageProducers } = await import('./usage-producers.js');
+    return cmdUsageProducers(args.slice(1));
+  }
   if (args[0] === 'pace') {
     if (args.length > 2 || (args[1] !== undefined && args[1] !== '--json')) { console.error('Usage: phm usage pace [--json]'); return 2; }
     const { readUsagePace } = await import('../core/usage/pace.js');
-    const pace = await readUsagePace();
-    if (args[1] === '--json') console.log(JSON.stringify(pace, null, 2));
-    else for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
+    const { readPlanPace } = await import('../core/usage/plan-pace.js');
+    const [pace, plans] = await Promise.all([readUsagePace(), readPlanPace().then(p => p.plans, () => [])]);
+    // `plans` is the per-plan runway check (plan-pace.ts); the rest is the dispatch forecast, unchanged.
+    if (args[1] === '--json') console.log(JSON.stringify({ ...pace, plans }, null, 2));
+    else for (const p of plans) console.log(`${p.plan}: ${p.verdict}${p.points_per_hour === null ? '' : ` (${p.points_per_hour} points an hour, even pace ${p.even_pace_points_per_hour})`}${p.reason ? ` - ${p.reason}` : ''}`);
+    if (args[1] !== '--json') for (const row of pace.pools) console.log(`${row.pool}: ${row.projectedPercent === null ? 'unknown' : `on pace to use ${row.projectedPercent}% before reset (${row.hoursLeft} h left)`} · suggested running slots: ${row.recommendedSlots ?? 'unknown'}`);
     return 0;
   }
   if (args[0] === 'sensors') return cmdUsageSensors(args.slice(1));
@@ -247,7 +263,9 @@ export async function cmdUsage(args: string[]): Promise<number> {
   }
 
   if (jsonMode) {
-    console.log(JSON.stringify(usage, null, 2));
+    const { readUsageSpend } = await import('../core/usage/spend.js');
+    const snapshot: UsageSnapshot = { ...usage, spend: await readUsageSpend() };
+    console.log(JSON.stringify(snapshot, null, 2));
   } else {
     renderTable(usage);
   }
@@ -265,8 +283,11 @@ function printUsage(): void {
   console.log(b('  ashlr usage') + d(' [--json]'));
   console.log('');
   console.log('  Show per-engine frontier usage: calls, tokens, cost, and window state.');
+  console.log('  --json also includes spend: the desktop pool usage, reset, burn and unused forecast.');
   console.log('  phm usage spend [--json] shows measured burn and unused capacity at reset.');
   console.log('  phm usage pace [--json] shows included-quota forecasts by pool.');
+  console.log('  phm usage limits [--json] shows every provider account: used percent, flagged limits and reset times.');
+  console.log('  phm usage producers [--since 6h] [--json] shows who started jobs: each lane and outside loop.');
   console.log('  phm usage validate <file> [--json] checks usage-reading.v1 JSONL records.');
   console.log('  phm usage sensors --json [--refresh] [--file <snapshot>]');
   console.log('  prints each lane reading, its age and whether it is stale.');

@@ -46,6 +46,17 @@ export interface ClaimNoticeDeliverySummary {
   unknown: number;
 }
 
+/** Fixed, sanitized reasons a pending observation could not be made. */
+export type ClaimNoticePendingUnknownReason = 'state-missing' | 'ledger-unavailable' | 'board-unavailable'
+  | 'bindings-unavailable' | 'prev-unavailable' | 'observation-failed';
+
+/** 'known' only after a successful dry-run pass, so `pending: []` under
+ * 'known' means nothing awaits delivery. Under 'unknown' `pending` is `[]`
+ * only for compatibility and says nothing. Diagnostic, never dispatch authority. */
+export type ClaimNoticePendingObservation =
+  | { state: 'known' }
+  | { state: 'unknown'; reason: ClaimNoticePendingUnknownReason };
+
 export interface ClaimNoticeView {
   v: 1;
   generatedAt: string;
@@ -55,6 +66,8 @@ export interface ClaimNoticeView {
   /** Counts over the listed `sent.recent` rows plus the send-store state they were read under. */
   delivery: ClaimNoticeDeliverySummary;
   pending: Array<{ state: string; threadKey: string; text: string }>;
+  /** Whether `pending` was actually observed; independent of `delivery` receipts. */
+  pendingObservation: ClaimNoticePendingObservation;
   /** Live claims with no binding: runClaimNoticePass drops every notice for them.
    * 'unknown' whenever the board could not be read as known; never an empty-list guess.
    * Task text is deliberately not carried. */
@@ -117,6 +130,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
   } catch { /* stays unknown */ }
   const empty = (source: 'missing' | 'unreadable'): ClaimNoticeView =>
     ({ ...base, source, bindings: 0, sent: { total: 0, recent: [] }, delivery: summary([]), pending: [],
+      pendingObservation: { state: 'unknown', reason: source === 'missing' ? 'state-missing' : 'ledger-unavailable' },
       unbound: { state: 'unknown', total: 0, rows: [] }, slackConfigured });
   if (!existsSync(root)) return empty('missing');
 
@@ -157,7 +171,7 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
 
   // One board read, shared by the unbound list and the dry run below.
   let boardRead: { board: FleetBoard } | { error: unknown };
-  try { boardRead = { board: (opts.readBoard ?? (() => readFleetBoard({ now: now() })))() }; }
+  try { boardRead = { board: (opts.readBoard ?? (() => readFleetBoard({ now: collectedAtMs })))() }; }
   catch (error) { boardRead = { error }; }
   const readBoardOnce = (): FleetBoard => {
     if ('error' in boardRead) throw boardRead.error;
@@ -176,18 +190,24 @@ export async function readClaimNoticeView(opts: ClaimNoticeViewOpts = {}): Promi
 
   const files = claimNoticeFileDeps(root);
   let pending: ClaimNoticeView['pending'] = [];
+  let pendingObservation: ClaimNoticePendingObservation = { state: 'unknown', reason: 'observation-failed' };
   try {
     const pass = await runClaimNoticePass({
       ...files,
       readBoard: readBoardOnce,
       writePrevSnapshot: () => { throw new Error('claim-notice view is read-only'); },
       appendSentLedger: () => { throw new Error('claim-notice view is read-only'); },
-      send: neverSend, now, dryRun: true,
+      send: neverSend, now: () => collectedAtMs, dryRun: true,
     });
-    pending = pass.deliveries.filter(d => d.result === 'planned').slice(0, CLAIM_NOTICE_VIEW_ROWS)
+    if (pass.status === 'dry-run') pendingObservation = { state: 'known' };
+    else if (pass.status !== 'completed') pendingObservation = { state: 'unknown', reason: pass.status };
+    if (pass.status === 'dry-run') pending = pass.deliveries.filter(d => d.result === 'planned').slice(0, CLAIM_NOTICE_VIEW_ROWS)
       .map(d => ({ state: d.state, threadKey: d.threadKey, text: d.text.slice(0, CLAIM_NOTICE_VIEW_TEXT) }));
-  } catch { /* pending stays empty; the sent half is still honest */ }
+  } catch {
+    // A thrown board read is a board outage; anything else stays 'observation-failed'.
+    if ('error' in boardRead) pendingObservation = { state: 'unknown', reason: 'board-unavailable' };
+  }
 
   return { ...base, source: 'ok', bindings: bindings.length,
-    sent: { total: rows.length, recent }, delivery: summary(recent), pending, unbound, slackConfigured };
+    sent: { total: rows.length, recent }, delivery: summary(recent), pending, pendingObservation, unbound, slackConfigured };
 }

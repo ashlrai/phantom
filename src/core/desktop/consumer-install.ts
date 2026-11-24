@@ -20,6 +20,7 @@ type Alias = {path: string; target: string; identity: unknown};
 export interface ConsumerInstallIo extends Record<string, unknown> {
   home: string; log(line: string): void;
   readCurrentPointer(path: string): Pointer | null;
+  isCanonicalLauncher(path: string): boolean;
   switchCurrentPointer(path: string, before: Pointer | null, target: string): Pointer;
   restoreCurrentPointer(path: string, before: Pointer | null, expected: Pointer): void;
   writeInstallJournal(owner: string, value: {phase: string}): void;
@@ -59,6 +60,7 @@ export interface ConsumerInstallResult {
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const same = (a: fs.Stats, b: fs.Stats) => ['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].every(key => a[key as keyof fs.Stats] === b[key as keyof fs.Stats]);
 class Held extends Error { constructor(readonly reason: string) {super(reason);} }
+export {Held as ConsumerInstallHeld};
 function require(condition: unknown, reason: string): asserts condition {if (!condition) throw new Held(reason);}
 function directory(path: string, privateMode = true): fs.Stats {
   const s=fs.lstatSync(path);
@@ -118,11 +120,12 @@ function original(a: Admission): void {
   const checked=verifyCompatibleUpdateManifest(JSON.parse(owned(join(a.stage,'envelope.json'),128*1024).data.toString('utf8')),a.deps.trust);
   require(canonicalJson(checked.manifest)===canonicalJson(a.manifest),'manifest-changed');
 }
-async function packageReady(root: string, a: Admission): Promise<void> {
+export async function packageReady(root: string, a: Pick<Admission,'pins'|'manifest'>): Promise<void> {
   await verifyInstalledRuntimeArchive(root,a.pins);
   const surface=verifyAuthoritySurfaceAt(root,'installed',{fresh:true});
   require(surface.ok && surface.digest===a.manifest.authoritySurfaceDigest,'package-surface');
 }
+export {directory, parents, owned, regular, write, sha, ioRead};
 /** Inspection persists only fresh private downloaded/staged data, never an installation. */
 export async function inspectConsumerDesktopInstall(input: ConsumerInstallDependencies): Promise<ConsumerInstallResult> {
   // Capture invocation inputs before the first await; caller mutation cannot

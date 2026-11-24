@@ -1,6 +1,7 @@
 /** Nightly local mining only. No model, provider, queue, git or network calls. */
 import { deriveNightlyImprovements } from '../../fleet/self-improve.js';
 import { extractNightlyJob, extractNightlyReview } from './extract.js';
+import { ensureNightlyInputs } from './feed.js';
 import { NIGHTLY_MAX_RECORDS, readNightlyInputs, updateNightlyState } from './store.js';
 import type { NightlyJob, NightlyReview } from './nightly-types.js';
 
@@ -61,6 +62,8 @@ export async function runNightlyRetro(cfg: unknown, nowMs = Date.now()): Promise
         }
         if (state.completedNight >= night) return null;
       }
+      // The fleet-ledger feed is best-effort; readNightlyInputs still gates availability.
+      await ensureNightlyInputs({ nowMs });
       const input = await readNightlyInputs();
       const jobs = reconcile(oldJobs, input.jobs.map(extractNightlyJob), nowMs);
       const reviews = reconcile(oldReviews, input.reviews.map((r) => extractNightlyReview(r)), nowMs);

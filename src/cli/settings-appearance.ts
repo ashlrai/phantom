@@ -2,8 +2,12 @@
  * `phm settings appearance` — the desktop and phone app's theme, accent,
  * density and font size, as a typed CLI so agents can read and change them.
  *
- *   phm settings appearance get [--json]
- *   phm settings appearance set <key> <value> [--json]
+ *   phm settings appearance [--json]          (read; `get` is an alias)
+ *   phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]
+ *   phm settings appearance --reset [--json]  (the page's "Reset to defaults")
+ *   phm settings appearance set <key> <value> [--json]   (one key, older form)
+ *
+ * Several flags land in ONE write, so the app never paints a half-applied mix.
  *
  * Reads and writes the SAME shared record the app polls and applies live
  * (<runs dir>/ui/appearance.json via core/verse/ui-appearance-file.ts); the
@@ -18,11 +22,13 @@ import { execFile } from 'node:child_process';
 import {
   APPEARANCE_SETTING_KEYS,
   appearanceSettingsFrom,
+  parseAppearanceFlags,
   resolveAppearanceTheme,
   validateAppearanceSetting,
   type AppearanceSettings,
 } from '../core/settings-appearance.js';
 import {
+  defaultUiAppearance,
   readUiAppearanceFile,
   updateUiAppearanceFile,
   UI_DENSITIES,
@@ -33,14 +39,17 @@ import {
 
 export const SETTINGS_APPEARANCE_SCHEMA = 'phm.settings.appearance.v1';
 
-const USAGE = `Usage: phm settings appearance get [--json]
+const USAGE = `Usage: phm settings appearance [--json]
+       phm settings appearance [--theme <t>] [--accent <hex>] [--density <d>] [--font-size <n>] [--json]
+       phm settings appearance --reset [--json]
        phm settings appearance set <key> <value> [--json]
 
-Keys:
-  theme     ${UI_THEMES.join(' | ')}
-  accent    a hex color, e.g. #6366f1
-  density   ${UI_DENSITIES.join(' | ')}
-  fontSize  ${UI_SCALES.join(' | ')}
+Settings:
+  --theme      ${UI_THEMES.join(' | ')}
+  --accent     a hex color, e.g. #6366f1
+  --density    ${UI_DENSITIES.join(' | ')}
+  --font-size  ${UI_SCALES.join(' | ')}, or a percent 100-125
+  --reset      back to the defaults, like the page's "Reset to defaults"
 
 A running Phantom app applies a change within a few seconds, no restart.
 More options (radius, layout, motion): phm fleet appearance --help.`;
@@ -123,9 +132,18 @@ export async function cmdSettings(args: string[], deps: SettingsAppearanceDeps =
   const rest = args.filter((arg) => arg !== '--json');
   if (rest[0] !== 'appearance') return fail(rest.length === 0 ? USAGE : `Unknown settings area "${rest[0]}".\n${USAGE}`, json, 2);
   const [, verb, key, value, ...extra] = rest;
-  if (verb === 'get' && key === undefined) {
+  // Bare `appearance` reads; `get` stays as an explicit alias.
+  if ((verb === undefined || verb === 'get') && key === undefined) {
     print(await view(await readUiAppearanceFile(), deps), json);
     return 0;
+  }
+  if (verb === '--reset') {
+    if (rest.length > 2) return fail('--reset takes no other settings.', json, 2);
+    return write(defaultUiAppearance(), json, deps);
+  }
+  if (verb?.startsWith('--')) {
+    const parsed = parseAppearanceFlags(rest.slice(1));
+    return parsed.ok ? write(parsed.patch, json, deps) : fail(`${parsed.error}\n${USAGE}`, json, 2);
   }
   if (verb !== 'set' || key === undefined || value === undefined || extra.length > 0) {
     return fail(verb === 'set'
@@ -134,7 +152,11 @@ export async function cmdSettings(args: string[], deps: SettingsAppearanceDeps =
   }
   const checked = validateAppearanceSetting(key, value);
   if (!checked.ok) return fail(checked.error, json, 2);
-  const result = await updateUiAppearanceFile(checked.patch, { updatedBy: 'cli' });
+  return write(checked.patch, json, deps);
+}
+
+async function write(patch: object, json: boolean, deps: SettingsAppearanceDeps): Promise<number> {
+  const result = await updateUiAppearanceFile(patch, { updatedBy: 'cli' });
   if (!result.ok) return fail('The appearance record changed while writing; run the command again.', json, 1);
   print(await view(result.file, deps), json);
   return 0;

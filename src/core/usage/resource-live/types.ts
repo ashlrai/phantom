@@ -96,6 +96,9 @@ export type ResourceLiveReason =
   | 'window-reset';
 
 export interface ResourceLiveReading {
+  account_id?: string;
+  model?: string;
+  window_start?: string;
   id: ResourceLiveId;
   label: string;
   lane: string | null;

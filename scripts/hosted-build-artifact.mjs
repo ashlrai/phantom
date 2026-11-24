@@ -516,9 +516,23 @@ export function verifyPushCi({ repository, revision, runId, runAttempt, read }) 
     const job = matches[0]; assert.equal(job.run_id, runId); assert.equal(job.head_sha, revision);
     assert.equal(job.status, 'completed'); assert.equal(job.conclusion, 'success');
     assert.ok(job.labels?.includes('ubuntu-latest') && !job.labels.includes('self-hosted'), 'unexpected push CI runner');
-    for (const stepName of steps) {
+    const conclusion = stepName => {
       const rows = job.steps?.filter(step => step.name === stepName); assert.equal(rows?.length, 1, 'push CI step missing or ambiguous');
-      assert.equal(rows[0].status, 'completed'); assert.equal(rows[0].conclusion, 'success');
+      assert.equal(rows[0].status, 'completed');
+      return rows[0].conclusion;
+    };
+    for (const stepName of steps) {
+      const result = conclusion(stepName);
+      if (name === 'Check authority drift (hermetic)' && result === 'skipped') {
+        // The source-owned job only skips the tests and receipt write when
+        // the reuse decision validates a green receipt for the exact input hash.
+        for (const proof of ['Hash authority drift inputs', 'Restore authority drift green result', 'Decide authority drift reuse']) {
+          assert.equal(conclusion(proof), 'success', `push CI authority cache proof did not pass: ${proof}`);
+        }
+        assert.equal(conclusion('Record authority drift green result'), 'skipped', 'push CI authority cache evidence is inconsistent');
+      } else {
+        assert.equal(result, 'success', `push CI step did not pass: ${name} / ${stepName}`);
+      }
     }
   }
   return { runId, runAttempt, revision };

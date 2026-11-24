@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readSlackEvidenceBundle } from '../src/core/agents/slack-evidence-bundle.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 
 const thread = '1731000000.000100';
 const channelA = 'C0FAKE0001';
@@ -12,8 +13,10 @@ const now = () => new Date('2024-11-07T18:00:00.000Z');
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+const rid = (channelId: string, messageTs: string) => fakeRequestId(`449s:${channelId}:${messageTs}`);
 const entry = (channelId: string, at: string, messageTs: string, bus?: string) => ({
   at, decision: 'ingested', ...(bus === undefined ? {} : { bus }), channelId, threadTs: thread, messageTs,
+  requestId: rid(channelId, messageTs),
 });
 const sent = (channel: string, ts: string) => ({ channel, thread, state: 'sent', ts });
 
@@ -31,7 +34,7 @@ const journal = [
   entry(channelA, '2024-11-07T17:59:30.000Z', '1731000010.000100', 'posted'),
   entry(channelB, '2024-11-07T12:00:00.000Z', '1731000020.000100', 'posted'),
 ].map((row) => JSON.stringify(row)).join('\n') + '\n';
-const messages = { a: sent(channelA, '1731002390.000100') };
+const messages = { [replyKey(rid(channelA, '1731000010.000100'))]: sent(channelA, '1731002390.000100') };
 
 it('keeps distinct channels on the same thread root distinguishable', () => {
   const deps = fixture(journal, messages);

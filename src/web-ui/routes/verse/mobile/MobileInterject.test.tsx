@@ -76,6 +76,20 @@ describe('Tell the leaders', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
+  it('shows the Leader chat above the one box when the Mac serves it, replacing the inbox lines', async () => {
+    const leaderChat = { v: 1, generatedAt: at, skipped: { malformedInbox: 0 }, messages: [
+      { id: 'phone-1', ts: at, direction: 'to-leader', channel: 'phone', text: 'Is it green?', state: 'answered', received: true },
+      { id: 'out-1', ts: at, direction: 'from-leader', channel: 'outbox', text: 'Green.', state: 'reply', replyTo: 'phone-1' },
+    ] };
+    stubFetch({ 'GET /api/verse/fleet/runs': { inbox: [{ ...entry, text: 'Old inbox line' }], leaderChat } });
+    renderMobile(<MobileInterject />);
+    const conversation = await screen.findByRole('list', { name: 'Conversation with the leader' });
+    expect(conversation).toHaveTextContent(/Is it green\?.*✓ answered.*Green\./);
+    expect(screen.queryByText('Old inbox line')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(conversation.compareDocumentPosition(screen.getByRole('textbox')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('keeps text and shows the server reason when a send fails', async () => {
     stubFetch({ 'GET /api/verse/fleet/runs': { inbox: [] }, 'POST /api/verse/fleet/runs/inbox': () => json({ error: 'Inbox is full.' }, 400) });
     renderMobile(<MobileInterject />);

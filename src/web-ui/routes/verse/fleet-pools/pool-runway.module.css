@@ -1,0 +1,49 @@
+/* "Runway ahead" on the Pools board: one row per plan pool (and per-model
+   window) with a reset ahead, all on the same line of time. Columns are fixed
+   so every row's track starts and ends where the scale above it does. */
+.root { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); font-size: var(--text-xs-size); }
+.title { margin: 0; color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.summary { margin: 0 0 var(--space-1); color: var(--text-primary); font-size: var(--text-sm-size); font-variant-numeric: tabular-nums; }
+.off { margin: 0; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+.rows { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0 0 var(--space-1); padding: 0; }
+.row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(4rem, 1fr) 11.5rem minmax(0, 15rem); align-items: center; column-gap: var(--space-3); min-width: 0; }
+.name { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; overflow: hidden; color: var(--text-primary); font: inherit; font-weight: var(--font-weight-medium); text-align: start; text-overflow: ellipsis; white-space: nowrap; }
+button.name { margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; cursor: pointer; }
+button.name:hover { text-decoration: underline; }
+button.name:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+/* A per-model window sits under its pool: indented, quieter, not a button. */
+.row[data-scope] .name { padding-inline-start: var(--space-4); color: var(--text-secondary); font-weight: var(--font-weight-regular); }
+.when { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.words { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.row[data-flagged] .words { color: var(--status-warning-fg); font-weight: var(--font-weight-medium); }
+.row[data-state='unknown'] .words { font-style: italic; }
+
+/* The scale: "now" at the left edge, then hours or days. */
+.scale { position: relative; grid-column: 2; height: var(--text-xs-line); color: var(--text-tertiary); font-size: var(--text-2xs-size); }
+.tickLabel { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.tickLabel[data-edge='start'] { transform: none; }
+
+/* A row's track: faint tick lines, what is left drawn from now, the reset at its end. */
+.track { position: relative; display: block; height: var(--space-4); border-inline-start: 1px solid var(--border-strong); }
+.tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-subtle); }
+.run { position: absolute; left: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 0 var(--radius-full) var(--radius-full) 0; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.dot { position: absolute; top: 50%; box-sizing: border-box; width: 8px; height: 8px; margin: -4px 0 0 -4px; border: 2px solid var(--text-primary); border-radius: var(--radius-full); background: var(--bg-surface); transition: left var(--duration-slow) var(--ease-standard); }
+/* Empty before the reset: the line stops where the pool does, and the wait after it is hatched. */
+.dry { position: absolute; top: 50%; height: 8px; margin-top: -4px; background: repeating-linear-gradient(135deg, var(--border-strong) 0 2px, transparent 2px 5px); transition: left var(--duration-slow) var(--ease-standard), width var(--duration-slow) var(--ease-standard); }
+.row[data-state='dry'] .run { border-radius: 0; }
+/* Amber only where the view's own verdict is slow down or fully used. */
+.row[data-flagged] .run { background: var(--status-warning-solid); }
+.row[data-flagged] .dry { background: repeating-linear-gradient(135deg, var(--status-warning-solid) 0 2px, transparent 2px 5px); }
+/* Nothing projected: a dashed line to the reset, never a solid one. */
+.row[data-state='unknown'] .run { height: 0; margin-top: -1px; border-top: 2px dashed var(--border-strong); border-radius: 0; background: none; }
+/* Held, or a per-model window with no burn of its own: a thin neutral line. */
+.row:is([data-state='held'], [data-state='window']) .run { height: 2px; margin-top: -1px; background: var(--border-strong); }
+.row[data-state='window'] .dot { width: 6px; height: 6px; margin: -3px 0 0 -3px; border-width: 1px; border-color: var(--text-secondary); }
+
+@media (width < 720px) {
+  .row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 0; }
+  .when { grid-column: 2; grid-row: 1; }
+  .track, .words, .scale { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .run, .dot, .dry { transition: none; } }

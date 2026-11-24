@@ -21,7 +21,8 @@ const TEAM_MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 const RESOURCE_MAX_LEASE_MS = 3_600_000;
 const LABEL = /^[\x21-\x7e]{1,256}$/;
 
-export type CoordinationOrigin = 'resource' | 'message' | 'team' | 'board';
+export const COORDINATION_ORIGINS = ['resource', 'message', 'team', 'board'] as const;
+export type CoordinationOrigin = (typeof COORDINATION_ORIGINS)[number];
 export type CoordinationState = 'live' | 'released' | 'completed';
 
 interface StoredClaim {
@@ -79,7 +80,7 @@ export interface CoordinationHolder { owner: string; key: string; leaseUntil: nu
 export type CoordinationResult =
   | { status: 'acquired' | 'renewed' | 'released' | 'completed'; token?: string; leaseUntil?: number }
   | { status: 'conflict'; holder: CoordinationHolder }
-  | { status: 'mismatched-token' | 'expired' | 'lost' | 'invalid' | 'unavailable' | 'full' };
+  | { status: 'mismatched-token' | 'stale' | 'expired' | 'lost' | 'invalid' | 'unavailable' | 'full' };
 
 export interface CoordinationAcquire {
   root?: string;
@@ -101,7 +102,16 @@ export function coordinationRoot(root?: string): string {
   return root ?? join(ashlrHome(), 'fleet');
 }
 
-function teamTargetOf(row: StoredClaim): ClaimTarget | null {
+interface OverlapRow {
+  origin: CoordinationOrigin | 'queue';
+  key: string;
+  repo: string | null;
+  branch: string | null;
+  path: string | null;
+  live: boolean;
+}
+
+function teamTargetOf(row: { repo: string | null; branch: string | null; path: string | null }): ClaimTarget | null {
   if (!row.repo) return null;
   return { repo: row.repo, ...(row.branch ? { branch: row.branch } : {}), ...(row.path ? { path: row.path } : {}) };
 }
@@ -118,10 +128,21 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
   const left = normPath(teamPath);
   const right = normPath(glob);
   if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
-  const wild = (value: string) => /[*?[{]/.test(value);
+  // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
+  // literal characters, so a team path like `src/[id]` is still a concrete
+  // prefix claim and must keep its `/**` subtree coverage below.
+  const wild = (value: string) => /[*?]/.test(value);
   if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   const sampleRepo = 'o/n';
-  return claimKeysOverlap(`path:${sampleRepo}:${left}`, `path:${sampleRepo}:${right}`);
+  const leftKey = `path:${sampleRepo}:${left}`;
+  const rightKey = `path:${sampleRepo}:${right}`;
+  // A team path is a prefix claim — `claimsOverlap` covers the path itself
+  // and everything beneath it — whether or not it carries `*`/`?` filename
+  // characters. The pair overlaps when the bus glob matches the bare path
+  // or any path under it, so the subtree joins the intersection as
+  // `left/**`. Checking only the bare globs let a bus glob covering the
+  // subtree slip past a live team claim.
+  return claimKeysOverlap(leftKey, rightKey) || claimKeysOverlap(`${leftKey}/**`, rightKey);
 }
 
 function teamHitsKey(target: ClaimTarget, key: string): boolean {
@@ -134,8 +155,8 @@ function teamHitsKey(target: ClaimTarget, key: string): boolean {
   return false;
 }
 
-function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
-  if (!live(a, now) || !live(b, now)) return false;
+function overlapRows(a: OverlapRow, b: OverlapRow): boolean {
+  if (!a.live || !b.live) return false;
   if (a.origin === 'team' && b.origin === 'team') {
     const left = teamTargetOf(a);
     const right = teamTargetOf(b);
@@ -152,13 +173,21 @@ function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
   return a.key === b.key || claimKeysOverlap(a.key, b.key);
 }
 
+function overlaps(a: StoredClaim, b: StoredClaim, now: number): boolean {
+  const shape = (row: StoredClaim): OverlapRow => ({
+    origin: row.origin, key: row.key, repo: row.repo, branch: row.branch, path: row.path,
+    live: live(row, now),
+  });
+  return overlapRows(shape(a), shape(b));
+}
+
 function validLease(origin: CoordinationOrigin, leaseMs: number): boolean {
   const max = origin === 'team' || origin === 'board' ? TEAM_MAX_LEASE_MS : RESOURCE_MAX_LEASE_MS;
   return integer(leaseMs) && leaseMs >= 1 && leaseMs <= max;
 }
 
 function validAcquire(input: CoordinationAcquire, now: number): boolean {
-  if (!['resource', 'message', 'team', 'board'].includes(input.origin)) return false;
+  if (!COORDINATION_ORIGINS.includes(input.origin)) return false;
   if (!LABEL.test(input.key) || !LABEL.test(input.owner) || !LABEL.test(input.sourceId)) return false;
   if (!validLease(input.origin, input.leaseMs) || !integer(input.leaseUntil) || input.leaseUntil <= now) return false;
   if (input.leaseUntil - now > input.leaseMs) return false;
@@ -198,7 +227,7 @@ function directoryFor(root: string): string {
 function claimOk(row: unknown): row is StoredClaim {
   if (!row || typeof row !== 'object') return false;
   const value = row as StoredClaim;
-  return (['resource', 'message', 'team', 'board'] as const).includes(value.origin) &&
+  return COORDINATION_ORIGINS.includes(value.origin) &&
     (['live', 'released', 'completed'] as const).includes(value.state) &&
     LABEL.test(value.key) && LABEL.test(value.owner) && /^[a-f0-9]{64}$/.test(value.token) &&
     LABEL.test(value.sourceId) && validLease(value.origin, value.leaseMs) && integer(value.leaseUntil) &&
@@ -310,6 +339,18 @@ export function listCoordination(root?: string, now = Date.now()): {
   }
 }
 
+/**
+ * Read-only: would acquiring `key` conflict with this coordination row? Applies
+ * the same overlap rule acquireCoordination uses, including team targets, over
+ * already-listed rows. `row.live` is the view's own lease state; queue
+ * observations are never live and never block. Claim tokens never leave the store.
+ */
+export function coordinationRowBlocks(row: CoordinationView, key: string): boolean {
+  return overlapRows(
+    { origin: row.origin, key: row.key, repo: row.repo, branch: row.branch, path: row.path, live: row.live },
+    { origin: 'resource', key, repo: null, branch: null, path: null, live: true });
+}
+
 export function coordinationSummary(root?: string, now = Date.now()): {
   source: 'missing' | 'available' | 'unavailable';
   liveClaims: number | null;
@@ -365,6 +406,16 @@ export function acquireCoordination(input: CoordinationAcquire): CoordinationRes
       !(drafted.origin === 'team' && row.owner === drafted.owner));
     if (conflict) return { status: 'conflict' as const, holder: { owner: conflict.owner, key: conflict.key, leaseUntil: conflict.leaseUntil } };
     const index = data.claims.findIndex(row => row.origin === drafted.origin && row.sourceId === drafted.sourceId);
+    const held = index >= 0 ? data.claims[index] : undefined;
+    // A source id names one operation, so only its owner may retry it into a new
+    // row; the same id presented by a different owner is a conflict, never a
+    // silent takeover that kills the holder's fencing token. Board leases are
+    // entity upserts — a task handoff deliberately moves itemId to a new owner —
+    // so that origin keeps last-writer-wins. An expired row is dead weight either
+    // way and stays replaceable, as the seat-handoff fencing tests rely on.
+    if (held && drafted.origin !== 'board' && held.owner !== drafted.owner && live(held, now)) {
+      return { status: 'conflict' as const, holder: { owner: held.owner, key: held.key, leaseUntil: held.leaseUntil } };
+    }
     if (index >= 0) data.claims[index] = drafted;
     else data.claims.push(drafted);
     return { status: 'acquired' as const, token: drafted.token, leaseUntil: drafted.leaseUntil };
@@ -407,14 +458,21 @@ export function settleCoordination(input: {
 }
 
 export function releaseCoordinationBySource(input: {
-  root?: string; origin: CoordinationOrigin; sourceId: string; now?: number;
+  root?: string; origin: CoordinationOrigin; sourceId: string; owner: string; leaseUntil?: number; now?: number;
 }): CoordinationResult {
   const now = input.now ?? Date.now();
-  if (!LABEL.test(input.sourceId)) return { status: 'invalid' };
+  if (!LABEL.test(input.sourceId) || !LABEL.test(input.owner) ||
+    (input.leaseUntil !== undefined && !integer(input.leaseUntil))) return { status: 'invalid' };
   const outcome = withStore(input.root, now, data => {
-    const before = data.claims.length;
-    data.claims = data.claims.filter(row => !(row.origin === input.origin && row.sourceId === input.sourceId));
-    return before === data.claims.length ? { status: 'lost' as const } : { status: 'released' as const };
+    const index = data.claims.findIndex(row => row.origin === input.origin && row.sourceId === input.sourceId);
+    const row = index >= 0 ? data.claims[index] : undefined;
+    if (!row) return { status: 'lost' as const };
+    if (row.owner !== input.owner || (input.leaseUntil !== undefined && row.leaseUntil !== input.leaseUntil)) {
+      return { status: 'stale' as const };
+    }
+    if (!live(row, now)) return { status: 'expired' as const };
+    data.claims.splice(index, 1);
+    return { status: 'released' as const };
   });
   return outcome as CoordinationResult;
 }
@@ -438,8 +496,8 @@ export function upsertBoardLease(input: {
   });
 }
 
-export function clearBoardLease(sourceId: string, root?: string, now = Date.now()): CoordinationResult {
-  const result = releaseCoordinationBySource({ root, origin: 'board', sourceId, now });
+export function clearBoardLease(sourceId: string, owner: string, root?: string, now = Date.now()): CoordinationResult {
+  const result = releaseCoordinationBySource({ root, origin: 'board', sourceId, owner, now });
   return result.status === 'lost' ? { status: 'released' } : result;
 }
 

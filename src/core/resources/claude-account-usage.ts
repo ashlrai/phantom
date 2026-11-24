@@ -209,7 +209,7 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
   const report = (reason: string, windows: ResourceConnectionQuotaWindow[] = []): ClaudeAccountUsageResult =>
     ({ ...before, reason, windows, finishedAt: new Date().toISOString() });
   const failed = (status: ClaudeAccountStatusResult['status'], reason: string): ClaudeAccountUsageResult =>
-    ({ ...report(reason), status, loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null,
+    ({ ...report(reason), status, loggedIn: null, authMethod: 'unknown', subscriptionType: null, accountHint: null, accountScope: null,
       ...(status === 'timed-out' ? { timeoutElapsedMs: timeoutElapsedMs() } : {}) });
   if (before.status === 'timed-out' && before.reason === 'status-timed-out') return failed('timed-out', 'status-auth-timed-out');
   if (before.status !== 'observed' || !before.loggedIn || before.authMethod !== 'claude.ai') return report(before.reason);
@@ -256,7 +256,7 @@ export async function probeClaudeAccountUsage(options: ClaudeAccountStatusOption
     if (after.status === 'timed-out' && after.reason === 'status-timed-out') return failed('timed-out', 'status-reauth-timed-out');
     if (after.status !== 'observed') return { ...after, windows: [], startedAt: before.startedAt };
     if (!after.loggedIn || after.authMethod !== before.authMethod || after.subscriptionType !== before.subscriptionType ||
-      after.accountHint !== before.accountHint) return failed('failed', 'usage-account-changed');
+      after.accountHint !== before.accountHint || after.accountScope !== before.accountScope) return failed('failed', 'usage-account-changed');
     if (pinned.signal?.aborted) return failed('cancelled', 'status-cancelled');
     if (!remaining()) return failed('timed-out', 'status-reauth-timed-out');
     if (parsed?.quotaFresh && (after.subscriptionType === 'pro' || after.subscriptionType === 'max')) {
