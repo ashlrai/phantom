@@ -729,6 +729,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
 | <code>phm incident report&#124;receipts [--json]</code> | Turn a production signal into one bounded fix job, or send receipts for finished incidents. | <code>--json</code> | <code>phm incident report&#124;receipts --json</code> |
 | <code>phm index [--refresh]</code> | Build or refresh the desktop index; show counts by category. | <code>--refresh</code> | - |
 | <code>phm init [--yes]</code> | Idempotent onboarding: ensure config, detect phantom + models, set editor. | <code>--yes</code> | - |
+| <code>phm install &lt;url&#124;owner/repo&#124;name&gt;</code> | Install a pinned Node tool and its project MCP registration; --dry-run previews, --json reports. | - | - |
 | <code>phm invent</code> | Generative backlog invention - propose novel high-value work items. | - | - |
 | <code>phm inventory [--kind &lt;kind&gt;] [--json]</code> | Everything this install can use in one list: messaging channels, connectors, plugins, skills and tools, each ready, needs setup, off, error or unknown, with the tool gap between lanes. Read only. | <code>--json</code>, <code>--kind</code> | <code>phm inventory [--kind &lt;kind&gt;] --json</code> |
 | <code>phm issues [--retry] [--dir &lt;queue-directory&gt;] [--json]</code> | Group failed queue jobs by error; --retry queues one READY retry per failed job without duplicates. | <code>--dir</code>, <code>--json</code>, <code>--retry</code> | <code>phm issues [--retry] [--dir &lt;queue-directory&gt;] --json</code> |

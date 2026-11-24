@@ -27,7 +27,7 @@ Companions install separately; each has its own capabilities and authorization b
 - [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
 - [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
 
-Package: `@ashlr/phantom` v3.30.72.
+Package: `@ashlr/phantom` v3.30.73.
 Node.js floor: 22.15.0 or newer.
 
 ## Install
