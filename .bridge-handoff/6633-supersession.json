@@ -1,0 +1,10 @@
+{
+  "pr": 6633,
+  "master_tree": "48f4f13519178f9eefb2def36dd00f3ea4a8589e",
+  "resolved_tree": "48f4f13519178f9eefb2def36dd00f3ea4a8589e",
+  "equal_master": true,
+  "resolved_paths": [
+    "test/fleet-empties-owner-qualification-521s.test.ts"
+  ],
+  "remaining_diff": ""
+}

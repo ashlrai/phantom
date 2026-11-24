@@ -1,0 +1,19 @@
+{
+  "pr": 6577,
+  "master_tree": "48f4f13519178f9eefb2def36dd00f3ea4a8589e",
+  "resolved_tree": "48f4f13519178f9eefb2def36dd00f3ea4a8589e",
+  "equal_master": true,
+  "resolved_paths": [
+    "docs/FLEET-EMPTIES.md",
+    "docs/FLEET-VERBS.md",
+    "docs/MCP-TOOLS.md",
+    "docs/llms.txt",
+    "src/cli/completions.ts",
+    "src/cli/fleet-empties.ts",
+    "src/cli/help.ts",
+    "src/core/fleet/empties.ts",
+    "src/mcp/fleet-server.ts",
+    "test/fleet-empties.test.ts"
+  ],
+  "remaining_diff": ""
+}

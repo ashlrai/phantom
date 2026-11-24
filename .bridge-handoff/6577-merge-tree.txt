@@ -1,0 +1,54 @@
+4c984ddac5c2547004d4f57891dd38d5fc2f7a6b
+100644 81a95f8c884af52bdb2c9bf6175804abe26efd97 1	docs/FLEET-EMPTIES.md
+100644 292c407357dbfb5c194606002f482e9a23fc059c 2	docs/FLEET-EMPTIES.md
+100644 a5b20eea74705776b84c191e68fd568407462a89 3	docs/FLEET-EMPTIES.md
+100644 a0618be631ff2dc5250024c1b7d7b846d41a68e4 1	docs/FLEET-VERBS.md
+100644 ec09daced1583b157b5a26a102737251947a6cfd 2	docs/FLEET-VERBS.md
+100644 edd3b29baeb8494c764efc97929143319cd16d65 3	docs/FLEET-VERBS.md
+100644 007e5ba9d9568b982cbfe3c841862163637a2517 1	docs/MCP-TOOLS.md
+100644 c1b537d9cb94586eee708c537e1f664db45a29bd 2	docs/MCP-TOOLS.md
+100644 cebc2dcd47839765a326520628cd9b3a751e23fe 3	docs/MCP-TOOLS.md
+100644 33addc216f81e44d06b6acfc3900905e3c898503 1	docs/llms.txt
+100644 ee9ddc18155530fe70635bc608c6674c545e3c0c 2	docs/llms.txt
+100644 27850bd67062357c675d1c6e21782db901ebd361 3	docs/llms.txt
+100644 147cdb11e254a51137cff682d4a2655282635d60 1	src/cli/completions.ts
+100644 35dd3981c3d830de4f62ea91329d5043cbf3cbac 2	src/cli/completions.ts
+100644 410dc13c8a4ca4dbcfe9d78a364b13e0930b5747 3	src/cli/completions.ts
+100644 e1c5f0120c3b9028a8cbe558afeea0e235db0357 1	src/cli/fleet-empties.ts
+100644 042117c4a2ebaac5d102ff2f936a38e9fb7b2be1 2	src/cli/fleet-empties.ts
+100644 8c90684a3c2a519679a402c0ebff2b9e30b45270 3	src/cli/fleet-empties.ts
+100644 530edd5b6884dedbb48c2cb5da9c5a6468c9a5c6 1	src/cli/help.ts
+100644 f63b340aa7ac1c55df9531af8fbf4ddc00822cc5 2	src/cli/help.ts
+100644 c35aadc24f13e582b983d4b8bf388351f52532af 3	src/cli/help.ts
+100644 b16344071cdd3bec34cf5d56c834ff5ea6bcfeed 2	src/core/fleet/empties.ts
+100644 07f11ea255d29cad844cbcd98f008be8a61e8b6f 3	src/core/fleet/empties.ts
+100644 fea7e2916414678036a1f0625f72022b755485b6 1	src/mcp/fleet-server.ts
+100644 652dc4f35ab1ba9928230798f6bdd99eda060fd1 2	src/mcp/fleet-server.ts
+100644 00e447ff1fc84af1372018957d141749f5e663c9 3	src/mcp/fleet-server.ts
+100644 6697ec25023f9b3288af42cfe2c08677dda5f805 1	test/fleet-empties.test.ts
+100644 f9f29b04b0da6a5d2905915c535f9c1bfe7630dd 2	test/fleet-empties.test.ts
+100644 e582736d440b8bb30a6566c667cafe172d6a7aa5 3	test/fleet-empties.test.ts
+
+Auto-merging docs/FLEET-EMPTIES.md
+CONFLICT (content): Merge conflict in docs/FLEET-EMPTIES.md
+Auto-merging docs/FLEET-VERBS.md
+CONFLICT (content): Merge conflict in docs/FLEET-VERBS.md
+Auto-merging docs/MCP-TOOLS.md
+CONFLICT (content): Merge conflict in docs/MCP-TOOLS.md
+Auto-merging docs/llms.txt
+CONFLICT (content): Merge conflict in docs/llms.txt
+Auto-merging src/cli/completions.ts
+CONFLICT (content): Merge conflict in src/cli/completions.ts
+Auto-merging src/cli/fleet-empties.ts
+CONFLICT (content): Merge conflict in src/cli/fleet-empties.ts
+Auto-merging src/cli/fleet-vitals.ts
+Auto-merging src/cli/help.ts
+CONFLICT (content): Merge conflict in src/cli/help.ts
+Auto-merging src/core/fleet/empties.ts
+CONFLICT (add/add): Merge conflict in src/core/fleet/empties.ts
+Auto-merging src/mcp/fleet-server.ts
+CONFLICT (content): Merge conflict in src/mcp/fleet-server.ts
+Auto-merging test/fleet-empties.test.ts
+CONFLICT (content): Merge conflict in test/fleet-empties.test.ts
+Auto-merging test/fleet-empty-cause.test.ts
+Auto-merging test/support/fleet-mcp-tools.ts

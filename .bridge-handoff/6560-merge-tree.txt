@@ -1,0 +1,19 @@
+547a522a0cabdf0d6c5ea433e23d0522de77ed0f
+100644 e59fc37354aa83a56b64445bbd5e44a814b866e0 1	docs/CLI-REFERENCE.md
+100644 1eef1eff122feeae6367bd70328b4b17dde88747 2	docs/CLI-REFERENCE.md
+100644 918d201e49c703d953d36bbdab56ca5a75f905b7 3	docs/CLI-REFERENCE.md
+100644 0025845a606bf95d65a0e91460c735eb2c0d3996 1	test/config/realio-lane-membership.mjs
+100644 e4dc134cd99d52804c70aaab94d7105c4ecb9032 2	test/config/realio-lane-membership.mjs
+100644 98958871b20cca2603057556ef361988399c452b 3	test/config/realio-lane-membership.mjs
+100644 d280951116ff3963f5c9fb22e75072e5fe882836 1	test/fixtures/authority/tier1-closure.json
+100644 40dd6de56b999aafa344d7ba129f81c8e7ca53ae 2	test/fixtures/authority/tier1-closure.json
+100644 07e9f62c13468e2d2960bedd3e447eac0c50b155 3	test/fixtures/authority/tier1-closure.json
+
+Auto-merging CONTRACT.md
+Auto-merging docs/CLI-REFERENCE.md
+CONFLICT (content): Merge conflict in docs/CLI-REFERENCE.md
+Auto-merging src/cli/completions.ts
+Auto-merging test/config/realio-lane-membership.mjs
+CONFLICT (content): Merge conflict in test/config/realio-lane-membership.mjs
+Auto-merging test/fixtures/authority/tier1-closure.json
+CONFLICT (content): Merge conflict in test/fixtures/authority/tier1-closure.json

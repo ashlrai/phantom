@@ -1,0 +1,871 @@
+{
+  "base": "2c2008f2611078ca36c73abd92517b79db55f45f",
+  "prs": [
+    {
+      "number": 6733,
+      "url": "https://github.com/ashlrai/phantom/pull/6733",
+      "head_sha": "4ae96d0a8fc9afa886dbe559b133e86453bfa9b5",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134411854143"
+        },
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134411852623"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134411783712"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410518892"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410516202"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473915"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473885"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473549"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473123"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473014"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410473011"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410472689"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410472639"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "neutral",
+          "url": "https://github.com/ashlrai/phantom/runs/134410340474"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310940"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310938"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310936"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310871"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310855"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310768"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44188220406/job/134410310391"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    },
+    {
+      "number": 6633,
+      "url": "https://github.com/ashlrai/phantom/pull/6633",
+      "head_sha": "6d3fe0e3172a84a9cce58d2df49f9f2b86fcf316",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134097258259"
+        },
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134097256538"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134097209179"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/runs/134097079482"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134097027121"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134097026854"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096964841"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096964251"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096964232"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096963685"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096963678"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096963467"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096963357"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096963174"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096804003"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096803564"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096803537"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096803505"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096803449"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096803421"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099905043/job/134096802991"
+        },
+        {
+          "name": "Perf budget (advisory, non-required)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44099904991/job/134096801959"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    },
+    {
+      "number": 6577,
+      "url": "https://github.com/ashlrai/phantom/pull/6577",
+      "head_sha": "bc14a9c6491fb068d1eaee2fb50094180b760c4e",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937488999"
+        },
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937488687"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937445762"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/runs/133937217454"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937207506"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937205545"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937144039"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937143649"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937143617"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937143507"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937143259"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937143179"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937142641"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937142463"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016295"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016271"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016269"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016236"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016216"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937016155"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542447/job/133937015781"
+        },
+        {
+          "name": "Perf budget (advisory, non-required)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44053542419/job/133937015221"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    },
+    {
+      "number": 6560,
+      "url": "https://github.com/ashlrai/phantom/pull/6560",
+      "head_sha": "e333a21b0af407a335a5f2081cbf1af6aca353b7",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134480266843"
+        },
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134480265835"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134480226214"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479504616"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479504036"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479503919"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479503436"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479503218"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479502926"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479502692"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479502419"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479502380"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479502299"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "neutral",
+          "url": "https://github.com/ashlrai/phantom/runs/134479375449"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349514"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349481"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349467"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349393"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349363"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479349341"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44208152719/job/134479348942"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    },
+    {
+      "number": 6547,
+      "url": "https://github.com/ashlrai/phantom/pull/6547",
+      "head_sha": "b9b3c376f56fbc33e8a3390de5b191751137f845",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896626461"
+        },
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896625099"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896571067"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896278246"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277891"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277889"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277584"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277523"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277466"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277350"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896277321"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896276946"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896276702"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "neutral",
+          "url": "https://github.com/ashlrai/phantom/runs/133896196153"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177914"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177906"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177882"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177868"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177761"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177746"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041274187/job/133896177416"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    },
+    {
+      "number": 6538,
+      "url": "https://github.com/ashlrai/phantom/pull/6538",
+      "head_sha": "882b3a89f1c3cbd27f9a5c69238aa620f6f1b3ec",
+      "initial_state": "open",
+      "mergeable": false,
+      "checks": [
+        {
+          "name": "Daily fixup queue",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896623876"
+        },
+        {
+          "name": "Master full qualification",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896623714"
+        },
+        {
+          "name": "Merge Gate",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896583718"
+        },
+        {
+          "name": "Native macOS broker foundation (Rust 1.97.1)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896341049"
+        },
+        {
+          "name": "Docs PR (docs-only)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896341005"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340870"
+        },
+        {
+          "name": "Site PR (ecosystem)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340850"
+        },
+        {
+          "name": "Release suites (build + signing path)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340798"
+        },
+        {
+          "name": "Windows service authority (Server 2022)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340791"
+        },
+        {
+          "name": "Desktop release smoke",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340530"
+        },
+        {
+          "name": "Mac exhaustive (isolated)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340400"
+        },
+        {
+          "name": "Mac exhaustive (${{ matrix.shard }}/4)",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340120"
+        },
+        {
+          "name": "CI (Node 22, ${{ matrix.label }})",
+          "status": "completed",
+          "conclusion": "skipped",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896340080"
+        },
+        {
+          "name": "CodeRabbit",
+          "status": "completed",
+          "conclusion": "neutral",
+          "url": "https://github.com/ashlrai/phantom/runs/133896228329"
+        },
+        {
+          "name": "Quick typecheck",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211849"
+        },
+        {
+          "name": "Check generated files",
+          "status": "completed",
+          "conclusion": "failure",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211832"
+        },
+        {
+          "name": "Secret-shape scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211797"
+        },
+        {
+          "name": "Secret scan (diff)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211791"
+        },
+        {
+          "name": "Fast gate (typecheck + affected tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211773"
+        },
+        {
+          "name": "Classify PR site lane",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211734"
+        },
+        {
+          "name": "Check authority drift (hermetic)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/ashlrai/phantom/actions/runs/44041284975/job/133896211451"
+        }
+      ],
+      "last_observed_state": "open",
+      "head_unchanged": true
+    }
+  ],
+  "replacements": [
+    {
+      "number": 8170,
+      "url": "https://github.com/ashlrai/phantom/pull/8170",
+      "merged": true,
+      "merge_commit_sha": "19ee7a3331029f7befbd56faff738267f1ddbfd5"
+    },
+    {
+      "number": 7013,
+      "url": "https://github.com/ashlrai/phantom/pull/7013",
+      "merged": true,
+      "merge_commit_sha": "d942db31c1619b0650cb315028871172422098ed"
+    },
+    {
+      "number": 6986,
+      "url": "https://github.com/ashlrai/phantom/pull/6986",
+      "merged": true,
+      "merge_commit_sha": "c199eaa9edf371f68d080def27fe15616ae8def8"
+    },
+    {
+      "number": 8184,
+      "url": "https://github.com/ashlrai/phantom/pull/8184",
+      "merged": true,
+      "merge_commit_sha": "c3099a10c8bf6e921168bcbb27a44232e929aa57"
+    }
+  ],
+  "mutations": {
+    "comment_6733": "HTTP 403: Resource not accessible by integration",
+    "close_6733": "HTTP 403: Resource not accessible by integration",
+    "successful": []
+  },
+  "final_verified_at": "2026-11-24T16:01:00.004282+00:00"
+}

@@ -1,0 +1,1093 @@
+diff --git a/A5_LIBRARY_FOLLOWUP.patch b/A5_LIBRARY_FOLLOWUP.patch
+new file mode 100644
+index 00000000000..c0b6e56abde
+--- /dev/null
++++ b/A5_LIBRARY_FOLLOWUP.patch
+@@ -0,0 +1,11 @@
++--- a/src/core/fleet/mason-asks.ts
+++++ b/src/core/fleet/mason-asks.ts
++@@ -93,7 +93,7 @@
++       { need: 'the phone Feed screen', path: `${VERSE}/mobile/screens/FeedScreen.tsx`, exportName: 'FeedScreen' },
++       { need: 'the phone Ideas screen', path: `${VERSE}/mobile/screens/IdeasScreen.tsx`, exportName: 'IdeasScreen' },
++       { need: 'the phone Goals screen', path: `${VERSE}/mobile/screens/GoalsScreen.tsx`, exportName: 'GoalsScreen' },
++-      { need: 'a Library screen in the phone view' },
+++      { need: 'a Library screen in the phone view', path: `${VERSE}/mobile/screens/LibraryScreen.tsx`, exportName: 'LibraryScreen' },
++     ],
++   },
++   {
+diff --git a/src/core/fleet/library-files.ts b/src/core/fleet/library-files.ts
+index 2d72bdafe2c..fb5164414ba 100644
+--- a/src/core/fleet/library-files.ts
++++ b/src/core/fleet/library-files.ts
+@@ -9,6 +9,7 @@ export interface LibraryFile {
+   size: number;
+   modifiedAt: string;
+   preview: string;
++  unavailable?: boolean;
+ }
+ 
+ // Read complete, bounded files before redaction: cutting a token at a byte
+@@ -32,10 +33,15 @@ export async function listLeaderFiles(root = join(homedir(), '.ashlr-runs')): Pr
+   } catch { /* An absent drafts directory is normal. */ }
+   const rows = await Promise.all(names.map(async name => {
+     let file;
++    let unavailable: LibraryFile | null = null;
+     try {
++      const metadata = await lstat(join(leader, name));
++      if (!metadata.isFile()) return null;
++      unavailable = { name: scrubPrivateText(name), size: metadata.size, modifiedAt: metadata.mtime.toISOString(), preview: '', unavailable: true };
+       file = await open(join(leader, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+       const stat = await file.stat();
+-      if (!stat.isFile() || stat.size > MAX_BYTES) return null;
++      if (!stat.isFile()) return null;
++      if (stat.size > MAX_BYTES) return unavailable;
+       const buffer = Buffer.alloc(MAX_BYTES + 1);
+       let used = 0;
+       while (used < buffer.length) {
+@@ -43,11 +49,11 @@ export async function listLeaderFiles(root = join(homedir(), '.ashlr-runs')): Pr
+         if (!bytesRead) break;
+         used += bytesRead;
+       }
+-      if (used > MAX_BYTES) return null;
++      if (used > MAX_BYTES) return unavailable;
+       const content = buffer.subarray(0, used).toString('utf8');
+       return { name: scrubPrivateText(name), size: stat.size, modifiedAt: stat.mtime.toISOString(),
+         preview: scrubPrivateText(content).replace(/\s+/g, ' ').trim().slice(0, 240) };
+-    } catch { return null; } finally { await file?.close(); }
++    } catch { return unavailable; } finally { await file?.close(); }
+   }));
+   return rows.filter((row): row is LibraryFile => row !== null)
+     .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt) || a.name.localeCompare(b.name));
+diff --git a/src/core/verse/leader-api.ts b/src/core/verse/leader-api.ts
+index 76d28c84dc5..f0d30f484aa 100644
+--- a/src/core/verse/leader-api.ts
++++ b/src/core/verse/leader-api.ts
+@@ -74,6 +74,7 @@ import type { NeedsYouItem } from './workbench-types.js';
+ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
+ import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
+ import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
++import { listLeaderAttachments } from './leader-attachment-list.js';
+ import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
+ import { handleLeaderHealth, VERSE_LEADER_HEALTH_PATH } from './leader-health-api.js';
+ import { handleLeaderThreadMerged, VERSE_LEADER_THREAD_MERGED_PATH } from './leader-thread-merged-api.js';
+@@ -843,6 +844,15 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
+   if (path === VERSE_LEADER_THREAD_MERGED_PATH) return handleLeaderThreadMerged(ctx, req, res, method);
+   if (path === VERSE_LEADER_HEALTH_PATH) return handleLeaderHealth(ctx, req, res, method);
+   if (path === '/api/verse/leader/attachments') return handleLeaderAttachmentList(ctx, req, res, method);
++  // Read-authenticated metadata only; screenshot bytes retain their mutation
++  // token gate and are never made available through the phone gateway.
++  if (path === '/api/verse/leader/attachment-metadata') {
++    if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
++    if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
++    if (req.url?.includes('?')) { sendJson(res, 400, { error: 'query parameters are not supported' }); return true; }
++    sendJson(res, 200, await listLeaderAttachments());
++    return true;
++  }
+   if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
+   if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
+     return handleLeaderAttachmentRead(ctx, req, res, method, path.slice(VERSE_LEADER_ATTACHMENT_PATH.length + 1));
+diff --git a/src/core/web/remote-gateway-policy.ts b/src/core/web/remote-gateway-policy.ts
+index 660190b901f..de395496515 100644
+--- a/src/core/web/remote-gateway-policy.ts
++++ b/src/core/web/remote-gateway-policy.ts
+@@ -62,6 +62,12 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
+   '/api/verse/fleet/live/queue',
+   '/api/verse/fleet/live/drop-jobs',
+   '/api/verse/agent-bus',
++  '/api/verse/agent-bus/status',
++  '/api/verse/library/pins',
++  '/api/verse/fleet/library-files',
++  '/api/verse/fleet/handoffs',
++  '/api/verse/cos/memory',
++  '/api/verse/leader/attachment-metadata',
+   '/api/verse/agent-bus/needs-mason/asks/batch',
+   '/api/verse/fleet/control/switches',
+   '/api/verse/fleet/control/lanes',
+@@ -142,6 +148,14 @@ function safeFile(path: string): boolean {
+     && ![...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+ }
+ 
++// The memory API resolves this project path through its existing root guard;
++// this permits its exact read query, never an arbitrary file read.
++function libraryProjectPath(value: string): boolean {
++  return value.length <= 1024 && (value.startsWith('/') || value.startsWith('~/'))
++    && !value.includes('\\') && ![...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
++    && value.replace(/^~?\//, '').split('/').every(part => part !== '' && part !== '.' && part !== '..');
++}
++
+ /** Every path and query shape here is reviewed separately; no general /api/* proxy. */
+ export function classifyRemoteRoute(method: string | undefined, rawTarget: string | undefined): RemoteRouteDecision {
+   if (!rawTarget || !rawTarget.startsWith('/') || rawTarget.length > 2048) return { kind: 'deny' };
+@@ -202,6 +216,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
+   if (path === '/api/verse/fleet/cos/list' && query === undefined) return { kind: 'read', path };
+   if (query === undefined) return { kind: 'deny' };
+   const params = new URLSearchParams(query);
++  if (path === '/api/verse/memory'
++    && exactParams(params, { projectPath: libraryProjectPath })) return { kind: 'read', path };
+   if (path === '/api/verse/activity'
+     && exactParams(params, { since: (v) => ACTIVITY_CURSOR.test(v) })) return { kind: 'read', path };
+   if (path === '/api/verse/authority/ledger'
+diff --git a/src/web-ui/routes/verse/context/context-queries.ts b/src/web-ui/routes/verse/context/context-queries.ts
+index 8fde982ea8b..61e3c5126a8 100644
+--- a/src/web-ui/routes/verse/context/context-queries.ts
++++ b/src/web-ui/routes/verse/context/context-queries.ts
+@@ -44,7 +44,8 @@ import type {
+ } from '../../../../core/verse/types.js';
+ import { getMutationToken, reportSessionExpired, getReadClientProof, touchMutationHold } from '../../../data/auth-store.js';
+ import { invalidate, invalidatePrefix } from '../../../data/cache.js';
+-import { ApiError, apiPost } from '../../../data/client.js';
++import { ApiError, apiGet, apiPost } from '../../../data/client.js';
++import { isRemoteMobileMode } from '../../../data/remote-mode.js';
+ import type { QueryDef } from '../../../data/queries.js';
+ import { invalidateVerseLists, verseSessionPath, VERSE_SESSIONS_KEY, VerseMutationLockedError } from '../verse-queries.js';
+ import { setVerseSession } from '../verse-store.js';
+@@ -77,6 +78,7 @@ async function refusalDetail(res: Response): Promise<string | null> {
+  * expired read session) but keeps the server's refusal sentence.
+  */
+ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
++  if (isRemoteMobileMode()) return apiGet<T>(path, signal);
+   const res = await fetch(path, {
+     method: 'GET',
+     credentials: 'same-origin',
+diff --git a/src/web-ui/routes/verse/library/CosMemorySection.tsx b/src/web-ui/routes/verse/library/CosMemorySection.tsx
+index 9b7b13fd829..a31d152e5ae 100644
+--- a/src/web-ui/routes/verse/library/CosMemorySection.tsx
++++ b/src/web-ui/routes/verse/library/CosMemorySection.tsx
+@@ -5,26 +5,17 @@
+  * text, never HTML.
+  */
+ import { useEffect, useMemo, useState } from 'react';
+-import type { MemoryEntry, MemoryKind } from '../../../../core/cos/memory.js';
+-import { ApiError, apiGet, apiPost } from '../../../data/client.js';
++import type { MemoryKind } from '../../../../core/cos/memory.js';
++import { ApiError, apiPost } from '../../../data/client.js';
+ import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
+-import type { QueryDef } from '../../../data/queries.js';
+ import { CardNote } from '../command/Surface.js';
+ import {
+   COS_MEMORY_FORGET_PATH, COS_MEMORY_KINDS, COS_MEMORY_MAX_CHARS, COS_MEMORY_PATH,
+-  cosMemoryOutcome, cosMemoryRows, narrowCosMemory,
++  cosMemoryOutcome, cosMemoryRows,
+ } from './cos-memory-model.js';
++import { cosMemoryQuery } from './library-queries.js';
+ import styles from './library.module.css';
+ 
+-const cosMemoryQuery: QueryDef<MemoryEntry[]> = {
+-  key: 'verse-cos-memory',
+-  fetch: async (signal) => {
+-    const entries = narrowCosMemory(await apiGet<unknown>(COS_MEMORY_PATH, signal));
+-    if (!entries) throw new Error('malformed memory response');
+-    return entries;
+-  },
+-};
+-
+ const failure = (err: unknown): string =>
+   err instanceof ApiError ? cosMemoryOutcome(err.status, err.detail) : cosMemoryOutcome(0);
+ 
+diff --git a/src/web-ui/routes/verse/library/LibraryPane.tsx b/src/web-ui/routes/verse/library/LibraryPane.tsx
+index be58622c024..80032e8fbee 100644
+--- a/src/web-ui/routes/verse/library/LibraryPane.tsx
++++ b/src/web-ui/routes/verse/library/LibraryPane.tsx
+@@ -4,8 +4,7 @@
+  */
+ import { useEffect, useMemo, useState } from 'react';
+ import type { VerseSearchResponse } from '../../../../core/verse/types.js';
+-import { ApiError, apiGet } from '../../../data/client.js';
+-import type { QueryDef } from '../../../data/queries.js';
++import { ApiError } from '../../../data/client.js';
+ import { useQuery } from '../../../data/hooks.js';
+ import { Card, CardNote } from '../command/Surface.js';
+ import { openChat } from '../command/nav.js';
+@@ -17,11 +16,11 @@ import { CosMemorySection } from './CosMemorySection.js';
+ import { LibraryOverview } from './LibraryOverview.js';
+ import { MediaSection } from './MediaSection.js';
+ import { HandoffsSection } from './HandoffsSection.js';
+-import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
+-import { leaderFileRows, narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
++import { leaderFileRows } from './library-leader-files-model.js';
+ import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
+ import { PinnedGroup, PinToggle } from './LibraryPins.js';
+ import { memorySummary, recentProjects, searchQueryValid, type RecentProject } from './library-model.js';
++import { leaderFilesQuery, handoffsQuery } from './library-queries.js';
+ import styles from './library.module.css';
+ 
+ export const LIBRARY_SEARCH_DEBOUNCE_MS = 300;
+@@ -167,24 +166,6 @@ function AgentConversation({ visible }: { visible: boolean }) {
+   );
+ }
+ 
+-const leaderFilesQuery: QueryDef<LeaderFilesResponse> = {
+-  key: 'verse-fleet-library-files',
+-  fetch: async (signal) => {
+-    const body = narrowLeaderFiles(await apiGet<unknown>('/api/verse/fleet/library-files', signal));
+-    if (!body) throw new Error('malformed leader files response');
+-    return body;
+-  },
+-};
+-
+-const handoffsQuery: QueryDef<HandoffsResponse> = {
+-  key: 'verse-fleet-handoffs',
+-  fetch: async (signal) => {
+-    const body = narrowHandoffs(await apiGet<unknown>('/api/verse/fleet/handoffs', signal));
+-    if (!body) throw new Error('malformed handoffs response');
+-    return body;
+-  },
+-};
+-
+ function LeaderFileItem({ row }: { row: ReturnType<typeof leaderFileRows>[number] }) {
+   const [open, setOpen] = useState(false);
+   return (
+diff --git a/src/web-ui/routes/verse/library/LibraryPins.tsx b/src/web-ui/routes/verse/library/LibraryPins.tsx
+index 761f5e7e2d8..b0dd33731a9 100644
+--- a/src/web-ui/routes/verse/library/LibraryPins.tsx
++++ b/src/web-ui/routes/verse/library/LibraryPins.tsx
+@@ -5,34 +5,20 @@
+  * shared with `ashlr fleet library-pins` and the fleet context pack.
+  */
+ import { useState } from 'react';
+-import type { LibraryPin, LibraryPinKind } from '../../../../core/fleet/library-pins.js';
++import type { LibraryPinKind } from '../../../../core/fleet/library-pins.js';
+ import { getMutationToken, touchMutationHold } from '../../../data/auth-store.js';
+ import { refetchQuery } from '../../../data/cache.js';
+-import { ApiError, apiGet, apiPost } from '../../../data/client.js';
++import { ApiError, apiPost } from '../../../data/client.js';
+ import { useQuery } from '../../../data/hooks.js';
+-import type { QueryDef } from '../../../data/queries.js';
+ import { CardNote } from '../command/Surface.js';
+ import { oneShotFetcher } from '../health/health-queries.js';
+ import { VerseMutationLockedError } from '../verse-queries.js';
++import { libraryPinsQuery, LIBRARY_PINS_PATH, LIBRARY_PINS_KEY, type PinsResponse } from './library-queries.js';
++export { libraryPinsQuery, LIBRARY_PINS_PATH, LIBRARY_PINS_KEY } from './library-queries.js';
+ import styles from './library.module.css';
+ 
+-export const LIBRARY_PINS_PATH = '/api/verse/library/pins';
+-export const LIBRARY_PINS_KEY = 'verse-library-pins';
+ const TITLE_MAX = 160;
+ 
+-interface PinsResponse { v: 1; pins: LibraryPin[] }
+-
+-/** A server without the route answers 404: no pins there, and no toggles either. */
+-export const libraryPinsQuery: QueryDef<PinsResponse | null> = {
+-  key: LIBRARY_PINS_KEY,
+-  fetch: async (signal) => {
+-    try { return await apiGet<PinsResponse>(LIBRARY_PINS_PATH, signal); } catch (err) {
+-      if (err instanceof ApiError && err.status === 404) return null;
+-      throw err;
+-    }
+-  },
+-};
+-
+ async function mutatePins(body: Record<string, string>): Promise<void> {
+   const token = getMutationToken();
+   if (!token) throw new VerseMutationLockedError();
+diff --git a/src/web-ui/routes/verse/library/MediaSection.test.tsx b/src/web-ui/routes/verse/library/MediaSection.test.tsx
+index 25add498621..6e65c7c71d8 100644
+--- a/src/web-ui/routes/verse/library/MediaSection.test.tsx
++++ b/src/web-ui/routes/verse/library/MediaSection.test.tsx
+@@ -1,15 +1,15 @@
+-import { render, screen } from '@testing-library/react';
++import { act, render, screen } from '@testing-library/react';
+ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
+ import { evictAll } from '../../../data/cache.js';
+ import { MediaSection } from './MediaSection.js';
+ 
+-vi.mock('../../../data/auth-store.js', async (original) => ({ ...await original<object>(), getMutationToken: () => 'test-token' }));
+ vi.mock('../../../data/remote-mode.js', () => ({ isRemoteMobileMode: () => false }));
+ const item = (name: string) => ({ name, type: 'image/png', bytes: 8, modifiedAt: new Date().toISOString() });
+-beforeEach(() => { evictAll(); vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} })); });
+-afterEach(() => { vi.unstubAllGlobals(); });
++beforeEach(() => { setMutationToken('a'.repeat(64)); evictAll(); vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} })); });
++afterEach(() => { clearMutationToken(); vi.unstubAllGlobals(); });
+ it('renders authenticated thumbnails', async () => {
+-  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/attachments')
++  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/attachment-metadata')
+     ? new Response(JSON.stringify({ state: 'ok', items: [item('0000000000000001.png'), item('0000000000000002.png')] }))
+     : new Response(new Blob(['fake']))));
+   render(<MediaSection visible />);
+@@ -26,3 +26,19 @@ it('shows an error', async () => {
+   render(<MediaSection visible />);
+   expect(await screen.findByText('Screenshots are unavailable right now.')).toBeInTheDocument();
+ });
++
++it('loads metadata while locked and retries bytes after unlocking', async () => {
++  clearMutationToken();
++  const fetchMock = vi.fn(async (url: string) => url.endsWith('/attachment-metadata')
++    ? new Response(JSON.stringify({ state: 'ok', items: [item('0000000000000001.png')] }))
++    : new Response(new Blob(['fake'])));
++  vi.stubGlobal('fetch', fetchMock);
++  render(<MediaSection visible />);
++  await screen.findByText(/image unavailable/);
++  expect(fetchMock).toHaveBeenCalledTimes(1);
++  act(() => setMutationToken('a'.repeat(64)));
++  expect(await screen.findByAltText('Screenshot you sent')).toBeInTheDocument();
++  act(() => clearMutationToken());
++  expect(await screen.findByText(/image unavailable/)).toBeInTheDocument();
++  expect(screen.queryByAltText('Screenshot you sent')).not.toBeInTheDocument();
++});
+diff --git a/src/web-ui/routes/verse/library/MediaSection.tsx b/src/web-ui/routes/verse/library/MediaSection.tsx
+index e061e7beea9..3242de77ce9 100644
+--- a/src/web-ui/routes/verse/library/MediaSection.tsx
++++ b/src/web-ui/routes/verse/library/MediaSection.tsx
+@@ -1,28 +1,13 @@
+ import { useEffect } from 'react';
+-import { getMutationToken } from '../../../data/auth-store.js';
+-import { useQuery, useRefetch } from '../../../data/hooks.js';
+-import type { QueryDef } from '../../../data/queries.js';
+-import { isRemoteMobileMode } from '../../../data/remote-mode.js';
++import { useMutationHold, useQuery, useRefetch } from '../../../data/hooks.js';
+ import { CardNote } from '../command/Surface.js';
+ import { ThreadScreenshot } from '../leader-thread/ThreadScreenshot.js';
+ import { leaderFileAge, leaderFileSize } from './library-leader-files-model.js';
+-import { narrowMedia, type MediaList } from './library-media-model.js';
++import { libraryMediaQuery as query } from './library-queries.js';
+ import styles from './library.module.css';
+ 
+-const query: QueryDef<MediaList> = {
+-  key: 'verse-leader-attachments',
+-  fetch: async (signal) => {
+-    const token = getMutationToken();
+-    if (!token || isRemoteMobileMode()) throw new Error('Attachments unavailable');
+-    const response = await fetch('/api/verse/leader/attachments', { credentials: 'same-origin', headers: { 'x-ashlr-token': token }, signal });
+-    if (!response.ok) throw new Error('Attachments unavailable');
+-    const body = narrowMedia(await response.json());
+-    if (!body) throw new Error('Invalid attachments response');
+-    return body;
+-  },
+-};
+-
+ export function MediaSection({ visible }: { visible: boolean }) {
++  const { hasHold } = useMutationHold();
+   const media = useQuery(query, { enabled: visible, freshMs: 30_000 });
+   const refetch = useRefetch(query);
+   useEffect(() => {
+@@ -39,7 +24,8 @@ export function MediaSection({ visible }: { visible: boolean }) {
+       : media.data.items.length === 0 ? <CardNote>No screenshots yet. Paste one into the Leader box.</CardNote>
+       : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '1rem' }}>
+         {media.data.items.map(item => <div key={item.name}>
+-          <ThreadScreenshot name={item.name} raw={item.name} />
++          {/* Retry after unlock; discard loaded bytes when the hold expires. */}
++          <ThreadScreenshot key={`${item.name}:${hasHold}`} name={item.name} raw={item.name} />
+           <p className={styles.meta}>{leaderFileAge(item.modifiedAt, Date.now())} · {leaderFileSize(item.bytes)}</p>
+         </div>)}
+       </div>}
+diff --git a/src/web-ui/routes/verse/library/library-items.ts b/src/web-ui/routes/verse/library/library-items.ts
+new file mode 100644
+index 00000000000..4bf013f7e9a
+--- /dev/null
++++ b/src/web-ui/routes/verse/library/library-items.ts
+@@ -0,0 +1,86 @@
++/** Phone projection of the desktop Library's existing typed reads. No writes. */
++import { scrubSecrets } from '../../../../core/util/scrub-secrets.js';
++import type { QueryDef } from '../../../data/queries.js';
++import { verseProjectMemoryQuery } from '../context/context-queries.js';
++import { agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
++import { verseSessionsQuery } from '../verse-queries.js';
++import { libraryBusLines, withReceiptTtl } from './library-bus-model.js';
++import { leaderFileLabel } from './library-leader-files-model.js';
++import { recentProjects } from './library-model.js';
++import { cosMemoryQuery, handoffsQuery, leaderFilesQuery, libraryMediaQuery, libraryPinsQuery } from './library-queries.js';
++
++export interface LibraryItem { id: string; kind: string; title: string; at: number; content: string | null }
++
++// Scrub before deriving titles or searching; env assignments are private even
++// when their values do not have a recognizable credential shape.
++export function libraryText(text: string): string {
++  if (/(?:["']?(?:env|environment)["']?\s*:|\b(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=|["']?[A-Z_][A-Z0-9_]*["']?\s*:)/.test(text)) return '[REDACTED]';
++  return scrubSecrets(text);
++}
++
++export function findLibraryItems(items: readonly LibraryItem[], search: string): LibraryItem[] {
++  const q = search.trim().toLocaleLowerCase();
++  return items.map(item => ({ ...item, title: libraryText(item.title), content: item.content === null ? null : libraryText(item.content) }))
++    .filter(item => `${item.title} ${item.kind} ${item.content ?? ''}`.toLocaleLowerCase().includes(q))
++    .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
++}
++
++export const libraryItemsQuery: QueryDef<LibraryItem[]> = {
++  key: 'verse-library-items',
++  fetch: async signal => {
++    const item = (id: string, kind: string, title: string, time: string | number, content: string | null): LibraryItem =>
++      ({ id: `${kind}:${id}`, kind, title, at: typeof time === 'number' ? time : Date.parse(time) || 0, content });
++    const sources: [string, () => Promise<LibraryItem[]>][] = [
++      ['Pinned items', async () => (await libraryPinsQuery.fetch(signal))?.pins.map(pin =>
++        item(pin.id, 'Pinned', pin.title, pin.pinnedAt, null)) ?? []],
++      ['Files', async () => {
++        const data = await leaderFilesQuery.fetch(signal);
++        if (data.state === 'unavailable') throw new Error('unavailable');
++        return data.files.map(row => item(row.name, 'File', leaderFileLabel(row.name), row.modifiedAt, row.unavailable ? null : row.preview));
++      }],
++      ['Media', async () => {
++        const data = await libraryMediaQuery.fetch(signal);
++        if (data.state === 'unavailable') throw new Error('unavailable');
++        return data.items.map(row => item(row.name, 'Media', row.name, row.modifiedAt, null));
++      }],
++      ['Context', async () => {
++        const data = await handoffsQuery.fetch(signal);
++        if (data.state === 'unavailable') throw new Error('unavailable');
++        return data.handoffs.map(row => item(`${row.folder}/${row.name}`, 'Context', `${row.folder}: ${row.name}`, row.modifiedAt, row.preview));
++      }],
++      ['Memory', async () => (await cosMemoryQuery.fetch(signal)).map(row =>
++        item(row.id, 'Memory', libraryText(row.text).split('\n')[0]!.slice(0, 100), row.updated, row.text))],
++      ['Project memory', async () => {
++        const projects = recentProjects(await verseSessionsQuery.fetch(signal));
++        return Promise.all(projects.map(async project => {
++          let content: string | null = null;
++          let at = project.latest;
++          try {
++            const data = await verseProjectMemoryQuery(project.path).fetch(signal);
++            if (typeof data.content === 'string') content = data.content;
++            at = Date.parse(data.updatedAt ?? '') || at;
++          } catch { /* Keep the known title when this one project cannot be read. */ }
++          return item(project.path, 'Memory', `${project.name} memory`, at, content);
++        }));
++      }],
++      ['Agent messages', async () => {
++        const status = await agentBusStatusQuery.fetch(signal);
++        if (!status || status.source === 'unavailable') throw new Error('unavailable');
++        if (status.source === 'missing') return [];
++        const page = await agentBusPageQuery(Math.max(0, (status.retainedCount ?? 0) - 50), 50).fetch(signal);
++        if (!page) throw new Error('unavailable');
++        return libraryBusLines(withReceiptTtl(page, Date.now()), Date.now()).map(line => {
++          const receipt = page.messages.find(row => row.envelope.id === line.id)!;
++          const body = receipt.envelope.body;
++          const text = typeof body === 'string' ? body : body && typeof body === 'object'
++            ? ['text', 'message', 'summary'].map(key => (body as Record<string, unknown>)[key]).find(value => typeof value === 'string') : null;
++          return item(line.id, 'Agent message', `${line.from} → ${line.to}`, receipt.receivedAt, typeof text === 'string' ? text : null);
++        });
++      }],
++    ];
++    const settled = await Promise.allSettled(sources.map(([, read]) => read()));
++    if (signal?.aborted) throw signal.reason;
++    return findLibraryItems(settled.flatMap((result, i) => result.status === 'fulfilled' ? result.value
++      : [item('unavailable', sources[i]![0], sources[i]![0], 0, null)]), '');
++  },
++};
+diff --git a/src/web-ui/routes/verse/library/library-leader-files-model.ts b/src/web-ui/routes/verse/library/library-leader-files-model.ts
+index 51c12097c80..1afede60834 100644
+--- a/src/web-ui/routes/verse/library/library-leader-files-model.ts
++++ b/src/web-ui/routes/verse/library/library-leader-files-model.ts
+@@ -6,7 +6,7 @@
+  */
+ export const LEADER_FILE_PREVIEW_MAX = 240;
+ 
+-export interface LeaderFile { name: string; size: number; modifiedAt: string; preview: string }
++export interface LeaderFile { name: string; size: number; modifiedAt: string; preview: string; unavailable?: boolean }
+ export type LeaderFilesState = 'unavailable' | 'absent';
+ export interface LeaderFilesResponse { v: 1; observedAt: string; files: LeaderFile[]; state?: LeaderFilesState }
+ export interface LeaderFileRow { key: string; label: string; age: string; size: string; preview: string }
+@@ -19,6 +19,7 @@ const SAFE_NAME = /^(?:[^/\\\0]+|drafts\/[^/\\\0]+)$/;
+ function validFile(row: unknown): row is LeaderFile {
+   return record(row) && typeof row.name === 'string' && SAFE_NAME.test(row.name) && row.name !== '..'
+     && Number.isSafeInteger(row.size) && (row.size as number) >= 0
++    && (row.unavailable === undefined || typeof row.unavailable === 'boolean')
+     && isTime(row.modifiedAt) && typeof row.preview === 'string' && row.preview.length <= LEADER_FILE_PREVIEW_MAX;
+ }
+ 
+@@ -56,5 +57,5 @@ export function leaderFileRows(files: readonly LeaderFile[], now: number): Leade
+   return files.map((file, index) => ({ file, index, at: Date.parse(file.modifiedAt) }))
+     .sort((a, b) => b.at - a.at || a.index - b.index)
+     .map(({ file }) => ({ key: file.name, label: leaderFileLabel(file.name), age: leaderFileAge(file.modifiedAt, now),
+-      size: leaderFileSize(file.size), preview: file.preview }));
++      size: leaderFileSize(file.size), preview: file.unavailable ? 'unavailable' : file.preview }));
+ }
+diff --git a/src/web-ui/routes/verse/library/library-queries.ts b/src/web-ui/routes/verse/library/library-queries.ts
+new file mode 100644
+index 00000000000..b39f98becf6
+--- /dev/null
++++ b/src/web-ui/routes/verse/library/library-queries.ts
+@@ -0,0 +1,62 @@
++/** Shared, validated desktop and phone Library reads. */
++import type { MemoryEntry } from '../../../../core/cos/memory.js';
++import type { LibraryPin } from '../../../../core/fleet/library-pins.js';
++import { ApiError, apiGet } from '../../../data/client.js';
++import type { QueryDef } from '../../../data/queries.js';
++import { COS_MEMORY_PATH, narrowCosMemory } from './cos-memory-model.js';
++import { narrowLeaderFiles, type LeaderFilesResponse } from './library-leader-files-model.js';
++import { narrowHandoffs, type HandoffsResponse } from './library-handoffs-model.js';
++import { narrowMedia, type MediaList } from './library-media-model.js';
++
++export const leaderFilesQuery: QueryDef<LeaderFilesResponse> = {
++  key: 'verse-fleet-library-files',
++  fetch: async (signal) => {
++    const body = narrowLeaderFiles(await apiGet<unknown>('/api/verse/fleet/library-files', signal));
++    if (!body) throw new Error('malformed leader files response');
++    return body;
++  },
++};
++
++export const handoffsQuery: QueryDef<HandoffsResponse> = {
++  key: 'verse-fleet-handoffs',
++  fetch: async (signal) => {
++    const body = narrowHandoffs(await apiGet<unknown>('/api/verse/fleet/handoffs', signal));
++    if (!body) throw new Error('malformed handoffs response');
++    return body;
++  },
++};
++
++export const cosMemoryQuery: QueryDef<MemoryEntry[]> = {
++  key: 'verse-cos-memory',
++  fetch: async (signal) => {
++    const entries = narrowCosMemory(await apiGet<unknown>(COS_MEMORY_PATH, signal));
++    if (!entries) throw new Error('malformed memory response');
++    return entries;
++  },
++};
++
++// Metadata only: screenshot bytes retain their separate mutation-token gate.
++export const libraryMediaQuery: QueryDef<MediaList> = {
++  key: 'verse-library-media-metadata',
++  fetch: async signal => {
++    const body = narrowMedia(await apiGet<unknown>('/api/verse/leader/attachment-metadata', signal));
++    if (!body) throw new Error('Invalid media response');
++    return body;
++  },
++};
++
++export const LIBRARY_PINS_PATH = '/api/verse/library/pins';
++export const LIBRARY_PINS_KEY = 'verse-library-pins';
++
++export interface PinsResponse { v: 1; pins: LibraryPin[] }
++
++/** A server without the route answers 404: no pins there, and no toggles either. */
++export const libraryPinsQuery: QueryDef<PinsResponse | null> = {
++  key: LIBRARY_PINS_KEY,
++  fetch: async (signal) => {
++    try { return await apiGet<PinsResponse>(LIBRARY_PINS_PATH, signal); } catch (err) {
++      if (err instanceof ApiError && err.status === 404) return null;
++      throw err;
++    }
++  },
++};
+diff --git a/src/web-ui/routes/verse/mobile/MobileShell.module.css b/src/web-ui/routes/verse/mobile/MobileShell.module.css
+index 857bc2ca749..2056dc8fc6b 100644
+--- a/src/web-ui/routes/verse/mobile/MobileShell.module.css
++++ b/src/web-ui/routes/verse/mobile/MobileShell.module.css
+@@ -13,7 +13,7 @@
+ .tabbar {
+   flex: none;
+   display: grid;
+-  grid-template-columns: repeat(5, minmax(0, 1fr));
++  grid-template-columns: repeat(6, minmax(0, 1fr));
+   padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+   background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+   backdrop-filter: saturate(1.6) blur(18px);
+diff --git a/src/web-ui/routes/verse/mobile/MobileShell.test.tsx b/src/web-ui/routes/verse/mobile/MobileShell.test.tsx
+index 6270a6d25a0..2cfa627444f 100644
+--- a/src/web-ui/routes/verse/mobile/MobileShell.test.tsx
++++ b/src/web-ui/routes/verse/mobile/MobileShell.test.tsx
+@@ -91,6 +91,8 @@ afterEach(() => {
+ });
+ 
+ async function glanceLoaded() {
++  // Home's body is a separate chunk; settle its import before testing its data.
++  await act(async () => { await vi.dynamicImportSettled(); });
+   await screen.findByText(/main red: phantom/);
+ }
+ 
+@@ -102,18 +104,22 @@ async function openFleet() {
+ }
+ 
+ describe('the shell', () => {
+-  it('draws five tabs with Home current, and badges once the runtime has counted', async () => {
++  it('draws six tabs with Home current, and badges once the runtime has counted', async () => {
+     mac();
+     render(<MobileShell />);
+     // The frame paints before the runtime chunk: tabs, no badges yet.
+     const frameTabs = screen.getByRole('navigation', { name: 'Phantom' });
+-    expect(within(frameTabs).getAllByRole('button')).toHaveLength(5);
++    expect(within(frameTabs).getAllByRole('button')).toHaveLength(6);
+     expect(within(frameTabs).getByRole('button', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+     expect(within(frameTabs).getByRole('button', { name: 'Needs you' })).toBeInTheDocument();
+     // Then the runtime lands (the frame is redrawn with the live context).
+     expect(await screen.findByRole('button', { name: 'Needs you, 1 waiting' }, { timeout: 4000 })).toBeInTheDocument();
+     const tabs = screen.getByRole('navigation', { name: 'Phantom' });
+     expect(within(tabs).getByRole('button', { name: 'Agents, 1 working' })).toBeInTheDocument();
++    fireEvent.click(within(tabs).getByRole('button', { name: 'Library' }));
++    await screen.findByRole('heading', { name: 'Library' });
++    expect(window.location.hash).toBe('#/library');
++    expect(within(tabs).getByRole('button', { name: 'Library' })).toHaveAttribute('aria-current', 'page');
+   });
+ 
+   it('switches screens through the hash (so Back works), and a re-tap pops to the tab root', async () => {
+diff --git a/src/web-ui/routes/verse/mobile/MobileShell.tsx b/src/web-ui/routes/verse/mobile/MobileShell.tsx
+index 5d8630cfcd7..f2d10ead957 100644
+--- a/src/web-ui/routes/verse/mobile/MobileShell.tsx
++++ b/src/web-ui/routes/verse/mobile/MobileShell.tsx
+@@ -1,6 +1,6 @@
+ /**
+- * routes/verse/mobile/MobileShell.tsx — Verse on a phone: five tabs (Home,
+- * Agents, Needs you, Leader, More), one screen at a time, one activity loop.
++ * routes/verse/mobile/MobileShell.tsx — Verse on a phone: six tabs (Home,
++ * Agents, Needs you, Leader, Library, More), one screen at a time, one activity loop.
+  *
+  * FIRST PAINT: this shell and Home's frame are the whole first-paint bundle
+  * (check-first-paint-budget.mjs measures them against 250 KB; React is ~220 KB
+@@ -19,7 +19,7 @@ import { PRODUCT_NAME } from '../../../app/product-brand.js';
+ import { Component, Suspense, useCallback, useEffect, type ComponentType, type ReactNode } from 'react';
+ import { preloadedLazy } from '../shell/preloaded.js';
+ import { BOOT_CONTEXT, MobileContext, type MobileContextValue } from './mobile-context.js';
+-import { AgentsGlyph, HomeGlyph, LeaderGlyph, MoreGlyph, NeedsGlyph } from './mobile-icons.js';
++import { AgentsGlyph, HomeGlyph, LeaderGlyph, LibraryGlyph, MoreGlyph, NeedsGlyph } from './mobile-icons.js';
+ import { tabOf, tabRoot, useMobileRoute, type MobileRoute, type MobileTab } from './mobile-router.js';
+ import type { MobileRuntimeProps } from './MobileRuntime.js';
+ import { HomeScreen } from './screens/HomeScreen.js';
+@@ -42,6 +42,7 @@ const TABS: ReadonlyArray<{ id: MobileTab; label: string; Glyph: ComponentType<{
+   { id: 'agents', label: 'Agents', Glyph: AgentsGlyph },
+   { id: 'needs', label: 'Needs you', Glyph: NeedsGlyph },
+   { id: 'leader', label: 'Leader', Glyph: LeaderGlyph },
++  { id: 'library', label: 'Library', Glyph: LibraryGlyph },
+   { id: 'more', label: 'More', Glyph: MoreGlyph },
+ ];
+ 
+diff --git a/src/web-ui/routes/verse/mobile/ScreenHost.tsx b/src/web-ui/routes/verse/mobile/ScreenHost.tsx
+index 9b26185c58c..412c6ea2600 100644
+--- a/src/web-ui/routes/verse/mobile/ScreenHost.tsx
++++ b/src/web-ui/routes/verse/mobile/ScreenHost.tsx
+@@ -20,6 +20,7 @@ const importFeed = () => import('./screens/FeedScreen.js');
+ const importGoals = () => import('./screens/GoalsScreen.js');
+ const importIdeas = () => import('./screens/IdeasScreen.js');
+ const importDropJob = () => import('./screens/DropJobScreen.js');
++const importLibrary = () => import('./screens/LibraryScreen.js');
+ const importMore = () => import('./screens/MoreScreen.js');
+ const importWatch = () => import('./screens/WatchScreen.js');
+ 
+@@ -36,11 +37,12 @@ const FeedScreen = lazy(() => importFeed().then((m) => ({ default: m.FeedScreen
+ const GoalsScreen = lazy(() => importGoals().then((m) => ({ default: m.GoalsScreen })));
+ const IdeasScreen = lazy(() => importIdeas().then((m) => ({ default: m.IdeasScreen })));
+ const DropJobScreen = lazy(() => importDropJob().then((m) => ({ default: m.DropJobScreen })));
++const LibraryScreen = lazy(() => importLibrary().then((m) => ({ default: m.LibraryScreen })));
+ const MoreScreen = lazy(() => importMore().then((m) => ({ default: m.MoreScreen })));
+ const WatchScreen = lazy(() => importWatch().then((m) => ({ default: m.WatchScreen })));
+ 
+ /** Most-visited first: Needs you and Agents are what a phone is opened for. */
+-const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importFeed, importGoals, importIdeas, importDropJob, importMore, importWatch];
++const SCREEN_IMPORTS = [importNeedsYou, importAgents, importAgentDetail, importLeader, importNewAgent, importFleet, importRuns, importWorker, importInbox, importFeed, importGoals, importIdeas, importDropJob, importLibrary, importMore, importWatch];
+ 
+ /** Warm every screen chunk (the shell calls this once the phone is idle); failures are the mount's to report. */
+ export function prefetchMobileScreens(): void {
+@@ -75,6 +77,8 @@ export function ScreenHost({ route }: { route: Exclude<MobileRoute, { screen: 'h
+       return <IdeasScreen />;
+     case 'drop-job':
+       return <DropJobScreen />;
++    case 'library':
++      return <LibraryScreen />;
+     case 'more':
+       return <MoreScreen />;
+     case 'watch':
+diff --git a/src/web-ui/routes/verse/mobile/mobile-icons.tsx b/src/web-ui/routes/verse/mobile/mobile-icons.tsx
+index c65b4dffbe1..55a364c5a06 100644
+--- a/src/web-ui/routes/verse/mobile/mobile-icons.tsx
++++ b/src/web-ui/routes/verse/mobile/mobile-icons.tsx
+@@ -67,3 +67,7 @@ export function BackGlyph(props: IconProps) {
+     </Icon>
+   );
+ }
++
++export function LibraryGlyph(props: IconProps) {
++  return <Icon {...props}><path d="M2 3h3v10H2zM7 3h3v10H7zM12 3l2-0.5 2 10-2 0.5z" /></Icon>;
++}
+diff --git a/src/web-ui/routes/verse/mobile/mobile-router.ts b/src/web-ui/routes/verse/mobile/mobile-router.ts
+index 0db105b7710..84c80d71a43 100644
+--- a/src/web-ui/routes/verse/mobile/mobile-router.ts
++++ b/src/web-ui/routes/verse/mobile/mobile-router.ts
+@@ -10,7 +10,7 @@
+ import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
+ import { useCallback, useSyncExternalStore } from 'react';
+ 
+-export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'more';
++export type MobileTab = 'home' | 'agents' | 'needs' | 'leader' | 'library' | 'more';
+ 
+ export type AgentPane = 'transcript' | 'changes';
+ 
+@@ -21,6 +21,7 @@ export type MobileRoute =
+   | { screen: 'new' }
+   | { screen: 'needs' }
+   | { screen: 'leader' }
++  | { screen: 'library' }
+   | { screen: 'more' }
+   | { screen: 'fleet' }
+   | { screen: 'runs' }
+@@ -32,7 +33,7 @@ export type MobileRoute =
+   | { screen: 'drop-job' }
+   | { screen: 'watch' };
+ 
+-const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'more', 'fleet', 'runs', 'inbox', 'feed', 'goals', 'ideas', 'drop-job', 'watch']);
++const SIMPLE = new Set(['agents', 'new', 'needs', 'leader', 'library', 'more', 'fleet', 'runs', 'inbox', 'feed', 'goals', 'ideas', 'drop-job', 'watch']);
+ 
+ /** `#/agents/abc/changes` → the route. Anything unrecognised is Home, never an error. */
+ export function parseMobileHash(hash: string): MobileRoute {
+@@ -87,6 +88,8 @@ export function tabOf(route: MobileRoute): MobileTab {
+       return 'needs';
+     case 'leader':
+       return 'leader';
++    case 'library':
++      return 'library';
+     case 'more':
+     case 'fleet':
+     case 'runs':
+diff --git a/src/web-ui/routes/verse/mobile/screens/LibraryScreen.module.css b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.module.css
+new file mode 100644
+index 00000000000..95c8569625f
+--- /dev/null
++++ b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.module.css
+@@ -0,0 +1,6 @@
++.items { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding: 0; list-style: none; }
++.item { border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
++.item summary { min-height: 3rem; padding: var(--space-3); cursor: pointer; touch-action: manipulation; }
++.item summary span { display: block; }
++.item summary:focus-visible { outline: 2px solid var(--accent-500); outline-offset: -2px; }
++.content { white-space: pre-wrap; padding: 0 var(--space-3) var(--space-3); margin: 0; }
+diff --git a/src/web-ui/routes/verse/mobile/screens/LibraryScreen.test.tsx b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.test.tsx
+new file mode 100644
+index 00000000000..d5a7775778c
+--- /dev/null
++++ b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.test.tsx
+@@ -0,0 +1,116 @@
++import { fireEvent, screen, within } from '@testing-library/react';
++import { afterEach, beforeEach, expect, it, vi } from 'vitest';
++import { evictAll } from '../../../../data/cache.js';
++import { LibraryPane } from '../../library/LibraryPane.js';
++import { libraryItemsQuery, libraryText } from '../../library/library-items.js';
++import { formatMobileHash, parseMobileHash, tabOf } from '../mobile-router.js';
++import { json, renderMobile, stubFetch } from '../mobile.test-support.js';
++import { LibraryScreen } from './LibraryScreen.js';
++
++const at = '2026-11-17T01:00:00Z';
++const file = { name: 'VISION.md', size: 20, modifiedAt: at, preview: '<b>Future</b>' };
++const routes = (over: Record<string, unknown> = {}) => stubFetch({
++  'GET /api/verse/library/pins': { v: 1, pins: [] },
++  'GET /api/verse/fleet/library-files': { v: 1, observedAt: at, files: [] },
++  'GET /api/verse/leader/attachment-metadata': { state: 'ok', items: [] },
++  'GET /api/verse/fleet/handoffs': { v: 1, observedAt: at, handoffs: [] },
++  'GET /api/verse/cos/memory': { v: 1, entries: [] },
++  'GET /api/verse/sessions': [],
++  'GET /api/verse/agent-bus': { v: 1, status: 'ok', nextCursor: 0, messages: [] },
++  'GET /api/verse/agent-bus/status': { v: 1, source: 'missing', retainedCount: 0, retainedBytes: 0, liveCount: 0, expiredCount: 0, maxMessages: 50, maxBytes: 5000 },
++  ...over,
++});
++beforeEach(() => evictAll());
++afterEach(() => vi.unstubAllGlobals());
++
++it('has a primary route and shows a genuinely empty Library', async () => {
++  routes();
++  renderMobile(<LibraryScreen />);
++  expect(await screen.findByText('Your Library is empty.')).toBeInTheDocument();
++  expect(parseMobileHash(formatMobileHash({ screen: 'library' }))).toEqual({ screen: 'library' });
++  expect(tabOf({ screen: 'library' })).toBe('library');
++});
++
++it('shows a failed query as unavailable without claiming that the Library is empty', async () => {
++  vi.spyOn(libraryItemsQuery, 'fetch').mockRejectedValueOnce(new Error('private diagnostic'));
++  renderMobile(<LibraryScreen />);
++  expect(await screen.findByText('Library unavailable. Try Refresh.')).toBeInTheDocument();
++  expect(screen.queryByText('Your Library is empty.')).not.toBeInTheDocument();
++  expect(screen.queryByText('private diagnostic')).not.toBeInTheDocument();
++});
++
++it('shows the same one file as desktop, opens as text and searches locally', async () => {
++  const fetches = routes({ 'GET /api/verse/fleet/library-files': { v: 1, observedAt: at, files: [file] } });
++  const desktop = renderMobile(<LibraryPane />);
++  expect(await screen.findByRole('button', { name: /Vision/ })).toHaveTextContent(file.preview);
++  desktop.unmount();
++  const { container } = renderMobile(<LibraryScreen />);
++  const title = await screen.findByText('Vision');
++  const summary = title.closest('summary')!;
++  fireEvent.click(summary);
++  expect(summary.parentElement).toHaveAttribute('open');
++  expect(screen.getByText(file.preview)).toBeInTheDocument();
++  expect(container.querySelector('b')).toBeNull();
++  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'missing' } });
++  expect(screen.getByText('No matching items.')).toBeInTheDocument();
++  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'future' } });
++  expect(screen.getByText('Vision')).toBeInTheDocument();
++  expect(fetches.posts()).toEqual([]);
++});
++
++it('retains unreadable item titles and distinguishes source failure from empty', async () => {
++  routes({
++    'GET /api/verse/fleet/library-files': { v: 1, observedAt: at, files: [{ ...file, preview: '', unavailable: true }] },
++    'GET /api/verse/fleet/handoffs': () => json({ error: 'private diagnostic' }, 503),
++  });
++  renderMobile(<LibraryScreen />);
++  const title = await screen.findByText('Vision');
++  expect(title.closest('summary')).toHaveTextContent('unavailable');
++  expect(screen.getByText('Context').closest('summary')).toHaveTextContent('unavailable');
++  expect(screen.queryByText('private diagnostic')).not.toBeInTheDocument();
++  expect(screen.queryByText('Your Library is empty.')).not.toBeInTheDocument();
++});
++
++it('sorts mixed desktop sources newest first, keeps media metadata and unreadable project memory', async () => {
++  routes({
++    'GET /api/verse/fleet/library-files': { v: 1, observedAt: at, files: [file] },
++    'GET /api/verse/cos/memory': { v: 1, entries: [{ id: 'm1', kind: 'fact', source: 'owner', updated: '2026-11-17T02:00:00Z', text: 'Remember this' }] },
++    'GET /api/verse/fleet/handoffs': { v: 1, observedAt: at, handoffs: [{ folder: 'agent', name: 'Notes.md', size: 2, modifiedAt: '2026-11-17T03:00:00Z', preview: 'Context text' }] },
++    'GET /api/verse/leader/attachment-metadata': { state: 'ok', items: [{ name: '0123456789abcdef.png', bytes: 10, type: 'image/png', modifiedAt: '2026-11-17T04:00:00Z' }] },
++    'GET /api/verse/sessions': [{ projectPath: '/tmp/project', createdAt: at, updatedAt: at }],
++    'GET /api/verse/memory': () => json({}, 403),
++  });
++  renderMobile(<LibraryScreen />);
++  const list = await screen.findByRole('list', { name: 'Library items' });
++  const titles = within(list).getAllByRole('listitem').map(row => row.querySelector('strong')?.textContent);
++  expect(titles.slice(0, 3)).toEqual(['0123456789abcdef.png', 'agent: Notes.md', 'Remember this']);
++  expect(screen.getByText('project memory').closest('summary')).toHaveTextContent('unavailable');
++  expect(list.querySelector('img')).toBeNull();
++});
++
++it('redacts assignments before search and refuses arbitrary agent-body objects', async () => {
++  const now = Date.now();
++  routes({
++    'GET /api/verse/agent-bus/status': { v: 1, source: 'available', retainedCount: 1, retainedBytes: 10, liveCount: 1, expiredCount: 0, maxMessages: 50, maxBytes: 5000 },
++    'GET /api/verse/agent-bus': { v: 1, status: 'ok', nextCursor: 1, messages: [{ cursor: 1, receivedAt: now, envelope: { id: 'b1', from: 'worker', to: 'leader', priority: 'P2', ttl: 5000, body: { env: { EXAMPLE: 'private-value' } } } }] },
++  });
++  const rows = await libraryItemsQuery.fetch();
++  expect(rows).toEqual([{ id: 'Agent message:b1', kind: 'Agent message', title: 'worker → leader', at: now, content: null }]);
++  for (const text of ['export lower_case=value', '_PRIVATE=value', '{"env":{"lower_case":"value"}}', 'EXAMPLE=private-value', '{"EXAMPLE":"private-value"}', 'EXAMPLE="multi\nline"']) expect(libraryText(text)).toBe('[REDACTED]');
++});
++
++it('uses paired-cookie reads for pins and project memory without local tokens', async () => {
++  const meta = document.createElement('meta');
++  meta.name = 'ashlr-remote-gateway'; meta.content = 'v1'; document.head.append(meta);
++  try {
++    const fetches = routes({
++      'GET /api/verse/library/pins': { v: 1, pins: [{ id: 'pin1', kind: 'bus', ref: 'old-message', title: 'Earlier decision', pinnedAt: at }] },
++      'GET /api/verse/sessions': [{ projectPath: '/tmp/project', createdAt: at, updatedAt: at }],
++      'GET /api/verse/memory': { content: 'Shared context', updatedAt: at },
++    });
++    const rows = await libraryItemsQuery.fetch();
++    expect(rows.map(row => row.title)).toEqual(['project memory', 'Earlier decision']);
++    expect(rows[0]?.content).toBe('Shared context');
++    expect(fetches.calls.every(call => !('x-ashlr-token' in call.headers) && !('x-ashlr-read-client' in call.headers))).toBe(true);
++  } finally { meta.remove(); }
++});
+diff --git a/src/web-ui/routes/verse/mobile/screens/LibraryScreen.tsx b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.tsx
+new file mode 100644
+index 00000000000..f71608dfce3
+--- /dev/null
++++ b/src/web-ui/routes/verse/mobile/screens/LibraryScreen.tsx
+@@ -0,0 +1,33 @@
++import { useState } from 'react';
++import { refetchQuery } from '../../../../data/cache.js';
++import { useQuery } from '../../../../data/hooks.js';
++import { findLibraryItems, libraryItemsQuery } from '../../library/library-items.js';
++import { usePollWhileVisible } from '../../shell/section-visibility.js';
++import { Button, Screen, SkeletonList } from '../ui.js';
++import { ui } from '../ui-parts.js';
++import styles from './LibraryScreen.module.css';
++
++export function LibraryScreen() {
++  const [search, setSearch] = useState('');
++  const data = useQuery(libraryItemsQuery, { freshMs: 30_000 });
++  const refresh = () => refetchQuery(libraryItemsQuery.key, () => libraryItemsQuery.fetch(), true);
++  usePollWhileVisible(() => { void refresh(); }, 30_000);
++  const items = findLibraryItems(data.data ?? [], search);
++  return <Screen title="Library" large label="Library" onRefresh={refresh}
++    trailing={<Button variant="plain" onClick={() => void refresh()}>Refresh</Button>}>
++    <input type="search" className={ui.input} aria-label="Search Library" placeholder="Search Library"
++      value={search} onChange={event => setSearch(event.target.value)} />
++    {data.error ? <p role="status">Library unavailable. Try Refresh.</p> : null}
++    {!data.data && !data.error ? <SkeletonList label="Loading Library" /> : null}
++    {data.data && !data.error && items.length === 0
++      ? <p role="status">{search ? 'No matching items.' : 'Your Library is empty.'}</p> : null}
++    {items.length > 0 ? <ul className={styles.items} aria-label="Library items">
++        {items.map(item => <li key={item.id}>
++          <details className={styles.item}>
++            <summary><strong>{item.title}</strong><span className={ui.faint}>{item.kind}{item.content === null ? ' · unavailable' : ''}</span></summary>
++            <p className={styles.content}>{item.content === null ? 'unavailable' : item.content || 'Empty item.'}</p>
++          </details>
++        </li>)}
++      </ul> : null}
++  </Screen>;
++}
+diff --git a/test/leader-attachment-list-api-119.test.ts b/test/leader-attachment-list-api-119.test.ts
+index 5984048d386..12c55f26429 100644
+--- a/test/leader-attachment-list-api-119.test.ts
++++ b/test/leader-attachment-list-api-119.test.ts
+@@ -1,6 +1,9 @@
+ import type { IncomingMessage, ServerResponse } from 'node:http';
++import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
+ import { Readable } from 'node:stream';
+-import { expect, it } from 'vitest';
++import { expect, it, vi } from 'vitest';
+ import { handleLeaderApi } from '../src/core/verse/leader-api.js';
+ import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+ 
+@@ -19,3 +22,29 @@ it('uses the same dispatch and token gate as the single image route', async () =
+   expect(await status(list, '', true)).toBe(401);
+   expect(await status(list, 'test-token', true)).toBe(200);
+ });
++
++it.each([['GET', '', true, 200], ['GET', '', false, 404], ['POST', '', true, 405],
++  ['GET', '?limit=1', true, 400], ['GET', '?', true, 400]] as const)(
++  'metadata %s %s with dispatch=%s returns %i without granting image access', async (method, query, allowDispatch, expected) => {
++    const root = await mkdtemp(join(tmpdir(), 'library-metadata-'));
++    vi.stubEnv('ASHLR_RUNS_DIR', root);
++    try {
++      const dir = join(root, 'inbox-attachments');
++      await mkdir(dir);
++      const file = join(dir, '0123456789abcdef.png');
++      await writeFile(file, 'not shown');
++      const time = new Date('2026-11-17T00:00:00.000Z');
++      await utimes(file, time, time);
++      const path = '/api/verse/leader/attachment-metadata';
++      let code = 0;
++      let body = '';
++      const req = { url: path + query, headers: {} } as IncomingMessage;
++      const res = { writeHead(n: number) { code = n; }, setHeader() {}, end(chunk: string) { body = chunk; } } as unknown as ServerResponse;
++      expect(await handleLeaderApi({ token: 'test-token', allowDispatch } as VerseApiContext, req, res, path, method)).toBe(true);
++      expect(code).toBe(expected);
++      if (expected === 200) expect(JSON.parse(body)).toEqual({ state: 'ok', items: [{ name: '0123456789abcdef.png',
++        bytes: 9, type: 'image/png', modifiedAt: time.toISOString() }] });
++      expect(await status('/api/verse/leader/attachment/0123456789abcdef.png', '', true)).toBe(401);
++    } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
++  },
++);
+diff --git a/test/library-files.test.ts b/test/library-files.test.ts
+index 99853f19b98..398f403caa5 100644
+--- a/test/library-files.test.ts
++++ b/test/library-files.test.ts
+@@ -8,7 +8,7 @@ let root = '';
+ afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
+ 
+ describe('leader library files', () => {
+-  it('lists bounded files and drafts with redacted previews, ignoring links and oversized files', async () => {
++  it('lists bounded files and drafts with redacted previews, ignoring links and retaining oversized titles as unavailable', async () => {
+     root = await mkdtemp(join(tmpdir(), 'library-files-'));
+     const leader = join(root, 'leader');
+     await mkdir(join(leader, 'drafts'), { recursive: true });
+@@ -18,7 +18,8 @@ describe('leader library files', () => {
+     await writeFile(join(leader, 'drafts', 'idea.md'), 'A draft');
+     await symlink(join(leader, 'VISION.md'), join(leader, 'INSPIRATION.md'));
+     const rows = await listLeaderFiles(root);
+-    expect(rows.map(row => row.name).sort()).toEqual(['VISION.md', 'drafts/idea.md']);
++    expect(rows.map(row => row.name).sort()).toEqual(['PLAN-LOG.md', 'VISION.md', 'drafts/idea.md']);
++    expect(rows.find(row => row.name === 'PLAN-LOG.md')).toMatchObject({ preview: '', unavailable: true });
+     expect(rows.find(row => row.name === 'VISION.md')?.preview).toContain('[REDACTED]');
+     expect(JSON.stringify(rows)).not.toContain(secret);
+     expect(rows.every(row => row.size > 0 && !Number.isNaN(Date.parse(row.modifiedAt)))).toBe(true);
+diff --git a/test/library-source-contract-qualification-522s.test.ts b/test/library-source-contract-qualification-522s.test.ts
+index a34f1922013..247dc7c621e 100644
+--- a/test/library-source-contract-qualification-522s.test.ts
++++ b/test/library-source-contract-qualification-522s.test.ts
+@@ -1,9 +1,9 @@
+ /**
+- * Qualification of original PR #6547's Library source contract against current
+- * origin/master. These tests encode what master supports TODAY at the
++ * Qualification of original PR #6547's Library source contract on the merged
++ * reader. These tests pin the
+  * reader-to-narrower boundary: listLeaderFiles -> JSON wire -> narrowLeaderFiles
+- * -> leaderFileRows. Candidate-only behavior (unavailable metadata for known
+- * files above the cap) is deliberately NOT asserted here; see BRIDGE_NOTES.md.
++ * -> leaderFileRows. Oversized known files retain metadata while their content
++ * stays unreadable, so unavailable files cannot masquerade as an empty Library.
+  * Synthetic temp root only; no secret-shaped fixtures.
+  */
+ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+@@ -48,35 +48,43 @@ describe('reader to narrower: readable file', () => {
+   it('reads a file of exactly the cap but never one byte more', async () => {
+     writeFileSync(join(leader, 'VISION.md'), 'a'.repeat(CAP));
+     writeFileSync(join(leader, 'PLAN-LOG.md'), 'a'.repeat(CAP + 1));
+-    const names = (await listLeaderFiles(root)).map(f => f.name);
+-    expect(names).toContain('VISION.md');
+-    expect(names).not.toContain('PLAN-LOG.md');
++    const files = await listLeaderFiles(root);
++    expect(files).toHaveLength(2);
++    expect(files.find(file => file.name === 'VISION.md')).toMatchObject({ size: CAP, preview: '[REDACTED]' });
++    expect(files.find(file => file.name === 'VISION.md')?.unavailable).toBeUndefined();
++    expect(files.find(file => file.name === 'PLAN-LOG.md')).toMatchObject({ size: CAP + 1, preview: '', unavailable: true });
+   });
+ });
+ 
+-describe('reader to narrower: known file above the cap (master contract)', () => {
+-  it('master omits the oversized file entirely: no name, size or flag reaches the wire', async () => {
++describe('reader to narrower: known file above the cap', () => {
++  it('retains only unavailable metadata for an oversized file, never its content', async () => {
+     writeFileSync(join(leader, 'PLAN-LOG.md'), 'x'.repeat(CAP + 1));
+     const files = await listLeaderFiles(root);
+-    expect(files).toEqual([]);
+-    expect(JSON.stringify(files)).not.toContain('PLAN-LOG');
++    expect(files).toHaveLength(1);
++    expect(files[0]).toMatchObject({ name: 'PLAN-LOG.md', size: CAP + 1, preview: '', unavailable: true });
++    expect(JSON.stringify(files)).not.toContain('x'.repeat(240));
+   });
+ 
+-  it('master cannot tell this apart from a genuinely empty Library: both narrow to the same body', async () => {
++  it('distinguishes an unavailable known file from a genuinely empty Library through the wire', async () => {
+     writeFileSync(join(leader, 'PLAN-LOG.md'), 'x'.repeat(CAP + 1));
+     const oversized = await viaWire();
+     rmSync(join(leader, 'PLAN-LOG.md'));
+     const empty = await viaWire();
+     expect(oversized).not.toBeNull();
+-    expect(oversized!.files).toEqual([]);
++    expect(oversized!.files).toHaveLength(1);
++    expect(oversized!.files[0]).toMatchObject({ name: 'PLAN-LOG.md', preview: '', unavailable: true });
+     expect(oversized!.state).toBeUndefined();
+-    expect({ ...oversized, observedAt: '' }).toEqual({ ...empty, observedAt: '' });
++    expect(empty!.files).toEqual([]);
++    expect({ ...oversized, observedAt: '' }).not.toEqual({ ...empty, observedAt: '' });
+   });
+ 
+   it('the oversized file does not hide a readable sibling', async () => {
+     writeFileSync(join(leader, 'PLAN-LOG.md'), 'x'.repeat(CAP + 1));
+     writeFileSync(join(leader, 'VISION.md'), 'ok');
+-    expect((await listLeaderFiles(root)).map(f => f.name)).toEqual(['VISION.md']);
++    const files = await listLeaderFiles(root);
++    expect(files).toHaveLength(2);
++    expect(files.find(file => file.name === 'VISION.md')).toMatchObject({ preview: 'ok' });
++    expect(files.find(file => file.name === 'PLAN-LOG.md')).toMatchObject({ preview: '', unavailable: true });
+   });
+ });
+ 
+@@ -148,13 +156,11 @@ describe('narrower: whole-response validation and the unavailable field', () =>
+     expect(narrowLeaderFiles(wire([], { state: 'unavailable' }))?.state).toBe('unavailable');
+   });
+ 
+-  it('master does not model per-file unavailability: an extra flag passes through the parser but rows render the empty preview', () => {
++  it('renders per-file unavailability explicitly and rejects a malformed unavailable flag', () => {
+     const body = narrowLeaderFiles(wire([row({ preview: '', unavailable: true })]));
+     expect(body).not.toBeNull();
+     expect((body!.files[0] as unknown as Record<string, unknown>).unavailable).toBe(true);
+-    // Master rows ignore the flag, so an unreadable file looks like an empty one.
+-    expect(leaderFileRows(body!.files, Date.parse('2026-11-09T12:00:00.000Z'))[0]!.preview).toBe('');
+-    // And master does not validate the flag's type.
+-    expect(narrowLeaderFiles(wire([row({ unavailable: 'yes' })]))).not.toBeNull();
++    expect(leaderFileRows(body!.files, Date.parse('2026-11-09T12:00:00.000Z'))[0]!.preview).toBe('unavailable');
++    expect(narrowLeaderFiles(wire([row({ unavailable: 'yes' })]))).toBeNull();
+   });
+ });
+diff --git a/test/remote-gateway-fleet-routes-oct31.test.ts b/test/remote-gateway-fleet-routes-oct31.test.ts
+index 22f90ec9917..5c7c1014699 100644
+--- a/test/remote-gateway-fleet-routes-oct31.test.ts
++++ b/test/remote-gateway-fleet-routes-oct31.test.ts
+@@ -2,6 +2,29 @@ import { describe, expect, it } from 'vitest';
+ import { classifyRemoteRoute, validateRemoteMutation } from '../src/core/web/remote-gateway-policy.js';
+ 
+ describe('remote gateway fleet routes for the paired phone', () => {
++  it('allows only exact Library reads while keeping media bytes and writes private', () => {
++    const paths = ['/api/verse/fleet/library-files', '/api/verse/fleet/handoffs',
++      '/api/verse/cos/memory', '/api/verse/agent-bus/status', '/api/verse/leader/attachment-metadata'];
++    for (const path of paths) {
++      expect(classifyRemoteRoute('GET', path)).toEqual({ kind: 'read', path });
++      for (const method of ['POST', 'DELETE']) expect(classifyRemoteRoute(method, path)).toEqual({ kind: 'deny' });
++      expect(classifyRemoteRoute('GET', `${path}?extra=1`)).toEqual({ kind: 'deny' });
++    }
++    for (const projectPath of ['/repo', '~/Projects/phone library']) {
++      expect(classifyRemoteRoute('GET', `/api/verse/memory?${new URLSearchParams({ projectPath })}`))
++        .toEqual({ kind: 'read', path: '/api/verse/memory' });
++    }
++    for (const projectPath of ['', 'relative', '/repo/../private', '/repo/./file', '/repo//file', '/repo\\file', '/repo\nfile', `/${'x'.repeat(1024)}`]) {
++      expect(classifyRemoteRoute('GET', `/api/verse/memory?${new URLSearchParams({ projectPath })}`)).toEqual({ kind: 'deny' });
++    }
++    for (const target of ['/api/verse/memory', '/api/verse/memory?projectPath=/repo&projectPath=/other',
++      '/api/verse/memory?projectPath=/repo&extra=1', '/api/verse/leader/attachments',
++      '/api/verse/leader/attachment/0123456789abcdef.png', '/api/verse/cos/memory/forget']) {
++      expect(classifyRemoteRoute('GET', target)).toEqual({ kind: 'deny' });
++    }
++    expect(classifyRemoteRoute('POST', '/api/verse/memory')).toEqual({ kind: 'deny' });
++  });
++
+   it('reads live runs, inbox, bus, queue, switches and lanes', () => {
+     for (const [target, path] of [
+       ['/api/verse/fleet/runs', '/api/verse/fleet/runs'],
