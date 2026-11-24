@@ -10,6 +10,7 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 [![GitHub stars](https://img.shields.io/github/stars/ashlrai/phantom?logo=github)](https://github.com/ashlrai/phantom/stargazers)
 [![npm downloads](https://img.shields.io/npm/dm/%40ashlr%2Fphantom?logo=npm&label=npm%20downloads)](https://www.npmjs.com/package/@ashlr/phantom)
 [![Latest release](https://img.shields.io/github/v/release/ashlrai/phantom?sort=semver)](https://github.com/ashlrai/phantom/releases/latest)
+[![Discord](https://img.shields.io/badge/Discord-The%20Dev%20Shack-5865F2?logo=discord&logoColor=white)](https://discord.gg/jBQrSU6XeD)
 
 [Quickstart](#quickstart) · [Documentation](docs/README.md) · [For agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) · [Desktop](#the-desktop-app-macos) · [Guided onboarding](https://phm.dev/connect)
 
@@ -208,7 +209,7 @@ AshlrAI is an engineering firm. We build tools like Phantom to make our own work
 - **Start here:** read [CONTRIBUTING.md](CONTRIBUTING.md). Your coding agent can follow [AGENTS.md](AGENTS.md) and [llms.txt](llms.txt).
 - **Pick an issue:** [`good first issue`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [`help wanted`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 - **See the whole lineup:** [ashlr.ai/open-source](https://ashlr.ai/open-source).
-<!-- TODO(discord): add the AshlrAI Discord invite here, and a Discord badge in the header, once the public invite link is confirmed. -->
+- **Talk with us:** [The Dev Shack](https://discord.gg/jBQrSU6XeD) on Discord.
 
 ### Star history
 
