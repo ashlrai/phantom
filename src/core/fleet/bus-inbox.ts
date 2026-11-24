@@ -10,9 +10,17 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local
 import { validateBusEnvelope, type BusEnvelope } from './bus-envelope.js';
 
 export const BUS_INBOX_MAX_BYTES = 1024 * 1024;
-export const BUS_INBOX_MAX_MESSAGES = 1024;
+// Structural upper bound for consumers that page the byte-bounded store. Every
+// validated receipt has at least these fields and at least one byte per token.
+const MIN_RECEIPT_BYTES = Buffer.byteLength(JSON.stringify({ cursor: 1, receivedAt: 0,
+  envelope: { id: 'a', from: 'a', to: 'a', priority: 'P0', ttl: 1, body: null } }));
+export const BUS_INBOX_MAX_MESSAGES = Math.floor(BUS_INBOX_MAX_BYTES / MIN_RECEIPT_BYTES);
+// Ordinary traffic leaves space for urgent replies; this is a share of the
+// existing on-disk safety ceiling, not a second count limit. Live rows are
+// never evicted, and existing stores above this threshold remain readable.
+const ORDINARY_CAPACITY_SHARE = 0.9;
 export const BUS_INBOX_MAX_READ = 100;
-export interface BusInboxOptions { root?: string; now?: () => number }
+export interface BusInboxOptions { root?: string; now?: () => number; reservedHeadroom?: boolean }
 export interface BusInboxReadOptions extends BusInboxOptions { includeOriginalEnvelope?: boolean }
 export interface BusInboxReceipt {
   cursor: number;
@@ -196,7 +204,8 @@ export function appendBusInbox(input: unknown, options: BusInboxOptions = {}): B
       if (!Number.isSafeInteger(cursor)) return { status: 'full' };
       rows.push({ cursor, receivedAt, envelope: checked.value });
       const json = JSON.stringify({ version: BUS_INBOX_SNAPSHOT_VERSION, highWater: cursor, rows });
-      if (rows.length > BUS_INBOX_MAX_MESSAGES || Buffer.byteLength(json) > BUS_INBOX_MAX_BYTES) return { status: 'full' };
+      const capacity = options.reservedHeadroom ? BUS_INBOX_MAX_BYTES : Math.floor(BUS_INBOX_MAX_BYTES * ORDINARY_CAPACITY_SHARE);
+      if (Buffer.byteLength(json) > capacity) return { status: 'full' };
       writePrivateFileAtomically(join(directory, '.pending'), join(directory, 'messages.json'), json, { anchorPath: root, label: 'Bus inbox' });
       return { status: 'posted', id: checked.value.id, cursor };
     } finally { releaseLocalStoreLock(acquired.lock); }

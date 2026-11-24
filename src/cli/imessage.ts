@@ -5,7 +5,7 @@
 import { parseArgs } from 'node:util';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
 import { buildDoctorReport, pollInboundSince, readCursor } from '../core/integrations/imessage.js';
-import { ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
+import { imessageInboxHealth, ingestIMessages } from '../core/comms/imessage-inbox-bridge.js';
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { sendLeaderReplies } from '../core/comms/imessage-leader-replies.js';
 import { tickTeammateMessages } from '../core/comms/imessage-teammate-worker.js';
@@ -69,17 +69,18 @@ export async function cmdIMessage(args: string[]): Promise<number> {
         return r.ok ? 0 : 1;
       }
       // Dry run: read only, cursor untouched, counts only.
+      const health = await imessageInboxHealth();
       const cursor = readCursor();
       if (cursor === null) {
-        out({ dryRun: true, state: 'no-cursor', waiting: 0, cursor: null }, 'iMessage poll (dry run): no cursor yet; --apply baselines to the newest message without ingesting history');
+        out({ ...health, dryRun: true, state: 'no-cursor', waiting: 0, cursor: null }, 'iMessage poll (dry run): no cursor yet; --apply baselines to the newest message without ingesting history');
         return 0;
       }
       const polled = await pollInboundSince(cursor, cfg);
       if (!polled.ok) {
-        out({ dryRun: true, state: polled.state, waiting: 0, cursor }, `iMessage poll (dry run): ${polled.state}`);
+        out({ ...health, dryRun: true, state: polled.state, waiting: 0, cursor }, `iMessage poll (dry run): ${polled.state}`);
         return 1;
       }
-      out({ dryRun: true, state: 'ok', waiting: polled.messages.length, cursor }, `iMessage poll (dry run): ${polled.messages.length} allowlisted message(s) waiting`);
+      out({ ...health, dryRun: true, state: 'ok', waiting: polled.messages.length, cursor }, `iMessage poll (dry run): ${polled.messages.length} allowlisted message(s) waiting`);
       return 0;
     }
     throw new Error('unknown command');

@@ -18,6 +18,7 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from '../src/
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { validateBusEnvelope } from '../src/core/fleet/bus-envelope.js';
 import { busBodySchema } from '../src/core/agents/bus-v2-schema.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 
 const HANDLE = '+15550000002';
 const SENDER = senderIdFor(HANDLE);
@@ -82,6 +83,51 @@ describe('teammateFindingEnvelope', () => {
 });
 
 describe('bridgeTeammateFindings', () => {
+  it('routes declared teammates to owners and leaves unknown senders on findings', () => {
+    registerAgentIdentity({ handle: 'imsg-dot', displayName: 'Dot', aliases: ['dot'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'imsg-instinct', displayName: 'Instinct', aliases: ['instinct'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'masbot' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'eo' }, { root: busRoot });
+    const instinct = '+15550000003';
+    const unknown = '+15550000004';
+    seed(11, 'dot reply');
+    recordTeammateText({ rowid: 12, handle: instinct, text: 'instinct reply' }, runsDir, NOW);
+    recordTeammateText({ rowid: 13, handle: unknown, text: 'unknown finding' }, runsDir, NOW);
+    const declarations = [{ name: 'Dot', handle: HANDLE }, { name: 'Instinct', handle: instinct, owner: 'eo' }];
+    expect(bridge({ teammateDeclarations: declarations })).toMatchObject({ pending: 0, lastRowid: 13 });
+    expect(busMessages().map(m => [m.envelope.id, m.envelope.to]).sort()).toEqual([
+      ['imessage-teammate-11', 'teammate.findings'],
+      ['imessage-teammate-11-agent-masbot', 'agent:masbot'],
+      ['imessage-teammate-12', 'teammate.findings'],
+      ['imessage-teammate-12-agent-eo', 'agent:eo'],
+      ['imessage-teammate-13', 'teammate.findings'],
+    ]);
+  });
+
+  it('prioritizes recent teammate messages while older findings remain pending', () => {
+    registerAgentIdentity({ handle: 'imsg-dot', displayName: 'Dot', aliases: ['dot'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'masbot' }, { root: busRoot });
+    seed(1, 'old finding', new Date(NOW.getTime() - 2 * 86400_000));
+    seed(2, 'recent reply');
+    const seen: string[] = [];
+    const append = (env: Parameters<NonNullable<Parameters<typeof bridgeTeammateFindings>[0]>['append']>[0], opts: { reservedHeadroom?: boolean }) => {
+      seen.push(`${env.id}:${String(opts.reservedHeadroom)}`);
+      return opts.reservedHeadroom ? { status: 'posted' as const, id: env.id, cursor: 1 } : { status: 'full' as const };
+    };
+    const report = bridge({ maxBatch: 1, teammateDeclarations: [{ name: 'Dot', handle: HANDLE }], append });
+    expect(report).toMatchObject({ state: 'pending', pending: 2, lastRowid: 0, priorityPosted: 2 });
+    expect(seen).toContain('imessage-teammate-2:true');
+    expect(seen).toContain('imessage-teammate-2-agent-masbot:true');
+  });
+
+  it('uses the operator address for Instinct without a declared owner and skips expired rows', () => {
+    registerAgentIdentity({ handle: 'imsg-instinct', displayName: 'Instinct' }, { root: busRoot });
+    recordTeammateText({ rowid: 1, handle: HANDLE, text: 'old' }, runsDir, new Date(NOW.getTime() - 8 * 86400_000));
+    recordTeammateText({ rowid: 2, handle: HANDLE, text: 'new' }, runsDir, NOW);
+    expect(bridge({ teammateDeclarations: [{ name: 'Instinct', handle: HANDLE }] })).toMatchObject({ refused: 1, lastRowid: 2 });
+    expect(busMessages().map(m => m.envelope.id).sort()).toEqual(['imessage-teammate-2', 'imessage-teammate-2-mason']);
+  });
+
   it('reports missing when no teammate inbox exists', () => {
     expect(bridge()).toMatchObject({ state: 'missing', examined: 0, posted: 0, lastRowid: 0 });
     expect(busMessages()).toHaveLength(0);
