@@ -137,13 +137,14 @@ export interface BusWorkMineOptions {
    * board deliveries on `createdAt`. An item stamped exactly at the
    * cutoff never matches — the bound is exclusive — and an item whose
    * store keeps no timestamp never matches, the same "unknown stays out"
-   * rule `since` applies. `inbox` and `wakes` keep their `since` bound but
-   * inherit their shared reads' lower-bound-only grammar —
-   * `readAgentInbox`/`readAgentWakes` accept no upper bound yet — so the
-   * `before` cutoff never reaches them and they report exactly the rows
-   * their `since`-only read returns, like `channels` and `seats`, rather
-   * than claiming a window they cannot prove; every section's count stays
-   * the filtered total, never the unfiltered one. */
+   * rule `since` applies. `inbox` and `wakes` delegate both bounds to their
+   * shared reads — `readAgentInbox`'s `before` on `receivedAt` and
+   * `readAgentWakes`' `filter.before` on the hint's queue time, each the
+   * same exclusive `receivedAt < before`/`at < before` match every other
+   * bus read's `--before` applies — so the cutoff reaches them like every
+   * other section; `channels` and `seats` stay unfiltered like they do
+   * under `since`, and every section's count stays the filtered total,
+   * never the unfiltered one. */
   before?: number;
   /** Keep only pending items stamped with this exact P0..P3 band — the same
    * `--priority` match every other bus read applies — on the sections whose
@@ -861,6 +862,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
   const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true,
     ...(options.job === undefined ? {} : { job: options.job }),
     ...(options.since === undefined ? {} : { since: options.since }),
+    ...(options.before === undefined ? {} : { before: options.before }),
     ...(options.priority === undefined ? {} : { priority: options.priority }),
     ...(options.channel === undefined ? {} : { channel: options.channel }),
     ...(contains === undefined ? {} : { contains }) },
@@ -1568,13 +1570,12 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * `mailbox` ANDs `acceptedAt < before` into `BusMailbox.pendingFor`'s
  * `match` predicate, and `board` passes it to `BusBoard.pendingFor`
  * (deliveries match `createdAt`, tasks never match for want of a recorded
- * time). `inbox` and `wakes` keep their `since` bound but their shared
- * reads accept no upper bound yet, so the cutoff never reaches them and
- * they report exactly the rows their `since`-only read returns — like
- * `channels`, `seats` and every other section that cannot prove the
- * window, they stay whole rather than claiming a bound they cannot
- * apply; `channels` and
- * `seats` stay unfiltered under every filter as before. `since`/`before`
+ * time). `inbox` and `wakes` delegate both bounds to their shared reads —
+ * `readAgentInbox`'s `before` on `receivedAt` and `readAgentWakes`'s
+ * `filter.before` on the hint's queue time — each the same exclusive
+ * upper bound every other bus read's `--before` applies, so the cutoff
+ * reaches them like every other section; `channels` and `seats` stay
+ * unfiltered under every filter as before. `since`/`before`
  * compose into one `[since, before)` window — the lower bound inclusive,
  * the upper exclusive, an item stamped exactly at either bound excluded
  * from the excluded side — so "what was pending before time T" and "what
@@ -1753,7 +1754,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     { ...(options.job === undefined ? {} : { job: options.job }),
       ...(contains === undefined ? {} : { contains }),
       ...(options.priority === undefined ? {} : { priority: options.priority }),
-      ...(options.channel === undefined ? {} : { channel: options.channel }) });
+      ...(options.channel === undefined ? {} : { channel: options.channel }),
+      ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
         truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,

@@ -41,7 +41,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CHANNEL_KEYS = new Set([
   'channel', 'topic', 'after', 'limit', 'matched',
-  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'contains',
+  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains',
 ]);
 const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job'] as const;
 
@@ -54,6 +54,7 @@ export interface FleetBusChannelFilters {
   priority?: BusPriority;
   job?: string;
   since?: number;
+  before?: number;
   contains?: string;
 }
 
@@ -115,6 +116,13 @@ export function parseFleetBusChannelArgs(args: Record<string, unknown>): FleetBu
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     filters.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters.before = resolved;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;

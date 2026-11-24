@@ -14,7 +14,7 @@ import { emptyState } from '../src/core/drive/nodes/state.js';
 import type { BusWorkFeedHold, BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
-import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
+import { enqueueBusWake, readBusWakes } from '../src/core/fleet/bus-wake-queue.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -2377,23 +2377,31 @@ describe('readBusWorkMine', () => {
     expect(result.awaiting.items.map(item => item.id)).toEqual(['t-out-old']);
     expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
 
-    // Inbox and wakes accept no upper bound yet: the cutoff never reaches
-    // them, so both report the same rows an unfiltered-by-time read would —
-    // never a window they cannot prove.
+    // Inbox and wakes delegate both bounds to their shared reads: inbox
+    // matches receivedAt, so only the strictly-below rows survive — the
+    // edge-time and fresh mail drop on the exclusive bound.
     const unfiltered = readBusWorkMine('atlas', options);
     expect(unfiltered.status).toBe('ok');
     if (unfiltered.status !== 'ok') throw new Error('unreachable');
-    expect(result.wakes).toMatchObject({ status: 'ok', matched: 5 });
     expect(unfiltered.wakes).toMatchObject({ status: 'ok', matched: 5 });
     expect(result.inbox.status).toBe('ok');
     if (result.inbox.status !== 'ok') throw new Error('unreachable');
-    expect(result.inbox.matched).toBe(12);
-    expect(result.inbox.messages.map(message => message.id).sort()).toEqual(
-      ['ask-new', 'ask-old', 'ho-new', 'ho-old', 'post-RQ-NEW-1', 'post-RQ-OLD-1',
-        'w-edge', 'w-new', 'w-old', 'wk-edge', 'wk-new', 'wk-old']);
+    expect(result.inbox.matched).toBe(5);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['ask-old', 'ho-old', 'post-RQ-OLD-1', 'w-old', 'wk-old']);
     expect(unfiltered.inbox.status).toBe('ok');
     if (unfiltered.inbox.status !== 'ok') throw new Error('unreachable');
-    expect(result.inbox.matched).toBe(unfiltered.inbox.matched);
+    expect(unfiltered.inbox.matched).toBe(12);
+
+    // Wakes matches the hint's queue `at`, which the send path stamps
+    // with wall-clock time rather than the injected clock — derive the
+    // expected count from the stored rows scoped to this agent's hints.
+    const tail = readBusWakes({ root: options.runsRoot });
+    expect(tail.state).toBe('ok');
+    if (tail.state !== 'ok' || unfiltered.wakes.status !== 'ok') throw new Error('unreachable');
+    const scoped = new Set(unfiltered.wakes.wakes.map(row => row.to));
+    expect(result.wakes).toMatchObject({ status: 'ok',
+      matched: tail.wakes.filter(row => row.at < before && scoped.has(row.to)).length });
 
     // The legacy mailbox matches acceptance strictly below the cutoff:
     // the edge-time row drops on the exclusive bound.
@@ -2428,14 +2436,14 @@ describe('readBusWorkMine', () => {
     if (result.next.status !== 'ok') throw new Error('unreachable');
     expect(result.next.items.map(item => item.id)).toEqual(['w-inside']);
 
-    // inbox honors since but accepts no upper bound yet: the cutoff never
-    // reaches it, so the above-window mail still lists — the honest
-    // partial coverage, never a claimed window.
+    // inbox honors the same [since, before) window on receivedAt: only
+    // the in-window mail survives — the below-window and above-window
+    // rows drop on the two exclusive bounds.
     expect(result.inbox.status).toBe('ok');
     if (result.inbox.status !== 'ok') throw new Error('unreachable');
-    expect(result.inbox.matched).toBe(2);
-    expect(result.inbox.messages.map(message => message.id).sort())
-      .toEqual(['w-above', 'w-inside']);
+    expect(result.inbox.matched).toBe(1);
+    expect(result.inbox.messages.map(message => message.id))
+      .toEqual(['w-inside']);
   });
 
   it('rejects a since outside the epoch-ms bound', () => {

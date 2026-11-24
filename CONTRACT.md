@@ -3309,15 +3309,16 @@ into the one shared conversations read (thread `lastAt`, the same query
 `agents conversations --before` serves), `mailbox` ANDs
 `acceptedAt < before` into `BusMailbox.pendingFor`'s `match` predicate,
 and `board` passes it to `BusBoard.pendingFor` (deliveries match
-`createdAt`, tasks never match for want of a recorded time). `wakes` and
-`inbox` keep their `since` bound but their shared reads accept no upper
-bound yet, so the cutoff never reaches them and they report exactly the
-rows their `since`-only read returns — like `channels` and `seats`,
-which carry no per-item historical timestamp at all, they stay whole
-rather than claiming a window they cannot prove. Every count stays the
-filtered total, and an item whose store keeps no timestamp or is stamped
-at or after the cutoff never matches — the same "unknown stays out" rule
-the other time bound applies.
+`createdAt`, tasks never match for want of a recorded time). `inbox`
+and `wakes` delegate both bounds to their shared reads —
+`readAgentInbox`'s `before` on `receivedAt` and `readAgentWakes`'s
+`filter.before` on the hint's queue time — each the same exclusive
+upper bound every other bus read's `--before` applies, so the cutoff
+reaches them like every other section; `channels` and `seats` carry no
+per-item historical timestamp at all and stay unfiltered. Every count
+stays the filtered total, and an item whose store keeps no timestamp or
+is stamped at or after the cutoff never matches — the same "unknown
+stays out" rule the other time bound applies.
 
 `options.priority` narrows the whole digest to pending items stamped
 with that exact P0..P3 band — the same match every bus read's
@@ -3404,7 +3405,7 @@ with a `reason`); they never throw for bad input or storage faults.
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
-check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, channel?, contains?}, options?)`
+check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -3425,7 +3426,10 @@ through `taskId`, or a `note`/`context` body carrying the
 `job:<id>` v2 thread label, the same bucket the messages and conversations
 projections group under `job:<id>`; `since` keeps only mail received at
 or after that epoch-ms cutoff — the same inclusive `receivedAt >= since`
-match `phm messages --since` applies; `contains` keeps only mail whose
+match `phm messages --since` applies; `before` keeps only mail received
+strictly before that epoch-ms cutoff — the exclusive upper bound every
+bus read's `--before` applies — composing with `since` into one
+`[since, before)` window on `receivedAt`; `contains` keeps only mail whose
 scrubbed one-line summary — the same text the frame renders per row —
 carries the needle as a case-insensitive substring, matching the rendered
 summary rather than the raw body so a secret-shaped value stays
@@ -3508,7 +3512,14 @@ live message a `bus.send` hint points at, or the citing `work.status`
 receipt's band behind a claim-holder `wh-…` hint), with
 `unresolved`/`unknown` referents never matching, `matched` counting the
 proven matches on the resolved page, an unreadable bus store answering
-`unavailable`, and a band outside P0..P3 answering `invalid`),
+`unavailable`, and a band outside P0..P3 answering `invalid`;
+`filter.before` keeps only hints recorded strictly before that
+epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
+applies on the hint's own queue time, composing with `sinceAt`'s
+strictly-after boundary into one `(since, before)` window, decided on
+the queue row's `at` alone so it counts inside the queue-tail match
+like `channel`/`from`/`excludeFrom`, never fails closed on an
+unreadable bus store, and answers `invalid` outside epoch-ms),
 `readAllWakes(sinceAt, options?, filter?)` (the fleet-wide companion —
 every hint the bounded queue tail holds with no addressee scope, so
 hints queued under bare coordination or routing labels the
@@ -3516,7 +3527,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
@@ -3530,7 +3541,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, contains, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -3545,7 +3556,10 @@ body declaring that `jobId`, a `worker-handoff` assigning that fleet job id
 through `taskId`, or a `note`/`context` body carrying the `job:<id>` v2
 thread label; `since` keeps only posts received at or after that epoch-ms
 cutoff — the same `receivedAt >= since` match `readAgentInbox`'s `since`
-applies; `contains` keeps only posts whose scrubbed one-line summary —
+applies; `before` keeps only posts received strictly before that epoch-ms
+cutoff — the exclusive upper bound every bus read's `--before` applies —
+composing with `since` into one `[since, before)` window on `receivedAt`;
+`contains` keeps only posts whose scrubbed one-line summary —
 the same text the inbox frame renders per row — carries the needle as a
 case-insensitive substring, the same rendered-summary rule
 `readAgentInbox`'s `contains` applies; `matched: true` scans the whole retained store and returns `matched`, the

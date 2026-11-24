@@ -1128,7 +1128,11 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * conversations projections group under `job:<id>`. `since` keeps only mail
  * received at or after that epoch-ms cutoff — the same inclusive
  * `receivedAt >= since` match `phm messages --since` applies, so fresh mail
- * is one filtered read without a persisted cursor. `channel` keeps only mail
+ * is one filtered read without a persisted cursor. `before` keeps only mail
+ * received strictly before that epoch-ms cutoff — the exclusive upper bound
+ * every bus read's `--before` applies — composing with `since` into one
+ * `[since, before)` window on `receivedAt` so "what was in my inbox before
+ * time T" is one filtered read. `channel` keeps only mail
  * addressed to `group:<name>:*` of one registry channel the agent belongs
  * to — channel posts (`kind:'channel'`) and channel-addressed handoffs
  * (`kind:'handoff'`) alike, matched on the delivery address rather than the
@@ -1160,11 +1164,11 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    channel?: string; contains?: string } = {},
+    before?: number; channel?: string; contains?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
-  const kindFilter = page.kind, jobFilter = page.job, since = page.since, channelFilter = page.channel;
+  const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1189,6 +1193,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { status: 'invalid', reason: 'Invalid before.' };
   }
   if (channelFilter !== undefined && (typeof channelFilter !== 'string' || !agentChannelNameSchema.safeParse(channelFilter).success)) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
@@ -1242,6 +1249,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
         (since === undefined || row.receivedAt >= since) &&
+        (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
@@ -1493,10 +1501,10 @@ export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band and contains text. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text and the exclusive upper time bound. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1522,12 +1530,17 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   if (channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) {
     return { ok: false, reason: 'Invalid channel name.' };
   }
+  const before = filter.before;
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { ok: false, reason: 'Invalid before.' };
+  }
   const containsNeedle = busReadContains(filter.contains);
   if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
   return { ok: true, ...(job === undefined ? {} : { job }),
     ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
     ...(channel === undefined ? {} : { channel }),
     ...(priority === undefined ? {} : { priority }),
+    ...(before === undefined ? {} : { before }),
     ...(containsNeedle === undefined ? {} : { containsNeedle }) };
 }
 
@@ -1547,7 +1560,7 @@ type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; trun
  */
 function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, registry: AgentRegistry,
   match: (wake: BusWakeRow) => boolean, filter: ParsedWakeFilter & { ok: true }): WakeRowsPage {
-  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match });
+  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, beforeAt: filter.before, match });
   if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
   // One bounded store scan serves both per-row resolutions: the claim-holder
   // citation re-derivation and the ordinary hint's referent lookup.
@@ -1671,6 +1684,14 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * matching (they name no provable band), `matched` counting the proven
  * matches on the resolved page, an unreadable bus store answering
  * `unavailable`, and a band outside P0..P3 answering `invalid`.
+ * `filter.before` keeps only hints recorded strictly before that
+ * epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
+ * applies on the hint's own queue time, composing with `sinceAt`'s
+ * strictly-after boundary into one `(since, before)` window; the verdict
+ * needs only the queue row's `at`, never the resolved referent, so it
+ * counts inside the queue-tail match like `channel`/`from`/`excludeFrom`
+ * and an unreadable bus store never fails it closed, with a bound outside
+ * epoch-ms answering `invalid`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
   filter: WakeFilter = {}): WakePage {
@@ -1707,11 +1728,14 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * claim-holder fan-out writes, which no identity ref can name). Rows
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
- * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority` filters
- * behave identically — `channel` keeps only hints whose own `to` label sits
- * under `group:<name>:*`, the room prefix every other bus read's channel
- * filter matches, decided on the address alone inside the queue-tail match
- * so `matched` counts it with the rest — including the fail-closed
+ * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`
+ * filters behave identically — `channel` keeps only hints whose own `to`
+ * label sits under `group:<name>:*`, the room prefix every other bus read's
+ * channel filter matches, decided on the address alone inside the
+ * queue-tail match so `matched` counts it with the rest, `before` keeps
+ * only hints recorded strictly before its epoch-ms cutoff — the same
+ * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
+ * hint's queue time — including the fail-closed
  * `unavailable` when a
  * `job`/`contains`/`priority` verdict needs a bus store that cannot be
  * read. An unreadable registry or queue is `unavailable`, never an
@@ -1873,6 +1897,14 @@ export interface ChannelReadOptions {
    */
   since?: number;
   /**
+   * Time filter: only posts received strictly before this epoch-ms cutoff —
+   * the exclusive upper bound every bus read's `--before` applies —
+   * composing with `since` into one `[since, before)` window on
+   * `receivedAt`, so "what did the room say before time T" is one filtered
+   * read.
+   */
+  before?: number;
+  /**
    * Text filter: only posts whose scrubbed one-line summary — the same
    * text the inbox frame renders per row — carries the needle as a
    * case-insensitive substring. Matching runs over the rendered summary,
@@ -1910,7 +1942,10 @@ export type ChannelReadPage =
  * inbox --job` applies, so a channel transcript answers one job's posts
  * without paging the whole room. `since` keeps only posts received at or
  * after that epoch-ms cutoff — the same `receivedAt >= since` match
- * `inbox --since` applies. `contains` keeps only posts whose scrubbed
+ * `inbox --since` applies; `before` keeps only posts received strictly
+ * before its epoch-ms cutoff — the exclusive upper bound composing with
+ * `since` into one `[since, before)` window on `receivedAt`. `contains`
+ * keeps only posts whose scrubbed
  * one-line summary — the same text the inbox frame renders per row —
  * carries the needle as a case-insensitive substring, the same
  * `busReadContainsMatch` rule `inbox --contains` applies, so "has anyone
@@ -1930,7 +1965,7 @@ export type ChannelReadPage =
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
-  const countMatched = page.matched === true, since = page.since;
+  const countMatched = page.matched === true, since = page.since, before = page.before;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1948,6 +1983,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { status: 'invalid', reason: 'Invalid before.' };
   }
   const containsNeedle = busReadContains(page.contains);
   if (containsNeedle === null) {
@@ -1996,6 +2034,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (priority === undefined || envelope.priority === priority) &&
         (job === undefined || busBodyJobMatch(body, job)) &&
         (since === undefined || row.receivedAt >= since) &&
+        (before === undefined || row.receivedAt < before) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;

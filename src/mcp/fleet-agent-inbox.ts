@@ -38,7 +38,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const INBOX_KEYS = new Set([
   'agent', 'after', 'limit', 'matched',
-  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'channel', 'contains',
+  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains',
 ]);
 const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job'] as const;
 
@@ -51,6 +51,7 @@ export interface FleetAgentInboxFilters {
   kind?: InboxKind;
   job?: string;
   since?: number;
+  before?: number;
   channel?: string;
   contains?: string;
 }
@@ -117,6 +118,13 @@ export function parseFleetAgentInboxArgs(args: Record<string, unknown>): FleetAg
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     filters.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters.before = resolved;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;

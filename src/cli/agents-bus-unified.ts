@@ -36,11 +36,11 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--matched] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -123,7 +123,14 @@ cutoff — the phm messages grammar (15m, 2h, 1d, epoch ms or an ISO
 time), resolved to epoch ms — so fresh mail, a room's recent posts and
 new wake hints are one filtered read without a persisted cursor; inbox
 and channel read match receivedAt inclusively, wakes matches hints
-after it. --from on wakes keeps only hints whose recorded sender label
+after it. --before on the same three reads keeps only rows strictly
+before its own cutoff on the same grammar — the exclusive upper bound
+composing with --since into one [since, before) window (wakes' own
+window is (since, before): its --since boundary is strictly-after and
+--before strictly-before on the hint's queue time) — so "what was in my
+inbox / what did the room say / which hints were pending before time T"
+is one filtered read. --from on wakes keeps only hints whose recorded
+sender label
 resolves to one agent — a handle, agent:<handle>, stable id or alias
 matching every label of that identity, the same rule inbox --from and
 channel read --from apply, with an unresolvable ref keeping exact-label
@@ -293,13 +300,13 @@ pair reads one [since, before) window and "what was pending before
 time T" is one filtered digest: claims match the lease's recorded
 started, feed jobs and announced jobs match updatedAt, next/handoffs
 match the envelope receipt, threads/awaiting/blocked inherit the shared
-conversations read's lastAt bound, mailbox matches acceptance, and
-board deliveries match createdAt while board tasks — which keep no
-timestamp — never match; an item stamped exactly at the cutoff never
-matches, channels and seats stay unfiltered, inbox and wakes keep
-their since bound but their shared reads accept no upper bound yet so
-the cutoff never reaches them, and every count stays the filtered
-total. --priority on work mine keeps only
+conversations read's lastAt bound, mailbox matches acceptance, inbox
+matches receivedAt and wakes the hint's queue time inside their own
+reads' exclusive upper bounds, and board deliveries match createdAt
+while board tasks — which keep no timestamp — never match; an item
+stamped exactly at the cutoff never
+matches, channels and seats stay unfiltered, and every count stays the
+filtered total. --priority on work mine keeps only
 pending items stamped with that exact P0..P3 band — the same match inbox
 --priority and every other bus read applies, so "what urgent work is
 pending for me" is one filtered digest: next and handoffs keep envelopes
@@ -698,7 +705,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
-          thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), contains: one('--contains'),
+          thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
+          contains: one('--contains'),
           matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
@@ -741,8 +749,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (!agent) throw new UsageError('An agent or PHM_AGENT_ID is required.');
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
-        kind: kindArg(), job: one('--job'), since: sinceArg(), channel: one('--channel'), contains: one('--contains'),
-        matched: p.bools.has('--matched') }, options);
+        kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
+        contains: one('--contains'), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
@@ -788,7 +796,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg() };
+        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {

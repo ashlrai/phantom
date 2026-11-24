@@ -92,14 +92,14 @@ describe('fleet_bus_channel argument parsing', () => {
       channel: 'ops', topic: 'alerts', after: 3, limit: 10, matched: true,
       from: 'agent:sender', excludeFrom: 'agent:bot',
       thread: 't-1', priority: 'P1', job: 'RQ-9',
-      since: '1800000000000', contains: '  Parser   Fix ',
+      since: '1800000000000', before: '1700000000000', contains: '  Parser   Fix ',
     });
     expect(parsed).toMatchObject({
       channel: 'ops', after: 3, limit: 10, matched: true,
       filters: {
         topic: 'alerts', from: 'agent:sender', excludeFrom: 'agent:bot',
         thread: 't-1', priority: 'P1', job: 'RQ-9',
-        since: 1800000000000, contains: 'parser fix',
+        since: 1800000000000, before: 1700000000000, contains: 'parser fix',
       },
     });
   });
@@ -114,6 +114,8 @@ describe('fleet_bus_channel argument parsing', () => {
       { channel: 'ops', thread: 'has space' }, { channel: 'ops', thread: '' }, { channel: 'ops', thread: 5 },
       { channel: 'ops', priority: 'P9' }, { channel: 'ops', priority: 1 }, { channel: 'ops', priority: 'p0' },
       { channel: 'ops', since: 'never' }, { channel: 'ops', since: 5 }, { channel: 'ops', since: '' },
+      { channel: 'ops', before: 'never' }, { channel: 'ops', before: 5 }, { channel: 'ops', before: '' },
+      { channel: 'ops', before: '1960-01-01T00:00:00.000Z' },
       { channel: 'ops', contains: '' }, { channel: 'ops', contains: '   ' },
       { channel: 'ops', contains: 'x'.repeat(513) }, { channel: 'ops', contains: 42 },
     ]) expect(parseFleetBusChannelArgs(bad)).toBeNull();
@@ -179,12 +181,12 @@ describe('fleet_bus_channel reader', () => {
       return okPage({ messages: [] });
     };
     await readFleetBusChannel(parseFleetBusChannelArgs({
-      channel: 'ops', topic: 'alerts', since: '1800000000000', contains: 'Parser Fix',
+      channel: 'ops', topic: 'alerts', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
       priority: 'P0', job: 'RQ-1',
     })!, { read });
     expect(seenPage).toMatchObject({
-      topic: 'alerts', since: 1800000000000, contains: 'parser fix',
+      topic: 'alerts', since: 1800000000000, before: 1700000000000, contains: 'parser fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
       priority: 'P0', job: 'RQ-1',
     });
@@ -221,6 +223,7 @@ describe('fleet_bus_channel MCP tool', () => {
     expect(tool?.inputSchema.properties?.['priority'])
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['P0', 'P3']) });
     expect(tool?.inputSchema.properties?.['matched']).toMatchObject({ type: 'boolean' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
   });
 
   it.each([
@@ -229,7 +232,7 @@ describe('fleet_bus_channel MCP tool', () => {
     [{ channel: 'ops', limit: 0 }], [{ channel: 'ops', limit: 101 }], [{ channel: 'ops', limit: '5' }],
     [{ channel: 'ops', after: -1 }], [{ channel: 'ops', matched: 'yes' }],
     [{ channel: 'ops', priority: 'P9' }], [{ channel: 'ops', topic: 'Bad Topic!' }],
-    [{ channel: 'ops', since: 'never' }], [{ channel: 'ops', contains: '' }], [{ channel: 'ops', extra: 1 }],
+    [{ channel: 'ops', since: 'never' }], [{ channel: 'ops', before: 'never' }], [{ channel: 'ops', contains: '' }], [{ channel: 'ops', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busChannel = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busChannel });

@@ -435,6 +435,52 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', 'nova', '--since', 'bogus'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox, channel read and wakes by --before', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // A P0 DM always queues a wake hint alongside the mail.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'fresh', '--priority', 'P0', '--id', 'b-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room', '--id', 'b-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // The same grammar resolves the exclusive upper bound: a cutoff before
+    // every receipt empties the page, a future one keeps it all, and epoch
+    // ms '0' predates every row.
+    const past = String(Date.now() - 3_600_000);
+    const future = String(Date.now() + 3_600_000);
+    expect((await run(['inbox', 'nova', '--before', past])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['channel', 'read', 'release', '--before', past])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['inbox', 'nova', '--before', '0'])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['inbox', 'nova', '--before', future])).json.messages.length).toBe(2);
+    expect((await run(['channel', 'read', 'release', '--before', future])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['b-ch']);
+
+    // wakes bounds the hint's queue time the same way, per-agent and --all.
+    expect((await run(['wakes', 'nova', '--before', past])).json.wakes).toEqual([]);
+    expect((await run(['wakes', '--all', '--before', past])).json.wakes).toEqual([]);
+    expect((await run(['wakes', 'nova', '--before', future])).json.wakes.length).toBeGreaterThan(0);
+
+    // The pair reads one [since, before) window on every read.
+    expect((await run(['inbox', 'nova', '--since', '15m', '--before', future])).json.messages.length).toBe(2);
+    expect((await run(['inbox', 'nova', '--since', '15m', '--before', past])).json.messages).toEqual([]);
+    expect((await run(['channel', 'read', 'release', '--since', '15m', '--before', future])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['b-ch']);
+    expect((await run(['wakes', 'nova', '--since', '15m', '--before', future])).json.wakes.length).toBeGreaterThan(0);
+    expect((await run(['wakes', 'nova', '--since', '15m', '--before', past])).json.wakes).toEqual([]);
+
+    // Anything outside the grammar is a usage error on every read.
+    expect(await run(['inbox', 'nova', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'read', 'release', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', 'nova', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', '--all', '--before', 'bogus'])).toMatchObject({ code: 2 });
+  });
+
   it('filters inbox and channel reads by --contains', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

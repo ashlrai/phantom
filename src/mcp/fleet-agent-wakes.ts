@@ -44,7 +44,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from` and `excludeFrom` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains']);
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains']);
 const LABEL_KEYS = ['job', 'from', 'excludeFrom'] as const;
 
 export interface FleetAgentWakesArgs {
@@ -52,6 +52,8 @@ export interface FleetAgentWakesArgs {
   agent?: string;
   /** Keep only hints recorded strictly after this epoch-ms cutoff — the wakes read's own boundary. */
   since?: number;
+  /** Keep only hints recorded strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into the wakes read's own `(since, before)` window on queue time. */
+  before?: number;
   /** Keep only hints provably naming this job id — the same `busBodyJobMatch` rule every bus `--job` read applies. */
   job?: string;
   /** Keep only hints sent under any registered spelling of this sender ref. */
@@ -109,6 +111,13 @@ export function parseFleetAgentWakesArgs(args: Record<string, unknown>): FleetAg
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     parsed.since = resolved;
   }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.before = resolved;
+  }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
   if (contains !== undefined) parsed.contains = contains;
@@ -153,6 +162,7 @@ export async function readFleetAgentWakes(
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
   };
   const page: WakePage | AllWakesPage = args.agent === undefined
