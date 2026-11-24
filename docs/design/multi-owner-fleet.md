@@ -250,7 +250,10 @@ Import rules:
 10. **M3-10.** The signer signs the audit chain head at each issue and revoke and at least daily, and revocation lists carry that head.
 11. **M3-11.** A test proves that no cross-owner verb or envelope writes the kill switch, the pause, policy, grants, roster configuration or pinned files, and that KILL stops all of a node's cross-owner traffic on every OS.
 12. **M3-12.** A grant is trust in the grantee owner; agent lists are advisory.
-13. **M3-13.** A cross-OS signer test proves that the same vector produces byte-identical signed messages on macOS, Windows and Linux, that a missing backend refuses, and that software-key and `alg` downgrade attempts fail verification. It is path-gated: it runs only when signer or authority paths change, and it is never part of the default matrix or a required check. Linux evidence may come from a container run.
+13. **M3-13.** A cross-OS signer test proves that the same vector produces byte-identical signed messages on macOS, Windows and Linux, that a missing backend refuses, and that software-key and `alg` downgrade attempts fail verification. It is path-gated: it runs only when signer or authority paths change, and it is never part of the default matrix or a required check. Three conditions apply:
+    - **Enable needs a proof on the exact commit.** The M3 enable step requires a passing signer-proof run on macOS, Windows and Linux for the exact commit being enabled. For an authority release, a path filter can never be the only reason the run is skipped.
+    - **Filter coverage.** The path filter covers the signer, the authority surface, the canonical encoder and verifier, and the workflow file of the signer-proof job itself. The CI owners maintain the filter, and Security reviews each change to it.
+    - **Recorded evidence.** Evidence from a container, a local run or another owner's machine is recorded in the audit ledger with the commit sha, the backend and the result.
 
 Before M3 turns on, each participating owner has also, on their own device, enrolled a hardware signer with attestation or an out-of-band fingerprint check, and compared pairwise key fingerprints out of band. Agents cannot do these steps. The signer ships first with the backends the first participants need, batched into one authority release so routine releases do not re-trip existing standing grants.
 
