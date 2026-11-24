@@ -41,6 +41,31 @@ export async function releaseForTag(read, base, tag) {
   }
 }
 
+
+/** Missing, null, or whitespace-only body. Any other body is treated as
+ * already written and must not be replaced. */
+function isBlankReleaseBody(release) {
+  const body = object(release)?.body;
+  if (body == null) return true;
+  return typeof body === 'string' && body.trim() === '';
+}
+
+/** Repair a blank draft left by the old generate_notes typo. Calls GitHub's
+ * generate-notes endpoint, then PATCHes only `body`. Never sends tag, draft,
+ * name, assets, or make_latest. Published releases and drafts that already
+ * have notes are left untouched. */
+async function fillBlankDraftNotes(write, base, tag, target, release) {
+  if (object(release)?.draft !== true || !isBlankReleaseBody(release)) return;
+  assert.ok(Number.isInteger(release.id), 'existing release is missing an id');
+  const notes = await write('POST', `${base}/releases/generate-notes`, {
+    tag_name: tag,
+    target_commitish: target,
+  });
+  const body = object(notes)?.body;
+  assert.ok(typeof body === 'string' && body.trim() !== '', 'generated release notes were empty');
+  await write('PATCH', `${base}/releases/${release.id}`, { body });
+}
+
 /** Every GitHub write goes through this one shape so tests can record it. */
 export async function createTagAndDraftRelease({ repo, version, sha, read, write }) {
   assert.match(repo, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'unexpected repository name');
@@ -64,7 +89,10 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
     }
   }
   const existing = await releaseForTag(read, base, tag);
-  if (existing !== null) return { tag, sha: target, release: 'exists', releaseId: existing.id };
+  if (existing !== null) {
+    await fillBlankDraftNotes(write, base, tag, target, existing);
+    return { tag, sha: target, release: 'exists', releaseId: existing.id };
+  }
   // GitHub's create-release API honors generate_release_notes. The previous
   // generate_notes field is not a documented parameter, so GitHub ignored it
   // and left draft bodies empty. When generate_release_notes is true, GitHub
@@ -82,15 +110,16 @@ export async function createTagAndDraftRelease({ repo, version, sha, read, write
     // Adopt the release that exists now instead of minting a second one.
     const raced = await releaseForTag(read, base, tag);
     if (raced === null) throw error;
+    await fillBlankDraftNotes(write, base, tag, target, raced);
     return { tag, sha: target, release: 'exists', releaseId: raced.id };
   }
   assert.equal(object(created)?.draft, true, 'release did not land as a draft');
   return { tag, sha: target, release: 'draft-created', releaseId: created.id };
 }
 
-function ghApi(args) {
+function ghApi(args, input) {
   return JSON.parse(execFileSync('gh', ['api', '--hostname', 'github.com', ...args],
-    { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, env: process.env }));
+    { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, env: process.env, input }));
 }
 
 /** 404 is the only tolerated absence; every other failure is fatal. */
@@ -111,11 +140,10 @@ async function main() {
   const result = await createTagAndDraftRelease({
     repo: REPO, version: VERSION, sha,
     read: readOrNull,
-    write: async (method, endpoint, fields) => {
-      const args = ['-X', method, endpoint];
-      for (const [key, value] of Object.entries(fields)) args.push('-F', `${key}=${value}`);
-      return ghApi(args);
-    },
+    write: async (method, endpoint, fields) =>
+      // JSON stdin keeps a multiline notes body intact and avoids gh -F
+      // treating a leading "@" in the body as a file include.
+      ghApi(['-X', method, endpoint, '--input', '-'], JSON.stringify(fields)),
   });
   console.log(JSON.stringify(result));
 }
