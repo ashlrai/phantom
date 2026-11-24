@@ -1,0 +1,5 @@
+{ "v": 1, "lanes": {
+  "claude": { "github-read": true, "shell": true },
+  "codex-cmp": { "github-read": true, "browser": true, "shell": true, "mcp": ["context7"] },
+  "gemini": { "github-read": "yes", "browser": true }
+} }

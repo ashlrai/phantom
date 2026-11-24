@@ -9,6 +9,7 @@ import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { jobDetailQuery } from '../fleet-job-log/worker-log-queries.js';
 import { JobActivity } from '../fleet-job-log/JobActivity.js';
+import { SessionLive } from './SessionLive.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import { openDockPane } from '../dock/dock-store.js';
 import { agentBusPageQuery } from '../fleet-bus/agent-bus-queries.js';
@@ -98,7 +99,9 @@ function Token({ session, selected, choose }: { session: MapSession; selected: b
   </button>;
 }
 
-function AgentDetail({ session, node, enabled, openLog }: { session: MapSession; node?: ComputeNode; enabled: boolean; openLog: () => void }) {
+/** The side panel a map node opens: the session's live window first, then its placement and coordination records. */
+function AgentDetail({ session, node, enabled, openLog, close, known }: { session: MapSession; node?: ComputeNode; enabled: boolean; openLog: () => void; close: () => void;
+  known: Pick<Parameters<typeof SessionLive>[0]['known'], 'repo' | 'startedAt' | 'tokens'> }) {
   const query = useMemo(() => jobDetailQuery(session.job), [session.job]);
   const localDetail = enabled && session.placement !== 'conflict' && (session.placement !== 'claim' || node?.local === true) && !['unknown', 'queued', 'parked'].includes(session.status);
   const detail = useQuery(query, { enabled: localDetail, freshMs: 0 });
@@ -112,15 +115,17 @@ function AgentDetail({ session, node, enabled, openLog }: { session: MapSession;
     return body?.jobId === session.job || row.envelope.from === session.job || row.envelope.to === session.job;
   }) ?? [];
   const data = localDetail ? detail.data : undefined;
-  return <section className={styles.detail} aria-label="Agent detail">
-    <h3>{session.job}</h3><p>{session.lane ?? 'lane unknown'} · {session.model ?? 'model unknown'} · {session.status}</p>
+  return <section className={styles.detail} aria-label="Agent detail" onKeyDown={event => { if (event.key === 'Escape') close(); }}>
+    <button type="button" className={styles.close} onClick={close}>Close</button>
+    <h3>{session.job}</h3><p>{session.status}</p>
+    <SessionLive job={session.job} local={localDetail} enabled={enabled} known={{ ...known, lane: session.lane, model: session.model }} />
     <p>Node: {node?.id ?? 'unassigned / placement unknown'} · Owner: {node?.jobs.find(j => j.job === session.job)?.owner ?? 'unknown'}</p>
     <p>Branch: {session.branch ?? data?.branch ?? 'unknown'} · Worktree: {session.worktree === 'recorded' ? 'recorded; current presence unknown' : 'unknown'}</p>
     <p>Placement evidence: {session.placement} · Elapsed: {session.elapsedSeconds === null ? 'unknown' : `${session.elapsedSeconds}s`} · Activity: {session.activity ?? 'unknown'}</p>
     <p>Outcome: {session.outcome ?? 'unknown'} · Merge state: {data?.publish?.autoMerge === true ? 'auto-merge enabled' : 'unknown'}</p>
-    {(data?.publish?.prUrl ?? session.prUrl) && <a href={data?.publish?.prUrl ?? session.prUrl!} target="_blank" rel="noreferrer">Open recorded PR</a>}
+    {(data?.publish?.prUrl ?? session.prUrl) ? <a href={data?.publish?.prUrl ?? session.prUrl!} target="_blank" rel="noreferrer">Open recorded PR</a> : <p>PR: unknown</p>}
     {detail.status === 'error' && <p role="alert">Job detail unavailable; retained details may be stale.</p>}
-    <button type="button" disabled={!localDetail} onClick={openLog}>Open full job log</button>
+    <button type="button" disabled={!localDetail} onClick={openLog}>Open full job log</button><small> Full log, brief, notes and the worktree's changed files.</small>
     <h4>Claims & handoffs</h4><p>Matching records in the first 100 retained bus messages; this is a partial coordination window.</p>
     {bus.status === 'error' && <p role="alert">Coordination refresh failed; retained records may be stale.</p>}
     {messages.length ? <ul>{messages.map(row => {
@@ -151,6 +156,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
   const [selection, select] = useState<string | null>(null);
   const [history, setHistory] = useState<Record<string, CoreHistory>>({});
   const data = compute.data;
+  const laneRows = Array.isArray(lanes.data?.lanes) ? lanes.data.lanes : [];
   useEffect(() => {
     if (!data) return;
     setHistory(old => Object.fromEntries(data.nodes.filter(n => n.stats).map(n => [n.id, advanceCores(old[n.id], n.stats!, Date.parse(data.generatedAt))])));
@@ -174,7 +180,8 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       })}</section>;
     });
   }
-  return <section className={styles.root} aria-label="Fleet compute map">
+  const row = selected && [...(sessions.data?.sessions ?? []), ...(sessions.data?.recent ?? [])].find(s => s.job === selected.job);
+  return <section className={styles.root} aria-label="Fleet compute map" data-panel={selected ? 'open' : undefined}>
     <header><p>PHANTOM / LIVE FLEET</p><h2>The company at work</h2><p>Compute → lanes → agents. Every reading carries its source time.</p></header>
     <div className={styles.toolbar} role="group" aria-label="Map controls">
       {(['2D', '3D'] as const).map(m => <button type="button" key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{m}</button>)}
@@ -193,7 +200,7 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
       return read.status === 'error' ? <p key={String(label)} role="alert">{String(label)} refresh failed. {read.data ? 'Last reading retained; may be stale.' : 'No data available.'}</p> : null;
     })}
     <p>{data ? `Compute observed ${data.generatedAt} · ${recordedAt(data.generatedAt, now)}${data.truncated ? ' · partial inventory' : ''}` : 'No compute data yet.'}</p>
-    <div className={styles.quota} aria-label="Lane quota strip">{!lanes.data?.lanes.length && <p>No lane observations.</p>}{lanes.data?.lanes.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
+    <div className={styles.quota} aria-label="Lane quota strip">{!laneRows.length && <p>No lane observations.</p>}{laneRows.map(l => <article key={l.lane} data-state={laneQuotaState(l.hold?.held, data?.lanes[l.lane]?.quotaOk)}>
       <strong>{l.lane}</strong><span>{shown(l.liveJobs)} running / {shown(l.slotTarget)} target / {shown(data?.lanes[l.lane]?.hardCap)} hard cap</span>
       <span>quota_ok: {data?.lanes[l.lane]?.quotaOk == null ? 'unknown' : String(data.lanes[l.lane]!.quotaOk)} · {l.credit.label}</span>
       <span>{l.hold?.held ? `HELD · ${l.hold.by ?? 'unknown'} · ${l.hold.reason ?? 'reason unknown'} · until ${l.hold.until ?? 'unknown'}` : l.hold ? 'No recorded hold' : 'Hold unknown'}</span>
@@ -232,7 +239,8 @@ export function ComputeMap({ visible, host }: Pick<PaneProps, 'visible'> & Parti
     {!jobs.length && <p>{sessions.data?.sourceState === 'healthy' ? 'No active sessions recorded.' : 'Session inventory unknown.'}</p>}
     {sessions.data && <p>Session placement uses compute observation {sessions.data.computeAt}.</p>}
     <p>Sessions: {sessions.data?.sourceState ?? 'unknown'}{sessions.data?.truncated ? ' · partial snapshot' : ''} · {recordedAt(sessions.data?.generatedAt, now)}. Dispatcher: {recordedAt(data?.dispatcherAt, now)}. {data && Object.entries(data.sources).map(([k, v]) => `${k}: ${v}`).join(' · ')}</p>
-    {selected && <AgentDetail key={selected.job} session={selected} node={nodes.find(n => n.id === location(selected))} enabled={enabled} openLog={() => { requestWorkerLogJob(selected.job); if (host) host.openPane('worker-log'); else openDockPane('worker-log'); }} />}
+    {selected && <AgentDetail key={selected.job} session={selected} node={nodes.find(n => n.id === location(selected))} enabled={enabled} close={() => select(null)}
+      known={{ repo: row?.repo ?? null, startedAt: row?.startedAt ?? null, tokens: row?.tokensTotal ?? null }} openLog={() => { requestWorkerLogJob(selected.job); if (host) host.openPane('worker-log'); else openDockPane('worker-log'); }} />}
     {selection && !selected && <p role="status">Selected session left the active snapshot. See the job log for its outcome.</p>}
   </section>;
 }

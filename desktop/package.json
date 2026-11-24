@@ -1,13 +1,13 @@
 {
   "name": "ashlr-desktop",
-  "version": "3.30.35",
+  "version": "3.30.72",
   "private": true,
   "description": "Tauri desktop wrapper for Phantom by AshlrAI",
   "scripts": {
     "tauri": "tauri",
     "dev": "cargo tauri dev",
-    "build": "cargo tauri build",
-    "build:debug": "cargo tauri build --debug",
+    "build": "node scripts/build-local.mjs",
+    "build:debug": "node scripts/build-local.mjs --debug",
     "icons": "cargo tauri icon src-tauri/icons/icon.svg",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
     "dmg-preflight": "node scripts/dmg-preflight.mjs",
@@ -20,6 +20,6 @@
     "node": ">=18"
   },
   "comments": {
-    "note": "npm/node is optional \u2014 the Tauri CLI can be invoked via `cargo tauri` instead. Both paths work; this package.json exists so IDEs that expect one don't complain."
+    "note": "Local builds require Node and the existing Ashlr Local signing identity. Raw cargo tauri builds are distribution/development inputs, not verified local install artifacts."
   }
 }

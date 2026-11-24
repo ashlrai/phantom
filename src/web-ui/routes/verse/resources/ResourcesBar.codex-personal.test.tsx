@@ -30,7 +30,11 @@ afterEach(() => {
 
 function mount(value: unknown, state = 'healthy', visible = true) {
   const fetch = installFetch(call => call.path === '/api/verse/fleet/runs'
-    ? json({ sources: { codex: state }, codexPersonal: value }) : json({}));
+    ? json({ v: 1, generatedAt: new Date(NOW).toISOString(),
+      sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: state, merges: 'healthy' },
+      lastTick: null, paused: false, memFreePct: null, diskFreeGb: null, switches: [], claudeLane: null,
+      lanes: [], workers: [], leaders: [], orchestratorAgents: null, publishesLastHour: [],
+      mergesLastHour: { count: null, items: [] }, events: [], inbox: [], drop: null, codexPersonal: value }) : json({}, 404));
   const view = render(<SectionVisibilityProvider visible={visible}><ResourcesBar expanded now={NOW} /></SectionVisibilityProvider>);
   // Session readings are supporting evidence, opened explicitly beside the account rows.
   fireEvent.click(screen.getByRole('button', { name: /Usage sources and budgets/ }));
@@ -72,7 +76,11 @@ describe('personal Codex session log resource', () => {
     const ids = [...view.container.querySelectorAll('[data-resource-id]')].map(element => element.getAttribute('data-resource-id'));
     expect(ids.slice(0, 2)).toEqual(['account:codex-seat', 'codex-personal:sessions']);
     expect(row.querySelector('[data-level="low"]')).toBeInTheDocument();
-    expect(row.querySelector('[class*="cell"]')).toHaveStyle({ '--fill': '13%' });
+    const meter = within(row).getByRole('meter', { name: 'Codex personal weekly used' });
+    expect(meter).toHaveAttribute('aria-valuenow', '87');
+    expect(meter).toHaveAttribute('aria-valuetext', expect.stringContaining('87% used'));
+    expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '87%' });
+    expect(meter).not.toHaveAttribute('data-unread');
     fireEvent.focus(within(row).getByRole('button', { name: /Codex personal · session logs:/ }));
     expect(screen.getByRole('tooltip')).toHaveTextContent(/Personal Codex weekly · 87% used · resets .* · as of 3 min ago · from this Mac's session logs/);
   });
@@ -82,7 +90,11 @@ describe('personal Codex session log resource', () => {
     await waitFor(() => expect(view.calls.some(call => call.path === '/api/verse/fleet/runs')).toBe(true));
     const row = view.container.querySelector('[data-resource-id="codex-personal:sessions"]') as HTMLElement;
     await waitFor(() => expect(within(row).getByRole('button', { name: new RegExp(`no session-log reading yet · source ${state}`) })).toBeInTheDocument());
-    expect(row.querySelector('[data-unknown]')).toBeInTheDocument();
+    // No current reading is a hatched bar with no number and no fill, never an empty measured one.
+    const meter = within(row).getByRole('meter', { name: 'Codex personal weekly used' });
+    expect(meter).toHaveAttribute('data-unread');
+    expect(meter).not.toHaveAttribute('aria-valuenow');
+    expect(meter.querySelector('[data-part]')).toBeNull();
     expect(view.container.querySelector('[data-resource-id="account:codex-seat"]')).toBeInTheDocument();
   });
 

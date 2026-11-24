@@ -28,7 +28,12 @@ recover an unavailable witness.
 
 Secondary workers probe their own native Codex and Claude CLI sign-in status,
 advertise only those lanes, pull fenced owner-scoped jobs and return result
-references. They check host-local PAUSE and KILL and stop the runner process group
+references. Provider binaries are resolved without a `PATH` lookup: the first
+executable regular file among `/opt/homebrew/bin`, `/usr/local/bin`,
+`~/.local/bin`, `~/.npm-global/bin` and the running Node's `bin` directory
+(`resolveProviderBinary` in `src/core/drive/nodes/provider-binary.ts`). A lane is
+advertised only when that exact path exits 0 for `login status` (Codex) or
+`auth status --json` (Claude); output and auth files are never read. They check host-local PAUSE and KILL and stop the runner process group
 when a lease cannot be renewed. Auth stays device-bound: never copy `~/.codex`,
 `~/.claude` or any auth directory. Publication remains exclusively on the primary
 through the existing `publish.sh` path. Backup promotion grants compute admission,
@@ -62,6 +67,34 @@ The closed request contains `protocol`, the router's running `job` view
 must be empty. Job IDs must be a single filename component: an alphanumeric
 character followed by at most 119 alphanumerics, dots, underscores or hyphens.
 Unknown fields and packs are refused; requests cannot supply commands or prompts.
+The worker adds an optional `providerBinaries` lane receipt (for example
+`{"codex":"/usr/local/bin/codex"}`) naming the absolute binary its probe signed in
+with, one entry per required provider lane. It is a witness, not a command: the
+runner accepts only allowlisted candidate paths and refuses the request unless its
+own resolver returns the same path.
+
+A runner reply carrying `packError`, `codex: "error"`, or a nonzero exit is a
+failed attempt: the worker releases the lease (the job returns to pending) and
+never completes it. Its JSON records `held: "runner-error"`, a `reason`
+(`pack-error`, `codex-error` or `runner-exit-nonzero`), the `pack` and the
+consecutive `failures`. The slot pulls once more in the same session; a second
+consecutive failure of the same pack is released with `--decline`, so another node
+takes it, and a success resets the count.
+
+### `codex-file` scratch directory
+
+`runCodexFilePack` (`src/core/drive/nodes/codex-pack.ts`) is the reference for the
+host runner's `codex-file` pack. It creates `~/.ashlr-runs/node-work/<jobId>/`
+as a new, empty mode-0700 directory, runs the resolved binary as
+`codex exec --sandbox read-only --skip-git-repo-check -C <scratch> -` with the task
+text on stdin only, and removes the directory afterwards. On success it keeps the
+last 48 KiB of stdout and writes an immutable mode-0600
+`~/.ashlr-runs/node-results/<jobId>.json` artifact
+(`{schemaVersion:1, jobId, pack:"codex-file", completedAt, result:{codex, output}}`),
+returning `node-results:<jobId>`; error replies write no artifact. It never uses the home directory as `-C`.
+A pre-existing scratch directory, a missing binary or a receipt mismatch is
+refused before spawn. Errors return `{"codex":"error","packError":"<code>"}` and
+the runner must exit nonzero.
 
 | Pack | Fixed action | Boundary |
 | --- | --- | --- |

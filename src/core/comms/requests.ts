@@ -20,6 +20,7 @@
 
 import {
   appendFileSync,
+  lstatSync,
   mkdirSync,
   writeFileSync,
 } from 'node:fs';
@@ -27,6 +28,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readPrivateFileTailCapped } from '../verse/preferences.js';
+import type { AshlrConfig } from '../types.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,31 +94,71 @@ function ensureDir(): void {
 /** Only the newest records are live queue state; oldest rows are resolved history. */
 const STORE_READ_BYTES = 8 * 1024 * 1024;
 
+function readStore(): { text: string; truncated: boolean } | null {
+  try {
+    return readPrivateFileTailCapped(storePath(), STORE_READ_BYTES);
+  } catch {
+    return null;
+  }
+}
+
+function parseRequests(raw: string, truncated: boolean): CommsRequest[] {
+  let text = raw;
+  if (truncated) {
+    // The first retained line is torn mid-record — drop it. Live records
+    // are the newest; a queue row aged out of the window can no longer be
+    // sent anyway (TTL expiry is fail-closed).
+    const firstBreak = text.indexOf('\n');
+    text = firstBreak < 0 ? '' : text.slice(firstBreak + 1);
+  }
+  const results: CommsRequest[] = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      results.push(JSON.parse(t) as CommsRequest);
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return results;
+}
+
 function loadAll(): CommsRequest[] {
   try {
-    const read = readPrivateFileTailCapped(storePath(), STORE_READ_BYTES);
+    const read = readStore();
     if (read === null) return [];
-    let raw = read.text;
-    if (read.truncated) {
-      // The first retained line is torn mid-record — drop it. Live records
-      // are the newest; a queue row aged out of the window can no longer be
-      // sent anyway (TTL expiry is fail-closed).
-      const firstBreak = raw.indexOf('\n');
-      raw = firstBreak < 0 ? '' : raw.slice(firstBreak + 1);
-    }
-    const results: CommsRequest[] = [];
-    for (const line of raw.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        results.push(JSON.parse(t) as CommsRequest);
-      } catch {
-        // skip malformed lines
-      }
-    }
-    return results;
+    return parseRequests(read.text, read.truncated);
   } catch {
     return [];
+  }
+}
+
+export type CommsRequestsRead = {
+  /** 'missing': no store file exists (a verified-empty queue). 'available':
+   * the file was read and parsed. 'unavailable': a store entry exists but
+   * could not be read — never an empty list passed off as fact. */
+  status: 'missing' | 'available' | 'unavailable';
+  requests: CommsRequest[];
+};
+
+/**
+ * Honest read of the whole request store for projections that must tell an
+ * absent queue apart from an unreadable one. Same bounded tail read and
+ * torn-line rule as loadAll; never throws.
+ */
+export function readCommsRequests(): CommsRequestsRead {
+  try {
+    try {
+      lstatSync(storePath());
+    } catch {
+      return { status: 'missing', requests: [] };
+    }
+    const read = readStore();
+    if (read === null) return { status: 'unavailable', requests: [] };
+    return { status: 'available', requests: parseRequests(read.text, read.truncated) };
+  } catch {
+    return { status: 'unavailable', requests: [] };
   }
 }
 
@@ -251,6 +293,13 @@ export function outstanding(): CommsRequest | undefined {
 /** Default lifetime of a comms request before it is expired (hours). */
 export const DEFAULT_REQUEST_TTL_HOURS = 48;
 
+/** Request TTL in ms from cfg.comms.requestTtlHours; invalid values use the default. */
+export function commsRequestTtlMs(cfg: AshlrConfig): number {
+  const hours = cfg.comms?.requestTtlHours;
+  const valid = typeof hours === 'number' && Number.isFinite(hours) && hours > 0;
+  return (valid ? hours : DEFAULT_REQUEST_TTL_HOURS) * 3_600_000;
+}
+
 export interface ExpireResult {
   /** Outstanding questions/approvals that were never answered in time. */
   expiredSent: number;
@@ -258,7 +307,8 @@ export interface ExpireResult {
   expiredPending: number;
 }
 
-function ageStartMs(r: CommsRequest): number {
+/** The instant a request's TTL clock started — the same age rule expireStaleRequests applies. */
+export function commsRequestAgeStartMs(r: CommsRequest): number {
   const iso = r.status === 'sent' ? (r.sentAt ?? r.createdAt) : r.createdAt;
   return Date.parse(iso);
 }
@@ -286,7 +336,7 @@ export function expireStaleRequests(nowMs: number, ttlMs: number): ExpireResult 
     const updated = all.map((r) => {
       const awaitingReply = r.status === 'sent' && (r.type === 'question' || r.type === 'approval');
       if (!awaitingReply && r.status !== 'pending') return r;
-      const started = ageStartMs(r);
+      const started = commsRequestAgeStartMs(r);
       if (!Number.isFinite(started) || nowMs - started < ttlMs) return r;
       if (awaitingReply) result.expiredSent += 1;
       else result.expiredPending += 1;

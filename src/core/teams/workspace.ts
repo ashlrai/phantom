@@ -64,7 +64,9 @@ function applyWorkspaceAction(team: string, actor: TeamActor, action: WorkspaceA
   const payload = { ...workspacePayload(state, actor, action), ...provenance };
   if (action.type === 'member.removed') {
     for (const claimId of payload['drainedClaims'] as string[]) {
-      const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId });
+      const claim = state.claims.find(c => c.id === claimId);
+      if (!claim) continue;
+      const released = releaseCoordinationBySource({ origin: 'team', sourceId: claimId, owner: claim.holder });
       if (released.status === 'unavailable') throw new Error('Claim store unavailable.');
     }
   }

@@ -1,7 +1,7 @@
 # Agent group chat
 
 The local owner dashboard and CLI can read an ordered, retained conversation
-for a run or outcome over the existing Agent Bus v2. No new message store,
+for a run or outcome over the existing Agent Bus v2. The read projection adds no message store,
 network connection, dispatcher, spending permission, or execution authority.
 
 ```sh
@@ -16,11 +16,11 @@ allowlists are unchanged. Other methods are refused. No caller-selected filesyst
 
 Producers use the existing channel post API, with a v2 note/context `thread`
 explicitly set to `run:<id>` or `outcome:<id>`. No inference from prose or job titles.
-Only same-channel, current-member, local Agent Bus messages are included; DMs,
-private owner inboxes, iMessage, email, Slack, handoffs, and mismatched metadata
-are excluded. A human-labelled channel message is displayed as an interjection.
-That flag is not authenticated owner identity or permission to execute; trusted
-intake must enforce those separately. This read API never imports owner messages
+Agent messages must be same-channel, current-member, local Agent Bus messages.
+Raw DMs, private owner inboxes, iMessage, email, Slack, handoffs, and mismatched
+metadata are excluded. The explicit native share below creates a separate local
+channel note containing only the selected text; it is displayed as an
+interjection only with a matching accepted owner receipt. A human flag alone proves neither owner identity nor permission. This read API never imports owner messages
 or sends anything. It never upgrades a note to a command.
 
 Messages sort by durable receipt cursor, not priority or client clocks. Resume
@@ -31,6 +31,41 @@ history. Participant engine is the latest registered runtime; state is `unknown`
 until an authoritative presence source exists. Avatar colors are deterministic.
 The desktop renderer must display text as text, never as raw HTML.
 
-Owner-ingress integration is a separate phase: current unified channel producers
-set human=false. This projection supports the interjection display contract only;
-no supported owner-to-channel write path is claimed by this change.
+Agent producers still set human=false. The only owner ingress added here is the
+explicit native iMessage sharing path below, not generic Bus sender flags.
+
+## Explicit owner share (native iMessage)
+
+An existing verified owner may send an exact JSON object:
+`{"kind":"agent-chat.share","channel":"engineering","thread":"run:build-42","text":"Review the tests."}`.
+This shares only the selected text. Ordinary messages and private history remain
+in the existing local owner inbox. No new transport, credential, or permission
+is enabled. Existing owner configuration, per-recipient team approval,
+communications confirmation, pause and KILL apply; unavailable policy refuses.
+
+Native message GUID and account GUID are required UUID-shaped provenance for
+explicit sharing, though optional for ordinary private intake. Missing/invalid
+metadata has no ROWID fallback: explicit sharing refuses while legacy-schema
+polling still supports ordinary private messages. Current schema observation
+is a host sample, not proof of global GUID uniqueness; conflicting reuse refuses.
+
+A private, bounded 512 KiB / 1024-entry ledger pins source namespace + GUID,
+content/target and approved stable recipient IDs. Pending writes recover through
+Bus idempotency; accepted IDs never recycle. Replay older than seven days refuses
+rather than resurrecting expired messages. Pending reads return retryable without
+advancing cursors; policy-rejected pending records are terminal. A full ledger
+refuses new shares, never evicts old idempotency records. Pause/KILL can leave
+pending work blocked until recovery or Bus expiry. An inbox acknowledgment is
+not proof of shared-chat delivery. Accepted ledger evidence establishes local
+Bus append, not recipient consumption, execution or remote delivery.
+
+Supported agent inbox reads enforce the accepted recipient snapshot, so joining
+later does not expose retained owner shares. Raw local Bus files and owner-only
+Bus diagnostics are privileged and are **not** per-agent isolation boundaries.
+The local owner dashboard can inspect its own history. Policy is rechecked just
+before append, but no global atomic lock across independent policy editors is
+claimed. No execution or cross-transport delivery authority is granted.
+
+This describes the merged source path, not proof that a particular host has
+installed it or completed a live native share. Configured-handle verification
+and native provenance do not establish fresh human presence at send time.

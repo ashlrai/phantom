@@ -51,7 +51,7 @@ describe('fleet coordination returns real MCP handler (392)', () => {
         evidenceKind: 'pr', pr: 392, head: 'abc1234' }] });
     expect(value.returns).toHaveLength(1);
     expect(Number.isFinite(Date.parse(value.asOf))).toBe(true);
-    expect(coordination.readFleetBoard).toHaveBeenCalledExactlyOnceWith();
+    expect(coordination.readFleetBoard).toHaveBeenCalledExactlyOnceWith({ now: Date.parse(value.asOf), reap: false });
   });
 
   it('reports a throwing reader as unknown without exposing thrown text', async () => {

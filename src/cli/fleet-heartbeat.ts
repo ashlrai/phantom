@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 const USAGE =
   'Usage: ashlr fleet heartbeat [--max-age <minutes>] [--json]\n' +
-  'Age of last_tick in <runs>/queue/status.json and of the header time in each <runs>/supervisor/status-*.md (default --max-age 30). One line per source; STALE when older than --max-age, missing or unreadable. Exits 0 all fresh, 1 any stale, 2 usage.';
+  'Age of last_tick in <runs>/queue/status.json and of the header time in each <runs>/supervisor/status-*.md (default --max-age 30). Reads time out after 2 seconds. One line per source; STALE when old, missing, unreadable or timed out. Exits 0 all fresh, 1 any stale, 2 usage.';
 
 const DEFAULT_MAX_AGE_MIN = 30;
 const MAX_FILE_BYTES = 256 * 1024;
@@ -17,15 +17,16 @@ const STAMP = /\b(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|
 /** Injected so tests use fixtures and never touch the real ~/.ashlr-runs. */
 export interface HeartbeatReader {
   /** Raw queue/status.json text, or null when absent. */
-  queueStatus(): Promise<string | null>;
+  queueStatus(signal?: AbortSignal): Promise<string | null>;
   /** Supervisor status-*.md files, name and raw text. */
-  supervisorStatuses(): Promise<Array<{ name: string; text: string }>>;
+  supervisorStatuses(signal?: AbortSignal): Promise<Array<{ name: string; text: string }>>;
 }
 
 export interface FleetHeartbeatDeps {
   reader?: HeartbeatReader;
   now?: () => number;
   runsDir?: string;
+  timeoutMs?: number;
 }
 
 export interface HeartbeatSource {
@@ -33,7 +34,7 @@ export interface HeartbeatSource {
   at: string | null;
   ageMinutes: number | null;
   stale: boolean;
-  reason?: 'missing' | 'unparseable' | 'old';
+  reason?: 'missing' | 'unparseable' | 'old' | 'timeout' | 'unreadable';
 }
 
 export interface FleetHeartbeatView {
@@ -82,30 +83,51 @@ function judge(source: string, ms: number | null, missing: boolean, nowMs: numbe
   return { source, at: new Date(ms).toISOString(), ageMinutes, stale, ...(stale ? { reason: 'old' as const } : {}) };
 }
 
-/** Typed API behind the verb; agents call this directly. */
-export async function readFleetHeartbeat(reader: HeartbeatReader, nowMs: number, maxAgeMinutes: number): Promise<FleetHeartbeatView> {
-  const queueText = await reader.queueStatus().catch(() => null);
-  const files = (await reader.supervisorStatuses().catch(() => [])).slice().sort((a, b) => a.name.localeCompare(b.name));
+/** Typed API behind the verb. Each independent probe has a deadline, even if it ignores cancellation. */
+export async function readFleetHeartbeat(reader: HeartbeatReader, nowMs: number, maxAgeMinutes: number, timeoutMs = 2_000): Promise<FleetHeartbeatView> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_000) throw new RangeError('timeoutMs must be 1..2000');
+  async function probe<T>(run: (signal: AbortSignal) => Promise<T>): Promise<{ value: T } | { reason: 'timeout' | 'unreadable' }> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => run(controller.signal)).then(value => ({ value }), () => ({ reason: 'unreadable' as const })),
+        new Promise<{ reason: 'timeout' }>(resolve => {
+          timer = setTimeout(() => { resolve({ reason: 'timeout' }); controller.abort(); }, timeoutMs);
+        }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+  const [queue, supervisors] = await Promise.all([
+    probe(signal => reader.queueStatus(signal)), probe(signal => reader.supervisorStatuses(signal)),
+  ]);
+  const failed = (source: string, reason: 'timeout' | 'unreadable'): HeartbeatSource =>
+    ({ source, at: null, ageMinutes: null, stale: true, reason });
+  const files = 'value' in supervisors ? supervisors.value.slice().sort((a, b) => a.name.localeCompare(b.name)) : [];
   const sources = [
-    judge('queue/status.json', queueStamp(queueText), queueText === null, nowMs, maxAgeMinutes),
+    'value' in queue ? judge('queue/status.json', queueStamp(queue.value), queue.value === null, nowMs, maxAgeMinutes)
+      : failed('queue/status.json', queue.reason),
+    ...('reason' in supervisors ? [failed('supervisor/status-*.md', supervisors.reason)] : []),
     ...files.map(f => judge(`supervisor/${f.name}`, headerStamp(f.text), false, nowMs, maxAgeMinutes)),
   ];
   return { v: 1, generatedAt: new Date(nowMs).toISOString(), maxAgeMinutes, stale: sources.some(s => s.stale), sources };
 }
 
 export function fsHeartbeatReader(runsDir: string): HeartbeatReader {
-  const read = async (path: string): Promise<string> => (await readFile(path)).subarray(0, MAX_FILE_BYTES).toString('utf8');
+  const read = async (path: string, signal?: AbortSignal): Promise<string> => (await readFile(path, { signal })).subarray(0, MAX_FILE_BYTES).toString('utf8');
   return {
-    queueStatus: async () => {
-      try { return await read(join(runsDir, 'queue', 'status.json')); } catch { return null; }
+    queueStatus: async signal => {
+      try { return await read(join(runsDir, 'queue', 'status.json'), signal); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
     },
-    supervisorStatuses: async () => {
+    supervisorStatuses: async signal => {
       let names: string[];
-      try { names = await readdir(join(runsDir, 'supervisor')); } catch { return []; }
+      try { names = await readdir(join(runsDir, 'supervisor')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
       const picked = names.filter(n => /^status-[A-Za-z0-9._-]{1,80}\.md$/.test(n)).sort().slice(0, MAX_SUPERVISOR_FILES);
       const out: Array<{ name: string; text: string }> = [];
       for (const name of picked) {
-        try { out.push({ name, text: await read(join(runsDir, 'supervisor', name)) }); } catch { /* unreadable: skipped */ }
+        out.push({ name, text: await read(join(runsDir, 'supervisor', name), signal) });
       }
       return out;
     },
@@ -113,6 +135,7 @@ export function fsHeartbeatReader(runsDir: string): HeartbeatReader {
 }
 
 function plainLine(s: HeartbeatSource, maxAge: number): string {
+  if (s.reason === 'timeout') return `${s.source}: probe timed out STALE`;
   if (s.ageMinutes === null) return `${s.source}: no time found (${s.reason}) STALE`;
   return `${s.source}: ${s.ageMinutes} min old${s.stale ? ` STALE (over ${maxAge})` : ''}`;
 }
@@ -152,7 +175,7 @@ export async function cmdFleetHeartbeat(args: string[], deps: FleetHeartbeatDeps
 
   const runsDir = deps.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const reader = deps.reader ?? fsHeartbeatReader(runsDir);
-  const view = await readFleetHeartbeat(reader, (deps.now ?? Date.now)(), maxAge);
+  const view = await readFleetHeartbeat(reader, (deps.now ?? Date.now)(), maxAge, deps.timeoutMs);
   if (json) process.stdout.write(`${JSON.stringify(view, null, 2)}\n`);
   else {
     for (const s of view.sources) console.log(plainLine(s, maxAge));

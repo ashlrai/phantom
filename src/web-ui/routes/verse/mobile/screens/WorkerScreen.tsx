@@ -3,8 +3,9 @@ import { getMutationToken } from '../../../../data/auth-store.js';
 import { ApiError, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
-import { metaLine, pollMs, prLabel, safePrUrl, stateTone } from '../../fleet-job-log/worker-log-model.js';
+import { pollMs, prLabel, safePrUrl } from '../../fleet-job-log/worker-log-model.js';
 import { jobDetailQuery } from '../../fleet-job-log/worker-log-queries.js';
+import { JobWindowCard } from '../../fleet-job-log/JobWindowCard.js';
 import { VerseControlLockedError } from '../../autonomy/control-queries.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { homeRunsQuery } from '../home-runs-query.js';
@@ -14,7 +15,10 @@ import { postFleetRunsInbox } from '../runs-queries.js';
 import { workerFromSnapshot } from '../worker-snapshot-model.js';
 import { workerTellPrefill } from '../worker-tell-text.js';
 import { Button, cx, Screen, SkeletonList } from '../ui.js';
-import { Badge, EmptyState, ErrorState, Row, Section, ui } from '../ui-parts.js';
+import { EmptyState, ErrorState, Row, Section, ui } from '../ui-parts.js';
+import { WorkerControls } from './WorkerControls.js';
+import { WorkerNote } from './WorkerNote.js';
+import { jobStopEligible } from '../../fleet-job-log/job-stop-action.js';
 import styles from './WorkerScreen.module.css';
 
 export function WorkerScreen({ job }: { job: string }) {
@@ -65,23 +69,14 @@ export function WorkerScreen({ job }: { job: string }) {
   } else if (detail === undefined) {
     body = <SkeletonList rows={4} label="Loading worker" />;
   } else {
-    const pr = safePrUrl(detail.publish?.prUrl);
-    const tone = stateTone(detail.state);
     body = <>
-      <Section title="Worker">
-        <Row title="Lane" trailing={detail.lane ?? '—'} />
-        <Row title="Tier" trailing={detail.tier ?? '—'} />
-        <Row title="Model" trailing={detail.model ?? '—'} />
-        <Row title="State" trailing={<Badge tone={tone === 'unknown' ? 'neutral' : tone}>{detail.state ?? 'unknown'}</Badge>} />
-        <Row title="Launched / age" subtitle={metaLine(detail, Date.now())} />
-        <Row title="Pull request" trailing={pr ? <a href={pr} target="_blank" rel="noopener noreferrer">{prLabel(pr)}</a> : '—'} />
-      </Section>
+      <JobWindowCard job={job} detail={detail} enabled />
       <Section title="Log tail" flat>
         <pre className={styles.tail} aria-label="Worker log tail">{detail.log?.tail?.length ? detail.log.tail.join('\n') : 'No log lines available yet.'}</pre>
       </Section>
     </>;
   }
-  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={() => { refetch(); if (gatewayUnavailable || detail === null) refetchSnapshot(); }}>{body}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
+  return <Screen title={job} onBack={() => navigate({ screen: 'runs' })} onRefresh={() => { refetch(); if (gatewayUnavailable || detail === null) refetchSnapshot(); }}>{body}{tell ? <WorkerControls key={`${job}-controls`} job={job} lane={tell.lane} /> : null}{tell ? <WorkerNote key={`${job}-note`} job={job} open={detail ? jobStopEligible(detail.state) : true} /> : null}{tell ? <TellLeaders key={job} prefill={workerTellPrefill(tell)} /> : null}</Screen>;
 }
 
 function TellLeaders({ prefill }: { prefill: string }) {

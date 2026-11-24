@@ -21,11 +21,41 @@ it('keeps the newest matching row per job and calculates repo and pooled medians
   });
 });
 
+it('reads the jobs-ledger dialect: reconciler outcome rows count as merges', async () => {
+  const iso = (ms: number) => new Date(ms).toISOString();
+  // The metrics-outcomes reconciler copies the PUBLISHED row verbatim, swaps
+  // outcome/status to MERGED and stamps ts + mergedAt with the GitHub merge
+  // time — jobId/prUrl fields and the copied event:'publish' included.
+  const reconciler = (job: string, mergedMs: number, extra: Record<string, unknown> = {}) => JSON.stringify({
+    event: 'publish', jobId: job, prUrl: 'https://github.com/ashlrai/phantom/pull/11',
+    outcome: 'MERGED', ts: iso(mergedMs), mergedAt: iso(mergedMs),
+    source: 'metrics-outcomes-reconciler', ...extra,
+  });
+  const text = [
+    reconciler('rec-a', now - 5 * 3_600_000),
+    reconciler('rec-a', now - 3_600_000), // newest mergedAt wins the dedup
+    reconciler('rec-b', now - 2 * 3_600_000, { prUrl: 'https://github.com/ashlrai/other/pull/4', ttmS: 90 }),
+    JSON.stringify({ type: 'outcome', id: 'rec-c', status: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/5', mergedAt: iso(now - 3_600_000), ttm_s: 30 }),
+    JSON.stringify({ kind: 'merged', job: 'rec-d', url: 'https://github.com/ashlrai/phantom/pull/6', timestamp: iso(now - 4 * 3_600_000) }),
+    reconciler('rec-e', now - 3_600_000, { outcome: 'CLOSED' }),
+    JSON.stringify({ event: 'outcome', state: 'MERGED', jobId: 'rec-f', ts: iso(now - 3_600_000) }), // no PR url: repo unknown
+    JSON.stringify({ event: 'merged', state: 'CLOSED', job: 'rec-g', url: 'https://github.com/ashlrai/phantom/pull/7', ts: iso(now - 3_600_000) }),
+  ].join('\n');
+  expect(await fleetMergePace(async () => text, now)).toEqual({
+    schema: 'fleet.merge-pace.v1', known: true, window_hours: 6, rows: [
+      { repo: 'ashlrai/other', merges: 1, merges_per_hour: 1 / 6, median_ttm_s: 90 },
+      { repo: 'ashlrai/phantom', merges: 3, merges_per_hour: 0.5, median_ttm_s: 30 },
+      { repo: 'total', merges: 4, merges_per_hour: 4 / 6, median_ttm_s: 60 },
+    ],
+  });
+});
+
 it('rejects unrelated, old, future and malformed rows and excludes invalid times only from medians', async () => {
   const valid = row('a', 1, 0);
   const read = reader(valid, row('b', 2, -1), row('c', 2, '30'), row('d', 2, null),
     row('old', 6.001, 1), row('future', -1, 1), { ...valid, job: 'closed', state: 'CLOSED' },
-    { ...valid, job: 'launch', event: 'launch' }, { ...valid, job: '' }, { ...valid, ts: 'bad' },
+    // A launch row carries no terminal phase; a MERGED phase would outrank even this event name.
+    { event: 'launch', job: 'launch', ts: valid.ts, lane: 'work' }, { ...valid, job: '' }, { ...valid, ts: 'bad' },
     { ...valid, url: 'https://evil.test/owner/repo/pull/1' }, null, [], 4);
   const result = await fleetMergePace(async () => `{broken\n${await read()}\n`, now);
   expect(result.rows).toEqual([

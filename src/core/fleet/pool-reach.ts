@@ -57,7 +57,7 @@ const firstLabel = (name: string): string => name.split('.')[0] ?? name;
  * case-insensitive). First-label-vs-first-label is deliberately not a match:
  * "a.x" and "a.y" are different hosts.
  */
-function aliasMatches(alias: string, name: string): boolean {
+export function aliasMatches(alias: string, name: string): boolean {
   const a = alias.toLowerCase();
   const n = name.toLowerCase();
   return a === n || a === firstLabel(n) || firstLabel(a) === n;
@@ -190,8 +190,8 @@ export function readPoolReach(deps: PoolReachDeps): PoolReach {
   let configError: string | null = null;
   try {
     config = deps.readConfig();
-  } catch (error) {
-    configError = error instanceof Error ? error.message : String(error);
+  } catch {
+    configError = 'pool config unreadable';
   }
   return joinPoolReach(config, configError, peers, home);
 }

@@ -10,6 +10,7 @@ import { formatUsd } from '../format-usd.js';
  *   control    GET /api/verse/control — daemon, pause, kill switch, today's spend
  *   fleet live GET /api/verse/fleet/live — the fleet's state and reason
  *   seats      the bootstrap's seats (HomeSeats, a chunk of its own)
+ *   this Mac   GET /api/verse/fleet/memory/host-top — what is using the Mac (ThisMacCard, shared with the desktop Home)
  *
  * A preloaded chunk of its own (HomeScreen.tsx): the frame paints at once
  * over skeletons in these cards' shape, and these arrive a beat later, the
@@ -34,6 +35,8 @@ import { canShowActions, useMobile } from '../mobile-context.js';
 import { MobileInterject } from '../MobileInterject.js';
 import { LeaderReplies } from '../LeaderReplies.js';
 import { HomeRuns } from '../HomeRuns.js';
+import { SpendDownCard } from '../SpendDownCard.js';
+import { hostTopQuery, ThisMacCard } from '../../home/ThisMacCard.js';
 import { Button, SkeletonList } from '../ui.js';
 import { Badge, Row, Section, ui, type Tone } from '../ui-parts.js';
 import styles from './HomeScreen.module.css';
@@ -62,7 +65,7 @@ export function elapsedText(startedAt: string | null, now: number = Date.now()):
 
 /** Pull-to-refresh on Home: every read the cards show, forced fresh. */
 export function homeRefreshKeys(): string[] {
-  return [verseControlQuery.key, fleetLiveQuery.key, verseBootstrapQuery.key, homeRunsQuery.key, cloudCreditsQuery.key];
+  return [verseControlQuery.key, fleetLiveQuery.key, verseBootstrapQuery.key, homeRunsQuery.key, cloudCreditsQuery.key, hostTopQuery.key];
 }
 
 export function refreshHome(): Promise<unknown> {
@@ -72,6 +75,7 @@ export function refreshHome(): Promise<unknown> {
     refetchQuery(verseBootstrapQuery.key, () => verseBootstrapQuery.fetch(), true),
     refetchQuery(homeRunsQuery.key, () => homeRunsQuery.fetch(), true),
     refetchQuery(cloudCreditsQuery.key, () => cloudCreditsQuery.fetch(), true),
+    refetchQuery(hostTopQuery.key, () => hostTopQuery.fetch(), true),
   ]);
 }
 
@@ -183,6 +187,8 @@ export function HomeBody() {
           onClick={() => navigate({ screen: 'inbox' })} />
       </Section> : personal ? <Row title={personal.title} trailing={<Badge tone={personal.tone}>{personal.trailing}</Badge>} /> : null}
       <HomeRuns />
+      <SpendDownCard />
+      <ThisMacCard className={ui.card} />
       <MobileInterject />
       <LeaderReplies />
 

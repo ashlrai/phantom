@@ -27,3 +27,5 @@
 .overviewTile dd { margin: var(--space-1) 0; font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
 :global([data-console-layout='compact']) .overview { grid-template-columns: minmax(0, 1fr); }
 :global([data-console-layout='wide']) .overview { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* Phone width: every button is a 44 px thumb target (held by `phm mobile check`). */
+@media (max-width: 479.98px) { .company button { min-height: 2.75rem; } }

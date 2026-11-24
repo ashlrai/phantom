@@ -9,7 +9,7 @@
  * it would have to wait for anyway:
  *
  *   MobileRuntime   activity loop, permissions, reachability, sheet, toasts
- *   HomeBody        Home's cards (screens/HomeScreen.tsx)
+ *   HomeGlance      Home's one read, `phm home` (screens/HomeScreen.tsx)
  *   ScreenHost      every other screen, each its own chunk, prefetched idle
  *
  * Until the runtime lands the frame draws with BOOT_CONTEXT (mobile-context.ts):

@@ -32,7 +32,7 @@ it('leads each outcome line with the contract state and shows missing evidence',
     return el!;
   });
   expect(assigned.textContent?.startsWith('ASSIGNED ·')).toBe(true);
-  expect(assigned.textContent).toContain('job RQ-PHX-FAKE01 running');
+  expect(assigned.textContent).toContain('job RQ-PHX-FAKE01 launched');
   expect(assigned).not.toHaveAttribute('title');
   const received = container.querySelector('[data-contract="RECEIVED"]')!;
   expect(received.textContent?.startsWith('RECEIVED ·')).toBe(true);

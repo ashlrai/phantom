@@ -22,7 +22,7 @@
  *  - list/show/status are READ-ONLY (no file mutation).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -77,6 +77,15 @@ vi.mock('../src/core/run/provider-client.js', () => ({
 import { cmdGoals } from '../src/cli/goals.js';
 import { enroll, unenroll, listEnrolled } from '../src/core/sandbox/policy.js';
 import { loadProposal, listProposals } from '../src/core/inbox/store.js';
+
+// Preload the safety-critical advance graph (sandboxed engine + swarm) once per
+// file, outside the per-test timeout: the first cmdGoals() call dynamically
+// imports it through importCore(), and that one-time module load (~7 s in CI)
+// is not what these CLI round-trip tests measure. Dynamic import keeps this
+// file's authority edges unchanged.
+beforeAll(async () => {
+  await import('../src/core/goals/advance.js');
+}, 60_000);
 
 // ---------------------------------------------------------------------------
 // stdout/stderr capture.

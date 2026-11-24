@@ -15,7 +15,7 @@ import { proveReuse } from './ci-green-reuse.mjs';
 export function failedTestFiles(log) {
   const found = new Set();
   for (const line of stripVTControlCharacters(log).split('\n')) {
-    const m = /^\s*(?:FAIL|×|✗)\s+(?:\|[^|]*\|\s+)?((?:test|\.github\/tests)\/[^\s>]+\.test\.(?:ts|mjs))/.exec(line);
+    const m = /^\s*(?:FAIL|×|✗)\s+(?:(?:\|[^|]*\||[^\s/|]+)\s+)?((?:test|\.github\/tests)\/[^\s>]+\.test\.(?:ts|mjs))/.exec(line);
     if (m) found.add(m[1]);
   }
   return [...found].sort();

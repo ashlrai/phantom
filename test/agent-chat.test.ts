@@ -65,10 +65,10 @@ describe('agent chat', () => {
     const result = readAgentChat({ channel: 'engineering', thread: 'run:one' }, options);
     expect(result.status === 'ok' && result.messages).toEqual([]);
   });
-  it('labels human channel input interjection but grants no authority', () => {
+  it('does not promote a human flag into an owner interjection', () => {
     const options = setup(); const e = envelope('human'); e.sender!.human = true; add(options, e);
     const result = readAgentChat({ channel: 'engineering', thread: 'run:one' }, options);
-    expect(result.status === 'ok' && result.messages[0]!.kind).toBe('interjection');
+    expect(result.status === 'ok' && result.messages[0]!.kind).toBe('message');
   });
   it('excludes expired rows and removed members', () => {
     const options = setup(); add(options, envelope('a'));

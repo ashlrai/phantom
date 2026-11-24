@@ -14,8 +14,16 @@ it('builds a valid UTC desktop-compatible drop with exact paths and bound', () =
   expect(job.body).toContain('node scripts/verify-recut-paths.mjs origin/master <paths.json>');
   expect(job.body).toContain('Closes #12');
 });
+it.each(['bridge: RQ-CL-DOCS-1795103686', 'bridge: RQ-MODELREGN20UQ8'])('recuts non-PHX fleet agent PR %s', title => {
+  const job = recutDropJob({ ...pr, title }, 0);
+  expect('reason' in job).toBe(false);
+  expect(job).toMatchObject({ body: expect.stringContaining('Closes #12') });
+});
+it.each(['bridge: other', 'bridge: RQ-', 'feat: bridge: RQ-X'])('still ignores non-fleet title %j', title => {
+  expect(recutDropJob({ ...pr, title }, 0)).toEqual({ reason: 'title' });
+});
 it.each([
-  [{ class: 'landed' }, 'class'], [{ class: 'unknown' }, 'class'], [{ title: 'other' }, 'title'],
+  [{ class: 'landed' }, 'already-present-on-base'], [{ class: 'unknown' }, 'class'], [{ title: 'other' }, 'title'],
   [{ remainingPaths: [] }, 'empty'], [{ remainingPaths: Array(21).fill('a') }, 'too-wide'],
   ...['.github/workflows/a', 'src/cli/desktop.ts', 'src/core/desktop/a', 'desktop/src-tauri/a'].map(p => [{ remainingPaths: [p] }, 'owner-path']),
   [{ head: '' }, 'invalid-data'], [{ remainingPaths: ['a'.repeat(4001)] }, 'too-large'],

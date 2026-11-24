@@ -9,7 +9,7 @@ function OrgGlyph({ size = 16 }: { size?: number }) {
 registerPane({
   id: 'fleet-org',
   title: 'Org',
-  description: 'The leader, executives and teammates, with role, model, lane and live status',
+  description: 'Org structure: the leader, each lane and the jobs under it, with provider, model and state',
   needsSession: false,
   icon: OrgGlyph,
   component: lazyPane(() => import('./OrgPane.js').then(m => m.OrgPane)),

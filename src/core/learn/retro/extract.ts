@@ -105,7 +105,7 @@ export interface FleetEndInput {
   proposalId: string;
   /** GitHub owner/name. */
   repo: string | null;
-  endKind: Extract<RetroEndKind, 'merged' | 'reverted' | 'closed' | 'gate-refused' | 'owner-laned' | 'verify-failed' | 'failed'>;
+  endKind: Extract<RetroEndKind, 'merged' | 'reverted' | 'revert-failed' | 'closed' | 'gate-refused' | 'owner-laned' | 'verify-failed' | 'failed'>;
   endedAt: string;
   title: string | null;
   summary: string | null;
@@ -114,8 +114,10 @@ export interface FleetEndInput {
   /** The deciding gate row, when a gate decided. */
   gate?: { gate: string; code: string; reason: string } | null;
   verify?: VerifyEvidence | null;
-  /** Post-merge verdict that caused a revert. */
+  /** Post-merge verdict that caused a revert (or a failed one). */
   postMerge?: { ci: string; suite: string; detail: string } | null;
+  /** Why the post-merge revert did not land (`revert:failed` ledger row). */
+  revertFailure?: { reason: string } | null;
   /** A PR close: the recorded reason and who closed it. */
   close?: { reason: string; actor: string } | null;
   /** Producer engine (`grok-cli`, `local`…), when known. */
@@ -513,6 +515,26 @@ export function retroFromFleet(input: FleetEndInput, createdAt: string): RetroV1
       happened: `Merged${engine}, went red in the post-merge watch, and was reverted: ${detail}`,
       rootCause: { code, label: red === 'ci' ? 'Red on CI after merge' : red === 'suite' ? 'Suite failed after merge' : 'Red after merge', detail, evidence: 'post-merge watch' },
       doDifferently: [advice],
+      betterPrompt: betterPrompt(asked, ['Run the full test suite and every CI check before finishing, not only the tests nearest the change.']),
+      candidates: [{ text: advice, scope: scope(input.repo, input.paths, []) }],
+    });
+  }
+
+  if (input.endKind === 'revert-failed') {
+    const pm = input.postMerge;
+    const red = pm ? (pm.ci === 'red' ? 'ci' : pm.suite === 'fail' ? 'suite' : 'red') : 'red';
+    const suffix = red === 'ci' ? 'ci-red' : red === 'suite' ? 'suite-failed' : 'post-merge-red';
+    const revertReason = input.revertFailure?.reason?.trim();
+    const detail = [pm?.detail, revertReason ? `Revert failed: ${revertReason}` : null]
+      .filter((part): part is string => !!part).join(' — ') || 'The post-merge watch went red and the revert failed.';
+    const advice = red === 'suite'
+      ? `Changes in ${at} passed the gates but broke the full suite after merge; run the whole suite, not only targeted tests.`
+      : `Changes in ${at} went red on CI after merge; run the same checks CI runs before proposing.`;
+    return baseRetro({
+      ...common,
+      happened: `Merged${engine}, went red in the post-merge watch, and the revert failed — the change stays on ${input.repo ?? 'the repo'}'s default branch under owner hold: ${detail}`,
+      rootCause: { code: `revert-failed:${suffix}`, label: red === 'ci' ? 'Red on CI after merge; revert failed' : red === 'suite' ? 'Suite failed after merge; revert failed' : 'Red after merge; revert failed', detail, evidence: 'post-merge watch + authority ledger' },
+      doDifferently: [advice, 'A red merge whose revert failed or was refused stays on the default branch under owner hold; verify post-merge health evidence before assuming a merge is clean.'],
       betterPrompt: betterPrompt(asked, ['Run the full test suite and every CI check before finishing, not only the tests nearest the change.']),
       candidates: [{ text: advice, scope: scope(input.repo, input.paths, []) }],
     });

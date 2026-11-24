@@ -22,22 +22,22 @@ describe('worktrees report', () => {
     expect(row!.sizeBytes).toBeGreaterThanOrEqual(24);
     expect(readFileSync(join(job, 'status.json'), 'utf8')).toBe(before);
   });
-  it('handles missing and malformed status and renders JSON and table', () => {
+  it('handles missing and malformed status and renders JSON and table', async () => {
     const root = mkdtempSync(join(tmpdir(), 'worktree-report-')); roots.push(root);
     mkdirSync(join(root, 'a')); mkdirSync(join(root, 'b'));
     writeFileSync(join(root, 'b', 'status.json'), '{');
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(cmdWorktrees(['report', '--dir', root, '--json'])).toBe(0);
+    expect(await cmdWorktrees(['report', '--dir', root, '--json'])).toBe(0);
     expect(JSON.parse(String(output.mock.calls[0]![0])).map((row: { jobState: string | null }) => row.jobState)).toEqual([null, null]);
     output.mockClear();
-    expect(cmdWorktrees(['report', '--dir', root])).toBe(0);
+    expect(await cmdWorktrees(['report', '--dir', root])).toBe(0);
     expect(output.mock.calls[0]![0]).toContain('LAST LOG MTIME');
     expect(output).toHaveBeenCalledTimes(3);
   });
-  it('rejects invalid arguments and missing directories', () => {
+  it('rejects invalid arguments and missing directories', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(cmdWorktrees(['report', '--bad'])).toBe(1);
-    expect(cmdWorktrees(['report', '--dir'])).toBe(1);
-    expect(cmdWorktrees(['report', '--dir', '/nonexistent-worktree-report'])).toBe(1);
+    expect(await cmdWorktrees(['report', '--bad'])).toBe(1);
+    expect(await cmdWorktrees(['report', '--dir'])).toBe(1);
+    expect(await cmdWorktrees(['report', '--dir', '/nonexistent-worktree-report'])).toBe(1);
   });
 });

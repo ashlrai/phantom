@@ -4,6 +4,7 @@ import { evictAll } from '../../../data/cache.js';
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { openDockPane, requestTerminal } from '../dock/dock-store.js';
 import { FleetHostPane } from './FleetHostPane.js';
+import { hostResponse } from './host-fetch.test-support.js';
 
 vi.mock('../dock/dock-store.js', () => ({ openDockPane: vi.fn(), requestTerminal: vi.fn() }));
 
@@ -15,7 +16,7 @@ const base: FleetRuns = {
 };
 const unhealthy: FleetRuns = { ...base, claudeLane: 'down: quota', host: { load1: 194, load5: 180, load15: 160, cores: 18, ratio: 10.8 } };
 
-const serve = (data: unknown) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(data)));
+const serve = (data: unknown) => vi.stubGlobal('fetch', vi.fn(async (url: string) => hostResponse(url, data)));
 const stubClipboard = (writeText = vi.fn(async () => {})) =>
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
 beforeEach(() => { evictAll(); });

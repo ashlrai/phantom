@@ -37,7 +37,8 @@ export function createSlackApi(input: {
     const token = ref ? input.resolveCredential(ref) : undefined;
     if (!token) throw new Error('slack-credential-unavailable');
     const json = method === 'chat.postMessage';
-    const encoded = json ? JSON.stringify(body) : new URLSearchParams(Object.entries(body)
+    // Enforce preview suppression at the HTTP boundary, including minimal replies.
+    const encoded = json ? JSON.stringify({ ...body, unfurl_links: false, unfurl_media: false }) : new URLSearchParams(Object.entries(body)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => [key, typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])).toString();
     let response: Response;
@@ -133,6 +134,8 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
   call: SlackCall; stateRoot?: string; runsDir?: string; busRoot?: string; leaderRequestId?: string;
   readPolicy?: () => SlackDeliveryPolicy | undefined;
   signal?: AbortSignal;
+  /** Trusted Leader composer fallback only; retain its minimal presentation. */
+  plainReply?: boolean;
 }): Promise<SlackDelivery> {
   if (input.signal?.aborted) return { status: 'refused', reason: 'session-expired' };
   const checked = validateBusEnvelope(envelope);
@@ -214,9 +217,11 @@ export async function deliverSlackEnvelope(envelope: BusEnvelope, input: {
       channelRef: `slack:${input.config.teamId}:${receipt.channel}:${receipt.thread}` }) : undefined;
     store.messages[key] = receipt;
     writePrivateFileAtomic(path, JSON.stringify(store));
-    const result = await input.call('chat.postMessage', { channel: receipt.channel, text: planned.plan.text, client_msg_id: receipt.clientId,
-      ...(work ? { attachments: [{ text: slackWorkStatusLine(work, { ...checked.value.body as RecordValue, requestId: input.leaderRequestId }), mrkdwn_in: [] }] } : {}),
-      ...(receipt.thread ? { thread_ts: receipt.thread } : {}), unfurl_links: false, unfurl_media: false });
+    const result = await input.call('chat.postMessage', { channel: receipt.channel,
+      text: input.plainReply ? planned.plan.text.replace(/^Leader: /, '') : planned.plan.text, client_msg_id: receipt.clientId,
+      ...(work && !input.plainReply ? { attachments: [{ text: slackWorkStatusLine(work, { ...checked.value.body as RecordValue, requestId: input.leaderRequestId }), mrkdwn_in: [] }] } : {}),
+      ...(receipt.thread ? { thread_ts: receipt.thread } : {}),
+      ...(!input.plainReply ? { unfurl_links: false, unfurl_media: false } : {}) });
     if (result.channel !== receipt.channel || !isSlackTs(result.ts)) return { status: 'uncertain', reason: 'delivery-response-unproved' };
     receipt.state = 'sent'; receipt.ts = result.ts;
     writePrivateFileAtomic(path, JSON.stringify(store));

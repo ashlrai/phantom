@@ -22,7 +22,10 @@ afterEach(() => { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: tr
 async function check(status: string, items: Array<{ id: string; text: string }>, exit: number) {
   expect(readNeedsMason({ runsDir: dir })).toEqual({ status, items });
   expect(await cmdFleetNeeds(['--runs-dir', dir, '--json'])).toBe(exit);
-  expect(JSON.parse(output.pop()!)).toEqual({ v: 1, status, count: items.length, items });
+  expect(JSON.parse(output.pop()!)).toEqual({
+    v: 1, status, count: items.length, items,
+    replyDeliveries: { status: 'ok', pending: [], unsafe: [], delivered: 0 },
+  });
   expect(await cmdFleetNeeds(['--runs-dir', dir])).toBe(exit);
   if (status === 'unavailable') {
     expect(errors.pop()).toBe('error: fleet needs unavailable\n');

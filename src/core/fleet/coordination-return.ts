@@ -55,25 +55,20 @@ export function returnFleetClaim(input: FleetClaimReturnInput, options: FleetCoo
       ? { ok: true, outcome: 'already-returned', claimId, message: scrubbed(concluded.value.message) }
       : { ok: true, outcome: 'returned', claimId, message: scrubbed(concluded.value.message) };
   const claim = board.claims.find(c => c.id === claimId);
-  if (!claim) {
-    const posted = board.messages.find(m => m.id === id);
-    if (posted) return { ok: true, outcome: 'already-returned', claimId, message: posted };
-    // No live claim and no posted receipt: a durable 'return' intent may let the owner repost.
-    const concluded = concludeFleetClaim({ id: claimId, agent: input.agent, lease: input.lease }, options);
-    if (!concluded.ok) return fail(concluded.error === 'duplicate' ? 'unavailable' : concluded.error);
-    return done(concluded);
-  }
-  const body = fold(`RESULT ${input.blocked !== undefined ? 'BLOCKED' : 'VERIFIED'} ${claim.repo} claim ${claimId} task "${claim.task}": ${result}`);
-  if (body.length > 4000) return fail('invalid-input');
+  const body = claim ? fold(`RESULT ${input.blocked !== undefined ? 'BLOCKED' : 'VERIFIED'} ${claim.repo} claim ${claimId} task "${claim.task}": ${result}`) : undefined;
+  if (body !== undefined && body.length > 4000) return fail('invalid-input');
   const concluded = concludeFleetClaim({ id: claimId, agent: input.agent, lease: input.lease,
-    message: { id, from: input.agent, to: 'all', body, ttlMs } }, options);
+    ...(body !== undefined ? { message: { id, from: input.agent, to: 'all', body, ttlMs } } : {}),
+    ...(!claim && input.pr !== undefined ? { correction: { pr: Number(input.pr), head: input.head!, ttlMs } } : {}),
+  }, options);
   if (!concluded.ok) return fail(concluded.error === 'duplicate' ? 'unavailable' : concluded.error);
   if (concluded.value.outcome !== 'intended') return done(concluded);
-  const posted = postFleetMessage({ from: input.agent, to: 'all', id, body, ttlMs }, options);
+  const message = concluded.value.message;
+  const posted = postFleetMessage({ ...message, ttlMs: message.expiresAt - message.at }, options);
   if (posted.ok) return { ok: true, outcome: 'returned', claimId, message: posted.value };
   if (posted.error === 'duplicate') {
-    const existing = readFleetBoard(options).messages.find(m => m.id === id);
+    const existing = readFleetBoard(options).messages.find(m => m.id === `return-${claimId}`);
     if (existing) return { ok: true, outcome: 'already-returned', claimId, message: existing };
   }
-  return { ok: false, outcome: 'released-unposted', claimId, id, body };
+  return { ok: false, outcome: 'released-unposted', claimId, id: message.id, body: message.body };
 }

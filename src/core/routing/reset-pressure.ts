@@ -140,6 +140,8 @@ export interface ResetCalendarPool {
   creditBalance?: number | null;
   /** Marginal USD per million tokens for this connected resource; 0 proves free capacity. */
   costPerMTok?: number | null;
+  /** Measured window percent burned per hour; absent or null when unknown. Drives the runway policy (usage/runway.ts). */
+  burnPerHour?: number | null;
 }
 
 /** Refuse malformed calendar entries; an unparseable reset is not evidence. */
@@ -150,7 +152,7 @@ export function validResetCalendarPool(value: unknown): value is ResetCalendarPo
   if (v.resetAt !== null && (typeof v.resetAt !== 'string' || !Number.isFinite(Date.parse(v.resetAt)))) return false;
   if (v.remainingPercent !== null && (typeof v.remainingPercent !== 'number' ||
     !Number.isFinite(v.remainingPercent) || v.remainingPercent < 0 || v.remainingPercent > 100)) return false;
-  return [v.creditBalance, v.costPerMTok].every(n => n == null || typeof n === 'number' && Number.isFinite(n) && n >= 0);
+  return [v.creditBalance, v.costPerMTok, v.burnPerHour].every(n => n == null || typeof n === 'number' && Number.isFinite(n) && n >= 0);
 }
 
 /** Closest spendable reset, then zero-cost capacity, then cheapest known marginal cost. */

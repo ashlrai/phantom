@@ -30,6 +30,22 @@ describe('output evaluation', () => {
       { job: 'two', lane: 'work', model: 'model-a', outcome: 'empty' },
     ]);
   });
+  it('reads the jobs-ledger dialect: id jobs, type/kind events, phase outcomes, arm lanes', () => {
+    const data = lines([
+      { type: 'launch', id: 'd1', arm: 'work', model: 'model-a' },
+      { kind: 'outcome', job: 'd1', result: 'MERGED' },
+      { event: 'launch', job: 'd2', pool: 'work', model: 'model-a' },
+      { event: 'outcome', job: 'd2', conclusion: 'MERGED' },
+      { event: 'launch', job: 'd3', lane: 'work', model: 'model-a' },
+      { event: 'outcome', job: 'd3', phase: 'MERGED' },
+    ]);
+    const result = foldOutputEval(data);
+    expect(result.records).toEqual([
+      { job: 'd1', lane: 'work', model: 'model-a', outcome: 'merged' },
+      { job: 'd2', lane: 'work', model: 'model-a', outcome: 'merged' },
+      { job: 'd3', lane: 'work', model: 'model-a', outcome: 'merged' },
+    ]);
+  });
   it('writes only identifiers and outcomes, replaces the snapshot and reports rates', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'eval-')); const jobs = join(dir, 'jobs'); const store = join(dir, 'store');
     await writeFile(jobs, lines([{ event: 'launch', job: 'j1', lane: 'work', model: 'a', prompt: 'private content' }, { event: 'outcome', job: 'j1', state: 'MERGED' }, { event: 'launch', job: 'j2', lane: 'work', model: 'a' }, { event: 'finish', job: 'j2', empty: true }]));

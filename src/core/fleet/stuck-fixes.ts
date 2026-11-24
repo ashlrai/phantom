@@ -51,16 +51,17 @@ const pick = (row: Row, ...names: string[]): string | null => {
 };
 const jobOf = (row: Row): string | null => pick(row, 'job', 'job_id', 'jobId', 'id');
 const urlOf = (row: Row): string | null => {
-  const url = pick(row, 'url', 'pr_url', 'prUrl', 'pr');
+  const url = pick(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
   return url !== null && /^https:\/\/\S+$/.test(url) ? url : null;
 };
+/** jobs.jsonl ts spellings; publishedAt/published_at stay ahead of the generic aliases. */
 const tsOf = (row: Row): number | null => {
-  const ts = pick(row, 'ts', 'timestamp', 'at', 'publishedAt', 'published_at');
+  const ts = pick(row, 'ts', 'timestamp', 'at', 'publishedAt', 'published_at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt');
   const ms = ts === null ? Number.NaN : Date.parse(ts);
   return Number.isFinite(ms) ? ms : null;
 };
 const TERMINAL = new Set(['MERGED', 'CLOSED']);
-const phaseOf = (row: Row): string => (pick(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
+const phaseOf = (row: Row): string => (pick(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
 const ID_REPO = /^FIXUP-MAIN-(.+)-[0-9a-f]{7,40}$/i;
 const URL_REPO = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/[1-9]\d*/;
 

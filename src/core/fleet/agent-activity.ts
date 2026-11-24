@@ -211,7 +211,7 @@ interface ParsedEvent {
  * `publish`.
  */
 function inferredEvent(row: Row): string | null {
-  const phase = (pickString(row, ['state', 'outcome', 'status']) ?? '').toUpperCase();
+  const phase = (pickString(row, ['state', 'outcome', 'status', 'phase', 'result', 'conclusion']) ?? '').toUpperCase();
   if (phase === 'PUBLISHED') return 'publish';
   if (phase === 'MERGED' || phase === 'CLOSED' || phase === 'OPEN') return 'outcome';
   return null;
@@ -278,7 +278,7 @@ const lastBoundary = (a: Attempt): number =>
 const reset = (a: Attempt): void => { const tl = a.timeline; Object.assign(a, freshAttempt()); a.timeline = tl; };
 
 function mergeMeta(a: Attempt, row: Row): void {
-  const lane = bounded(pickString(row, ['lane', 'pool']), LANE_ID);
+  const lane = bounded(pickString(row, ['lane', 'pool', 'arm']), LANE_ID);
   const repo = bounded(pickString(row, ['repo']), LABEL);
   const tier = bounded(pickString(row, ['tier']), LABEL);
   const model = bounded(pickString(row, ['model']), LABEL);
@@ -350,7 +350,7 @@ export function summarizeAgentActivity(
       if (ev.ts >= a.boundary) {
         if (ev.ts >= (a.outcomeAt ?? -Infinity)) {
           a.outcomeAt = ev.ts;
-          a.outcome = bounded(pickString(ev.row, ['outcome', 'state', 'status']), OUTCOME_TEXT) ?? 'recorded';
+          a.outcome = bounded(pickString(ev.row, ['outcome', 'state', 'status', 'phase', 'result', 'conclusion']), OUTCOME_TEXT) ?? 'recorded';
         }
         const url = prUrl(pickString(ev.row, ['url', 'pr_url', 'prUrl', 'pr']));
         if (a.url === null && url) a.url = url;
@@ -566,9 +566,9 @@ function prRefOf(row: Row): PrRef | null {
   return null;
 }
 
-/** Uppercase outcome-ish phase (outcome/state/status), null when absent. */
+/** Uppercase outcome-ish phase (outcome/state/status plus producer aliases), null when absent. */
 function prPhase(row: Row): string | null {
-  const v = pickString(row, ['outcome', 'state', 'status']);
+  const v = pickString(row, ['outcome', 'state', 'status', 'phase', 'result', 'conclusion']);
   return v === null ? null : v.toUpperCase();
 }
 
@@ -602,7 +602,7 @@ const vLastBoundary = (a: VAttempt): number =>
   Math.max(a.finish?.ts ?? 0, a.publishTs ?? 0, a.outcomeTs ?? 0, a.taskOutcome?.ts ?? 0);
 
 function mergeVMeta(a: VAttempt, row: Row): void {
-  const lane = bounded(pickString(row, ['lane', 'pool']), LANE_ID);
+  const lane = bounded(pickString(row, ['lane', 'pool', 'arm']), LANE_ID);
   const repo = bounded(pickString(row, ['repo']), LABEL);
   if (a.lane === null && lane) a.lane = lane;
   if (a.repo === null && repo) a.repo = repo;
@@ -692,7 +692,7 @@ function foldVerifiedCompletion(
         urlEdge(pr.key, ev.job, ev.ts);
         if (a.publishTs === null) {
           a.publishTs = ev.ts;
-          a.publishLane = bounded(pickString(ev.row, ['lane', 'pool']), LANE_ID);
+          a.publishLane = bounded(pickString(ev.row, ['lane', 'pool', 'arm']), LANE_ID);
         }
       }
       mergeVMeta(a, ev.row);

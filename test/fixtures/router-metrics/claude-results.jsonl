@@ -1,0 +1,4 @@
+{"schemaVersion":1,"id":"present","lane":"claude","tier":"work","outcome":"merged","pr":"owner/repo#1","reverted":false,"impact":2,"type":"result","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":20,"cache_creation_input_tokens":3},"result":"fixture response excluded from metrics"}
+{"schemaVersion":1,"id":"missing","lane":"claude","tier":"work","outcome":"failed","type":"result"}
+{"schemaVersion":1,"id":"partial","lane":"claude","tier":"work","outcome":"failed","type":"result","usage":{"input_tokens":10,"output_tokens":5}}
+{"schemaVersion":1,"id":"truncated","lane":"claude","tier":"work","outcome":"failed","type":"result","usage":{"input_tokens":10

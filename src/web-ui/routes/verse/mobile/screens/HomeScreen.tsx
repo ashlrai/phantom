@@ -5,42 +5,30 @@
  * FIRST PAINT (SPEC-310A's arrangement, as the workbench's Chat section does
  * it): this frame is the phone app's first-paint root, measured by
  * scripts/check-first-paint-budget.mjs against 250 KB — React alone is
- * ~220 KB of that. The glance (OperatorGlance.tsx) is a preloaded chunk: its download starts when this module
+ * ~220 KB of that. The glance (HomeGlance.tsx) is a preloaded chunk: its download starts when this module
  * evaluates, in parallel with the session probe, and it renders synchronously
  * once in. On a warm launch (service worker cache) that is the same frame.
- * The opening card is one glance: running, usage, merges, main, incidents, and an order.
+ * Everything below the title is HomeGlance's four parts: fleet health, approvals, a message box and what shipped today.
  */
 import { PRODUCT_NAME } from '../../../../app/product-brand.js';
 import { Suspense } from 'react';
 import { preloadedLazy } from '../../shell/preloaded.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
 import { PlusGlyph } from '../mobile-icons.js';
-import { Button, Screen, SkeletonList, ui } from '../ui.js';
-import styles from './HomeScreen.module.css';
+import { Button, Screen, SkeletonList } from '../ui.js';
 
-const loadBody = () => import('./OperatorGlance.js');
-const Body = preloadedLazy<object>(() => loadBody().then((m) => m.OperatorGlance));
+const loadBody = () => import('./HomeGlance.js');
+const Body = preloadedLazy<object>(() => loadBody().then((m) => m.HomeGlance));
 
-/** The cards' shape, drawn until they arrive. */
+/** Drawn until the four parts arrive. */
 export function HomeSkeleton() {
-  return (
-    <div aria-busy="true" aria-label="Loading Home">
-      <div className={`${ui.card} ${styles.fleet}`}>
-        <span className={`skeleton ${styles.badgeSkeleton}`} aria-hidden="true" />
-        <span className={`skeleton ${ui.skeletonLine}`} style={{ width: '80%' }} aria-hidden="true" />
-      </div>
-      <div className={styles.stats} aria-hidden="true">
-        {[0, 1, 2].map((i) => <div key={i} className={`${styles.stat} skeleton`} style={{ height: '4.5rem' }} />)}
-      </div>
-      <SkeletonList rows={2} label="Loading running agents" />
-    </div>
-  );
+  return <SkeletonList rows={4} label="Loading Home" />;
 }
 
 export function HomeScreen() {
   const { permissions, navigate, refreshActivity } = useMobile();
   const canAct = canShowActions(permissions);
-  const onRefresh = () => Promise.all([refreshActivity(), loadBody().then((m) => m.refreshOperatorGlance())]);
+  const onRefresh = () => Promise.all([refreshActivity(), loadBody().then((m) => m.refreshHomeGlance())]);
   return (
     <Screen
       title={PRODUCT_NAME}

@@ -446,6 +446,7 @@ export function readCodexCatalog(nativeStatePath: string): CodexCatalogEntry[] |
 const CODEX_DOCUMENTED_MODELS: readonly CodexCatalogEntry[] = [
   // Codex's installed catalog (2026-09-29) reports the same raw/effective
   // budgets as GPT-6 Sol. A seat's own catalog always takes precedence.
+  ['gpt-6.2-sol', 'GPT-6.2 Sol', 872_000],
   ['gpt-6.1-sol', 'GPT-6.1 Sol', 872_000],
   ['gpt-6-astra', 'GPT-6 Astra', 872_000],
   ['gpt-6-sol', 'GPT-6 Sol', 872_000],

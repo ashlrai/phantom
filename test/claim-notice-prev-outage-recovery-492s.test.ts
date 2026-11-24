@@ -40,7 +40,7 @@ function fixture() {
     const binding = appendClaimThreadBinding(paths.bindings,
       { claimId: made.claim.id, repo: 'fake/outage', threadKey: thread, head }, now);
     if (!binding.ok) throw new Error(binding.reason);
-    return JSON.stringify(['ASSIGNED', made.claim.id, head]);
+    return JSON.stringify(['ASSIGNED', made.claim.repo, made.claim.id, made.claim.agent, made.claim.claimedAt, head]);
   };
   const sent = () => existsSync(paths.sent) ? readFileSync(paths.sent, 'utf8') : '';
   return { paths, pass, baseline, claim, sends, sent };

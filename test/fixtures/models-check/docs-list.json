@@ -1,0 +1,11 @@
+{
+  "schema": "models.docs.v1",
+  "version": 1,
+  "records": [
+    {"provider": "openai", "id": "gpt-6-luna", "status": "current", "source_url": "https://developers.openai.com/api/docs/models", "seen_at": "2026-11-17"},
+    {"provider": "openai", "id": "gpt-6-sol", "status": "retired", "replacement": "gpt-6-luna", "source_url": "https://developers.openai.com/api/docs/changelog", "seen_at": "2026-11-16"},
+    {"provider": "openai", "id": "gpt-6-nova", "status": "current", "source_url": "https://developers.openai.com/api/docs/models", "seen_at": "2026-11-17"},
+    {"provider": "openai", "id": "gpt-6-fake", "status": "current", "source_url": "https://example.com/models", "seen_at": "2026-11-17"},
+    {"provider": "openai", "id": "gpt-6-odd", "status": "maybe", "source_url": "https://developers.openai.com/api/docs/models", "seen_at": "2026-11-17"}
+  ]
+}

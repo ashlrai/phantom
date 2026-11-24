@@ -9,6 +9,7 @@
  * skip). The DEFAULT path is local + deterministic + read-mostly.
  *
  * Usage:
+ *   ashlr goals [--json]                                # fleet scorecard (src/cli/goals-view.ts)
  *   ashlr goals add "<objective>" [--project <enrolled-repo>]
  *   ashlr goals list [--json]
  *   ashlr goals show <id> [--json]
@@ -366,6 +367,7 @@ function printHelp(): void {
   out(bold('  ashlr goals') + gray(' — plan, track, and steer high-level objectives'));
   out('');
   out(bold('  Usage'));
+  out(`    ${cyan('ashlr goals')} [--text]` + gray('   fleet scorecard: target, now, 24 h trend, status (JSON by default)'));
   out(`    ${cyan('ashlr goals add "<objective>"')} [--project <enrolled-repo>]`);
   out(`    ${cyan('ashlr goals list')} [--json]`);
   out(`    ${cyan('ashlr goals show <id>')} [--json]`);

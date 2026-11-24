@@ -14,7 +14,7 @@ export function resolvePlannerPreset(id: PlannerPresetId, { home, runsRoot, exis
   const dropDir = id === 'codex-personal' ? join(home, 'Projects', 'ashlrai', '.orch-drop', 'sol')
     : join(runsRoot, 'leader', 'drop', 'claude');
   const argv = binary === null ? [] : id === 'codex-personal'
-    ? ['/usr/bin/env', 'CODEX_HOME=' + join(home, '.codex-2'), binary, 'exec', '-m', 'gpt-6.1-sol', '--sandbox', 'danger-full-access', '--skip-git-repo-check', '-C', dropDir, '-']
+    ? ['/usr/bin/env', 'CODEX_HOME=' + join(home, '.codex-2'), binary, 'exec', '-m', 'gpt-6.2-sol', '--sandbox', 'danger-full-access', '--skip-git-repo-check', '-C', dropDir, '-']
     : ['/bin/sh', '-c', 'cd "$0" && exec "$1" -p --model claude-fable-5-1 --dangerously-skip-permissions --add-dir "$2"', dropDir, binary, join(home, 'Projects', 'ashlrai', 'phantom')];
   return { id, provider: id, available: binary !== null, binary, dropDir, argv };
 }
