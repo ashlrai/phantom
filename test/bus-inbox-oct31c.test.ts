@@ -58,6 +58,19 @@ it('reports lock contention and full store without losing accepted messages', ()
   expect(listBusInboxAfter(0, 100, a)).toMatchObject({ nextCursor: accepted });
 }, 60_000);
 
+it('reserves byte headroom for priority replies without evicting live receipts', () => {
+  const a = setup();
+  const ordinary = (id: string) => ({ ...message(id), body: 'f'.repeat(60000) });
+  let count = 0;
+  while (appendBusInbox(ordinary(`bulk-${count}`), a).status === 'posted') count++;
+  expect(count).toBeGreaterThan(0);
+  expect(appendBusInbox(ordinary('blocked'), a).status).toBe('full');
+  const reply = { ...message('direct-reply'), body: 'reply' };
+  expect(appendBusInbox(reply, { ...a, reservedHeadroom: true }).status).toBe('posted');
+  expect(appendBusInbox(reply, { ...a, reservedHeadroom: true }).status).toBe('duplicate');
+  expect(listBusInboxAfter(0, 100, a)).toMatchObject({ nextCursor: count + 1 });
+}, 60_000);
+
 it('refuses permissive storage and nonregular store paths', () => {
   const a = setup(); appendBusInbox(message(), a);
   const file = join(a.root, 'bus-inbox', 'messages.json');

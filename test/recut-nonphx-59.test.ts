@@ -7,7 +7,7 @@
  * Fixture handles are plainly fake and never real numbers or addresses.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -73,6 +73,21 @@ afterEach(() => {
   if (savedRuns === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = savedRuns;
   rmSync(join(homedir(), '.ashlr', 'config.json'), { force: true });
   rmSync(runs, { recursive: true, force: true });
+});
+
+describe('phm imessage poll health', () => {
+  it('reports the inbox health without advancing the cursor', async () => {
+    writeConfig({});
+    mkdirSync(join(runs, 'leader'), { recursive: true });
+    const path = join(runs, 'leader', 'MASON-INBOX.md');
+    writeFileSync(path, '');
+    chmodSync(path, 0o444);
+    await cmdIMessage(['poll', '--json']);
+    expect(JSON.parse(logs.at(-1) ?? '{}')).toMatchObject({ dryRun: true, inboxHealth: 'permission-denied', cursor: null });
+    chmodSync(path, 0o644);
+    await cmdIMessage(['poll', '--json']);
+    expect(JSON.parse(logs.at(-1) ?? '{}')).not.toHaveProperty('inboxHealth');
+  });
 });
 
 describe('phm imessage replies (recut of #4552)', () => {

@@ -71,7 +71,24 @@ import {
 } from '../integrations/imessage.js';
 import { createChannelReceiver, OPERATOR_SENDER_ID, type ChannelAck, type ChannelEnvelope, type ChannelMessage } from '../fleet/channel-envelope.js';
 import { formatChannelAck } from '../fleet/channel-ack-text.js';
+import { inboxWriteHealth } from '../fleet/mason-inbox.js';
+import { appendBusInbox } from '../fleet/bus-inbox.js';
+import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
 import type { AshlrConfig } from '../types.js';
+
+/** Report inbox access without exposing message content or handles. */
+export async function imessageInboxHealth(runsDir?: string, busRoot?: string): Promise<{ inboxHealth?: 'missing' | 'permission-denied' }> {
+  const health = await inboxWriteHealth(runsDir);
+  if (!health) return {};
+  alertInboxPermission(busRoot);
+  return { inboxHealth: health };
+}
+
+function alertInboxPermission(busRoot?: string): void {
+  // Fixed envelope and id make repeated health checks idempotent.
+  appendBusInbox({ id: 'imessage-owner-inbox-unwritable', from: 'imessage', to: 'mason', priority: 'P0',
+    ttl: CHANNEL_BUS_TTL_MS, body: { kind: 'note', text: 'iMessage owner inbox is missing or not writable.' } }, { root: busRoot, reservedHeadroom: true });
+}
 
 /** Fixed owner "status" auto-answer for a verified-Mason short ask; the same
  * contract the Slack adapter injects (agents/slack-leader.ts SlackStatusReply). */
@@ -107,7 +124,7 @@ export interface IMessageIngestDeps {
 }
 
 export type IMessageIngestState =
-  | 'ingested' | 'baselined' | 'disabled' | 'unsupported' | 'error' | Exclude<ChatDbState, 'ok'>;
+  | 'inbox-permission-denied' | 'ingested' | 'baselined' | 'disabled' | 'unsupported' | 'error' | Exclude<ChatDbState, 'ok'>;
 
 export interface IMessageIngestResult {
   ok: boolean;
@@ -122,6 +139,7 @@ export interface IMessageIngestResult {
   /** Stopped early on a transient failure; the rest is retried next poll. */
   deferred: boolean;
   cursor: number | null;
+  inboxHealth?: 'missing' | 'permission-denied';
   /** Findings mirror outcome; null only when the pass ended before the bus stage. */
   findings: FindingsBridgeReport | null;
   /** Patch transfer outcome: this batch's frame tallies merged with the expiry sweep. */
@@ -226,6 +244,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
   try {
     if (cfg.comms?.enabled !== true || imessageAllowlist(cfg).length === 0) return { ...result, state: 'disabled' };
     if ((deps.platform ?? process.platform) !== 'darwin') return { ...result, state: 'unsupported' };
+    Object.assign(result, await imessageInboxHealth(deps.runsDir, deps.busRoot));
     const now = deps.now ?? (() => new Date());
     // The findings mirror is best effort and local-only: it never changes a
     // receipt, the cursor or this result's ok/state, and it drains any durable
@@ -321,6 +340,10 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
           const share = receiptOwnerChat(msg, cfg, { runsDir: deps.runsDir, busRoot: deps.busRoot, now: () => now().getTime() });
           if (share.status === 'retryable') { result.deferred = true; break; }
           if (share.status === 'refused') result.refused++;
+        } else if (got.reason === 'inbox-permission-denied') {
+          result.inboxHealth = 'permission-denied';
+          alertInboxPermission(deps.busRoot);
+          break;
         } else if (TRANSIENT.has(got.reason)) {
           result.deferred = true;
           break;
@@ -333,7 +356,7 @@ export async function ingestIMessages(cfg: AshlrConfig, deps: IMessageIngestDeps
       cursor = msg.rowid;
     }
     if (cursor !== start) writeCursor(cursor, deps.runsDir, now);
-    return { ...result, ok: !result.deferred, state: 'ingested', cursor, findings: findings(), patches: patches() };
+    return { ...result, ok: !result.deferred && result.inboxHealth !== 'permission-denied', state: result.inboxHealth === 'permission-denied' ? 'inbox-permission-denied' : 'ingested', cursor, findings: findings(), patches: patches() };
   } catch {
     return result;
   }

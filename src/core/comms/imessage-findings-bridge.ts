@@ -25,8 +25,8 @@
  * persisted announcedPatchIds ring, and expired receipts are announced-past so
  * no later pass rescans them.
  *
- * Handling is otherwise value-blind: the bridge never reads, classifies or
- * routes on message content beyond the protocol-frame marker. Dedup is by
+ * The bridge routes declared teammates by their hashed sender identity and
+ * never classifies message content beyond the protocol-frame marker. Dedup is by
  * chat.db rowid alone — the envelope id derives from the rowid, so the bus
  * store's exact-envelope dedupe makes every retry safe, and the watermark
  * only records the last handled rowid. Reports carry counts and rowids,
@@ -51,7 +51,9 @@ import { imessageStateDir } from '../integrations/imessage.js';
 import { ensurePrivateDirectory, readPrivateFileCapped } from '../verse/preferences.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { readTeammateTexts, type TeammateText } from './imessage-teammate-inbox.js';
+import { readTeammateTexts, senderIdFor, type TeammateText } from './imessage-teammate-inbox.js';
+import { realHome } from '../real-home.js';
+import { readAgentRegistry, resolveAgent, agentHandleSchema } from '../agents/bus-identity.js';
 import { isPatchFrameText, readPatchReceipts, type PatchReceipt } from './imessage-patch-transfer.js';
 
 /** Bus address every teammate finding is posted to. */
@@ -75,6 +77,8 @@ export interface FindingsBridgeReport {
   /** Candidate rows handled this pass (posted, duplicate or refused). */
   examined: number;
   posted: number;
+  /** Recent teammate envelopes posted ahead of the sequential backlog. */
+  priorityPosted: number;
   duplicate: number;
   /** Rows that can never be enveloped (invalid, secret-shaped, oversize or expired); the watermark advances past them. */
   refused: number;
@@ -100,10 +104,12 @@ export interface FindingsBridgeOptions {
   readTexts?: typeof readTeammateTexts;
   append?: (envelope: BusEnvelope, options: BusInboxOptions) => BusInboxPost;
   readReceipts?: typeof readPatchReceipts;
+  /** Bounded local teammate declarations; injectable for hermetic tests. */
+  teammateDeclarations?: unknown;
 }
 
 const empty = (state: FindingsBridgeReport['state'], lastRowid = 0): FindingsBridgeReport =>
-  ({ schema: 'imessage.findings-bridge.v1', state, examined: 0, posted: 0, duplicate: 0, refused: 0, protocol: 0, announced: 0, pending: 0, lastRowid });
+  ({ schema: 'imessage.findings-bridge.v1', state, examined: 0, posted: 0, priorityPosted: 0, duplicate: 0, refused: 0, protocol: 0, announced: 0, pending: 0, lastRowid });
 
 interface Watermark { lastRowid: number; announcedPatchIds: string[] }
 
@@ -164,6 +170,49 @@ export function teammateFindingEnvelope(row: Pick<TeammateText, 'rowid' | 'sende
     sender: { agent_id: row.senderId, vendor: 'imessage', human: false, team: true },
     external: false,
   };
+  const checked = validateBusEnvelope(candidate);
+  return checked.ok ? checked.value : null;
+}
+
+/** Read declared teammate handles only to hash them for a local routing lookup. */
+function teammateOwners(options: FindingsBridgeOptions): Map<string, string> {
+  const owners = new Map<string, string>();
+  try {
+    let declarations = options.teammateDeclarations;
+    if (declarations === undefined) {
+      const home = realHome();
+      if (!home) return owners;
+      const file = readPrivateFileCapped(join(home, '.phantom', 'agents', 'teammates.json'), 64 * 1024);
+      if (!file || file.truncated) return owners;
+      declarations = JSON.parse(file.text) as unknown;
+    }
+    if (!Array.isArray(declarations)) return owners;
+    const registry = readAgentRegistry({ root: options.busRoot });
+    if (registry.status !== 'ok' || registry.source !== 'available') return owners;
+    const ambiguous = new Set<string>();
+    for (const value of declarations) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const row = value as Record<string, unknown>;
+      if (typeof row.handle !== 'string' || !row.handle.trim() || typeof row.name !== 'string') continue;
+      const name = row.name.trim().toLowerCase();
+      if (name !== 'dot' && name !== 'instinct') continue;
+      const identity = resolveAgent(registry.registry, name) ?? registry.registry.identities.find(item => item.displayName.toLowerCase() === name);
+      if (!identity || identity.handle !== `imsg-${name}`) continue;
+      const owner = name === 'dot' ? 'agent:masbot' : typeof row.owner === 'string' && row.owner.trim()
+        ? row.owner.trim() : 'mason';
+      const label = owner.startsWith('agent:') ? owner.slice(6) : owner;
+      if (owner !== 'mason' && (!agentHandleSchema.safeParse(label).success || !resolveAgent(registry.registry, label))) continue;
+      const address = owner === 'mason' ? owner : `agent:${label}`;
+      const sender = senderIdFor(row.handle);
+      if (owners.has(sender)) { owners.delete(sender); ambiguous.add(sender); }
+      else if (!ambiguous.has(sender)) owners.set(sender, address);
+    }
+  } catch { return new Map(); }
+  return owners;
+}
+
+function ownerEnvelope(finding: BusEnvelope, owner: string): BusEnvelope | null {
+  const candidate = { ...finding, id: `${finding.id}-${owner.replace(':', '-')}`, to: owner };
   const checked = validateBusEnvelope(candidate);
   return checked.ok ? checked.value : null;
 }
@@ -234,13 +283,33 @@ export function bridgeTeammateFindings(options: FindingsBridgeOptions = {}): Fin
     const limit = options.maxBatch ?? FINDINGS_BATCH_MAX;
     const append = options.append ?? appendBusInbox;
     const nowMs = now().getTime();
-    const post = (envelope: BusEnvelope): BusInboxPost => {
+    const owners = teammateOwners(options);
+    const post = (envelope: BusEnvelope, priority = false): BusInboxPost => {
       try {
-        return append(envelope, { root: options.busRoot, now: () => nowMs });
+        return append(envelope, { root: options.busRoot, now: () => nowMs, reservedHeadroom: priority });
       } catch {
         return { status: 'unavailable' };
       }
     };
+    // The durable ledger does not establish reply-to linkage. Recent inbound
+    // messages from declared teammates are a conservative superset of replies;
+    // process newest first so an old backlog cannot consume reserved headroom.
+    // Deterministic IDs let the sequential pass later complete both deliveries.
+    if (!options.signal?.aborted) {
+      const recent = candidates.filter(row => owners.has(row.senderId) && nowMs >= Date.parse(row.at)
+        && nowMs - Date.parse(row.at) <= 24 * 60 * 60_000).sort((a, b) => b.rowid - a.rowid).slice(0, limit);
+      for (const row of recent) {
+        if (options.signal?.aborted) break;
+        if (isPatchFrameText(row.text)) continue;
+        const finding = teammateFindingEnvelope(row);
+        if (!finding) continue;
+        const owner = ownerEnvelope(finding, owners.get(row.senderId)!);
+        const outcome = post(finding, true);
+        if (outcome.status === 'posted') report.priorityPosted++;
+        if (outcome.status !== 'posted' && outcome.status !== 'duplicate') continue;
+        if (owner && post(owner, true).status === 'posted') report.priorityPosted++;
+      }
+    }
     let handled = watermark.lastRowid;
     let pending = candidates.length;
     if (inbox.sourceState !== 'missing') {
@@ -261,6 +330,12 @@ export function bridgeTeammateFindings(options: FindingsBridgeOptions = {}): Fin
         else if (outcome.status === 'duplicate') report.duplicate++;
         else if (TERMINAL.has(outcome.status)) { report.refused++; handled = row.rowid; continue; }
         else break;
+        const owner = owners.get(row.senderId);
+        const direct = owner ? ownerEnvelope(envelope, owner) : null;
+        if (direct) {
+          const extra = post(direct);
+          if (extra.status !== 'posted' && extra.status !== 'duplicate' && !TERMINAL.has(extra.status)) break;
+        }
         handled = row.rowid;
       }
       report.examined = index;

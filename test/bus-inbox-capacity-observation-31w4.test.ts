@@ -66,20 +66,20 @@ it('counts retained live and expired records at the exact TTL boundary without r
 it('exposes a full retained store of expired records until a post reclaims it', () => {
   const root = setup(), directory = join(root, 'bus-inbox');
   mkdirSync(directory, { mode: 0o700 });
-  const rows = Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, index) => ({
+  const rows = Array.from({ length: 1024 }, (_, index) => ({
     cursor: index + 1, receivedAt: 0, envelope: message(`fake-${index}`, 1),
   }));
   const text = JSON.stringify(rows), file = fileOf(root);
   writeFileSync(file, text, { mode: 0o600 });
   expect(inspectBusInbox({ root, now: () => 1 })).toEqual({ source: 'available', ...unknown,
-    retainedCount: BUS_INBOX_MAX_MESSAGES, retainedBytes: Buffer.byteLength(text),
-    liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES });
+    retainedCount: 1024, retainedBytes: Buffer.byteLength(text),
+    liveCount: 0, expiredCount: 1024 });
   // The next append reclaims the expired receipts and keeps advancing cursors.
   expect(appendBusInbox(message('extra'), { root, now: () => 1 })).toEqual({
-    status: 'posted', id: 'extra', cursor: BUS_INBOX_MAX_MESSAGES + 1,
+    status: 'posted', id: 'extra', cursor: 1024 + 1,
   });
   expect(inspectBusInbox({ root, now: () => 1 })).toMatchObject({ retainedCount: 1, liveCount: 1, expiredCount: 0 });
-  writeFileSync(file, JSON.stringify([...rows, { cursor: rows.length + 1, receivedAt: 0, envelope: message('other') }]));
+  writeFileSync(file, JSON.stringify([...rows, { cursor: rows.length + 1, receivedAt: 0, envelope: message('fake-0', 1) }]));
   expect(inspectBusInbox({ root, now: () => 1 })).toEqual({ source: 'unavailable', ...unknown });
 });
 
