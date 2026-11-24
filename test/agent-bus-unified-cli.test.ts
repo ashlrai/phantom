@@ -321,6 +321,52 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('find me');
   });
 
+  it('reads the reply thread around one retained envelope id', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // A root ask, a reply citing it, a transitive reply and unrelated mail.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root ask', '--id', 'th-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'first reply', '--reply-to', 'th-1', '--id', 'th-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'second reply', '--reply-to', 'th-2', '--id', 'th-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'unrelated', '--id', 'th-x'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // The same fleet.bus-thread.v1 projection fleet bus-thread serves, on the unified surface.
+    const thread = await run(['thread', 'th-1']);
+    expect(thread.code).toBe(0);
+    expect(thread.json).toMatchObject({ schema: 'fleet.bus-thread.v1', requestedId: 'th-1',
+      rootFound: true, complete: true, sourceFailure: null });
+    expect(thread.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['th-1', 'th-2', 'th-3']);
+    // A mid-chain id roots its own subtree: th-2 and its reply, never the parent.
+    const mid = await run(['thread', 'th-2']);
+    expect(mid.code).toBe(0);
+    expect(mid.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['th-2', 'th-3']);
+
+    // Proven miss, malformed id and usage errors keep the contract `show` gives.
+    expect(await run(['thread', 'th-404'])).toMatchObject({ code: 1,
+      json: { schema: 'fleet.bus-thread.v1', requestedId: 'th-404', rootFound: false, messages: [] } });
+    expect(await run(['thread', 'bad id'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'th-1', 'extra'])).toMatchObject({ code: 2 });
+
+    // The verb routes through `phm agents bus` dispatch like every sibling read.
+    const routed: string[] = [];
+    expect(await runAgentsCli(['bus', 'thread', 'th-1', '--root', root, '--json'], t => routed.push(t), () => {})).toBe(0);
+    expect(JSON.parse(routed.join('\n'))).toMatchObject({ schema: 'fleet.bus-thread.v1', rootFound: true });
+
+    // Human output marks the root row and decorates registered handles.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['thread', 'th-1', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    const human = text.join('\n');
+    expect(human).toContain('th-1 (root)');
+    expect(human).toContain('from atlas -> nova');
+    expect(human).toContain('first reply');
+    expect(human).not.toContain('th-x');
+  });
+
   it('annotates work envelope lookups with the live feed job', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--job', 'RQ-CLI-SHOW', '--title', 'CLI job', '--repo', 'ashlrai/phantom',
