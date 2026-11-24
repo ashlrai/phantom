@@ -3012,8 +3012,8 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
-    for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..200>] [--json]');
+    for (const args of [['--json', '--json'], ['unified'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
     }
@@ -3226,6 +3226,43 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('bounds the unified view with --limit like the API and MCP reads', async () => {
+    const { command, json, lines } = setupCli();
+    postWorkSnapshot(['lim-1', 'lim-2', 'lim-3', 'lim-4', 'lim-5']);
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --limit keeps the first n items of the matched view; total still
+    // reports every match and omitted recounts the unshown rest — the same
+    // slice GET /api/verse/comms/inbox?limit= and fleet_comms_inbox apply.
+    expect(await command(['--limit', '2', '--json'])).toBe(0);
+    let report = json();
+    expect(report.items).toHaveLength(2);
+    expect(report.total).toBe(6);
+    expect(report.omitted).toBe(4);
+    expect(report.filter).toBeUndefined();
+    expect(report.sources.bus.pending).toBe(5);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --limit slices the matched set, so it ANDs with the view filters.
+    expect(await command(['--limit', '1', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ source: 'bus' });
+    expect(report.items).toHaveLength(1);
+    expect(report.total).toBe(5);
+    expect(report.omitted).toBe(4);
+
+    // A limit at or past the matched count changes nothing; the boundary
+    // values take, and the human view reports the same honest counts.
+    expect(await command(['--limit', '200', '--json'])).toBe(0);
+    report = json();
+    expect(report.items).toHaveLength(6);
+    expect(report.omitted).toBe(0);
+    expect(await command(['--limit', '1'])).toBe(0);
+    const out = lines().join('\n');
+    expect(out).toContain('6 pending');
+    expect(out).toContain('5 omitted');
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -3289,6 +3326,9 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--limit'], ['--limit', '0'], ['--limit', '201'], ['--limit', 'bogus'],
+      ['--limit', '--json'], ['--limit', '5', '--limit', '6'], ['--json', '--limit'],
+      ['--limit', '99999999999999999999'], ['--limit', '5', '--job'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
