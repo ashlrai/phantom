@@ -85,8 +85,25 @@ interface SendCommon {
    */
   wake?: boolean;
 }
-export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
-export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
+export interface DirectMessageInput extends SendCommon {
+  to: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+  replyTo?: string;
+}
+export interface ChannelPostInput extends SendCommon {
+  channel: string;
+  topic?: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+  replyTo?: string;
+}
 export interface LabelPostInput extends SendCommon {
   /** Plain routing label the message addresses; the reserved prefixes are refused. */
   to: string;
@@ -175,7 +192,8 @@ function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: str
   };
 }
 
-function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
+function noteFields(input: { kind?: unknown; text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
+  if (input.kind !== undefined && input.kind !== 'note' && input.kind !== 'context') return 'Kind must be note or context.';
   if (!text(input.text)) return `Text must be 1-${BUS_V2_TEXT_MAX} characters.`;
   if (input.thread !== undefined && (typeof input.thread !== 'string' || !THREAD.test(input.thread))) return 'Thread must be a printable label.';
   if (input.refs !== undefined && (!Array.isArray(input.refs) || input.refs.length > 32 ||
@@ -247,7 +265,6 @@ export async function postLabelMessage(input: LabelPostInput, options: UnifiedBu
   const problem = noteFields(input);
   if (problem) return refuse('invalid', problem);
   const kind = input.kind ?? 'note';
-  if (kind !== 'note' && kind !== 'context') return refuse('invalid', 'Kind must be note or context.');
   const to = input.to;
   if (typeof to !== 'string' || !THREAD.test(to) || scrubSecrets(to) !== to) {
     return refuse('invalid', 'Address must be a printable routing label.');

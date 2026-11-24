@@ -3428,7 +3428,9 @@ with a `reason`); they never throw for bad input or storage faults.
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
-check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?}, options?)`
+check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
+body kind `postLabelMessage` already exposed, now shared by all three so a
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every

@@ -928,6 +928,34 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'fleet.mesh'])).toMatchObject({ code: 1, json: { status: 'unknown-agent' } });
   });
 
+  it('posts v2 context bodies on dm and channel post with --kind', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    // The same --kind note|context choice post already had now rides the
+    // other conversational sends; the default stays note.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--kind', 'context', '--text', '{"spec":1}',
+      '--thread', 'rq-kind', '--id', 'cli-dm-ctx'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--kind', 'context', '--text', 'see spec',
+      '--id', 'cli-ch-ctx'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 'cli-dm-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    const dmCtx = await run(['show', 'cli-dm-ctx']);
+    expect(dmCtx.json.message.envelope.body).toEqual({ kind: 'context', text: '{"spec":1}', thread: 'rq-kind' });
+    const chCtx = await run(['show', 'cli-ch-ctx']);
+    expect(chCtx.json.message.envelope.body).toEqual({ kind: 'context', text: 'see spec' });
+    const dmNote = await run(['show', 'cli-dm-note']);
+    expect(dmNote.json.message.envelope.body).toEqual({ kind: 'note', text: 'plain' });
+    // A kind outside note|context is a usage error on every conversational send.
+    for (const args of [
+      ['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--kind', 'work.post'],
+      ['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'x', '--kind', 'handoff'],
+      ['channel', 'post', 'ops', '--from', 'atlas', '--text', 'x', '--kind', 'dm'],
+    ]) {
+      expect(await run(args)).toMatchObject({ code: 2 });
+    }
+  });
+
   it('announces and updates v2 work on the same bus, owner-only for status', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

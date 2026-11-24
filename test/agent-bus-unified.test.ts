@@ -1646,6 +1646,40 @@ describe('DM, channel, handoff and priority wake on the one bus store', () => {
     expect(readAgentInbox('orion', {}, options)).toMatchObject({ messages: [{ envelope: { id: 'ch-1' } }] });
   });
 
+  it('posts note or context bodies on DMs and channel posts like label posts', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // The same --kind note|context choice postLabelMessage exposes now rides
+    // the other two conversational sends: context is reference material, not
+    // a different delivery kind.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', kind: 'context', text: '{"spec":1}',
+      thread: 'rq-9', refs: ['RQ-KIND'], id: 'dm-ctx' }, options)).toMatchObject({ status: 'posted' });
+    expect(await postChannelMessage({ from: 'atlas', channel: 'release', kind: 'context', text: 'see spec',
+      id: 'ch-ctx' }, options)).toMatchObject({ status: 'posted' });
+    // The default is still note on both verbs.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plain', id: 'dm-note' }, options))
+      .toMatchObject({ status: 'posted' });
+    const raw = listBusInboxAfter(0, 10, options);
+    if (raw.status !== 'ok') throw new Error('unreadable');
+    const body = (id: string) => raw.messages.find(row => row.envelope.id === id)!.envelope.body;
+    expect(body('dm-ctx')).toEqual({ kind: 'context', text: '{"spec":1}', thread: 'rq-9', refs: ['RQ-KIND'] });
+    expect(body('ch-ctx')).toEqual({ kind: 'context', text: 'see spec' });
+    expect(body('dm-note')).toEqual({ kind: 'note', text: 'plain' });
+    for (const id of ['dm-ctx', 'ch-ctx', 'dm-note']) {
+      expect(busBodySchema.safeParse(body(id)).success).toBe(true);
+    }
+    // A kind outside the conversational enum refuses before anything posts.
+    for (const send of [
+      () => sendDirectMessage({ from: 'atlas', to: 'nova', text: 'x', kind: 'work.post' as never, id: 'dm-bad' }, options),
+      () => postChannelMessage({ from: 'atlas', channel: 'release', text: 'x', kind: 'handoff' as never, id: 'ch-bad' }, options),
+    ]) {
+      expect(await send()).toMatchObject({ status: 'invalid' });
+    }
+    const after = listBusInboxAfter(0, 10, options);
+    expect(after.status === 'ok' && after.messages.length).toBe(3);
+  });
+
   it('sends handoffs in the worker-handoff shape on the handoff channel and wakes by default', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
