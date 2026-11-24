@@ -18,7 +18,7 @@ function store(messages: [at: number, from: string, to: string, text: string][] 
     { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, since?: string) => readMapEdges(since, { root, now: () => NOW })!;
+const read = (root: string, since?: string, before?: string) => readMapEdges(since, { root, now: () => NOW, before })!;
 const chat: Parameters<typeof store>[0] = [
   [T0, 'leader', 'claude', 'please look at the build'], [T0 + 1_000, 'claude', 'leader', 'on it'], [T0 + 2_000, 'leader', 'claude', 'thanks, next the docs']];
 const fan: Parameters<typeof store>[0] = ['RQ-ONE', 'RQ-TWO', 'RQ-THREE', 'RQ-FOUR', 'RQ-FIVE'].map((job, i) => [T0 + i * 1_000, 'claude', job, `start ${job}`]);
@@ -56,6 +56,18 @@ describe('phm map edges', () => {
     expect(parseAgentMessagesQuery({ with: 'leader' })).toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
   });
 
+  it('--before is an exclusive upper bound: the [since, before) window counts each message once', () => {
+    const root = store(chat), at = (ms: number) => new Date(ms).toISOString();
+    // chat: leader->claude at T0 and T0+2000, claude->leader at T0+1000.
+    const bounded = (since: string | undefined, before: string | undefined) => readMapEdges(since, { root, now: () => NOW, before });
+    expect(bounded(undefined, at(T0 + 2_000))!.messages).toBe(2);
+    expect(bounded(undefined, at(T0 + 2_001))!.messages).toBe(3);
+    expect(bounded(at(T0 + 500), at(T0 + 1_500))!.edges!.map(edge => [edge.id, edge.count, edge.lastAt]))
+      .toEqual([['claude->leader', 1, '2026-11-18T12:00:01.000Z']]);
+    expect(bounded(at(T0 + 2_500), at(T0 + 1_000))!).toMatchObject({ source: 'available', edges: [], messages: 0 });
+    expect(bounded(undefined, 'soon')).toBeNull();
+  });
+
   it('one agent fanning out to five: five edges to workers on map job nodes, matching the map line counts', () => {
     const root = store([...fan, [T0 + 9_000, 'claude', 'claude-7', 'x'.repeat(200)], [T0 + 9_500, 'claude', 'mystery', 'who are you'],
       [T0 + 9_600, 'claude', 'claude', 'note to self'], [T0 + 9_700, 'claude', 'leaders', 'broadcast']]);
@@ -87,10 +99,12 @@ describe('phm map edges', () => {
     expect(Date.parse(printed.generatedAt) - Date.parse(printed.since)).toBe(600_000);
     expect(await cmdMap(['edges'])).toBe(0);
     expect(log.mock.calls[1]![0]).toMatch(/^0 agent messages on 0 lines since /);
-    for (const bad of [['edges', '--since'], ['edges', '--since', 'soon'], ['edges', '--minutes', '5'], ['edges', '--json', '--json']]) expect(await cmdMap(bad)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(4);
+    expect(await cmdMap(['edges', '--json', '--before', '1h'])).toBe(0);
+    expect(JSON.parse(log.mock.calls[2]![0] as string)).toMatchObject({ schema: 'fleet.map-edges.v1', version: 1, source: 'missing' });
+    for (const bad of [['edges', '--since'], ['edges', '--since', 'soon'], ['edges', '--minutes', '0'], ['edges', '--json', '--json'], ['edges', '--before'], ['edges', '--before', 'soon']]) expect(await cmdMap(bad)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(6);
     expect(await cmdMap(['--help'])).toBe(0);
-    expect(log.mock.calls[2]![0]).toContain('phm map edges [--json] [--since <10m|2h|1d|ISO>]');
+    expect(log.mock.calls[3]![0]).toContain('phm map edges [--json] [--since <10m|2h|1d|ISO> | --minutes <n>] [--before <10m|2h|1d|ISO|epoch>]');
   });
 });
 
@@ -102,19 +116,25 @@ describe('GET /api/verse/fleet/control/map-edges', () => {
     return { handled, status: status || (res as { statusCode: number }).statusCode, body: body ? JSON.parse(body) as Record<string, unknown> : null };
   };
 
-  it('serves the same edges as the CLI, behind a read session, with one optional since', async () => {
+  it('serves the same edges as the CLI, behind a read session, with since and an exclusive before', async () => {
     const root = store(chat), calls: string[] = [];
-    const api = createFleetLiveMapApi(async () => { throw new Error('not the map'); }, since => { calls.push(since); return readMapEdges(since, { root, now: () => NOW }); });
+    const api = createFleetLiveMapApi(async () => { throw new Error('not the map'); },
+      (since, options) => { calls.push(`${since}${options?.before ? `+${options.before}` : ''}`); return readMapEdges(since, { root, now: () => NOW, ...options }); });
     const ok = await send(api, MAP_EDGES_PATH);
     expect(ok).toMatchObject({ handled: true, status: 200 });
     expect(ok.body).toEqual(JSON.parse(JSON.stringify(read(root))));
     expect((await send(api, `${MAP_EDGES_PATH}?since=1d`)).body).toMatchObject({ since: '2026-11-17T12:01:00.000Z', messages: 3 });
+    // A bare before keeps the default window's floor and adds the exclusive ceiling.
+    expect((await send(api, `${MAP_EDGES_PATH}?before=${T0 + 1_500}`)).body).toMatchObject({ messages: 2 });
+    expect((await send(api, `${MAP_EDGES_PATH}?since=${T0}&before=${T0 + 1_500}`)).body).toMatchObject({ messages: 2 });
     // The default window is built once per 5 s; an explicit window is read each time.
     await send(api, MAP_EDGES_PATH);
-    expect(calls).toEqual(['15m', '1d']);
+    expect(calls).toEqual(['15m', '1d', `15m+${T0 + 1_500}`, `${T0}+${T0 + 1_500}`]);
     expect((await send(api, `${MAP_EDGES_PATH}?since=soon`)).status).toBe(400);
+    expect((await send(api, `${MAP_EDGES_PATH}?before=soon`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?limit=5`)).status).toBe(400);
     expect((await send(api, `${MAP_EDGES_PATH}?since=1d&since=2d`)).status).toBe(400);
+    expect((await send(api, `${MAP_EDGES_PATH}?before=1d&before=2d`)).status).toBe(400);
     expect((await send(api, MAP_EDGES_PATH, 'POST')).status).toBe(405);
     expect((await send(api, MAP_EDGES_PATH, 'GET', Date.now() - 1)).status).toBe(401);
     expect((await send(api, '/api/verse/fleet/control/other')).handled).toBe(false);

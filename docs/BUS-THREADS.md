@@ -126,12 +126,44 @@ delivery from subsequent pending reads. Historical `thread read` is unchanged.
 The view and receipt check share one locked snapshot; labels remain cooperative
 and neither a pending read nor a receipt grants execution authority.
 
+The thread reads take the same optional filters `board pending` applies,
+scoped to the fields each read's rows carry. `thread read`, `thread pending`
+and `thread hops` accept `--contains`, `--since` and `--before`: `--contains`
+keeps only posts whose text carries the normalized needle under the same
+scrubbed display-text rule, `--since` (15m, 2h, 1d, epoch ms or an ISO time)
+keeps only deliveries whose `createdAt` reaches the inclusive cutoff, and
+`--before` keeps only deliveries recorded strictly before its own cutoff, so
+the pair reads one `[since, before)` window on `createdAt`; `thread hops`
+filters the same deliveries before projecting metadata. `thread receipts`
+accepts `--since`/`--before` on each receipt's `receivedAt`. `thread list`
+and `task list` accept `--contains` on the stored thread or task title.
+A flag is valid only where the row carries the field it filters: `--contains`
+on `thread receipts` (receipt rows keep no text) and `--since`/`--before` on
+`thread list` or `task list` (threads and tasks record no timestamp) are
+usage errors rather than silently ignored flags, and `--job`/`--all` remain
+`board pending` only. Filtering reads history only: it never acknowledges a
+delivery, claims a task or grants authority.
+
 `board pending` is the cross-thread digest of the same state: one locked board
 snapshot plus one shared-queue read returns every thread the peer has joined
 (with member list, pending-delivery count and per-state task counts), every
 unacknowledged delivery addressed to the peer (`matched` is the true total;
 `items` caps at 50 with `truncated`), and every task on those threads annotated
-with the fleet queue's observed hold state. A task `hold` is `held` when the
+with the fleet queue's observed hold state. `--all` swaps the single-peer view
+for the fleet-wide `pendingAll` digest — every thread member as the label set,
+reported under `peers` with the stored untrusted text rather than the
+display frame — the same read `fleet_bus_board` and `comms inbox`'s board
+source project, and it cannot be combined with `--peer`. `--job`,
+`--contains`, `--since` and `--before` are the same optional filters
+`pendingFor` and `pendingAll` take, applied under identical rules: `--job`
+keeps only threads
+carrying a task whose fleet `itemId` cites it, `--contains` the normalized
+needle over the same scrubbed display text, `--since` (15m, 2h, 1d,
+epoch ms or an ISO time) the inclusive cutoff deliveries must reach, and
+`--before` the exclusive upper bound on the same `createdAt` field so the
+pair reads one `[since, before)` window — while tasks, which the board
+records without a timestamp, never match under either bound; the flags are
+valid only on `board pending`. A task `hold` is `held` when the
 queue shows a live claim (the `owner` peer label and lease expiry, never
 capability material), `open` when the queue shows no live claim — an expired
 modern `claimed` record counts as open because the claim path reclaims it —
@@ -146,14 +178,16 @@ mine` carries the same digest as its `board` section — one locked snapshot
 under every routing label the agent's identity answers to, with the same
 hold-state honesty — so an agent on the board finds its pending deliveries
 and tasks without a separate `board pending --peer` read per label.
-`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?)` is the fleet-wide
+`BusBoard.pendingAll(now?, jobId?, contains?, sinceMs?, beforeMs?)` is the fleet-wide
 form — every thread member as the label set in the same locked snapshot
 and queue read, with the same optional filters `pendingFor` takes: `jobId`
 keeps only threads carrying a task whose `itemId` cites it (and `peers`
 then reports only that job's thread members), `contains` the normalized
-`--contains` needle over the same scrubbed display text, and `sinceMs` the
-epoch-ms cutoff deliveries must reach while tasks — which the board
-records without any timestamp — never match. `phm comms inbox`'s `board`
+`--contains` needle over the same scrubbed display text, `sinceMs` the
+epoch-ms cutoff deliveries must reach, and `beforeMs` the exclusive
+epoch-ms upper bound on the same `createdAt` field composing with
+`sinceMs` into one `[since, before)` window — while tasks, which the
+board records without any timestamp, never match under a time bound. `phm comms inbox`'s `board`
 source and the `fleet_bus_board` fleet MCP tool project it: every
 unacknowledged delivery and every task whose hold is not `held`, across
 all peers, with the same untrusted-content and

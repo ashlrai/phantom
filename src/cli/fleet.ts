@@ -115,6 +115,13 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.guardian) {
+    const { age, service, log } = s.guardian;
+    lines.push(`Guardian: ${age.status}; age: ${age.ageSeconds === null ? 'unknown' : `${Math.floor(age.ageSeconds)} seconds`}; limit: ${age.maxAgeSeconds} seconds.`);
+    lines.push(`  Launch service: ${service.state}; last exit code: ${service.lastExitCode ?? 'unknown'}.`);
+    lines.push(`  Log: ${log.source}; errors in last 24 hours (tail only): ${log.recentErrors ?? 'unknown'}; errors without usable time: ${log.unparseableErrors ?? 'unknown'}.`);
+    lines.push(`  ${s.guardian.reason} Next: ${s.guardian.nextStep}`);
+  } else lines.push('Guardian: unavailable. Next: phm fleet health-age --diagnose --json');
   if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {

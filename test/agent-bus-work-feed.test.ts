@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectBusWorkFeed } from '../src/core/agents/bus-work-feed.js';
-import { busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
+import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, busWorkJobDispatch, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView,
   sliceBusWorkFeedView, type BusWorkFeedClaims, type BusWorkFeedJob, type BusWorkFeedReadResult } from '../src/core/agents/bus-work-feed-read.js';
 import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { workFeedSchema, type Participant, WORK_STATUSES } from '../src/core/agents/bus-v2-schema.js';
@@ -350,6 +350,33 @@ describe('work-feed view filters', () => {
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['new']);
   });
 
+  it('keeps jobs whose last activity precedes the --before cutoff and composes with --since', () => {
+    const jobs = [
+      viewJob({ id: 'old', updatedAt: 100 }),
+      viewJob({ id: 'edge', updatedAt: 200 }),
+      viewJob({ id: 'new', status: 'done', updatedAt: 300 }),
+    ];
+    const result = okResult(jobs);
+    // Exclusive like the window's upper bound: updatedAt == cutoff drops out.
+    expect(ids(projectBusWorkFeedView(result, { before: 200 }))).toEqual(['old']);
+    expect(ids(projectBusWorkFeedView(result, { before: 201 }))).toEqual(['edge', 'old']);
+    expect(ids(projectBusWorkFeedView(result, { before: 100 }))).toEqual([]);
+    // since/before read one [since, before) window — the boundary job counts once.
+    expect(ids(projectBusWorkFeedView(result, { since: 200, before: 300 }))).toEqual(['edge']);
+    expect(ids(projectBusWorkFeedView(result, { since: 200, before: 200 }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(result, { before: 250, status: 'done' }))).toEqual([]);
+    // Holds regroup under the jobs still shown: a hidden job's hold never lists.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'old', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'new', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(jobs, claims), { before: 200 });
+    expect(ids(view)).toEqual(['old']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['old']);
+  });
+
   it('keeps jobs whose descriptive text carries the --contains needle', () => {
     const dispatch = { tier: 'work' as const, scope: 'Migrate the queue drain path', acceptance: 'Drain finishes green' };
     const jobs = [
@@ -394,6 +421,36 @@ describe('work-feed view filters', () => {
     const view = projectBusWorkFeedView(okResult(jobs, claims), { contains: 'drain', status: 'queued' });
     expect(ids(view)).toEqual(['title', 'scope', 'accept']);
     expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['title']);
+  });
+
+  it('keeps jobs announced to group:<channel>:* under every topic', () => {
+    const result = okResult([
+      viewJob({ id: 'room-a', to: 'group:release:general', updatedAt: 400 }),
+      viewJob({ id: 'room-a-topic', to: 'group:release:deploy', updatedAt: 300 }),
+      viewJob({ id: 'room-b', to: 'group:ops:deploy', updatedAt: 200 }),
+      viewJob({ id: 'direct', to: 'agent:nova', updatedAt: 100 }),
+      viewJob({ id: 'leaders', to: 'leaders', updatedAt: 50 }),
+    ]);
+    // The room's whole traffic under every topic — the same group:<name>:
+    // prefix agents bus inbox --channel, channel read and phm messages
+    // --channel match on the raw routing label.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release' }))).toEqual(['room-a', 'room-a-topic']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ops' }))).toEqual(['room-b']);
+    expect(ids(projectBusWorkFeedView(result, { channel: 'ghost' }))).toEqual([]);
+    // The prefix needs the topic separator: a lookalike label that merely
+    // starts with the room name never matches, and case stays exact.
+    expect(ids(projectBusWorkFeedView(result, { channel: 'release2' }))).toEqual([]);
+    expect(ids(projectBusWorkFeedView(okResult([viewJob({ id: 'x', to: 'group:Release:general' })]), { channel: 'release' }))).toEqual([]);
+    // The filter composes with the others and holds still regroup under shown jobs.
+    const claims: BusWorkFeedClaims = { source: 'available', truncated: false, holds: [
+      { jobId: 'room-a', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:x' },
+      { jobId: 'leaders', claimKey: 'repo:ashlrai/phantom', owner: 'holder', leaseUntil: 200,
+        origin: 'resource', sourceId: 'work:y' },
+    ] };
+    const view = projectBusWorkFeedView(okResult(result.status === 'ok' ? result.jobs : [], claims), { channel: 'release' });
+    expect(ids(view)).toEqual(['room-a', 'room-a-topic']);
+    expect(view.status === 'ok' && view.claims?.holds.map(hold => hold.jobId)).toEqual(['room-a']);
   });
 
   it('matches --to under the pending-work addressed rule: identity labels plus member channels', () => {
@@ -446,9 +503,48 @@ describe('work-feed view filters', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
+  it('matches --owner under the same exact-ref rule: the ref resolves exactly, owner labels still fold', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bus-feed-owner-'));
+    try {
+      expect(registerAgentIdentity({ handle: 'atlas', aliases: ['a-cloud'] }, { root }).status).toBe('created');
+      expect(registerAgentIdentity({ handle: 'nova' }, { root }).status).toBe('created');
+      const result = okResult([
+        viewJob({ id: 'handle', owner: 'agent:atlas', updatedAt: 400 }),
+        viewJob({ id: 'alias', owner: 'a-cloud', updatedAt: 300 }),
+        viewJob({ id: 'caseenv', owner: 'Atlas', updatedAt: 200 }),
+        viewJob({ id: 'other', owner: 'agent:nova', updatedAt: 100 }),
+      ]);
+      const shown = (owner: string, at: string = root): string[] => {
+        const view = projectBusWorkFeedView(result, { ownerMatch: busWorkFeedOwnerMatcher(owner, { root: at }) });
+        if (view.status !== 'ok') throw new Error('expected an ok view');
+        return view.jobs.map(job => job.id).sort();
+      };
+      // atlas and every spelling of her identity announce her jobs; the
+      // case-folded 'Atlas' owner label resolves through the registry too.
+      for (const ref of ['atlas', 'a-cloud', 'agent:atlas']) {
+        expect(shown(ref)).toEqual(['alias', 'caseenv', 'handle']);
+      }
+      // 'Atlas' names no registered label exactly, so as an owner ref it keeps
+      // exact-label matching: only the job literally owned 'Atlas' shows —
+      // never the identity's handle or alias announcements.
+      expect(shown('Atlas')).toEqual(['caseenv']);
+      expect(shown('ghost')).toEqual([]);
+      // An unreadable registry never widens: 'atlas' falls back to the literal
+      // owner label, so only a job literally owned 'atlas' could match — here
+      // none does, while the literal 'agent:atlas' ref still finds its row.
+      const bad = mkdtempSync(join(tmpdir(), 'bus-feed-owner-bad-'));
+      try {
+        mkdirSync(join(bad, 'agent-identities'), { mode: 0o700 });
+        writeFileSync(join(bad, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
+        expect(shown('atlas', bad)).toEqual([]);
+        expect(shown('agent:atlas', bad)).toEqual(['handle']);
+      } finally { rmSync(bad, { recursive: true, force: true }); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('passes non-ok reads through untouched', () => {
     const refused: BusWorkFeedReadResult = { status: 'refused', reason: 'duplicate-job', receipts: 2, asOf: 'now' };
-    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, contains: 'x' })).toBe(refused);
+    expect(projectBusWorkFeedView(refused, { repo: 'a/b', provider: 'devin', claimable: true, since: 1, before: 2, contains: 'x' })).toBe(refused);
   });
 
   it('pages the filtered view with honest matched/omitted counts and regrouped holds', () => {

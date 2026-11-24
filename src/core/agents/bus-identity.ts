@@ -249,6 +249,28 @@ export function agentAddressMatcher(identityOf: AgentIdentityKeyFor | undefined,
 }
 
 /**
+ * One agent-ref address filter as a predicate over envelope routing labels —
+ * the read-filter counterpart of `agentAddressMatcher` for a caller-supplied
+ * ref (`--from`, `--exclude-from`, `--to`, `--owner`, `--agent`, a request's
+ * `to`/`from`): the literal ref, or any label of the identity the ref
+ * resolves to. The ref resolves through `resolveAgent` exactly — handle,
+ * `agent:` address, stable id or alias, never case-folded — so a spelling
+ * like `Devin` that names no registered identity keeps exact-label matching
+ * instead of inheriting handle `devin`'s whole label set; the envelope
+ * labels on the value side still fold through `identityOf` (exact first,
+ * then lowercase), the same split `agentPendingAddressMatcher` applies. An
+ * unreadable registry (`registry` undefined) or a ref resolving to no
+ * identity matches the literal ref only: unknown identity state never
+ * widens a filter.
+ */
+export function agentRefAddressMatcher(ref: string, registry: AgentRegistry | undefined,
+  identityOf: AgentIdentityKeyFor = registry === undefined ? () => undefined : identityKeysFor(registry)): (value: string) => boolean {
+  const key = registry === undefined ? undefined : resolveAgent(registry, ref)?.id;
+  if (key === undefined) return value => value === ref;
+  return value => value === ref || identityOf(value) === key;
+}
+
+/**
  * "Addressed to this agent" for the pending-work surfaces — `bus next` claims
  * and the `work mine` digest's next/handoffs sections: the literal `ref`, any
  * label of the identity it resolves to, or a `group:<channel>:<topic>` address

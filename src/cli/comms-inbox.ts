@@ -7,9 +7,9 @@ import { createChannelReceiver } from '../core/fleet/channel-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { INBOX_MAX_CHARS, readInboxEntries } from '../core/fleet/mason-inbox.js';
 import { readStableRegularFile } from '../core/util/stable-file-read.js';
-import { parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
+import { entryInstant, parseInboxReadQuery, projectInboxRead } from '../core/verse/fleet-inbox-read.js';
 
-const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]
+const HELP = `phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]
 phm comms inbox read [--source <label>] [--contains <text>] [--priority <P0|P1|P2|P3>] [--after <RFC3339-with-zone>] [--before <RFC3339-with-zone>] [--limit <1..200>] [--watch [--new-only] [--interval-ms <1000..60000>] [--max-samples <1..10000>]] [--json]
 phm comms inbox post --file <text-file|-> [--receipt-only] [--json]
 With no verb, lists every pending comms item — unresolved needs-you lines
@@ -20,7 +20,7 @@ unanswered iMessage
 teammate texts, unsettled Dot/Instinct teammate tasks, owner-thread messages awaiting a recorded reply, recorded owner
 replies whose channel fanout is not fully delivered, drafts awaiting approval,
 pending bus work (unclaimed envelopes, open, unclaimable or stalled feed jobs and worker handoffs), pending legacy phm bus mailbox mail across every recipient label, pending shared task board deliveries and unheld tasks across every peer, agent
-conversation threads waiting on a reply or blocked, bot seats with pending handoffs, unpublished peer work-dispatch
+conversation threads waiting on a reply or blocked, pending wake hints grouped by addressee, bot seats with pending handoffs, unpublished peer work-dispatch
 results, comms
 questions/approvals awaiting an answer, inbound .eml files awaiting the email
 drop pass, .reply.eml artifacts stuck in the
@@ -34,11 +34,14 @@ bus-work/bus-handoff split, the board source's board-delivery/board-task
 split) — --severity one severity band, --blocking only items that
 block, --job only items that provably name one job id — a bus or mailbox
 body's job citation, a feed job's id, a board task's fleet item or a
-delivery on a job-carrying thread, a conversation thread's jobs, a teammate
+delivery on a job-carrying thread, a conversation thread's jobs, a wake hint's cited job, a teammate
 task's job, a seat's node-job handoff or a peer-dispatch receipt's job — and --since only items whose
 recorded appearance time reaches the cutoff (15m, 2h, 1d, epoch ms or an
 ISO time; an item whose store keeps no timestamp never matches, so unknown
-never counts as new); --contains keeps only items whose scrubbed title or
+never counts as new), with --before the exclusive upper bound keeping only
+items whose recorded appearance time is strictly before its cutoff — the
+two compose into one [since, before) window and an item exactly on either
+boundary stays out of the excluded side; --contains keeps only items whose scrubbed title or
 detail carries the text as a case-insensitive substring — the same text
 the row shows, never the deep-link commands — and the
 dimensions AND together, and the
@@ -69,56 +72,6 @@ Default duplicate receipts persist across receiver restarts in the shared runs c
 const LOCAL_OPERATOR = 'local-operator';
 // A UTF-16 code unit can encode as at most three UTF-8 bytes.
 const MAX_FILE_BYTES = INBOX_MAX_CHARS * 3;
-
-// Validate the calendar fields before Date.parse, which otherwise normalizes invalid dates.
-type Instant = { seconds: number; fraction: string };
-function rfc3339Instant(value: string): Instant | undefined {
-  const match = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})$/.exec(value);
-  if (!match) return undefined;
-  const [, y, m, d, h, min, s, fraction = '', zone] = match;
-  const year = Number(y), month = Number(m), day = Number(d);
-  const calendar = new Date(0); calendar.setUTCFullYear(year, month, 0);
-  if (month < 1 || month > 12 || day < 1 || day > calendar.getUTCDate() ||
-    Number(h) > 23 || Number(min) > 59 || Number(s) > 59 || zone === '-00:00' ||
-    (zone!.toUpperCase() !== 'Z' && (Number(zone!.slice(1, 3)) > 23 || Number(zone!.slice(4, 6)) > 59))) return undefined;
-  const milliseconds = Date.parse(`${y}-${m}-${d}T${h}:${min}:${s}${zone!.toUpperCase()}`);
-  if (!Number.isFinite(milliseconds)) return undefined;
-  return { seconds: milliseconds / 1000, fraction: fraction.replace(/0+$/, '') };
-}
-
-const easternClock = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-});
-const easternOffset = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'longOffset' });
-
-function entryInstant(at: string): Instant | undefined {
-  const local = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(at);
-  if (!local) return rfc3339Instant(at);
-  const [, year, month, day, hour, minute] = local;
-  const wall = rfc3339Instant(`${year}-${month}-${day}T${hour}:${minute}:00Z`);
-  if (wall === undefined) return undefined;
-  const wallMs = wall.seconds * 1000;
-  const candidates = new Set<number>();
-  // Sample both sides of a transition, then validate the round-trip in Eastern time.
-  for (const delta of [-86_400_000, 0, 86_400_000]) {
-    const offset = easternOffset.formatToParts(new Date(wallMs + delta)).find(part => part.type === 'timeZoneName')?.value;
-    const match = /^GMT([+-])(\d{2}):(\d{2})$/.exec(offset ?? '');
-    if (!match) continue;
-    const minutes = (Number(match[2]) * 60 + Number(match[3])) * (match[1] === '+' ? 1 : -1);
-    const candidate = wallMs - minutes * 60_000;
-    const parts = easternClock.formatToParts(new Date(candidate));
-    const part = (type: Intl.DateTimeFormatPartTypes): string | undefined => parts.find(item => item.type === type)?.value;
-    if (`${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}` === at) candidates.add(candidate);
-  }
-  return candidates.size === 1 ? { seconds: [...candidates][0]! / 1000, fraction: '' } : undefined;
-}
-
-function laterThan(left: Instant, right: Instant): boolean {
-  if (left.seconds !== right.seconds) return left.seconds > right.seconds;
-  const length = Math.max(left.fraction.length, right.fraction.length);
-  return left.fraction.padEnd(length, '0') > right.fraction.padEnd(length, '0');
-}
 
 async function readStdin(stream: Readable): Promise<string | undefined> {
   const chunks: Buffer[] = [];
@@ -161,6 +114,7 @@ function describeUnifiedFilter(filter: UnifiedInboxFilter): string {
     ...(filter.blocking === undefined ? [] : ['blocking']),
     ...(filter.job === undefined ? [] : [`job=${filter.job}`]),
     ...(filter.since === undefined ? [] : [`since=${new Date(filter.since).toISOString()}`]),
+    ...(filter.before === undefined ? [] : [`before=${new Date(filter.before).toISOString()}`]),
     ...(filter.contains === undefined ? [] : [`contains=${filter.contains}`]),
   ].join(' ');
 }
@@ -198,7 +152,7 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       let json = false, blocking = false;
       let source: UnifiedInboxSource | undefined, kind: UnifiedInboxKind | undefined,
         severity: UnifiedInboxSeverity | undefined, job: string | undefined, contains: string | undefined;
-      let sinceMs: number | undefined;
+      let sinceMs: number | undefined, beforeMs: number | undefined;
       const seen = new Set<string>();
       for (let i = 0; i < args.length; i++) {
         const arg = args[i]!;
@@ -236,6 +190,16 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
           if (ms === null || !Number.isSafeInteger(ms) || ms < 0) return invalid();
           seen.add(arg); sinceMs = ms; continue;
         }
+        if (arg === '--before' && !seen.has(arg)) {
+          const value = args[++i];
+          // A flag-looking value is a missing value — the same rule --since applies.
+          if (value === undefined || value.startsWith('--')) return invalid();
+          const ms = parseSince(value);
+          // The same --before rule every bus read applies: an unparseable,
+          // unsafe or negative cutoff refuses the invocation.
+          if (ms === null || !Number.isSafeInteger(ms) || ms < 0) return invalid();
+          seen.add(arg); beforeMs = ms; continue;
+        }
         if (arg === '--contains' && !seen.has(arg)) {
           const value = args[++i];
           // Free text, not a label: printable content of any kind is fine,
@@ -249,12 +213,13 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
       }
       const filter: UnifiedInboxFilter | undefined =
         source === undefined && kind === undefined && severity === undefined && !blocking &&
-          job === undefined && sinceMs === undefined && contains === undefined ? undefined
+          job === undefined && sinceMs === undefined && beforeMs === undefined && contains === undefined ? undefined
           : { ...(source === undefined ? {} : { source }),
               ...(kind === undefined ? {} : { kind }),
               ...(severity === undefined ? {} : { severity }),
               ...(job === undefined ? {} : { job }),
               ...(sinceMs === undefined ? {} : { since: sinceMs }),
+              ...(beforeMs === undefined ? {} : { before: beforeMs }),
               ...(contains === undefined ? {} : { contains }),
               ...(blocking ? { blocking: true } : {}) };
       const report = await readUnifiedInbox({ runsDir: options.runsDir, busRoot: options.busRoot,
@@ -264,9 +229,11 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
     }
     const [verb, ...rest] = args;
     if (verb !== 'read' && verb !== 'post') return invalid();
-    let file: string | undefined, after: Instant | undefined, before: Instant | undefined, priority: string | undefined, contains: string | undefined, json = false, watch = false, newOnly = false, receiptOnly = false;
+    let file: string | undefined, json = false, watch = false, newOnly = false, receiptOnly = false;
     let intervalMs: number | undefined, maxSamples: number | undefined;
     const queryParams = new URLSearchParams();
+    const valueFlags = ['--source', '--limit', '--contains', '--priority', '--after', '--before'];
+    const flagNames = [...valueFlags, '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'];
     for (let i = 0; i < rest.length; i++) {
       const arg = rest[i];
       if (arg === '--json' && !json) json = true;
@@ -287,50 +254,30 @@ export function createCommsInboxCommand(options: CommandOptions = {}): (args: st
         const value = rest[++i];
         if (!value || value !== '-' && value.startsWith('-')) return invalid();
         file = value;
-      } else if (verb === 'read' && arg === '--after' && after === undefined) {
-        const value = rest[++i];
-        if (value === undefined || (after = rfc3339Instant(value)) === undefined) return invalid();
-      } else if (verb === 'read' && arg === '--before' && before === undefined) {
-        const value = rest[++i];
-        if (value === undefined || (before = rfc3339Instant(value)) === undefined) return invalid();
-      } else if (verb === 'read' && arg === '--priority' && priority === undefined) {
-        const value = rest[++i];
-        if (value === undefined || !/^P[0-3]$/.test(value)) return invalid();
-        priority = value;
-      } else if (verb === 'read' && (arg === '--source' || arg === '--limit')) {
+      } else if (verb === 'read' && valueFlags.includes(arg)) {
         const key = arg.slice(2), value = rest[++i];
-        if (value === undefined || ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value) || queryParams.has(key)) return invalid();
+        if (value === undefined || flagNames.includes(value) || queryParams.has(key)) return invalid();
         queryParams.append(key, value);
-      } else if (verb === 'read' && arg === '--contains' && contains === undefined) {
-        const value = rest[++i];
-        if (value === undefined || !value.trim() ||
-          ['--source', '--limit', '--contains', '--priority', '--after', '--before', '--watch', '--new-only', '--interval-ms', '--max-samples', '--json', '--receipt-only', '--file', '--help', '-h'].includes(value)) return invalid();
-        contains = value;
       } else return invalid();
     }
     if (verb === 'post' && file === undefined) return invalid();
     if (verb === 'read') {
-      if (after !== undefined && before !== undefined && !laterThan(before, after)) return invalid();
       if (!watch && (newOnly || intervalMs !== undefined || maxSamples !== undefined)) return invalid();
       const query = parseInboxReadQuery(queryParams);
       if ('error' in query) return invalid();
       // Read the bounded file tail before filtering, so other sources do not consume the requested limit.
-      const needle = contains === undefined ? undefined : contains.toLowerCase();
+      const bounded = query.after !== undefined || query.before !== undefined;
       const readSnapshot = async () => {
         const result = await readInboxEntries({ runsDir: options.runsDir, limit: Number.MAX_SAFE_INTEGER });
+        // Entries whose `at` reads as neither Eastern wall time nor RFC3339
+        // cannot satisfy a window; the projection excludes them silently, so
+        // the count is reported here for the caller.
         let omittedUndated = 0;
-        const datedEntries = after === undefined && before === undefined ? result.entries : result.entries.filter(entry => {
-          const instant = entryInstant(entry.at);
-          if (instant === undefined) { omittedUndated++; return false; }
-          return (after === undefined || laterThan(instant, after)) && (before === undefined || laterThan(before, instant));
-        });
-        const matchingEntries = priority === undefined ? datedEntries : datedEntries.filter(entry => entry.priority === priority);
-        // Match on projected entries so redaction and the source filter still apply; the limit then keeps the newest matches.
-        const projected = projectInboxRead({ ...result, entries: matchingEntries },
-          needle === undefined ? query : { ...query, limit: Number.MAX_SAFE_INTEGER })!.entries;
-        const entries = needle === undefined ? projected
-          : projected.filter(entry => entry.text.toLowerCase().includes(needle)).slice(-query.limit);
-        return { ...result, entries, ...(after === undefined && before === undefined ? {} : { omittedUndated }) };
+        if (bounded) for (const entry of result.entries) {
+          if (entryInstant(entry.at) === undefined) omittedUndated++;
+        }
+        const entries = projectInboxRead(result, query)!.entries;
+        return { ...result, entries, ...(bounded ? { omittedUndated } : {}) };
       };
       if (!watch) {
         const result = await readSnapshot();

@@ -91,6 +91,67 @@ describe('channels status', () => {
     expect(telegram.credential).toBe('environment');
     expect(JSON.stringify(status)).not.toContain('test-token-value-not-real');
   });
+
+  it('measures pairing state and pending outbound when the stores are well-formed', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    const queue = join(runsDir, 'queue');
+    mkdirSync(queue, { recursive: true });
+    writeFileSync(join(queue, 'telegram-pair.json'), JSON.stringify({ v: 1, userId: 777 }));
+    writeFileSync(join(queue, 'email-paired.json'), JSON.stringify({ v: 1, addresses: ['a@b.c', 7, 'd@e.f'] }));
+    const leader = join(root, '.ashlr', 'vision', 'leader');
+    mkdirSync(leader, { recursive: true });
+    writeFileSync(join(leader, 'thread-index.json'), JSON.stringify({
+      v: 1,
+      delivery: { m1: { telegram: 'pending' }, m2: { telegram: 'sent' }, m3: {} },
+    }));
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
+    expect(by['telegram']!.paired).toBe(true);
+    expect(by['telegram']!.pendingOutbound).toBe(1);
+    expect(by['email']!.paired).toBe(true);
+  });
+
+  it('reports unknown — never a guessed unpaired — when a pairing store cannot be read', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    const queue = join(runsDir, 'queue');
+    mkdirSync(queue, { recursive: true });
+    writeFileSync(join(queue, 'telegram-pair.json'), '{broken');
+    writeFileSync(join(queue, 'email-paired.json'), JSON.stringify({ v: 1, addresses: 'not-a-list' }));
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
+    expect(by['telegram']!.paired).toBe('unknown');
+    expect(by['email']!.paired).toBe('unknown');
+  });
+
+  it('reports unknown when a pairing path is not a readable file', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    const queue = join(runsDir, 'queue');
+    // A directory where the record file should be is a non-ENOENT read failure.
+    mkdirSync(join(queue, 'telegram-pair.json'), { recursive: true });
+    mkdirSync(join(queue, 'email-paired.json'), { recursive: true });
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
+    expect(by['telegram']!.paired).toBe('unknown');
+    expect(by['email']!.paired).toBe('unknown');
+  });
+
+  it('reports unknown pending outbound when the thread index or email outbox cannot be measured', async () => {
+    const root = useHome();
+    const runsDir = join(root, '.ashlr-runs');
+    const leader = join(root, '.ashlr', 'vision', 'leader');
+    mkdirSync(leader, { recursive: true });
+    writeFileSync(join(leader, 'thread-index.json'), JSON.stringify({ v: 1, delivery: 'corrupt' }));
+    const outbox = join(root, 'mail-out');
+    await addChannel('email', { runsDir, inboxDir: join(root, 'mail-in'), outboxDir: outbox, from: ['a@b.c'] });
+    writeFileSync(outbox, 'not a directory');
+    const status = await buildChannelsStatus({ homeDir: root, runsDir });
+    const by = Object.fromEntries(status.channels.map((c) => [c.kind, c]));
+    expect(by['telegram']!.pendingOutbound).toBe('unknown');
+    expect(by['email']!.pendingOutbound).toBe('unknown');
+  });
 });
 
 describe('channels add', () => {
