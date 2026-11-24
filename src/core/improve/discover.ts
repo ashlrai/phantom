@@ -550,6 +550,15 @@
  *     resets every poll — so a fleet that kept exhausting the same
  *     provider window week after week looked healthy between events,
  *     never work;
+ *   - asksLedgerBacklogItems folds the NEEDS-MASON answers ledger
+ *     (<runs>/asks-ledger.jsonl, asks.ledger.v1 rows answerAsk and the
+ *     usage sensor append) per (kind, subject) cell across distinct UTC
+ *     days inside the 7-day window, counting fleet self-answers as
+ *     coverage context (asksLedgerBacklogItems below). Until now the
+ *     ledger's only readers were the ask surfaces and readFleetActions
+ *     for display, so an ask kind that kept reaching Mason — a self-
+ *     answer coverage gap or an owner-gated need never resolved once —
+ *     never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -632,6 +641,7 @@ import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
 import { rateLimitBacklogItems } from './rate-limit-backlog.js';
+import { asksLedgerBacklogItems } from './asks-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1507,6 +1517,18 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // Claude runs and carries no repository column.
   items.push(...await rateLimitBacklogItems({ repo }));
+  // NEEDS-MASON answers ledger (asks-ledger.jsonl beside NEEDS-MASON.md):
+  // every Mason answer and every sensor self-answer lands as one
+  // asks.ledger.v1 row, and until now the ledger's only readers were the
+  // ask surfaces themselves — an ask kind that keeps reaching Mason, the
+  // fleet's autonomy gap made visible, never became work. A (kind,
+  // subject) cell emits only at the recurring bar — distinct UTC days in
+  // the 7-day window — with fleet self-answers counted as coverage
+  // context, truncated tails stated as lower bounds, journal strings
+  // scrubbed before they reach a prompt, and only the fleet's own
+  // repository inheriting the items since the ledger describes this
+  // install's ask traffic and carries no repository column.
+  items.push(...await asksLedgerBacklogItems({ repo }));
   return { items, errors };
 }
 
