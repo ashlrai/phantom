@@ -50,10 +50,12 @@ export async function cmdFleetLaunchable(args: string[]): Promise<number> {
     if (!record(status) || !record(status.lanes)) throw new Error('Invalid status');
     const lanes = new Map<string, Lane>();
     for (const [lane, value] of Object.entries(status.lanes)) {
-      if (!record(value) || !count(value.running) || !count(value.target)) throw new Error('Invalid lane');
+      if (!record(value) || !count(value.running) || !count(value.target)
+        || (value.held != null && typeof value.held !== 'boolean')
+        || (value.effective_target != null && !count(value.effective_target))) throw new Error('Invalid lane');
       // Free slots count against the launch ceiling: a shed lane has no phantom room.
       const target = laneLaunchTarget(value.target, count(value.effective_target) ? value.effective_target : null);
-      lanes.set(lane, { lane, running: value.running, target, free: Math.max(0, target - value.running), launchable: 0 });
+      lanes.set(lane, { lane, running: value.running, target, free: value.held === true ? 0 : Math.max(0, target - value.running), launchable: 0 });
     }
     const excluded = new Set(skipped.split('\n').flatMap(line => {
       const cols = line.split('\t');
