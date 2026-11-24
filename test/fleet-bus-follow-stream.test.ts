@@ -701,6 +701,27 @@ it('delivers only protocol-v1 bodies of --kind while v2 and plain bodies never m
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
 });
 
+it('delivers only bodies carrying the --body-kind discriminator while kindless bodies never match', async () => {
+  post('bk-note', 'worker-a', { body: { kind: 'note' } });
+  post('bk-context', 'worker-a', { body: { kind: 'context' } });
+  post('bk-post', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-BK', title: 'x', repo: 'o/n', claimKeys: [] } });
+  post('bk-wake', 'worker-a', { body: { kind: 'wake', target: 'agent:nova', reason: 'r' } });
+  post('bk-handoff', 'worker-a', { body: { kind: 'worker-handoff', taskId: 'RQ-BK', prompt: 'p' } });
+  post('bk-v1', 'worker-a', { body: { protocol: { version: 1, kind: 'task' } } });
+  post('bk-plain', 'worker-a', { body: { text: 'no kind' } });
+  const { records, pending, expire } = follow({ bodyKind: 'work.post' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['bk-post']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 7 });
+  // The protocol-v1 kind is reachable through the same discriminator.
+  const second = follow({ bodyKind: 'task' });
+  second.expire();
+  expect((await second.pending).status).toBe('expired');
+  expect(messages(second.records).map(row => row.envelope.id)).toEqual(['bk-v1']);
+});
+
 it('delivers only protocol bodies whose topic matches --topic exactly or by namespace', async () => {
   post('deploy', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
   post('deploy-canary', 'fleet.deploy.canary', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy.canary' } } });

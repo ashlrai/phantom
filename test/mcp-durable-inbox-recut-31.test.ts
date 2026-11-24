@@ -96,6 +96,7 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ kind: 'bogus' }], [{ kind: 'TASK' }], [{ kind: 5 }],
     [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
     [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
+    [{ bodyKind: 'has space' }], [{ bodyKind: 'x'.repeat(129) }], [{ bodyKind: '' }], [{ bodyKind: 5 }],
     [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
     [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
@@ -273,6 +274,26 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the bodyKind read filter to the exact kind discriminator', async () => {
+    expect(post('bk-note', { body: { kind: 'note', text: 'hi' } }).status).toBe('posted');
+    expect(post('bk-post', { body: { kind: 'work.post', jobId: 'RQ-BK', title: 't', repo: 'o/n', claimKeys: [] } }).status).toBe('posted');
+    expect(post('bk-wake', { body: { kind: 'wake', target: 'agent:nova', reason: 'r' } }).status).toBe('posted');
+    expect(post('bk-v1', { body: { protocol: { version: 1, kind: 'task' } } }).status).toBe('posted');
+    expect(post('bk-plain', { body: { fake: 'nothing here' } }).status).toBe('posted');
+    const client = await connect();
+    const posts = await callInbox(client, { bodyKind: 'work.post' });
+    expect(posts.parsed).toMatchObject({ sourceState: 'ok', filters: { bodyKind: 'work.post' } });
+    expect(rows(posts.parsed).map(row => row.envelope.id)).toEqual(['bk-post']);
+    // The protocol-v1 kind is reachable through the same discriminator, and a
+    // body carrying none never matches; the match is exact and case-sensitive.
+    const v1 = await callInbox(client, { bodyKind: 'task' });
+    expect(rows(v1.parsed).map(row => row.envelope.id)).toEqual(['bk-v1']);
+    const notes = await callInbox(client, { bodyKind: 'note' });
+    expect(rows(notes.parsed).map(row => row.envelope.id)).toEqual(['bk-note']);
+    expect((await callInbox(client, { bodyKind: 'Note' })).parsed).toMatchObject({ returnedMessages: 0 });
+    expect((await callInbox(client, { bodyKind: 'nonexistent' })).parsed).toMatchObject({ returnedMessages: 0 });
   });
 
   it('applies the before upper bound exclusive of its edge and composes with since', async () => {
