@@ -59,6 +59,20 @@ describe('per-line batch session evidence', () => {
     expect((await readQueueBatches(root)).emptyPrefixes.evidence).toBe('unknown');
   });
 
+  it('counts empty finish rows across the jobs-ledger field dialect', async () => {
+    const home = await fixture(), root = join(home, '.ashlr-runs');
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    const now = Date.now(), iso = (ms: number) => new Date(now + ms).toISOString();
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ job_id: 'RQ-DIA-1', type: 'finish', empty: true, timestamp: iso(-1000) }),
+      JSON.stringify({ id: 'RQ-DIA-2', kind: 'finish', empty: true, at: iso(-2000) }),
+      JSON.stringify({ job: 'RQ-DIA-3', event: 'finish', empty: true, time: iso(-3000) }),
+      JSON.stringify({ job: 'RQ-DIA-9', event: 'outcome', state: 'MERGED', mergedAt: iso(-4000) }),
+    ].join('\n'));
+    expect((await readQueueBatches(root)).emptyPrefixes).toMatchObject({ evidence: 'available', total: 3, malformedLines: 0,
+      top: [{ prefix: 'RQ-DIA', count: 3 }] });
+  });
+
   it('exposes admission reasons through queue JSON and keeps stale or invalid evidence unknown', async () => {
     const root = await fixture(), runs = join(root, '.ashlr-runs'), path = join(runs, 'queue', 'ranking.json');
     await mkdir(join(runs, 'queue'), { recursive: true }); vi.stubEnv('HOME', root);

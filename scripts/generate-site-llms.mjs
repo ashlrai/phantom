@@ -174,6 +174,7 @@ function renderLlmsTxt(data) {
   lines.push(`- [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task`);
   lines.push(`- [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md`);
   lines.push(`- [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide`);
+  lines.push(`- [Contribute with an agent](${REPO}/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge`);
 
   lines.push('');
   lines.push('## Install');
@@ -313,6 +314,7 @@ function renderLlmsFull(data) {
   lines.push('- [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview');
   lines.push('- [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map');
   lines.push('- [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide');
+  lines.push(`- [Contribute with an agent](${REPO}/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge`);
   lines.push('- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations');
   lines.push('- [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries');
   lines.push('- [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn');

@@ -51,6 +51,8 @@ import { SkeletonLine } from '../../../components/primitives/Skeleton.js';
 import { ActionMenu, anchorBelow, type ActionMenuItem, type MenuAnchor } from '../chat/ActionMenu.js';
 import { commandChord, formatChord } from '../shell/command-keys.js';
 import { DOCK_LAYOUT, clampDockHeight, clampDockWidth, type DockPaneId, type DockPresentation } from '../shell/dock-catalog.js';
+import { ResourceBoardsNav } from './ResourceBoardsNav.js';
+import { isResourceBoard } from './resource-boards.js';
 import { getPane, isPaneAvailable, paneChordLabel, panesFor, preloadPanes, usePanes, type PaneContext, type PaneProps, type RegisteredPane } from '../panes/index.js';
 import {
   closeDock,
@@ -497,6 +499,8 @@ export function Dock(props: DockProps) {
                 : undefined}
             >
               {tiled ? <div className={styles.workspaceTitle}>{titleOf(id)}</div> : null}
+              {/* The tiled workspace is a fixed set of panes; swapping one out would break it. */}
+              {!tiled && isResourceBoard(id) ? <ResourceBoardsNav current={id} visible={shown} primary={id === active} /> : null}
               <PaneHost id={id} visible={shown} presentation={presentation} context={paneContext} requests={requests} />
             </div>
           );

@@ -36,7 +36,9 @@ describe('fleet launchable', () => {
       row('good', 'alpha', prompt), row('A123456Q8', 'alpha', prompt),
       row('A12345Q8', 'alpha', prompt), row('missing', 'alpha', join(root, 'missing')),
       row('drop', 'alpha', prompt), row('defer', 'alpha', prompt), row('other', 'alpha', prompt),
-      row('parked', 'PARKEDx', prompt), row('beta', 'beta', prompt), '# comment',
+      row('parked', 'PARKEDx', prompt), row('RQ-PD8', 'PARKED-DEP.alpha', prompt),
+      'PARKED-DEP.alpha\tRQ-PD9\talpha\twork\t' + prompt,
+      row('beta', 'beta', prompt), '# comment',
     ].join('\n'));
     writeFileSync(join(queue, 'skipped-empty.tsv'), 'time\tdrop\tdrop\treason\ntime\tdefer\tdefer\treason\ntime\tother\tobserve\treason\n');
     writeFileSync(join(queue, 'FILLER_HOLD'), '');
@@ -50,6 +52,14 @@ describe('fleet launchable', () => {
     rmSync(join(queue, 'FILLER_HOLD'));
     expect(await cmdFleetLaunchable(['--json'])).toBe(0);
     expect(report().lanes[0].launchable).toBe(4);
+  });
+  it('counts free slots against the shed launch target', async () => {
+    status({ shed: { target: 4, running: 3, effective_target: 3 }, room: { target: 4, running: 2, effective_target: 3 } });
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report().lanes).toEqual([
+      { lane: 'room', running: 2, target: 3, free: 1, launchable: 0 },
+      { lane: 'shed', running: 3, target: 3, free: 0, launchable: 0 },
+    ]);
   });
   it('handles absent optional files and clamps negative free slots', async () => {
     status({ idle: { target: 2, running: 0 }, full: { target: 1, running: 2 } });

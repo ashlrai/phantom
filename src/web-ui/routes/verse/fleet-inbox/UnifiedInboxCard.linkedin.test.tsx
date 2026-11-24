@@ -11,7 +11,7 @@ function stub(status = 200) {
   const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     if (String(url) === LINKEDIN_ANSWERED_PATH && init?.method === 'POST') return Response.json({ v: 1, outcome: 'marked' }, { status });
     return Response.json({ schema: 'comms.unified-inbox.v1', generatedAt: new Date().toISOString(), total: 2, omitted: 0,
-      sources: { 'needs-you': healthy, imessage: healthy, drafts: healthy, bus: healthy, linkedin: healthy },
+      sources: { 'needs-you': healthy, imessage: healthy, drafts: healthy, bus: healthy, conversations: healthy, linkedin: healthy },
       items: [row('linkedin:fake-msg-1', 'linkedin', 'linkedin-message'), row('bus:fake-work', 'bus', 'bus-work')] });
   });
   vi.stubGlobal('fetch', fetchMock);

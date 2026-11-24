@@ -199,7 +199,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-usage-producers' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -251,6 +251,7 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
   // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
+  { id: 'fleet-usage-producers', load: async () => (await import('./fleet-usage-producers-api.js')).handleFleetUsageProducersApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
@@ -2141,6 +2142,14 @@ export async function handleVerseApi(
     if (path === `${VERSE_API_PREFIX}/shipped`) {
       // Read-only weekly summary of merged work; the same report as `phm shipped --json`.
       return (await import('./whats-new-api.js')).handleShippedApi(req, res, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/fleet/lane-supply`) {
+      // Read-only lane supply report; the same fleet.lane-supply.v1 as `phm fleet lane-supply --json`.
+      return (await import('./lane-supply-api.js')).handleLaneSupplyApi(req, res, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/supply`) {
+      // Read-only self-supply report; the same doctor.supply.v1 as `phm doctor supply --json`.
+      return (await import('./supply-api.js')).handleSupplyApi(req, res, method);
     }
     if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
       return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);

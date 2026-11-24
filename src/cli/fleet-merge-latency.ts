@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { recutRequest, type MergeRecutRequest } from '../core/merge-eta.js';
 import { mergeQueueStatus, type MergeQueueBlocker, type MergeQueueStatus } from '../core/fleet/merge-queue-status.js';
+import { diagnoseMergeWait, type MergeWaitDiagnosis } from '../core/fleet/merge-wait-diagnosis.js';
 import { queueStageTiming, QUEUE_TIMING_STAGES, QUEUE_TIMING_LABELS, type QueueStageTimingReport } from '../core/fleet/queue-stage-timing.js';
 
 const usage = 'Usage: ashlr fleet merge-latency [--events <file>] [--hours <n>] [--stalled-after <seconds>] [--json]';
@@ -137,9 +138,11 @@ export interface PrStages {
   missing_or_ambiguous: MergeEventType[];
   out_of_order: boolean;
   slowest_stage: PrStage | null;
+  /** Per-stage timestamps, current state, stall verdict and next automatic action. */
+  wait: MergeWaitDiagnosis;
 }
 
-function prStages(events: MergeEvent[]): PrStages {
+function prStages(events: MergeEvent[], status: MergeQueueStatus, now: number, stalledAfter: number): PrStages {
   const boundaries = ['opened', 'queued', 'checks_passed', 'merged'] as const;
   const times = boundaries.map(type => {
     const matches = events.filter(e => e.type === type);
@@ -157,7 +160,10 @@ function prStages(events: MergeEvent[]): PrStages {
     queue_wait_s: durations[0]!, required_checks_s: durations[1]!, merge_s: durations[2]!,
     missing_or_ambiguous: boundaries.filter((_, i) => times[i] === undefined),
     out_of_order: !ordered,
-    slowest_stage: winners.length === 1 ? winners[0]! : null };
+    slowest_stage: winners.length === 1 ? winners[0]! : null,
+    wait: diagnoseMergeWait({ times: { opened: times[0], queued: times[1], checks_passed: times[2], merged: times[3] },
+      closed: events.some(e => e.type === 'closed'), status, now, stalledAfter,
+      retryable: !events.some(e => e.type === 'merged' || e.type === 'closed') && queueRetryVerdict(events, now).kind === 'retryable' }) };
 }
 
 /** Recorded transitions are observations, not permission to merge. */
@@ -394,8 +400,8 @@ export async function fleetMergeLatency(read: MergeEventReader, now = Date.now()
     const first = (type: MergeEventType) => { const e = events.find(x => x.type === type); return e?.at ? eventTime(e) : undefined; };
     const { repo, pr } = last;
     const mergedAt = first('merged');
-    if (mergedAt === undefined || mergedAt >= since) stages.push(prStages(events));
     const observedTimeline = timeline(events, now);
+    if (mergedAt === undefined || mergedAt >= since) stages.push(prStages(events, observedTimeline.status, now, stalledAfter));
     if (events.some(e => ['queued', 'eligible', 'blocked', 'check_observed', 'conflict', 'merged', 'closed'].includes(e.type))) timelines.push(observedTimeline);
     if (events.some(e => e.type === 'merged')) {
       if (mergedAt !== undefined && mergedAt < since) continue;
@@ -506,7 +512,7 @@ export function formatMergeLatency(r: MergeLatencyReport): string {
     ...QUEUE_TIMING_STAGES.map(stage => `${line(QUEUE_TIMING_LABELS[stage], r.queue_stage_timing!.stages[stage])}; total observed ${secs(r.queue_stage_timing!.stages[stage].total_s)}`),
     `Largest observed queue delay: ${r.queue_stage_timing!.largest_delay ? QUEUE_TIMING_LABELS[r.queue_stage_timing!.largest_delay] : 'unknown (no positive unique total)'}.`,
     ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: current stage ${t.status.stage.replaceAll('_', ' ')}, wait ${secs(t.status.waiting_s)}; ready to merge ${secs(t.eligible_to_merge_s)}; ready now ${secs(t.ready_wait_s)}; observed delays: ${Object.entries(t.status.delays_s).map(([stage, s]) => `${stage.replaceAll('_', ' ')} ${secs(s)}`).join(', ')}.`),
-    ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.`),
+    ...r.pr_stages!.map(p => `${p.repo}#${p.pr}: queue wait ${secs(p.queue_wait_s)}, required checks ${secs(p.required_checks_s)}, merge ${secs(p.merge_s)}; slowest stage: ${p.slowest_stage ?? 'unknown (incomplete, unordered, or tied)'}; missing or ambiguous: ${p.missing_or_ambiguous.join(', ') || 'none'}${p.out_of_order ? '; timestamps out of order' : ''}.\n  ${p.wait.diagnosis} Elapsed ${secs(p.wait.elapsed_s)}. Next${p.wait.next.automatic ? ' (automatic)' : ''}: ${p.wait.next.note}`),
     ...r.queue_timelines!.map(t => `${t.repo}#${t.pr}: enqueue to eligible ${secs(t.enqueue_to_eligible_s)}, eligible to merge ${secs(t.eligible_to_merge_s)}; ready before queue ${secs(t.ready_to_queue_s)}, ready in queue ${secs(t.ready_in_queue_s)}; dominant ready delay: ${t.dominant_delay?.replace('_', ' ') ?? 'unknown'}; blockers: ${t.blocked.map(b => b.reason).join(', ') || 'none recorded'}; wait by reason: ${t.wait_by_reason_s === null ? 'unknown' : Object.entries(t.wait_by_reason_s).map(([reason, seconds]) => `${reason} ${seconds}s`).join(', ')}; failed observations: ${t.checks ? `${t.checks.required_failures} required, ${t.checks.unrelated_failures} unrelated, ${t.checks.unknown_failures} unknown` : 'unknown'}.`),
     stateTimeLine(r.queue_state_time!),
     line('Open to merge', r.total),

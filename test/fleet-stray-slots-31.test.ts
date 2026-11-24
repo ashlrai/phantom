@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cmdFleetStraySlots, readStraySlots, type StrayJob, type StrayProcess, type StrayReaders } from '../src/cli/fleet-stray-slots.js';
+import { strayJobStates } from '../src/core/fleet/stray-slots.js';
 
 const job = (id: string, finished = true, lane = 'devin'): StrayJob => ({ id, lane, finished, worktree: `/wt/${id}` });
 const proc = (pid: number, command: string, cwd: string | null = null): StrayProcess => ({ pid, command, cwd, elapsed: '3-00:00:00' });
@@ -48,6 +49,21 @@ describe('fleet stray-slots', () => {
       ['codex-personal', 1, 1], ['devin', 1, 1],
     ]);
     expect(result.lanes[0].strays[0].ageSeconds).toBeNull();
+  });
+
+  it('folds jobs.jsonl lifecycle rows through the jobs-ledger field dialect', () => {
+    const metrics = [
+      JSON.stringify({ job_id: 'RQ-A', type: 'launch', pool: 'devin' }),
+      JSON.stringify({ id: 'RQ-B', kind: 'start', lane: 'codex-personal' }),
+      JSON.stringify({ jobId: 'RQ-A', event: 'finish', lane: 'devin', timestamp: '2026-11-09T10:00:00Z' }),
+      JSON.stringify({ job: 'RQ-C', type: 'publish', lane: 'devin' }), // not a lifecycle event
+      JSON.stringify({ event: 'launch' }), // jobless — skipped
+    ].join('\n');
+    expect([...strayJobStates(metrics)]).toEqual([
+      ['RQ-A', { lane: 'devin', finished: true }],
+      ['RQ-B', { lane: 'codex-personal', finished: false }],
+    ]);
+    expect(() => strayJobStates('not json')).toThrow();
   });
 
   it('prints JSON with injected readers and refuses unknown options before reading', async () => {

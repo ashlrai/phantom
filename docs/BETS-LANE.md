@@ -12,7 +12,7 @@ All files live under `$ASHLR_RUNS_DIR` or `~/.ashlr-runs`.
 
 | Command | Effect |
 | --- | --- |
-| `phm metrics loop [--dry-run] [--json]` | Collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. |
+| `phm metrics loop [--since 24h] [--dry-run] [--json]` | Print where the loop waits (`stages`, schema `metrics.loop-stages.v1`), then collect the loop report and write the loop, hint and share files; merge morning fields. `--dry-run` writes nothing. The desktop Metrics card serves the same report from `GET /api/verse/fleet/runs/metrics?since=24h|7d` (`loopStages`), reading releases through the same reader and keeping them for 10 minutes; when releases cannot be read, `releases` is `unavailable` and `releases_reason` says why; `jobs_truncated` is true when the jobs ledger tail was cut at the read cap, and the loop report's `truncated_sources` names every bounded ledger tail that was cut. |
 | `phm bets list [--json]` | Current state of every bet (fold of the ledger). |
 | `phm bets launch --id RQ-BET-<slug> --hypothesis <text> --metric <key> --max-lane-hours <n> --max-cycles <n>` | Append a launch. Baseline defaults to the metric's value in today's loop file, or unknown. |
 | `phm bets score [--dry-run] [--json]` | One kill-fast cycle over every launched bet; appends each decision with its numbers and refreshes `bets-share.json`. |
@@ -36,7 +36,7 @@ Score is the sum of `min(value, cap) x weight` over these terms; ties sort by id
 | --- | --- | --- | --- |
 | `redMain` | 1 for a red main branch (always ranks first) | 1000 | 1 |
 | `fixAttempt` | guardian fix attempts that did not clear it | 10 | 10 |
-| `idleSlot` | free slots on a lane with nothing queued and no hold | 40 | 5 |
+| `idleSlot` | free slots on a lane with nothing queued and no hold, counted against the launch target (configured target tightened by the controller's `effective_target` shed) | 40 | 5 |
 | `poolWastePct` | percent of usage projected to expire unused (from 20 up) | 2 | 100 |
 | `releaseAgeDay` | days since the last tag, when commits follow it | 4 | 30 |
 | `unreleasedCommit` | commits since the last tag | 1 | 40 |
@@ -52,8 +52,9 @@ guardian fix jobs. Lane suggestions take the tier with the best merged-per-launc
 | --- | --- | --- | --- |
 | `metrics/bets.jsonl` | `bets.ledger.v1` | `phm bets` | Append-only events: `launch`, `score`, `kill`. Events after a terminal state are ignored. |
 | `metrics/bets-share.json` | `bets.share.v1` | `phm metrics loop`, `phm bets score` | `reserved` and `usable` bet slots this cycle, stamped `at`. |
-| `metrics/loop-YYYYMMDD.json` | `metrics.loop.v1` | `phm metrics loop` | Full report. Unknown values are `{"missing": "<reason>"}`. |
-| `metrics/selection-hints.json` | `metrics.selection-hints.v1` | `phm metrics loop` | Advisory: ranked lanes, nodes with spare slots, top constraint. |
+| `metrics/loop-YYYYMMDD.json` | `metrics.loop.v1` | `phm metrics loop` | Full report. Unknown values are `{"missing": "<reason>"}`. `truncated_sources` names ledger files whose bounded tail read was cut; counts folded from them cover only the newest bytes. |
+| `metrics/selection-hints.json` | `metrics.selection-hints.v1` | `phm metrics loop` | Advisory: ranked lanes, nodes with spare slots, top constraint, and `loop_wait` — the where-the-loop-waits summary (headline, slowest stage, window, truncation flag) folded from the same jobs.jsonl tail as `metrics.loop-stages.v1`. `phm ideas list` reads it as the `loop-hints` signal: a named binding constraint becomes a `loop-constraint:*` idea and a slowest stage at p50 ≥ 60 min becomes a `loop-wait:*` idea; a report older than 72 h, a missing file or a non-advisory document leaves the signal unknown. |
+| `metrics/dupcheck.jsonl` | `queue.dupcheck-event.v1` | `phm queue dupcheck --gate`, `empty-tag-sync`, `phm jobs empty --record` | Append-only pre-launch gate decisions and `already_done` outcome rows. `phm ideas list` reads it as the `dupcheck-gate` signal: recurring false skips become `dupcheck-gate:false-skips` and cleared jobs that still ended `already_done` become `dupcheck-gate:missed-duplicates`; a missing or unreadable file leaves the signal unknown. |
 | `reports/morning-YYYYMMDD.json` | (existing) | `phm metrics loop` | Adds `bets`, `feedback_loop_minutes`, `cost_per_merged_pr`, `capacity_per_node`; other keys are kept. A file that is not a JSON object is left untouched. |
 
 ## Bet rows and the capacity share
@@ -91,6 +92,7 @@ Metric keys: `merges_per_hour.1h`, `merges_per_hour.6h`, `opens_per_hour.1h`,
 
 - Throughput: `metrics/jobs.jsonl` MERGED outcomes and first PR publish per job over 1h and 6h.
 - Idea to merged: the `enqueue` row dispatchd writes when it first sees a `queue/ready.tsv` row, to the MERGED outcome. ready.tsv itself has no timestamp column.
+- Ledger rows are read in the fleet's canonical jobs.jsonl dialect — job ids `job|job_id|jobId|id`, event names `event|type|kind` (`published` normalizes to `publish`), phases `state|outcome|status` (an eventless PUBLISHED/MERGED/CLOSED/OPEN row infers its event), timestamps `ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt`, PR links `url|pr_url|prUrl|pr|html_url` and the `pool` lane alias — the same field sets `queue/visit-sync`, `queue/job-outcomes`, `fleet/agent-activity`, `fleet/job-latency`, `fleet/throughput` and `metrics/reward-feed` accept, so reconciler-resolved merges count once.
 - Merged to installed: `gh` merged PRs and releases for ashlrai/phantom plus `/Applications/Phantom.app/Contents/Info.plist` (version and file time). Only merges first shipped by the installed release are timed.
 - Feedback loop: enqueue to install, for jobs whose PR is in the installed release.
 - Cost per merged PR: the newest `costPerMergedPrUsd` in `metrics/growth-cost-hourly.jsonl` within 24h.

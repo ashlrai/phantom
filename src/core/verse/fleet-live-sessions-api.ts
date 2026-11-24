@@ -6,23 +6,27 @@
  *
  * One session-map read serves every caller for 5 seconds (the Map's throttle);
  * filters apply to that shared read, so polling panes and agents cost at most
- * one fleet read per 5 s.
+ * one fleet read per 5 s. The leader's row (its last pass and last reply, from
+ * its plan log and outbox) is read at most once per 15 s: it changes per pass.
  */
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import type { FleetSessionMap } from '../fleet/sessions-view.js';
 import { SESSION_FILTER_RE, type LiveSessionsV1 } from '../fleet/live-sessions.js';
-import { readLiveSessions } from '../fleet/live-sessions-read.js';
+import { readLeaderSessionFacts, readLiveSessions } from '../fleet/live-sessions-read.js';
+import type { LeaderSessionFacts } from '../fleet/session-tree.js';
 import { throttledLiveMap } from './fleet-live-map-api.js';
 
 export const LIVE_SESSIONS_PATH = '/api/verse/fleet/control/live-sessions';
+const LEADER_FACTS_MIN_INTERVAL_MS = 15_000;
 
 export type LiveSessionsRead = (filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<LiveSessionsV1>;
 
 /** The default read: one throttled session map, filtered per request. */
 export function defaultLiveSessionsRead(): LiveSessionsRead {
   const map = throttledLiveMap<FleetSessionMap>(async () => (await import('../fleet/sessions-view.js')).readFleetSessionMap());
-  return filter => readLiveSessions({ ...filter, readMap: () => map() });
+  const leader = throttledLiveMap<LeaderSessionFacts>(() => readLeaderSessionFacts(), Date.now, LEADER_FACTS_MIN_INTERVAL_MS);
+  return filter => readLiveSessions({ ...filter, readMap: () => map(), readLeader: () => leader() });
 }
 
 export function createFleetLiveSessionsApi(read: LiveSessionsRead = defaultLiveSessionsRead()): ApiModule {

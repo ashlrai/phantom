@@ -1,3 +1,4 @@
+/** Why finished job worktrees were kept, grouped by reason with the oldest ids. Read-only. */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

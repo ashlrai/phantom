@@ -2,12 +2,14 @@
  * lane-reward.ts — per-lane one-ask reward rollup over a host metrics jobs
  * ledger (`~/.ashlr-runs/metrics/jobs.jsonl` by default). Every job folds
  * into one attempt scored by {@link inspectOneAskReward} at uniform weight 1.
+ * The ledger is append-only, so the read covers its newest bounded tail —
+ * the same window every other jobs-ledger reader uses — never the stale head.
  * Observation only: never writes, never routes, never releases merge credit.
  */
-import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadProposal } from '../inbox/store.js';
+import { readLedgerTail } from '../router/outcomes.js';
 import type { Proposal } from '../types.js';
 import { inspectOneAskReward, type OneAskReward } from './one-ask-reward.js';
 
@@ -38,6 +40,8 @@ export interface LaneRewardLane {
 }
 export interface LaneRewardV1 {
   schema: typeof LANE_REWARD_SCHEMA; generatedAt: string; source: 'healthy' | 'missing' | 'degraded';
+  /** true when the ledger exceeded the bounded tail window; counts cover recent rows only. */
+  truncated: boolean;
   weight: number; attempts: number; scored: number; unscored: number;
   meanReward: number | null; lanes: LaneRewardLane[];
   /** Fleet-wide measured spend in ledger token units (across every lane). */
@@ -47,8 +51,10 @@ export interface LaneRewardV1 {
   /** Fleet-wide tokens ÷ verified results; null = unknown. */
   tokensPerVerifiedResult: number | null;
 }
+/** What a jobsText dep may return: raw ledger text, or text plus its tail-window flag. */
+export interface LaneRewardLedgerRead { text: string; truncated: boolean }
 export interface LaneRewardDeps {
-  jobsText(path: string): Promise<string | null>; // null = unreadable
+  jobsText(path: string): Promise<string | LaneRewardLedgerRead | null>; // null = unreadable
   proposal(id: string): Proposal | null; // trusted inbox lookup (loadProposal)
   score(input: Parameters<typeof inspectOneAskReward>[0]): OneAskReward; // the inspector
   nowMs(): number;
@@ -56,14 +62,8 @@ export interface LaneRewardDeps {
 
 export const defaultLaneRewardDeps: LaneRewardDeps = {
   async jobsText(path) {
-    try {
-      const file = await open(path, 'r');
-      try {
-        const buffer = Buffer.alloc(16 * 1024 * 1024);
-        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-        return buffer.subarray(0, bytesRead).toString('utf8');
-      } finally { await file.close(); }
-    } catch { return null; }
+    const tail = await readLedgerTail(path);
+    return tail.state === 'read' ? { text: tail.text, truncated: tail.truncated } : null;
   },
   proposal: loadProposal,
   score: inspectOneAskReward,
@@ -85,11 +85,23 @@ const pickString = (row: Row, ...names: string[]): string | null => {
 };
 const boundedId = (value: string | null, re: RegExp): string | null =>
   value !== null && re.test(value) ? value : null;
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/** Terminal outcome stamp; MERGED prefers mergedAt, CLOSED closedAt. */
+const terminalTsMs = (row: Row, phase: string): number => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : 'closedAt';
+  const keys = [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
+  return Date.parse(pickString(row, ...keys) ?? '') || 0;
+};
 const jobOf = (row: Row): string | null => boundedId(pickString(row, 'job', 'job_id', 'jobId', 'id'), JOB_ID);
 const laneOf = (row: Row): string | null => boundedId(pickString(row, 'lane', 'pool', 'arm'), LANE_ID);
-const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr');
+const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
+const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
 const tokensOf = (row: Row): number | null => {
   const value = row['tokens_total'] ?? row['tokens'] ?? row['total_tokens'];
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : null;
@@ -128,7 +140,7 @@ export function foldLaneRewardAttempts(text: string): { attempts: Map<string, La
     if (finish) attempt.tokens = tokensOf(row) ?? attempt.tokens;
     attempt.published ||= PUBLISH_EVENTS.has(event) || phase === 'PUBLISHED' || url !== null;
     if (TERMINAL_PHASES.has(phase)) {
-      const tsMs = Date.parse(pickString(row, 'ts', 'timestamp', 'at', 'mergedAt', 'closedAt') ?? '') || 0;
+      const tsMs = terminalTsMs(row, phase);
       if (tsMs >= attempt.outcomeTsMs) {
         attempt.outcome = phase === 'MERGED' ? 'merged' : 'closed';
         attempt.outcomeTsMs = tsMs;
@@ -168,22 +180,25 @@ export async function readLaneReward(opts: {
   deps?: Partial<LaneRewardDeps>;
 } = {}): Promise<LaneRewardV1> {
   const deps: LaneRewardDeps = { ...defaultLaneRewardDeps, ...opts.deps };
-  const nowMs = deps.nowMs();
-  // Pin one observation time across every attempt's window inspection.
-  const pinned: LaneRewardDeps = { ...deps, nowMs: () => nowMs };
   const path = resolve(
     opts.jobsPath?.startsWith('~/')
       ? join(homedir(), opts.jobsPath.slice(2))
       : opts.jobsPath ?? join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'),
   );
-  const text = await deps.jobsText(path);
+  const raw = await deps.jobsText(path);
+  const ledger = raw === null ? null
+    : typeof raw === 'string' ? { text: raw, truncated: false } : raw;
+  const nowMs = deps.nowMs();
+  // Pin one observation time across every attempt's window inspection.
+  const pinned: LaneRewardDeps = { ...deps, nowMs: () => nowMs };
   const base: LaneRewardV1 = { schema: LANE_REWARD_SCHEMA,
     generatedAt: new Date(Number.isFinite(nowMs) ? nowMs : Date.now()).toISOString(), source: 'healthy',
+    truncated: ledger?.truncated ?? false,
     weight: LANE_REWARD_WEIGHT, attempts: 0, scored: 0, unscored: 0, meanReward: null, lanes: [],
     tokensMeasured: 0, verifiedResults: 0, tokensPerVerifiedResult: null };
-  if (text === null) return { ...base, source: 'missing' };
+  if (ledger === null) return { ...base, source: 'missing' };
 
-  const fold = foldLaneRewardAttempts(text);
+  const fold = foldLaneRewardAttempts(ledger.text);
   const lanes = new Map<string, LaneRewardLane & { rewardSum: number }>();
   let rewardSum = 0;
   for (const [job, attempt] of fold.attempts) {

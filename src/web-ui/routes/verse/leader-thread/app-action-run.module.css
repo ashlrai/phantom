@@ -1,0 +1,33 @@
+/* App actions in the Leader conversation (AppActionRun): a quiet group between messages. */
+.list { display: grid; gap: 0; width: 100%; margin: 0; padding: var(--space-1) var(--space-3); border-left: 2px solid var(--border-subtle); list-style: none; }
+
+/* Dot, what happened, when; the logged detail sits under the sentence. */
+.row { display: grid; grid-template-columns: var(--space-2) minmax(0, 1fr) max-content; align-items: baseline; gap: 0 var(--space-2); padding: var(--space-1) 0; font-size: var(--text-sm-size); line-height: var(--text-sm-line); animation: app-run-in var(--duration-base) var(--ease-decelerate); }
+@keyframes app-run-in { from { opacity: 0; transform: translateY(2px); } }
+
+.dot { width: var(--space-2); height: var(--space-2); border-radius: var(--radius-full); background: var(--status-success-solid); transform: translateY(-1px); }
+.row[data-tone='warn'] .dot { background: var(--status-warning-solid); }
+.row[data-tone='bad'] .dot { background: var(--status-danger-solid); }
+/* Unknown is hollow: there is no result to colour. */
+.row[data-tone='unknown'] .dot { border: 1px solid var(--status-unknown-fg); background: none; }
+
+.what { min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+/* A finished action is the ordinary case and reads lighter than one that did not go through. */
+.row[data-tone='ok'] .what { color: var(--text-secondary); font-weight: 400; }
+.when { color: var(--text-tertiary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.detail { grid-column: 2 / -1; min-width: 0; color: var(--text-secondary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; }
+
+.look { color: var(--status-warning-fg); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+
+.door,
+.more { padding: 0; border: 0; background: none; color: var(--text-link, var(--accent-500)); font: inherit; font-size: var(--text-xs-size); line-height: var(--text-xs-line); cursor: pointer; }
+.door { margin-left: auto; }
+.more { align-self: flex-start; font-variant-numeric: tabular-nums; }
+.door:hover,
+.more:hover { text-decoration: underline; }
+.door:focus-visible,
+.more:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: var(--radius-xs); }
+
+@media (prefers-reduced-motion: reduce) {
+  .row { animation: none; }
+}

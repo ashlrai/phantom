@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fleetYield, jobFamily } from '../src/core/fleet/slot-yield.js';
+import { fleetYield, jobFamily, jobYield } from '../src/core/fleet/slot-yield.js';
 import { cmdFleetYield, familyYieldLines, type YieldLineReader } from '../src/cli/fleet-yield.js';
 import { readFamilyYield } from '../src/core/fleet/family-yield.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
@@ -87,6 +87,97 @@ describe('fleetYield', () => {
 
   it('rejects a non-positive window', () => {
     expect(() => fleetYield([], now, 0)).toThrow(RangeError);
+  });
+});
+
+describe('jobs-ledger dialect', () => {
+  it('credits reconciler PUBLISHED and MERGED rows keyed by jobId/prUrl/outcome', () => {
+    const lines = [
+      launch('RQ-DIALECT-1', 3),
+      row({ jobId: 'RQ-DIALECT-1', prUrl: 'https://github.com/example/fake/pull/21', outcome: 'PUBLISHED', timestamp: at(2) }),
+      row({ jobId: 'RQ-DIALECT-1', prUrl: 'https://github.com/example/fake/pull/21', outcome: 'MERGED', mergedAt: at(1), reconciledAt: at(0.5), source: 'metrics-outcomes-reconciler' }),
+    ];
+    const report = fleetYield(lines, now, 24);
+    expect(report.families).toEqual([expect.objectContaining({ name: 'RQ-DIALECT*', launches: 1, prs: 1, merged: 1, reverted: 0 })]);
+  });
+
+  it('credits a reconciler row that kept event:publish with a resolved phase', () => {
+    const lines = [
+      launch('RQ-DIALECT-2', 3),
+      row({ event: 'publish', job: 'RQ-DIALECT-2', class: 'pr', url: 'https://github.com/example/fake/pull/22', ts: at(2) }),
+      row({ event: 'publish', jobId: 'RQ-DIALECT-2', prUrl: 'https://github.com/example/fake/pull/22', outcome: 'MERGED', mergedAt: at(1), source: 'metrics-outcomes-reconciler' }),
+    ];
+    expect(fleetYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, prs: 1, merged: 1 });
+  });
+
+  it('reads status/closedAt terminal rows without merging them', () => {
+    const lines = [
+      launch('RQ-DIALECT-3', 3),
+      row({ jobId: 'RQ-DIALECT-3', prUrl: 'https://github.com/example/fake/pull/23', status: 'PUBLISHED', ts: at(2) }),
+      row({ jobId: 'RQ-DIALECT-3', prUrl: 'https://github.com/example/fake/pull/23', status: 'CLOSED', closedAt: at(1), source: 'metrics-outcomes-reconciler' }),
+    ];
+    expect(fleetYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, prs: 1, merged: 0 });
+  });
+
+  it('accepts type/kind event names, job_id/id keys, pool lanes and timestamp aliases', () => {
+    const lines = [
+      row({ type: 'launch', job_id: 'RQ-DIALECT-4', pool: 'zai', timestamp: at(3) }),
+      row({ kind: 'finish', id: 'RQ-DIALECT-4', empty: false, wall_s: 100, recordedAt: at(2) }),
+      row({ kind: 'outcome', jobId: 'RQ-DIALECT-4', outcome: 'MERGED', updatedAt: at(1) }),
+    ];
+    const report = fleetYield(lines, now, 24);
+    expect(report.families[0]).toMatchObject({ launches: 1, prs: 0, merged: 1, finished: 1 });
+    expect(report.lanes.map(r => [r.name, r.launches])).toEqual([['zai', 1]]);
+  });
+
+  it('counts skipped_empty and skipped_empty-style skips but not dry-run precheck_skip rows', () => {
+    const lines = [
+      row({ event: 'skipped_empty', job: 'RQ-DIALECT-SK1', repo: 'phantom', ts: at(1) }),
+      row({ event: 'precheck_skip', job: 'RQ-DIALECT-SK2', repo: 'phantom', applied: false, ts: at(1) }),
+      row({ event: 'precheck_skip', job: 'RQ-DIALECT-SK2', repo: 'phantom', ts: at(1) }),
+    ];
+    expect(jobYield(lines, now, 24).families).toEqual([expect.objectContaining({ family: 'RQ-DIALECT-SK', launches: 0, skipped: 2 })]);
+  });
+
+  it('reads merged:true as merge evidence and keeps reconciler merges revert-sticky', () => {
+    const lines = [
+      launch('RQ-DIALECT-5', 3),
+      row({ jobId: 'RQ-DIALECT-5', merged: true, ts: at(2) }),
+      launch('RQ-DIALECT-6', 3),
+      row({ jobId: 'RQ-DIALECT-6', prUrl: 'https://github.com/example/fake/pull/26', outcome: 'PUBLISHED', ts: at(2) }),
+      row({ jobId: 'RQ-DIALECT-6', prUrl: 'https://github.com/example/fake/pull/26', outcome: 'MERGED', mergedAt: at(1.5) }),
+      row({ job: 'RQ-DIALECT-6', reverted: true, ts: at(1) }),
+    ];
+    expect(fleetYield(lines, now, 24).families[0]).toMatchObject({ launches: 2, prs: 1, merged: 1, reverted: 1 });
+  });
+
+  it('does not let a phase-less outcome row overwrite a recorded merge', () => {
+    const lines = [
+      launch('RQ-DIALECT-7', 3),
+      pr('RQ-DIALECT-7', 7),
+      outcome('RQ-DIALECT-7', 'MERGED'),
+      row({ event: 'outcome', job: 'RQ-DIALECT-7', ts: at(0.4) }),
+    ];
+    expect(fleetYield(lines, now, 24).families[0]).toMatchObject({ launches: 1, prs: 1, merged: 1 });
+  });
+
+  it('skips node-pool producer rows instead of minting phantom launches', () => {
+    const lines = [
+      // fleet.session-pool.v1 and phm-node-runner.v1 rows are a different
+      // producer dialect: `job` is a per-attempt/claim id, never a
+      // dispatchd launch, so none of them may mint or finish a run.
+      row({ schema: 'fleet.session-pool.v1', ts: at(3), sessionId: 'sess-a', event: 'session_start', context: 0 }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(3), sessionId: 'sess-a', event: 'launch', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(2.9), sessionId: 'sess-a', event: 'finish', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1', outcome: 'completed' }),
+      row({ schema: 'fleet.session-pool.v1', ts: at(2.8), sessionId: 'sess-a', event: 'session_stop', context: 0 }),
+      row({ schema: 'phm-node-runner.v1', ts: at(2), event: 'finish', job: 'ready:RQ-NODE-2:1:4', jobId: 'ready:RQ-NODE-2:1', node: 'muse', pack: 'shell-check', token: 4, outcome: 'succeeded' }),
+      launch('RQ-DIALECT-8', 3),
+      finish('RQ-DIALECT-8', { empty: false, wall_s: 100 }),
+    ];
+    const report = fleetYield(lines, now, 24);
+    expect(report.launches).toBe(1);
+    expect(report.families).toEqual([expect.objectContaining({ name: 'RQ-DIALECT*', launches: 1, finished: 1 })]);
+    expect(report.lanes.map(r => [r.name, r.launches])).toEqual([['codex-personal', 1]]);
   });
 });
 

@@ -23,7 +23,7 @@ describe('layoutLiveMap3D', () => {
     expect(projectLayout3D(layout, 0, 800, 480).size).toBe(0);
   });
 
-  it('one leader, 3 lanes, 5 jobs: leader on the axis on top, then a lane ring, then a job ring with jobs near their lane', () => {
+  it('one leader, 3 lanes, 5 jobs: leader on the axis on top, lanes one level down, jobs one more, each job nearest its own lane', () => {
     const layout = layoutLiveMap3D(org(3, 5));
     expect(layout.nodes).toHaveLength(9);
     const leader = layout.at.get('leader')!, lanes = layout.nodes.filter(n => n.kind === 'lane'), jobs = layout.nodes.filter(n => n.kind === 'job');
@@ -33,24 +33,38 @@ describe('layoutLiveMap3D', () => {
     expect(leader.y).toBeLessThan(lanes[0]!.y);
     expect(lanes[0]!.y).toBeLessThan(jobs[0]!.y);
     expect(leader.y + jobs[0]!.y).toBe(0); // centred on the origin
-    // Jobs are ordered round the ring by their lane: lane0's jobs first, then lane1's, then lane2's.
-    expect(jobs.map(n => n.label)).toEqual(['job0', 'job3', 'job1', 'job4', 'job2']);
-    const radius = (n: { x: number; z: number }) => Math.hypot(n.x, n.z);
-    for (const lane of lanes) expect(radius(lane)).toBeCloseTo(radius(lanes[0]!), 0);
+    const gap = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+    for (const job of jobs) {
+      const own = layout.at.get(`lane:lane${Number(job.label.slice(3)) % 3}`)!;
+      for (const lane of lanes) expect(gap(job, own)).toBeLessThanOrEqual(gap(job, lane));
+    }
+    expect(layout.labels.map(l => l.text)).toEqual(['lane0: 2 running', 'lane1: 2 running', 'lane2: 1 running']);
     expect(layout.radius).toBeGreaterThan(0);
   });
 
-  it('projects every node inside the box, leader above the lanes and lanes above the jobs, at any angle', () => {
+  it('groups by org: a job with no lane sits in "Other", and computers sit on a ring below the jobs', () => {
+    const base = org(1, 1), computer = node('computer', 'node-a');
+    const layout = layoutLiveMap3D({ ...base, nodes: [...base.nodes, node('job', 'orphan'), computer] });
+    expect(layout.nodes).toHaveLength(5);
+    expect(layout.labels.map(l => l.text)).toEqual(['lane0: 1 running', 'Other: 1 running']);
+    expect(layout.at.get('computer:node-a')!.y).toBeGreaterThan(layout.at.get('job:orphan')!.y);
+  });
+
+  it('a collapsed lane hides its jobs and says how many', () => {
+    const layout = layoutLiveMap3D(org(2, 4), new Set(['lane:lane0']));
+    expect(layout.nodes.map(n => n.label)).toEqual(['Leader', 'lane0', 'lane1', 'job1', 'job3']);
+    expect(layout.labels[0]!.text).toBe('lane0: 2 running, 2 hidden');
+  });
+
+  it('projects every node and group label inside the box at any angle', () => {
     const layout = layoutLiveMap3D(org(3, 5));
     for (const yaw of [0, 45, 90, 180, 270]) {
       const at = projectLayout3D(layout, yaw, 800, 480);
+      expect(at.size).toBe(layout.nodes.length + layout.labels.length);
       for (const p of at.values()) {
         expect(p.x).toBeGreaterThanOrEqual(0); expect(p.x).toBeLessThanOrEqual(800);
         expect(p.y).toBeGreaterThanOrEqual(0); expect(p.y).toBeLessThanOrEqual(480);
       }
-      const ys = (kind: LiveMapNodeKind) => layout.nodes.filter(n => n.kind === kind).map(n => at.get(n.id)!.y);
-      expect(Math.max(...ys('leader'))).toBeLessThan(Math.min(...ys('lane')));
-      expect(Math.max(...ys('lane'))).toBeLessThan(Math.min(...ys('job')));
     }
     // Turning moves ring nodes; the leader on the axis stays put.
     const a = projectLayout3D(layout, 0, 800, 480), b = projectLayout3D(layout, 90, 800, 480);

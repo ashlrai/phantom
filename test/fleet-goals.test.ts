@@ -35,7 +35,7 @@ const mains = (states: ('green' | 'red' | 'unknown')[]): FleetMainHealthV1 => ({
 const NONE: GoalScorecardInput = { now: NOW, jobs: null, status: null, mains: null, releaseLines: null };
 const goalsOf = (input: Partial<GoalScorecardInput>): Record<string, FleetGoal> =>
   Object.fromEntries(buildGoalScorecard({ ...NONE, ...input }).goals.map(g => [g.id, g]));
-const FIVE = ['merges-per-day', 'publish-to-merge', 'launches-merged', 'main-green'] as const;
+const FIVE = ['merges-per-day', 'publish-to-merge', 'launches-merged', 'wasted-launch-rate', 'main-green'] as const;
 
 describe('each goal is computed from fleet data', () => {
   it('PRs merged per day counts distinct merged PRs in the last 24 hours', () => {
@@ -158,7 +158,7 @@ describe('phm goals --json', () => {
     vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
     expect(await cmdGoals(['--json'], { runsDir: dir, now: () => NOW })).toBe(0);
     const card = JSON.parse(out[0]!) as GoalScorecard;
-    expect(Object.keys(card)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'goals']);
+    expect(Object.keys(card)).toEqual(['schema', 'version', 'generatedAt', 'malformedLines', 'targets', 'endState', 'goals', 'end_state_text', 'bets', 'bets_source', 'bets_reason', 'as_of']);
     expect(card).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date(NOW).toISOString() });
     for (const g of card.goals) {
       for (const key of ['id', 'title', 'why', 'metric', 'unit', 'target', 'current', 'trend', 'updated_at', 'source'] as const) expect(g).toHaveProperty(key);

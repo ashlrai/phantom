@@ -22,7 +22,20 @@ runs on two nodes.
   node stalls, the lease lapses and another node can pull the job with a higher
   token; the old holder's renew and complete are then refused. Two nodes racing
   for one job get exactly one claim. Pass the token to every external effect so
-  a paused node cannot act after losing the job.
+  a paused node cannot act after losing the job. Only a claim its session can
+  still act on consumes capacity: a lapsed claim is re-routable, and a claim
+  fenced by a rejoin or departure frees the node's slot and host budget at
+  once even though the job itself stays fenced until the claim expires.
+- **Handing a claim back.** A pool worker (`phm node worker`) that pulls a job
+  it will not run releases the claim at once through the pool's `release`
+  operation, so the job returns to pending instead of showing as running until
+  the lease lapses. A temporary refusal (the node is stopping, short on
+  capacity or lost the lease) stays retryable. Only a permanent one (the job
+  needs a lane or cap the node lacks, carries secrets, or has an invalid task)
+  declines the job, and that session is not offered it again. A primary too old
+  to know `release` lets the claim expire instead. `release` is not a
+  standalone `phm node` verb: a manual holder stops renewing and lets the
+  lease lapse.
 - **Local auth only.** Jobs needing `gh` go only to nodes whose own heartbeat
   reports a working GitHub CLI login (`phm node beat --probe-auth` runs
   `gh auth status` locally and reads only its exit code). Phantom never copies,
@@ -46,10 +59,6 @@ phm node pull --node box --session 1 --json
 # While working, renew; when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
-# A claim you will not run is handed back at once and the job returns to pending. Add --decline only when this
-# session can never run it (it is then not offered again); a temporary refusal omits it and stays retryable:
-phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3 [--decline]
-
 # What this owner scope can see:
 phm node status --owner acme
 ```
@@ -89,13 +98,17 @@ Standalone legacy queues retain their existing compatibility policy.
 Workers reporting the same host share the minimum fresh slot budget. Active
 claims and planned assignments consume it once; a fresh pressure hold blocks
 that host. Placement ranks remaining slots divided by the median accepted
-claim-to-completion duration over 24 hours. Missing latency uses the mean of
+claim-to-completion duration over 24 hours; a producer withdrawal is a fence,
+not an execution, and adds no sample. Missing latency uses the mean of
 measured host medians (equal weights when none exist). Unknown duration is never
 reported as zero. Owner, capability, local-auth and fencing checks still apply.
 
 `phm node status --json` exposes scoped capacity samples. `phm fleet status-api
 --json` and the existing Fleet compute API add lane occupancy, targets, floors
-and queued counts from dispatcher status. Four local reads run concurrently,
+and queued counts from dispatcher status. Lane `available` counts slots against
+the launch target — the configured target tightened by the controller's
+`effective_target` load-shed ceiling (`effectiveTarget`, null when unpublished)
+— so a shed lane never reports phantom room. Four local reads run concurrently,
 each capped at 2 MiB and 250 ms, with phase status; no SSH probes or writes.
 Lane availability expires after two 30-second dispatcher intervals.
 
@@ -147,7 +160,10 @@ both preserve the row, lease and manifest without withdrawing or requeueing.
 
 A ready row with a `needs` value other than an array of strings, or a
 `data_class` that is not a string own key of `DATA_CLASSES`, stays local with
-`needs_invalid` or `data_class_invalid`, respectively.
+`needs_invalid` or `data_class_invalid`, respectively. A row whose status or
+lane cell carries the dispatcher's `PARKED-` hold marker (either ready.tsv
+dialect) stays local with `parked_row`, whatever its requirements spec says —
+held work is never offloaded.
 
 The bridge does nothing and reports `inert` with one of these reason codes:
 `bridge-owner-unset`, `bridge-disabled` (when `--apply` is used without
@@ -159,7 +175,7 @@ lacks the lease protocol), `router-unavailable`, `not-pool-primary` or
 (`callPool`). A demoted primary never claims.
 
 A row stays local with one of these reasons: `invalid_row`,
-`invalid_requirements`, `data_class_invalid`, `needs_invalid`,
+`invalid_requirements`, `parked_row`, `data_class_invalid`, `needs_invalid`,
 `duplicate_row`, `host_bound_job` (`RQ-FIX-MAIN-`,
 `RQ-REL-`, `RQ-DESK-`, `RQ-BATCH-`), `local_claim_present`, `exclusive`,
 `local_execution_required` (`codex-local`, `omlx`), `lane_not_remote` (`devin`,
@@ -235,6 +251,17 @@ rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
 never launches work. Providers passed with `--exhausted` are never routed.
+
+The outcomes file is optional to maintain by hand: `--outcomes-ledger` derives
+the same `{provider: {attempts, merged}}` tallies from
+`<runs-dir>/metrics/jobs.jsonl` (default `ASHLR_RUNS_DIR`, then
+`~/.ashlr-runs`; `--runs-dir` requires the flag). A job counts as an attempt
+only when its merge verdict is known — MERGED or CLOSED — so in-flight and
+aborted work never deflates a lane's rate; a merge recorded as reverted
+counts as an attempt but not as a held merge; an absent ledger means no
+recorded outcomes, while an unreadable one refuses the route. Explicit `--outcomes`
+entries win per provider over ledger tallies, and the JSON plan reports the
+ledger state, truncation and provider count under `outcomes_ledger`.
 
 ## Limits
 

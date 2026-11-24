@@ -1,4 +1,6 @@
 /** Offline attempt-cohort metrics. No clock, filesystem, pricing or routing side effects. */
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+
 export interface OutcomeGroup {
   name: string;
   model: string | null;
@@ -46,11 +48,45 @@ type Row = Record<string, unknown>;
 type Event = { row: Row; kind: string; at: number; ref: string; job: string | null; url: string | null };
 type Attempt = { launch: Event; finishes: Event[]; prs: Event[] };
 const DAY = 86_400_000;
+/**
+ * Attempt boundaries in jobs.jsonl vocabulary. `launch` opens a solo attempt;
+ * `batch_claim` opens a batch member's attempt (members never get a `launch`
+ * row — the session id does). `finish` closes a solo attempt; `task_outcome`
+ * is the batch member's end-of-session record, emitted once per member at reap
+ * whatever its outcome word (done/skipped/failed/deferred/unreported), so it
+ * is the member finish boundary; success is still measured only through PR
+ * and empty evidence. `claim` rows pair with their `launch` (launch_dedupe)
+ * and never open attempts.
+ */
+const START_KINDS: ReadonlySet<string> = new Set(['launch', 'batch_claim']);
+const FINISH_KINDS: ReadonlySet<string> = new Set(['finish', 'task_outcome']);
+const JOB_REQUIRED_KINDS: ReadonlySet<string> = new Set(['launch', 'finish', 'batch_claim', 'task_outcome']);
+const KINDS: ReadonlySet<string> = new Set(['launch', 'finish', 'publish', 'published', 'outcome', 'merged', 'revert', 'revert_coverage', 'batch_claim', 'task_outcome']);
+/** RQ-BATCH-* session ids are dispatch infrastructure, not job attempts. */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
 const label = (value: unknown): string | null => typeof value === 'string' && /^[\w][\w.:@/-]{0,159}$/.test(value) ? value : null;
 const time = (value: unknown): number | null => {
   const n = typeof value === 'string' ? Date.parse(value) : NaN;
   return Number.isFinite(n) ? n : null;
 };
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/** Ledger row time; MERGED prefers mergedAt, CLOSED closedAt. */
+function eventTs(row: Row): number | null {
+  const raw = row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion;
+  const phase = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_KEYS : [preferred, ...TS_KEYS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const at = time(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+}
 const number = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const url = (value: unknown): string | null => typeof value === 'string' && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*\/?$/i.test(value) ? value.replace(/\/$/, '').toLowerCase() : null;
 const rate = (yes: number, total: number): number | null => total ? yes / total : null;
@@ -92,15 +128,19 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   for (const [i, value] of (input.events ?? []).entries()) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) { ignoredRows++; continue; }
     const row = value as Row;
-    const kind = label(row.event) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
-    if (!kind || !['launch', 'finish', 'publish', 'published', 'outcome', 'merged', 'revert', 'revert_coverage'].includes(kind)) continue;
-    const at = time(row.ts ?? row.timestamp ?? row.at);
-    const job = label(row.job ?? row.jobId ?? row.job_id);
-    const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr);
-    if (at === null || (['launch', 'finish'].includes(kind) && !job)) { ignoredRows++; continue; }
+    // Node-pool machinery rows are a different producer dialect — `job` is
+    // a per-attempt id and no row carries attempt fields, so a
+    // session-pool `launch`/`finish` pair would mint a phantom attempt.
+    if (isNodePoolLedgerRow(row)) continue;
+    const kind = label(row.event ?? row.type ?? row.kind) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+    if (!kind || !KINDS.has(kind)) continue;
+    const at = eventTs(row);
+    const job = label(row.job ?? row.job_id ?? row.jobId ?? row.id);
+    const prUrl = url(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? row.html_url);
+    if (at === null || (JOB_REQUIRED_KINDS.has(kind) && !job)) { ignoredRows++; continue; }
     if (at <= until) events.push({ row, kind, at, ref: `events:${i}`, job, url: prUrl });
   }
-  events.sort((a, b) => a.at - b.at || (Number(b.kind === 'launch') - Number(a.kind === 'launch')));
+  events.sort((a, b) => a.at - b.at || (Number(START_KINDS.has(b.kind)) - Number(START_KINDS.has(a.kind))));
   const attempts: Attempt[] = [], current = new Map<string, Attempt>(), seen = new Set<string>();
   for (const e of events) {
     if (!e.job) continue;
@@ -108,7 +148,10 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     const key = JSON.stringify([e.job, e.kind, e.at, Object.entries(e.row).sort(([a], [b]) => a.localeCompare(b))]);
     if (seen.has(key)) continue;
     seen.add(key);
-    if (e.kind === 'launch') {
+    if (START_KINDS.has(e.kind)) {
+      // A batch session's own launch/finish rows are infrastructure evidence,
+      // not a job attempt; its members arrive through batch_claim instead.
+      if (e.job.startsWith(BATCH_SESSION_PREFIX)) continue;
       const prior = current.get(e.job);
       if (prior?.launch.at === e.at) {
         // One timestamp cannot prove two attempts. Conflicting route metadata is unknown.
@@ -123,7 +166,7 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     } else {
       const a = current.get(e.job);
       if (!a) continue;
-      if (e.kind === 'finish') a.finishes.push(e);
+      if (FINISH_KINDS.has(e.kind)) a.finishes.push(e);
       if (e.url && ['publish', 'published'].includes(e.kind)) a.prs.push(e);
     }
   }
@@ -133,7 +176,8 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
     for (const a of cohort) { const k = key(a), list = groups.get(k) ?? []; list.push(a); groups.set(k, list); }
     return [...groups].sort(([a], [b]) => a.localeCompare(b));
   };
-  const byLane = grouped(a => label(a.launch.row.lane) ?? 'unknown').map(([k, a]) => group(k, a));
+  const laneLabel = (row: Row): string | null => label(row.lane) ?? label(row.pool) ?? label(row.arm);
+  const byLane = grouped(a => laneLabel(a.launch.row) ?? 'unknown').map(([k, a]) => group(k, a));
   const byModelTier = grouped(a => JSON.stringify([label(a.launch.row.model), label(a.launch.row.tier)]))
     .map(([k, a]) => { const [model, tier] = JSON.parse(k) as [string | null, string | null]; return group(k, a, model, tier); });
   // PRs have their own merge-time cohort, independent of launch time or lane attribution.
@@ -143,7 +187,8 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   const coverageEvents = events.filter(e => e.kind === 'revert_coverage');
   let unknownMergeTimes = 0;
   for (const [prUrl, rows] of prs) {
-    const merges = rows.filter(e => e.kind === 'merged' || (e.kind === 'outcome' && (e.row.state ?? e.row.outcome ?? e.row.status) === 'MERGED'));
+    const merges = rows.filter(e => e.kind === 'merged' || (e.kind === 'outcome' &&
+      (e.row.state ?? e.row.outcome ?? e.row.status ?? e.row.phase ?? e.row.result ?? e.row.conclusion) === 'MERGED'));
     if (!merges.length) continue;
     const stamps = [...new Set(merges.map(e => time(e.row.mergedAt) ?? (e.kind === 'merged' ? e.at : null)).filter((t): t is number => t !== null))];
     if (stamps.length !== 1) { unknownMergeTimes++; continue; }

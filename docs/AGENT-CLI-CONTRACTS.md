@@ -46,9 +46,12 @@ For finite reads, start at cursor 0, process a page, then persist its
 continue while it advances, including when the filtered `messages` array is
 empty. An unchanged cursor means caught up for that snapshot, not that no future
 messages will arrive. The limit (1–100, default 50) counts live records scanned
-before filters; expired records advance the cursor without counting. Filters
-are exact, case-sensitive, and combined. A cursor beyond the retained end is
-invalid; do not silently reset it and replay work.
+before filters; expired records advance the cursor without counting. `--to`,
+`--from` and `--exclude-from` match the literal routing label or any other
+label of the same registered agent identity (an unresolvable label or
+unreadable registry keeps exact matching); `--id`, `--in-reply-to` and
+`--priority` stay exact and case-sensitive. All filters combine. A cursor
+beyond the retained end is invalid; do not silently reset it and replay work.
 
 Watch emits one JSON object per line for each successful poll, even empty ones,
 and resumes from that page's `nextCursor`. It silently retries `retryable` at
@@ -71,7 +74,16 @@ stdout with or without `--json`:
 | read degraded | 1 | `{sourceState:"degraded",entries:[]}` |
 | invalid options | 2 | `{status:"invalid"}` |
 
-Missing is not evidence of a healthy empty inbox. Read selects the newest
+Missing is not evidence of a healthy empty inbox. With no verb, `phm comms
+inbox` is instead the unified pending view ([docs/CHANNELS.md](CHANNELS.md#unified-inbox)):
+`--source <name>`, `--kind <name>`, `--severity <info|warn|high>`,
+`--blocking`, `--job <id>`, `--since <15m|2h|1d|ISO>`, `--before
+<15m|2h|1d|ISO>` (the exclusive upper bound composing with `--since` into
+one `[since, before)` window) and `--contains
+<text>` narrow its items while `sources` keeps
+every store's real unfiltered pending count — `null` when a source could
+not be read, never a fabricated 0.
+Read selects the newest
 matching entries, returns them oldest first, and defaults to 50 (limit 1–200).
 `source` is metadata, not identity. Duplicate receipts last only for the
 receiver process lifetime. Post reads owner-controlled stable regular UTF-8
@@ -147,7 +159,14 @@ returns the identical object. Rows are sorted by `wasteRisk` (`high`, `medium`,
 `staleAfterMinutes`, past its reset, or missing has `wasteRisk: "unknown"`, a
 `reason`, and `null` numbers; never treat it as zero or as spare capacity.
 `burnBasis` says whether the burn was `reported`, a `window-average`, or zero
-because the lane is `held`. `gaps` lists what the view cannot see. Exit 0 with
+because the lane is `held`. `running` and `target` are the lane's jobs against
+its slot target as the dispatcher last reported them, and `source` names the
+reader behind the usage reading; each is `null` when not reported. `scopes`
+lists per-model windows (`id`, `usedPct`, `resetAt`, `hoursLeft`) beside the
+pool's own: it is empty unless the pool's reading is current, and a scope whose
+own reset has passed has `usedPct: null`. These fields were added to `pools.v1`
+without a version change; a reader must treat an absent one as unknown. `gaps`
+lists what the view cannot see. Exit 0 with
 JSON on stdout, 2 on an unknown flag.
 
 The `window-average` burn and unused-at-reset projection are anchored to the
@@ -155,9 +174,31 @@ reading's capture time, not the request time: a request cannot create a new usag
 observation. They use unrounded values; rounding is for output only. The hours-left
 countdown, time marker, and freshness checks still use the request time.
 
+`phm pools spenddown` is the chart view of the same rows
+([`pools-spenddown.ts`](../src/core/fleet/pools-spenddown.ts), `GET
+/api/app/pools/spenddown`, schema `pools.spenddown.v1`). Each pool has `used_frac`,
+`reset_at`, `even_pace_frac` (where a straight line from the last reset would be
+now), `projected_at_reset` (used share at reset at the current burn), a `state`
+(`on-pace`, `under`, `idle`, `over`, `drained`, `unknown`) and a plain `verdict`
+("spending on pace", "refilled, lane idle", "behind: will waste ~12%", "exhausted until
+Fri 6 PM", "unknown: no reading", "unknown: no fresh reading (3 h old)"). `idle` is a
+pool at 10% used or less, in the first quarter of its window, whose lane is open with
+nothing running and rows queued. `resets_in_h` is hours to the reset, `as_of`
+and `reading_age_min` say when the last reading was taken and how old it is.
+Optional fields: `running`, `target` (slots) and `queued_rows` (rows waiting for the lane; `null` is unknown, never 0), `queued_hours` (ready jobs times the pool's median job time over
+the last 72 h; `0` for an empty queue, `null` when unknown) and `blocked: "sign-in"`
+with `blocked_fix` when the lane is held for a sign-in (verdict "blocked: sign-in"). `sentence`
+is the row in one plain line ("Claude: 45% used, 6 days left, on pace"; pace is "on pace",
+"behind: will leave N% unused", "spent until Fri 6 PM" or "unknown"), and the desktop chart shows it.
+Fractions are 0 to 1; a pool with no current reading has `null` fractions and
+`state: "unknown"`, never zero. The desktop Spend down panel and the phone Home Pools card
+draw only this JSON.
+
 ```sh
 phm pools
 phm pools --text
+phm pools spenddown
+phm pools spenddown --text
 ```
 
 ## Keep streams and exit codes separate
