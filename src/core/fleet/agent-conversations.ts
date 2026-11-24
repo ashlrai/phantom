@@ -11,8 +11,8 @@
  * bus starts its own thread. Names are routing labels, not proven identities.
  */
 import { JOB_THREAD_PREFIX, agentName, projectAgentMessages } from './agent-messages.js';
-import { busBodyJobId } from '../agents/bus-unified.js';
-import { agentIdentityKeys, agentLabels, readAgentRegistry, resolveAgent,
+import { busBodyJobId, labelIdentityOf } from '../agents/bus-unified.js';
+import { agentLabels, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
@@ -29,6 +29,9 @@ export const buildConversations = (messages: readonly ConversationMessage[], now
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const text = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value.trim() : null;
+/** The body's own `inReplyTo` citation verbatim — never the `replyTo` alias and never trimmed, so the conversations `inReplyTo` filter applies the same own-property exact match `busBodyInReplyToMatch` gives every other bus read. */
+const ownInReplyTo = (body: Record<string, unknown> | null): string | undefined =>
+  body !== null && Object.hasOwn(body, 'inReplyTo') && typeof body['inReplyTo'] === 'string' ? body['inReplyTo'] : undefined;
 
 /** Bus receipts → messages. Subjects come from the scrubbed `phm messages` projection; only ids and states are read from the body. */
 export function conversationMessages(rows: readonly BusInboxReceipt[]): ConversationMessage[] {
@@ -49,6 +52,7 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
     return {
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
+      priority: m.priority, inReplyTo: ownInReplyTo(body),
       ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
@@ -110,34 +114,43 @@ export function conversationScope(agent: string, registry: AgentRegistry | undef
  * or missing registry and an unresolvable ref reduce to the literal-label
  * scope, matching never widens on unknown state.
  */
-function waitingOnScope(ref: string, options: BusInboxOptions): (on: string, from: string) => boolean {
-  const read = readAgentRegistry({ root: options.root });
-  const registry = read.status === 'ok' ? read.registry : undefined;
+function waitingOnScope(ref: string, registry: AgentRegistry | undefined): (on: string, from: string) => boolean {
   const identity = registry === undefined ? undefined : resolveAgent(registry, ref);
   const scope = conversationScope(ref, registry, identity);
   return (on, from) => scope.denotes(on) && !scope.isSelf(from);
 }
 
 /** Pure: a bus scan in, the typed JSON out. `identityOf` lets `--agent` match
- * every label of one registered identity; absent or unresolved, labels stay strict. */
+ * every label of one registered identity while `refKeyFor` resolves the query
+ * ref exactly; absent or unresolved, labels stay strict. */
 export function buildAgentConversations(scan: { source: AgentConversations['source']; rows: readonly BusInboxReceipt[]; skipped?: number },
   query: ConversationQuery, now: number, identityOf?: AgentIdentityKeyFor,
-  waitingOnMatch?: (on: string, from: string) => boolean): AgentConversations {
+  waitingOnMatch?: (on: string, from: string) => boolean, refKeyFor?: AgentIdentityKeyFor): AgentConversations {
   const head = { schema: 'agents.conversations.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), source: scan.source };
   const skipped = scan.skipped ?? 0;
   if (scan.source === 'unavailable') return { ...head, conversations: null, matched: null, waiting: null, skipped };
   const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= now);
   const all = buildConversations(conversationMessages(rows), now);
-  const matched = filterConversations(all, query, identityOf, waitingOnMatch);
+  const matched = filterConversations(all, query, identityOf, waitingOnMatch, refKeyFor);
   return { ...head, conversations: query.limit === undefined ? matched : matched.slice(0, query.limit),
     matched: matched.length, waiting: all.filter(c => c.state === 'waiting').length, skipped };
 }
 
 /** The one read behind the CLI, the API and the map. */
 export function readAgentConversations(query: ConversationQuery = {}, options: BusInboxOptions = {}): AgentConversations {
-  const identityOf = query.agent === undefined ? undefined : agentIdentityKeys({ root: options.root });
-  const waitingOnMatch = query.waitingOn === undefined ? undefined : waitingOnScope(query.waitingOn, options);
-  return buildAgentConversations(scanBusInbox(options), query, (options.now ?? Date.now)(), identityOf, waitingOnMatch);
+  // The registry backs `agent`, `waitingOn` and the `from`/`excludeFrom`
+  // sender filters' identity matching; `channel`, `priority` and
+  // `inReplyTo` decide on member-message fields alone and need no read.
+  const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
+    query.from !== undefined || query.excludeFrom !== undefined;
+  const registryRead = needsRegistry ? readAgentRegistry({ root: options.root }) : undefined;
+  const registry = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const needsIdentity = query.agent !== undefined || query.from !== undefined || query.excludeFrom !== undefined;
+  const identityOf = !needsIdentity || registry === undefined ? undefined : labelIdentityOf(registry);
+  const refKeyFor = !needsIdentity || registry === undefined ? undefined
+    : (ref: string) => resolveAgent(registry, ref)?.id;
+  const waitingOnMatch = query.waitingOn === undefined ? undefined : waitingOnScope(query.waitingOn, registry);
+  return buildAgentConversations(scanBusInbox(options), query, (options.now ?? Date.now)(), identityOf, waitingOnMatch, refKeyFor);
 }
 
 /** `phm agents conversations` for people: one line per thread. */

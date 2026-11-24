@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { liveOwnerTransports } from '../src/core/comms/owner-live-transport.js';
 import type { OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
-import { acceptOwnerInbound, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { acceptOwnerInbound, sendOwnerReply, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 import { createOwnerThreadApi, VERSE_OWNER_THREAD_PATH as PATH } from '../src/core/verse/owner-thread-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { parseOwnerThreadRead } from '../src/web-ui/routes/verse/leader-thread/owner-thread-queries.js';
@@ -97,6 +97,41 @@ describe('GET /api/verse/comms/owner-thread', () => {
     for (const bad of ['?contains=', `?contains=${'x'.repeat(513)}`]) {
       const rejected = await call('GET', bad);
       expect(rejected.status, bad.slice(0, 40)).toBe(400);
+    }
+  });
+
+  it('filters by beforeAt and rejects a bad value with 400', async () => {
+    await seed(3);
+    // seq 2 lands exactly at the ceiling — exclusive, like every other comms read's --before.
+    const ceiling = new Date(NOW + 2).toISOString();
+    const r = await call('GET', `?beforeAt=${encodeURIComponent(ceiling)}`);
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: { seq: number }) => m.seq)).toEqual([1]);
+    const window = await call('GET', `?since=${encodeURIComponent(new Date(NOW + 1).toISOString())}&beforeAt=${encodeURIComponent(new Date(NOW + 3).toISOString())}`);
+    expect(window.status).toBe(200);
+    expect(window.body.messages.map((m: { seq: number }) => m.seq)).toEqual([1, 2]);
+    for (const bad of ['?beforeAt=', '?beforeAt=bogus']) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad).toBe(400);
+    }
+  });
+
+  it('filters by replyTo and rejects a bad key with 400', async () => {
+    const options: OwnerThreadOptions = { runsDir, now: () => NOW, settings, halted: false, paused: false, mailbox };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'owner-test-1', text: 'fake ask', idempotencyKey: 'telegram-test-0001', at: NOW }, options);
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'owner-test-1', text: 'fake aside', idempotencyKey: 'telegram-test-0002', at: NOW + 1 }, options);
+    // No transports attached: deliveries record disabled, the outbound row still lands citing the inbound key.
+    await sendOwnerReply({ text: 'fake answer', replyTo: 'telegram-test-0001', idempotencyKey: 'reply-test-0001' }, options);
+    const r = await call('GET', '?replyTo=telegram-test-0001');
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: { seq: number; direction: string }) => [m.seq, m.direction])).toEqual([[1, 'inbound'], [3, 'outbound']]);
+    const aside = await call('GET', '?replyTo=telegram-test-0002');
+    expect(aside.status).toBe(200);
+    expect(aside.body.messages.map((m: { seq: number }) => m.seq)).toEqual([2]);
+    expect(aside.body.awaitingReply).toEqual(['m2']);
+    for (const bad of ['?replyTo=', '?replyTo=has%20space', '?replyTo=short']) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad).toBe(400);
     }
   });
 

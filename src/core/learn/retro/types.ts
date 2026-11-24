@@ -18,6 +18,7 @@
  * BROWSER-SAFE: the Lessons view imports this — type-only imports, plain consts.
  */
 
+import type { LessonEffect } from '../../improve/lesson-trial.js';
 import type { PlaybookRef } from '../../playbooks/types.js';
 import type { TrajectoryRealizedOutcome, TrajectoryTerminalOutcome } from '../../autonomy/trajectory-records.js';
 
@@ -217,6 +218,15 @@ export interface KnowledgeNoteV1 {
    * sample floor); never zero-filled.
    */
   outcomes?: KnowledgeNoteOutcomes;
+  /**
+   * The cloud lesson holdout's per-note read (improve/lesson-trial.ts
+   * `byNote`, `scope` dropped — it is this note's id): landed rates with and
+   * without the note's lessons, the effect and its 95% interval. Computed at
+   * read time from cloud task files, never stored. Absent = the note was
+   * never part of a finished eligible run, or the task store / revert
+   * evidence was unreadable — unknown, never "no effect".
+   */
+  trial?: Omit<LessonEffect, 'scope'>;
   /** Retros that suggested the same note again while it was pending/approved. */
   seen: number;
   /** Fleet task that proposes it for AGENTS.md; null until requested. */
@@ -244,6 +254,19 @@ export interface LessonsCauseRow {
   bySource: Record<RetroSource, number>;
 }
 
+/**
+ * The cloud lesson holdout's all-notes read, joined into the Lessons state at
+ * read time (improve/lesson-trial.ts): the share of eligible launches that
+ * ran without lessons, the served-vs-holdout effect across every note, and
+ * the finished runs left out of both arms. Absent = the task store or revert
+ * evidence was unreadable, or no finished run has been eligible yet.
+ */
+export interface KnowledgeTrialSummary {
+  holdout: number;
+  overall: LessonEffect;
+  excluded: { launchFailed: number; unfinished: number };
+}
+
 export interface LessonsStateV1 {
   v: 1;
   /** Newest first, ≤ 50. */
@@ -259,6 +282,8 @@ export interface LessonsStateV1 {
     /** Bytes the approved notes would take if every one matched (the cap bounds what is injected). */
     approvedBytes: number;
     capBytes: number;
+    /** The holdout trial across all notes; absent = not measured (see KnowledgeTrialSummary). */
+    trial?: KnowledgeTrialSummary;
   };
   /** Veto lessons the Leader and task prompts now read back (playbook deltas). */
   playbook: { text: string; hits: number; addedAt: string }[];

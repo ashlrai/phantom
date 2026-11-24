@@ -135,6 +135,37 @@ describe('executeBusClaimBody', () => {
     expect(acquire('path:ashlrai/phantom:src2/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
   });
 
+  it('conflicts with a live team claim whose wildcard path covers the glob subtree', () => {
+    const root = tempDir('v2claim-');
+    // A team lease on 'src/*/foo' is still a prefix claim — `*`/`?` are legal
+    // filename characters — so a bus glob matching anything beneath it must
+    // conflict even though the two bare globs' languages never intersect.
+    const team = acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w1',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW });
+    expect(team.status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:src/*/foo/bar', 'bus-lane', 600_000, 'op-1', root))
+      .toMatchObject({ status: 'conflict', holder: { owner: 'agent:team-lane' } });
+    expect(acquire('path:ashlrai/phantom:src/*/foo/**', 'bus-lane', 600_000, 'op-2', root))
+      .toMatchObject({ status: 'conflict' });
+    // The reverse order conflicts the same way: the bus glob blocks the team claim.
+    const root2 = tempDir('v2claim-');
+    expect(acquire('path:ashlrai/phantom:src/*/foo/bar', 'bus-lane', 600_000, 'op-1', root2)).toMatchObject({ status: 'acquired' });
+    expect(acquireCoordination({ root: root2, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w2',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW }).status).toBe('conflict');
+    // Provably disjoint scopes still coordinate independently.
+    const root3 = tempDir('v2claim-');
+    expect(acquireCoordination({ root: root3, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/phantom', path: 'src/*/foo' }), owner: 'agent:team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-w3',
+      teamTarget: { repo: 'ashlrai/phantom', path: 'src/*/foo' }, now: NOW }).status).toBe('acquired');
+    expect(acquire('path:ashlrai/phantom:docs/**', 'bus-lane', 600_000, 'op-1', root3)).toMatchObject({ status: 'acquired' });
+    expect(acquire('path:ashlrai/phantom:src/*/bar/**', 'bus-lane', 600_000, 'op-2', root3)).toMatchObject({ status: 'acquired' });
+  });
+
   it('lets non-overlapping keys coexist across claim forms', () => {
     const root = tempDir('v2claim-');
     expect(acquire('repo:ashlrai/phantom', 'a', 600_000, 'op-1', root)).toMatchObject({ status: 'acquired' });

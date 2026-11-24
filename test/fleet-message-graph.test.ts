@@ -22,7 +22,7 @@ function store(messages: [at: number, from: string, to: string, text: string][] 
     { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, since?: string) => readMessageGraph(since, { root, now: () => NOW })!;
+const read = (root: string, since?: string, before?: string) => readMessageGraph(since, { root, now: () => NOW, before })!;
 const KEYS = ['schema', 'version', 'generatedAt', 'since', 'source', 'organizations', 'groups', 'messages', 'skipped'];
 
 describe('fleet message graph', () => {
@@ -76,6 +76,11 @@ describe('fleet message graph', () => {
     expect([organizationOf({ lane: 'claude' }), organizationOf({ lane: null })]).toEqual(['Anthropic', 'unknown']);
     // --since narrows the window.
     expect(read(root, String(T0 + 7_500)).groups!.map(group => [group.id, group.count])).toEqual([['unknown->unknown', 1]]);
+    // --before is the exclusive ceiling: [since, before) counts each message once.
+    expect(read(root, undefined, String(T0 + 8_000)).messages).toBe(8);
+    expect(read(root, undefined, String(T0 + 8_001)).messages).toBe(9);
+    expect(read(root, String(T0 + 7_500), String(T0 + 8_500))).toMatchObject({ messages: 1, groups: [{ id: 'unknown->unknown', count: 1 }] });
+    expect(readMessageGraph(undefined, { root, now: () => NOW, before: 'soon' })).toBeNull();
     expect(formatMessageGraphText(graph).split('\n').slice(0, 3)).toEqual(['9 agent messages between 5 organizations since 2026-11-18 11:46 UTC.',
       'unknown -> unknown: 1, last 12:00:08Z', '  mystery-claude -> mystery: 1']);
   });
@@ -93,7 +98,9 @@ describe('fleet message graph', () => {
     const root = store([[T0, 'claude', 'codex', 'hello']]), options = { root, now: () => NOW };
     expect(messageGraphResponse(MESSAGE_GRAPH_PATH, options)).toEqual({ status: 200, body: read(root) });
     expect(messageGraphResponse(`${MESSAGE_GRAPH_PATH}?since=${T0 + 500}`, options)).toMatchObject({ status: 200, body: { groups: [], messages: 0 } });
-    for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'since=1m&limit=2']) expect(messageGraphResponse(`${MESSAGE_GRAPH_PATH}?${query}`, options).status).toBe(400);
+    expect(messageGraphResponse(`${MESSAGE_GRAPH_PATH}?before=${T0}`, options)).toMatchObject({ status: 200, body: { messages: 0 } });
+    expect(messageGraphResponse(`${MESSAGE_GRAPH_PATH}?since=${T0}&before=${T0 + 1}`, options)).toMatchObject({ status: 200, body: { messages: 1 } });
+    for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'since=1m&limit=2', 'before=soon', 'before=1m&before=2m', 'since=1m&before=soon']) expect(messageGraphResponse(`${MESSAGE_GRAPH_PATH}?${query}`, options).status).toBe(400);
     const call = async (url: string, method = 'GET') => {
       const req = Object.assign(Readable.from([]) as IncomingMessage, { url, method, headers: {} });
       let status = 0, payload = '';
@@ -106,19 +113,23 @@ describe('fleet message graph', () => {
     expect(Object.keys(served.body)).toEqual(KEYS);
     expect(served.body).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
     expect((await call(`${MESSAGE_GRAPH_PATH}?since=soon`)).status).toBe(400);
+    expect((await call(`${MESSAGE_GRAPH_PATH}?before=soon`)).status).toBe(400);
+    expect((await call(`${MESSAGE_GRAPH_PATH}?before=${T0 + 8_000}`)).status).toBe(200);
   });
 
   it('phm fleet message-graph prints the same JSON, is registered, and rejects bad usage', async () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {}), err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(Object.keys(await FLEET_SUBCOMMAND_LOADERS['message-graph']!())).toContain('cmdFleetMessageGraph');
     expect(await cmdFleetMessageGraph(['--help'])).toBe(0);
-    expect(out.mock.lastCall![0]).toContain('phm fleet message-graph [--json] [--since');
-    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--apply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(4);
+    expect(out.mock.lastCall![0]).toContain('phm fleet message-graph [--json] [--since <10m|2h|1d|ISO>] [--before <10m|2h|1d|ISO|epoch>]');
+    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--before'], ['--before', 'soon'], ['--apply']]) expect(await cmdFleetMessageGraph(args)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(6);
     expect(await cmdFleetMessageGraph(['--json', '--since', '1m'])).toBe(0);
     const printed = JSON.parse(out.mock.lastCall![0]);
     expect(Object.keys(printed)).toEqual(KEYS);
     expect(printed).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
+    expect(await cmdFleetMessageGraph(['--json', '--before', '1h'])).toBe(0);
+    expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.message-graph.v1', version: 1 });
     expect(await cmdFleetMessageGraph([])).toBe(0);
     expect(out.mock.lastCall![0]).toMatch(/^\d+ agent messages? between \d+ organizations? since /);
   });

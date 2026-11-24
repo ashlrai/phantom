@@ -9,6 +9,7 @@ import { ledgerRows, ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerStateToken
 import { collapseFamily } from './family-yield.js';
 import { readGuardianGlance } from './guardian-glance.js';
 import { readFleetPace } from './pace-verdict.js';
+import { parseTickCost } from './tick-cost.js';
 import { compactMergeLatency, dispatchTick, objectRow } from './compact-brief-evidence.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { LIVE_JOBS_FILE, type LiveJobsSnapshot } from './live-jobs.js';
@@ -21,6 +22,7 @@ import { openPrCount } from './open-prs.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 import { activeFamilyStops, type BriefFamily } from './family-auto-stop.js';
 import { whyIdle } from './why-idle.js';
+import { fleetGhosts } from './ghosts.js';
 
 export const LEADER_COMPACT_FILE = 'queue/leader-brief.json';
 const clean = (s: string) => scrubSecrets(s).replace(/\s+/g, ' ').slice(0, 80);
@@ -125,6 +127,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
   }
   const mergedPrs = [...merges.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
   const readyRows = ready === null ? null : parseReadyRows(ready);
+  const ghosts = await fleetGhosts({ runsDir, now: () => now });
   const lanes = (snapshot?.snapshot.lanes ?? []).map(l => {
     const finished = [...new Map(rows.filter(r => r.lane === l.lane && ledgerEventName(r.row) === 'finish').map(r => [`${r.id}:${r.at}`, r])).values()].slice(-20);
     const slot = objectRow(slots[l.lane]), pause = slot.pause_new_until;
@@ -132,7 +135,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     const held = slot.held === true || (pause_new_until !== null && pause_new_until > now / 1000) ? true
       : slot.held === false || slot.held === undefined && Object.keys(slot).length ? false : l.held;
     const queuedReady = readyRows?.filter(r => r.lane === l.lane && !r.id.startsWith('PARKED-') && r.id !== 'id').length ?? null;
-    return { lane: clean(l.lane), running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
+    return { lane: clean(l.lane), ghosts: ghosts.known ? ghosts.jobs.filter(j => j.lane === l.lane && j.state === 'ghost').length : null, running: tick.running[l.lane] ?? l.running, queued: queuedReady, queuedReady,
       target: l.target, held, pause_new_until, emptyRate: finished.length ? finished.filter(r => r.row.empty === true).length / finished.length : null };
   });
   const hungry = lanes.filter(l => l.held === false && l.running !== null && l.target !== null && l.queuedReady !== null
@@ -164,8 +167,9 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
+    tickWallP95: parseTickCost(log?.text ?? null, now, 2, log?.truncated ?? false).tickWallP95,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
-      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
+      burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' || p.verdict === 'free' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
       headroom: p.headroom, source: p.source, ageHours: p.ageHours,
       why: p.verdict === 'unknown' ? [p.usedPct === null ? 'usage missing or stale' : '', p.hoursToReset === null || p.hoursToReset <= 0 ? 'reset missing or elapsed' : '', p.recentPerHour === null ? 'burn rate missing' : ''].filter(Boolean).join('; ') : 'usage, reset and burn rate known' })),
     families: briefFamilyYield(tail?.text ?? '', now).map(({ family, launches, prs, merges, empty }) => ({ family: clean(family), launches, prs, merges, empty })).sort((a, b) => a.prs / Math.max(1, a.launches) - b.prs / Math.max(1, b.launches) || b.launches - a.launches || a.family.localeCompare(b.family)),
@@ -190,7 +194,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
 }
 type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
 /** Stored briefs written before merge projection recovery remain readable. */
-export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs'> & Partial<Pick<GeneratedBrief, 'mergedPrs'>>;
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
@@ -200,7 +204,7 @@ export async function writeCompactBrief(runsDir: string, now = Date.now(), file 
 export function compactBriefLines(b: CompactLeaderBrief): string[] {
   const lines = [b.headline, ...(b.hostLoadWarning ? [b.hostLoadWarning] : []), `Leader: ${b.state} (${b.at}); lanes: ${b.lanes.length}; pools: ${b.pools.length}`,
     ...b.whyIdle,
-    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
+    ...b.lanes.slice(0, 3 - b.whyIdle.length).map(l => `${l.lane}: ${l.running ?? '?'}/${l.target ?? '?'}, ${l.ghosts ?? '?'} ghosts, ${l.queued ?? '?'} queued, held ${l.held ?? '?'}, empty ${l.emptyRate === null ? '?' : Math.round(l.emptyRate * 100) + '%'}`),
     ...b.pools.slice(0, 2).map(p => `${p.pool}: ${p.usedPct ?? '?'}%, reset ${p.hoursToReset ?? '?'}h, burn ${p.burnPerHour ?? '?'}/h, safe ${p.safeBurn ?? '?'}/h, ${p.verdict}`),
     ...b.families.slice(0, 2).map(f => `${f.family}: ${f.launches} launches, ${f.prs} PRs, ${f.merges} merges, ${f.empty} empty (2h)`),
     ...(b.emptyTokenFamilies === null ? ['EMPTY tokens (24h): unknown'] : b.emptyTokenFamilies.slice(0, 3).map(f => `${f.family}: ${f.tokens === null ? 'unknown' : f.tokens} EMPTY tokens (24h), ${f.unknownJobs} jobs with unknown usage`)),
