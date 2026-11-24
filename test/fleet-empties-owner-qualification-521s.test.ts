@@ -46,6 +46,9 @@ it('keeps note contents and escaping or symlinked paths out of the report and CL
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetEmpties(['--runs-dir', root, '--json'], undefined, now)).toBe(0);
   const cli = String(log.mock.calls.at(-1)?.[0]);
-  expect(JSON.parse(cli)).toEqual(report);
+  // The CLI adds the additive `why` block (fleet.empties.why.v1); the v2 report itself is unchanged.
+  const { why, ...v2 } = JSON.parse(cli);
+  expect(v2).toEqual(report);
+  expect(why).toMatchObject({ schema: 'fleet.empties.why.v1', empties: 5 });
   for (const value of ['synthetic-note-marker', 'synthetic-outside-marker', parent, 'outside.md']) expect(cli).not.toContain(value);
 });

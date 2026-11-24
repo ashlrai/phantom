@@ -41,10 +41,11 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 describe('listAsks', () => {
   it('lists only the four kinds, with created and age, and counts the rest as the fleet’s own', () => {
     const list = listAsks(opts);
-    expect(Object.keys(list)).toEqual(['schema', 'asOf', 'ledger', 'count', 'asks', 'fleetDecides']);
+    expect(Object.keys(list)).toEqual(['schema', 'asOf', 'ledger', 'count', 'asks', 'fleetDecides', 'expiredHidden']);
     expect(list).toMatchObject({ schema: 'asks.v1', asOf: '2026-11-17T15:00:00.000Z', ledger: 'available', count: 2, fleetDecides: 1 });
     expect(list.asks.map(ask => Object.keys(ask))).toEqual([
-      ['id', 'shortId', 'kind', 'request', 'created', 'ageSeconds'], ['id', 'shortId', 'kind', 'request', 'created', 'ageSeconds']]);
+      ['id', 'shortId', 'kind', 'type', 'request', 'replies', 'replyHint', 'unblocks', 'subject', 'created', 'ageSeconds', 'expires'],
+      ['id', 'shortId', 'kind', 'type', 'request', 'replies', 'replyHint', 'unblocks', 'subject', 'created', 'ageSeconds', 'expires']]);
     const [device, code] = list.asks;
     expect(device).toMatchObject({ kind: 'device', request: 'Approve the fake-device sign-in on the example-ask laptop', created: '2026-11-17T14:00:00.000Z', ageSeconds: 3600 });
     expect(device!.id).toMatch(/^nm-[0-9a-f]{12}$/);

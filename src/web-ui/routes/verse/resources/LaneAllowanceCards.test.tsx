@@ -9,7 +9,7 @@ import { apiGet } from '../../../data/client.js';
 vi.mock('../../../data/client.js', () => ({ apiGet: vi.fn() }));
 const now = Date.parse('2026-12-02T00:00:00.000Z');
 const row = (changes: Partial<LaneAllowanceRow> = {}): LaneAllowanceRow => ({ lane: 'claude', label: 'Claude', used: 62, limit: 100,
-  left: 38, unit: 'percent', usedPct: 62, resetAt: new Date(now + 3_600_000).toISOString(), resetsInHours: 1,
+  left: 38, unit: 'percent', usedPct: 62, resetAt: new Date(now + 3_600_000).toISOString(), resetsInHours: 1, windowStart: null,
   measuredAt: new Date(now - 240_000).toISOString(), ageSeconds: 240, freshness: 'live', posture: 'balanced', postureReason: 'fixture',
   costClass: 'included', projectedUnusedPct: null, history: null, reason: null, devin: null, ...changes });
 afterEach(() => vi.resetAllMocks());

@@ -12,10 +12,12 @@
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, realpathSync, unlinkSync, writeFileSync, writeSync, openSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, constants, existsSync, readFileSync, readdirSync, renameSync, realpathSync, unlinkSync, writeFileSync, writeSync, openSync, fstatSync, readSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import { NODE_TASK_LIMIT, validNodeTask, nodeTaskArgs, type EmbeddedNodeTask } from './task.js';
 import { type DriveNodes, type JobView, type NodeView, type WithdrawOutcome } from './index.js';
 import { validCap } from './state.js';
+import { scrubSecrets } from '../../util/scrub.js';
 
 export const NODE_BRIDGE_SCHEMA = 'phantom.node-bridge.v1';
 /** dispatchd keeps a lease only when its owner starts with RQ-BATCH- and has a manifest. */
@@ -65,12 +67,14 @@ export interface NodeBridgeReport {
 export interface BridgeRouter {
   scope: string;
   view(owner: string): { nodes: NodeView[]; jobs: JobView[] };
-  enqueue(jobId: string, spec: { owner: string; requires: string[]; pack: string }): boolean;
+  enqueue(jobId: string, spec: { owner: string; requires: string[]; pack: string; task?: EmbeddedNodeTask }): boolean;
   withdraw(jobId: string, owner: string): WithdrawOutcome;
 }
 export interface DispatcherLock { release(): Promise<void> }
 export type AcquireDispatcherLock = (queueDir: string, signal?: AbortSignal) => Promise<DispatcherLock | { busy: string }>;
 interface Manifest {
+  /** Digest only; the task text is never written to a manifest. */
+  taskSha256?: string;
   schema: typeof NODE_BRIDGE_SCHEMA; id: string; job: string; line: string; routerJobId: string; owner: string;
   routerScope?: string; createdAt: number; state: 'claimed' | 'offloaded' | 'completed'; completedAt?: number; result?: string;
 }
@@ -96,7 +100,14 @@ export function parseReadyRow(text: string): ReadyRow | null {
   if (!line.trim() || line.startsWith('#')) return null;
   const f = line.split('\t');
   const job = f[0] ?? '';
-  if (f.length < 5 || !JID.test(job)) return { job, lane: f[2] ?? '', line, spec: null, invalid: 'invalid_row' };
+  const laneCell = f[2] ?? '';
+  // A PARKED- marker in the status or lane cell is a hold, not a candidate —
+  // the same cells dispatchd's parked_row() skips. A spec retained from before
+  // the park still names preferred_lane, so the check must precede spec use.
+  if (/^PARKED-/i.test(f[0]!) || /^PARKED-/i.test(laneCell)) {
+    return { job, lane: laneCell, line, spec: null, invalid: 'parked_row' };
+  }
+  if (f.length < 5 || !JID.test(job)) return { job, lane: laneCell, line, spec: null, invalid: 'invalid_row' };
   let spec: Record<string, unknown> = {};
   if (f.length > 5) {
     try {
@@ -181,6 +192,37 @@ export function planNodeBridge(input: {
 
 function readText(path: string): string | null {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
+}
+
+/** Bounded, no-follow read of a ready row's prompt, confined to <queue>/prompts. Errors carry a code, never text. */
+function readBridgeTask(host: NodeBridgeHost, row: ReadyRow): EmbeddedNodeTask {
+  let fd: number | undefined;
+  try {
+    const path = row.line.split('\t')[4]!;
+    const prompts = join(realpathSync(queueDir(host)), 'prompts');
+    if (realpathSync(prompts) !== prompts) throw new Error('task_unavailable');
+    if (!realpathSync(path).startsWith(prompts + sep)) throw new Error('task_unavailable');
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) throw new Error('task_unavailable');
+    if (fstatSync(fd).size > NODE_TASK_LIMIT) throw new Error('task_oversize');
+    const bytes = Buffer.alloc(NODE_TASK_LIMIT + 1);
+    let size = 0;
+    while (size < bytes.length) {
+      const n = readSync(fd, bytes, size, bytes.length - size, null);
+      if (!n) break;
+      size += n;
+    }
+    if (size > NODE_TASK_LIMIT) throw new Error('task_oversize');
+    const content = bytes.subarray(0, size);
+    const text = content.toString('utf8');
+    if (scrubSecrets(text) !== text) throw new Error('task_secret_shaped');
+    const task = { text, sha256: createHash('sha256').update(content).digest('hex') };
+    if (!Buffer.from(text).equals(content) || !validNodeTask(task)) throw new Error('task_invalid');
+    return task;
+  } catch (error) {
+    if (error instanceof Error && ['task_oversize', 'task_invalid', 'task_secret_shaped'].includes(error.message)) throw error;
+    throw new Error('task_unavailable');
+  } finally { if (fd !== undefined) closeSync(fd); }
 }
 
 function readRows(host: NodeBridgeHost): { text: string; rows: ReadyRow[] } {
@@ -286,7 +328,7 @@ export function poolBridgeRouter(call: (verb: string, args: string[]) => { demot
   return {
     scope: realpathSync(storeDirectory),
     view: owner => ok('status', ['--owner', owner]) as unknown as { nodes: NodeView[]; jobs: JobView[] },
-    enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack])['enqueued'] === true,
+    enqueue: (jobId, spec) => ok('enqueue', ['--job', jobId, '--owner', spec.owner, '--requires', spec.requires.join(','), '--pack', spec.pack, ...nodeTaskArgs(spec.task)])['enqueued'] === true,
     withdraw: (jobId, owner) => {
       const r = ok('withdraw', ['--job', jobId, '--owner', owner]);
       if (!['withdrawn', 'held', 'completed', 'absent'].includes(String(r['state']))) throw new Error('Invalid withdraw reply');
@@ -416,29 +458,42 @@ export async function runNodeBridge(opts: NodeBridgeOptions): Promise<NodeBridge
       report.requeued.push(m.job);
     }
 
-    const staged: { decision: BridgeRowDecision; manifest: Manifest }[] = [];
+    const staged: { decision: BridgeRowDecision; manifest: Manifest; task?: EmbeddedNodeTask }[] = [];
     for (const decision of claims) {
       const row = fresh.rows.find(r => r.job === decision.job);
       const id = bridgeLeaseOwner(decision.job);
       if (!row || claimedLocally(host, decision.job) || existsSync(join(batchesDir(host), `${id}.json`))) { report.lostRace.push(decision.job); continue; }
+      let task: EmbeddedNodeTask | undefined;
+      if (decision.pack === 'codex-file') {
+        // Embed the bounded prompt so the receiving host needs no access to this host's prompt root.
+        try { task = readBridgeTask(host, row); }
+        catch (error) {
+          decision.offload = false;
+          decision.reasons.push((error as Error).message);
+          decision.nodeId = null;
+          decision.routerJobId = null;
+          decision.requires = [];
+          continue;
+        }
+      }
       const manifest: Manifest = { schema: NODE_BRIDGE_SCHEMA, id, job: decision.job, line: row.line, routerJobId: decision.routerJobId!,
-        owner, routerScope: router.scope, createdAt: now, state: 'claimed' };
+        owner, routerScope: router.scope, createdAt: now, state: 'claimed', ...(task ? { taskSha256: task.sha256 } : {}) };
       const manifestPath = join(batchesDir(host), `${id}.json`);
       writeAtomic(manifestPath, JSON.stringify(manifest) + '\n');
       let fd: number;
       try { fd = openSync(join(runDir(host), `${decision.job}.batched`), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
       catch { unlinkSync(manifestPath); report.lostRace.push(decision.job); continue; }
       try { writeSync(fd, id); } finally { closeSync(fd); }
-      staged.push({ decision, manifest });
+      staged.push({ decision, manifest, ...(task ? { task } : {}) });
     }
     if (staged.length) {
       const taken = new Set(staged.map(s => s.manifest.line));
       writeAtomic(join(queueDir(host), 'ready.tsv'), lines.filter(l => !taken.has(l)).map(l => l + '\n').join(''));
     }
 
-    for (const { decision, manifest } of staged) {
+    for (const { decision, manifest, task } of staged) {
       let enqueued = false;
-      try { enqueued = router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack! }); } catch { /* next pass */ }
+      try { enqueued = router.enqueue(manifest.routerJobId, { owner, requires: decision.requires, pack: decision.pack!, ...(task ? { task } : {}) }); } catch { /* next pass */ }
       if (enqueued) writeAtomic(join(batchesDir(host), `${manifest.id}.json`), JSON.stringify({ ...manifest, state: 'offloaded' }) + '\n');
       report.claimed.push(decision.job);
     }

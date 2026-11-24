@@ -5,7 +5,7 @@
  * area each cycle. Most ended EMPTY ("no eligible PR"). Before it writes one, each area must pass:
  *   1. the recut gate (`shouldEmitRecut`): yield stop list, empty streak, and a live stop-file row;
  *   2. at least one eligible PR in the area, counted from the list the recut worker scans: open
- *      conflicting `bridge: RQ-PHX-*` PRs from `phm fleet dirty-landed`, kept only when `recutDropJob`
+ *      conflicting `bridge: RQ-*` PRs from `phm fleet dirty-landed`, kept only when `recutDropJob`
  *      accepts them (the same filter `phm fleet recut-sweep` applies) and a remaining path is in the area.
  * An unreadable PR list is unknown, never zero: the area then follows the gate alone.
  *

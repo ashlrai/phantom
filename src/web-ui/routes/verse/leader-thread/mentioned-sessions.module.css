@@ -1,0 +1,119 @@
+/* The "Mentioned" row under a Leader message: one chip per named job, saying
+   what that session is doing now, then the pull requests as links. */
+.root {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--duration-base) var(--ease-standard);
+}
+
+/* The session open beside the chat. */
+.chip[data-open] { border-color: var(--accent-500); }
+
+.dot {
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-neutral-solid);
+  transition: background-color var(--duration-base) var(--ease-standard);
+}
+
+.chip[data-state='running'] .dot { background: var(--status-info-solid); }
+.chip[data-state='quiet'] .dot { background: var(--status-warning-solid); }
+.chip[data-state='done'] .dot { background: var(--status-success-solid); }
+.chip[data-state='failed'] .dot { background: var(--status-danger-solid); }
+
+/* Not known: a hollow dot, never a colour that reads as a state. */
+.chip[data-state='unknown'] .dot,
+.chip[data-state='absent'] .dot,
+.chip[data-state='unread'] .dot,
+.chip[data-state='reading'] .dot {
+  border: 1px solid var(--status-unknown-fg);
+  background: none;
+}
+
+/* Only a session that is working pulses; the pulse token is 0s under reduced motion. */
+.chip[data-state='running'] .dot,
+.chip[data-state='reading'] .dot {
+  animation: mention-pulse var(--duration-pulse) var(--ease-standard) infinite;
+}
+
+@keyframes mention-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.door,
+.log {
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.door { font-family: var(--font-mono); }
+
+.door:hover,
+.log:hover { text-decoration: underline; }
+
+.door[aria-current] {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-500);
+  text-underline-offset: 2px;
+}
+
+.door:focus-visible,
+.log:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.words { flex: none; color: var(--text-secondary); }
+
+.chip[data-state='quiet'] .words { color: var(--status-warning-fg); }
+.chip[data-state='failed'] .words { color: var(--status-danger-fg); }
+.chip[data-state='unknown'] .words,
+.chip[data-state='absent'] .words,
+.chip[data-state='unread'] .words,
+.chip[data-state='reading'] .words { color: var(--status-unknown-fg); }
+
+/* The last thing it said: one line, cut with an ellipsis; the whole text is the title. */
+.said {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 44ch;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pulls { margin: 0; }

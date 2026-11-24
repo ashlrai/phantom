@@ -51,7 +51,7 @@ describe('phm home', () => {
       mergedLastHour: { state: 'ok', value: 2 }, merged24h: { state: 'ok', value: 3 }, medianMergeSeconds: { state: 'ok', value: 360 },
       main: { state: 'ok', value: [{ repo: 'phantom', state: 'green' }, { repo: 'locus', state: 'green' }] },
       running: { state: 'ok', value: [{ lane: 'claude', running: 3, target: 8 }, { lane: 'grok', running: 0, target: 1 }] },
-      atRisk: { state: 'ok', value: { resource: 'claude', percentUnused: 50 } },
+      atRisk: { state: 'ok', value: { resource: 'claude', percentUnused: 50, usedPercent: 40, burnPctPerHour: 1, resetAt: '2026-11-17T22:00:00.000Z' } },
       unreadLeaderReplies: { state: 'ok', value: 1 }, needsYou: { state: 'ok', value: [] },
     });
     const log = home.worklog.state === 'ok' ? home.worklog.value : [];

@@ -63,7 +63,7 @@ describe('phm feed', () => {
     await fixture();
     const report = await readFeed({ limit: 30 }, defaultFeedReaders(runsDir), now);
     expect(report).toMatchObject({ schema: 'phantom.feed.v2', version: 2, more: false });
-    expect(Object.keys(report.items[0]!).sort()).toEqual(['at', 'count', 'href', 'id', 'job', 'kind', 'repo', 'text']);
+    expect(Object.keys(report.items[0]!).sort()).toEqual(['at', 'count', 'detail', 'href', 'id', 'job', 'kind', 'lane', 'repo', 'text']);
     expect(report.items.map(item => [item.kind, item.text, item.count])).toEqual([
       ['leader', 'Ready. All checks passed.', 1],
       ['released', 'Released ashlrai/phantom v3.30.36', 1],
@@ -72,10 +72,10 @@ describe('phm feed', () => {
       ['merged', 'Merged #123 Add the feed in phantom', 1],
       ['failed', 'Main went red in ashlrai/phantom', 1],
       ['incident', 'Incident: disk guard paused launches', 1],
-      ['incident', 'Lane hold: codex credits exhausted (limit); supervisor clears held in slots.', 3],
+      ['lane', 'The codex lane hit its plan limit and is paused', 3],
     ]);
     const byText = new Map(report.items.map(item => [item.text, item]));
-    expect(byText.get('Merged #123 Add the feed in phantom')).toMatchObject({ href: 'https://github.com/ashlrai/phantom/pull/123', repo: 'phantom', job: 'RQ-MERGE', at: '2026-11-17T11:00:00.000Z' });
+    expect(byText.get('Merged #123 Add the feed in phantom')).toMatchObject({ href: 'https://github.com/ashlrai/phantom/pull/123', repo: 'phantom', lane: 'claude', job: 'RQ-MERGE', at: '2026-11-17T11:00:00.000Z' });
     expect(byText.get('Released ashlrai/phantom v3.30.36')!.href).toBe('https://github.com/ashlrai/phantom/releases/tag/v3.30.36');
     expect(byText.get('Main went red in ashlrai/phantom')).toMatchObject({ href: 'https://github.com/ashlrai/phantom/commits', at: '2026-11-17T09:00:00.000Z' });
     expect(byText.get('RQ-FAIL failed with exit code 2')).toMatchObject({ href: '/verse/?pane=worker-log', job: 'RQ-FAIL' });
@@ -92,8 +92,8 @@ describe('phm feed', () => {
   });
 
   it('folds identical neighbours and dedupes one PR seen by two sources', () => {
-    const merge: FeedItem = { id: 'merged:https://github.com/ashlrai/phantom/pull/123', kind: 'merged', at: '2026-11-17T11:00:00.000Z', text: 'Merged Add the feed in phantom', href: 'https://github.com/ashlrai/phantom/pull/123', repo: 'phantom', job: null, count: 1 };
-    const notice = (at: string): FeedItem => ({ id: `incident:${at}`, kind: 'incident', at, text: 'Incident: same', href: '/verse/?pane=fleet-bus', repo: null, job: null, count: 1 });
+    const merge: FeedItem = { id: 'merged:https://github.com/ashlrai/phantom/pull/123', kind: 'merged', at: '2026-11-17T11:00:00.000Z', text: 'Merged Add the feed in phantom', href: 'https://github.com/ashlrai/phantom/pull/123', repo: 'phantom', lane: null, job: null, detail: null, count: 1 };
+    const notice = (at: string): FeedItem => ({ id: `incident:${at}`, kind: 'incident', at, text: 'Incident: same', href: '/verse/?pane=fleet-bus', repo: null, lane: null, job: null, detail: null, count: 1 });
     const noise = { ...notice('2026-11-17T08:30:00Z'), id: 'n', text: 'LOADGATE warn (non-tripping): load 9' };
     const report = buildFeed({ worklog: ledgerOnly(), proposalMerges: [merge, notice('2026-11-17T08:00:00Z'), noise, notice('2026-11-17T09:00:00Z')], outbox: '', guardian: '{}' }, { limit: 30 }, now);
     expect(report.items.filter(item => item.kind === 'merged')).toHaveLength(1);
@@ -118,7 +118,7 @@ describe('phm feed', () => {
 
   it('returns an empty feed with unknown sources when nothing could be read', async () => {
     const report = await readFeed({ limit: 30 }, fixed({}), now);
-    expect(report).toEqual({ schema: 'phantom.feed.v2', version: 2, items: [], more: false,
+    expect(report).toEqual({ schema: 'phantom.feed.v2', version: 2, items: [], more: false, next: null,
       sources: { jobs: 'unknown', events: 'unknown', leader: 'unknown', merges: 'unknown', releases: 'unknown', main: 'unknown' } });
     const throwing: FeedReaders = { ...fixed({}), worklog: () => Promise.reject(new Error('boom')) };
     expect((await readFeed({ limit: 30 }, throwing, now)).items).toEqual([]);
@@ -133,23 +133,23 @@ describe('phm feed', () => {
     expect(parseFeedQuery({ since: '2026-11-18T00:00:00Z' }, now)).toEqual({ limit: 30, sinceMs: Date.parse('2026-11-18T00:00:00Z') });
     for (const since of ['', '0h', '-1h', '8d', '1.5h', 'yesterday', '2026-11-01T00:00:00Z', '2026-11-19T00:00:00Z']) expect(parseFeedQuery({ since }, now)).toBeNull();
     for (const limit of ['0', '1001', 'NaN', '1.5']) expect(parseFeedQuery({ limit }, now)).toBeNull();
-    for (const kind of ['merge', 'release', 'blocked', '']) expect(parseFeedQuery({ kind }, now)).toBeNull();
+    for (const kind of ['merge', 'release', 'blocked', 'lanes', '']) expect(parseFeedQuery({ kind }, now)).toBeNull();
   });
 
   it('serves the CLI and HTTP from the same report', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(now);
     await fixture();
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await cmdFeed(['--json', '--since', '2d', '--kind', 'incident'])).toBe(0);
+    expect(await cmdFeed(['--json', '--since', '2d', '--kind', 'lane'])).toBe(0);
     const cli = JSON.parse(output.mock.calls.at(-1)![0] as string);
     let status = 0, body = '';
     const res = { writeHead(code: number) { status = code; }, end(text: string) { body = text; } } as unknown as ServerResponse;
-    await handleApi({ url: '/api/feed?since=2d&kind=incident', method: 'GET' } as IncomingMessage, res, {} as AshlrConfig, { token: '', allowDispatch: false });
+    await handleApi({ url: '/api/feed?since=2d&kind=lane', method: 'GET' } as IncomingMessage, res, {} as AshlrConfig, { token: '', allowDispatch: false });
     expect(status).toBe(200);
     expect(JSON.parse(body)).toEqual(cli);
-    expect(cli.items.map((item: FeedItem) => item.count)).toEqual([1, 3]);
-    expect(await cmdFeed(['--since', '2d', '--kind', 'incident'])).toBe(0);
-    expect(output.mock.calls.at(-1)![0]).toContain('(x3)  /verse/?pane=fleet-bus');
+    expect(cli.items.map((item: FeedItem) => [item.lane, item.count, item.detail])).toEqual([['codex', 3, 'codex credits exhausted (limit); supervisor clears held in slots.']]);
+    expect(await cmdFeed(['--since', '2d', '--kind', 'lane'])).toBe(0);
+    expect(output.mock.calls.at(-1)![0]).toContain('(x3)  /verse/?pane=fleet-lanes');
     vi.spyOn(console, 'error').mockImplementation(() => {});
     for (const args of [['--since', 'oops'], ['--kind', 'merge'], ['--kind'], ['--bogus']]) expect(await cmdFeed(args)).toBe(2);
     await handleApi({ url: '/api/feed?kind=nope', method: 'GET' } as IncomingMessage, res, {} as AshlrConfig, { token: '', allowDispatch: false });

@@ -14,15 +14,15 @@ const goal = (over: Partial<FleetGoal>): FleetGoal => ({
   metric: 'PRs merged in the last 24 hours', unit: 'PRs a day', target: 96, targetText: '96 or more a day', better: 'higher', current: 120,
   currentText: '120 in the last 24 hours', trend: 'flat', updated_at: '2026-11-17T11:55:00.000Z', source: 'metrics/jobs.jsonl',
   trend24h: trend([4, 5, 6], 'up', 4), trend7d: trend([96, 96, 96, 96, 96, 96, 96], 'flat', 96),
-  status: 'on-track', statusText: 'on track', reason: 'Merging at or above target.', parts: [], evidencePane: 'fleet-metrics', ...over,
+  status: 'on-track', statusText: 'on track', reason: 'Merging at or above target.', parts: [], evidencePane: 'fleet-metrics', next: null, ...over,
 });
 const unknown = (id: string, title: string, reason: string, evidencePane = 'fleet-metrics'): FleetGoal => goal({
   id, title, current: null, currentText: 'unknown', updated_at: null, trend: 'unknown', trend24h: NONE, trend7d: NONE, status: 'unknown',
   statusText: `unknown: ${reason[0]!.toLowerCase()}${reason.slice(1, -1)}`, reason, evidencePane,
 });
 const card = (goals: FleetGoal[]): GoalScorecard => ({
-  schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: '2026-11-17T12:00:00.000Z', malformedLines: 0,
-  targets: { mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90 },
+  schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: '2026-11-17T12:00:00.000Z', malformedLines: 0, endState: 'Behind on 1 of 3 goals: Releases.',
+  targets: { mergesPerDay: 96, publishToMergeMinutes: 60, launchesMergedPercent: 50, releasesPerRepoPer7d: 1, poolUsedByResetPercent: 90, wastedLaunchRate: 0.2 },
   goals,
 });
 /** Deliberately on-track first: the view must still lead with the behind goal. */
@@ -50,6 +50,20 @@ afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllG
 const titles = () => screen.getAllByRole('button', { name: 'See evidence' }).map(b => b.closest('section, article, div[class]')?.textContent ?? '');
 
 describe.each([['desktop width', 1440], ['390 px', 390]])('FleetGoalCards at %s', (_name, width) => {
+  it('shows the vision line and the current bets, or why there are none', async () => {
+    viewport = mockViewport(width);
+    stubSurfaceFetch({ routes: { [ROUTE]: { ...MIXED, end_state_text: 'Ship fewer, better PRs', bets_source: 'leader/VISION.md', as_of: '2026-11-17T11:00:00.000Z',
+      bets: [{ id: 'RQ-ONE', pool: 'claude', repo: 'phantom', goal: 'Fix the thing.' }] } } });
+    render(<FleetGoalCards />);
+    expect(await screen.findByText('Ship fewer, better PRs')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Current bets' })).toHaveTextContent('RQ-ONE (claude, phantom): Fix the thing.');
+  });
+  it('says plainly when the vision file is missing', async () => {
+    viewport = mockViewport(width);
+    stubSurfaceFetch({ routes: { [ROUTE]: { ...MIXED, end_state_text: null, bets: [], bets_source: null, bets_reason: 'The leader vision file is missing or could not be read.', as_of: null } } });
+    render(<FleetGoalCards />);
+    expect(await screen.findByText(/Current bets: none\. The leader vision file is missing/)).toBeInTheDocument();
+  });
   it('leads with the behind goal and draws each trend against its target', async () => {
     viewport = mockViewport(width);
     stubSurfaceFetch({ routes: { [ROUTE]: MIXED } });
@@ -131,5 +145,19 @@ describe('FleetGoalCards', () => {
     await import('./goals.pane.js');
     const { listPanes } = await import('../panes/pane-registry.js');
     expect(listPanes().find(p => p.id === 'goals')).toMatchObject({ title: 'Goals', needsSession: false });
+  });
+});
+
+describe('end state and next step', () => {
+  it('shows the one-sentence end state on top and a next step only where one is linked', async () => {
+    viewport = mockViewport(390);
+    const withNext = card([goal({ next: 'Raise the claude lane to 8 workers.' }), goal({ id: 'b', title: 'Second goal' }), goal({ id: 'c', title: 'Third goal' })]);
+    stubSurfaceFetch({ routes: { [ROUTE]: { ...withNext, endState: 'On track on every goal.' } } });
+    render(<FleetGoalCards />);
+    expect(await screen.findByText('On track on every goal.')).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Target: 96 or more a day')).toHaveLength(3);
+    expect(screen.getAllByText(/^Next: /)).toHaveLength(1);
+    expect(screen.getByText('Next: Raise the claude lane to 8 workers.')).toBeInTheDocument();
   });
 });

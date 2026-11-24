@@ -9,8 +9,8 @@ export async function cmdCiBaseline(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   if (args[0] === 'reruns') {
     if (args.slice(1).some(arg => arg !== '--json')) { console.error(USAGE); return 2; }
-    const { recent, counts, lastHour } = readCiReruns();
-    console.log(JSON.stringify({ recent, counts, lastHour }, null, 2));
+    const { recent, counts, lastHour, recurringFlakes, verdicts } = readCiReruns();
+    console.log(JSON.stringify({ recent, counts, lastHour, recurringFlakes, verdicts }, null, 2));
     return 0;
   }
   if (args.shift() !== 'baseline') { console.error(USAGE); return 2; }

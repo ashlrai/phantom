@@ -66,6 +66,8 @@ export interface RunwaySnapshot {
   headline: string;
   /** starve first (longest idle), then spend (most unused), pace, unknown. */
   pools: PoolRunway[];
+  /** Same typed spend-down rows as phm fleet pools; optional for older servers. */
+  shares?: PoolShareSnapshot;
 }
 
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -169,6 +171,10 @@ export const POOL_WASTING_PROJECTED_PERCENT = 90;
 
 export interface PoolShareInput {
   pool: string;
+  resetAt?: string | null;
+  unit?: 'percent' | 'usd';
+  remainingUsd?: number | null;
+  reason?: string | null;
   usedPercent: number | null;
   burnPerHour: number | null;
   hoursToReset: number | null;
@@ -176,6 +182,13 @@ export interface PoolShareInput {
 
 export interface PoolShare {
   pool: string;
+  reset_at: string | null;
+  /** Percent of the allowance per hour, including gifts with a known grant. */
+  burn_pct_per_hour: number | null;
+  unit: 'percent' | 'usd';
+  remaining_usd: number | null;
+  /** Plain words, shared by the CLI and desktop/phone. */
+  verdict: string;
   /** Hours until empty at the measured burn; null when unknown or when nothing burns it (never empties). */
   runway_hours: number | null;
   /** As read; zero or negative means the reset already passed (state unknown). */
@@ -205,6 +218,7 @@ export interface PoolShareSnapshot {
 
 /** "codex-personal" -> "Codex personal". */
 export function poolLabel(pool: string): string {
+  if (pool === 'claude-api') return 'Claude API';
   const words = pool.replace(/[-_]+/g, ' ').trim();
   return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : pool;
 }
@@ -223,9 +237,10 @@ export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
     const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
     const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
     const hours = num(input.hoursToReset) ? input.hoursToReset : null;
-    const reason = used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
-      : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null;
-    const base = { pool: input.pool, runway_hours: null as number | null, hours_to_reset: hours === null ? null : round1(hours),
+    const reason = input.reason ?? (used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
+      : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null);
+    const base = { pool: input.pool, reset_at: input.resetAt ?? null, burn_pct_per_hour: burn,
+      unit: input.unit ?? 'percent', remaining_usd: input.remainingUsd ?? null, runway_hours: null as number | null, hours_to_reset: hours === null ? null : round1(hours),
       used_percent: used === null ? null : round1(used), projected_percent_at_reset: null as number | null };
     if (reason !== null) return { ...base, state: 'unknown' as PoolShareState, reason, room: 0 };
     const left = Math.max(0, 100 - used!);
@@ -250,11 +265,22 @@ export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
       : row.state === 'wasting' ? `${name}: ${left}${resets}send work here`
         : row.state === 'on_pace' ? `${name}: ${left}${resets}on pace, normal work`
           : `${name}: ${left}runs dry in ${wholeHours(row.runway_hours ?? 0)}, ${resets}top-priority work only`;
-    return { ...row, suggested_share: share, rank: index + 1, line };
+    const early = Math.max(0, (row.hours_to_reset ?? 0) - (row.runway_hours ?? 0));
+    const verdict = row.state === 'unknown' ? `unknown: ${row.reason === 'no usage reading' ? 'no reading' : row.reason}`
+      : row.state === 'starving' ? `will run dry ${early >= 24 ? `${Math.round(early / 24)} days` : `${Math.round(early)} hours`} early`
+        : row.state === 'wasting' ? `will waste ${Math.round(100 - row.projected_percent_at_reset!)}%` : 'on pace';
+    return { ...row, verdict, suggested_share: share, rank: index + 1, line };
   });
 }
 
 export function poolShareSnapshot(inputs: readonly PoolShareInput[], asOf: string | null): PoolShareSnapshot {
   const pools = planPoolShares(inputs);
   return { schema: POOL_SHARE_SCHEMA, asOf, next_pool: pools.find(row => (row.suggested_share ?? 0) > 0)?.pool ?? null, pools };
+}
+
+/** One sentence for the CLI and compact desktop/phone rows. */
+export function poolSpendLine(row: PoolShare): string {
+  const pct = (n: number | null) => n === null ? 'unknown' : `${Number(n.toFixed(2))}%`;
+  const reset = row.reset_at === null ? 'unknown' : `${row.hours_to_reset} h (${row.reset_at})`;
+  return `${poolLabel(row.pool)}${row.unit === 'usd' ? ' gift' : ''}: ${row.verdict} · ${pct(row.used_percent)} used · ${pct(row.burn_pct_per_hour)}/h · ${pct(row.projected_percent_at_reset)} at reset · ${row.unit === 'usd' ? 'expires' : 'resets'} in ${reset}`;
 }

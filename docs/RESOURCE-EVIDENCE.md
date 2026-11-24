@@ -6,6 +6,21 @@ The Resources drawer reads `GET /api/usage/lanes` to show each lane's recorded
 allowance, remaining amount, reset countdown and observation age alongside the
 router's burn, balanced or preserve posture. Missing readings remain unknown;
 stale readings keep their last values with a stale label, not fresh headroom.
+
+Each card names its lane beside the provider mark and draws the shared
+usage-window bar. The solid share is measured use. When the router's posture
+receipt for the same window projects allowance left over, that share is
+outlined in amber and the stretch between is drawn lighter: on course to be
+used. When the measured burn reaches the limit before the reset, the bar turns
+amber and the card gives the time it runs out. A reading that reports where
+its window began (`windowStart` on the row) adds a mark for the time gone and
+a line comparing use with an even spend. A stale reading, an unknown reset or
+a reset that has passed draws the last measured share and projects nothing. A
+lane with no usable reading keeps its card with a hatched bar and the reason,
+never 0%. The reset shows as a countdown and a local time. The heading counts
+the lanes measured. A refresh keeps the cards on screen; if it fails they stay,
+under a line giving the time of the read they came from.
+
 History sparklines use recorded samples. Devin cards separate weekly ACUs and
 in-flight reservations from the Lightning/Flash preview expiry; absent preview
 pricing evidence is unknown, never assumed free. API USD credit pools are
@@ -30,6 +45,22 @@ Summary counts describe accounts **with current usage** and accounts whose usage
 it does not imply available allowance. Sign-in, recorded credits and historical
 readings alone do not count as current usage. Chat and Fleet readiness appear
 separately in each account card.
+
+Each usage window on an account card is drawn on the bar the resource boards
+share (`components/primitives/WindowBar.tsx`). The fill is the share used. A
+hatched band at the end of the binding window is the reserve kept for you, and
+the line under the bar names it ("40% kept for you"). A flagged limit fills the
+bar in red and shows "limit reached" with no percentage. A window with no
+reading, or with a reading that is no longer current, is a hatched track.
+
+A mark across the bar shows how much of the window's time has gone, and the
+line under it says so in words with how far use sits from an even spend ("71%
+of the window gone · use is 9 points behind an even spend"). The mark needs the
+window's start, which comes from the reset provenance on the seat
+(`GET /api/verse/seats`, the same provenance `GET /api/verse/accounts` gives the
+Usage board): the provider's own period start, or seven days before a reset
+the server qualified as weekly. A window without that provenance has no mark
+and no line; the start is never guessed from the window's name.
 
 Connect native CLI accounts for subscription work, configure API resources separately,
 or run models on your own hardware. Routing is provider-neutral: an account's
@@ -69,6 +100,20 @@ The private cache binds readings to the account, selected native profile, and a 
 | Grok Bot profile | Separate identity; unknown allowance and reset until verified | Grok Build quota does not establish Bot capacity or connect Bot execution |
 
 Dollar references are not invoices, purchased-credit prices, or attributed task costs. Subscription percentages are not token counts. Different accounts remain independent, including accounts from the same provider. No account-count truncation is introduced by these views.
+
+In the left rail each of these rows draws the same bar as the boards
+(`components/primitives/WindowBar.tsx`), not a battery: the fill is the share
+**used**, left to right, so the rail and the Resources drawer read the same
+way. An account row draws its binding window, with the reserve hatched at the
+window's end and a mark for the time gone where the seat reports when the
+window began; the hover card carries the same reading in words. A row with
+nothing left is a full red bar with no percentage. No reading, or a reading
+that is no longer current, is a hatched bar whatever it last said; the dated
+value stays in the text beside it. The Devin tracked budget draws reported use
+solid and the exposure held for running sessions lighter after it, so held is
+never read as used. The cloud estimate draws the share of the estimate spent.
+Local models are not metered and get a readiness dot instead of a bar. The
+collapsed rail draws the bar as a thin rule under each provider mark.
 
 ## Grok Build and Grok Bot
 
@@ -185,6 +230,12 @@ The endpoint reads fixed local stores. Opening it does not start a model, provid
 The console's **Every resource** panel (desktop Usage section and mobile Fleet screen) reads one authorized GET, `/api/verse/usage-resources`, accepting no query parameters or mutations. It returns the twelve fixed operator resources — Ultra (Cursor + Grok pool), Claude Max, claude-api gift, claude-api monthly, codex-cmp, codex-personal, Devin, zai, agy, Gemini (Workspace), local and Stacksync — each with used, limit, unit, resets-at, source and as-of, or an explicit state: `ok`, `no-reading` (a reader ran but measured nothing), `no-reader` (nothing in the repo reads that resource yet) or `unavailable` (the read failed, errored, or beat its deadline).
 
 Each resource is one `UsageResourceReader` in `src/core/usage/resource-usage.ts`: a small function returning the shared `UsageResourceReading` shape, or `null`. Adding a reader for an uncovered pool is a one-function change. Reader returns are boundary-checked — only finite non-negative amounts, ISO instants, and bounded printable source labels reach the wire; a malformed or oversized return degrades to `unavailable`. Reader failures are states, never thrown errors, and provider error text is never echoed. A resource with no measured value reports nulls, never a fabricated percentage or limit.
+
+The same read carries the scheduler's pace snapshot, which the Resources drawer draws under **Usage pace**: a headline naming the pool that takes the next job, one strip showing how new ordinary work is split between the pools with room, and a row per pool in the scheduler's rank order. Each row has the provider mark, the verdict (**Send work here**, **On pace**, **Top priority only** or **Unknown**), the pool's share of new work, and the shared usage-window bar: used so far, more by the reset at the measured burn, and the share left unused. A pool that runs dry before its reset draws its bar in amber and takes no ordinary work. A pool with no reading keeps its row with a hatched bar and the reason, and a pool with a usage reading but no burn rate draws only the share used. A report older than two minutes is not read as current: every row then reads unknown and the section says how old the report is. The shares are the ones this command prints:
+
+```bash
+phm fleet pools --json
+```
 
 ## Claude API promotional grants
 
@@ -315,3 +366,12 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
   it never borrows the API weekly reading's org, so free previews stay unproven.
 - The Devin budget row has no account scope: `readDevinUsage` returns usage
   fields only. Its ACU pool covers all models, so it also omits model.
+
+### One spend-down view
+
+`phm fleet pools --json` returns `fleet.pools.v1`: `used_percent`, `reset_at`,
+`hours_to_reset`, `burn_pct_per_hour`, `projected_percent_at_reset`, and a plain
+`verdict` for each budget pool. Gift burn is normalized to percent of its grant;
+without a grant or fresh reading the projection is unknown. Home's Pools card
+uses these same rows (also on the phone) through the existing runway refresh.
+Solid is used, light is projected use, and the right mark is reset or expiry.

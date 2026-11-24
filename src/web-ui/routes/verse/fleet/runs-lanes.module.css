@@ -11,3 +11,7 @@
 .panel table { width: 100%; border-collapse: collapse; text-align: left; font-variant-numeric: tabular-nums; }
 .panel th, .panel td { padding: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
 .panel td:last-child { overflow-wrap: anywhere; }
+/* LaunchesCard: three headline numbers in a row that wraps at narrow widths. */
+.numbers { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: var(--space-3) 0; }
+.numbers dt { color: var(--text-secondary); font-size: var(--text-xs-size); }
+.numbers dd { margin: 0; font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }

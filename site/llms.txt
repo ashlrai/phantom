@@ -18,6 +18,7 @@ Agents run the factory and the human owner acts as a passive board member. Agent
 - [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task
 - [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md
 - [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
+- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge
 
 ## Install
 

@@ -54,6 +54,16 @@ describe('fleet empty-why', () => {
     expect(emptyJobs(LEDGER, NOW, 100).map(j => j.id)).toContain('OLD');
   });
 
+  it('reads outcome rows through the jobs-ledger field dialect', () => {
+    const dialect = [
+      JSON.stringify({ job_id: 'D1', type: 'outcome', timestamp: '2026-11-04T08:30:00Z', pool: 'devin', empty: true }),
+      JSON.stringify({ id: 'D2', kind: 'outcome', at: '2026-11-04T08:40:00Z', lane: 'codex', empty: true }),
+      JSON.stringify({ jobId: 'D3', event: 'finish', time: '2026-11-04T08:50:00Z', empty: true }), // not an outcome
+      JSON.stringify({ job_id: 'D4', type: 'outcome', recordedAt: '2026-11-04T08:55:00Z', empty: false }),
+    ].join('\n');
+    expect(emptyJobs(dialect, NOW, 24)).toEqual([{ id: 'D1', lane: 'devin' }, { id: 'D2', lane: 'codex' }]);
+  });
+
   it('reports counts per reason and lane as JSON, reading ASHLR_RUNS_DIR', async () => {
     const { code, text, paths } = await run(['--json']);
     expect(code).toBe(0);

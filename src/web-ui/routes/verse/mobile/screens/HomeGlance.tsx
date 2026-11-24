@@ -1,10 +1,12 @@
 /**
- * The phone opens here, on exactly six things, top to bottom:
+ * The phone opens here, with fleet health, admission, decisions and activity:
+ *  -1. the four tiles: merged, time to merge, main green, plan runway (`phm status --brief --json`);
  *   0. the Pulse card: five numbers with a trend each (the desktop Home card, `phm fleet pulse`);
  *   1. one line of fleet health: merges in the last hour, lanes running, main
  *      green or red (one read of `phm home --json`, home.v1);
  *   2. decisions, one tap each (the desktop Home Decisions card, built on `phm approvals`);
  *   3. the leader's newest reply (the desktop Home From your leader card, `phm leader replies`);
+ *   3b. the Supply card: is the fleet feeding itself (`phm doctor supply --json`);
  *   4. a box that posts to the fleet inbox, the same API as the desktop inbox box;
  *   5. what shipped today (the desktop Shipped card, `phm shipped --since 1d`).
  * A fact the Mac could not read says unknown, never 0.
@@ -14,10 +16,22 @@ import { refetchQuery } from '../../../../data/cache.js';
 import { apiGet, readFailureReason } from '../../../../data/client.js';
 import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QueryDef } from '../../../../data/queries.js';
+import { BriefTiles, briefQuery } from '../BriefTiles.js';
+import { TodayCard } from '../TodayCard.js';
+import { AdmissionCard } from '../AdmissionCard.js';
+import { FamilyYieldCard, familyYieldQuery } from '../../fleet-hub/FamilyYieldCard.js';
+import { fleetAdmissionQuery } from '../../fleet-hub/fleet-admission-query.js';
+import { hostLoadQuery } from '../../fleet-host/host-load-query.js';
 import { ApprovalsCard, approvalAsksQuery } from '../../home/ApprovalsCard.js';
 import { LeaderRepliesCard, leaderRepliesQuery } from '../../home/LeaderRepliesCard.js';
+import { LiveBuildLine } from '../../home/LiveBuildLine.js';
+import { ReleasesLine } from '../../home/ReleasesLine.js';
+import { MachinesCard } from '../../home/MachinesCard.js';
+import { LaneYieldCard } from '../../home/LaneYieldCard.js';
 import { PoolsCard, poolsQuery } from '../../home/PoolsCard.js';
 import { PulseCard, pulseQuery } from '../../home/PulseCard.js';
+import { PulseStrip, pulseLanesQuery } from '../../home/PulseStrip.js';
+import { SupplyCardPhone, supplyQuery } from '../../home/SupplyCard.js';
 import { ShippedCard, shippedQuery } from '../../home/ShippedCard.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
 import { canShowActions, useMobile } from '../mobile-context.js';
@@ -38,11 +52,17 @@ export const homeQuery: QueryDef<HomeSummary | null> = {
   },
 };
 export const refreshHomeGlance = (): Promise<unknown> => Promise.all([
+  refetchQuery(familyYieldQuery.key, () => familyYieldQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(fleetAdmissionQuery.key, () => fleetAdmissionQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(hostLoadQuery.key, () => hostLoadQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(briefQuery.key, () => briefQuery.fetch(), true).catch(() => undefined),
   refetchQuery(poolsQuery.key, () => poolsQuery.fetch(), true).catch(() => undefined),
   refetchQuery(homeQuery.key, () => homeQuery.fetch(), true).catch(() => undefined),
   refetchQuery(approvalAsksQuery.key, () => approvalAsksQuery.fetch(), true).catch(() => undefined),
+  refetchQuery(pulseLanesQuery.key, () => pulseLanesQuery.fetch(), true).catch(() => undefined),
   refetchQuery(pulseQuery.key, () => pulseQuery.fetch(), true).catch(() => undefined),
   refetchQuery(leaderRepliesQuery(1).key, () => leaderRepliesQuery(1).fetch(), true).catch(() => undefined),
+  refetchQuery(supplyQuery.key, () => supplyQuery.fetch(), true).catch(() => undefined),
   refetchQuery(shippedQuery(1).key, () => shippedQuery(1).fetch(), true).catch(() => undefined),
 ]);
 
@@ -71,17 +91,27 @@ export function HomeGlance() {
   const health = home ? healthLine(home) : null;
   return (
     <>
+      <TodayCard home={home} />
+      <BriefTiles />
+      <PulseStrip />
       <PulseCard />
+      <AdmissionCard />
+      <FamilyYieldCard />
       {health ? <p className={styles.health} data-tone={health.tone} role="status" aria-label="Fleet health">{health.text}</p> : (
         <section className={`${ui.card} ${styles.needs}`} role="alert">
           <p className={styles.askText}>Fleet health is unknown. {read.error ? readFailureReason(read.error) : 'Your Mac’s build does not serve it yet. Update Phantom on your Mac.'}</p>
           <Button variant="tinted" onClick={() => refetch()}>Try again</Button>
         </section>
       )}
+      <LiveBuildLine className={styles.health} />
+      <ReleasesLine className={styles.health} />
       {/* Approvals stand on their own API: what only Mason can decide does not wait on the health line. */}
       <ApprovalsCard from="phone" canAnswer={canShowActions(permissions)} limit={APPROVALS_SHOWN} />
       <LeaderRepliesCard limit={1} />
+      <SupplyCardPhone />
       <PoolsCard onOpenJob={job => navigate({ screen: 'worker', job })} />
+      <LaneYieldCard compact />
+      <MachinesCard className={ui.card} />
       <MobileInterject compact title="Message the leader" placeholder="Say it in plain words." />
       <ShippedCard days={1} />
     </>

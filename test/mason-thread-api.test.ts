@@ -1,0 +1,71 @@
+/** GET /api/verse/comms/mason-thread: the Mason panel's read. Temp dirs, no transports, nothing sent. */
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { PassThrough } from 'node:stream';
+import { afterEach, beforeEach, expect, it } from 'vitest';
+import { acceptOwnerInbound } from '../src/core/comms/owner-thread.js';
+import { createOwnerThreadApi, VERSE_MASON_THREAD_PATH as PATH } from '../src/core/verse/owner-thread-api.js';
+import type { VerseApiContext } from '../src/core/verse/verse-api.js';
+
+const NOW = Date.parse('2026-11-19T12:00:00Z');
+const settings = { owners: { desktop: 'local-owner' }, secretHandles: {}, confirmed: true, team: [{ channel: 'bus' as const, id: 'local-owner' }] };
+let runsDir: string;
+beforeEach(() => { runsDir = mkdtempSync(join(tmpdir(), 'mason-api-')); });
+afterEach(() => { rmSync(runsDir, { recursive: true, force: true }); });
+
+async function call(query = '', method = 'GET', allowDispatch = true) {
+  let status = 0, text = '';
+  const req = Object.assign(new PassThrough(), { url: PATH + query, method }) as IncomingMessage;
+  const res = { writeHead(code: number) { status = code; return this; }, end(body: string) { text = body; } } as unknown as ServerResponse;
+  const api = createOwnerThreadApi({ runsDir, busRoot: join(runsDir, 'bus'), settings, now: () => NOW });
+  const handled = await api({ cfg: {}, allowDispatch } as VerseApiContext, req, res, PATH, method);
+  return { handled, status, body: text ? JSON.parse(text) : null };
+}
+
+it('answers an empty thread with the schema id and no items', async () => {
+  const r = await call();
+  expect(r).toMatchObject({ handled: true, status: 200, body: { schema: 'phantom.mason.thread.v1', items: [] } });
+});
+
+it('serves a message as Received and refuses writes and bad windows', async () => {
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'hello leader', idempotencyKey: 'desk-api-1', at: NOW - 60_000 },
+    { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false, mailbox: { async accept() { return { status: 'accepted' as const }; } } });
+  expect((await call('?since=1h')).body.items).toMatchObject([{ dir: 'in', channel: 'desktop', text: 'hello leader', state: 'RECEIVED' }]);
+  expect((await call('', 'POST')).status).toBe(405);
+  expect((await call('?since=soon')).status).toBe(400);
+  expect((await call('', 'GET', false)).status).toBe(404);
+});
+
+it('bounds the thread by an exclusive before ceiling on the same grammar', async () => {
+  const owner = { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } } };
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'older note', idempotencyKey: 'desk-api-old', at: NOW - 300_000 }, owner);
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'newer note', idempotencyKey: 'desk-api-new', at: NOW - 60_000 }, owner);
+  const before = new Date(NOW - 120_000).toISOString();
+  const bounded = await call(`?before=${encodeURIComponent(before)}`);
+  expect(bounded.status).toBe(200);
+  expect(bounded.body.before).toBe(before);
+  expect(bounded.body.items.map((i: { text: string }) => i.text)).toEqual(['older note']);
+  const unbounded = await call('?since=1h');
+  expect(unbounded.body.before).toBeUndefined();
+  expect(unbounded.body.items.map((i: { text: string }) => i.text)).toEqual(['older note', 'newer note']);
+  expect((await call('?before=soon')).status).toBe(400);
+});
+
+it('slices the thread by channel, direction and contains query params', async () => {
+  const owner = { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } } };
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'alpha note', idempotencyKey: 'desk-slice-a', at: NOW - 300_000 }, owner);
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'beta note', idempotencyKey: 'desk-slice-b', at: NOW - 200_000 }, owner);
+  const texts = (body: { items: { text: string }[] } | null) => body!.items.map(i => i.text);
+  expect(texts((await call('?contains=ALPHA')).body)).toEqual(['alpha note']);
+  expect(texts((await call('?channel=desktop')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?channel=slack')).body)).toEqual([]);
+  expect(texts((await call('?direction=inbound')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?direction=outbound')).body)).toEqual([]);
+  expect((await call('?channel=Bad Channel')).status).toBe(400);
+  expect((await call('?direction=sideways')).status).toBe(400);
+  expect((await call('?contains=%20%20%20')).status).toBe(400);
+});

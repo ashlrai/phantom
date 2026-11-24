@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { cmdCommsBus } from '../src/cli/comms-bus.js';
 import { appendBusInbox, listBusInboxAfter, type BusInboxPage } from '../src/core/fleet/bus-inbox.js';
 import { validateBusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 
 const roots: string[] = [];
 function setup() {
@@ -36,6 +37,42 @@ it('filters exact recipient and sender labels independently and together', async
     expect(page.nextCursor).toBe(4);
     expect(page.messages.map((row: { envelope: { id: string } }) => row.envelope.id)).toEqual(ids);
   }
+});
+
+it('resolves address refs exactly: a case-variant never inherits an identity', async () => {
+  const options = setup(), log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(registerAgentIdentity({ handle: 'worker', aliases: ['w-ops'] }, { root: options.root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'bot' }, { root: options.root }).status).toBe('created');
+  expect(registerAgentIdentity({ handle: 'alice' }, { root: options.root }).status).toBe('created');
+  for (const row of [message('1', 'worker', 'agent:alice'), message('2', 'agent:worker', 'alice'),
+    message('3', 'w-ops', 'Alice'), message('4', 'bob', 'alice'), message('5', 'Worker', 'agent:alice'),
+    message('6', 'BOT', 'alice')]) {
+    expect(appendBusInbox(row, options).status).toBe('posted');
+  }
+  const ids = async (args: string[]) => {
+    expect(await cmdCommsBus(['read', ...args], options)).toBe(0);
+    const page = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    return page.messages.map((row: { envelope: { id: string } }) => row.envelope.id) as string[];
+  };
+  // Every label of one identity matches under an exact ref — including the
+  // case-folded 'Worker'/'BOT' envelope stamps, which still resolve.
+  for (const from of ['worker', 'agent:worker', 'w-ops']) {
+    expect(await ids(['--from', from])).toEqual(['1', '2', '3', '5']);
+  }
+  expect(await ids(['--from', 'bot'])).toEqual(['6']);
+  // A case-variant of a registered handle or alias resolves to no identity:
+  // it keeps exact-label matching, never the identity's other labels.
+  expect(await ids(['--from', 'Worker'])).toEqual(['5']);
+  expect(await ids(['--from', 'agent:Worker'])).toEqual([]);
+  expect(await ids(['--from', 'BOT'])).toEqual(['6']);
+  expect(await ids(['--exclude-from', 'worker'])).toEqual(['4', '6']);
+  expect(await ids(['--exclude-from', 'Worker'])).toEqual(['1', '2', '3', '4', '6']);
+  // The same rule holds on the recipient side.
+  for (const to of ['alice', 'agent:alice']) {
+    expect(await ids(['--to', to])).toEqual(['1', '2', '3', '4', '5', '6']);
+  }
+  expect(await ids(['--to', 'Alice'])).toEqual(['3']);
+  expect(await ids(['--to', 'agent:Alice'])).toEqual([]);
 });
 
 it('advances an unmatched page and resumes at the global cursor, including expired rows', async () => {

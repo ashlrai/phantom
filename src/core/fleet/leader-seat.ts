@@ -16,7 +16,15 @@ export interface LeaderLaneSeat {
 }
 export interface LeaderSeatReport {
   schema: 'leader.seat.v1'; version: 1; generatedAt: string;
-  current: { lane: string|null; model: string|null; lastSuccessAt: string|null };
+  current: { lane: string|null; model: string|null; lastSuccessAt: string|null;
+    /** Plan usage and reset of the current lane; null = unknown. */
+    used_pct?: number|null; reset_at?: string|null };
+  /** True when the current seat can keep the leader; false when it cannot; null when unknown. */
+  healthy?: boolean|null;
+  /** Other lanes that can take the leader, soonest reset first. Lanes that are drained, held, down or have no usage reading are left out. */
+  fallback?: LeaderFallback[];
+  /** Plain reason `fallback` is empty ("No other plan has usage left."); null otherwise. */
+  fallback_reason?: string|null;
   fallbacks: LeaderLaneSeat[]; pick: LeaderLaneSeat|null;
   /** The seat the leader moves to if the pick fails. */
   next?: LeaderLaneSeat|null;
@@ -24,6 +32,7 @@ export interface LeaderSeatReport {
   currentSeat?: LeaderLaneSeat|null;
   reason: string|null;
 }
+export interface LeaderFallback { lane: string; model: string|null; used_pct: number; reset_at: string|null; why: string }
 /** One recent failure on a lane. `rate-limit` is a provider limit; `failed` is a failed leader pass. */
 export interface LeaderSeatFailure { lane: string; at: string; kind: 'rate-limit'|'failed' }
 /** The compact answer agents adopt: where the leader runs, or plainly why it cannot. */
@@ -77,9 +86,18 @@ export function buildLeaderSeat(runs: FleetRunsDirState|null, models: LaneModelS
   const current = { lane: statusFresh ? runs?.leader?.lane ?? null : null, model: statusFresh ? runs?.leader?.model ?? null : null,
     lastSuccessAt: runs?.leader?.lastSuccessAt ?? null };
   const [pick = null, next = null] = seats.filter(seat => seat.eligible);
-  return { schema: 'leader.seat.v1', version: 1, generatedAt: new Date(now).toISOString(), current,
+  const currentSeat = seats.find(seat => seat.lane === current.lane) ?? null;
+  const resetMs = (at: string|null) => at && Number.isFinite(Date.parse(at)) ? Date.parse(at) : Number.MAX_VALUE;
+  const fallback = seats.filter(seat => seat.lane !== current.lane && seat.eligible && seat.headroomPct !== null)
+    .sort((a, b) => resetMs(a.resetAt) - resetMs(b.resetAt) || compareLeaderSeats(a, b))
+    .map((seat): LeaderFallback => ({ lane: seat.lane, model: seat.model, used_pct: 100 - seat.headroomPct!, reset_at: seat.resetAt,
+      why: `${seat.headroomPct}% of included usage left${seat.resetAt ? `, resets ${seat.resetAt}` : ''}.` }));
+  const healthy = currentSeat ? currentSeat.eligible : null;
+  return { schema: 'leader.seat.v1', version: 1, generatedAt: new Date(now).toISOString(),
+    current: { ...current, used_pct: currentSeat?.headroomPct == null ? null : 100 - currentSeat.headroomPct, reset_at: currentSeat?.headroomPct == null ? null : currentSeat.resetAt },
+    healthy, fallback, fallback_reason: fallback.length ? null : 'No other plan has usage left.',
     fallbacks: seats.filter(seat => seat.lane !== current.lane), pick, next,
-    currentSeat: seats.find(seat => seat.lane === current.lane) ?? null,
+    currentSeat,
     reason: pick ? null : seats.every(seat => seat.health === 'unknown') ? 'No seat: lane health is unknown.'
       : `No seat available. ${seats.map(seat => `${seat.lane}: ${seat.reason}`).join(' ')}` };
 }
@@ -138,9 +156,23 @@ export async function readLeaderSeat(readers: Partial<LeaderSeatReaders> = {}): 
   return buildLeaderSeat(s.status === 'fulfilled' ? s.value : null, m.status === 'fulfilled' ? m.value : null,
     r.status === 'fulfilled' ? r.value : null, now, f.status === 'fulfilled' ? f.value : []);
 }
+/** What a launcher should use now: the current seat while it is healthy, else the soonest-resetting fallback; null when neither. */
+export function launcherSeat(report: LeaderSeatReport): { lane: string; model: string }|null {
+  const keep = report.healthy && report.current.lane && report.current.model ? { lane: report.current.lane, model: report.current.model } : null;
+  const move = report.fallback?.find(f => f.model);
+  return keep ?? (move ? { lane: move.lane, model: move.model! } : null);
+}
+/** The Org-view "Leader" chip: the current model by plain name, its plan usage, and whether to warn (above 95%). Unknown stays null. */
+export interface LeaderChip { model: string|null; lane: string|null; used_pct: number|null; reset_at: string|null; warn: boolean }
+export function leaderChip(report: LeaderSeatReport): LeaderChip {
+  const used = report.current.used_pct ?? null;
+  return { model: report.current.model ? seatModelName(report.current.model) : null, lane: report.current.lane, used_pct: used,
+    reset_at: report.current.reset_at ?? null, warn: used !== null && used > 95 };
+}
 export function leaderSeatText(report: LeaderSeatReport, pickOnly = false): string {
   const line = (seat: LeaderLaneSeat) => `${seat.lane} · ${seat.model ?? 'model unknown'} · ${seat.health} · headroom ${seat.headroomPct === null ? 'unknown' : `${seat.headroomPct}%`}${seat.reason ? ` · ${seat.reason}` : ''}`;
   const next = report.pick ? `Next seat: ${line(report.pick)}` : report.reason!;
   return pickOnly ? next : [leaderSeatLine(report), `Leader seat: ${report.current.lane ?? 'unknown'} · ${report.current.model ?? 'model unknown'}${report.currentSeat?.reason ? ` · ${report.currentSeat.reason}` : ''}`,
-    `Last successful pass: ${report.current.lastSuccessAt ?? 'unknown'}`, next, ...report.fallbacks.map(seat => `Fallback: ${line(seat)}`)].join('\n');
+    `Last successful pass: ${report.current.lastSuccessAt ?? 'unknown'}`, next, ...report.fallbacks.map(seat => `Fallback: ${line(seat)}`),
+    ...(report.healthy === false && report.fallback_reason ? [report.fallback_reason] : [])].join('\n');
 }

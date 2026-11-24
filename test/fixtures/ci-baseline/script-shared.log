@@ -1,0 +1,56 @@
+##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+with:
+  fetch-depth: 1
+  persist-credentials: false
+##[endgroup]
+##[group]Run node .github/scripts/ci-fetch-range.mjs
+node .github/scripts/ci-fetch-range.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  BASE_SHA: 0000000000000000000000000000000000000000
+  HEAD_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  BASE_REF: master
+##[endgroup]
+pull request base is missing
+##[error]Process completed with exit code 1.
+##[group]Run node .github/scripts/ci-fast-inputs.mjs plan
+node .github/scripts/ci-fast-inputs.mjs plan
+node .github/scripts/ci-fast-inputs.mjs tests "$RUNNER_TEMP/fast-gate-plan.json"
+shell: /usr/bin/bash -e {0}
+env:
+  CI_DEP_GRAPH: /home/runner/work/_temp/dep-graph.json
+##[endgroup]
+tests needs the plan file
+##[error]Process completed with exit code 1.
+##[group]Run node --test .github/tests/ci-mcp-selection.test.mjs
+node --test .github/tests/ci-mcp-selection.test.mjs
+node .github/scripts/ci-mcp-selection.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  ASHLR_CI_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ASHLR_CI_HEAD_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+##[endgroup]
+TAP version 13
+# Subtest: mcp selection
+ok 1 - mcp selection
+1..1
+MCP test selection failed: merge base unavailable
+##[error]Process completed with exit code 1.
+##[group]Run node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
+node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
+node .github/scripts/ci-fast-select.mjs
+shell: /usr/bin/bash -e {0}
+env:
+  CI_DEP_GRAPH: /home/runner/work/_temp/dep-graph.json
+##[endgroup]
+TAP version 13
+# Subtest: warm sparse checkout
+not ok 1 - warm sparse checkout
+  ---
+  type: 'test'
+  location: '/home/runner/work/repo/repo/.github/tests/ci-fast-select.test.mjs:10:1'
+  failureType: 'testCodeFailure'
+  error: 'boom'
+  ...
+1..1
+##[error]Process completed with exit code 1.

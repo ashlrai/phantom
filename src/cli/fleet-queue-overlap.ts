@@ -1,11 +1,11 @@
 import { queueOverlap, type QueueOverlapReport } from '../core/queue/overlap.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const HELP = 'Usage: phm fleet queue-overlap <prompt-file> [--json]\nCheck named files against local default-branch, open-PR and queue evidence. Writes nothing.';
+const usage = 'Usage: phm fleet queue-overlap <prompt-file> [--json]\nCheck named files against local default-branch, open-PR and queue evidence. Writes nothing.';
 export async function cmdFleetQueueOverlap(args: string[]): Promise<number> {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(HELP); return 0; }
+  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   const files = args.filter(arg => arg !== '--json'), json = args.includes('--json');
-  if (files.length !== 1 || files[0]!.startsWith('-') || args.length > (json ? 2 : 1)) { console.error(HELP); return 2; }
+  if (files.length !== 1 || files[0]!.startsWith('-') || args.length > (json ? 2 : 1)) { console.error(usage); return 2; }
   try {
     const report = sanitizePublicJson(await queueOverlap(files[0]!)) as QueueOverlapReport;
     console.log(json ? JSON.stringify(report) : [

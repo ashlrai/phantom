@@ -1,0 +1,134 @@
+/* Leader health: the notice above the reply box while the Leader's passes fail. The edge carries the tone. */
+.health {
+  flex: none;
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 var(--card-pad) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-left: 2px solid var(--health-tone);
+  border-radius: var(--radius-lg);
+  background: var(--health-wash);
+  color: var(--text-secondary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  animation: health-in var(--duration-base) var(--ease-standard);
+  --health-tone: var(--status-warning-fg);
+  --health-wash: var(--status-warning-bg);
+}
+
+/* In a session's conversation the column already has its padding; on the Conversations wall it lines up with the bar above the cards. */
+.health[data-place='thread'] { margin: 0; }
+.health[data-place='wall'] { margin: var(--space-2) var(--space-3) 0; }
+
+.health[data-state='down'] { --health-tone: var(--status-danger-fg); --health-wash: var(--status-danger-bg); }
+.health[data-state='recovered'] { --health-tone: var(--status-success-fg); --health-wash: var(--status-success-bg); }
+
+@keyframes health-in {
+  from { opacity: 0; transform: translateY(var(--space-2)); }
+  to { opacity: 1; transform: none; }
+}
+
+.health p { margin: 0; }
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+
+.dot {
+  flex: none;
+  align-self: center;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--health-tone);
+}
+
+/* While the Leader is not reading, the dot breathes: the one moving thing is the thing that is wrong. */
+.health[data-state='down'] .dot { animation: health-owed 2.4s var(--ease-standard) infinite; }
+
+@keyframes health-owed {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.headline {
+  color: var(--text-primary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+  font-weight: 600;
+}
+
+.health[data-state='down'] .headline { color: var(--status-danger-fg); }
+
+.since { font-variant-numeric: tabular-nums; }
+
+.detail { color: var(--text-primary); }
+
+.cause {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cause code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.cause[data-known='false'] { color: var(--status-unknown-fg); }
+
+.label {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.stale { color: var(--status-unknown-fg); }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.action code,
+.command code { font-family: var(--font-mono); color: var(--text-primary); }
+
+.action:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.action:disabled { opacity: 0.6; cursor: default; }
+.action[data-state='copied'] { border-color: var(--status-success-fg); }
+
+.copied:empty { display: none; }
+
+.command {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .health,
+  .health[data-state='down'] .dot { animation: none; }
+}
