@@ -2919,6 +2919,123 @@ describe('wake hint priority filter', () => {
   });
 });
 
+describe('wake hint thread and reply-citation filters', () => {
+  it('keeps only hints whose resolved referent carries the thread label or cites the envelope', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A note in thread 'release-plan' and a reply citing envelope 'orig-1'.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'plan the cut',
+      thread: 'release-plan', id: 'wk-thread', wake: true }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 're: the cut',
+      replyTo: 'orig-1', id: 'wk-reply', wake: true }, options)).toMatchObject({ status: 'posted' });
+    // A reply citing a different envelope and plain mail match neither.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 're: other',
+      replyTo: 'orig-2', id: 'wk-other-reply', wake: true }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'hello',
+      id: 'wk-plain', wake: true }, options)).toMatchObject({ status: 'posted' });
+    // A hand-enqueued hint with no live envelope names no provable thread or citation.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 5 });
+    const thread = readAgentWakes('nova', undefined, options, { thread: 'release-plan' });
+    expect(thread).toMatchObject({ status: 'ok', matched: 1, truncated: false });
+    if (thread.status !== 'ok') throw new Error('unreachable');
+    expect(thread.wakes.map(row => row.id)).toEqual(['wk-thread']);
+    const cited = readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-1' });
+    expect(cited).toMatchObject({ status: 'ok', matched: 1 });
+    if (cited.status !== 'ok') throw new Error('unreachable');
+    expect(cited.wakes.map(row => row.id)).toEqual(['wk-reply']);
+    // The citation match is exact: another envelope id keeps only its own reply.
+    const other = readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-2' });
+    expect(other).toMatchObject({ status: 'ok', matched: 1 });
+    if (other.status !== 'ok') throw new Error('unreachable');
+    expect(other.wakes.map(row => row.id)).toEqual(['wk-other-reply']);
+    expect(readAgentWakes('nova', undefined, options, { thread: 'absent-thread' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-9' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // Both compose with the queue-tail filters like every other referent verdict.
+    expect(readAgentWakes('nova', undefined, options, { thread: 'release-plan', from: 'orion' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-1', thread: 'release-plan' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    // The fleet-wide read resolves the same referents under scope 'fleet'.
+    const fleet = readAllWakes(undefined, options, { thread: 'release-plan' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['wk-thread']);
+    const fleetCited = readAllWakes(undefined, options, { inReplyTo: 'orig-1' });
+    expect(fleetCited).toMatchObject({ status: 'ok', matched: 1 });
+    if (fleetCited.status !== 'ok') throw new Error('unreachable');
+    expect(fleetCited.wakes.map(row => row.id)).toEqual(['wk-reply']);
+  });
+
+  it('never matches claim-holder hints and refuses malformed labels', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-HO-1', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-HO-1'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-HO-1',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-HO-1', status: 'done', id: 'w-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // An ordinary hint in the same thread shares the page with the wh-… hint.
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'thread note',
+      thread: 'release-plan', id: 'wk-th', wake: true }, options)).toMatchObject({ status: 'posted' });
+
+    // The claim-holder hint's citing work.status receipt carries neither a
+    // thread label nor an inReplyTo citation, so it never matches either.
+    const page = readAgentWakes('nova', undefined, options, { thread: 'release-plan' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wk-th']);
+    expect(readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-1' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 2 });
+
+    for (const bad of ['has space', '', 'x'.repeat(129)]) {
+      expect(readAgentWakes('nova', undefined, options, { thread: bad }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAgentWakes('nova', undefined, options, { inReplyTo: bad }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { thread: bad }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { inReplyTo: bad }))
+        .toMatchObject({ status: 'invalid' });
+    }
+  });
+
+  it('never matches unresolved referents and fails closed on an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // A hint whose envelope is gone resolves unresolved — it names no provable thread or citation.
+    enqueueBusWake({ kind: 'bus.send', id: 'wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'in thread',
+      thread: 't-1', id: 'wk-live', wake: true }, options)).toMatchObject({ status: 'posted' });
+    const page = readAgentWakes('nova', undefined, options, { thread: 't-1' });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wk-live']);
+    // An unreadable bus store makes every referent's body unknown, so both
+    // filtered reads are unavailable — never an empty page passed off as
+    // "no wakes in this thread" or "no wakes answering that message".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { thread: 't-1' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAgentWakes('nova', undefined, options, { inReplyTo: 'orig-1' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAllWakes(undefined, options, { thread: 't-1' }))
+      .toMatchObject({ status: 'unavailable' });
+    // The unfiltered read still answers with per-row unknown referents.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('fleet-wide wakes read', () => {
   it('lists every hint across identities and bare labels with the shared filters', async () => {
     const options = setup();

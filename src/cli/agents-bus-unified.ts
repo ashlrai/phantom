@@ -40,7 +40,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--id <id>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -70,8 +70,10 @@ still a registered identity under the same scrub and wake rules. --kind on
 dm, post and channel post picks the v2 conversational body kind — note by
 default, context for reference material; the delivery-kind enum inbox reads
 filter by is a different --kind.
---thread on dm, post, channel post, inbox and channel read is the v2 conversation
-label carried by note/context bodies; reads match that field only. --from on
+--thread on dm, post, channel post, inbox, channel read and wakes is the v2
+conversation label carried by note/context bodies; reads match that field
+only — on wakes the verdict is the resolved referent's own thread, so a
+claim-holder hint's work.status citation never matches. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
 stable id or alias; an unresolvable ref keeps exact-label matching.
 --reply-to on dm, post and channel post stamps the v2 inReplyTo citation —
@@ -161,12 +163,13 @@ substring, so "did anyone send me mail about X" and "has anyone posted
 about X in this room" are one filtered read; matching runs over the
 rendered summary, never the raw body, so a secret-shaped value stays
 unfindable even though it sits in the stored envelope. --in-reply-to on
-inbox and channel read keeps only rows whose object body cites that
+inbox, channel read and wakes keeps only rows whose object body cites that
 envelope id through its own inReplyTo field — the same own-property
 exact match phm messages --in-reply-to, comms bus read|watch
 --in-reply-to, fleet bus-follow --in-reply-to and fleet_bus_inbox's
 inReplyTo apply, never the replyTo alias or a substring — so "which of
-my pending mail / which room posts answer envelope X" is one filtered
+my pending mail / which room posts answer envelope X" and "did the reply
+to envelope X trigger a wake" is one filtered
 read, composing with every other filter. --id on inbox, channel read and
 wakes keeps only the row whose own id is strictly equal to the value —
 the same exact-envelope match comms bus read|watch --id, fleet
@@ -825,7 +828,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id') };
+        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        thread: one('--thread'), inReplyTo: one('--in-reply-to') };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {

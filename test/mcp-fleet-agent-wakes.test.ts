@@ -82,12 +82,12 @@ describe('fleet_agent_wakes argument parsing', () => {
     const parsed = parseFleetAgentWakesArgs({
       agent: 'agent:planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
-      contains: '  Parser   Fix ', id: 'm-9',
+      contains: '  Parser   Fix ', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1',
     });
     expect(parsed).toEqual({
       agent: 'agent:planner', since: 1800000000000, before: 1700000000000, job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
-      contains: 'parser fix', id: 'm-9',
+      contains: 'parser fix', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1',
     });
   });
 
@@ -125,6 +125,9 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', contains: '' }, { agent: 'a', contains: '   ' },
       { agent: 'a', contains: 'x'.repeat(513) }, { agent: 'a', contains: 42 },
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 }, { agent: 'a', id: 'x'.repeat(129) },
+      { agent: 'a', thread: 'has space' }, { agent: 'a', thread: '' }, { agent: 'a', thread: 5 },
+      { agent: 'a', thread: 'x'.repeat(129) }, { agent: 'a', inReplyTo: 'has space' },
+      { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: null }, { agent: 'a', inReplyTo: 'x'.repeat(129) },
     ]) expect(parseFleetAgentWakesArgs(bad)).toBeNull();
   });
 });
@@ -137,9 +140,9 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000 }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,
@@ -232,6 +235,10 @@ describe('fleet_agent_wakes MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['thread'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['inReplyTo'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 

@@ -3562,6 +3562,23 @@ receipt's band behind a claim-holder `wh-…` hint), with
 `unresolved`/`unknown` referents never matching, `matched` counting the
 proven matches on the resolved page, an unreadable bus store answering
 `unavailable`, and a band outside P0..P3 answering `invalid`;
+`filter.thread` keeps only hints whose resolved referent is a
+`note`/`context` body carrying that v2 thread label — the same
+`busBodyThread` own-field match the inbox and channel reads' `thread`
+apply to the message a hint refers to — with claim-holder `wh-…` hints
+never matching (a `work.status` receipt carries no thread label) and
+`unresolved`/`unknown` referents never matching, `matched` counting the
+proven matches on the resolved page, an unreadable bus store answering
+`unavailable`, and a malformed label answering `invalid`;
+`filter.inReplyTo` keeps only hints whose resolved referent body cites
+that envelope id through its own `inReplyTo` field — the same
+own-property exact match the inbox/channel `inReplyTo`, `phm messages
+--in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet
+bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply,
+never the `replyTo` alias or a substring — with claim-holder hints and
+`unresolved`/`unknown` referents never matching under the same
+unreadable-store/`matched` rules, and a malformed id answering
+`invalid`;
 `filter.before` keeps only hints recorded strictly before that
 epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
 applies on the hint's own queue time, composing with `sinceAt`'s
@@ -3582,7 +3599,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
