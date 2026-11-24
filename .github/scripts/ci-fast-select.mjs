@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global process, console */
+/* global process, console, URL */
 // Fast-gate test selection (RQ-CI-FASTGATE-1). Pure policy plus a thin git CLI.
 //
 // The fast gate must finish in about a minute, so it runs a bounded set of
@@ -24,9 +24,24 @@ import { DOCS_ONLY_PATH_PATTERNS } from './ci-site-lane.mjs';
 import { REAL_IO_TEST_FILES } from '../../test/config/realio-lane-membership.mjs';
 import { SERIAL_CPU_TEST_FILES } from '../../test/config/serial-cpu-lane-membership.mjs';
 
-export const MAX_RELATED_TESTS = 25;
-export const FALLBACK_SHARDS = 3;
-export const FALLBACK_TESTS_PER_SHARD = 40;
+function loadBudget() {
+  const parsed = JSON.parse(readFileSync(new URL('../fast-gate-budget.json', import.meta.url), 'utf8'));
+  const values = {
+    maxRelatedTests: parsed.maxRelatedTests,
+    fallbackShards: parsed.fallbackShards,
+    fallbackTestsPerShard: parsed.fallbackTestsPerShard,
+  };
+  for (const [name, value] of Object.entries(values)) {
+    if (!Number.isInteger(value) || value < 1) throw new Error(`fast-gate budget ${name} is not a positive integer`);
+  }
+  if (parsed.schema !== 'phantom-fast-gate-budget.v1') throw new Error('fast-gate budget schema mismatch');
+  return values;
+}
+
+const BUDGET = loadBudget();
+export const MAX_RELATED_TESTS = BUDGET.maxRelatedTests;
+export const FALLBACK_SHARDS = BUDGET.fallbackShards;
+export const FALLBACK_TESTS_PER_SHARD = BUDGET.fallbackTestsPerShard;
 
 // Global inputs: a change here can alter every test, so selection by import
 // edge is meaningless. These mirror the globalInputs of ci-impact-policy.

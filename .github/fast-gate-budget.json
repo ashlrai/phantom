@@ -1,0 +1,10 @@
+{
+  "schema": "phantom-fast-gate-budget.v1",
+  "maxRelatedTests": 25,
+  "fallbackShards": 3,
+  "fallbackTestsPerShard": 40,
+  "derivation": {
+    "maxRelatedTests": "25 stays. Green pull-request Fast gate jobs measured p50 64s and p95 117s (n=108, 12 newest successful CI runs per UTC day, 2026-11-10 through 2026-11-23, recorded on PR #8574). No per-file duration series exists, so a smaller cap would be a guess. Narrow run 45349284678 spent 2s in Run affected tests for 2 files.",
+    "fallback": "3 shards of 40 stays. That 120-file sample is the mode in 82 of 91 Fast gate test failures from 2026-11-22 13:39Z to 2026-11-24 07:04Z. Those failed jobs measured p50 100s and p95 130s (n=95). Cutting the sample without per-file timings would be a new guess. The 16s after the first failure is run 45348547174: progress marked test/doc-facts.test.ts failed at 07:31:42.258Z and the vitest summary landed at 07:31:57.754Z. --bail=1 is the stop, not a smaller sample."
+  }
+}

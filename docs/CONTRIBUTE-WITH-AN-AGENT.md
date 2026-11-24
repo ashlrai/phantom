@@ -227,12 +227,13 @@ and the fast gate never skips tests silently:
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
   `test/docs-repo-links.test.ts` always runs, plus each test whose source
   names a changed file by its path or its bare file name, even in a comment,
-  up to 25 in total. A page no test names runs only the link suite; a
+  up to the same related cap. A page no test names runs only the link suite; a
   docs-only diff never takes the fallback set below.
 - **Code diff, fresh graph**: the dependency graph for this commit
   (schema `phantom-dep-graph.v1`, `commit` equal to `HEAD` or an ancestor of
   the base, blob hashes matching) selects tests by transitive reverse-import
-  reachability, nearest first, up to 25 files. Name-matched
+  reachability, nearest first, up to the related cap in
+  `.github/fast-gate-budget.json` (25 in the measured file). Name-matched
   `test/**/<stem>.test.ts` files fill in after that closure. A web test that
   reaches a changed file, and the colocated `src/web-ui/**/*.test.ts` or
   `*.test.tsx` for a changed web file, run under `vitest.config.web.ts`
@@ -262,8 +263,9 @@ and the fast gate never skips tests silently:
   `scripts/test-ci*.mjs`, a missing, unparsable, or stale graph (its `commit`
   is not `HEAD` and not an ancestor of the base), a changed file with a
   dynamic import or other specifier the graph cannot resolve, a docs diff
-  that maps to no test, or a selection error runs an even spread of up to 120
-  backend tests across the repository (three shards of 40) that always
+  that maps to no test, or a selection error runs an even spread of the
+  fallback budget in `.github/fast-gate-budget.json` (three shards of 40 in
+  the measured file) that always
   includes the two authority suites. A `package.json` change also adds
   `test/package-files-allowlist.test.ts`. Uncertain inputs run this broader
   set, never a smaller one.
