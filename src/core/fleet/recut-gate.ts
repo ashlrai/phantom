@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process';
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { jobKind, yieldTally } from './slot-yield.js';
+import { familyPauseReason, launchFamily, readFamilyYield, type LaunchFamilyYield } from './family-yield.js';
 import { readLiveStops, stopFilePath, stoppedBy } from './stop-file.js';
 
 export const RECUT_EMPTY_STREAK = 3;
@@ -39,13 +40,16 @@ export interface RecutGateInput {
   /** The live stop-file row that matches this job or kind; null or absent when none does or the file is unknown. */
   stopRow?: { until: number; reason: string } | null;
   streak?: number;
+  yieldStats?: LaunchFamilyYield;
 }
 
-export type RecutGateCode = 'already-on-master' | 'stop-file' | 'yield-unknown' | 'stop-list' | 'empty-streak' | 'emit';
+export type RecutGateCode = 'already-on-master' | 'stop-file' | 'yield-unknown' | 'stop-list' | 'empty-streak' | 'family-paused' | 'emit';
 export interface RecutGateDecision { emit: boolean; code: RecutGateCode; reason: string }
 
 export function shouldEmitRecut(input: RecutGateInput): RecutGateDecision {
   const n = input.streak ?? RECUT_EMPTY_STREAK;
+  const pausedReason = familyPauseReason(input.yieldStats);
+  if (pausedReason) return { emit: false, code: 'family-paused', reason: pausedReason };
   if (input.diffContained === true) return { emit: false, code: 'already-on-master', reason: 'the source change is already on master' };
   if (input.stopRow) {
     return { emit: false, code: 'stop-file', reason: `${input.family} is stopped by the stop file until ${new Date(input.stopRow.until * 1000).toISOString()}${input.stopRow.reason ? ` (${input.stopRow.reason})` : ''}` };
@@ -149,6 +153,8 @@ export async function readRecutGateFacts(target: string, opts: RecutGateReadOpti
   const diffContained = ref ? await refContained(opts.git, base, ref) : null;
   const stops = await readLiveStops(opts.stopFile === undefined ? stopFilePath() : opts.stopFile, now);
   const hit = stops && stoppedBy(stops, [target.toUpperCase(), t.family]);
+  const report = await readFamilyYield(opts.metrics, 24, now, opts.read);
   return { family: t.family, area: t.area, paths: t.paths, stopList, lastJobs, masterTouched, diffContained, ref, since, streak: n,
+    yieldStats: report.launch_families.find(row => row.family === launchFamily(target.toUpperCase()) || row.family === `${t.family}C`),
     stopRow: hit ? { until: hit.until, reason: hit.reason } : null };
 }

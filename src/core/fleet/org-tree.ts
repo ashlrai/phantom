@@ -32,6 +32,8 @@ export interface OrgTreeJob {
   /** What the job is doing, in plain words. */
   doing: string;
   startedAt: string | null;
+  /** Verified session PR URL; null when no source reported one. */
+  prUrl: string | null;
   /** Newest dispatcher event naming the job, else its start. `kind` is the dispatcher's word (LAUNCH, PUBLISH_START) or `started`. */
   lastEvent: { at: string; kind: string } | null;
   /** Newest of the last event and, when a worker process was seen, the time the tree was built. */
@@ -170,7 +172,7 @@ export function fleetOrgTree(map: FleetOrgMap, inputs: OrgTreeInputs = {}): Flee
       const last = event ? { at: event.at, kind: event.kind } : startedAt ? { at: startedAt, kind: 'started' } : null;
       const state = jobState(job.status, job.published);
       return { id: job.jobId!, repo: text(job.repo), model: text(job.model), provider: job.provider, status: job.status,
-        tier: job.tier ?? null, ageSeconds: job.ageSeconds ?? null, goal: job.goal ?? null, state, doing: jobDoing(state, job.status, text(job.repo)), startedAt,
+        tier: job.tier ?? null, ageSeconds: job.ageSeconds ?? null, goal: job.goal ?? null, state, doing: jobDoing(state, job.status, text(job.repo)), startedAt, prUrl: job.prUrl ?? null,
         lastEvent: last, lastActivityAt: newest(last?.at, job.processLive === 'yes' ? map.generatedAt : null) };
     }).sort((a, b) => start(a) - start(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const live = jobs.filter(job => job.state === 'running').length;

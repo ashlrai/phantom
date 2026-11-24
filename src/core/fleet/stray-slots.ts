@@ -26,6 +26,8 @@ export interface StrayJob { id: string; lane: string; finished: boolean; worktre
 export interface StrayReaders {
   readProcesses: () => Promise<StrayProcess[]>;
   readJobs: () => Promise<StrayJob[]>;
+  /** Lane names the daemon knows (queue/status.json), so an idle lane still counts as checked. Optional. */
+  readLanes?: () => Promise<string[]>;
 }
 
 /** One leftover process still holding a finished job's worktree. */
@@ -58,9 +60,12 @@ function commandInside(command: string, root: string): boolean {
 }
 
 export async function readStraySlots(readers: StrayReaders = defaultStrayReaders, selectedLanes?: ReadonlySet<string>): Promise<StraySlotsReport> {
-  const [processes, jobs] = await Promise.all([readers.readProcesses(), readers.readJobs()]);
+  const [processes, jobs, known] = await Promise.all([readers.readProcesses(), readers.readJobs(), readers.readLanes?.() ?? []]);
   const live = new Set(parsePsTable(processes.map(p => `${p.pid} ${p.elapsed} ${p.command}`).join('\n')).workers.map(p => p.job));
   const lanes = new Map<string, StraySlotLane>();
+  for (const name of known) {
+    if (STRAY_ID_PATTERN.test(name) && (!selectedLanes || selectedLanes.has(name))) lanes.set(name, { lane: scrubSecrets(name), slotsLost: 0, strays: [] });
+  }
   for (const job of new Map(jobs.map(job => [job.id, job])).values()) {
     if (selectedLanes && !selectedLanes.has(job.lane)) continue;
     if (!STRAY_ID_PATTERN.test(job.id) || !STRAY_ID_PATTERN.test(job.lane) || !isAbsolute(job.worktree) || normalize(job.worktree) === '/') continue;
@@ -77,15 +82,34 @@ export async function readStraySlots(readers: StrayReaders = defaultStrayReaders
     ({ ...lane, strays: lane.strays.sort((a, b) => a.job.localeCompare(b.job) || a.pid - b.pid) })) };
 }
 
-/** Bounded descriptor reads: never follow links into credentials or block on a FIFO. */
+/** An evidence file that cannot be used; the message names the file and says what is wrong. */
+export class StraySourceError extends Error {
+  constructor(path: string, problem: 'missing' | 'not JSON' | 'not a regular file' | 'unexpected shape') {
+    super(problem === 'unexpected shape' ? `${path} has an unexpected shape` : `${path} is ${problem}`);
+    this.name = 'StraySourceError';
+  }
+}
+
+/**
+ * Bounded descriptor reads: never follow links into credentials or block on a FIFO.
+ * A file bigger than `limit` yields its last `limit` bytes (whole lines only), which is all
+ * the append-only ledger needs: the latest row per job wins.
+ */
 async function text(path: string, limit: number): Promise<string> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let file;
+  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new StraySourceError(path, code === 'ENOENT' ? 'missing' : 'not a regular file');
+  }
   try {
     const stat = await file.stat();
-    if (!stat.isFile() || stat.size > limit) throw new Error('invalid source');
-    const bytes = Buffer.alloc(Math.min(stat.size, limit));
-    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-    return bytes.subarray(0, bytesRead).toString('utf8');
+    if (!stat.isFile()) throw new StraySourceError(path, 'not a regular file');
+    const length = Math.min(stat.size, limit);
+    const bytes = Buffer.alloc(length);
+    const { bytesRead } = await file.read(bytes, 0, length, stat.size - length);
+    const body = bytes.subarray(0, bytesRead).toString('utf8');
+    return length < stat.size ? body.slice(body.indexOf('\n') + 1) : body;
   } finally { await file.close(); }
 }
 
@@ -140,8 +164,10 @@ export const defaultStrayReaders: StrayReaders = {
   },
   async readJobs() {
     const root = join(homedir(), '.ashlr-runs');
-    const metrics = await text(join(root, 'metrics/jobs.jsonl'), 8 * 1024 * 1024);
-    const latest = strayJobStates(metrics);
+    const ledger = join(root, 'metrics/jobs.jsonl');
+    const metrics = await text(ledger, 8 * 1024 * 1024);
+    let latest;
+    try { latest = strayJobStates(metrics); } catch { throw new StraySourceError(ledger, 'not JSON'); }
     const jobs: StrayJob[] = [];
     for (const [id, state] of latest) {
       // A job with no readable base file has no known worktree, so it cannot hold a stray: skip it, do not fail the whole read.
@@ -152,4 +178,17 @@ export const defaultStrayReaders: StrayReaders = {
     }
     return jobs;
   },
+  async readLanes() {
+    const file = join(homedir(), '.ashlr-runs', 'queue/status.json');
+    return strayStatusLanes(await text(file, 1024 * 1024), file);
+  },
 };
+
+/** Lane names from a dispatchd.status.v1 document: `lanes` is an object keyed by lane name. */
+export function strayStatusLanes(body: string, file: string): string[] {
+  let doc: unknown;
+  try { doc = JSON.parse(body); } catch { throw new StraySourceError(file, 'not JSON'); }
+  const lanes = doc && typeof doc === 'object' ? (doc as { lanes?: unknown }).lanes : undefined;
+  if (!lanes || typeof lanes !== 'object' || Array.isArray(lanes)) throw new StraySourceError(file, 'unexpected shape');
+  return Object.keys(lanes);
+}

@@ -7,6 +7,7 @@ import { defaultRunsDir } from './landed-closes-read.js';
 import { readFleetMainHealth, type FleetMainHealthV1 } from './main-health.js';
 import { fetchLatestRelease, validReleaseRepo, type ReleaseRunner } from './release-live-notice.js';
 import { durationText, readThroughput, type ThroughputReport } from './throughput.js';
+import { readBlockedHourLine } from './load-history.js';
 import { readUsageSpend, type SpendSnapshot } from '../usage/spend.js';
 
 export const PULSE_SCHEMA = 'fleet.pulse.v1' as const;
@@ -25,6 +26,8 @@ export interface PulseV1 {
   /** The worst (largest) count; `repos` lists every guarded repo, `days` null when its release could not be read. */
   daysSinceRelease: PulseNumber & { worstRepo: string | null; repos: { repo: string; tag: string | null; days: number | null }[] };
   poolsOnPace: PulseNumber & { measured: number | null };
+  /** Blocked-by-load evidence, when the last hour exceeds ten minutes. */
+  loadLine?: string | null;
 }
 export type PulseRelease = { repo: string; tag: string | null; publishedAt: string | null };
 /** Every reader's output as it returned it; null when that reader failed. */
@@ -34,6 +37,7 @@ export interface PulseInputs {
   main: FleetMainHealthV1 | null;
   releases: PulseRelease[] | null;
   spend: SpendSnapshot | null;
+  loadLine?: string | null;
 }
 
 const DAY = 86_400_000;
@@ -98,7 +102,7 @@ export function buildPulse(inputs: PulseInputs, now: number): PulseV1 {
     : behind.length ? `Watch: ${plural(behind.length, 'pool')} will leave allowance unused.` : notGreen ? 'Watch: some main branches are not known to be green.'
     : verdict === 'unknown' ? `Partly unknown: ${plural(fields.filter(field => field.value === null).length, 'number')} could not be read.`
     : `Doing well: ${rate} PRs merged per hour and every main is green.`;
-  return { schema: PULSE_SCHEMA, v: 1, asOf: new Date(now).toISOString(), verdict, headline, mergesPerHour, medianMergeSeconds, mainsGreen, daysSinceRelease, poolsOnPace };
+  return { schema: PULSE_SCHEMA, v: 1, asOf: new Date(now).toISOString(), verdict, headline, mergesPerHour, medianMergeSeconds, mainsGreen, daysSinceRelease, poolsOnPace, ...(inputs.loadLine ? { loadLine: inputs.loadLine } : {}) };
 }
 
 /** Guardian rows name repos as `owner/name` or bare `name`; bare names are the ashlrai org's. */
@@ -106,7 +110,7 @@ const releaseRepo = (repo: string): string => repo.includes('/') ? repo : `ashlr
 const RELEASE_TTL_MS = 15 * 60_000;
 let releaseCache: { key: string; at: number; read: Promise<PulseRelease[]> } | null = null;
 /** Latest published release per repo, reused for 15 minutes: Home polls, GitHub should not be asked every minute. */
-function readReleases(repos: string[], now: number, run?: ReleaseRunner): Promise<PulseRelease[]> {
+export function readReleases(repos: string[], now: number, run?: ReleaseRunner): Promise<PulseRelease[]> {
   const key = repos.join(',');
   if (!run && releaseCache?.key === key && now - releaseCache.at < RELEASE_TTL_MS) return releaseCache.read;
   const read = Promise.all(repos.map(async repo => {
@@ -127,7 +131,7 @@ export async function readPulseInputs(runsDir: string, now: number, run?: Releas
   const [main, spend] = await Promise.all([quiet(readFleetMainHealth({ runsDir, now: () => now })), quiet(readUsageSpend(join(runsDir, 'queue', 'status.json'), now))]);
   const repos = main?.source === 'ok' ? main.repos.map(repo => repo.repo) : null;
   const releases = repos ? await quiet(readReleases(repos, now, run)) : null;
-  return { jobs: day && dayBefore ? { day, dayBefore } : null, main, releases, spend };
+  return { jobs: day && dayBefore ? { day, dayBefore } : null, main, releases, spend, loadLine: readBlockedHourLine(runsDir, now) };
 }
 
 export async function readPulse(opts: { runsDir?: string; now?: number; run?: ReleaseRunner; read?: typeof readPulseInputs } = {}): Promise<PulseV1> {
@@ -147,7 +151,7 @@ export function pulseText(pulse: PulseV1): string[] {
   const show = (title: string, field: PulseNumber, value: string) => `${ARROW[field.trend]} ${title}: ${field.value === null
     ? `unknown (${field.line.replace(/^Unknown: /, '').replace(/\.$/, '')})` : `${value}. ${field.line}`}`;
   const { mergesPerHour: m, medianMergeSeconds: t, mainsGreen: g, daysSinceRelease: r, poolsOnPace: p } = pulse;
-  return [pulse.headline,
+  return [pulse.headline, ...(pulse.loadLine ? [pulse.loadLine] : []),
     `${show('PRs merged per hour', m, String(m.value))}${m.sparkline.length ? ` ${sparkText(m.sparkline)}` : ''}`,
     show('Median publish to merge', t, durationText(t.value)),
     show('Main branches green', g, `${g.value} of ${g.total}`),

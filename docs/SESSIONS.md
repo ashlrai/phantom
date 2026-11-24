@@ -162,6 +162,14 @@ line, counts as new. When a
 conversation spans more than one day, each day's first message has a heading
 (**Today**, **Yesterday**, or the date).
 
+In the pane, choose All, Running, Quiet or Failed to narrow the tree (each
+shows its count from the same read), or type in the filter box to match a
+session's id, lane, model, repo, computer or last message. A parent stays
+visible, dashed, when only a session under it matches. Press `/` to reach the
+filter, ↑ and ↓ (or `j` and `k`) to move between sessions, Enter to open one in
+the Worker log, and Esc to clear the typed filter. Narrowing happens in the
+window only; it sends no request and changes nothing for agents.
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams

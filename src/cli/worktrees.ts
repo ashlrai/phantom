@@ -54,10 +54,13 @@ const USAGE = `Usage: phm worktrees [--json] [--reap [--dry-run | --apply | --pl
 List every job worktree with its job, repo, state (live job, merged PR, empty
 result, open PR, kept on purpose, unknown), age, size and whether it is safe to
 remove. Safe means: merged or empty, over 2 hours old, no uncommitted changes,
-no live job and not kept on purpose.
+no live job and not kept on purpose. A worktree with no publish record at all is
+removable as stale-no-publish when it is also clean, has no unpushed commits and
+has been quiet for 24 hours: that launch died and nothing will pick it up.
   --reap            Preview removal of the safe worktrees (a dry run).
   --reap --plan     Print only the git worktree remove commands, one per line, for a script to run.
   --reap --apply    Remove them with git worktree remove (never --force).
+  --stale-hours <n> With --reap: also remove worktrees that never published once quiet for n hours (default 24).
   --reap --status   Show the scheduled reap: on or off, last run, removed, skipped, freed.
 The fleet self-tick runs this reap on its own when there are more than 40
 worktrees: up to 40 removals, once per 30 minutes. Create queue/worktree-reap.off
@@ -72,6 +75,14 @@ export async function cmdWorktrees(args: string[], deps: WorktreesDeps & { outpu
     return 0;
   }
   if (args[0] === 'report') return cmdWorktreesReport(args.slice(1), out);
+  // --stale-hours <n> sets how long a never-published worktree must be quiet before it is reaped.
+  const staleAt = args.indexOf('--stale-hours');
+  if (staleAt >= 0) {
+    const hours = Number(args[staleAt + 1]);
+    if (!Number.isFinite(hours) || hours < 1) { out.error(`--stale-hours needs a number of hours, 1 or more.\n${USAGE}`); return 2; }
+    deps = { ...deps, staleHours: hours };
+    args = [...args.slice(0, staleAt), ...args.slice(staleAt + 2)];
+  }
   const modes = ['--dry-run', '--apply', '--plan', '--status'];
   const allowed = ['--json', '--reap', ...modes];
   const bad = args.find(arg => !allowed.includes(arg));

@@ -3,6 +3,7 @@
  * reset, what is left unused, and how far the window has run), its window so far when the board passes the stored readings, its labelled
  * readings and any per-model windows. Draws only what pools.v1 and the stored readings hold for the row.
  */
+import { reservePace } from '../../../../core/usage/reserve-pace.js';
 import type { PoolRow, PoolsViewV1 } from '../../../../core/fleet/pools-view.js';
 import type { PoolUsageSeries } from '../../../../core/fleet/usage-history.js';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
@@ -27,6 +28,7 @@ function PoolBar({ row }: { row: PoolRow }) {
 export interface PoolWindows { read: WindowRead; now: number; pools: readonly PoolUsageSeries[] }
 
 export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<PoolsViewV1, 'generatedAt'>; windows?: PoolWindows }) {
+  const pace = reservePace(row);
   const facts = poolFacts(row, view, localTime);
   // Focusable from code only: the Runway line above the cards puts the keyboard here when a pool's name is chosen.
   return <li className={styles.row} data-pool={row.id} tabIndex={-1} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
@@ -41,6 +43,7 @@ export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<Pool
       <span className={styles.summary}>{row.summary}</span>
     </div>
     {/* Only a plan window is a share of something: a credit balance or an unmetered lane gets no bar. */}
+    {row.kind === 'subscription' ? <p className={styles.pace} data-over={pace.verdict === 'over' || undefined}>{pace.line}</p> : null}
     {row.kind === 'subscription' ? <PoolBar row={row} /> : null}
     {row.kind === 'subscription' && windows ? <PoolWindow row={row} read={windows.read} now={windows.now} series={windows.pools.find(series => series.pool === row.id)} /> : null}
     {facts.length > 0 ? <dl className={styles.facts}>{facts.map(fact => <div key={fact.label} className={styles.fact}>

@@ -90,7 +90,7 @@ export interface LedgerRow { row: Record<string, unknown>; id: string; lane: str
  * mergedAt read that field themselves (merge-latency, throughput).
  */
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 /**
  * The rest of the jobs-ledger dialect the finish/outcome readers share with
@@ -103,7 +103,7 @@ const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recor
  */
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
 
 const pickString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {

@@ -30,8 +30,16 @@ import { listBusInboxAfter } from '../core/fleet/bus-inbox.js';
 import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../core/agents/slack-leader.js';
 import { ownerStatusReply } from '../core/agents/owner-status-reply.js';
 import { defaultRuntimeLine } from '../core/agents/owner-status-runtime-line.js';
+import { buildDotEvidencePacket } from '../core/comms/dot-evidence-packet.js';
+import { formatDotEvidenceReply } from '../core/comms/dot-evidence-reply.js';
+import { resolveDotBridgeOwner } from '../core/comms/dot-bridge-owner.js';
+import { defaultDotEvidenceDeps } from './fleet-dot-evidence.js';
 import { createClaimNoticeTick } from './channels-slack-claim-tick.js';
 import { createSlackNoticeHealth } from './slack-notice-health.js';
+
+/** Read-only Dot evidence for a long live-evidence ask (runtime, claims, bridge owner). */
+const dotEvidenceReply = async (now: Date): Promise<string> =>
+  formatDotEvidenceReply(buildDotEvidencePacket({ ...defaultDotEvidenceDeps(await resolveDotBridgeOwner()), now: () => now }));
 
 const SLACK_USAGE = `usage: phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
@@ -209,7 +217,7 @@ async function cmdSlackTransport(args: string[], run: boolean): Promise<number> 
     if (run) {
       socket = await openSlackSocket({ call, config, ingest: { config, teamIdentities: parsed.teamIdentities },
         signal: controller.signal,
-        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply({ runtime: defaultRuntimeLine }) }),
+        leaderAdapter: createSlackLeaderAdapter({ call, signal: controller.signal, statusReply: ownerStatusReply({ runtime: defaultRuntimeLine, evidence: dotEvidenceReply }) }),
         readIngest: () => {
           const current = readSlackDeliveryPolicy();
           return current && JSON.stringify(current.config) === JSON.stringify(config) ? { config, teamIdentities: current.teamIdentities } : undefined;

@@ -591,6 +591,131 @@ async function compactHits(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Injection runs (trajectory correlation)
+// ---------------------------------------------------------------------------
+//
+// knowledge-hits.jsonl counts injections for ranking; it carries no join key,
+// so "which run saw this note, and how did that run end" was unanswerable.
+// knowledge-runs.jsonl records one row per real injection — the trajectory id
+// the dispatch minted (`run:<attemptId>`, the same key trajectory-records
+// joins on) plus the note ids that reached its prompt — so a later read can
+// attribute each note's served runs to terminal/realized trajectory outcomes.
+// Cloud tasks keep their own attribution (cloud task `lessons` + the holdout
+// trial) and never write here.
+
+export function knowledgeRunsPath(): string {
+  return join(learnHome(), 'knowledge-runs.jsonl');
+}
+
+/** Bounded opaque trajectory id — the `kind:body` shape trajectory records use. */
+const RUN_ID_PATTERN = /^[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9][A-Za-z0-9_.-]{0,220}$/;
+/** Newest rows kept when the log compacts; the join window is far smaller. */
+const RUNS_KEEP_ROWS = 2048;
+/** Compact once the log passes this size (well under the kept-rows footprint). */
+const RUNS_COMPACT_BYTES = 512 * 1024;
+/** Tail bytes a read inspects; older rows are outside every join window. */
+const RUNS_READ_BYTES = 2 * 1024 * 1024;
+const RUNS_MAX_ROWS = 20_000;
+
+/**
+ * Append one injection-run row: the trajectory a note set was injected into.
+ * Fire-and-forget safe: never rejects; a lost row is a lost correlation, never
+ * a lost note. Invalid ids are dropped rather than recorded raw.
+ */
+export async function recordKnowledgeRuns(
+  trajectoryId: string,
+  ids: readonly string[],
+  at: string = new Date().toISOString(),
+): Promise<void> {
+  const clean = [...new Set(ids.filter((id) => /^kn_[0-9a-f]{16}$/.test(id)))].sort();
+  if (!RUN_ID_PATTERN.test(trajectoryId) || clean.length === 0) return;
+  try {
+    await ensurePrivateDir(learnHome());
+    await appendFile(knowledgeRunsPath(), `${JSON.stringify({ trajectoryId, ids: clean, at })}\n`, { encoding: 'utf8', mode: 0o600 });
+    const size = (await stat(knowledgeRunsPath())).size;
+    if (size > RUNS_COMPACT_BYTES) await compactRuns();
+  } catch {
+    /* a lost run row is a lost correlation, never a lost lesson */
+  }
+}
+
+export interface KnowledgeRunsRead {
+  /** 'missing' = no correlated injections recorded yet; 'degraded' = unsafe/unreadable. */
+  state: 'read' | 'missing' | 'degraded';
+  /** note id → distinct trajectory ids the note was injected into (retained tail). */
+  byNote: Map<string, Set<string>>;
+  /** The retained tail dropped older bytes — per-note run counts are a floor, not a total. */
+  truncated: boolean;
+}
+
+/** Bounded tail read of the runs log; malformed lines are skipped, never fatal. */
+export async function readKnowledgeRuns(): Promise<KnowledgeRunsRead> {
+  const out: KnowledgeRunsRead = { state: 'read', byNote: new Map(), truncated: false };
+  const file = knowledgeRunsPath();
+  let raw: string;
+  try {
+    const size = (await stat(file)).size;
+    if (size > RUNS_READ_BYTES) {
+      out.truncated = true;
+      const handle = await open(file, 'r');
+      try {
+        const buf = Buffer.alloc(RUNS_READ_BYTES);
+        const { bytesRead } = await handle.read(buf, 0, RUNS_READ_BYTES, size - RUNS_READ_BYTES);
+        raw = buf.subarray(0, bytesRead).toString('utf8');
+        const nl = raw.indexOf('\n');
+        if (nl >= 0) raw = raw.slice(nl + 1); // drop the partial first line
+      } finally {
+        await handle.close();
+      }
+    } else {
+      raw = await readFile(file, 'utf8');
+    }
+  } catch (error) {
+    out.state = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded';
+    return out;
+  }
+  let rows = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    if (++rows > RUNS_MAX_ROWS) { out.truncated = true; break; }
+    try {
+      const row = JSON.parse(line) as { trajectoryId?: unknown; ids?: unknown };
+      if (typeof row.trajectoryId !== 'string' || !RUN_ID_PATTERN.test(row.trajectoryId) ||
+        !Array.isArray(row.ids)) continue;
+      for (const id of row.ids) {
+        if (typeof id !== 'string' || !/^kn_[0-9a-f]{16}$/.test(id)) continue;
+        const set = out.byNote.get(id) ?? new Set<string>();
+        set.add(row.trajectoryId);
+        out.byNote.set(id, set);
+      }
+    } catch {
+      /* skip a torn line */
+    }
+  }
+  return out;
+}
+
+/** Rewrite the runs log as its newest RUNS_KEEP_ROWS rows. */
+async function compactRuns(): Promise<void> {
+  const file = knowledgeRunsPath();
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch {
+    return;
+  }
+  const lines = raw.split('\n').filter((line) => line.trim());
+  const kept = lines.slice(-RUNS_KEEP_ROWS);
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, kept.length ? `${kept.join('\n')}\n` : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await rename(tmp, file);
+  } catch {
+    await unlink(tmp).catch(() => undefined);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sweep state
 // ---------------------------------------------------------------------------
 

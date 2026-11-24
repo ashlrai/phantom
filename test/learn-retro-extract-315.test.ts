@@ -111,6 +111,32 @@ describe('fleet ends', () => {
     expect(ci.rootCause!.code).toBe('revert:ci-red');
   });
 
+  it('revert-failed: a red merge whose revert did not land is a failure retro carrying both evidences', () => {
+    const r = retroFromFleet(fleet({
+      endKind: 'revert-failed',
+      postMerge: { ci: 'red', suite: 'not-run', detail: 'CI `test` failed on m' },
+      revertFailure: { reason: 'revert of PR #7 (m) failed [conflict]: the revert conflicts with later work' },
+    }), NOW);
+    expect(r).toMatchObject({ endKind: 'revert-failed', sourceKey: 'fleet:p-1:revert-failed' });
+    expect(r.rootCause).toMatchObject({ code: 'revert-failed:ci-red', evidence: 'post-merge watch + authority ledger' });
+    expect(r.rootCause!.detail).toContain('CI `test` failed on m');
+    expect(r.rootCause!.detail).toContain('conflicts with later work');
+    expect(r.happened).toContain('revert failed');
+    expect(r.happened).toContain('owner hold');
+    expect(r.candidates).toHaveLength(1);
+    expect(r.candidates[0]!.text).toMatch(/went red on CI after merge/);
+    const suite = retroFromFleet(fleet({
+      endKind: 'revert-failed',
+      postMerge: { ci: 'green', suite: 'fail', detail: 'suite failed twice at m' },
+      revertFailure: { reason: 'not reverted: authorship unproven' },
+    }), NOW);
+    expect(suite.rootCause!.code).toBe('revert-failed:suite-failed');
+    // No post-merge row and no reason: the cause stays honest about what is unknown.
+    const bare = retroFromFleet(fleet({ endKind: 'revert-failed' }), NOW);
+    expect(bare.rootCause).toMatchObject({ code: 'revert-failed:post-merge-red' });
+    expect(bare.rootCause!.detail).toBe('The post-merge watch went red and the revert failed.');
+  });
+
   it('closed by Mason with a reason: the reason becomes a candidate; a generic close does not', () => {
     const r = retroFromFleet(fleet({ endKind: 'closed', close: { reason: 'Wrong approach: use the existing retry helper', actor: 'mason' } }), NOW);
     expect(r.rootCause!.code).toBe('closed:by-mason');

@@ -366,3 +366,12 @@ The free-preview Devin CLI models (SWE-2 Lightning and Flash) are the
   it never borrows the API weekly reading's org, so free previews stay unproven.
 - The Devin budget row has no account scope: `readDevinUsage` returns usage
   fields only. Its ACU pool covers all models, so it also omits model.
+
+### One spend-down view
+
+`phm fleet pools --json` returns `fleet.pools.v1`: `used_percent`, `reset_at`,
+`hours_to_reset`, `burn_pct_per_hour`, `projected_percent_at_reset`, and a plain
+`verdict` for each budget pool. Gift burn is normalized to percent of its grant;
+without a grant or fresh reading the projection is unknown. Home's Pools card
+uses these same rows (also on the phone) through the existing runway refresh.
+Solid is used, light is projected use, and the right mark is reset or expiry.

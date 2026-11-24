@@ -46,6 +46,8 @@ const fetcher = vi.fn(async (url: string, _init?: RequestInit) => {
   if (url === '/api/fleet/message-graph') return Response.json(talk, { status: talk.groups ? 200 : 503 });
   if (url === '/api/fleet/map/messages') return Response.json({ schema: 'fleet.map-messages.v1', version: 1, generatedAt: iso, since: iso, source: 'available', messages: live, matched: live.length, skipped: 0 });
   if (url === '/api/verse/fleet/runtime-identity/nodes-plan') return Response.json(plan, { status: plan ? 200 : 503 });
+  if (url.startsWith('/api/fleet/job/tail')) return Response.json({ schema: 'fleet.job.tail.v1', job: 'RQ-MAP', status: 'live', message: null, truncated: false,
+    events: [{ ts: null, source: 'log', text: 'step one done' }, { ts: null, source: 'log', text: 'step two done' }], detail: null, controls: { available: true, reason: null } });
   throw new Error(`Unexpected read: ${url}`);
 });
 /** Reads of the live maps; the slow-moving plan badges are counted on their own. */
@@ -126,6 +128,14 @@ describe('FleetMap', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(token).toHaveFocus();
     expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+  });
+
+  it('shows the live log and Pause, Resume, Stop for a session on this machine', async () => {
+    await mount('/control/fleet?mapSession=RQ-MAP');
+    const detail = within(screen.getByRole('dialog', { name: 'RQ-MAP' }));
+    expect(detail.getByRole('log', { name: 'Live log for RQ-MAP' })).toHaveTextContent('step two done');
+    for (const name of ['Pause this job', 'Resume this job', 'Stop this job']) expect(detail.getByRole('button', { name })).toBeEnabled();
+    expect(fetcher.mock.calls.some(([url]) => String(url).startsWith('/api/fleet/job/tail?id=RQ-MAP'))).toBe(true);
   });
 
   it('supports deep links, missing selections and safe PR links', async () => {

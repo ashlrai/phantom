@@ -193,7 +193,7 @@ describe('leader job brief', () => {
       vi.stubEnv('ASHLR_RUNS_DIR', runs);
       vi.stubEnv('ASHLR_WT_DIR', wt);
       const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      expect(await runLeaderCli(['brief', '--json'])).toBe(0);
+      expect(await runLeaderCli(['brief', '--since', '24h', '--json'])).toBe(0);
       const out = JSON.parse(String(log.mock.calls[0]?.[0])) as { schema: string; lanes: { known: boolean; reason: string } };
       expect(out.schema).toBe('leader.brief.v1');
       expect(out.lanes).toMatchObject({ known: false, reason: 'queue/status.json is unreadable or invalid' });

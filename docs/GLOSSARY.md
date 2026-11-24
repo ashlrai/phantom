@@ -36,7 +36,7 @@ The hand-off file a worker writes at the worktree root: summary, commands run, t
 
 ## Merge Gate
 
-The required CI check that runs the full lint, typecheck and tests before a bridge PR can merge.
+The one required CI check before a pull request can merge. On a pull request it includes secret scans, generated-file checks and the fast gate: typecheck plus tests selected from the change. Full suites and lint run on the scheduled `master` run. See [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md).
 
 ## Runs directory
 
@@ -48,11 +48,11 @@ A file whose presence pauses dispatch (a HOLD switch) or changes fleet behaviour
 
 ## Inbox
 
-The shared file where Mason's prompts and interjections land from any channel, read by every leader and agent.
+The shared file where the owner's prompts and interjections land from any channel, read by every leader and agent.
 
 ## Interjection
 
-A message from Mason that steers running work without stopping it.
+A message from the owner that steers running work without stopping it.
 
 ## Agent bus
 
@@ -60,10 +60,10 @@ The shared event stream agents read and write to coordinate; shown in the deskto
 
 ## Pane
 
-One dockable view in the desktop console (lanes, merges, usage, worker log, and so on).
+One dockable view in the desktop console (lanes, merges, usage, worker log, and so on). See [console panes](PANES.md).
 
 ## Leader
 
 A planning agent that writes jobs; workers build them.
 
-See also: [CLI reference](./CLI-REFERENCE.md), [Architecture overview](./ARCHITECTURE.md).
+See also: [FAQ](./FAQ.md), [CLI reference](./CLI-REFERENCE.md), [Architecture overview](./ARCHITECTURE.md).

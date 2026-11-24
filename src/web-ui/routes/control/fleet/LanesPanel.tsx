@@ -105,6 +105,7 @@ export function LanesPanel() {
                   <strong>{lane.lane}</strong>
                   <span>Queue {cell(lane.queueDepth)} · Live {cell(lane.liveJobs)} · Merges/h {cell(lane.mergesPerHour)}</span>
                   <span>Credit: {lane.credit.state === 'observed' || lane.credit.state === 'reset-pending' ? lane.credit.label : 'unknown'}</span>
+                  {lane.held ? <span role="status" data-held="true">Held: {lane.held.reason} · {lane.held.launches_held_1h} launches in the last hour. {lane.held.next_step}.</span> : null}
                   <LaneCapBadges caps={lane.caps} lane={lane.lane} />
                 </button>
               ))}

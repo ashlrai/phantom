@@ -104,6 +104,69 @@ describe('phm doctor build', () => {
     expect(seen.filter(c => !['rev-parse', 'symbolic-ref', 'rev-list', 'log'].includes(c))).toEqual([]);
   });
 
+  describe('--fetch', () => {
+    /** A work repo whose origin (a bare repo) has `ahead` commits the local origin/master ref has never seen. */
+    function staleClone(ahead: number): { sha: string } {
+      const origin = join(dir, 'origin.git');
+      const work = join(dir, 'work');
+      const g = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, '-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }).trim();
+      mkdirSync(origin); g(origin, 'init', '-q', '--bare', '-b', 'master');
+      mkdirSync(work); g(work, 'init', '-q', '-b', 'master'); g(work, 'remote', 'add', 'origin', origin);
+      writeFileSync(join(work, 'a'), 'a'); g(work, 'add', '.'); g(work, 'commit', '-q', '-m', 'a');
+      g(work, 'push', '-q', 'origin', 'master');
+      const sha = g(work, 'rev-parse', 'HEAD');
+      // Master moves on origin; the work repo never fetches.
+      const other = join(dir, 'other'); execFileSync('git', ['clone', '-q', origin, other]);
+      for (let i = 0; i < ahead; i++) { writeFileSync(join(other, `n${i}`), 'n'); g(other, 'add', '.'); g(other, 'commit', '-q', '-m', `n${i}`); }
+      g(other, 'push', '-q', 'origin', 'master');
+      return { sha };
+    }
+    const at = (codeDir: string, extra: Parameters<typeof readBuildLive>[0] = {}) => readBuildLive({ codeDir, now: () => 0, readBuiltSha: () => null, ...extra });
+
+    it('without it, a host that never fetches reads current while master moved', () => {
+      staleClone(2);
+      const r = at(join(dir, 'work'));
+      expect(r.behind).toMatchObject({ state: 'known', count: 0 });
+      expect(r.refFreshness).toBe('local');
+    });
+
+    it('refreshes the master ref and counts what the stale ref hid, leaving the checkout alone', () => {
+      const { sha } = staleClone(2);
+      const r = at(join(dir, 'work'), { fetch: true });
+      expect(r.refFreshness).toBe('fetched');
+      expect(r.behind).toMatchObject({ state: 'known', count: 2, ref: 'origin/master' });
+      expect(r.verdict).toBe(`live build is 2 commits behind master on master; merged fleet features may not be running`);
+      expect(execFileSync('git', ['-C', join(dir, 'work'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).toBe(sha);
+    });
+
+    it('a failed fetch keeps the local ref and says so', () => {
+      repo(1);
+      git('remote', 'add', 'origin', join(dir, 'nowhere.git'));
+      const r = read({ fetch: true });
+      expect(r.refFreshness).toBe('fetch-failed');
+      expect(r.behind).toMatchObject({ state: 'known', count: 1 });
+      expect(r.verdict).toContain('1 commit behind master');
+      expect(r.verdict).toContain('fetching origin failed');
+    });
+
+    it('does not fetch outside a git checkout', () => {
+      mkdirSync(join(dir, 'plain'));
+      const seen: string[] = [];
+      at(join(dir, 'plain'), { fetch: true, git: (_c, a) => { seen.push(a[0]!); return null; } });
+      expect(seen).not.toContain('fetch');
+    });
+
+    it('the CLI passes --fetch through and still rejects unknown flags', async () => {
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const seen: boolean[] = [];
+      const stub = (o: { fetch: boolean }) => { seen.push(o.fetch); return read(); };
+      await cmdDoctorBuild([], stub); await cmdDoctorBuild(['--fetch', '--json'], stub);
+      expect(seen).toEqual([false, true]);
+      expect(await cmdDoctorBuild(['--fetch', '--bogus'], stub)).toBe(2);
+    });
+  });
+
   it('prints plain words and JSON, rejects other flags', async () => {
     const report = read();
     const out: string[] = [];

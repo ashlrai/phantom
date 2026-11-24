@@ -603,6 +603,7 @@ export interface FleetLiveSummary {
 export type FleetLiveState = 'dark' | 'idle' | 'running' | 'paused' | 'stopped';
 
 export interface FleetLiveSnapshotV1 {
+  liveJobs?: import('./live-jobs.js').LiveJobsReport;
   v: 1;
   generatedAt: string;
   state: FleetLiveState;

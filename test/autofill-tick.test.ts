@@ -142,9 +142,15 @@ describe('autofill picks starved lanes from the status facts', () => {
   });
 
   it('feeds no more than the free slots', async () => {
-    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 5, target: 7, queued: 0, held: false, remainingPct: null }] }) });
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 5, target: 7, queued: 0, held: false, remainingPct: 40 }] }) });
     expect(report.runs[0]).toMatchObject({ lane: 'claude', drafted: 2, applied: 2 });
-    expect(report.lanes![0]).toMatchObject({ starved: true, fed: 2, why: 'running 5 of 7, 0 queued' });
+    expect(report.lanes![0]).toMatchObject({ starved: true, fed: 2, why: 'running 5 of 7, 0 queued, pool 60% used' });
+  });
+
+  it('does not feed a lane with no pool budget reading', async () => {
+    const report = await tick({}, { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 7, queued: 0, held: false, remainingPct: null }] }) });
+    expect(report.runs).toEqual([]);
+    expect(report.lanes).toEqual([{ lane: 'claude', starved: false, fed: 0, why: 'no budget reading, so usage left is unknown' }]);
   });
 
   it('skips a held lane with the reason in the report', async () => {
@@ -192,15 +198,15 @@ describe('autofill tick gap harvest', () => {
     const report = await tick({ claude: 0, devin: 0 }, { harvestGaps });
     expect(harvestGaps).toHaveBeenCalledTimes(1);
     expect(report.schema).toBe('queue.autofill.tick.v1');
-    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, unknown: false });
+    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, parked: 0, unknown: false });
   });
   it('harvests on every apply tick, even with no starved lane', async () => {
     const harvestGaps = vi.fn(async () => gapsReport);
     const report = await tick({}, { harvestGaps, lastGapQueuedMs: async () => null });
     expect(harvestGaps).toHaveBeenCalledTimes(1);
     expect(report.reason).toBe('No lane is starved.');
-    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, unknown: false });
-    expect(report.gapsNote).toBeNull();
+    expect(report.gaps).toEqual({ candidates: 1, queued: 1, skipped: 0, parked: 0, unknown: false });
+    expect(report.gapsNote).toBe('1 gaps found, queued 1 for a lane');
   });
   it('never writes on a dry run and says why', async () => {
     const harvestGaps = vi.fn(async () => gapsReport);
@@ -242,7 +248,7 @@ describe('autofill tick gap note with lanes that cannot launch', () => {
     const seen: unknown[] = [];
     const report = await tick({}, { readLanes: async () => lanes, lastGapQueuedMs: async () => null, harvestGaps: async o => { seen.push(o.lanes); return gaps; } });
     expect(seen[0]).toEqual(lanes.lanes);
-    expect(report.gapsNote).toMatch(/^36 gaps found, queued 1 for claude \(0 of 8 busy\); 10 rows wait on codex-personal \(back \w{3} .*(AM|PM)\)$/);
+    expect(report.gapsNote).toMatch(/^36 gaps found, queued 1 for claude \(0 of 8 busy\); 10 rows parked on codex-personal \(pool spent until \w{3} .*(AM|PM)\)$/);
   });
 
   it('never writes on a dry run', async () => {
