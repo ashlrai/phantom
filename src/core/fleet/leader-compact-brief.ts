@@ -9,6 +9,7 @@ import { ledgerRows, ledgerEventName, ledgerPhase, ledgerPrUrl, ledgerStateToken
 import { collapseFamily } from './family-yield.js';
 import { readGuardianGlance } from './guardian-glance.js';
 import { readFleetPace } from './pace-verdict.js';
+import { parseTickCost } from './tick-cost.js';
 import { compactMergeLatency, dispatchTick, objectRow } from './compact-brief-evidence.js';
 import { parseLedgerTs } from '../metrics/loop.js';
 import { LIVE_JOBS_FILE, type LiveJobsSnapshot } from './live-jobs.js';
@@ -166,6 +167,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     schema: 'leader.compact-brief.v1', at: new Date(now).toISOString(), headline, hostLoadWarning,
     state: openPrs !== null || lanes.length || tail || hasPace || guardian?.length ? 'ready' : 'no data', sources,
     windowHours: 2, emptyWindowHours: 24, lanes,
+    tickWallP95: parseTickCost(log?.text ?? null, now, 2, log?.truncated ?? false).tickWallP95,
     pools: (pace?.pools ?? []).map(p => ({ pool: clean(p.pool), usedPct: p.usedPct, hoursToReset: p.hoursToReset,
       burnPerHour: p.recentPerHour, safeBurn: p.safeBurnPerHour ?? null, verdict: p.verdict === 'stale' || p.verdict === 'spent' || p.verdict === 'free' ? p.line ?? p.verdict : p.verdict ?? 'unknown',
       headroom: p.headroom, source: p.source, ageHours: p.ageHours,
@@ -192,7 +194,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
 }
 type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
 /** Stored briefs written before merge projection recovery remain readable. */
-export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs'> & Partial<Pick<GeneratedBrief, 'mergedPrs'>>;
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });

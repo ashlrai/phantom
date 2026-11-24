@@ -20,7 +20,14 @@ All snapshots for a visit must retain the same arrival time, station and pool;
 the last appended snapshot wins. A retry or station transfer gets a new visit ID.
 Do not put prompts, credentials or task descriptions in these labels. Existing
 fleet events do not contain these timestamps: producers must record visits before
-the estimator can report them. The journal currently has no automatic retention.
+the estimator can report them. The journal keeps itself bounded: every
+`visits-sync` pass (the daemon off-tick job and `--apply`) compacts it once it
+exceeds 4 MiB, rewriting to the latest snapshot per (station, pool, id) — the
+only form every reader folds to — while keeping open visits, visits completed
+within the last 30 days, and every key still derivable from the jobs-ledger
+tail or live queue. Completed visits older than that whose jobs have left
+every evidence window are dropped; stats windows never reach them, and a visit
+id is never reused so nothing can append against a dropped key.
 
 `phm queue visits-sync` is the fleet producer: it folds `metrics/jobs.jsonl`
 and the live `- READY` rows of `queue/router-queue.md` into visits and appends

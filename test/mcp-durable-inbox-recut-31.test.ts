@@ -97,7 +97,11 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
     [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
     [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
+    [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
+    [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
+    [{ channel: '' }], [{ channel: 5 }], [{ channel: null }],
     [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
+    [{ before: 'not-a-time' }], [{ before: '' }], [{ before: 1735689600000 }], [{ before: '999999d' }], [{ before: null }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ after: 0, extra: 1 }], [{ path: '/tmp/x' }], [{ command: 'read' }], [{ file: 'x' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
@@ -128,6 +132,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { priority: 'P1', job: 'RQ-1', contains: 'Fake' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
       filters: { priority: 'P1', job: 'RQ-1', contains: 'fake' } });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { channel: 'eng' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { channel: 'eng' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -266,6 +273,41 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the before upper bound exclusive of its edge and composes with since', async () => {
+    expect(post('b-old', {}, () => 1_000).status).toBe('posted');
+    expect(post('b-edge', {}, () => 2_000).status).toBe('posted');
+    expect(post('b-new', {}, () => 3_000).status).toBe('posted');
+    const client = await connect();
+    const before = await callInbox(client, { before: '2000' });
+    expect(before.parsed).toMatchObject({ sourceState: 'ok', filters: { before: 2000 } });
+    expect(rows(before.parsed).map(row => row.envelope.id)).toEqual(['b-old']);
+    // [since, before) keeps the lower bound inclusive and the upper exclusive:
+    // b-edge sits exactly on since and b-new exactly on before.
+    const window = await callInbox(client, { since: '2000', before: '3000' });
+    expect(rows(window.parsed).map(row => row.envelope.id)).toEqual(['b-edge']);
+    const empty = await callInbox(client, { before: '1000' });
+    expect(empty.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 3 });
+  });
+
+  it('applies the channel read filter to every topic of one room', async () => {
+    expect(post('eng-general', { to: 'group:eng:general' }).status).toBe('posted');
+    expect(post('eng-alerts', { to: 'group:eng:alerts' }).status).toBe('posted');
+    expect(post('ops-general', { to: 'group:ops:general' }).status).toBe('posted');
+    expect(post('direct', { to: 'worker' }).status).toBe('posted');
+    expect(post('eng-bare', { to: 'group:eng' }).status).toBe('posted');
+    expect(post('engx-room', { to: 'group:engx:general' }).status).toBe('posted');
+    const client = await connect();
+    const room = await callInbox(client, { channel: 'eng' });
+    expect(room.parsed).toMatchObject({ sourceState: 'ok', filters: { channel: 'eng' } });
+    expect(rows(room.parsed).map(row => row.envelope.id)).toEqual(['eng-general', 'eng-alerts']);
+    expect(room.parsed['nextCursor']).toBe(6);
+    // The same raw to-prefix rule narrows inside other filters conjunctively.
+    const narrowed = await callInbox(client, { channel: 'eng', contains: 'eng-alerts' });
+    expect(rows(narrowed.parsed).map(row => row.envelope.id)).toEqual(['eng-alerts']);
+    const none = await callInbox(client, { channel: 'missing' });
+    expect(none.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 6 });
   });
 
   it('excludes expired records while the cursor still skips them', async () => {
