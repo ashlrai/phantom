@@ -312,6 +312,44 @@ describe('bus board thread read filters', () => {
     expect(store.listTasks('alice', first, 'frobnicate').map((row) => row.itemId)).toEqual(['item-frob']);
     expect(store.listTasks('alice', first, 'absent')).toHaveLength(0);
   });
+
+  it('filters thread deliveries by sender label under the shared from/exclude-from rule', async () => {
+    const store = board();
+    const threadId = store.createThread('alice', 'Sender split').id;
+    store.joinThread('bob', threadId);
+    store.joinThread('carol', threadId);
+    await store.post('alice', threadId, 'alice first');
+    await store.post('bob', threadId, 'bob second');
+    await store.post('alice', threadId, 'alice third');
+
+    const senders = (rows: { sender: string }[]) => rows.map((row) => row.sender);
+    // readThread lists the caller's copies: bob sees all three posts —
+    // two from alice, one from himself.
+    expect(senders(store.readThread('bob', threadId))).toEqual(['alice', 'bob', 'alice']);
+    expect(senders(store.readThread('bob', threadId, false, { from: 'alice' })))
+      .toEqual(['alice', 'alice']);
+    expect(senders(store.readThread('bob', threadId, false, { excludeFrom: 'alice' })))
+      .toEqual(['bob']);
+    // The two compose like every other bus read: a sender both included
+    // and excluded matches nothing.
+    expect(store.readThread('bob', threadId, false, { from: 'alice', excludeFrom: 'alice' })).toHaveLength(0);
+    // A well-formed label no delivery carries is an honest empty from-match
+    // and an excludeFrom that excludes nothing — never an error.
+    expect(store.readThread('bob', threadId, false, { from: 'dave' })).toHaveLength(0);
+    expect(senders(store.readThread('bob', threadId, false, { excludeFrom: 'dave' })))
+      .toEqual(['alice', 'bob', 'alice']);
+    // hops projects the same filtered deliveries before dropping bodies.
+    expect(senders(store.hops('bob', threadId, { from: 'bob' }))).toEqual(['bob']);
+    // pendingOnly composes: bob's own post is unacknowledged, so a
+    // from-filtered pending read still answers it.
+    expect(senders(store.readThread('bob', threadId, true, { from: 'bob' }))).toEqual(['bob']);
+    expect(store.readThread('bob', threadId, true, { from: 'carol' })).toHaveLength(0);
+    // The sender rule ANDs with the text and time filters on the same rows.
+    expect(senders(store.readThread('bob', threadId, false,
+      { from: 'alice', contains: 'third' }))).toEqual(['alice']);
+    expect(store.readThread('bob', threadId, false,
+      { from: 'alice', contains: 'bob second' })).toHaveLength(0);
+  });
 });
 
 describe('bus board task claims tied to fleet claims', () => {
@@ -993,6 +1031,19 @@ describe('phm bus CLI end-to-end', () => {
     expect(window.value.result).toHaveLength(2);
     expect((await call(['thread', 'read', thread, '--since', 'bogus'], 'bob')).code).toBe(2);
 
+    // --from/--exclude-from narrow deliveries by the stored sender label:
+    // alice posted both rows, so --from alice keeps them and --exclude-from
+    // alice empties the read; a peer label that fails the id grammar is a
+    // usage error like --peer's.
+    const bySender = await call(['thread', 'read', thread, '--from', 'alice'], 'bob');
+    expect(bySender.code).toBe(0);
+    expect(bySender.value.result).toHaveLength(2);
+    expect((await call(['thread', 'read', thread, '--exclude-from', 'alice'], 'bob')).value.result).toHaveLength(0);
+    expect((await call(['thread', 'hops', thread, '--from', 'alice'], 'bob')).value.result).toHaveLength(2);
+    expect((await call(['thread', 'pending', thread, '--from', 'alice'], 'bob')).value.result).toHaveLength(2);
+    expect((await call(['thread', 'read', thread, '--from', 'alice', '--exclude-from', 'alice'], 'bob')).value.result).toHaveLength(0);
+    expect((await call(['thread', 'read', thread, '--from', 'not a peer'], 'bob')).code).toBe(2);
+
     // Title reads take --contains; receipts take the time window on
     // receivedAt — ack one delivery and bound it both ways.
     const tasks = await call(['task', 'list', thread, '--contains', 'frobnicate'], 'bob');
@@ -1009,10 +1060,16 @@ describe('phm bus CLI end-to-end', () => {
     expect(receipts.value.result).toHaveLength(1);
     expect((await call(['thread', 'receipts', thread, '--before', '0'], 'alice')).value.result).toHaveLength(0);
 
-    // A filter valid nowhere on the command stays a usage error.
+    // A filter valid nowhere on the command stays a usage error — the
+    // sender rule reaches only the delivery reads, never the title lists,
+    // the receipts projection or board pending's digest.
     expect((await call(['thread', 'read', thread, '--job', 'job-t1'])).code).toBe(2);
     expect((await call(['thread', 'join', thread, '--contains', 'x'])).code).toBe(2);
     expect((await call(['task', 'claim', 'task-x', '--since', '1d'])).code).toBe(2);
+    expect((await call(['thread', 'list', '--from', 'alice'])).code).toBe(2);
+    expect((await call(['task', 'list', thread, '--exclude-from', 'alice'])).code).toBe(2);
+    expect((await call(['thread', 'receipts', thread, '--from', 'alice'], 'alice')).code).toBe(2);
+    expect((await call(['board', 'pending', '--from', 'alice'], 'bob')).code).toBe(2);
   });
 
   it('serves the fleet-wide board pending digest through --all', async () => {
