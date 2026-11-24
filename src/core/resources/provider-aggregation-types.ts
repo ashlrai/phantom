@@ -1,6 +1,6 @@
 /** Browser-safe qualitative grouping. No value here grants entitlement, execution or spending authority. */
 /** Matches routing/headroom's default observation age; current policy may impose a stricter supplied limit. */
-export const DEFAULT_RESOURCE_OBSERVATION_MAX_AGE_MS = 15 * 60_000;
+export const DEFAULT_RESOURCE_OBSERVATION_MAX_AGE_MS = 60 * 60_000;
 export type ProviderReadingState = 'current' | 'stale' | 'missing' | 'unknown' | 'invalid' | 'conflict' | 'unavailable' | 'declared';
 export interface ProviderResourceDescriptor {
   /** accountId is a supplied connection/seat locator or declared Bot reference, never verified human/provider identity. */

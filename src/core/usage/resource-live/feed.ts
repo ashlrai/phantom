@@ -31,7 +31,8 @@ export interface ResourceLiveFeed {
   pace: ResourceLivePaceRow[];
 }
 
-const SENSOR_SOURCE: Readonly<Record<string, string>> = { 'grok-ultra-manual': 'manual' };
+const SENSOR_SOURCE: Readonly<Record<string, string>> = { 'grok-ultra-manual': 'manual',
+  'queue/ultra.reading.json': 'grok-ultra-reading', 'state/grok-ultra.reading.json': 'grok-ultra-reading' };
 
 function sensorLane(id: string): string | null {
   return RESOURCE_LIVE_ALLOWANCES.find(row => row.id === id)?.sensor_lane ?? null;
@@ -51,7 +52,7 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
   const parsed = usageSensorReadingSchema.safeParse({
     lane,
     observedAt: reading.observed_at,
-    source: SENSOR_SOURCE[reading.source] ?? reading.source,
+    source: reading.source.startsWith('status-budget:') ? 'dispatcher-budget' : SENSOR_SOURCE[reading.source] ?? reading.source,
     staleAfter: reading.stale_after ?? new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
     used: Math.round(reading.used * factor * 1000) / 1000,
     limit: Math.round(reading.limit * factor * 1000) / 1000,

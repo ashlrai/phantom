@@ -280,7 +280,7 @@ describe('barRows', () => {
   it('never projects a reset forecast or usability from stale quota without a connection check', () => {
     const resetAt = new Date(NOW + 60_000).toISOString();
     const result = barRows([row({ engine: 'codex', cls: 'blocked', connection: null,
-      connectionCheckedAt: null, usageObservedAt: new Date(NOW - 3_600_000).toISOString(), resetAt,
+      connectionCheckedAt: null, usageObservedAt: new Date(NOW - 3_600_001).toISOString(), resetAt,
       windows: [win({ usedPercent: null, limitReached: true, resetsAt: resetAt, resetText: 'resets later' })],
       credits: '7 native credits available', creditBalance: '7', creditState: 'available' })],
     { healthRead: true, now: NOW })[0]!;
@@ -637,7 +637,7 @@ describe('Codex credits are independent of the quota battery', () => {
 
   it('does not color expired or untimed Codex usage as current capacity', () => {
     for (const patch of [
-      { usageObservedAt: new Date(NOW - 60 * 60_000).toISOString() },
+      { usageObservedAt: new Date(NOW - 60 * 60_000 - 1).toISOString() },
       { usageObservedAt: null },
       { quotaExpiresAt: new Date(NOW - 1).toISOString() },
     ]) {

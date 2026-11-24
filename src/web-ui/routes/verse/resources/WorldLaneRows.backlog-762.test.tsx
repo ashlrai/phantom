@@ -45,9 +45,9 @@ describe('preserved resource sidebar from #6585', () => {
     expect(tooltip).toHaveTextContent('Observed fresh · 1m ago');
 
     fireEvent.blur(row);
-    act(() => { vi.advanceTimersByTime(14 * 60_000); });
+    act(() => { vi.advanceTimersByTime(59 * 60_000); });
     expect(row).toHaveAttribute('data-freshness', 'stale');
-    expect(row).toHaveTextContent('stale · 15m ago');
+    expect(row).toHaveTextContent('stale · 1h ago');
     expect(row).not.toHaveTextContent('resets in');
     expect(row.querySelector('[data-gauge]')).toBeNull();
     unmount();

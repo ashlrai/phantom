@@ -24,6 +24,8 @@ export interface WorldLaneRow {
   label: string;
   engine: LaneEngine;
   usage: string;
+  limit: string;
+  billing: string;
   remaining: string;
   reset: string;
   resetAt: string | null;
@@ -60,8 +62,11 @@ const CANONICAL: readonly LaneSpec[] = [
   { lane: 'claude-max', label: 'Claude subscription', engine: 'claude', match: ['claude-max', 'claude', 'claude-subscription'] },
   { lane: 'claude-api', label: 'Claude API', engine: 'claude', match: ['claude-api'] },
   { lane: 'codex-personal', label: 'Codex personal', engine: 'codex', match: ['codex-personal'] },
+  { lane: 'codex-cmp', label: 'Codex CMP', engine: 'codex', match: ['codex-cmp'] },
   { lane: 'devin', label: 'Devin', engine: 'devin', match: ['devin'] },
+  { lane: 'devin-swe-flash', label: 'Devin Flash', engine: 'devin', match: ['devin-swe-flash', 'devin-flash'] },
   { lane: 'dot', label: 'Dot', engine: 'dot', match: ['dot'] },
+  { lane: 'instinct', label: 'Instinct', engine: 'other', match: ['instinct'] },
   { lane: 'grok-ultra', label: 'Grok', engine: 'grok', match: ['grok-ultra', 'grok'] },
   { lane: 'cursor-cloud', label: 'Cursor cloud', engine: 'cursor', match: ['cursor-cloud', 'cursor'] },
   { lane: 'local', label: 'Local / oMLX', engine: 'local', match: ['local', 'omlx', 'ollama'] },
@@ -318,7 +323,7 @@ function badgeOf(primary: Signal, nowMs: number): { freshness: LaneFreshness; ob
 function unknownRow(lane: string, label: string, engine: LaneEngine, key: string): WorldLaneRow {
   const summary = `${label}: usage unknown, remaining unknown, reset unknown, burn unknown, forecast unknown. Source unknown. Observed unknown.`;
   return {
-    key, lane, label, engine, history: null, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null, resetIn: null,
+    key, lane, label, engine, history: null, usage: 'unknown', limit: 'unknown', billing: engine === 'local' ? 'local' : 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null, resetIn: null,
     burn: 'unknown', forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null,
     source: 'unknown', observedAt: null, freshness: 'unknown', age: 'unknown', summary,
   };
@@ -366,7 +371,7 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const source = primary.source ?? 'unknown';
   const summary = `${label}: usage ${usage}, remaining ${remainingText}, reset ${resetText}, burn ${burnText}, forecast ${text}. Source ${source}. Observed ${badge.freshness}${badge.observedAt ? ` ${badge.observedAt}` : ''}.`;
   return {
-    key, lane: laneName, label, engine, history: parseHistory(lane['history']), usage, remaining: remainingText, reset: resetText, resetAt,
+    key, lane: laneName, label, engine, history: parseHistory(lane['history']), usage, limit: numberText(limit, unit, 'used'), billing: engine === 'local' ? 'local' : 'unknown', remaining: remainingText, reset: resetText, resetAt,
     resetIn: resetCountdown(resetAt, nowMs), burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
     source, observedAt: badge.observedAt, freshness: badge.freshness, age: badge.age, summary,
   };
@@ -442,13 +447,55 @@ export function worldLaneRows(document: unknown, nowMs: number): WorldLaneRow[] 
     const extra = extraIdentity(id);
     rows.push(project(lane, extra.label, extra.engine, windows, now, keyFor(id)));
   });
+  const pool = asRecord(asRecord(document)?.['resourcePool']);
+  const entries = Array.isArray(pool?.['entries']) ? pool['entries'] : [];
+  const live = asRecord(pool?.['live']);
+  const readings = Array.isArray(live?.['readings']) ? live['readings'] : [];
+  const aliases: Record<string, string> = { 'claude-weekly': 'claude-max', 'devin-flash': 'devin-swe-flash', grok: 'grok-ultra', cursor: 'cursor-cloud', 'glm-lite': 'zai', antigravity: 'agy' };
+  for (const raw of [...entries, ...readings]) {
+    const item = asRecord(raw);
+    if (!item) continue;
+    const id = typeof item['id'] === 'string' ? item['id'] : typeof item['lane'] === 'string' ? item['lane'] : typeof item['name'] === 'string' ? item['name'] : null;
+    if (!id) continue;
+    const lane = aliases[id] ?? id;
+    let index = rows.findIndex(row => row.lane === lane);
+    if (index < 0) {
+      const identity = extraIdentity(lane);
+      rows.push(unknownRow(lane, identity.label, identity.engine, keyFor(lane)));
+      index = rows.length - 1;
+    }
+    const previous = rows[index]!;
+    const observedAt = typeof item['observed_at'] === 'string' ? item['observed_at'] : typeof item['measured_at'] === 'string' ? item['measured_at'] : null;
+    const observed = observedAt ? Date.parse(observedAt) : NaN;
+    const stale = item['stale'] === true || item['stale_over_1h'] === true || (Number.isFinite(observed) && now - observed >= WORLD_LANE_STALE_MS);
+    const current = !stale && Number.isFinite(observed) && observed <= now && item['verified'] !== false;
+    const billing = typeof item['billing_type'] === 'string' ? item['billing_type'] : previous.billing;
+    const oldObserved = previous.observedAt ? Date.parse(previous.observedAt) : NaN;
+    if (previous.freshness === 'fresh' && (!current || (Number.isFinite(oldObserved) && oldObserved > observed))) {
+      rows[index] = { ...previous, billing };
+      continue;
+    }
+    const unit = typeof item['unit'] === 'string' ? safeUnit(item['unit']) : null;
+    const wrapped = (value: unknown): Signal => ({ present: true, value: current && typeof value === 'number' && Number.isFinite(value) ? value : null, source: null, observedAt, freshness: current ? 'fresh' : stale ? 'stale' : 'unknown' });
+    const usage = wrapped(item['used'] ?? item['usage'] ?? item['used_pct']);
+    const limit = wrapped(item['limit']);
+    const remaining = wrapped(item['remaining']);
+    const resetRaw = item['reset_at'] ?? item['reset_or_expiry'];
+    const resetAt = current && typeof resetRaw === 'string' && isoLabel(resetRaw) ? resetRaw : null;
+    const freshness: LaneFreshness = stale ? 'stale' : current ? 'fresh' : 'unknown';
+    rows[index] = { ...previous, billing, usage: usageText(usage, limit, unit), limit: numberText(limit, unit, 'used'),
+      remaining: numberText(remaining, unit, 'remaining'), resetAt, reset: resetAt ? isoLabel(resetAt)! : 'unknown',
+      resetIn: resetCountdown(resetAt, now), observedAt, freshness, age: observationAge(observedAt, now),
+      source: typeof item['source'] === 'string' ? item['source'] : 'resource pool',
+      summary: `${previous.label}: ${billing}, usage ${usageText(usage, limit, unit)}, limit ${numberText(limit, unit, 'used')}, ${freshness}.` };
+  }
   return rows;
 }
 
 /** True when two mapped rows would paint the same pixels. */
 export function sameWorldLaneRow(left: WorldLaneRow, right: WorldLaneRow): boolean {
   return left.key === right.key && left.lane === right.lane && left.label === right.label
-    && left.engine === right.engine && left.usage === right.usage && left.remaining === right.remaining
+    && left.engine === right.engine && left.usage === right.usage && left.limit === right.limit && left.billing === right.billing && left.remaining === right.remaining
     && left.reset === right.reset && left.resetAt === right.resetAt && left.resetIn === right.resetIn && left.burn === right.burn
     && left.forecast === right.forecast && left.forecastText === right.forecastText
     && left.exhaustFraction === right.exhaustFraction && left.source === right.source

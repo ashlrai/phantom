@@ -8,7 +8,7 @@ const reading = { sourceState: 'healthy' as const, usedPct: 90,
 describe('session usage display freshness', () => {
   it('uses the original observation time and expires without another response', () => {
     expect(personalSessionCurrent(reading, now)).toBe(true);
-    expect(personalSessionCurrent(reading, now + 15 * 60_000)).toBe(false);
+    expect(personalSessionCurrent(reading, now + 60 * 60_000)).toBe(false);
     expect(personalSessionCurrent(reading, now, 30_000)).toBe(false);
   });
   it('does not treat a successful file read as fresh usage after a reset or clock error', () => {

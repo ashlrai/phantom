@@ -5,7 +5,7 @@ import type { LaneEngine, LaneFreshness, WorldLaneRow } from './world-lane-rows.
 function row(key: string, engine: LaneEngine, freshness: LaneFreshness = 'fresh', lane = key): WorldLaneRow {
   return {
     history: null,
-    key, lane, label: key, engine, usage: 'Used 40%', remaining: 'left 60%', reset: 'unknown', resetAt: null, resetIn: null, burn: 'unknown',
+    key, lane, label: key, engine, usage: 'Used 40%', limit: '100%', billing: 'subscription', remaining: 'left 60%', reset: 'unknown', resetAt: null, resetIn: null, burn: 'unknown',
     forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null, source: 'claude-usage', observedAt: null, freshness, age: '2m ago', summary: '',
   };
 }

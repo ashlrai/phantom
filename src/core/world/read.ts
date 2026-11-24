@@ -3,7 +3,8 @@ import { readFableAdmission } from '../routing/fable-admission.js';
  * Build and cache ashlr.world-model/v1. A warm cache hit does not re-probe
  * the roster, the desktop operator, or gh.
  */
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { listBusInboxAfter } from '../fleet/bus-inbox.js';
@@ -36,6 +37,7 @@ const MAX_BYTES = 1_048_576;
 
 export interface CachedWorld extends WorldModel {
   views: { observe: ObserveSnapshot };
+  resourcePool?: unknown;
 }
 
 interface MemoryEntry { at: number; model: CachedWorld }
@@ -105,6 +107,42 @@ async function readQueue(): Promise<{ ready: number; claimed: number } | null> {
   } catch {
     return null;
   }
+}
+
+/** Only the display fields cross into the desktop API, never arbitrary pool metadata. */
+export async function readResourcePool(): Promise<unknown> {
+  const path = join(process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs'), 'state', 'resource-pool.json');
+  try {
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let content: string;
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > MAX_BYTES) return null;
+      const buffer = Buffer.alloc(MAX_BYTES + 1);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (bytesRead > MAX_BYTES) return null;
+      content = buffer.subarray(0, bytesRead).toString('utf8');
+    } finally { await handle.close(); }
+    const pool = JSON.parse(content) as Record<string, unknown>;
+    const fields = ['id', 'name', 'label', 'lane', 'billing_type', 'usage', 'used', 'used_pct', 'limit', 'remaining',
+      'unit', 'reset_or_expiry', 'reset_at', 'measured_at', 'observed_at', 'stale', 'stale_over_1h', 'verified', 'source'];
+    const clean = (value: unknown): Record<string, unknown> | null => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const row = value as Record<string, unknown>;
+      return Object.fromEntries(fields.flatMap(key => {
+        const v = row[key];
+        return v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))
+          || (typeof v === 'string' && v.length <= 160) ? [[key, v]] : [];
+      }));
+    };
+    const rows = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
+      ? value.flatMap(v => { const row = clean(v); return row ? [row] : []; })
+      : value && typeof value === 'object' ? Object.entries(value).flatMap(([id, v]) => {
+        const row = clean(v); return row ? [{ id, ...row }] : [];
+      }) : [];
+    const live = pool['live'] && typeof pool['live'] === 'object' ? pool['live'] as Record<string, unknown> : {};
+    return { entries: rows(pool['entries']), live: { readings: rows(live['readings']) } };
+  } catch { return null; }
 }
 
 async function readCi(nowMs: number): Promise<{ repos: number; medianDailyTtgSeconds: number | null; observedAt: string | null } | null> {
@@ -243,7 +281,7 @@ export async function buildWorldModel(options: WorldReadOptions = {}): Promise<C
     ...observe.coverage,
     unknownFields: model.blindSpots.map((spot) => ({ id: spot.id, path: spot.path, freshness: spot.freshness })),
   };
-  const snapshot = { ...model, views: { observe } };
+  const snapshot = { ...model, views: { observe }, resourcePool: await readResourcePool() };
   writeWorldExport(model, { nowMs });
   return snapshot;
 }

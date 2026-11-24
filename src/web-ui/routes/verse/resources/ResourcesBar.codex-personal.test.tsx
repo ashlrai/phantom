@@ -44,7 +44,7 @@ function mount(value: unknown, state = 'healthy', visible = true) {
 describe('personal Codex session log resource', () => {
   it.each(['observation expiry', 'reset'])('invalidates at the exact %s between display polls without restamping or fetching', async kind => {
     const value = { ...reading,
-      asOf: new Date(NOW - (kind === 'observation expiry' ? 15 * 60_000 - 1000 : 60_000)).toISOString(),
+      asOf: new Date(NOW - (kind === 'observation expiry' ? 60 * 60_000 - 1000 : 60_000)).toISOString(),
       resetsAt: new Date(NOW + (kind === 'reset' ? 1000 : 86_400_000)).toISOString() };
     const warm = mount(value);
     await warm.findByRole('button', { name: /Personal Codex weekly · 87% used/ });
@@ -63,7 +63,7 @@ describe('personal Codex session log resource', () => {
       expect(row).toHaveTextContent('87% used · last');
       expect(row.querySelector('button')).toHaveAccessibleName(/Last session reading · current usage unconfirmed/);
       expect(warm.calls).toHaveLength(reads);
-      expect(value.asOf).toBe(new Date(NOW - (kind === 'observation expiry' ? 15 * 60_000 - 1000 : 60_000)).toISOString());
+      expect(value.asOf).toBe(new Date(NOW - (kind === 'observation expiry' ? 60 * 60_000 - 1000 : 60_000)).toISOString());
     } finally { vi.useRealTimers(); }
   });
 
