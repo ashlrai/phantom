@@ -1,8 +1,8 @@
 /**
  * `phm fleet router-weights [--runs-dir <absolute dir>] [--json]` — advisory per-work-class router-weight
  * proposals from recorded outcomes (metrics/jobs.jsonl joined with the bounded side ledgers
- * api-spend/work-market/empty-tags/merge-events plus the reward-signal substrate under the
- * ASHLR home root). Read-only: never writes weights.json and never
+ * api-spend/work-market/empty-tags/merge-events/launch-cost plus the reward-signal substrate and the
+ * cross-review verdict journal under the ASHLR home root). Read-only: never writes weights.json and never
  * changes routing. Logic lives in src/core/router/weight-proposals.ts; this file parses argv and renders.
  * Exit: 0 for a bounded read (proposals or an insufficient-evidence refusal); 1 when the ledger is missing,
  * unreadable, not a file or oversized (reported as unavailable, never as an empty success); 2 for usage.
@@ -16,8 +16,9 @@ import { buildRouterWeightProposalReport, type RouterWeightEvidence, type Router
 export const FLEET_ROUTER_WEIGHTS_USAGE =
   'Usage: phm fleet router-weights [--runs-dir <absolute dir>] [--json]\n' +
   'Advisory only. Reads <runs-dir>/metrics/jobs.jsonl (default ASHLR_RUNS_DIR, then ~/.ashlr-runs) plus the bounded ' +
-  'side ledgers (api-spend/work-market/empty-tags/merge-events) plus the reward-signal ledger ' +
-  '(<ashlr>/metrics/reward-signals.jsonl) and the fleet controller\'s recorded lane-quality ' +
+  'side ledgers (api-spend/work-market/empty-tags/merge-events/launch-cost) plus the reward-signal ledger ' +
+  '(<ashlr>/metrics/reward-signals.jsonl), the cross-review verdict journal (<ashlr>/fleet/cross-review.jsonl) ' +
+  'and the fleet controller\'s recorded lane-quality ' +
   'verdicts in <runs-dir>/queue/fleet-controller.json. ' +
   'Proposes bounded weight shifts per work_class/lane from held-merge outcomes (20 known outcomes required, ' +
   'shifts capped at 0.1; merges recorded as reverted never count as held). Writes nothing and changes no ' +
@@ -45,9 +46,22 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
     const f = e.review_findings;
     parts.push(`review_findings=${f.fixed + f.rejected + f.ignored}(${e.review_findings_known})`);
   }
+  if (e.cross_review !== null) {
+    const c = e.cross_review;
+    parts.push(`cross_review=${c.approve + c.reject + c.failed + c.skipped}(${e.cross_review_known})` +
+      `(approve:${c.approve},reject:${c.reject},failed:${c.failed},skipped:${c.skipped})`);
+  }
   if (e.cost_usd_mean !== null) parts.push(`cost_usd=${e.cost_usd_mean}(${e.cost_known})`);
   if (e.acus_mean !== null) parts.push(`acus=${e.acus_mean}(${e.acus_known})`);
   if (e.pool_pct_used_mean !== null) parts.push(`pool_pct_used=${e.pool_pct_used_mean}(${e.pool_pct_used_known})`);
+  if (e.launch_cost_known > 0) {
+    parts.push(`launch_cost=${e.launch_cost_known}` +
+      `(measured:${e.launch_cost_measured}` +
+      (e.launch_peak_processes_mean !== null ? `,peak_processes:${e.launch_peak_processes_mean}` : '') +
+      (e.launch_cpu_pct_mean !== null ? `,cpu_pct_mean:${e.launch_cpu_pct_mean}` : '') +
+      (e.launch_cpu_pct_peak_mean !== null ? `,cpu_pct_peak:${e.launch_cpu_pct_peak_mean}` : '') +
+      ')');
+  }
   if (e.wall_s_mean !== null) parts.push(`wall_s=${e.wall_s_mean}(${e.wall_known})`);
   if (e.ttm_s_mean !== null) parts.push(`ttm_s=${e.ttm_s_mean}(${e.ttm_known})`);
   if (e.queue_wait_s_mean !== null) parts.push(`queue_wait_s=${e.queue_wait_s_mean}(${e.queue_wait_known})`);
@@ -83,6 +97,11 @@ function evidenceSuffix(e: RouterWeightEvidence): string {
       (e.pool_kinds !== null && e.pool_kinds.length > 0
         ? `(${e.pool_kinds.map(r => `${r.kind}:${r.jobs}`).join(',')})` : ''));
   }
+  if (e.node_outcomes_known > 0) {
+    parts.push(`node=${e.node_outcomes_known}` +
+      (e.node_verdicts !== null && e.node_verdicts.length > 0
+        ? `(${e.node_verdicts.map(r => `${r.verdict}:${r.jobs}`).join(',')})` : ''));
+  }
   if (e.merge_queue_known > 0) {
     parts.push(`merge_queue=${e.merge_queue_known}` +
       (e.merge_queue_blocked_reasons !== null && e.merge_queue_blocked_reasons.length > 0
@@ -114,7 +133,7 @@ function qualityReceiptLine(r: ControllerQualityReceipt): string {
 }
 
 function proposalLines(report: RouterWeightProposalReport): string[] {
-  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
+  const header = `router weight proposals status=${report.status} ledger=${report.ledger.state} market=${report.market_state} empty_tags=${report.empty_tag_state} merge_events=${report.merge_events_state} reward=${report.reward_state} launch_cost=${report.launch_cost_state} cross_review=${report.cross_review_state} controller_quality=${report.controller_quality_state} truncated=${report.truncated} as_of=${report.as_of} ` +
     'advisory-only: not applied to routing or weights.json';
   if (report.status === 'unavailable') {
     return [header, `unavailable: ledger state=${report.ledger.state}; no proposals were computed`, `ledger ${report.ledger.path}`];
@@ -122,7 +141,7 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
   const counts = `known=${report.known_outcomes} unknown=${report.unknown_outcomes} unclassified=${report.unclassified_outcomes} ` +
     `min_samples=${report.bounds.min_samples} max_shift=${report.bounds.max_shift}`;
   const resolution = report.unknown_unresolved === null ? [] : [
-    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} provider_walls=${report.unknown_provider_walls} unresolved=${report.unknown_unresolved}` +
+    `unknown resolution: empty=${report.unknown_empty} nonzero_exit=${report.unknown_nonzero_exit} skipped=${report.unknown_skipped} deferred=${report.unknown_deferred} noop=${report.unknown_noop} handoffs=${report.unknown_handoffs} provider_walls=${report.unknown_provider_walls} node_outcomes=${report.unknown_node_outcomes} unresolved=${report.unknown_unresolved}` +
       (report.unknown_failure_classes !== null && report.unknown_failure_classes.length > 0
         ? ` failure_classes=${report.unknown_failure_classes.map(c => `${c.failure_class}:${c.jobs}`).join(',')}`
         : '') +
@@ -163,6 +182,9 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
           (report.unknown_pool_kinds !== null && report.unknown_pool_kinds.length > 0
             ? `(${report.unknown_pool_kinds.map(c => `${c.kind}:${c.jobs}`).join(',')})` : '')
         : '') +
+      (report.unknown_node_verdicts !== null && report.unknown_node_verdicts.length > 0
+        ? ` node_verdicts=${report.unknown_node_verdicts.map(c => `${c.verdict}:${c.jobs}`).join(',')}`
+        : '') +
       (report.unknown_merge_queue !== null && report.unknown_merge_queue > 0
         ? ` merge_queue=${report.unknown_merge_queue}` +
           (report.unknown_merge_queue_blocked !== null && report.unknown_merge_queue_blocked > 0
@@ -173,6 +195,11 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
               `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`
             : `(check_failures:${report.unknown_merge_queue_check_failures},conflicts:${report.unknown_merge_queue_conflicts},` +
               `retries:${report.unknown_merge_queue_retries},recuts:${report.unknown_merge_queue_recuts})`)
+        : '') +
+      (report.unknown_cross_reviews !== null && report.unknown_cross_reviews > 0
+        ? ` cross_reviews=${report.unknown_cross_reviews}` +
+          (report.unknown_cross_review_verdicts !== null && report.unknown_cross_review_verdicts.length > 0
+            ? `(${report.unknown_cross_review_verdicts.map(c => `${c.verdict}:${c.jobs}`).join(',')})` : '')
         : ''),
   ];
   const rows = report.proposals.map(p => {
@@ -216,6 +243,16 @@ function proposalLines(report: RouterWeightProposalReport): string[] {
       ? [`reward coverage: reward-signals.jsonl ${report.reward_state}; no reward-signal evidence joined`]
       : report.reward_truncated
         ? ['reward coverage: retained tail only; reward-signal joins cover the newest bytes']
+        : []),
+    ...(report.launch_cost_state !== 'read'
+      ? [`launch-cost coverage: launch-cost.jsonl ${report.launch_cost_state}; no launch resource evidence joined`]
+      : report.launch_cost_truncated
+        ? ['launch-cost coverage: retained tail only; launch_cost joins cover the newest bytes']
+        : []),
+    ...(report.cross_review_state !== 'read'
+      ? [`cross-review coverage: cross-review.jsonl ${report.cross_review_state}; no review verdicts joined`]
+      : report.cross_review_truncated
+        ? ['cross-review coverage: retained tail only; cross_review joins cover the newest bytes']
         : []),
     ...(report.controller_quality_state !== 'read' && report.controller_quality_state !== 'unreported'
       ? [`controller-quality coverage: fleet-controller.json ${report.controller_quality_state}; no lane-quality verdicts joined`]

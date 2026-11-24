@@ -25,6 +25,7 @@ import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import { BusBoard, type BusBoardPendingPeers, type BusBoardPendingTask, type BusBoardTaskHold } from '../src/core/fleet/bus-board.js';
 import type { BusBoardDelivery } from '../src/core/fleet/bus-delivery.js';
@@ -33,6 +34,7 @@ import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
@@ -124,6 +126,7 @@ describe('readUnifiedInbox sources', () => {
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
+        wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
         'peer-dispatch': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
@@ -774,6 +777,43 @@ describe('worker-handoff assignments in the bus source', () => {
     const inbox = await read();
     expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${id}`]);
   });
+
+  it('drops a handoff answered under another label of the same identities', async () => {
+    registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-lane'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer', aliases: ['peer-alias'] }, { root: busRoot });
+    const id = postV2Body(handoff('RQ-HANDOFF-9', 'fake alias-answered handoff'), { to: 'agent:worker-9' });
+    expect((await read()).items.map(i => i.id)).toContain(`bus-handoff:${id}`);
+    // The assignee's lane alias answers the assigner's alias — the same two
+    // identities under different routing labels, still recipient -> sender.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'done on the lane' },
+      { from: 'w9-lane', to: 'peer-alias' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('drops a channel-addressed handoff a channel member answered', async () => {
+    registerAgentIdentity({ handle: 'worker-9' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'member-1' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'outsider' }, { root: busRoot });
+    expect(createAgentChannel({ name: 'ops', createdBy: 'peer', members: ['worker-9', 'member-1'] },
+      { root: busRoot }).status).toBe('created');
+    const id = postV2Body(handoff('RQ-HANDOFF-10', 'fake room handoff'), { to: 'group:ops:general' });
+    // member-1 — a room member, not the assigner — answers under its own
+    // label routed to the assigner: the room is the assignee set.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'room took it' },
+      { from: 'agent:member-1', to: 'agent:peer' });
+    const answered = await read();
+    expect(answered.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    // A registered non-member's citation is no answer: the next room handoff
+    // stays pending.
+    const second = postV2Body(handoff('RQ-HANDOFF-11', 'fake room handoff two'), { to: 'group:ops:general' });
+    postV2Body({ kind: 'note', inReplyTo: second, text: 'not mine to answer' },
+      { from: 'agent:outsider', to: 'agent:peer' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${second}`]);
+  });
 });
 
 describe('agent conversation threads in the unified inbox', () => {
@@ -923,6 +963,98 @@ describe('agent conversation threads in the unified inbox', () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
     expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: null });
+  });
+});
+
+describe('wake hints in the unified inbox', () => {
+  const wakeRow = (id: string, to: string, at: number, extra: Partial<AgentWakeRow> = {}): AgentWakeRow =>
+    ({ id, from: 'agent:peer', to, kind: 'bus.send', at, ...extra });
+  const wakesPage = (wakes: AgentWakeRow[]): AllWakesPage =>
+    ({ status: 'ok', scope: 'fleet', wakes, matched: wakes.length, truncated: false });
+  const resolvedMsg = (summary: string, jobId?: string): AgentWakeRow['message'] => ({
+    status: 'resolved', id: 'env-1', ts: new Date(now).toISOString(), priority: 'P2',
+    from: 'agent:peer', to: 'agent:helper', channel: null, fromAgent: null, summary,
+    ...(jobId === undefined ? {} : { job: { jobId, feed: 'ok' as const, job: null } }),
+  });
+
+  it('groups pending wake hints by addressee into one warn item each', async () => {
+    registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: busRoot });
+    const inbox = await read({
+      readWakes: () => wakesPage([
+        wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('review the diff') }),
+        wakeRow('m-2', 'helper', now - 3_600_000, { message: resolvedMsg('check the feed') }),
+        wakeRow('m-3', 'helper-alias', now - 1_800_000),
+        wakeRow('m-4', 'worker-9', now - 900_000),
+      ]),
+    });
+    const items = inbox.items.filter(i => i.source === 'wakes');
+    // helper's three label spellings merge into one identity group; the
+    // unregistered worker-9 stays a literal-label group.
+    expect(items).toHaveLength(2);
+    const helper = items.find(i => i.title.includes('helper'))!;
+    expect(helper).toMatchObject({
+      kind: 'wake-hint', severity: 'warn', blocking: false,
+      title: '3 pending wake hints for helper',
+      since: new Date(now - 1_800_000).toISOString(), expiresAt: null,
+    });
+    expect(helper.detail).toContain('"review the diff"');
+    expect(helper.act).toEqual(['phm agents bus wakes helper', 'phm agents bus wakes --all']);
+    const worker = items.find(i => i.title.includes('worker-9'))!;
+    expect(worker).toMatchObject({ title: '1 pending wake hint for worker-9', kind: 'wake-hint' });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('carries provable job citations so --job finds the hint', async () => {
+    const page = wakesPage([
+      wakeRow('wh-1', 'agent:helper', now - 3_600_000, {
+        claimHolder: { statusId: 'st-1', jobId: 'RQ-WAKE-1', status: 'done', priority: 'P2' } }),
+      wakeRow('m-2', 'agent:helper', now - 1_800_000, { message: resolvedMsg('feed says ship', 'RQ-WAKE-2') }),
+      wakeRow('m-3', 'agent:helper', now - 900_000, { message: resolvedMsg('no job here') }),
+    ]);
+    const inbox = await read({ readWakes: () => page });
+    const item = inbox.items.find(i => i.source === 'wakes')!;
+    expect(item.jobIds).toEqual(['RQ-WAKE-1', 'RQ-WAKE-2']);
+    const byJob = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readWakes: () => page, filter: { job: 'RQ-WAKE-1' } });
+    expect(byJob.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    expect(byJob.items.find(i => i.source === 'wakes')!.jobIds).toContain('RQ-WAKE-1');
+  });
+
+  it('reports the wakes source unavailable when the fleet read cannot resolve', async () => {
+    const inbox = await read({ readWakes: () => ({ status: 'unavailable', reason: 'registry unreadable' }) });
+    expect(inbox.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const throwing = await read({ readWakes: () => { throw new Error('boom'); } });
+    expect(throwing.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('reports a readable empty wake queue as healthy with nothing pending', async () => {
+    const inbox = await read({ readWakes: () => wakesPage([]) });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+  });
+
+  it('honors source, kind, since and contains filters on wake items', async () => {
+    const page = wakesPage([
+      wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('old ping') }),
+      wakeRow('m-2', 'agent:helper', now - 900_000, { message: resolvedMsg('fresh ping about the release') }),
+    ]);
+    const readWakes = () => page;
+    const base = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }), readWakes };
+    const bySource = await readUnifiedInbox({ ...base, filter: { source: 'wakes' } });
+    expect(bySource.items.every(i => i.source === 'wakes')).toBe(true);
+    expect(bySource.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const byKind = await readUnifiedInbox({ ...base, filter: { kind: 'wake-hint' } });
+    expect(byKind.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const bySince = await readUnifiedInbox({ ...base, filter: { since: now - 1_000_000 } });
+    expect(bySince.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const tooNew = await readUnifiedInbox({ ...base, filter: { since: now - 500_000 } });
+    expect(tooNew.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const byContains = await readUnifiedInbox({ ...base, filter: { contains: 'release' } });
+    expect(byContains.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const missContains = await readUnifiedInbox({ ...base, filter: { contains: 'nonexistent-needle' } });
+    expect(missContains.items.filter(i => i.source === 'wakes')).toHaveLength(0);
   });
 });
 
@@ -2705,6 +2837,76 @@ describe('readUnifiedInbox since filter', () => {
   });
 });
 
+describe('readUnifiedInbox before filter', () => {
+  it('keeps only items whose recorded since is strictly before the cutoff; undated items never match', async () => {
+    postWork('flt-before-oldest', { at: now - 4 * 3_600_000 });
+    postWork('flt-before-edge', { at: now - 2 * 3_600_000 });
+    postWork('flt-before-new', { at: now - 30 * 60_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    // A now-2h cutoff keeps only the 4h-old envelope: the item exactly on the
+    // cutoff, the fresher one and the undated needs-you line all stay out —
+    // before is exclusive where since is inclusive, and unknown never counts
+    // as old.
+    const older = await read({ filter: { before: now - 2 * 3_600_000 } });
+    expect(older.filter).toEqual({ before: now - 2 * 3_600_000 });
+    expect(older.items.map(i => i.id)).toEqual(['bus:flt-before-oldest']);
+    // Per-source reports stay the unfiltered store truth.
+    expect(older.sources.bus.pending).toBe(3);
+    expect(older.sources['needs-you'].pending).toBe(1);
+
+    // since and before compose into one [since, before) window: the 2h-old
+    // envelope sits inside, the 4h-old one before the lower bound and the
+    // 30m-old one at or after the upper bound.
+    const window = await read({ filter: { since: now - 3 * 3_600_000, before: now - 90 * 60_000 } });
+    expect(window.filter).toEqual({ since: now - 3 * 3_600_000, before: now - 90 * 60_000 });
+    expect(window.items.map(i => i.id)).toEqual(['bus:flt-before-edge']);
+
+    // A window that admits nothing — inverted or empty — is an honest empty
+    // match, not an error and not the unfiltered list.
+    const inverted = await read({ filter: { since: now - 3_600_000, before: now - 7_200_000 } });
+    expect(inverted.total).toBe(0);
+    expect(inverted.items).toEqual([]);
+    const empty = await read({ filter: { since: now - 2 * 3_600_000, before: now - 2 * 3_600_000 } });
+    expect(empty.total).toBe(0);
+    expect(empty.items).toEqual([]);
+
+    // A cutoff after every dated item still excludes the undated needs-you
+    // line — unknown never counts as old.
+    const everything = await read({ filter: { before: now + 3_600_000 } });
+    expect(everything.items.map(i => i.id).sort())
+      .toEqual(['bus:flt-before-edge', 'bus:flt-before-new', 'bus:flt-before-oldest']);
+    expect(everything.items.some(i => i.source === 'needs-you')).toBe(false);
+    expect(everything.total).toBe(3);
+  });
+
+  it('ANDs the upper bound with the other view dimensions', async () => {
+    postWork('flt-b2-old', { at: now - 3 * 3_600_000 });
+    postWork('flt-b2-new');
+    postJob('RQ-B2', { at: now - 5 * 3_600_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const busOnly = await read({ filter: { before: now - 2 * 3_600_000, source: 'bus' } });
+    expect(busOnly.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+
+    // before ANDs with source: the undated needs-you line can never satisfy it.
+    const undated = await read({ filter: { before: now - 2 * 3_600_000, source: 'needs-you' } });
+    expect(undated.total).toBe(0);
+    expect(undated.items).toEqual([]);
+
+    // before ANDs with kind the same way since does.
+    const kind = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-work' } });
+    expect(kind.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+    const handoff = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-handoff' } });
+    expect(handoff.total).toBe(0);
+    expect(handoff.items).toEqual([]);
+  });
+});
+
 describe('readUnifiedInbox contains filter', () => {
   it('keeps only items whose scrubbed title or detail carries the needle', async () => {
     postWork('flt-c1');                        // bus title 'fake work flt-c1'
@@ -2810,7 +3012,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -2909,6 +3111,50 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--since', '15m', '--source', 'needs-you', '--json'])).toBe(0);
     report = json();
     expect(report.filter).toEqual({ since: now - 15 * 60_000, source: 'needs-you' });
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
+  it('filters the unified JSON view by --before', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-before-old', { at: now - 3_600_000 });
+    postWork('cli-before-new');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --before keeps only items whose appearance time is strictly before the
+    // cutoff: the hour-old envelope, never the fresh one or the undated
+    // needs-you line — unknown never counts as old.
+    expect(await command(['--before', '15m', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(report.sources['needs-you'].pending).toBe(1);
+    expect(report.sources.bus.pending).toBe(2);
+
+    // The bound is exclusive and takes every parseSince spelling: the old
+    // envelope sits exactly on this cutoff and stays out.
+    expect(await command(['--before', String(now - 3_600_000), '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+    expect(await command(['--before', '2026-11-07T11:30:00Z', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+
+    // --since and --before compose into one [since, before) window.
+    expect(await command(['--since', '2h', '--before', '15m', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ since: now - 2 * 3_600_000, before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(await command(['--since', '15m', '--before', '2h', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --before ANDs with the other view filters.
+    expect(await command(['--before', '15m', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000, source: 'needs-you' });
     expect(report.total).toBe(0);
     expect(report.items).toEqual([]);
   });
@@ -3016,6 +3262,10 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--since', String(now + 60_000)])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching since=' +
       `${new Date(now + 60_000).toISOString()}.`);
+    // --before labels the resolved cutoff the same way; nothing here predates it.
+    expect(await command(['--before', '15m'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching before=' +
+      `${new Date(now - 15 * 60_000).toISOString()}.`);
   });
 
   it('refuses malformed unified filter invocations', async () => {
@@ -3031,6 +3281,9 @@ describe('phm comms inbox cli', () => {
       ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', '-5m'],
       ['--since', '15m', '--since', '15m'], ['--json', '--since'],
       ['--since', '15m', '--job'],
+      ['--before'], ['--before', '--json'], ['--before', 'bogus'], ['--before', '-5m'],
+      ['--before', '15m', '--before', '15m'], ['--json', '--before'],
+      ['--before', '15m', '--job'], ['--before', '15m', '--since'],
       ['--kind'], ['--kind', 'bogus'], ['--kind', 'bus'], ['--kind', 'bus-work', '--kind', 'bus-handoff'],
       ['--kind', '--json'], ['--json', '--kind'], ['--kind', 'read'],
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],

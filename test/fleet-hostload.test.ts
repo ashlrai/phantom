@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { cmdFleetHostload } from '../src/cli/fleet-hostload.js';
-import { groupHostFamilies, readHostFamilies } from '../src/core/fleet/host-families.js';
+import { groupHostFamilies, HOST_FAMILIES_PS_ARGS, ioWaitLine, readHostFamilies } from '../src/core/fleet/host-families.js';
 import { cmdFleetLeftovers } from '../src/cli/fleet-leftovers.js';
 import { readHostLoadReport } from '../src/core/fleet/host-load.js';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -89,7 +89,7 @@ it('bounds CLI JSON and text, rejects bad flags, and keeps read failures private
     expect(await cmdFleetHostload(['--json'], ps)).toBe(0);
     const json = String(out.mock.calls.at(-1)![0]);
     expect(Buffer.byteLength(json)).toBeLessThan(4096); expect(JSON.parse(json).omitted).toBe(100);
-    expect(await cmdFleetHostload([], ps)).toBe(0); expect(String(out.mock.calls.at(-1)![0]).split('\n')).toHaveLength(9);
+    expect(await cmdFleetHostload([], ps)).toBe(0); expect(String(out.mock.calls.at(-1)![0]).split('\n')).toHaveLength(11);
     expect(await cmdFleetHostload(['--bad'], ps)).toBe(2);
     expect(await cmdFleetHostload(['--json'], async () => { throw new Error('privateword'); })).toBe(1);
     expect(String(out.mock.calls.at(-1)![0])).not.toContain('privateword');
@@ -115,7 +115,9 @@ it('names busy executable families, folds app helpers and Spotlight, and blames 
   ]);
   expect(host.families.find(r => r.family === 'git')).toMatchObject({ processes: 2, cpuPercent: 20, rssMb: 2 });
   expect(host.families).toHaveLength(8); expect(host.omitted).toBe(3);
-  expect(host.blame).toBe('load1 25 on 18 cores: Spotlight 190%, Google Chrome 120%, fleet 10%');
+  expect(host.blame).toBe('load1 25 on 18 cores: load is mostly I/O wait (waiting processes unknown)');
+  expect(groupHostFamilies(`PID PPID %CPU RSS ELAPSED ${'COMM'.padEnd(1024)} COMMAND\n${table}`, undefined, { load1: 8, cores: 18 }).blame)
+    .toBe('load1 8 on 18 cores: Spotlight 190%, Google Chrome 120%, fleet 10%');
   expect(JSON.stringify(host)).not.toMatch(/hiddenword|Applications|Decoy|Contents|command/);
   expect(groupHostFamilies('10 1 19 1024 00:01 node plain\n11 1 19 1024 00:01 git plain').families)
     .toEqual([{ family: 'other', job: null, processes: 2, cpuPercent: 38, rssMb: 2 }]);
@@ -174,4 +176,56 @@ it('keeps fleet ownership ahead of app families and never uses an argument as a 
   expect(report.families.find(r => r.family === 'Docker')).toMatchObject({ processes: 2, cpuPercent: 11 });
   expect(report.families.find(r => r.family === 'fleet worker')).toMatchObject({ processes: 2, cpuPercent: 17 });
   expect(JSON.stringify(report)).not.toMatch(/Hidden|hiddenword|privateword|\/repo/);
+});
+
+const stateTable = (rows: [number, string, string, string][]) =>
+  `PID PPID %CPU RSS STAT ELAPSED ${'COMM'.padEnd(64)} COMMAND\n` + rows.map(([pid, state, comm, command]) =>
+    `${pid} 1 1 1024 ${state} 00:01 ${comm.padEnd(64)} ${command} hiddenword`).join('\n');
+const ioFixture = stateTable([
+  [10, 'D', '', '/usr/libexec/fseventsd'],
+  [11, 'U+', '/usr/libexec/mdworker_shared', '/usr/libexec/mdworker_shared'],
+  [12, 'D<', '/usr/libexec/mdworker_shared', '/usr/libexec/mdworker_shared'],
+  [13, 'D', '/usr/bin/find', '/usr/bin/find'],
+  [14, 'S', '/usr/bin/find', '/usr/bin/find'],
+  [15, 'R', '/usr/bin/node', '/usr/bin/node'],
+]);
+
+it.each([
+  ['', '/usr/libexec/fseventsd', 'fseventsd'],
+  ['Ph', '/Applications/Phantom.app/Contents/MacOS/Phantom', 'Phantom'],
+  ['Xc', '/Applications/Xcode.app/Contents/MacOS/Xcode', 'Xcode'],
+  ['We', '/usr/libexec/WebContent', 'WebContent'],
+  ['/usr/libexec/mdworker_sh', '/usr/libexec/mdworker_shared', 'Spotlight'],
+])('resolves empty or truncated comm %s using only the executable path', (comm, command, name) => {
+  const report = groupHostFamilies(stateTable([[10, 'D', comm, command]]).replace(' 1 1024 ', ' 25 1024 '));
+  expect(report.families[0]).toMatchObject({ family: name, processes: 1, cpuPercent: 25 });
+  expect(JSON.stringify(report)).not.toMatch(/unnamed|hiddenword|\/Applications|\/usr/);
+});
+
+it('counts D/U states by executable and names the top three when CPU cannot explain load', async () => {
+  expect(HOST_FAMILIES_PS_ARGS).toEqual(['-ww', '-axo', 'pid,ppid,pcpu,rss,state,etime,comm,command']);
+  const report = groupHostFamilies(ioFixture, undefined, { load1: 77, cores: 18 });
+  expect(report.totalCpuPercent).toBe(6);
+  expect(report.ioWait).toEqual([{ name: 'mdworker_shared', processes: 2 }, { name: 'find', processes: 1 }, { name: 'fseventsd', processes: 1 }]);
+  expect(ioWaitLine(report)).toBe('io-wait: mdworker_shared 2, find 1, fseventsd 1');
+  expect(report.blame).toBe('load1 77 on 18 cores: load is mostly I/O wait (mdworker_shared 2, find 1, fseventsd 1)');
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    expect(await cmdFleetHostload(['--json'], async () => ioFixture)).toBe(0);
+    expect(JSON.parse(String(out.mock.calls.at(-1)![0])).ioWait).toEqual(report.ioWait);
+    expect(await cmdFleetHostload([], async () => ioFixture)).toBe(0);
+    expect(String(out.mock.calls.at(-1)![0])).toContain(ioWaitLine(report));
+  } finally { out.mockRestore(); }
+});
+
+it('distinguishes missing state readings from an observed absence of waiting processes', () => {
+  expect(ioWaitLine(groupHostFamilies(null))).toBe('io-wait: unknown');
+  expect(ioWaitLine(groupHostFamilies(fixture))).toBe('io-wait: unknown');
+  expect(ioWaitLine(groupHostFamilies(stateTable([[10, 'S', '/bin/find', '/bin/find']])))).toBe('io-wait: none observed');
+  const atHalf = groupHostFamilies(ioFixture, undefined, { load1: 0.12, cores: 18 });
+  expect(atHalf.blame).not.toContain('mostly I/O wait');
+  expect(groupHostFamilies(null, undefined, { load1: 77, cores: 18 }).blame).toContain('process load unknown');
+  const spaced = groupHostFamilies(stateTable([[10, 'D', '/opt/Code Helper', '/opt/Code Helper']]));
+  expect(spaced.ioWait).toEqual([{ name: 'Code Helper', processes: 1 }]);
+  expect(JSON.stringify(spaced)).not.toContain('hiddenword');
 });

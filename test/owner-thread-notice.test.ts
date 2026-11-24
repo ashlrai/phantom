@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { OwnerChannelTransport, OwnerThreadSettings } from '../src/core/comms/owner-channel.js';
 import { OWNER_CHANNELS } from '../src/core/comms/leader-mailbox.js';
-import { postOwnerNotice, readOwnerThread, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
+import { postOwnerNotice, postOwnerThreadNotice, readOwnerThread, type OwnerThreadOptions } from '../src/core/comms/owner-thread.js';
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
@@ -93,5 +93,30 @@ describe('postOwnerNotice', () => {
     await postOwnerNotice({ text: 'Result ping.', idempotencyKey: 'line-dddddddddddddddd' }, options);
     expect(deliver).not.toHaveBeenCalled();
     expect(pull).not.toHaveBeenCalled();
+  });
+});
+
+describe('postOwnerThreadNotice', () => {
+  it('records a local-only notice on the desktop surface, never a phone channel', async () => {
+    const { options, deliver, pull } = fixture();
+    const result = await postOwnerThreadNotice('Teammate texted 7 min ago, no reply yet: fake excerpt', 'teammate-overdue-1', options);
+    expect(result.status).toBe('accepted');
+    const thread = readOwnerThread(options);
+    expect(thread.messages).toHaveLength(1);
+    expect(thread.messages[0]).toMatchObject({
+      channel: 'desktop', senderId: 'leader', direction: 'outbound', fanout: ['desktop'],
+      text: 'Teammate texted 7 min ago, no reply yet: fake excerpt',
+    });
+    expect(thread.messages[0]!.channel).not.toBe('imessage');
+    expect(deliver).not.toHaveBeenCalled();
+    expect(pull).not.toHaveBeenCalled();
+  });
+
+  it('a repeated key is a duplicate and adds no line', async () => {
+    const { options } = fixture();
+    const input = ['notice text', 'notice-key-0000000001'] as const;
+    expect((await postOwnerThreadNotice(input[0], input[1], options)).status).toBe('accepted');
+    expect((await postOwnerThreadNotice(input[0], input[1], options)).status).toBe('duplicate');
+    expect(readOwnerThread(options).messages).toHaveLength(1);
   });
 });

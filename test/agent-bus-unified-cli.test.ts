@@ -84,6 +84,66 @@ describe('phm agents bus (unified)', () => {
     expect(adapters.json.adapters.map((a: { cli: string }) => a.cli)).toEqual(['claude', 'codex', 'devin', 'cursor', 'grok']);
   });
 
+  it('resolves one agent ref through id show — self, aliases and honest misses', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude', '--alias', 'lane-atlas', '--display', 'Atlas One'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+
+    // Self view: PHM_AGENT_ID resolves to the card, the detected CLI rides along.
+    const self = await run(['id', 'show'], { PHM_AGENT_ID: 'atlas', CLAUDECODE: '1' });
+    expect(self.code).toBe(0);
+    expect(self.json).toMatchObject({ status: 'ok', ref: 'atlas', self: true, address: 'agent:atlas', cli: 'claude',
+      channels: ['ops'], identity: { handle: 'atlas', aliases: ['lane-atlas'], displayName: 'Atlas One' } });
+    // Explicit refs resolve handle, alias and agent: address — self stays false and no cli is reported.
+    for (const ref of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const view = await run(['id', 'show', ref]);
+      expect(view.code).toBe(0);
+      expect(view.json).toMatchObject({ status: 'ok', ref, self: false, address: 'agent:atlas', channels: ['ops'],
+        identity: { handle: 'atlas' } });
+      expect(view.json).not.toHaveProperty('cli');
+    }
+    const stable = (await run(['id', 'list'])).json.identities.find((i: { handle: string }) => i.handle === 'atlas').id;
+    expect((await run(['id', 'show', stable])).json).toMatchObject({ status: 'ok', self: false, identity: { id: stable } });
+    // Honest misses: unset env, unregistered self and ref, malformed ref.
+    expect(await run(['id', 'show'])).toMatchObject({ code: 1, json: { status: 'unset' } });
+    expect(await run(['id', 'show'], { PHM_AGENT_ID: 'ghost' }))
+      .toMatchObject({ code: 1, json: { status: 'unknown', self: true } });
+    expect(await run(['id', 'show', 'ghost'])).toMatchObject({ code: 1, json: { status: 'unknown', self: false } });
+    expect(await run(['id', 'show', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    // Human output prints the same card without --json.
+    const humanOut: string[] = [];
+    const human = await runAgentsBusUnified(['id', 'show', 'atlas', '--root', root], t => humanOut.push(t), () => {});
+    expect(human).toBe(0);
+    const card = humanOut.join('\n');
+    expect(card).toContain('atlas agt_');
+    expect(card).toContain('agent:atlas');
+    expect(card).toContain('channels=ops');
+    expect(card).toContain('aliases=lane-atlas');
+  });
+
+  it('stamps --reply-to as the v2 inReplyTo citation on dm, post and channel post', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'question', '--id', 'rq-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer', '--reply-to', 'rq-1', '--id', 'rs-dm'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'nova', '--text', 'channel answer', '--reply-to', 'rq-1', '--id', 'rs-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--kind', 'context', '--text', '{}', '--reply-to', 'rq-1', '--id', 'rs-lp'])).json)
+      .toMatchObject({ status: 'posted' });
+    for (const id of ['rs-dm', 'rs-ch', 'rs-lp']) {
+      const shown = await run(['show', id]);
+      expect(shown.json).toMatchObject({ status: 'ok', message: { envelope: { body: { inReplyTo: 'rq-1' } } } });
+    }
+    // A target that is not a printable message id refuses like any invalid
+    // send; the duplicate flag form is a usage error like every value flag.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--reply-to', 'has space', '--id', 'rs-bad'])).code).toBe(1);
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--reply-to', 'a', '--reply-to', 'b'])).code).toBe(2);
+  });
+
   it('filters wakes by sender identity', async () => {
     expect((await run(['id', 'register', 'atlas', '--alias', 'lane-atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -106,6 +166,84 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['wakes', 'nova', '--from', 'ghost'])).json)
       .toMatchObject({ matched: 0, wakes: [] });
     expect(await run(['wakes', 'nova', '--from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+
+    // --exclude-from drops one sender's hints under every label of its
+    // identity; a sender both included and excluded matches nothing.
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
+    for (const excludeFrom of ['atlas', 'lane-atlas', 'agent:atlas']) {
+      const page = await run(['wakes', 'nova', '--exclude-from', excludeFrom]);
+      expect(page.json).toMatchObject({ matched: 1, truncated: false });
+      expect(page.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wf-orion']);
+    }
+    expect((await run(['wakes', 'nova', '--exclude-from', 'ghost'])).json)
+      .toMatchObject({ matched: 2 });
+    expect((await run(['wakes', 'nova', '--from', 'atlas', '--exclude-from', 'atlas'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', 'nova', '--from', 'atlas', '--exclude-from', 'orion'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wf-atlas']);
+    expect(await run(['wakes', 'nova', '--exclude-from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('reads every wake hint fleet-wide with --all', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'orion'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'a', '--priority', 'P0', '--id', 'wa-nova'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'orion', '--to', 'nova', '--text', 'b', '--priority', 'P0', '--id', 'wa-nova-2'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'orion', '--text', 'c', '--priority', 'P0', '--id', 'wa-orion'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    // A hint under a bare label no identity owns — the fleet page carries it
+    // beside the registered addressees' hints in one read.
+    expect((await run(['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'ping',
+      '--priority', 'P1', '--id', 'wa-mesh'])).json).toMatchObject({ status: 'posted', wake: 'queued' });
+
+    const all = await run(['wakes', '--all']);
+    expect(all.json).toMatchObject({ status: 'ok', scope: 'fleet', matched: 4, truncated: false });
+    expect(all.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-nova-2', 'wa-orion', 'wa-mesh']);
+    expect(all.json.wakes.map((w: { to: string }) => w.to)).toEqual(['agent:nova', 'agent:nova', 'agent:orion', 'fleet.mesh']);
+    // The shared filters scope the fleet page the same way the per-agent read.
+    expect((await run(['wakes', '--all', '--from', 'atlas'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-orion', 'wa-mesh']);
+    expect((await run(['wakes', '--all', '--exclude-from', 'atlas'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wa-nova-2']);
+    expect((await run(['wakes', '--all', '--priority', 'P0'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wa-nova', 'wa-nova-2', 'wa-orion']);
+    expect((await run(['wakes', '--all', '--job', 'RQ-ABSENT'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    // --all takes no agent operand; the per-agent read is unchanged.
+    expect(await run(['wakes', '--all', 'nova'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', '--all', '--from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 2 });
+  });
+
+  it('filters wakes by the channel room their to label addresses', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas'])).json).toMatchObject({ status: 'created' });
+    // P0 channel posts wake the room's group:<name>:* address.
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'cut', '--priority', 'P0', '--id', 'wc-rel'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--text', 'page', '--priority', 'P0', '--id', 'wc-ops'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'hi', '--priority', 'P0', '--id', 'wc-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    // Per-agent: nova belongs to release, so the room's hint shows; ops is not hers.
+    const release = await run(['wakes', 'nova', '--channel', 'release']);
+    expect(release.json).toMatchObject({ matched: 1, truncated: false });
+    expect(release.json.wakes.map((w: { id: string; to: string }) => `${w.id}:${w.to}`)).toEqual(['wc-rel:group:release:general']);
+    expect((await run(['wakes', 'nova', '--channel', 'ops'])).json).toMatchObject({ matched: 0, wakes: [] });
+    // Fleet-wide: --channel answers "which hints concern room X" in one read.
+    const allOps = await run(['wakes', '--all', '--channel', 'ops']);
+    expect(allOps.json).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    expect(allOps.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wc-ops']);
+    expect((await run(['wakes', '--all', '--channel', 'absent'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect(await run(['wakes', 'nova', '--channel', 'Bad Name'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
   it('lists channels for discovery and filters by agent', async () => {
@@ -297,6 +435,52 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', 'nova', '--since', 'bogus'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox, channel read and wakes by --before', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // A P0 DM always queues a wake hint alongside the mail.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'fresh', '--priority', 'P0', '--id', 'b-dm'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room', '--id', 'b-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // The same grammar resolves the exclusive upper bound: a cutoff before
+    // every receipt empties the page, a future one keeps it all, and epoch
+    // ms '0' predates every row.
+    const past = String(Date.now() - 3_600_000);
+    const future = String(Date.now() + 3_600_000);
+    expect((await run(['inbox', 'nova', '--before', past])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['channel', 'read', 'release', '--before', past])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['inbox', 'nova', '--before', '0'])).json)
+      .toMatchObject({ status: 'ok', messages: [] });
+    expect((await run(['inbox', 'nova', '--before', future])).json.messages.length).toBe(2);
+    expect((await run(['channel', 'read', 'release', '--before', future])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['b-ch']);
+
+    // wakes bounds the hint's queue time the same way, per-agent and --all.
+    expect((await run(['wakes', 'nova', '--before', past])).json.wakes).toEqual([]);
+    expect((await run(['wakes', '--all', '--before', past])).json.wakes).toEqual([]);
+    expect((await run(['wakes', 'nova', '--before', future])).json.wakes.length).toBeGreaterThan(0);
+
+    // The pair reads one [since, before) window on every read.
+    expect((await run(['inbox', 'nova', '--since', '15m', '--before', future])).json.messages.length).toBe(2);
+    expect((await run(['inbox', 'nova', '--since', '15m', '--before', past])).json.messages).toEqual([]);
+    expect((await run(['channel', 'read', 'release', '--since', '15m', '--before', future])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['b-ch']);
+    expect((await run(['wakes', 'nova', '--since', '15m', '--before', future])).json.wakes.length).toBeGreaterThan(0);
+    expect((await run(['wakes', 'nova', '--since', '15m', '--before', past])).json.wakes).toEqual([]);
+
+    // Anything outside the grammar is a usage error on every read.
+    expect(await run(['inbox', 'nova', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['channel', 'read', 'release', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', 'nova', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    expect(await run(['wakes', '--all', '--before', 'bogus'])).toMatchObject({ code: 2 });
+  });
+
   it('filters inbox and channel reads by --contains', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -324,6 +508,41 @@ describe('phm agents bus (unified)', () => {
     // A blank or oversized needle fails closed on both reads.
     expect(await run(['inbox', 'nova', '--contains='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['channel', 'read', 'release', '--contains', '   '])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters inbox and channel reads by --exclude-from', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'relay', '--alias', 'lane-relay'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova', '--member', 'relay'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'atlas dm', '--id', 'x-dm-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'relay', '--to', 'nova', '--text', 'relay dm', '--id', 'x-dm-r'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'atlas post', '--id', 'x-ch-a'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'relay', '--text', 'relay post', '--id', 'x-ch-r'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Every spelling of the excluded identity drops its mail on both reads.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay']) {
+      const inbox = await run(['inbox', 'nova', '--exclude-from', ref]);
+      expect(inbox.code).toBe(0);
+      expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+        .toEqual(['x-ch-a', 'x-dm-a']);
+      const channel = await run(['channel', 'read', 'release', '--exclude-from', ref]);
+      expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id))
+        .toEqual(['x-ch-a']);
+    }
+    // It composes with --from: a sender both included and excluded matches nothing.
+    expect((await run(['inbox', 'nova', '--from', 'relay', '--exclude-from', 'relay'])).json.messages).toEqual([]);
+    expect((await run(['channel', 'read', 'release', '--from', 'relay', '--exclude-from', 'relay'])).json.messages)
+      .toEqual([]);
+    // --matched counts only the accepted rows; a blank value fails closed.
+    expect((await run(['inbox', 'nova', '--exclude-from', 'relay', '--matched'])).json.matched).toBe(2);
+    expect(await run(['inbox', 'nova', '--exclude-from='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--exclude-from', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
   it('filters inbox reads by --kind', async () => {
@@ -447,6 +666,106 @@ describe('phm agents bus (unified)', () => {
     expect((await run(['channel', 'read', 'release', '--job', 'RQ-ABSENT'])).json.messages).toEqual([]);
     // A job id must be a printable label; anything else fails closed.
     expect(await run(['channel', 'read', 'release', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters inbox and channel reads by --in-reply-to', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // The cited parent and replies carrying the v2 inReplyTo citation.
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'question', '--id', 'rt-q'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer one', '--reply-to', 'rt-q', '--id', 'rt-a1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer two', '--reply-to', 'rt-q', '--id', 'rt-a2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'elsewhere', '--reply-to', 'rt-x', '--id', 'rt-a3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 'rt-p'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room answer', '--reply-to', 'rt-q', '--id', 'rt-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room noise', '--id', 'rt-noise'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Inbox keeps the citing dm rows plus the room post nova receives as
+    // channel mail; channel read keeps only the citing post.
+    const inbox = await run(['inbox', 'nova', '--in-reply-to', 'rt-q']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['rt-a1', 'rt-a2', 'rt-ch']);
+    const channel = await run(['channel', 'read', 'release', '--in-reply-to', 'rt-q']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rt-ch']);
+    // --matched counts accepted rows and the flag composes with the others.
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-q', '--matched'])).json.matched).toBe(3);
+    expect((await run(['channel', 'read', 'release', '--in-reply-to', 'rt-q', '--matched'])).json.matched).toBe(1);
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-q', '--kind', 'dm'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rt-a1', 'rt-a2']);
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-none'])).json.messages).toEqual([]);
+
+    // A citation that is not a printable label fails closed on both reads.
+    expect(await run(['inbox', 'nova', '--in-reply-to', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--in-reply-to=']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['inbox', 'nova', '--in-reply-to', 'a', '--in-reply-to', 'b'])).toMatchObject({ code: 2 });
+  });
+
+  it('filters inbox, channel read and wakes by --id', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'first', '--id', 'id-dm-1', '--priority', 'P1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'second', '--id', 'id-dm-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    // A citing reply and a room post must never satisfy another id's filter.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'cites id-dm-1', '--reply-to', 'id-dm-1', '--id', 'id-dm-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room one', '--id', 'id-ch-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room two', '--id', 'id-ch-2'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Inbox keeps only the addressed row carrying that wire id; --matched
+    // counts the same accepted set and the flag composes with the others.
+    const inbox = await run(['inbox', 'nova', '--id', 'id-dm-1']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['id-dm-1']);
+    expect((await run(['inbox', 'nova', '--id', 'id-ch-1'])).json.messages[0])
+      .toMatchObject({ kind: 'channel', envelope: { id: 'id-ch-1' } });
+    expect((await run(['inbox', 'nova', '--id', 'id-dm-1', '--matched'])).json.matched).toBe(1);
+    expect((await run(['inbox', 'nova', '--id', 'id-dm-1', '--kind', 'handoff'])).json.messages).toEqual([]);
+    expect((await run(['inbox', 'nova', '--id', 'id-absent'])).json.messages).toEqual([]);
+
+    // Channel read keeps only the room post carrying that wire id.
+    const room = await run(['channel', 'read', 'release', '--id', 'id-ch-2']);
+    expect(room.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['id-ch-2']);
+    expect((await run(['channel', 'read', 'release', '--id', 'id-ch-2', '--matched'])).json.matched).toBe(1);
+    expect((await run(['channel', 'read', 'release', '--id', 'id-dm-1'])).json.messages).toEqual([]);
+
+    // Wakes: the bus.send hint's own id is the triggering envelope's wire
+    // id, so the pending hint for id-dm-1 is one filtered read — per-agent
+    // and fleet-wide.
+    const wake = await run(['wakes', 'nova', '--id', 'id-dm-1']);
+    expect(wake.json).toMatchObject({ matched: 1 });
+    expect(wake.json.wakes.map((w: { id: string }) => w.id)).toEqual(['id-dm-1']);
+    expect((await run(['wakes', 'nova', '--id', 'id-dm-2'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', '--all', '--id', 'id-dm-1'])).json.wakes.map((w: { id: string }) => w.id))
+      .toEqual(['id-dm-1']);
+    expect((await run(['wakes', '--all', '--id', 'wh-' + 'a'.repeat(32)])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+
+    // A malformed id fails closed on every read.
+    expect(await run(['inbox', 'nova', '--id', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--id=']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--id', 'x'.repeat(129)]))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['inbox', 'nova', '--id', 'a', '--id', 'b'])).toMatchObject({ code: 2 });
   });
 
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
@@ -725,6 +1044,101 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters the work feed by --before on last activity', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-BEFORE-OLD', '--title', 'old',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sb-old'])).json)
+        .toMatchObject({ status: 'posted' });
+      clock += 120_000;
+      expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-BEFORE-NEW', '--title', 'new',
+        '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'sb-new'])).json)
+        .toMatchObject({ status: 'posted' });
+      const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+      // A cutoff between the two announcement times keeps only the older job.
+      const between = await run(['work', 'feed', '--before', String(clock - 60_000)]);
+      expect(between.code).toBe(0);
+      expect(ids(between)).toEqual(['RQ-BEFORE-OLD']);
+      // The bound is exclusive: the newer job's own updatedAt drops it out.
+      expect(ids(await run(['work', 'feed', '--before', String(clock)]))).toEqual(['RQ-BEFORE-OLD']);
+      // since/before read one [since, before) window.
+      expect(ids(await run(['work', 'feed', '--since', String(clock - 180_000), '--before', String(clock + 60_000)])))
+        .toEqual(['RQ-BEFORE-NEW', 'RQ-BEFORE-OLD']);
+      expect(ids(await run(['work', 'feed', '--since', String(clock - 60_000), '--before', String(clock + 60_000)])))
+        .toEqual(['RQ-BEFORE-NEW']);
+      // A status moves the older job's last activity past the bound — it drops out.
+      clock += 10_000;
+      expect((await run(['work', 'status', '--from', 'atlas', '--job', 'RQ-BEFORE-OLD', '--status', 'running',
+        '--id', 'sb-old-s'])).json).toMatchObject({ status: 'posted' });
+      expect(ids(await run(['work', 'feed', '--before', String(clock - 5_000)]))).toEqual(['RQ-BEFORE-NEW']);
+      // Unparseable and duplicate cutoffs are usage errors, never silently widened.
+      expect(await run(['work', 'feed', '--before', 'bogus'])).toMatchObject({ code: 2 });
+      expect(await run(['work', 'feed', '--before', '1m', '--before', '2m'])).toMatchObject({ code: 2 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('filters the work feed by --channel on the announcement room address', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ROOM', '--title', 'room job',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom',
+      '--to', 'group:release:deploy', '--id', 'ch-post'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-SINK', '--title', 'sink job',
+      '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', 'ch-sink'])).json)
+      .toMatchObject({ status: 'posted' });
+    const ids = (feed: { json: { jobs: { id: string }[] } }) => feed.json.jobs.map(job => job.id);
+    // The room's traffic under every topic — the same group:<name>: prefix
+    // inbox --channel and channel read match.
+    expect(ids(await run(['work', 'feed', '--channel', 'release']))).toEqual(['RQ-ROOM']);
+    expect(ids(await run(['work', 'feed', '--channel', 'ops']))).toEqual([]);
+    // The filter composes with the other view filters.
+    expect(ids(await run(['work', 'feed', '--channel', 'release', '--status', 'done']))).toEqual([]);
+    // A name outside the channel grammar is a usage error, never a guessed match.
+    for (const bad of ['Has Space', 'UPPER', 'a:b']) {
+      expect(await run(['work', 'feed', '--channel', bad])).toMatchObject({ code: 2 });
+    }
+  });
+
+  it('pages the work feed with --limit and reports matched/omitted', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+      for (const [job, title] of [['RQ-P1', 'first'], ['RQ-P2', 'second'], ['RQ-P3', 'third']] as const) {
+        clock += 1_000;
+        expect((await run(['work', 'post', '--from', 'atlas', '--job', job, '--title', title,
+          '--repo', 'ashlrai/phantom', '--claim', 'repo:ashlrai/phantom', '--id', `pg-${job}`])).json)
+          .toMatchObject({ status: 'posted' });
+      }
+      // Newest first: the two newest jobs page ahead of the rest.
+      const page = await run(['work', 'feed', '--limit', '2']);
+      expect(page.code).toBe(0);
+      expect(page.json).toMatchObject({ status: 'ok', matched: 3, omitted: 1 });
+      expect(page.json.jobs.map((job: { id: string }) => job.id)).toEqual(['RQ-P3', 'RQ-P2']);
+      // Filters narrow before the slice; a wide page reports zero omitted.
+      const filtered = await run(['work', 'feed', '--limit', '1', '--status', 'queued']);
+      expect(filtered.json).toMatchObject({ matched: 3, omitted: 2 });
+      const wide = await run(['work', 'feed', '--limit', '200']);
+      expect(wide.json).toMatchObject({ matched: 3, omitted: 0 });
+      expect(wide.json.jobs).toHaveLength(3);
+      // Out-of-range and malformed limits are usage errors, never a silent widen.
+      for (const bad of ['0', '201', 'abc', '1.5']) {
+        expect(await run(['work', 'feed', '--limit', bad])).toMatchObject({ code: 2 });
+      }
+      // The human footer names the page.
+      const text: string[] = [];
+      expect(await runAgentsBusUnified(['work', 'feed', '--limit', '2', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+      expect(text.join('\n')).toContain('matched=3 omitted=1');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('claims a work-feed job key in one step and joins it to the feed holds', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-CLI-CLAIM', '--title', 'Claim me',
@@ -833,6 +1247,126 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['work', 'next', 'nova', '--lease-ms', '60000',
       '--root', root], t => emptyText.push(t), () => {}, {})).toBe(0);
     expect(emptyText.join('\n')).toContain('empty candidates=2 held=2');
+  });
+
+  it('filters the next-work claim by contains, since and priority', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to: 'agent:atlas', priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    post('wf-old', 'P0', { kind: 'work', text: 'deploy alpha' });
+    post('wf-chore', 'P3', { kind: 'work', text: 'unrelated chore' });
+    post('wf-alpha', 'P1', { kind: 'work', text: 'ship ALPHA build' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --priority keeps only the exact band: the P1 alpha claims while the
+    // higher-priority old-alpha and lower-priority chore stay outside it.
+    const byPriority = await run(['work', 'next', '--lease-ms', '60000', '--priority', 'P1'], env);
+    expect(byPriority.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-alpha' } } });
+    await complete('wf-alpha', byPriority.json.token);
+
+    // --contains matches the scrubbed one-line summary case-insensitively:
+    // both alpha receipts remain candidates (one completed), so claim order
+    // takes the P0 old-alpha; the chore never enters the filtered scan.
+    const byContains = await run(['work', 'next', '--lease-ms', '60000', '--contains', '  ALPHA  '], env);
+    expect(byContains.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-old' } } });
+    await complete('wf-old', byContains.json.token);
+
+    // --since is the inclusive receivedAt cutoff in the phm messages grammar:
+    // a cutoff past every receipt's arrival empties the filtered scan, while
+    // 15m keeps all three — completed receipts still count as candidates.
+    const future = String(Date.now() + 3_600_000);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--since', future], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    const bySince = await run(['work', 'next', '--lease-ms', '60000', '--since', '15m'], env);
+    expect(bySince.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wf-chore' } } });
+    await complete('wf-chore', bySince.json.token);
+
+    // --before is the exclusive receivedAt ceiling in the same grammar: a
+    // cutoff before every receipt's arrival empties the filtered scan even
+    // though the completed receipts would otherwise count as candidates.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--before', '1'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Malformed filters are usage or invalid results, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--priority', 'P9'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--since', 'bogus'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--before', 'bogus'], env))
+      .toMatchObject({ code: 2 });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--contains', '   '], env))
+      .toMatchObject({ code: 2, json: { status: 'invalid' } });
+  });
+
+  it('filters the next-work claim by channel and sender', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'coord', '--alias', 'coordinator'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'noisy'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'eng', '--from', 'atlas'])).json)
+      .toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, from: string, priority: BusEnvelope['priority']): void => {
+      expect(appendBusInbox({ id, from, to, priority, ttl: 3_600_000,
+        body: { kind: 'work', text: id } }, { root }).status).toBe('posted');
+    };
+    post('wn-chan-coord', 'group:eng:general', 'agent:coord', 'P0');
+    post('wn-chan-noisy', 'group:eng:alerts', 'noisy', 'P1');
+    post('wn-direct-coord', 'agent:atlas', 'coordinator', 'P2');
+    post('wn-direct-other', 'agent:atlas', 'agent:nova', 'P3');
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --channel keeps only the room's whole traffic under every topic: the
+    // P0 group:eng:* receipt claims ahead of the direct mail.
+    const byChannel = await run(['work', 'next', '--lease-ms', '60000', '--channel', 'eng'], env);
+    expect(byChannel.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-chan-coord' } } });
+    await complete('wn-chan-coord', byChannel.json.token);
+    const byChannelAgain = await run(['work', 'next', '--lease-ms', '60000', '--channel', 'eng'], env);
+    expect(byChannelAgain.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-chan-noisy' } } });
+    await complete('wn-chan-noisy', byChannelAgain.json.token);
+
+    // --from resolves the ref through the registry: 'coord' names the identity
+    // behind both 'agent:coord' and alias 'coordinator', so the coord-posted
+    // direct receipt claims while the completed room post still counts.
+    const byFrom = await run(['work', 'next', '--lease-ms', '60000', '--from', 'coord'], env);
+    expect(byFrom.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-direct-coord' } } });
+    await complete('wn-direct-coord', byFrom.json.token);
+
+    // --exclude-from drops every registered spelling of one sender: coord's
+    // two posts leave only the unregistered-sender receipt live.
+    const byExclude = await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'coord'], env);
+    expect(byExclude.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-direct-other' } } });
+    await complete('wn-direct-other', byExclude.json.token);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'coord'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 2, held: 0 } });
+    // A sender both included and excluded matches nothing.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--from', 'coord', '--exclude-from', 'coord'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Malformed channel and sender filters are usage errors, never a
+    // widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--channel', 'Bad Name'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--from', 'has space'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'has space'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
   it('claims one envelope id and renews, releases and completes its message claim', async () => {
@@ -1190,5 +1724,19 @@ describe('phm agents bus (unified)', () => {
     const contract: string[] = [];
     expect(await runAgentsCli(['bus', 'contract', '--json'], t => contract.push(t), () => {})).toBe(0);
     expect(JSON.parse(contract[0]!).schemaVersion).toBe('agent-bus.v2');
+  });
+
+  it('agents help names the roster read and the real conversations and chat flags', async () => {
+    const out: string[] = [];
+    expect(await runAgentsCli(['--help'], t => out.push(t), () => {})).toBe(0);
+    const help = out.join('\n');
+    // `phm agents --help` is the complete agents reference: it must name every
+    // dispatched subcommand and the filters each read actually accepts, so an
+    // agent discovering the surface here is not told a narrower command than
+    // the dispatcher runs.
+    expect(help).toContain('ashlr agents roster [--json]');
+    expect(help).toMatch(/ashlr agents conversations [^\n]*--contains <text>/);
+    expect(help).toMatch(/ashlr agents chat [^\n]*--after <cursor>/);
+    expect(help).toMatch(/ashlr agents chat [^\n]*--limit <1-100>/);
   });
 });

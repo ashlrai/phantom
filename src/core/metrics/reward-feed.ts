@@ -23,7 +23,12 @@
  *     vocabulary: reverted:true, reverted_at/revertedAt, revert event/state
  *     names) newer than the latest merge resolves the job as merged:false —
  *     the v1 schema has no revert dimension and consumers score held merges.
- *     A later merge is a fresh held merge.
+ *     A later merge is a fresh held merge. Reverts only git history or the
+ *     outcome/cloud ledgers prove — the standing `owner/repo#n` keys
+ *     `revertedPrKeys()` resolves — discount the same way when the held
+ *     merge's PR URL is claimed by exactly that job (the unambiguous-claim
+ *     join skill-nudge and outcome-learning apply); a contested or foreign
+ *     claim never resolves, and absent keys change nothing.
  *   - dispatchedAt IS THE LAST DISPATCH BEFORE THE OUTCOME. claim,
  *     batch_claim and launch rows are dispatch evidence; the latest at or
  *     before the terminal row produced it (earliest is the fallback). No
@@ -47,6 +52,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { ashlrHome } from '../cloud/store.js';
+import { isNodePoolLedgerRow } from '../fleet/jobs-ledger-dialect.js';
 import { hasRevertEvidence } from '../fleet/slot-yield.js';
 import type { UsageReading } from '../fabric/usage-signal-writer.js';
 import {
@@ -78,6 +84,10 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const PR_URL_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/\d+\/?$/;
 const POOL_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
+/** Batch session ids are infrastructure and never claim a PR — the rule the sibling outcome folds apply. */
+const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
 
 /** Rows that record a dispatch (the launch that produced later outcomes). */
 const DISPATCH_EVENTS: ReadonlySet<string> = new Set(['claim', 'batch_claim', 'launch']);
@@ -143,18 +153,47 @@ function repoOf(row: Record<string, unknown>): string | null {
   return REPO_PATTERN.test(derived) ? derived : null;
 }
 
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+function pullRequestKey(url: string): string | null {
+  const match = GITHUB_PULL_URL.exec(url);
+  return match ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}#${match[3]}` : null;
+}
+
+/**
+ * The standing revert-set join: a held merge whose verdict row's pull URL is
+ * claimed by exactly that job and whose `owner/repo#n` key stands in the
+ * supplied set counts as reverted — git-history and outcome-ledger reverts
+ * the jobs ledger never spelled still discount the reward. Absent, empty or
+ * unmatched keys change nothing, and a contested or foreign claim never
+ * resolves — the same rule skill-nudge and outcome-learning apply.
+ */
+function standingReverted(
+  id: string,
+  mergeUrl: string | null,
+  claims: ReadonlyMap<string, ReadonlySet<string>> | null,
+  keys: ReadonlySet<string> | null | undefined,
+): boolean {
+  if (claims === null || keys === null || keys === undefined || mergeUrl === null) return false;
+  const claimants = claims.get(mergeUrl);
+  if (claimants === undefined || claimants.size !== 1 || !claimants.has(id)) return false;
+  const key = pullRequestKey(mergeUrl);
+  return key !== null && keys.has(key);
+}
+
 interface DispatchMark { ms: number; lane: string | null }
 
 interface RewardJobAccum {
   repo: string | null;
   firstDispatch: DispatchMark | null;
   lastDispatch: DispatchMark | null;
-  /** Latest merge-resolution row: row time and the GitHub mergedAt it reported. */
-  merge: { atMs: number; mergedAtMs: number } | null;
+  /** Latest merge-resolution row: row time, the GitHub mergedAt it reported, and its PR URL. */
+  merge: { atMs: number; mergedAtMs: number; url: string | null } | null;
   /** Latest closed-unmerged resolution row time. */
   closedMs: number | null;
   /** Latest positive revert-evidence row time. */
   revertMs: number | null;
+  /** True when the standing revert set proves the held merge's PR was reverted. */
+  standingReverted: boolean;
   /** ci_start/ci_complete boundary stamps, deduped like job-latency's boundary lists. */
   ciStartAts: number[];
   ciCompleteAts: number[];
@@ -163,7 +202,8 @@ interface RewardJobAccum {
 function newAccum(): RewardJobAccum {
   return {
     repo: null, firstDispatch: null, lastDispatch: null,
-    merge: null, closedMs: null, revertMs: null, ciStartAts: [], ciCompleteAts: [],
+    merge: null, closedMs: null, revertMs: null, standingReverted: false,
+    ciStartAts: [], ciCompleteAts: [],
   };
 }
 
@@ -193,11 +233,25 @@ function ciWallMsOf(acc: RewardJobAccum): number | null {
  * Fold jobs.jsonl text into one RewardSignalInput per job with resolved merge
  * evidence. Pure; never throws; rows without a usable timestamp or job id are
  * ignored, and rows stamped after `nowMs` cannot fabricate outcomes.
+ *
+ * `revertedPrKeys` is the caller-resolved standing revert set (`owner/repo#n`
+ * keys from the outcome ledger, cloud tasks and the revert-outcomes scan —
+ * the same set skill-nudge consumes). When supplied, a held merge whose PR
+ * URL is claimed by exactly that job and whose key stands in the set folds
+ * as merged:false; absent, empty or unmatched keys change nothing.
  */
 export function foldJobsLedgerRewards(
   text: string, nowMs: number, costs?: ReadonlyMap<string, number>,
+  revertedPrKeys?: ReadonlySet<string> | null,
 ): RewardSignalInput[] {
   const jobs = new Map<string, RewardJobAccum>();
+  // PR URL -> claiming job ids, collected only when the caller supplied
+  // standing revert keys — the same unambiguous-claim evidence pass
+  // skill-nudge and outcome-learning run, so a contested or foreign URL
+  // never resolves. Node-pool producer rows are a different dialect and
+  // batch session ids are infrastructure: neither ever claims.
+  const claims = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
+    ? null : new Map<string, Set<string>>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let row: Record<string, unknown>;
@@ -207,6 +261,14 @@ export function foldJobsLedgerRewards(
       row = parsed as Record<string, unknown>;
     } catch { continue; }
     const id = firstString(row, JOB_ID_KEYS);
+    if (claims !== null && id !== null && !id.startsWith(BATCH_SESSION_PREFIX) && !isNodePoolLedgerRow(row)) {
+      const url = firstString(row, URL_KEYS);
+      if (url !== null) {
+        const set = claims.get(url) ?? new Set<string>();
+        set.add(id);
+        claims.set(url, set);
+      }
+    }
     if (!id || !JOB_ID_PATTERN.test(id)) continue;
     const at = ledgerTs(row);
     if (at === null || at > nowMs) continue;
@@ -229,10 +291,15 @@ export function foldJobsLedgerRewards(
     const state = outcomeStateOf(row);
     if (row['merged'] === true || MERGE_STATES.has(state)) {
       const mergedAtMs = mergedAtValue(row) ?? at;
-      if (acc.merge === null || at >= acc.merge.atMs) acc.merge = { atMs: at, mergedAtMs };
+      if (acc.merge === null || at >= acc.merge.atMs) {
+        acc.merge = { atMs: at, mergedAtMs, url: firstString(row, URL_KEYS) };
+      }
     } else if (row['merged'] === false || CLOSED_STATES.has(state)) {
       acc.closedMs = Math.max(acc.closedMs ?? 0, at);
     }
+  }
+  for (const [id, acc] of jobs) {
+    acc.standingReverted = standingReverted(id, acc.merge?.url ?? null, claims, revertedPrKeys);
   }
   const inputs: RewardSignalInput[] = [];
   for (const [id, acc] of jobs) {
@@ -254,14 +321,16 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 /**
  * One job's reward input, or null when the evidence cannot support a row:
  * no dispatch in the window, a dispatch after the outcome, a merge whose
- * GitHub timestamp predates dispatch, or a merge superseded by a revert.
+ * GitHub timestamp predates dispatch, or a merge superseded by a revert —
+ * row-level revert evidence or the standing revert set's unambiguous claim.
  */
 function rewardInput(
   id: string, acc: RewardJobAccum, costUsd: number | undefined,
 ): RewardSignalInput | null {
   const ciWallMs = ciWallMsOf(acc);
   const cost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : null;
-  const heldMerge = acc.merge !== null && (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
+  const heldMerge = acc.merge !== null && !acc.standingReverted &&
+    (acc.revertMs === null || acc.merge.atMs > acc.revertMs);
   if (heldMerge) {
     const merge = acc.merge!;
     const dispatch = dispatchBefore(acc, merge.mergedAtMs);
@@ -274,7 +343,12 @@ function rewardInput(
       ...(ciWallMs !== null ? { ciWallMs } : {}),
     };
   }
-  const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0);
+  // A standing-reverted held merge resolves like a row-level revert: the
+  // merge's own GitHub stamp bounds the dispatch lookup — the revert's
+  // ledger time is not recorded in the standing set, and the merge stamp
+  // is the latest outcome time the fold can prove.
+  const closedMs = Math.max(acc.closedMs ?? 0, acc.revertMs ?? 0,
+    acc.standingReverted && acc.merge !== null ? acc.merge.mergedAtMs : 0);
   if (closedMs > 0) {
     const dispatch = dispatchBefore(acc, closedMs);
     if (dispatch === null) return null;
@@ -298,6 +372,14 @@ export interface RewardFeedOptions {
   jobsText?: string;
   /** Injected api-spend tail text; skips that read when set. */
   spendText?: string;
+  /**
+   * Standing revert keys (`owner/repo#n`) the caller resolved from the
+   * outcome ledger, cloud tasks and the revert-outcomes scan ledger — the
+   * same set skill-nudge consumes. A held merge whose verdict row's pull
+   * URL is claimed by exactly that job and whose key stands in the set
+   * folds as merged:false; absent or unmatched keys change nothing.
+   */
+  revertedPrKeys?: ReadonlySet<string> | null;
   /** Usage journal for pool-cost metering; default probes the known locations. */
   usageLogPath?: string;
   usageReadings?: readonly UsageReading[];
@@ -374,7 +456,7 @@ export async function syncRewardSignalsFromJobsLedger(
     const spendState: RewardFeedResult['spendState'] = spend.state === 'read' ? 'read' : spend.state;
     const costs = spend.state === 'read' ? foldSpendCosts(spend.text) : undefined;
 
-    const folded = foldJobsLedgerRewards(jobs.text, nowMs, costs);
+    const folded = foldJobsLedgerRewards(jobs.text, nowMs, costs, opts.revertedPrKeys);
     const recorded = new Set(latestRewardSignals(path).map((row) => row.jobId));
     const pending = folded.filter((input) => {
       if (recorded.has(input.jobId)) return false;

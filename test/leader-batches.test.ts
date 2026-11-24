@@ -64,10 +64,18 @@ describe('leader batches', () => {
   });
 
   it('treats a closed PR and a precheck skip as empty with a reason', () => {
-    const q = [job('RQ-ONEN21IQ8'), job('RQ-TWON21IQ8')].join('\n');
-    const l = [row({ job: 'RQ-ONEN21IQ8', event: 'outcome', state: 'CLOSED', url: PR, ts: ago(1) }), row({ job: 'RQ-TWON21IQ8', event: 'precheck_skip', code: 3, ts: ago(1) })].join('\n');
+    const q = [job('RQ-ONEN21IQ8'), job('RQ-TWON21IQ8'), job('RQ-THREEN21IQ8')].join('\n');
+    const l = [row({ job: 'RQ-ONEN21IQ8', event: 'outcome', state: 'CLOSED', url: PR, ts: ago(1) }), row({ job: 'RQ-TWON21IQ8', event: 'precheck_skip', code: 3, ts: ago(1) }),
+      row({ job: 'RQ-THREEN21IQ8', event: 'skipped_empty', code: 10, ts: ago(1) })].join('\n');
     const bets = leaderBets(q, l, NOW).batches[0]!.bets;
-    expect(bets.map(b => [b.stage, b.reason])).toEqual([['empty', 'PR closed without merging'], ['empty', 'precheck 3']]);
+    expect(bets.map(b => [b.stage, b.reason])).toEqual([['empty', 'PR closed without merging'], ['empty', 'precheck 10'], ['empty', 'precheck 3']]);
+  });
+  it('ignores empty-gate skipped_empty rows and dry-run precheck skips', () => {
+    const q = [job('RQ-GATEN21IQ8'), job('RQ-DRYN21IQ8')].join('\n');
+    const l = [row({ job: 'RQ-GATEN21IQ8', event: 'skipped_empty', reason: 'task_empty_repeat_24h', ts: ago(1) }),
+      row({ job: 'RQ-DRYN21IQ8', event: 'skipped_empty', code: 10, applied: false, ts: ago(1) })].join('\n');
+    const bets = leaderBets(q, l, NOW).batches[0]!.bets;
+    expect(bets.map(b => [b.stage, b.reason])).toEqual([['queued', null], ['queued', null]]);
   });
 
   it('takes the producer from a launch row when the queue line is gone', () => {

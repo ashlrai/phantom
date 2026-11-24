@@ -51,23 +51,35 @@ export interface MapEdges {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
+export interface MapEdgesOptions extends BusInboxOptions {
+  /** Exclusive upper time bound spelled like `since` (`10m`, `2h`, `1d`,
+   * epoch ms or ISO): only messages received strictly before it count,
+   * composing with `since` into one `[since, before)` window — a message
+   * stamped exactly at the cutoff drops, so adjacent windows never
+   * double-count it. Parsed under the read's own clock, so a relative
+   * spelling resolves against the same `now` `since` does; an invalid value
+   * makes the read null like a bad `since`. */
+  before?: string;
+}
 
 const JOB = /^(?:job:)?((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})$/;
 /** The map node and org role a routing label proves; `node` null when the map does not draw it. Shared with `phm agents messages`. */
 export function mapEdgeAgent(ref: AgentRef): MapEdgeAgent {
   const { name } = ref, job = JOB.exec(name)?.[1];
+  if (['executor', 'orchestrator', 'guardian', 'comms'].includes(name)) return { name, role: 'unknown', lane: null, node: `planner:${name}` };
   if (name === 'leader') return { name, role: 'leader', lane: null, node: 'leader' };
   if (ref.lane === name || (ORG_LANES as readonly string[]).includes(name)) return { name, role: 'lane', lane: name, node: `lane:${name}` };
   if (job) return { name, role: 'worker', lane: ref.lane, node: `job:${job}` };
   return { name, role: ref.lane ? 'worker' : 'unknown', lane: ref.lane, node: null };
 }
 
-/** Pure: bus receipts in, edges out. The same rows and clock always give the same JSON. */
-export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly BusInboxReceipt[]; skipped?: number }, since: number, now: number): MapEdges {
+/** Pure: bus receipts in, edges out. The same rows and clock always give the same JSON. `before` is the exclusive upper bound in epoch ms. */
+export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly BusInboxReceipt[]; skipped?: number }, since: number, now: number, before?: number): MapEdges {
   const head = { schema: 'fleet.map-edges.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), since: new Date(since).toISOString(), source: scan.source };
   if (scan.source === 'unavailable') return { ...head, edges: null, agents: null, messages: null, skipped: scan.skipped ?? 0 };
   const edges = new Map<string, MapEdge>();
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now);
+  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now
+    && (before === undefined || row.receivedAt < before));
   // Newest first, so the first message seen on an edge is its last one.
   for (const message of projectAgentMessages(rows)) {
     const id = `${message.from.name}->${message.to.name}`, edge = edges.get(id);
@@ -81,10 +93,12 @@ export function buildMapEdges(scan: { source: MapEdges['source']; rows: readonly
   return { ...head, edges: list, agents, messages: rows.length, skipped: scan.skipped ?? 0 };
 }
 
-/** The one read behind the CLI, the API and the pane. `since` is `10m`, `2h`, `1d`, epoch ms or an ISO time; null when it is none of those. */
-export function readMapEdges(since: string = MAP_EDGES_DEFAULT_SINCE, options: BusInboxOptions = {}): MapEdges | null {
+/** The one read behind the CLI, the API and the pane. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. */
+export function readMapEdges(since: string = MAP_EDGES_DEFAULT_SINCE, options: MapEdgesOptions = {}): MapEdges | null {
   const now = (options.now ?? Date.now)(), from = parseSince(since, now);
-  return from === null ? null : buildMapEdges(scanBusInbox(options), from, now);
+  const beforeMs = options.before === undefined ? undefined : parseSince(options.before, now);
+  if (from === null || beforeMs === null) return null;
+  return buildMapEdges(scanBusInbox(options), from, now, beforeMs);
 }
 
 /** `phm map edges` for people: one line per edge, then who is who. */

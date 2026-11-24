@@ -258,7 +258,8 @@ export async function collectLoop(readers: LoopReaders, shareConfig: BetsShareCo
   const readyBetRows = readyText === null ? null : parseReadyRows(readyText).filter(isBetRow).length;
   const free = localCap !== null && localRunning !== null ? Math.max(0, localCap - localRunning) : null;
   const share = betsShare({ freeSlots: free, readyBetRows }, shareConfig);
-  return { report, share, hints: selectionHints(report, share), jobsText, stages: buildLoopStages(jobsText, releases, now, sinceMs, releasesReason, jobsRead?.truncated) };
+  const stages = buildLoopStages(jobsText, releases, now, sinceMs, releasesReason, jobsRead?.truncated);
+  return { report, share, hints: selectionHints(report, share, stages), jobsText, stages };
 }
 
 export interface LoopWrites { loop: string; hints: string; share: string; morning: string | Missing }

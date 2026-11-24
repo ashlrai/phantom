@@ -115,6 +115,13 @@ export function formatFleetStatus(s: FleetStatus): string {
       : '';
 
   lines.push('Fleet status' + pausedTag);
+  if (s.guardian) {
+    const { age, service, log } = s.guardian;
+    lines.push(`Guardian: ${age.status}; age: ${age.ageSeconds === null ? 'unknown' : `${Math.floor(age.ageSeconds)} seconds`}; limit: ${age.maxAgeSeconds} seconds.`);
+    lines.push(`  Launch service: ${service.state}; last exit code: ${service.lastExitCode ?? 'unknown'}.`);
+    lines.push(`  Log: ${log.source}; errors in last 24 hours (tail only): ${log.recentErrors ?? 'unknown'}; errors without usable time: ${log.unparseableErrors ?? 'unknown'}.`);
+    lines.push(`  ${s.guardian.reason} Next: ${s.guardian.nextStep}`);
+  } else lines.push('Guardian: unavailable. Next: phm fleet health-age --diagnose --json');
   if (s.disk) lines.push(...formatFleetDiskAttribution(s.disk));
   if (s.metrics) lines.push(...formatFleetMetrics(s.metrics));
   if (s.memory) {
@@ -842,6 +849,17 @@ export function formatFleetStatus(s: FleetStatus): string {
       } else if (skillObservation.sampleState === 'none') {
         lines.push('  skill observations: none');
       }
+    }
+    const skillOutcomes = trajectoryLearning.skillOutcomes;
+    const topSkillOutcome = skillOutcomes?.perSkill?.[0];
+    if (skillOutcomes && topSkillOutcome) {
+      const outcomeText = Object.entries(topSkillOutcome.outcomes)
+        .map(([outcome, count]) => `${outcome} ${count}`)
+        .join(', ');
+      lines.push(
+        `  skill outcomes: ${skillOutcomes.skills} skill(s), ${skillOutcomes.selections} selection(s); ` +
+          `top ${topSkillOutcome.skillId} r${topSkillOutcome.skillRevision}: ${topSkillOutcome.selections} (${outcomeText})`,
+      );
     }
     const gap = trajectoryLearning.gaps[0];
     if (gap) lines.push(`  top gap:      ${gap.kind} missing on ${gap.count} trajector${gap.count === 1 ? 'y' : 'ies'}`);

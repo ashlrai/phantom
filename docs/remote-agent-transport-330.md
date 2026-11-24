@@ -67,13 +67,16 @@ return `{ kind: 'read' }` or the request is refused with `ROUTE_DENIED`.
 | `feed.runs()` | `GET /api/verse/fleet/runs` | `FleetRunsV1` |
 | `feed.laneTargets()` | `GET /api/verse/fleet/control/lanes` | `LaneTargetsV1` |
 | `feed.switches()` | `GET /api/verse/fleet/control/switches` | `RunsSwitchesV1` |
-| `feed.inbox({ limit?, source? })` | `GET /api/verse/fleet/runs/inbox?limit=N[&source=S]` | `FleetInboxReadV1 \| null` |
+| `feed.inbox({ limit?, source?, contains?, priority?, after?, before? })` | `GET /api/verse/fleet/runs/inbox?limit=N[&filters]` | `FleetInboxReadV1 \| null` |
 | `feed.queue({ limit? })` | `GET /api/verse/fleet/live/queue[?limit=N]` | `FleetQueueV1` |
 | `feed.bus({ limit? })` | `GET /api/verse/fleet/live/bus[?limit=N]` | `FleetBusFeedV1` |
 
 Option contract (validated locally before any request): `limit` is an integer
 from 1 to 200 (inbox defaults to 50 and always sends `limit`); `source` matches
-`^[A-Za-z0-9 ._-]{1,40}$` and is URL-encoded. Unknown option keys throw.
+`^[A-Za-z0-9 ._-]{1,40}$` and is URL-encoded; `contains` is a non-empty
+case-insensitive substring of at most 512 characters; `priority` matches
+`^P[0-3]$`; `after`/`before` are RFC3339 instants with a zone that compose
+into one exclusive window. Unknown option keys throw.
 
 ## Mutations — pause, resume, Stop
 

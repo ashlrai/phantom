@@ -82,7 +82,7 @@ export interface DigestSources {
   capacity?: () => { seats: Array<Record<string, unknown>> } | null;
   memos?: () => Array<{ id: string; at: string; status: string; move: { statement: string } | null; bottleneck: { statement: string } | null }>;
   autonomy?: () => { on: boolean; mode: string | null };
-  loadLine?: () => string | null;
+  loadLine?: (nowMs: number) => string | null;
 }
 
 const LEDGER_KINDS = ['merge:landed', 'pr:opened', 'revert:landed', 'revert:failed'] as const;
@@ -125,7 +125,7 @@ async function resolveSources(overrides: DigestSources): Promise<Required<Digest
     capacity: () => null,
     memos: () => [],
     autonomy: () => ({ on: false, mode: null }),
-    loadLine: () => readBlockedHourLine(defaultRunsDir(), Date.now()),
+    loadLine: nowMs => readBlockedHourLine(defaultRunsDir(), nowMs),
     fleetTruth: async (sinceMs, nowMs) => {
       const { getFleetTruth } = await import('../fleet/fleet-truth.js');
       return getFleetTruth(sinceMs, { nowMs, fresh: true, githubOnly: true });
@@ -376,7 +376,7 @@ export async function collectDigestFacts(sinceMs: number, overrides: DigestSourc
   }
 
   const autonomy = call(() => src.autonomy(), { on: false, mode: null });
-  const loadLine = call(() => src.loadLine(), null);
+  const loadLine = call(() => src.loadLine(nowMs), null);
   return { events, seats, autonomy, mergeCountUnavailable, fleet, evidence, loadLine };
 }
 

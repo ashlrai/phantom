@@ -9,7 +9,9 @@ every account and local model is costing you.
 
 The primary CLI is `phm`; `ashlr` and `ashlr verse` remain compatible, as do
 `/verse/` routes. The current repository is `ashlrai/phantom` and the source
-package is the published `@ashlr/phantom@3.26.0`.
+package is `@ashlr/phantom`, first published under that name in canonical 3.26.0.
+The `@ashlr/phantom/universe` export also began with that release. The source
+version in `package.json` and dated entries in the [changelog](https://github.com/ashlrai/phantom/blob/master/CHANGELOG.md) describe source and release history; neither proves npm promotion, desktop signing, or the installed version.
 The earlier published compatibility release is 3.25.3, distributed as `@ashlr/hub`
 and `Phantom.app`. The historical 3.25.0 release used `Ashlr.app`; older
 screenshots and references retain their captured names. See
@@ -1168,6 +1170,30 @@ Lessons shows recurring failure causes (stacked by fleet, cloud and Leader),
 the suggested-knowledge queue, recent retros (each expandable to its cause,
 next steps and better prompt), approved knowledge with hit counts, and Leader
 veto lessons. It loads separately, so Growth's first paint never waits on it.
+
+Each approved note also carries **trajectory outcome evidence** once enough
+fleet runs have seen it: how many distinct dispatches it was injected into,
+how many of those resolved to a trajectory record, and — past a small sample
+floor — how those runs ended (merged, failed, reverted and the like). The
+correlation is recorded when a real dispatch starts, keyed by the run's
+trajectory id, so refused previews and quota refusals never count. These are
+descriptive tallies of what happened to runs that saw the note, not proof the
+note caused the outcome — that causal question stays with the cloud lesson
+holdout. When the trajectory journals or the run ledger are degraded,
+truncated or simply absent, the tallies stay unknown rather than reading as
+zero.
+
+The holdout's answer is shown here too. Approved cloud launches are randomly
+split: most get the lessons block, a fixed share runs without it, and both
+arms record which notes applied. **Approved knowledge** carries a one-line
+read of that experiment — landed rates with and without lessons overall, and
+per note once enough finished runs exist in each arm, with the point effect
+and a 95% interval (`helps`, `hurts`, `no clear effect`, or still
+`measuring`). Launch failures and unfinished runs are named as not counted.
+Below three finished runs in either arm the effect stays unknown; when the
+task store or revert evidence cannot be read, every trial line stays absent
+rather than reading as zero. `ashlr improve lessons [--json]` prints the
+same numbers.
 
 **When sweeps run.** `ashlr verse` sweeps in the background: first 5 minutes
 after start, then hourly, skipping a tick while a sweep is running or when the

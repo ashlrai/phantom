@@ -113,6 +113,8 @@ export async function cmdEvalDataset(args: string[], overrides: EvalDatasetCliDe
         market: { state: read.market_state, truncated: read.market_truncated },
         emptyTags: { state: read.empty_tag_state, truncated: read.empty_tag_truncated },
         mergeEvents: { state: read.merge_events_state, truncated: read.merge_events_truncated },
+        reward: { state: read.reward_state, truncated: read.reward_truncated },
+        launchCost: { state: read.launch_cost_state, truncated: read.launch_cost_truncated },
         revertLedger: read.revert_ledger_state,
       },
       written: parsed.out ?? null,

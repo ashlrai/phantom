@@ -35,7 +35,7 @@ import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wake
   workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
-  AGENT_ADDRESS_PREFIX, agentAddressMatcher, agentChannelNameSchema, agentLabels, findAgentChannel, readAgentRegistry,
+  AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, agentRefAddressMatcher, findAgentChannel, readAgentRegistry,
   RESERVED_PREFIXES, resolveAgent, type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry,
   type AgentRegistryOptions,
 } from './bus-identity.js';
@@ -85,8 +85,8 @@ interface SendCommon {
    */
   wake?: boolean;
 }
-export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[] }
-export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[] }
+export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
+export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
 export interface LabelPostInput extends SendCommon {
   /** Plain routing label the message addresses; the reserved prefixes are refused. */
   to: string;
@@ -95,6 +95,7 @@ export interface LabelPostInput extends SendCommon {
   kind?: 'note' | 'context';
   thread?: string;
   refs?: string[];
+  replyTo?: string;
 }
 export interface HandoffInput extends SendCommon { to: string; taskId: string; prompt: string }
 
@@ -165,19 +166,23 @@ function metadata(sender: AgentIdentity, channel: 'bus' | 'handoff', channelRef:
   } as const;
 }
 
-function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[] }) {
+function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: string; refs?: string[]; replyTo?: string }) {
   return {
     kind: input.kind ?? 'note', text: input.text,
     ...(input.thread === undefined ? {} : { thread: input.thread }),
     ...(input.refs === undefined ? {} : { refs: input.refs }),
+    ...(input.replyTo === undefined ? {} : { inReplyTo: input.replyTo }),
   };
 }
 
-function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown }): string | null {
+function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
   if (!text(input.text)) return `Text must be 1-${BUS_V2_TEXT_MAX} characters.`;
   if (input.thread !== undefined && (typeof input.thread !== 'string' || !THREAD.test(input.thread))) return 'Thread must be a printable label.';
   if (input.refs !== undefined && (!Array.isArray(input.refs) || input.refs.length > 32 ||
     input.refs.some(ref => typeof ref !== 'string' || ref.length < 1 || ref.length > 256))) return 'Refs must be up to 32 short strings.';
+  if (input.replyTo !== undefined && (typeof input.replyTo !== 'string' || !THREAD.test(input.replyTo))) {
+    return 'Reply target must be a printable message id.';
+  }
   return null;
 }
 
@@ -1023,6 +1028,27 @@ export function busReadContains(value: unknown): string | null | undefined {
   return busReadContainsNeedle(value);
 }
 
+/**
+ * The honest resume cursor a paged bus read reports. A plain page stops the
+ * scan at `limit`, so its `nextCursor` already resumes strictly before the
+ * first unshown row. A `matched` page scans the whole retained store to count
+ * every accepted row, so its raw `nextCursor` is the store's end — resuming
+ * there would skip every match beyond the shown slice. When `matched`
+ * exceeds the shown rows the resume point is the newest shown row's cursor:
+ * every unshown match sits beyond it and every shown one at or before it, so
+ * `--after <nextCursor>` continues the page without a gap or a repeat. A
+ * `matched` total that fits inside the page keeps the store-end cursor —
+ * nothing was hidden, so the scan's end is the honest resume. The CLI and
+ * the fleet MCP adapters all report this one cursor, so a matched read can
+ * never disagree about where to resume.
+ */
+export function busPageResumeCursor(page: { nextCursor: number; matched?: number;
+    messages: readonly { cursor: number }[] }): number {
+  return page.matched !== undefined && page.matched > page.messages.length && page.messages.length > 0
+    ? Math.max(...page.messages.map(message => message.cursor))
+    : page.nextCursor;
+}
+
 interface Addressing { identity: AgentIdentity; labels: Set<string>; channels: Map<string, string> }
 
 function addressing(reg: AgentRegistry, ref: string): Addressing | undefined {
@@ -1073,6 +1099,24 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
 }
 
 /**
+ * The reply-citation match every bus read's `inReplyTo` filter applies: an
+ * object body whose own `inReplyTo` field is strictly equal to the cited
+ * envelope id — exact and case-sensitive, never the `replyTo` alias or a
+ * substring, and never a non-object or array body. This is the one rule
+ * `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`,
+ * `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`,
+ * `agents bus inbox --in-reply-to` and `agents bus channel read
+ * --in-reply-to` share, so "who answered envelope X" can never disagree
+ * about what counts as the answer; the citation is an application
+ * convention on the body, not an envelope field or authenticated identity.
+ */
+export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+  return Object.hasOwn(record, 'inReplyTo') && record['inReplyTo'] === inReplyTo;
+}
+
+/**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own and minus `group.presence`
@@ -1085,7 +1129,13 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `note`/`context` bodies carrying that v2 thread label; `from` narrows by
  * sender through the same identity-label matching `channel read` uses — a
  * ref that resolves through the registry matches every label of that
- * identity, an unresolvable ref keeps exact-label matching. `priority` keeps
+ * identity, an unresolvable ref keeps exact-label matching. `excludeFrom`
+ * drops mail sent under every registered spelling of one identity — the
+ * same sender-exclusion rule `comms bus read|watch --exclude-from`,
+ * `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+ * apply — so a member's noisy sender never reaches the page while every
+ * other sender still does; it composes with `from` (a sender both included
+ * and excluded matches nothing) and with every other filter. `priority` keeps
  * only envelopes stamped with that exact P0..P3 band — the same match
  * `comms bus read --priority` applies — so urgent mail is one filtered read,
  * not a page through the backlog. `job` keeps only mail that names one job:
@@ -1096,7 +1146,11 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * conversations projections group under `job:<id>`. `since` keeps only mail
  * received at or after that epoch-ms cutoff — the same inclusive
  * `receivedAt >= since` match `phm messages --since` applies, so fresh mail
- * is one filtered read without a persisted cursor. `channel` keeps only mail
+ * is one filtered read without a persisted cursor. `before` keeps only mail
+ * received strictly before that epoch-ms cutoff — the exclusive upper bound
+ * every bus read's `--before` applies — composing with `since` into one
+ * `[since, before)` window on `receivedAt` so "what was in my inbox before
+ * time T" is one filtered read. `channel` keeps only mail
  * addressed to `group:<name>:*` of one registry channel the agent belongs
  * to — channel posts (`kind:'channel'`) and channel-addressed handoffs
  * (`kind:'handoff'`) alike, matched on the delivery address rather than the
@@ -1109,6 +1163,18 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * is one filtered read instead of a page through the backlog; matching
  * runs over the rendered summary, never the raw body, so a secret-shaped
  * value stays unfindable even though it sits in the stored envelope.
+ * `inReplyTo` keeps only mail whose object body cites that envelope id
+ * through its own `inReplyTo` field — the same own-property exact match
+ * `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`,
+ * `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and
+ * `channel read --in-reply-to` apply, never the `replyTo` alias or a
+ * substring — so "which of my pending mail answers envelope X" is one
+ * filtered read of the addressed inbox, composing with every other
+ * filter. `id` keeps only the row whose own wire id is strictly equal to
+ * the value — the same exact-envelope match `comms bus read|watch --id`,
+ * `fleet bus-follow --id` and `fleet_bus_inbox`'s `id` apply, never a
+ * substring — so "is envelope X still pending for me" is one filtered
+ * read that composes with every other filter.
  * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
@@ -1127,12 +1193,13 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * `messages` still returns only the first `limit` of them.
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
-    matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number; channel?: string;
-    contains?: string } = {},
+    excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
+    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
-  const kindFilter = page.kind, jobFilter = page.job, since = page.since, channelFilter = page.channel;
+  const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
+  const inReplyTo = page.inReplyTo, idFilter = page.id;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1141,6 +1208,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (page.from !== undefined && (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128)) {
     return { status: 'invalid', reason: 'Invalid sender filter.' };
+  }
+  if (page.excludeFrom !== undefined &&
+      (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128)) {
+    return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
   }
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
     return { status: 'invalid', reason: 'Invalid priority.' };
@@ -1151,8 +1222,17 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   if (jobFilter !== undefined && (typeof jobFilter !== 'string' || !THREAD.test(jobFilter))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
   }
+  if (inReplyTo !== undefined && (typeof inReplyTo !== 'string' || !THREAD.test(inReplyTo))) {
+    return { status: 'invalid', reason: 'Invalid in-reply-to id.' };
+  }
+  if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
+    return { status: 'invalid', reason: 'Invalid message id.' };
+  }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { status: 'invalid', reason: 'Invalid before.' };
   }
   if (channelFilter !== undefined && (typeof channelFilter !== 'string' || !agentChannelNameSchema.safeParse(channelFilter).success)) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
@@ -1166,7 +1246,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
-  const fromMatch = page.from === undefined ? undefined : agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
+  const excludeFromMatch = page.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1198,11 +1280,15 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       else if (toChannel) kind = 'channel';
       const matchedKind = kind !== null &&
         (kindFilter === undefined || kind === kindFilter) &&
+        (idFilter === undefined || envelope.id === idFilter) &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
+        (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
         (since === undefined || row.receivedAt >= since) &&
+        (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
@@ -1244,7 +1330,7 @@ const CLAIM_HOLDER_WAKE_ID = /^wh-[a-f0-9]{32}$/;
  * possible — never reported as "no status".
  */
 export type AgentWakeClaimHolder =
-  | { statusId: string; jobId: string; status: WorkJob['status']; detail?: string }
+  | { statusId: string; jobId: string; status: WorkJob['status']; detail?: string; priority: BusPriority }
   | 'unresolved'
   | 'unknown';
 
@@ -1305,7 +1391,8 @@ function claimHolderWakeContexts(rows: readonly BusWakeRow[], options: UnifiedBu
       const id = claimHolderWakeId(receipt.envelope.id, owner);
       if (!hints.has(id) || contexts.has(id)) continue;
       contexts.set(id, { statusId: receipt.envelope.id, jobId: parsed.data.jobId,
-        status: parsed.data.status, ...(parsed.data.detail === undefined ? {} : { detail: parsed.data.detail }) });
+        status: parsed.data.status, priority: receipt.envelope.priority,
+        ...(parsed.data.detail === undefined ? {} : { detail: parsed.data.detail }) });
     }
   }
   for (const id of hints.keys()) if (!contexts.has(id)) contexts.set(id, 'unresolved');
@@ -1438,6 +1525,138 @@ export type WakePage = { status: 'ok'; agent: string;
   { status: 'unknown-agent' | 'unavailable' | 'invalid'; reason: string };
 
 /**
+ * One page of every wake hint in the bounded queue tail — the fleet-wide
+ * companion to `readAgentWakes`: no addressee scope, so hints queued under
+ * bare coordination or routing labels (the claim-holder fan-out's raw
+ * claim-owner targets) appear beside registered identities' hints, each
+ * row's own `to` naming its addressee. `scope:'fleet'` marks the unscoped
+ * read. `matched`/`truncated` carry the same queue-tail semantics
+ * `readAgentWakes` documents — `matched` counts every hint the bounded
+ * tail accepted before the row cap, or the proven matches on the resolved
+ * page under `job`/`contains`/`priority`, and `truncated` marks older
+ * bytes or matched rows beyond the returned slice.
+ */
+export type AllWakesPage =
+  | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
+  | { status: 'unavailable' | 'invalid'; reason: string };
+
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, the exclusive upper time bound and one exact hint id. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string }
+
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string }
+  | { ok: false; reason: string };
+
+/** Validate the shared wakes filter set before any store is touched. */
+function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
+  const job = filter.job;
+  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
+    return { ok: false, reason: 'Invalid job id.' };
+  }
+  const id = filter.id;
+  if (id !== undefined && (typeof id !== 'string' || !THREAD.test(id))) {
+    return { ok: false, reason: 'Invalid message id.' };
+  }
+  const priority = filter.priority;
+  if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
+    return { ok: false, reason: 'Invalid priority.' };
+  }
+  const from = filter.from;
+  if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
+    return { ok: false, reason: 'Invalid sender filter.' };
+  }
+  const excludeFrom = filter.excludeFrom;
+  if (excludeFrom !== undefined &&
+      (typeof excludeFrom !== 'string' || excludeFrom.length === 0 || excludeFrom.length > 128)) {
+    return { ok: false, reason: 'Invalid sender-exclusion filter.' };
+  }
+  const channel = filter.channel;
+  if (channel !== undefined && (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success)) {
+    return { ok: false, reason: 'Invalid channel name.' };
+  }
+  const before = filter.before;
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { ok: false, reason: 'Invalid before.' };
+  }
+  const containsNeedle = busReadContains(filter.contains);
+  if (containsNeedle === null) return { ok: false, reason: 'Invalid contains filter.' };
+  return { ok: true, ...(job === undefined ? {} : { job }),
+    ...(from === undefined ? {} : { from }), ...(excludeFrom === undefined ? {} : { excludeFrom }),
+    ...(channel === undefined ? {} : { channel }),
+    ...(priority === undefined ? {} : { priority }),
+    ...(before === undefined ? {} : { before }),
+    ...(id === undefined ? {} : { id }),
+    ...(containsNeedle === undefined ? {} : { containsNeedle }) };
+}
+
+/** The annotated rows plus queue-tail counts every wake page reports. */
+type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
+  | { status: 'unavailable'; reason: string };
+
+/**
+ * The queue-tail read plus referent resolution every wake page shares.
+ * `match` decides addressee scope inside `readBusWakes`, so `matched`
+ * counts only rows the whole filter set accepts; one bounded store scan
+ * then resolves each row's `claimHolder`/`message` evidence and the
+ * `job`/`contains`/`priority` verdicts filter on that resolved text — an
+ * unreadable queue is `unavailable`, and a `job`/`contains`/`priority`
+ * read whose bus store cannot be read fails closed the same way, never
+ * an empty page passed off as "no wakes".
+ */
+function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, registry: AgentRegistry,
+  match: (wake: BusWakeRow) => boolean, filter: ParsedWakeFilter & { ok: true }): WakeRowsPage {
+  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, beforeAt: filter.before, match });
+  if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
+  // One bounded store scan serves both per-row resolutions: the claim-holder
+  // citation re-derivation and the ordinary hint's referent lookup.
+  const scan = wakes.wakes.length === 0 ? undefined
+    : scanBusInbox({ root: options.root, now: options.now });
+  const job = filter.job, containsNeedle = filter.containsNeedle, priority = filter.priority;
+  // A job, contains or priority verdict needs the resolved referent; when the
+  // store cannot be read every hint's citation, summary and band are unknown,
+  // so the filtered read fails closed instead of reporting an empty page as
+  // "no wakes for this job", "no wakes mentioning this" or "no urgent wakes".
+  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined) &&
+      scan !== undefined && scan.source === 'unavailable') {
+    return { status: 'unavailable', reason: 'Bus store is not readable.' };
+  }
+  const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
+  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, job);
+  const shown = wakes.wakes.filter(row => {
+    if (job !== undefined) {
+      const holder = contexts.get(row.id);
+      const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
+      if (!jobMatch) return false;
+    }
+    if (containsNeedle !== undefined &&
+        !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
+      return false;
+    }
+    if (priority !== undefined) {
+      // The band is the resolved referent's own priority — the live message a
+      // bus.send hint points at, or the citing work.status receipt behind a
+      // claim-holder wh-… hint. A hint whose referent is unresolved or
+      // unknown names no provable band and never matches.
+      const holder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      const band = typeof holder === 'object' ? holder.priority
+        : message?.status === 'resolved' ? message.priority : undefined;
+      if (band !== priority) return false;
+    }
+    return true;
+  });
+  return { status: 'ok',
+    wakes: shown.map(row => {
+      const claimHolder = contexts.get(row.id);
+      const message = resolved.contexts.get(row.id);
+      return { ...row,
+        ...(claimHolder === undefined ? {} : { claimHolder }),
+        ...(message === undefined ? {} : { message }) };
+    }),
+    matched: job === undefined && containsNeedle === undefined && priority === undefined ? wakes.matched ?? 0 : shown.length,
+    truncated: wakes.truncated ?? false };
+}
+
+/**
  * Wake hints addressed to this identity under any label it resolves through
  * (address, bare handle, stable id or alias) or to one of its channels after
  * `sinceAt`. A ref that resolves to no registered identity keeps exact-label
@@ -1470,7 +1689,7 @@ export type WakePage = { status: 'ok'; agent: string;
  * read `unavailable` rather than an empty page, and `matched` then counts
  * the proven matches on the resolved page while `truncated` keeps its
  * queue-tail meaning. `filter.from` keeps only hints whose recorded `from`
- * label matches one agent — the same `agentAddressMatcher` identity-label
+ * label matches one agent — the same `agentRefAddressMatcher` identity-label
  * rule `inbox --from`/`channel read --from` apply over the already-read
  * registry: a handle, `agent:<handle>`, stable id or alias matches every
  * label of that identity, and an unresolvable ref keeps exact-label
@@ -1479,78 +1698,117 @@ export type WakePage = { status: 'ok'; agent: string;
  * a `bus.send` hint, the `agent:<handle>` of the identity whose terminal
  * `work.status` generated a claim-holder `wh-…` hint — so "which agent
  * keeps waking me" is one filtered read that composes with `--since` and
- * `--job`. `filter.contains` keeps only hints whose resolved referent text
- * carries the needle — a `bus.send` hint's live message summary or a
- * claim-holder hint's citing `work.status` detail, the same scrubbed
- * one-line text the row reports — so "which wake was about X" is one
- * filtered read; a hint whose referent cannot be resolved names no
- * provable text and never matches, and like `job` the filtered `matched`
- * counts the proven matches on the resolved page.
+ * `--job`. `filter.excludeFrom` drops hints sent under every registered
+ * spelling of one identity through the same matcher — an unresolvable ref
+ * keeping exact-label matching — composing with `from` so a sender both
+ * included and excluded matches nothing, the same rule
+ * `readAgentInbox`/`readAgentChannel`'s `excludeFrom` apply; the drop
+ * happens inside the queue-tail match, so `matched` stays the count the
+ * whole filter set accepts. `filter.channel` keeps only hints whose own
+ * `to` label sits under `group:<name>:*` — the same room prefix
+ * `inbox --channel`, `channel read` and `phm messages --channel` match,
+ * grammar-validated by the shared channel-name rule and decided on the
+ * hint's address alone, so it needs no referent resolution, composes
+ * with the addressee scope (a per-agent read narrows to one room's hints
+ * for that agent — a channel the agent does not belong to simply has no
+ * hints to show) and with every other filter, `matched` counting it with
+ * the rest of the queue-tail match; a name no hint addresses matches
+ * nothing rather than erroring. `filter.contains` keeps only hints whose
+ * resolved referent text carries the needle — a `bus.send` hint's live
+ * message summary or a claim-holder hint's citing `work.status` detail,
+ * the same scrubbed one-line text the row reports — so "which wake was
+ * about X" is one filtered read; a hint whose referent cannot be
+ * resolved names no provable text and never matches, and like `job` the
+ * filtered `matched` counts the proven matches on the resolved page.
+ * `filter.priority` keeps only hints in one exact P0..P3 band — the same
+ * match every other bus read's `--priority` applies — decided on the
+ * resolved referent's own priority: the live message a `bus.send` hint
+ * points at, or the citing `work.status` receipt's band behind a
+ * claim-holder `wh-…` hint, with `unresolved`/`unknown` referents never
+ * matching (they name no provable band), `matched` counting the proven
+ * matches on the resolved page, an unreadable bus store answering
+ * `unavailable`, and a band outside P0..P3 answering `invalid`.
+ * `filter.before` keeps only hints recorded strictly before that
+ * epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
+ * applies on the hint's own queue time, composing with `sinceAt`'s
+ * strictly-after boundary into one `(since, before)` window; the verdict
+ * needs only the queue row's `at`, never the resolved referent, so it
+ * counts inside the queue-tail match like `channel`/`from`/`excludeFrom`
+ * and an unreadable bus store never fails it closed, with a bound outside
+ * epoch-ms answering `invalid`.
  */
 export function readAgentWakes(ref: string, sinceAt: number | undefined, options: UnifiedBusOptions = {},
-  filter: { job?: string; from?: string; contains?: string } = {}): WakePage {
-  const job = filter.job;
-  if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
-    return { status: 'invalid', reason: 'Invalid job id.' };
-  }
-  const from = filter.from;
-  if (from !== undefined && (typeof from !== 'string' || from.length === 0 || from.length > 128)) {
-    return { status: 'invalid', reason: 'Invalid sender filter.' };
-  }
-  const containsNeedle = busReadContains(filter.contains);
-  if (containsNeedle === null) {
-    return { status: 'invalid', reason: 'Invalid contains filter.' };
-  }
+  filter: WakeFilter = {}): WakePage {
+  const parsed = parseWakeFilter(filter);
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
   const target = addressing(read.registry, ref);
   if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
-  const fromMatch = from === undefined ? undefined
-    : agentAddressMatcher(labelIdentityOf(read.registry), from);
-  const wakes = readBusWakes({ root: options.runsRoot, sinceAt, match: wake =>
+  const fromMatch = parsed.from === undefined ? undefined
+    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+  const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
+  const page = readWakeRows(sinceAt, options, read.registry, wake =>
+    (parsed.id === undefined || wake.id === parsed.id) &&
+    (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
+    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
     (target !== undefined
       ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
-      : wake.to === ref) });
-  if (wakes.state === 'unreadable') return { status: 'unavailable', reason: 'Wake queue is unreadable.' };
-  // One bounded store scan serves both per-row resolutions: the claim-holder
-  // citation re-derivation and the ordinary hint's referent lookup.
-  const scan = wakes.wakes.length === 0 ? undefined
-    : scanBusInbox({ root: options.root, now: options.now });
-  // A job or contains verdict needs the resolved referent; when the store
-  // cannot be read every hint's citation and summary are unknown, so the
-  // filtered read fails closed instead of reporting an empty page as "no
-  // wakes for this job" or "no wakes mentioning this".
-  if ((job !== undefined || containsNeedle !== undefined) && scan !== undefined && scan.source === 'unavailable') {
-    return { status: 'unavailable', reason: 'Bus store is not readable.' };
-  }
-  const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
-  const resolved = wakeMessageContexts(wakes.wakes, scan, read.registry, options, job);
-  const shown = wakes.wakes.filter(row => {
-    if (job !== undefined) {
-      const holder = contexts.get(row.id);
-      const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
-      if (!jobMatch) return false;
-    }
-    if (containsNeedle !== undefined &&
-        !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
-      return false;
-    }
-    return true;
-  });
+      : wake.to === ref), parsed);
+  if (page.status !== 'ok') return page;
   return { status: 'ok', agent: target?.identity.handle ?? ref,
     scope: target === undefined ? 'label' : 'identity',
-    wakes: shown.map(row => {
-      const claimHolder = contexts.get(row.id);
-      const message = resolved.contexts.get(row.id);
-      return { ...row,
-        ...(claimHolder === undefined ? {} : { claimHolder }),
-        ...(message === undefined ? {} : { message }) };
-    }),
-    matched: job === undefined && containsNeedle === undefined ? wakes.matched ?? 0 : shown.length,
-    truncated: wakes.truncated ?? false };
+    wakes: page.wakes, matched: page.matched, truncated: page.truncated };
+}
+
+/**
+ * Every wake hint the bounded queue tail holds, fleet-wide — the read a
+ * leader or comms pass runs once instead of `readAgentWakes` per
+ * registered identity (and once more per bare coordination label the
+ * claim-holder fan-out writes, which no identity ref can name). Rows
+ * carry the same `claimHolder`/`message` resolution `readAgentWakes`
+ * annotates, so fleet triage costs the same zero extra reads; the
+ * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`
+ * filters behave identically — `channel` keeps only hints whose own `to`
+ * label sits under `group:<name>:*`, the room prefix every other bus read's
+ * channel filter matches, decided on the address alone inside the
+ * queue-tail match so `matched` counts it with the rest, `before` keeps
+ * only hints recorded strictly before its epoch-ms cutoff — the same
+ * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
+ * hint's queue time — including the fail-closed
+ * `unavailable` when a
+ * `job`/`contains`/`priority` verdict needs a bus store that cannot be
+ * read. An unreadable registry or queue is `unavailable`, never an
+ * empty page passed off as "no wakes". `filter.id` keeps only the hint
+ * whose own id is strictly equal to the value — the triggering envelope's
+ * wire id on a `bus.send` hint, the `wh-…` claim-holder id on those — the
+ * same exact-id match `agents bus inbox`/`channel read`'s `id` apply,
+ * decided on the queue row alone inside the queue-tail match so it
+ * counts in `matched` and needs no referent resolution.
+ */
+export function readAllWakes(sinceAt: number | undefined, options: UnifiedBusOptions = {},
+  filter: WakeFilter = {}): AllWakesPage {
+  const parsed = parseWakeFilter(filter);
+  if (!parsed.ok) return { status: 'invalid', reason: parsed.reason };
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', reason: read.reason };
+  const fromMatch = parsed.from === undefined ? undefined
+    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+  const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+  const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
+  const page = readWakeRows(sinceAt, options, read.registry, wake =>
+    (parsed.id === undefined || wake.id === parsed.id) &&
+    (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
+    (fromMatch === undefined || fromMatch(wake.from)) &&
+    (excludeFromMatch === undefined || !excludeFromMatch(wake.from)), parsed);
+  if (page.status !== 'ok') return page;
+  return { status: 'ok', scope: 'fleet', wakes: page.wakes, matched: page.matched, truncated: page.truncated };
 }
 
 /**
@@ -1646,6 +1904,18 @@ export interface ChannelReadOptions {
    */
   from?: string;
   /**
+   * Sender-exclusion filter: a handle, `agent:<handle>`, stable id or alias.
+   * A ref that resolves through the identity registry drops posts sent under
+   * every label of that identity; an unresolvable ref keeps exact-label
+   * matching — the same `agentRefAddressMatcher` rule `comms bus read|watch
+   * --exclude-from`, `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s
+   * `excludeFrom` apply, so a room's noisy member never reaches the
+   * transcript while every other sender still does. It composes with `from`
+   * (a sender both included and excluded matches nothing) and with every
+   * other filter.
+   */
+  excludeFrom?: string;
+  /**
    * Thread filter: the v2 `thread` label a `note`/`context` body carries.
    * Every other body kind — and a note without the field — never matches.
    */
@@ -1678,6 +1948,14 @@ export interface ChannelReadOptions {
    */
   since?: number;
   /**
+   * Time filter: only posts received strictly before this epoch-ms cutoff —
+   * the exclusive upper bound every bus read's `--before` applies —
+   * composing with `since` into one `[since, before)` window on
+   * `receivedAt`, so "what did the room say before time T" is one filtered
+   * read.
+   */
+  before?: number;
+  /**
    * Text filter: only posts whose scrubbed one-line summary — the same
    * text the inbox frame renders per row — carries the needle as a
    * case-insensitive substring. Matching runs over the rendered summary,
@@ -1685,6 +1963,24 @@ export interface ChannelReadOptions {
    * though it sits in the stored envelope.
    */
   contains?: string;
+  /**
+   * Reply-citation filter: only posts whose object body cites this envelope
+   * id through its own `inReplyTo` field — the same own-property exact
+   * match `agents bus inbox --in-reply-to`, `phm messages --in-reply-to`,
+   * `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`
+   * and `fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias
+   * or a substring — so "which room posts answer envelope X" is one
+   * filtered read of the transcript.
+   */
+  inReplyTo?: string;
+  /**
+   * Envelope-id filter: only the post whose own wire id is strictly equal
+   * to this value — the same exact-match `comms bus read|watch --id`,
+   * `fleet bus-follow --id` and `fleet_bus_inbox`'s `id` apply, never a
+   * substring or a body citation — so "did envelope X reach the room" is
+   * one filtered read of the transcript.
+   */
+  id?: string;
   after?: number;
   limit?: number;
 }
@@ -1703,19 +1999,32 @@ export type ChannelReadPage =
  * (`groupPresence`), not messages. Reading needs no identity and no
  * membership: membership gates posting only, and the rows are the same
  * shared store `comms bus group read` sees. `from` narrows by sender through
- * the same identity-label matching `comms bus read` uses; `thread` narrows to
+ * the same identity-label matching `comms bus read` uses; `excludeFrom`
+ * drops posts sent under every registered spelling of one identity — the
+ * same sender-exclusion rule `comms bus read|watch --exclude-from`,
+ * `fleet bus-follow --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
+ * apply, with an unresolvable ref keeping exact-label matching — so a room's
+ * noisy member never reaches the transcript; `thread` narrows to
  * `note`/`context` bodies carrying that v2 thread label, `priority`
  * narrows to posts stamped with that exact P0..P3 band, and `job` narrows
  * to posts that name one job — the same `busBodyJobMatch` rule `agents bus
  * inbox --job` applies, so a channel transcript answers one job's posts
  * without paging the whole room. `since` keeps only posts received at or
  * after that epoch-ms cutoff — the same `receivedAt >= since` match
- * `inbox --since` applies. `contains` keeps only posts whose scrubbed
+ * `inbox --since` applies; `before` keeps only posts received strictly
+ * before its epoch-ms cutoff — the exclusive upper bound composing with
+ * `since` into one `[since, before)` window on `receivedAt`. `contains`
+ * keeps only posts whose scrubbed
  * one-line summary — the same text the inbox frame renders per row —
  * carries the needle as a case-insensitive substring, the same
  * `busReadContainsMatch` rule `inbox --contains` applies, so "has anyone
  * posted about X in this room" is one filtered read; matching runs over
- * the rendered summary, never the raw body. `nextCursor`
+ * the rendered summary, never the raw body. `inReplyTo` keeps only posts
+ * whose object body cites that envelope id through its own `inReplyTo`
+ * field — the same own-property exact match `inbox --in-reply-to`,
+ * `phm messages --in-reply-to` and the raw bus reads apply, never the
+ * `replyTo` alias or a substring — so "which room posts answer envelope
+ * X" is one filtered read of the transcript. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -1730,7 +2039,8 @@ export type ChannelReadPage =
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
-  const countMatched = page.matched === true, since = page.since;
+  const countMatched = page.matched === true, since = page.since, before = page.before, inReplyTo = page.inReplyTo;
+  const idFilter = page.id;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1746,8 +2056,17 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
   }
+  if (inReplyTo !== undefined && (typeof inReplyTo !== 'string' || !THREAD.test(inReplyTo))) {
+    return { status: 'invalid', reason: 'Invalid in-reply-to id.' };
+  }
+  if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
+    return { status: 'invalid', reason: 'Invalid message id.' };
+  }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
+  }
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) {
+    return { status: 'invalid', reason: 'Invalid before.' };
   }
   const containsNeedle = busReadContains(page.contains);
   if (containsNeedle === null) {
@@ -1768,7 +2087,14 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
     if (typeof page.from !== 'string' || page.from.length === 0 || page.from.length > 128) {
       return { status: 'invalid', reason: 'Invalid sender filter.' };
     }
-    fromMatch = agentAddressMatcher(labelIdentityOf(read.registry), page.from);
+    fromMatch = agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
+  }
+  let excludeFromMatch: ((value: string) => boolean) | undefined;
+  if (page.excludeFrom !== undefined) {
+    if (typeof page.excludeFrom !== 'string' || page.excludeFrom.length === 0 || page.excludeFrom.length > 128) {
+      return { status: 'invalid', reason: 'Invalid sender-exclusion filter.' };
+    }
+    excludeFromMatch = agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
   }
   const messages: ChannelReadMessage[] = [];
   let matched = 0;
@@ -1783,11 +2109,15 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
       const envelope = row.envelope, body = envelope.body;
       const accepted = !isGroupPresenceBody(body) && envelope.to.startsWith(prefix) &&
         (exact === undefined || envelope.to === exact) &&
+        (idFilter === undefined || envelope.id === idFilter) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
+        (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
         (job === undefined || busBodyJobMatch(body, job)) &&
+        (inReplyTo === undefined || busBodyInReplyToMatch(body, inReplyTo)) &&
         (since === undefined || row.receivedAt >= since) &&
+        (before === undefined || row.receivedAt < before) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;

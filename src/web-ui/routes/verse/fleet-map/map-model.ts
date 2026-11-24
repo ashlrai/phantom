@@ -17,7 +17,7 @@ export const LIVE_MAP_API = '/api/verse/fleet/control/live-map';
 /** The pane polls no faster than the server rebuilds the graph. */
 export const MAP_POLL_MS = 5_000;
 const MAX_NODES = 400, MAX_EDGES = 1200, MAX_TEXT = 160;
-const NODE_KINDS: readonly LiveMapNodeKind[] = ['leader', 'lane', 'job', 'computer', 'resource'];
+const NODE_KINDS: readonly LiveMapNodeKind[] = ['leader', 'lane', 'job', 'computer', 'resource', 'planner'];
 const EDGE_KINDS: readonly LiveMapEdgeKind[] = ['reports-to', 'runs-on', 'uses-resource', 'messaged-in-last-15-min'];
 
 type Obj = Record<string, unknown>;
@@ -254,4 +254,11 @@ export function readMapFilter(): MapFilter {
 }
 export function saveMapFilter(filter: MapFilter): void {
   try { globalThis.sessionStorage?.setItem(MAP_FILTER_KEY, JSON.stringify(filter)); } catch { /* storage blocked: the filter lasts until the page closes */ }
+}
+
+/** Live overlays use the same nodes and renderers as retained message lines. */
+export const MESSAGE_EDGE_TTL_MS = 10_000;
+export function transientMessageEdges(messages: readonly import('../../../../core/fleet/map-messages.js').MapMessage[], now: number): LiveMapEdge[] {
+  return messages.filter(m => m.fromNode && m.toNode && now >= Date.parse(m.at) && now - Date.parse(m.at) < MESSAGE_EDGE_TTL_MS)
+    .map(m => ({ id: `live:${m.id}`, from: m.fromNode!, to: m.toNode!, kind: 'messaged-in-last-15-min', messages: 1, lastMessageAt: m.at, pulse: true }));
 }

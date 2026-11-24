@@ -37,10 +37,10 @@ export const LIVE_MAP_PULSE_MS = 60_000;
 /** Message line thickness by count, shared by the 2D and 3D maps: 1 message is thin, 10 or more is the cap. Unknown counts draw thin. */
 export const messageLineWidth = (count: number | null | undefined): number => Math.min(6, 1.25 + 0.5 * Math.max(1, count ?? 1));
 
-export type LiveMapNodeKind = 'leader' | 'lane' | 'job' | 'computer' | 'resource';
+export type LiveMapNodeKind = 'leader' | 'lane' | 'job' | 'computer' | 'resource' | 'planner';
 export type LiveMapEdgeKind = 'reports-to' | 'runs-on' | 'uses-resource' | 'messaged-in-last-15-min';
 /** Rows of the 2D view, top to bottom: leader, lanes, jobs, computers, resources. */
-export const LIVE_MAP_LEVEL: Readonly<Record<LiveMapNodeKind, number>> = { leader: 0, lane: 1, job: 2, computer: 3, resource: 4 };
+export const LIVE_MAP_LEVEL: Readonly<Record<LiveMapNodeKind, number>> = { leader: 0, lane: 1, job: 2, computer: 3, resource: 4, planner: 1 };
 const EDGE_ORDER: readonly LiveMapEdgeKind[] = ['reports-to', 'runs-on', 'uses-resource', 'messaged-in-last-15-min'];
 
 /** Key order is the JSON contract. */
@@ -236,6 +236,10 @@ export function buildFleetLiveMap(inputs: LiveMapInputs): FleetLiveMap {
   }
 
   const order = (kind: LiveMapNodeKind) => LIVE_MAP_LEVEL[kind];
+  for (const planner of tree?.planners ?? []) {
+    node('planner', `planner:${planner.id}`, planner.label, planner.state, planner.doing);
+    edge('reports-to', `planner:${planner.id}`, 'leader');
+  }
   const insertion = [...nodes.keys()];
   const sortedNodes = [...nodes.values()].sort((a, b) => order(a.kind) - order(b.kind)
     // Lanes and computers keep their source order (fixed lane order, this computer first); jobs and resources sort by id.

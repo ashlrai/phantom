@@ -11,6 +11,8 @@ import type { ProcessRow } from './host-load.js';
 
 export interface LeftoverEvidence { worktreeRoot: string; cwds: ReadonlyMap<number, string>; liveJobs: ReadonlyMap<string, boolean | null> }
 export interface LeftoverProcess { pid: number; job: string; tool: string; cpu: number; ageSeconds: number | null }
+export const processTool = (command: string): string =>
+  scrubSecrets(basename(command.trim().split(/\s+/)[0]!)).replace(/[^\w.+-]/g, '').slice(0, 64) || 'unknown';
 export const leftoverJob = (cwd: string, root: string): string | undefined =>
   /^([A-Za-z0-9][\w.-]{0,127})(?:\/|$)/.exec(relative(root, cwd))?.[1];
 
@@ -21,7 +23,7 @@ export function findHostLeftovers(rows: readonly ProcessRow[], evidence?: Leftov
     const cwd = evidence?.cwds.get(row.pid), job = cwd && evidence ? leftoverJob(cwd, evidence.worktreeRoot) : undefined;
     if (!cwd || job && evidence?.liveJobs.get(job) == null) known = false;
     if (job && evidence?.liveJobs.get(job) === false) items.push({ pid: row.pid, job: scrubSecrets(job),
-      tool: scrubSecrets(basename(row.command.trim().split(/\s+/)[0]!)).replace(/[^\w.+-]/g, '').slice(0, 64) || 'unknown', cpu: row.cpu, ageSeconds: ages.get(row.pid) ?? null });
+      tool: processTool(row.command), cpu: row.cpu, ageSeconds: ages.get(row.pid) ?? null });
   }
   items.sort((a, b) => b.cpu - a.cpu || a.pid - b.pid);
   return { state: known ? 'known' as const : 'unknown' as const, items, processes: items.length,

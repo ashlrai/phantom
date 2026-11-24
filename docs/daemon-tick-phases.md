@@ -53,16 +53,41 @@ Reflection is a separate single-flight off-tick job in resident ticks; it
 writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
-reward-signal ledger (`src/core/metrics/reward-feed.ts`); it is best-effort,
+reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
+the standing revert set proves did not hold; it is best-effort,
 never throws, and writes only under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
-skill cards (`src/core/fleet/skill-nudge.ts`); it writes only candidate
+skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
+standing revert set proves did not hold; it writes only candidate
 records under `~/.ashlr/skills`. An `empty-tag-sync` off-tick job on the
 same cadence folds the tail's windowed empty finishes into
 `metrics/empty-tags.jsonl` and the matching dupcheck outcome rows
 (`src/core/fleet/empty-tag-sync.ts`) — the records `phm jobs empty
 --record` appends by hand, now automatic; it is best-effort, never throws,
-and writes only under the runs dir. A job that ignores
+and writes only under the runs dir. A `visit-sync` off-tick job on the
+same cadence folds the same jobs-ledger tail plus the live READY rows of
+`queue/router-queue.md` into the queue visit journal
+(`src/core/queue/visit-sync.ts`) — the records `phm queue visits-sync
+--apply` appends by hand, now automatic, so `phm queue stats` and
+`/api/queue/stats` stay fed; it is best-effort, never throws, dedups
+against the journal and skips the append when the journal is unreadable.
+A `swapout-sync` off-tick job runs on every resident tick — outside the
+`selfImprove` cadence, since it is host evidence rather than queue work —
+and folds the bridge's latest `memstat.json` sample into
+`metrics/swapout-rate.jsonl` (`src/core/fleet/swapout-sync.ts`), the tuning
+ledger `lane-autopilot.ts`'s MEMORY_GUARD constants name but nothing wrote.
+Sample time is the sample's own timestamp, dedup by `sampled_at` keeps
+appends at the bridge's cadence, and an unreadable ledger blocks the
+append rather than risking a duplicate row; it is best-effort, never
+throws, and writes only under the runs dir. `phm fleet vitals` reads the
+ledger back into its `swapout_rate` evidence so the distribution the
+thresholds should be tuned against is visible; with the lane-autopilot
+thresholds injected, each `memoryGuard` share reports how often a
+MEMORY_GUARD condition would have fired across the samples carrying that
+field — the calibration denominator the constants' tune-from-the-ledger
+note asks for, advisory only and never a routing input; unknown stays
+unknown.
+A job that ignores
 cancellation remains single-flight until its work settles; shutdown cancels
 running jobs with bounded waiting. Once ticks keep reflection in-tick;
 dry-run ticks skip maintenance.
@@ -139,6 +164,8 @@ and persists the outcome in a `finally`, whatever `tick()` did.
 | `reward-sync`    | 1 min            | `TICK_PHASE_REWARD_SYNC_MS`; resident off-tick reward-ledger feed |
 | `skill-nudge`    | 1 min            | `TICK_PHASE_SKILL_NUDGE_MS`; resident off-tick shadow skill-card feed |
 | `empty-tag-sync` | 1 min            | `TICK_PHASE_EMPTY_TAG_SYNC_MS`; resident off-tick empty-tag/dupcheck evidence feed |
+| `visit-sync`     | 1 min            | `TICK_PHASE_VISIT_SYNC_MS`; resident off-tick queue-visit journal feed |
+| `swapout-sync`   | 1 min            | `TICK_PHASE_SWAPOUT_SYNC_MS`; resident off-tick memstat → swapout-rate ledger feed |
 | `ci-rerun`       | 5 min            | `TICK_PHASE_CI_RERUN_MS`; optional resident off-tick flake maintenance |
 | `auto-merge`, `proposal-repair` | 5 min | `TICK_PHASE_MAINTENANCE_MS`                   |
 | `capacity`       | 30 s             | `TICK_PHASE_CAPACITY_MS`; internally probed             |

@@ -48,7 +48,8 @@ function outcome(over: Partial<RouterOutcome> = {}): RouterOutcome {
     provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
     pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
     node_outcome: null, node_id: null, node_pack: null,
-    merge_queue: null,
+    merge_queue: null, cross_review: null,
+    launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
     passk: null,
     ...over,
   };
@@ -62,6 +63,9 @@ function read(over: Partial<RouterOutcomeRead> = {}): RouterOutcomeRead {
     empty_tag_state: 'missing', empty_tag_truncated: false,
     merge_events_state: 'missing', merge_events_truncated: false,
     revert_ledger_state: 'missing',
+    reward_state: 'missing', reward_truncated: false,
+    launch_cost_state: 'missing', launch_cost_truncated: false,
+    cross_review_state: 'missing', cross_review_truncated: false,
     outcomes: [], malformed_rows: 0, unattached_rows: 0, ambiguous_urls: 0, session_rows: 0, truncated: false,
     ...over,
   };
@@ -219,7 +223,10 @@ describe('cmdEvalDataset', () => {
       schema: 'phm.eval-dataset.v1', jobs: 1, unattributed: 0,
       counts: { merged: 1, closed: 0, failed: 0, held: 0, pending: 0 },
     });
-    expect((summary['sources'] as Record<string, unknown>)['jobs']).toMatchObject({ state: 'read', truncated: true });
+    const sources = summary['sources'] as Record<string, { state: string; truncated: boolean }>;
+    expect(sources['jobs']).toMatchObject({ state: 'read', truncated: true });
+    expect(sources['launchCost']).toMatchObject({ state: 'missing', truncated: false });
+    expect(sources['reward']).toMatchObject({ state: 'missing', truncated: false });
   });
 
   it('refuses when the jobs ledger was not read', async () => {
