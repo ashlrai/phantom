@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -483,6 +483,21 @@
  *     whose dispatched work kept failing, whose queue kept overflowing
  *     or whose candidates kept waiting out gates and limits never
  *     became work;
+ *   - the MCP gateway activity journal's recurring policy blocks: the
+ *     per-call {ts, session, caller, tool, verdict, args} rows the
+ *     gateway's audit() in src/core/mcp-gateway.ts appends to
+ *     <account home>/gateway/activity.jsonl through
+ *     recordGatewayActivity on every CallToolRequest — 'deny' and
+ *     'approval_required' verdicts where checkGatewayPolicy refused the
+ *     call, and 'revoked' verdicts where the call arrived on a session
+ *     whose record is revoked or unreadable — folded per
+ *     (caller, tool, verdict) cell across distinct UTC days inside the
+ *     7-day window (gatewayActivityBacklogItems below). Until now the
+ *     journal had no reader at all — readGatewayActivity's only callers
+ *     were the writer's own rotation and tests — so a (caller, tool)
+ *     pair the policy kept denying, a tool whose approval gate kept
+ *     stalling calls, and calls that kept arriving on dead session
+ *     records never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -559,6 +574,7 @@ import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
 import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
+import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1310,6 +1326,30 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the target, truncated tails are stated as lower bounds, and every
   // journal string is scrubbed before it reaches a prompt.
   items.push(...await automationBacklogItems({ repo }));
+
+  // MCP gateway activity journal: the per-call audit rows the gateway's
+  // audit() appends to <account home>/gateway/activity.jsonl on every
+  // CallToolRequest — recurring 'deny' and 'approval_required' verdicts
+  // where checkGatewayPolicy refused the call, and 'revoked' verdicts
+  // where the call arrived on a session whose record is revoked or
+  // unreadable — folded per (caller, tool, verdict) cell across
+  // distinct UTC days inside the window. Until now the journal had no
+  // reader at all — readGatewayActivity's only callers were the
+  // writer's own rotation and tests — so a (caller, tool) pair the
+  // policy kept denying, a tool whose approval gate kept stalling
+  // calls, and calls that kept arriving on dead session records never
+  // became work. Same bounded no-follow tail read at a bound above the
+  // writer's own 8 MiB self-trim; rows count only under the writer's
+  // contract (gs_ session ids, the caller/tool length bounds, the
+  // closed verdict vocabulary, args as at most 20 '[redacted]'-valued
+  // keys), 'allow' rows — the call running — never emit, a cell emits
+  // only at the recurring bars of records across distinct UTC days
+  // inside the window, truncated tails are stated as lower bounds,
+  // argument signatures quote key names only, every journal string is
+  // scrubbed before it reaches a prompt, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's gateway and carries no repository column.
+  items.push(...await gatewayActivityBacklogItems({ repo }));
   return { items, errors };
 }
 
