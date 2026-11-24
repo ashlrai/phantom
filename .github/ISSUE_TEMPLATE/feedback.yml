@@ -1,0 +1,39 @@
+name: Feedback
+description: Tell us what works, what doesn't, or what you wish Phantom did
+title: "[Feedback]: "
+labels: ["feedback", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping steer Phantom. Feedback is ranked into the public roadmap
+        (see docs/COMMUNITY.md). Please do not paste secrets, tokens or personal paths.
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Your feedback
+      description: What happened, what you expected, or what you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Something is hard or confusing
+        - Missing feature
+        - Works great (tell us why)
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Coding agent you use (optional)
+      description: e.g. Codex, Claude Code, Cursor, Copilot, Gemini CLI, Grok, Devin, Aider, a local model
+  - type: input
+    id: version
+    attributes:
+      label: Phantom version (optional)
+      description: Output of `phm --version`

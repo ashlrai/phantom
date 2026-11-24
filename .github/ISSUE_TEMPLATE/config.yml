@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas (GitHub Discussions)
+    url: https://github.com/ashlrai/phantom/discussions
+    about: Ask a question, share what you built, or float an idea before filing an issue.
+  - name: Security vulnerability
+    url: https://github.com/ashlrai/phantom/security/advisories/new
+    about: Report privately. Do not open a public issue for vulnerabilities.

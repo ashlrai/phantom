@@ -145,6 +145,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Implement sandbox inbox/reply transport for Codex or Claude | [Mailbox engine adapters](https://github.com/ashlrai/phantom/blob/master/docs/MAILBOX-ENGINE.md) |
 | Change code and verify it locally | [Contributing — source guide](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md) |
 | Open a first pull request with a coding agent, from fork to auto-merge | [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md) |
+| Give feedback and see how it becomes the roadmap | [Community feedback loop](https://github.com/ashlrai/phantom/blob/master/docs/COMMUNITY.md) |
 | Queue Mac bridge builds and tests within a shared memory budget | [Memory admission — source guide](https://github.com/ashlrai/phantom/blob/master/scripts/mac-bridge/MEMORY.md) |
 | Bound Mac bridge disk growth and clean published worktrees | [Mac bridge disk lifecycle](https://github.com/ashlrai/phantom/blob/master/docs/BRIDGE-WORKTREES.md) |
 | Preview or remove finished job worktrees | [Worktree prune](https://github.com/ashlrai/phantom/blob/master/docs/WORKTREE-PRUNE.md) |
