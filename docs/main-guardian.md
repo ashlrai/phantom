@@ -47,6 +47,9 @@ log tail. The JSON `log` object reports source availability, recent errors and
 error lines with missing, invalid or future timestamps separately; it never
 prints log text. Missing logs or undated errors are unknown and exit 1. The
 count is limited to the tail, not necessarily the entire 24-hour period.
+Python traceback headers and common exception labels such as `ModuleNotFoundError:`
+and `subprocess.TimeoutExpired:` count as error lines too. Undated traceback
+lines remain unknown; they never borrow a timestamp from a nearby line.
 
 1. **Compact** prunes old entries. Stale state (entries no longer in the
    manifest) is removed so the state file stays under 1 000 entries.

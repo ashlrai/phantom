@@ -40,6 +40,8 @@ it.each([
   ['missing file', null, 'normal', 'loaded', 0, 'warn'],
   ['fresh', '11:59:00', null, 'loaded', 0, 'warn'],
   ['fresh', '11:59:00', 'ERROR private-detail', 'loaded', 0, 'red'],
+  ['fresh', '11:59:00', 'ModuleNotFoundError: private-detail', 'loaded', 0, 'red'],
+  ['fresh', '11:59:00', 'Traceback (most recent call last):', 'loaded', 0, 'red'],
   ['fresh', '11:59:00', 'normal', 'not-loaded', null, 'red'],
   ['fresh', '11:59:00', 'normal', 'loaded', -9, 'red'],
   ['fresh', '11:59:00', 'normal', 'loaded', null, 'warn'],

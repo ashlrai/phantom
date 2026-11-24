@@ -89,7 +89,10 @@ export async function readGuardianLogHealth(opts: { runsDir?: string; now?: () =
   result.unparseableErrors = 0;
   const now = (opts.now ?? Date.now)();
   for (const line of source.text.split('\n')) {
-    if (!/\b(?:error|failed|failure|exception)\b/i.test(line)) continue;
+    // Python crashes need no standalone "error" word. Require traceback syntax
+    // or an exception label, so routine mentions of exception types stay clean.
+    const pythonFailure = /\bTraceback \(most recent call last\):|\b(?:[A-Za-z_]\w*(?:Error|Exception)|TimeoutExpired):(?:\s|$)/.test(line);
+    if (!pythonFailure && !/\b(?:error|failed|failure|exception)\b/i.test(line)) continue;
     const match = /^(?:\[)?(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?)/.exec(line);
     const raw = match?.[1];
     const time = raw && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(raw) ? localTimestamp(raw).ms : raw ? Date.parse(raw) : NaN;
