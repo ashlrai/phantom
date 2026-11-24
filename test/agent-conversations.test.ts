@@ -258,6 +258,44 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { excludeFrom: 'agt_lead' }, same).map(c => c.id).sort()).toEqual(['c', 'd']);
   });
 
+  it('with keeps threads holding the pairwise exchange agent names, in either direction', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 2, { kind: 'ask' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c' }),
+      say('e', 'peer-a', 'peer-b', 4, { kind: 'status' }),
+      say('f', 'peer-b', 'peer-c', 5, { kind: 'status' }),
+      // 'g'+'h' share thread t-x: leader and claude are both in it, but
+      // each only ever addresses grok — never each other.
+      say('g', 'leader', 'grok', 6, { kind: 'status', thread: 't-x' }),
+      say('h', 'claude', 'grok', 7, { kind: 'status', thread: 't-x' }),
+    ], NOW);
+    // Threads: 'a' leader<->claude, 'c' grok<->zai, 'e' peer-a->peer-b,
+    // 'f' peer-b->peer-c, 't-x' leader+claude via grok — 'd' replies into 'c'.
+    expect(filterConversations(list, { agent: 'leader', with: 'claude' }).map(c => c.id)).toEqual(['a']);
+    // Either direction counts: agent=claude with=leader finds the same thread.
+    expect(filterConversations(list, { agent: 'claude', with: 'leader' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { agent: 'grok', with: 'zai' }).map(c => c.id)).toEqual(['c']);
+    // A pair that never exchanges directly never passes: leader and zai
+    // share no thread at all, so the pairwise read is an honest empty.
+    expect(filterConversations(list, { agent: 'leader', with: 'zai' })).toEqual([]);
+    expect(filterConversations(list, { agent: 'peer-a', with: 'peer-b' }).map(c => c.id)).toEqual(['e']);
+    expect(filterConversations(list, { agent: 'peer-b', with: 'peer-c' }).map(c => c.id)).toEqual(['f']);
+    // with means nothing without agent: an honest empty list, never widened.
+    expect(filterConversations(list, { with: 'claude' })).toEqual([]);
+    // Both agents in one thread is not the exchange: 't-x' holds leader and
+    // claude as participants yet no member runs leader<->claude, so --agent
+    // leader alone keeps it while --with claude drops it — 'a' stays.
+    expect(filterConversations(list, { agent: 'leader' }).map(c => c.id).sort()).toEqual(['a', 't-x']);
+    expect(filterConversations(list, { agent: 'leader', with: 'claude' }).map(c => c.id)).toEqual(['a']);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { agent: 'leader', with: 'claude', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    // The identity resolver folds both refs' labels the same way `agent` does.
+    const same = (label: string) => ['leader', 'agt_lead'].includes(label) ? 'agt_lead' : undefined;
+    expect(filterConversations(list, { agent: 'agt_lead', with: 'claude' }, same).map(c => c.id)).toEqual(['a']);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -814,6 +852,24 @@ describe('phm agents conversations --json', () => {
     expect(errors.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('the CLI --with narrows --agent to the pairwise exchange and needs --agent', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // CHAT: m1 leader<->claude answered, m3 grok->zai waiting.
+    expect(await run(['--agent', 'leader', '--with', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(await run(['--agent', 'claude', '--with', 'leader', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    // A pair that never exchanges is an honest empty page.
+    expect(await run(['--agent', 'leader', '--with', 'zai', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // --with without --agent is a usage error, never a widened read.
+    expect(await run(['--with', 'claude'])).toBe(2);
+    expect(errors.pop()).toContain('--with takes the other agent and needs --agent');
+    expect(await run(['--with'])).toBe(2);
+    expect(await run(['--agent', 'leader', '--with', 'has space'])).toBe(2);
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
     const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
@@ -869,6 +925,17 @@ describe('phm agents conversations --json', () => {
     expect(found.status).toBe(200);
     expect(found.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
     expect(found.body.matched).toBe(1);
+    // with narrows agent to the pairwise exchange; it needs agent and a bad value is refused.
+    const pair = await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=claude`);
+    expect(pair.status).toBe(200);
+    expect(pair.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    const none = await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=zai`);
+    expect(none.status).toBe(200);
+    expect(none.body.conversations).toEqual([]);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?with=claude`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=a&with=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=%20%20`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=a&contains=b`)).status).toBe(400);

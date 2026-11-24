@@ -157,6 +157,18 @@ export interface ConversationQuery {
    * sender both included and excluded matches nothing, the same rule every
    * bus read's `--exclude-from` applies. Whole threads. */
   excludeFrom?: string;
+  /** Keep only threads holding the two-way exchange `agent` and `with` name
+   * — the same pairwise rule `phm messages --agent <a> --with <b>` applies,
+   * decided on each member message's from/to endpoints: a member counts when
+   * one endpoint is the `agent` ref and the other the `with` ref, in either
+   * direction, each side matching by the same name/identity-key rule the
+   * `agent` participant filter and the `from`/`excludeFrom` sender filters
+   * use, so a thread where the two only ever talk through a third party or a
+   * room never passes. `with` narrows `agent` and means nothing without it:
+   * a `with` with no `agent` is an honest empty list, never a widened one —
+   * the same needs-`--agent` rule the messages read enforces. Whole threads,
+   * never partial message lists. */
+  with?: string;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -263,7 +275,15 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * name/lane/identity-key match `agent` uses, so a thread the ref only
  * receives in never passes; `excludeFrom` drops every thread where any
  * member message was sent under that ref's labels, composing with `from`
- * so a sender both included and excluded matches nothing. Every one of
+ * so a sender both included and excluded matches nothing. `with` keeps
+ * only the threads holding the two-way exchange `agent` and the `with`
+ * ref name — the same pairwise rule `phm messages --agent <a> --with
+ * <b>` applies, decided on each member message's from/to endpoints (one
+ * endpoint the `agent` ref, the other the `with` ref, either direction,
+ * each side through the same name/identity-key match) — so "our thread"
+ * is one filtered read while a thread where the two only share a third
+ * party or a room never passes; a `with` with no `agent` is an honest
+ * empty list, never a widened one. Every one of
  * these is a member-level test: whole threads survive, never partial
  * message lists, and the matched member stays in `messages[]`.
  */
@@ -278,6 +298,8 @@ export function filterConversations(list: readonly Conversation[], query: Conver
   const fromKey = from !== undefined ? keyFor?.(query.from!) : undefined;
   const excludeFrom = query.excludeFrom?.toLowerCase();
   const excludeKey = excludeFrom !== undefined ? keyFor?.(query.excludeFrom!) : undefined;
+  const peer = query.with?.toLowerCase();
+  const peerKey = peer !== undefined ? keyFor?.(query.with!) : undefined;
   // --contains normalizes once per read — lowercase, whitespace collapsed,
   // trimmed — the same needle form every other bus read's --contains applies;
   // a needle that normalizes to nothing imposes no constraint.
@@ -292,6 +314,16 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     name.toLowerCase() === wanted || (wantedKey !== undefined && identityOf?.(name) === wantedKey);
   const fromMatch = from === undefined ? undefined : senderIs(from, fromKey);
   const excludeMatch = excludeFrom === undefined ? undefined : senderIs(excludeFrom, excludeKey);
+  // `with` narrows `agent` to the threads holding the pairwise exchange —
+  // the same from/to endpoint test `phm messages --with` applies, run over
+  // each member message's labels through the same sender matcher. A `with`
+  // with no `agent` proves nothing and matches nothing.
+  const agentMatch = agent === undefined ? undefined : senderIs(agent, key);
+  const peerMatch = peer === undefined ? undefined : senderIs(peer, peerKey);
+  const pairwise = peer === undefined ? undefined
+    : agentMatch === undefined || peerMatch === undefined ? () => false
+    : (c: Conversation) => c.messages.some(m =>
+      (agentMatch(m.from) && peerMatch(m.to)) || (peerMatch(m.from) && agentMatch(m.to)));
   const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
@@ -302,6 +334,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))
     && (excludeMatch === undefined || !c.messages.some(m => excludeMatch(m.from)))
+    && (pairwise === undefined || pairwise(c))
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')
