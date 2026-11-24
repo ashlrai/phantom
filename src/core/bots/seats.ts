@@ -412,8 +412,12 @@ export async function planSeatHandoffs(o: SeatOptions = {}): Promise<SeatHandoff
     seats: seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
   return { schema: 'phantom-bot-handoffs-plan.v1', apply: false, seats };
 }
-type NoticeStatus = 'posted' | 'accepted' | 'sent' | 'duplicate' | 'halted' | 'refused' | 'unavailable' | 'failed' | 'unknown';
-type NoticeReceipt = { bus?: NoticeStatus; owner?: NoticeStatus };
+export type NoticeStatus = 'posted' | 'accepted' | 'sent' | 'duplicate' | 'halted' | 'refused' | 'unavailable' | 'failed' | 'unknown';
+export type NoticeReceipt = { bus?: NoticeStatus; owner?: NoticeStatus };
+/** One journaled handoff record plus its per-channel notification receipts —
+ * the element `applySeatHandoff` reports per applied record and
+ * `applySeatHandoffs` carries into its per-seat result. */
+export type AppliedSeatHandoff = SeatHandoff & { notifications: NoticeReceipt };
 async function noticeStatus(send: () => Promise<unknown>): Promise<NoticeStatus> {
   try {
     const result = await send();
@@ -524,6 +528,99 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
     await persist(data.states, o);
     return { schema: 'phantom-bot-handoff-plan.v1', seatId: id, state: data.states[id]!.state, apply: true, handoffs: applied };
   } finally { releaseLocalStoreLock(lock); }
+}
+
+/** One seat's slice of the fleet apply result. */
+export interface SeatHandoffsApplySeat {
+  seatId: string;
+  /** The bus routing label the seat's claims and messages answer to. */
+  participantId: string;
+  /** Plan-time eligibility under the same rule plan/apply enforce; false means
+   * no apply was attempted for this seat. */
+  eligible: boolean;
+  /** 'applied' the seat's pending records journaled, held work released and
+   * notices receipted — already-complete records count, the apply is
+   * idempotent; 'skipped' the seat was ineligible at plan time or stopped
+   * qualifying before its turn; 'contended' the shared handoff-store lock
+   * could not be taken; 'failed' the apply threw — `reason` then names the
+   * fixed failure class, 'unavailable' when the thrown error is not one of
+   * the module's value-free phrases (a filesystem error can carry a path). */
+  outcome: 'applied' | 'skipped' | 'contended' | 'failed';
+  /** The seat's lifecycle state after its turn: the apply's reported state on
+   * 'applied', the plan's projection otherwise. A 'failed' apply can still
+   * have persisted its projected transition before throwing, so only 'applied'
+   * carries a verified post-apply state. */
+  state: SeatState['state'];
+  /** Journaled handoff records with their notification receipts — populated
+   * only on 'applied'; a skipped, contended or failed seat lists none even
+   * though its pending records still wait (re-run the plan to see them). */
+  handoffs: AppliedSeatHandoff[];
+  /** The fixed failure phrase on 'contended'/'failed'; absent otherwise. */
+  reason?: string;
+}
+export interface SeatHandoffsApply {
+  schema: 'phantom-bot-handoffs-apply.v1';
+  apply: true;
+  seats: SeatHandoffsApplySeat[];
+}
+/** The value-free failure phrases `applySeatHandoff` throws — the only error
+ * messages a fleet apply may surface verbatim; anything else collapses to
+ * 'unavailable' because a filesystem error can carry a path. */
+const APPLY_FIXED_REASONS: ReadonlySet<string> = new Set([
+  'Unknown seat.',
+  'Seat must be draining or idle with open work.',
+  'Seat handoff store unavailable or contended.',
+  'Node claim release refused.',
+  'Bus claim release refused.',
+]);
+function applySeatFailure(error: unknown): { outcome: 'skipped' | 'contended' | 'failed'; reason?: string } {
+  const message = error instanceof Error ? error.message : '';
+  if (message === 'Seat must be draining or idle with open work.') return { outcome: 'skipped' };
+  if (message === 'Seat handoff store unavailable or contended.') return { outcome: 'contended', reason: message };
+  return { outcome: 'failed', reason: APPLY_FIXED_REASONS.has(message) ? message : 'unavailable' };
+}
+/**
+ * Fleet-wide apply of every eligible seat handoff — the write half of the
+ * `planSeatHandoffs` dry-run `phm bots handoffs` and `fleet_seat_handoffs`
+ * serve. One plan snapshot picks the candidates, then each eligible seat
+ * runs the same `applySeatHandoff` a per-seat `--apply` runs, serialized by
+ * the shared handoff-store lock it already takes: journal-before-release,
+ * idempotent notices and stale-safe claim fencing are unchanged, so seats
+ * are independent and a partial fleet apply is safely re-run — applied seats
+ * simply find nothing pending on the next pass.
+ *
+ * Per-seat outcomes are honest and independent: 'applied' seats report the
+ * apply's own state and journaled records; 'skipped' seats were ineligible at
+ * plan time or stopped qualifying before their turn; 'contended' seats never
+ * got the store lock; 'failed' seats threw — `reason` is one of the module's
+ * fixed phrases or 'unavailable', never a raw error that could carry a path.
+ * A throwing plan read propagates exactly as `planSeatHandoffs` does: with no
+ * roster snapshot there is nothing per-seat to report. This grants no
+ * authority beyond the per-seat apply — claims still coordinate scope only.
+ */
+export async function applySeatHandoffs(o: SeatOptions = {}): Promise<SeatHandoffsApply> {
+  const plan = await planSeatHandoffs(o);
+  const seats: SeatHandoffsApplySeat[] = [];
+  for (const entry of plan.seats) {
+    if (!entry.eligible) {
+      seats.push({ seatId: entry.seatId, participantId: entry.participantId,
+        eligible: false, outcome: 'skipped', state: entry.state, handoffs: [] });
+      continue;
+    }
+    try {
+      const applied = await applySeatHandoff(entry.seatId, o);
+      seats.push({ seatId: entry.seatId, participantId: entry.participantId,
+        eligible: true, outcome: 'applied', state: applied.state, handoffs: applied.handoffs });
+    } catch (error) {
+      const failure = applySeatFailure(error);
+      seats.push({ seatId: entry.seatId, participantId: entry.participantId,
+        eligible: true, outcome: failure.outcome, state: entry.state, handoffs: [],
+        ...(failure.reason === undefined ? {} : { reason: failure.reason }) });
+    }
+  }
+  assertMetadata(JSON.stringify({ schema: 'phantom-bot-handoffs-apply.v1', apply: true,
+    seats: seats.map(({ handoffs, ...rest }) => ({ ...rest, handoffs: handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
+  return { schema: 'phantom-bot-handoffs-apply.v1', apply: true, seats };
 }
 export async function sendSeatMessage(input: { from: string; to: string; text: string }, o: SeatOptions = {}) {
   assertMetadata(input.text);

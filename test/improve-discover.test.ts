@@ -7,6 +7,8 @@ import { nightlyLearningBacklogItems } from '../src/core/improve/nightly-backlog
 import { fleetPolicyBacklogItems } from '../src/core/improve/policy-backlog.js';
 import { localGateBacklogItems } from '../src/core/improve/gate-backlog.js';
 import { passkAlertBacklogItems } from '../src/core/improve/passk-backlog.js';
+import { frictionBacklogItems } from '../src/core/improve/friction-backlog.js';
+import { crossReviewBacklogItems } from '../src/core/improve/xreview-backlog.js';
 import { nightlyProposalsPath } from '../src/core/learn/retro/store.js';
 import { updateCloudBudget } from '../src/core/cloud/store.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -892,5 +894,360 @@ describe('pass^k eval alert items', () => {
     const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
     expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('passk-alert-')))).toBe(0);
     expect(readUserBacklogItems().filter((i) => i.id.startsWith('passk-alert-'))).toHaveLength(1);
+  });
+});
+
+// Fleet friction fold items → backlog items: the dispatch→merge drag
+// categories `phm friction` scores over a 7-day window become items instead
+// of sitting advisory-only in a report someone had to run — and whose note
+// ledger only updates on manual runs.
+describe('fleet friction items', () => {
+  const NOW = new Date('2026-11-22T12:00:00Z');
+  const at = (hoursAgo: number): string => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const J = (o: Record<string, unknown>): string => JSON.stringify(o);
+  const frictionDir = (name: string, files: Record<string, string>): string => {
+    const dir = path.join(home, name);
+    for (const [rel, text] of Object.entries(files)) {
+      const p = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, text);
+    }
+    return dir;
+  };
+  /**
+   * A runs dir whose every friction source fires: bad finishes, an anomalous
+   * diff, lane auth with a relogin, quota holds, terminal launch give-ups, a
+   * precheck park, deferred requests, an invalid-tier enqueue, a concurrency
+   * shed, dispatch-event requeues/routes/holds and a stale ready row — plus
+   * guardian red-main, held lanes, a budget override, kept jobs and one
+   * dispatch-events.log line per counted kind.
+   */
+  const richFiles = (base: Date = NOW): Record<string, string> => {
+    const a = (hoursAgo: number): string => new Date(base.getTime() - hoursAgo * 3_600_000).toISOString();
+    const l = (hoursAgo: number): string => a(hoursAgo).replace('T', ' ').slice(0, 19);
+    return {
+    'metrics/jobs.jsonl': [
+      J({ event: 'finish', job: 'RQ-E1', lane: 'devin', ts: a(30), empty: true, exit_code: 0 }),
+      J({ event: 'finish', job: 'RQ-E2', lane: 'devin', ts: a(29), empty: false, exit_code: 3 }),
+      J({ event: 'finish', job: 'RQ-E3', lane: 'claude', ts: a(28), empty: false, pool_error: 'usage_limit' }),
+      J({ event: 'finish', job: 'RQ-D1', lane: 'devin', ts: a(27), diff_files: 2, diff_lines: 500, empty: false }),
+      J({ event: 'autobackoff_hold', lane: 'devin', job: 'RQ-V', ts: a(20), pattern: 'claude_auth_401', auth_failures: 2 }),
+      J({ event: 'finish', job: 'RQ-W', lane: 'devin', ts: a(19), empty: false, exit_code: 0 }),
+      J({ event: 'autobackoff_hold', lane: 'claude', job: 'RQ-U', ts: a(18), pattern: 'usage_limit' }),
+      J({ event: 'autobackoff_skip', lane: 'devin', job: 'RQ-T', ts: a(17), pattern: 'usage_limit' }),
+      J({ event: 'launch_failed', job: 'RQ-L2', lane: 'devin', ts: a(16), reason: 'launch_script_error', class: 'permanent', action: 'give_up' }),
+      J({ event: 'launch_failed', job: 'RQ-L3', ts: a(15), reason: 'launch_interrupted', action: 'give_up' }),
+      J({ event: 'precheck_parked', job: 'RQ-S', lane: 'devin', ts: a(14), code: 13 }),
+      J({ event: 'dispatch_deferred', job: 'RQ-D1', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-A', ts: a(13) }),
+      J({ event: 'dispatch_deferred', job: 'RQ-D2', repo: 'phantom', reason: 'duplicate-request', repeatOf: 'RQ-B', ts: a(12) }),
+      J({ event: 'enqueue', job: 'RQ-C', lane: 'codex', tier: 'standard', ts: a(11) }),
+      J({ event: 'concurrency', from: 18, to: 13, reason: 'backoff fork', zones: { fork: 'danger' }, ts: a(10) }),
+      J({ event: 'enqueue', job: 'RQ-A', lane: 'devin', tier: 'work', ts: a(30) }),
+    ].join('\n'),
+    'queue/dispatch-events.log': [
+      `${l(15)} LAUNCH_DEFERRED RQ-1 PAUSED (requeued)`,
+      `${l(14)} AUTH_FAILURE_SEEN claude RQ-3 claude_auth_401: run produced work, no hold`,
+      `${l(13)} USAGE_LIMIT_SEEN codex RQ-2 codex_usage_limit: provider named the reset`,
+      `${l(12)} LANE_HOLD devin autobackoff pattern=claude_auth_401 job=RQ-4 until=x src=default`,
+      `${l(11)} ROUTE RQ-5 devin->codex-personal`,
+      `${l(10)} PARKED-DEP RQ-6 deps=RQ-7,RQ-8`,
+    ].join('\n'),
+    'queue/ready.tsv': [
+      'RQ-A\tphantom\tdevin\twork\tqueue/prompts/RQ-A.md',
+      'RQ-C\tphantom\tdevin\tplatinum\tqueue/prompts/RQ-C.md',
+      'RQ-NEW\tphantom\tdevin\twork\tqueue/prompts/RQ-NEW.md',
+    ].join('\n'),
+    'guardian/state.json': J({
+      'ashlrai/phantom': { state: 'red', red_first: a(26), attempts: 2, cur_job: 'RQ-FIX-1' },
+      'ashlrai/locus': { state: 'green' },
+    }),
+    'queue/slots.json': J({
+      devin: { held: true, held_by: 'autobackoff', held_until: a(-1) },
+      claude: { held: true, held_by: 'mason 2026-11-20' },
+      'codex-personal': { target: 10 },
+    }),
+    'queue/budget-overrides.json': J({ devin: { floor: 3 } }),
+    'queue/keep.txt': 'RQ-KEPT\nRQ-A\n',
+    };
+  };
+
+  it('turns firing friction categories into valid priority-3 backlog items in score order', async () => {
+    const runsDir = frictionDir('runs-rich', richFiles());
+    const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
+    // The catalog is thirteen categories; the default limit emits the top eight.
+    expect(items).toHaveLength(8);
+    expect(items[0]!.id).toBe('friction-empty-finishes');
+    expect(items.map((i) => i.id)).toEqual([
+      'friction-empty-finishes', 'friction-holds', 'friction-deferred-requests',
+      'friction-quota-exhaustion', 'friction-stale-ready', 'friction-red-main',
+      'friction-invalid-tier', 'friction-lane-auth',
+    ]);
+    for (const item of items) {
+      expect(item.id).toMatch(/^friction-[a-z-]+$/);
+      expect(validBacklogItem(item)).not.toBeNull();
+      expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'fleet-friction' });
+      expect(item.prompt).toContain('phm friction');
+      expect(item.prompt).toContain('no-change');
+      expect(item.prompt).toContain('7-day signals');
+    }
+    const [top] = items;
+    expect(top!.title).toContain('finish with no diff');
+    expect(top!.prompt).toContain('bad=3');
+    expect(top!.prompt).toContain('Primary');
+    expect(top!.prompt).toContain('RQ-E1');
+    expect(top!.prompt).toContain('Recorded owner: fleet');
+    const holds = items.find((i) => i.id === 'friction-holds')!;
+    expect(holds.prompt).toContain('hold_events=3');
+    const requeues = items.find((i) => i.id === 'friction-requeues');
+    expect(requeues).toBeUndefined(); // below the default limit of eight
+  });
+
+  it('honours the item limit and emits the tail categories too', async () => {
+    const runsDir = frictionDir('runs-all', richFiles());
+    const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW, limit: 25 });
+    expect(items).toHaveLength(13);
+    const ids = items.map((i) => i.id);
+    expect(ids).toContain('friction-requeues');
+    expect(ids).toContain('friction-manual-interventions');
+    expect(ids).toContain('friction-wrong-route');
+    expect(ids).toContain('friction-anomalous-diffs');
+    expect(ids).toContain('friction-concurrency-throttle');
+    const giveUps = items.find((i) => i.id === 'friction-requeues')!;
+    // Terminal launch give-ups opened the item through the catalog's openOn
+    // signal even though the events log's requeue count is small.
+    expect(giveUps.prompt).toContain('launch_giveups=2');
+    expect(giveUps.prompt).toContain('requeued=1');
+  });
+
+  it('emits nothing when no source fires, for a missing runs dir, or another repository', async () => {
+    const empty = frictionDir('runs-empty', {});
+    expect(await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir: empty, now: NOW })).toEqual([]);
+    expect(await frictionBacklogItems({
+      repo: 'ashlrai/phantom', runsDir: path.join(home, 'no-such-runs'), now: NOW,
+    })).toEqual([]);
+    const runsDir = frictionDir('runs-other', richFiles());
+    expect(await frictionBacklogItems({ repo: 'ashlrai/other', runsDir, now: NOW })).toEqual([]);
+  });
+
+  it('emits only the categories a partial source set can prove', async () => {
+    // ready.tsv alone: an invalid-tier row fires; every jobs/events-derived
+    // category stays quiet because its source was never read — unknown is
+    // never a zero and never a guess.
+    const runsDir = frictionDir('runs-ready-only', {
+      'queue/ready.tsv': 'RQ-C\tphantom\tdevin\tplatinum\tqueue/prompts/RQ-C.md\n',
+    });
+    const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
+    expect(items.map((i) => i.id)).toEqual(['friction-invalid-tier']);
+    expect(items[0]!.prompt).toContain('ready_rows=1');
+    expect(items[0]!.prompt).toContain('enqueued=unknown');
+  });
+
+  it('respects operator notes: in-progress and wontfix suppress, fixed-but-firing regresses', async () => {
+    const note = (item: string, status: string): string =>
+      J({ kind: 'note', v: 1, ts: at(50), item, status });
+    const runsDir = frictionDir('runs-noted', {
+      ...richFiles(),
+      'friction/ledger.jsonl': [
+        note('holds', 'in-progress'),
+        note('quota-exhaustion', 'wontfix'),
+        note('deferred-requests', 'fixed'),
+        note('wrong-route', 'fixed'),
+        note('manual-interventions', 'fixed'),
+      ].join('\n'),
+    });
+    const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW, limit: 25 });
+    const ids = items.map((i) => i.id);
+    expect(ids).not.toContain('friction-holds');
+    expect(ids).not.toContain('friction-quota-exhaustion');
+    // fixed + still firing = regressed: the earlier fix did not hold.
+    const deferred = items.find((i) => i.id === 'friction-deferred-requests')!;
+    expect(deferred.prompt).toContain('did not hold');
+    const wrongRoute = items.find((i) => i.id === 'friction-wrong-route')!;
+    expect(wrongRoute.prompt).toContain('did not hold');
+    // manual-interventions fired (manual_holds=1) so its fixed note regresses too.
+    const manual = items.find((i) => i.id === 'friction-manual-interventions')!;
+    expect(manual.prompt).toContain('did not hold');
+  });
+
+  it('derives stable ids so a refresh re-adds nothing', async () => {
+    const runsDir = frictionDir('runs-stable', richFiles());
+    const first = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
+    const second = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+    const one = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW, limit: 1 });
+    expect(one).toHaveLength(1);
+    expect(one[0]!.id).toBe('friction-empty-finishes');
+  });
+
+  it('appends friction items through discovery and dedupes on refresh', async () => {
+    const savedRuns = process.env.ASHLR_RUNS_DIR;
+    process.env.ASHLR_RUNS_DIR = path.join(home, '.ashlr-runs');
+    try {
+      // discoverBacklog anchors the fold at the real clock, so the fixture
+      // stamps must be relative to it — the 7-day window is the fold's own.
+      frictionDir('.ashlr-runs', richFiles(new Date()));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const friction = first.items.filter((i) => i.id.startsWith('friction-'));
+      expect(friction).toHaveLength(8);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(friction)).toBe(8);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('friction-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('friction-'))).toHaveLength(8);
+    } finally {
+      if (savedRuns === undefined) delete process.env.ASHLR_RUNS_DIR;
+      else process.env.ASHLR_RUNS_DIR = savedRuns;
+    }
+  });
+});
+
+// Cross-review journal recurring findings → backlog items: the reject reason
+// codes and review failures fleet/cross-review.jsonl records become items
+// instead of sitting advisory-only in `phm router outcomes`/`router-weights`
+// tallies and the audit log.
+describe('cross-review findings', () => {
+  const NOW = new Date('2026-11-22T12:00:00Z');
+  const iso = (hoursAgo: number): string => new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString();
+  const journalPath = (): string => path.join(home, '.ashlr', 'fleet', 'cross-review.jsonl');
+  const writeJournal = (lines: string[]): void => {
+    const file = journalPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  };
+  const review = (hoursAgo: number, over: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      schemaVersion: 1, kind: 'review', at: iso(hoursAgo),
+      repo: 'ashlrai/phantom', pr: 700, prUrl: 'https://github.com/ashlrai/phantom/pull/700',
+      reviewedHeadSha: 'a'.repeat(40), diffSha256: 'b'.repeat(64),
+      producerPool: 'devin', producerFamily: 'devin',
+      reviewerPool: 'claude', reviewerFamily: 'claude',
+      outcome: 'reject', reasons: ['missing-tests'], failure: null, skippedFor: [],
+      ...over,
+    });
+  /** Three rejects for pool 'devin' citing 'missing-tests' across two pull requests. */
+  const rejectFindings = (): string[] => [
+    review(30, { pr: 701 }),
+    review(20, { pr: 701 }),
+    review(10, { pr: 702, reasons: ['missing-tests', 'out-of-scope'] }),
+  ];
+  /** Three failed reviews on 'ashlrai/phantom' citing the 'timeout' failure code across two PRs. */
+  const failureFindings = (): string[] => [
+    review(30, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: null, reviewerFamily: null, pr: 801 }),
+    review(20, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: 'claude', pr: 801 }),
+    review(10, { outcome: 'failed', reasons: [], failure: 'timeout', reviewerPool: 'codex', pr: 802 }),
+  ];
+
+  it('turns recurring reject reasons into valid priority-3 backlog items', async () => {
+    writeJournal(rejectFindings());
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    // 'missing-tests' rests on all three rows; 'out-of-scope' rests on the
+    // single multi-reason row — below the recurring bar, so one item.
+    expect(items).toHaveLength(1);
+    const missing = items[0]!;
+    expect(missing.id).toMatch(/^xreview-reject-[0-9a-f]{16}$/);
+    expect(validBacklogItem(missing)).not.toBeNull();
+    expect(missing).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'cross-review' });
+    expect(missing.prompt).toContain('fleet/cross-review.jsonl');
+    expect(missing.prompt).toContain('no-change');
+    expect(missing.prompt).toContain('phm router outcomes');
+    expect(missing.title).toContain('devin');
+    expect(missing.title).toContain('missing-tests');
+    // missing-tests: 3 rows (the multi-reason row counts once per code) across 2 PRs.
+    expect(missing.prompt).toContain('3 recorded reject rows across 2 distinct pull requests');
+    expect(missing.prompt).toContain('ashlrai/phantom#701');
+    expect(missing.prompt).toContain('ashlrai/phantom#702');
+    expect(missing.prompt).toContain('Producer families seen: devin:3');
+    expect(missing.prompt).toContain('Reviewer pools seen: claude:3');
+  });
+
+  it('emits nothing below the row or distinct-PR bar, for stale evidence, or another repository', async () => {
+    // Three rows but all on one pull request: one job's problem, not a fleet finding.
+    writeJournal([review(30), review(20), review(10)]);
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Two rows across two PRs never reach the row bar.
+    writeJournal([review(30, { pr: 711 }), review(20, { pr: 712 })]);
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Recurring but stale: the newest row is older than the window.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['at'] = iso(24 * 40);
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Findings on another repository's pull requests never land on this one.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['repo'] = 'ashlrai/other';
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    // Repo matching is case-insensitive like the nightly source's.
+    writeJournal(rejectFindings().map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      row['repo'] = 'AshlrAI/Phantom';
+      return JSON.stringify(row);
+    }));
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toHaveLength(1);
+  });
+
+  it('turns recurring review failures into failure items and ignores non-finding rows', async () => {
+    writeJournal([
+      ...failureFindings(),
+      // approve, skipped and decision rows are not findings.
+      review(8, { outcome: 'approve', reasons: ['correct-and-scoped'], pr: 803 }),
+      review(7, { outcome: 'skipped', reasons: [], failure: null, skippedFor: ['sensitive-path'], pr: 804 }),
+      JSON.stringify({ schemaVersion: 1, kind: 'decision', at: iso(6), repo: 'ashlrai/phantom', pr: 805, action: 'enable-auto-merge' }),
+      // A torn tail line and a foreign schema version are skipped, never trusted.
+      'not json',
+      JSON.stringify({ schemaVersion: 2, kind: 'review', at: iso(5), repo: 'ashlrai/phantom', pr: 806, outcome: 'reject', reasons: ['missing-tests'], producerPool: 'devin' }),
+      // Rejects without a usable reason or producer pool cannot be attributed.
+      review(4, { reasons: [], pr: 807 }),
+      review(3, { reasons: ['not-a-real-code'], pr: 808 }),
+      review(2, { producerPool: 'bad pool!', pr: 809 }),
+    ]);
+    const items = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(items).toHaveLength(1);
+    const item = items[0]!;
+    expect(item.id).toMatch(/^xreview-failure-[0-9a-f]{16}$/);
+    expect(validBacklogItem(item)).not.toBeNull();
+    expect(item).toMatchObject({ priority: 3, repo: 'ashlrai/phantom', area: 'cross-review' });
+    expect(item.title).toContain('timeout');
+    expect(item.prompt).toContain('3 recorded failed-review rows across 2 distinct pull requests');
+    expect(item.prompt).toContain('Reviewer pools seen: claude:1, codex:1');
+    expect(item.prompt).toContain('1 row(s) recorded no reviewer pool');
+    expect(item.prompt).toContain('no-change');
+  });
+
+  it('emits nothing for a missing ledger and derives stable ids honouring the limit', async () => {
+    expect(await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW })).toEqual([]);
+    writeJournal([...rejectFindings(), ...failureFindings()]);
+    const first = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    const second = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW });
+    expect(second.map((i) => i.id)).toEqual(first.map((i) => i.id));
+    expect(first).toHaveLength(2);
+    const one = await crossReviewBacklogItems({ repo: 'ashlrai/phantom', now: NOW, limit: 1 });
+    expect(one).toHaveLength(1);
+  });
+
+  it('appends cross-review items through discovery and dedupes on refresh', async () => {
+    writeJournal(rejectFindings());
+    const greenGh = async (args: string[]) => {
+      const p = args[4] ?? '';
+      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+    };
+    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    const xreview = first.items.filter((i) => i.id.startsWith('xreview-'));
+    expect(xreview).toHaveLength(1);
+    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+    expect(appendUserBacklogItems(xreview)).toBe(1);
+    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('xreview-')))).toBe(0);
+    expect(readUserBacklogItems().filter((i) => i.id.startsWith('xreview-'))).toHaveLength(1);
   });
 });

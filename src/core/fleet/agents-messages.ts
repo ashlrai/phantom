@@ -3,14 +3,17 @@
  *
  * Not a new store: the same read-only projection of the durable bus inbox that
  * `phm messages` uses (agent-messages.ts: scrubbed one-line summaries, capped at
- * 160 characters), filtered by the map's agent-to-agent rule (fleet-edges.ts),
+ * 160 characters), filtered by the map's agent-to-agent rule (fleet-edges.ts)
+ * and by the same filter vocabulary `phm messages` parses — kind, priority,
+ * job, thread, channel, contains, from/exclude-from, in-reply-to, id, agent/with —
  * with each sender and recipient resolved to the node id `phm map` draws
  * (map-edges.ts: `leader`, `lane:<name>`, `job:<id>`). An agent the map does not
  * draw reads "unknown"; its routing label stays in `fromName` / `toName`.
  * Served by GET /api/verse/fleet/control/agent-messages for the Map pane's cards.
  */
-import { AGENT_MESSAGES_MAX_LIMIT, parseSince, projectAgentMessages, type AgentMessageKind } from './agent-messages.js';
-import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
+import { matchAgentMessages, parseAgentMessagesQuery, parseSince,
+  type AgentMessage, type AgentMessageKind, type AgentMessagesQuery } from './agent-messages.js';
+import { scanBusInbox, type BusInboxOptions } from './bus-inbox.js';
 import { agentToAgent } from './fleet-edges.js';
 import { mapEdgeAgent } from './map-edges.js';
 
@@ -52,23 +55,29 @@ export interface AgentsMessages {
   source: 'available' | 'missing' | 'unavailable';
   /** Newest first, at most `limit`. Null when the bus could not be read (unknown, not zero). */
   messages: AgentsMessage[] | null;
-  /** Edge weights over every message in the window (not only the listed ones), newest pair first. Null with `messages`. */
+  /** Edge weights over every message the filters kept (not only the listed ones), newest pair first. Null with `messages`. */
   pairs: AgentsMessagePair[] | null;
-  /** Messages in the window before `limit`; null when unknown. */
+  /** Messages the filters kept before `limit`; null when unknown. */
   matched: number | null;
   skipped: number;
 }
 
-/** Pure: bus receipts in, messages and per-pair weights out. Same rows and clock, same JSON. */
-export function buildAgentsMessages(scan: { source: AgentsMessages['source']; rows: readonly BusInboxReceipt[]; skipped?: number },
+/** The stringly flags the CLI and API hand this read: the `phm messages` filter vocabulary plus this read's own --since/--before/--limit. */
+export interface AgentsMessagesFlags {
+  since?: string; before?: string; limit?: string;
+  agent?: string; with?: string; kind?: string; priority?: string; job?: string;
+  thread?: string; channel?: string; contains?: string;
+  from?: string; excludeFrom?: string; inReplyTo?: string; id?: string;
+}
+/** Pure: the matched agent messages in, map-node rows and per-pair weights out. Same rows and clock, same JSON. */
+export function buildAgentsMessages(scan: { source: AgentsMessages['source']; matched: readonly AgentMessage[]; skipped?: number },
   query: { since: number; limit?: number }, now: number): AgentsMessages {
   const head = { schema: 'agents.messages.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(),
     since: new Date(query.since).toISOString(), source: scan.source };
   const skipped = scan.skipped ?? 0;
   if (scan.source === 'unavailable') return { ...head, messages: null, pairs: null, matched: null, skipped };
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= query.since && row.receivedAt <= now);
   const node = (name: string, lane: string | null) => mapEdgeAgent({ name, lane }).node ?? UNKNOWN_NODE;
-  const all: AgentsMessage[] = projectAgentMessages(rows).map(m => ({
+  const all: AgentsMessage[] = scan.matched.map(m => ({
     at: m.ts, from: node(m.from.name, m.from.lane), to: node(m.to.name, m.to.lane), kind: m.kind, summary: m.summary,
     // `pair:` conversations are synthesized from the two labels, not a thread the agents named.
     ...(m.conversation.startsWith('pair:') ? {} : { threadId: m.conversation }),
@@ -84,23 +93,45 @@ export function buildAgentsMessages(scan: { source: AgentsMessages['source']; ro
   return { ...head, messages: all.slice(0, query.limit ?? AGENTS_MESSAGES_DEFAULT_LIMIT), pairs: [...pairs.values()], matched: all.length, skipped };
 }
 
-/** Shared flag/param check: `since` is 10m, 2h, 1d, epoch ms or ISO; `limit` 1..1024. */
-export function parseAgentsMessagesQuery(input: { since?: string; limit?: string }, now: number):
-  { ok: true; query: { since: number; limit: number } } | { ok: false; error: string } {
+/**
+ * Shared flag/param check: `since`/`before` take 10m, 2h, 1d, epoch ms or ISO
+ * (`before` exclusive) with this read's 1h default; every other filter is the
+ * `phm messages` vocabulary validated by the same parser — `limit` 1..1024.
+ */
+export function parseAgentsMessagesQuery(input: AgentsMessagesFlags, now: number):
+  { ok: true; query: AgentMessagesQuery & { since: number; limit: number } } | { ok: false; error: string } {
   const since = parseSince(input.since ?? AGENTS_MESSAGES_DEFAULT_SINCE, now);
   if (since === null) return { ok: false, error: '--since takes 10m, 2h, 1d, epoch ms or an ISO time.' };
-  const limit = input.limit === undefined ? AGENTS_MESSAGES_DEFAULT_LIMIT : Number(input.limit);
-  if (input.limit !== undefined && (!/^[1-9][0-9]*$/.test(input.limit) || limit > AGENT_MESSAGES_MAX_LIMIT)) {
-    return { ok: false, error: `--limit takes 1..${AGENT_MESSAGES_MAX_LIMIT}.` };
+  let before: number | undefined;
+  if (input.before !== undefined) {
+    const parsed = parseSince(input.before, now);
+    if (parsed === null) return { ok: false, error: '--before takes 10m, 2h, 1d, epoch ms or an ISO time.' };
+    before = parsed;
   }
-  return { ok: true, query: { since, limit } };
+  const shared = parseAgentMessagesQuery({
+    agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
+    thread: input.thread, channel: input.channel, contains: input.contains,
+    from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id, limit: input.limit,
+  }, now);
+  if (!shared.ok) return shared;
+  return { ok: true, query: { ...shared.query, since, before, limit: shared.query.limit ?? AGENTS_MESSAGES_DEFAULT_LIMIT } };
 }
 
-/** The one read behind the CLI, the API and the map. */
-export function readAgentsMessages(input: { since?: string; limit?: string } = {}, options: BusInboxOptions = {}):
+/**
+ * The one read behind the CLI, the API and the map. `agentToAgent` stays the
+ * map's row gate and `receivedAt <= now` the clock-skew guard; every shared
+ * filter then runs inside `matchAgentMessages`, so `matched` and `pairs` count
+ * exactly the rows every filter accepts — the same set `phm messages` lists
+ * for these flags, minus the rows the map never draws as agent mail.
+ */
+export function readAgentsMessages(input: AgentsMessagesFlags = {}, options: BusInboxOptions = {}):
   { ok: true; result: AgentsMessages } | { ok: false; error: string } {
   const now = (options.now ?? Date.now)(), parsed = parseAgentsMessagesQuery(input, now);
-  return parsed.ok ? { ok: true, result: buildAgentsMessages(scanBusInbox(options), parsed.query, now) } : parsed;
+  if (!parsed.ok) return parsed;
+  const scan = scanBusInbox(options);
+  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= now);
+  const matched = matchAgentMessages(rows, parsed.query, options, false);
+  return { ok: true, result: buildAgentsMessages({ source: scan.source, matched, skipped: scan.skipped }, parsed.query, now) };
 }
 
 export function formatAgentsMessagesText(result: AgentsMessages): string {
