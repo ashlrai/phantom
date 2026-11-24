@@ -1,0 +1,8 @@
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                  1649018.
+Pages active:                                1819983.
+Pages stored in compressor:                  7679188.
+Pages occupied by compressor:                1624563.
+"Translation faults":                    63541562780.
+Swapins:                                     6239950.
+Swapouts:                                   14002729.
