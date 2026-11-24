@@ -937,6 +937,38 @@ describe('install() — mocked spawnSync', () => {
     expect(hasEnable).toBe(true);
   });
 
+  it('linux: keeps the unit enabled when enable --now cannot hold the process', async () => {
+    const unit = path.join(FAKE_HOME, '.config', 'systemd', 'user', 'ashlr-daemon.service');
+    let enabled = false;
+    spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd !== 'systemctl') return { status: 0, stdout: '', stderr: '', error: undefined };
+      if (args.includes('--now') && args.includes('enable')) {
+        return { status: 1, stdout: '', stderr: 'start failed', error: undefined };
+      }
+      if (args.includes('enable')) {
+        enabled = true;
+        return { status: 0, stdout: '', stderr: '', error: undefined };
+      }
+      if (args.includes('is-active')) {
+        return { status: 3, stdout: 'inactive\n', stderr: '', error: undefined };
+      }
+      if (args.includes('is-enabled')) {
+        return enabled
+          ? { status: 0, stdout: 'enabled\n', stderr: '', error: undefined }
+          : { status: 1, stdout: 'disabled\n', stderr: '', error: undefined };
+      }
+      if (args.includes('show')) {
+        return { status: 0, stdout: `${unit}\n`, stderr: '', error: undefined };
+      }
+      return { status: 0, stdout: '', stderr: '', error: undefined };
+    });
+
+    await install(baseOpts('linux'));
+    const calls = spawnSyncMock.mock.calls as [string, string[]][];
+    expect(calls.some(([cmd, args]) => cmd === 'systemctl' && args.includes('--now') && args.includes('enable'))).toBe(true);
+    expect(calls.some(([cmd, args]) => cmd === 'systemctl' && args.includes('enable') && !args.includes('--now'))).toBe(true);
+  });
+
   it('linux: fails closed when daemon-reload fails', async () => {
     const normal = successfulServiceCommands();
     spawnSyncMock.mockImplementation((cmd: string, args: string[]) =>

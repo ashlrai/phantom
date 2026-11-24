@@ -1189,7 +1189,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
   { cmd: 'daemon activate --request <path> --authorize <digest> --confirm <digest> [--json]', desc: 'Dormant permit-gated 3.2.7 selection; preserves loaded=false and the exact disabled bit, and never starts a service.', topic: 'safety' },
   { cmd: 'daemon service-status',        desc: 'Read-only OS service state; remains available during the resident-mutation restriction.', topic: 'autonomy' },
   { cmd: 'daemon uninstall',             desc: 'Remove an existing OS service; remains available during the resident-mutation restriction.', topic: 'autonomy' },
-  { cmd: 'daemon install',               desc: 'Temporarily unavailable: install/reinstall/repair/restart authority is withheld.', topic: 'autonomy' },
+  { cmd: 'daemon install',               desc: 'On Linux and Windows, register the per-user daemon (systemd --user or a limited schtasks logon task). macOS resident install stays on authority resident start.', topic: 'autonomy' },
   { cmd: 'daemon recover-state --dry-run|--execute', desc: 'Preview or explicitly execute one exact quarantine of a malformed daemon state (the fix when `daemon status` shows a state issue).', topic: 'autonomy' },
   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },

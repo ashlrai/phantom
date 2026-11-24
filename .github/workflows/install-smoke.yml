@@ -1,0 +1,138 @@
+# Path-gated install smoke. Not a required check and not part of Merge Gate.
+# Runs only when installer, daemon, or this workflow changes.
+
+name: Install smoke
+
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - scripts/install.ps1
+      - scripts/install-release.sh
+      - src/core/daemon/**
+      - src/cli/daemon.ts
+      - src/cli/help.ts
+      - .github/workflows/install-smoke.yml
+  push:
+    branches: [master]
+    paths:
+      - install.sh
+      - scripts/install.ps1
+      - scripts/install-release.sh
+      - src/core/daemon/**
+      - src/cli/daemon.ts
+      - src/cli/help.ts
+      - .github/workflows/install-smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-smoke-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-smoke-linux:
+    name: install smoke (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Start the user systemd manager
+        run: |
+          set -euo pipefail
+          sudo loginctl enable-linger "$USER"
+          runtime="/run/user/$(id -u)"
+          sudo mkdir -p "$runtime"
+          sudo chown "$(id -u):$(id -g)" "$runtime"
+          sudo chmod 700 "$runtime"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+          systemctl --user is-system-running --wait || true
+          systemctl --user status --no-pager
+
+      - name: Install dependencies and build
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Run the source installer
+        run: bash install.sh
+
+      - name: Doctor, daemon start, status, and stop
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$PATH"
+          phm doctor
+          phm daemon start --once --dry-run
+          phm daemon status
+          phm daemon install
+          phm daemon service-status --json
+          phm daemon stop
+          phm daemon uninstall
+
+  install-smoke-windows:
+    name: install smoke (windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run the PowerShell installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $raw = npm pack --json
+          if ($LASTEXITCODE -ne 0) { throw 'npm pack failed' }
+          $pack = $raw | ConvertFrom-Json
+          $file = if ($pack.filename) { $pack.filename } else { $pack[0].filename }
+          $full = (Resolve-Path $file).Path
+          $sha = [System.Security.Cryptography.SHA512]::Create()
+          try {
+            $integrity = 'sha512-' + [Convert]::ToBase64String($sha.ComputeHash([IO.File]::ReadAllBytes($full)))
+          } finally {
+            $sha.Dispose()
+          }
+          $env:PHANTOM_TARBALL = $full
+          $env:PHANTOM_INTEGRITY = $integrity
+          & ./scripts/install.ps1
+
+      - name: Doctor, daemon start, status, and stop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          phm doctor
+          if ($LASTEXITCODE -ne 0) { throw "phm doctor failed ($LASTEXITCODE)" }
+          phm daemon service-status
+          if ($LASTEXITCODE -ne 0) { throw "phm daemon service-status failed ($LASTEXITCODE)" }
+          phm daemon start --once --dry-run
+          if ($LASTEXITCODE -ne 0) { throw "phm daemon start failed ($LASTEXITCODE)" }
+          phm daemon status
+          if ($LASTEXITCODE -ne 0) { throw "phm daemon status failed ($LASTEXITCODE)" }
+          phm daemon stop
+          if ($LASTEXITCODE -ne 0) { throw "phm daemon stop failed ($LASTEXITCODE)" }
+          phm daemon uninstall
+          if ($LASTEXITCODE -ne 0) { throw "phm daemon uninstall failed ($LASTEXITCODE)" }

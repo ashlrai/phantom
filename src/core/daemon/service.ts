@@ -1425,6 +1425,25 @@ export async function install(opts: ServiceInstallOptions = {}): Promise<void> {
   return withDaemonServiceLifecycleFence(opts, () => installWithinLifecycleFence(opts));
 }
 
+/**
+ * Register the per-user daemon on Linux (systemd --user) or Windows
+ * (Task Scheduler logon task, limited, interactive). This is not the macOS
+ * resident service: `install` and `ensureRunning` stay denied on every
+ * platform, and darwin is refused here.
+ */
+export async function registerPerUserDaemon(opts: ServiceInstallOptions = {}): Promise<void> {
+  const platform = (opts.platform ?? process.platform) as Platform;
+  if (platform === 'darwin') {
+    throw new Error(
+      'macOS per-user daemon registration is the resident service; use `ashlr authority resident start`',
+    );
+  }
+  if (platform !== 'linux' && platform !== 'win32') {
+    throw new Error(`per-user daemon registration is unsupported (platform ${platform})`);
+  }
+  return withDaemonServiceLifecycleFence(opts, () => installWithinLifecycleFence({ ...opts, platform }));
+}
+
 export const RESIDENT_SERVICE_CAPABILITY_REFUSAL =
   'resident service install refused: no valid resident-service capability (run `ashlr authority resident start` yourself under an active standing grant)';
 
@@ -1599,6 +1618,18 @@ async function installWithinLifecycleFence(opts: ServiceInstallOptions): Promise
         const reloaded = runCmd(['systemctl', '--user', 'daemon-reload']);
         if (!reloaded.ok) return reloaded;
         const changed = runCmd(autostart ? def.registerArgs : def.unregisterArgs);
+        // enable --now starts `daemon start`. Without a standing grant that
+        // process exits, and Restart=always would fail the transaction.
+        // Keep the unit enabled for the next user session instead.
+        if (!changed.ok && autostart) {
+          runCmd(['systemctl', '--user', 'stop', 'ashlr-daemon']);
+          runCmd(['systemctl', '--user', 'reset-failed', 'ashlr-daemon']);
+          const enabled = runCmd(['systemctl', '--user', 'enable', 'ashlr-daemon']);
+          if (!enabled.ok) return changed;
+          desired.active = false;
+          const held = verifySystemdState(desired);
+          return held.ok ? held : changed;
+        }
         if (!changed.ok) return changed;
         return verifySystemdState(desired);
       },
