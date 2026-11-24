@@ -1251,6 +1251,18 @@ export async function handleApi(
       sendJson(res, 200, await readUsageSpend());
       return true;
     }
+    if (path === '/api/usage/burn' && method === 'GET') {
+      // Same report as `phm fleet burn --json` (usage.burn.v1).
+      const { readBurnWho } = await import('../usage/burn-who.js');
+      sendJson(res, 200, await readBurnWho());
+      return true;
+    }
+    if (path === '/api/fleet/pace' && method === 'GET') {
+      // Same report as `phm fleet pace --json` (fleet.pace.v1).
+      const { readFleetPace } = await import('../fleet/pace-verdict.js');
+      sendJson(res, 200, await readFleetPace());
+      return true;
+    }
     if (path === '/api/usage/runway' && method === 'GET') {
       // Same snapshot as `phm pool runway --json` (pool.runway.v1).
       const { readPoolRunway } = await import('../usage/runway-read.js');
@@ -1888,9 +1900,10 @@ export async function handleApi(
     }
 
     if (path === '/api/fleet/releases' && method === 'GET') {
-      // The same report as `phm releases --json`: local clones only, never tags or publishes.
+      // Legacy PR cadence plus the commit status shared with `phm release status --json`.
       const { getReleases } = await import('../release/status.js');
-      sendJson(res, 200, getReleases());
+      const { readReleaseRepos } = await import('../release/release-repos.js');
+      sendJson(res, 200, { ...getReleases(), releaseRepos: await readReleaseRepos() });
       return true;
     }
 
@@ -2016,6 +2029,26 @@ export async function handleApi(
       const [{ getFleetLaneSnapshot }, { fleetLaneEmptyNotes }] = await Promise.all([
         import('../fleet/lane-console.js'), import('../fleet/lane-empty-notes.js')]);
       sendJson(res, 200, await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes }));
+      return true;
+    }
+
+    // ── GET /api/fleet/local-capacity ────────────────────────────────────
+    // How many local-model workers fit in free memory (local.capacity.v1), the same answer as
+    // `phm local capacity`. Read-only (vm_stat and the process table); unknown is workers: null.
+    if (path === '/api/fleet/local-capacity' && method === 'GET') {
+      const { readLocalCapacity } = await import('../fleet/local-capacity.js');
+      sendJson(res, 200, await readLocalCapacity());
+      return true;
+    }
+
+    // ── GET /api/fleet/lane-yield[?hours=24] ─────────────────────────────
+    // Merged PRs per launch for every lane (fleet.lane-yield.v1), the same report as
+    // `phm fleet yield --by lane`. Read-only; an unreadable ledger is known: false.
+    if (path === '/api/fleet/lane-yield' && method === 'GET') {
+      const [{ readLaneYield }, { runsRoot }, { join }] = await Promise.all([import('../fleet/lane-yield-board.js'), import('../metrics/loop-collect.js'), import('node:path')]);
+      const raw = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('hours') ?? 24);
+      const hours = Number.isFinite(raw) && raw > 0 && raw <= 168 ? raw : 24;
+      sendJson(res, 200, await readLaneYield(join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, Date.now()));
       return true;
     }
 

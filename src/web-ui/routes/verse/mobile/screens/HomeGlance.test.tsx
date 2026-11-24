@@ -50,7 +50,7 @@ describe('phone Home', () => {
     ['empty', 'quiet', '0 merged in the last hour · 0 lanes running · main green', 'ok', 'Nothing merged in the last 24 hours.'],
     ['normal', 'busy', '7 merged in the last hour · 2 lanes running · main green', 'ok', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
     ['red main', 'red', '7 merged in the last hour · 2 lanes running · main red: phantom', 'red', 'Today: 3 user-facing changes across 1 repo; biggest: Add a phone Home.'],
-  ] as const)('%s at 390 px: ten parts in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
+  ] as const)('%s at 390 px: Today first, then the rest in order, and nothing a phone cannot use', async (_name, kind, line, tone, shippedLine) => {
     const viewport = mockViewport(390);
     const fetches = mac(kind);
     const { container } = renderMobile(<div className={ui.app} style={{ width: 390 }}><HomeGlance /></div>);
@@ -67,13 +67,13 @@ describe('phone Home', () => {
     const strip = within(await screen.findByRole('region', { name: 'Pulse strip' }));
     expect(strip.getAllByRole('listitem')).toHaveLength(4);
     expect(strip.queryAllByText('unknown')).toHaveLength(kind === 'quiet' ? 4 : 0);
-    // Top to bottom: the four tiles, the strip, the pulse, health, live build, approvals (or their empty note), supply, pools, the message box, what shipped today.
-    const parts = [screen.getByRole('region', { name: 'Fleet at a glance' }), screen.getByRole('region', { name: 'Pulse strip' }), screen.getByRole('region', { name: 'Pulse' }), await health(), await screen.findByLabelText('Live build'), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Supply' }), screen.getByRole('region', { name: 'Pools' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
+    // Top to bottom: Today, the four tiles, the strip, the pulse, health, live build, approvals (or their empty note), supply, pools, the message box, what shipped today.
+    const parts = [await screen.findByRole('heading', { name: 'Today' }), screen.getByRole('region', { name: 'Fleet at a glance' }), screen.getByRole('region', { name: 'Pulse strip' }), screen.getByRole('region', { name: 'Pulse' }), await health(), await screen.findByLabelText('Live build'), screen.getByText('Nothing needs you'), screen.getByRole('region', { name: 'Supply' }), screen.getByRole('region', { name: 'Pools' }), screen.getByRole('region', { name: 'Yield' }), screen.getByLabelText('Message to the leaders'), screen.getByRole('region', { name: 'Shipped today' })];
     for (let i = 1; i < parts.length; i++) expect(parts[i - 1]!.compareDocumentPosition(parts[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect([...container.firstElementChild!.children]).toHaveLength(10);
+    expect([...container.firstElementChild!.children]).toHaveLength(15); // includes the yield card and admission card and the one-line release status
     expect(checkView('home', 'Home', container).findings).toEqual([]);
-    // One read each for pulse, health, approvals, pools, machines and shipped (one day); the only other reads are the message box's own inbox.
-    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, NODES_POOL_PATH, SUPPLY_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway'].sort());
+    // One read each for pulse, health, approvals, pools, local capacity, machines and shipped (one day); the only other reads are the message box's own inbox.
+    expect([...new Set(fetches.calls.map((call) => call.url))].filter((url) => !url.includes('/fleet/runs')).sort()).toEqual([APPROVALS_PATH, NODES_POOL_PATH, SUPPLY_PATH, `${SHIPPED_PATH}?days=1`, '/api/usage/runway', '/api/fleet/lane-yield', '/api/fleet/local-capacity', '/api/fleet/releases', '/api/app/pools', '/api/verse/build-stale-limits', '/api/verse/agent-bus/needs-mason/asks/batch', '/api/verse/fleet/admission', '/api/verse/fleet/yield', '/api/verse/fleet/memory/host-load'].sort());
     viewport.restore();
   });
 

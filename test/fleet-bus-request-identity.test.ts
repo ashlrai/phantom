@@ -58,6 +58,24 @@ it('does not correlate a reply from a different registered identity', async () =
   expect(result).toMatchObject({ outcome: 'timeout', reply: null });
 });
 
+it('keeps exact-label correlation for case-variant request refs', async () => {
+  const { options } = setup();
+  register(options, 'requester');
+  register(options, 'responder');
+  const cased: BusEnvelope = { ...request(), from: 'agent:Requester', to: 'agent:Responder' };
+  const append: typeof appendBusInbox = (input, opts) => {
+    const posted = appendBusInbox(input, opts);
+    // The handle-spelled reply cannot correlate: the case-variant request
+    // refs name no identity, so only the literal labels match.
+    expect(appendBusInbox(reply('rep-handle', 'responder', 'requester'), opts).status).toBe('posted');
+    expect(appendBusInbox(reply('rep-exact', 'agent:Responder', 'agent:Requester'), opts).status).toBe('posted');
+    return posted;
+  };
+  const result = await requestBusRoundtrip(cased, 5000, 100, options, { append });
+  expect(result.outcome).toBe('replied');
+  expect(result.reply?.envelope.id).toBe('rep-exact');
+});
+
 it('keeps exact-label correlation when the identity registry is unreadable', async () => {
   const { options } = setup();
   register(options, 'requester', ['req-alias']);

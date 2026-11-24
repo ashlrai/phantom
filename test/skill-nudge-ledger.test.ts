@@ -105,12 +105,114 @@ describe('skillNudgeJobsFromLedger', () => {
     expect(byId.get('RQ-L')).toMatchObject({ outcome: 'merged' });
   });
 
+  it('reads the full jobs-ledger dialect: alias events, phase spellings and event-named outcomes', () => {
+    const text = [
+      // Reconciler-style merge: publish-shaped event, terminal phase in `phase`, alias stamp and PR link.
+      launch('RQ-DIA1'),
+      line({ type: 'publish', job: 'RQ-DIA1', phase: 'MERGED',
+        pr_url: 'https://github.com/ashlrai/phantom/pull/42', recordedAt: '2026-10-28T15:30:00.000Z' }),
+      // Closed outcome spelled `result` on a `kind` event.
+      launch('RQ-DIA2'),
+      line({ kind: 'outcome', job: 'RQ-DIA2', result: 'CLOSED',
+        pr: 'https://github.com/ashlrai/phantom/pull/43', updatedAt: '2026-10-28T15:30:00.000Z' }),
+      // Verdict carried only by the event name.
+      launch('RQ-DIA3'),
+      line({ event: 'merged', job: 'RQ-DIA3', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      launch('RQ-DIA4'),
+      line({ event: 'closed', job: 'RQ-DIA4', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      // A bare outcome event names no verdict; a published row is not terminal.
+      launch('RQ-DIA5'),
+      line({ event: 'outcome', job: 'RQ-DIA5', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+      launch('RQ-DIA6'),
+      line({ event: 'published', job: 'RQ-DIA6', outcome: 'PUBLISHED',
+        url: 'https://github.com/ashlrai/phantom/pull/44', ts: '2026-10-28T15:30:00.000Z' }),
+      // Phase stays authoritative over the event name.
+      launch('RQ-DIA7'),
+      line({ event: 'closed', job: 'RQ-DIA7', conclusion: 'MERGED', lane: 'codex', ts: '2026-10-28T15:30:00.000Z' }),
+    ].join('\n');
+    const byId = new Map(skillNudgeJobsFromLedger(text).map(job => [job.id, job]));
+    expect(byId.get('RQ-DIA1')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-DIA2')).toMatchObject({ outcome: 'failed' });
+    expect(byId.get('RQ-DIA3')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-DIA4')).toMatchObject({ outcome: 'failed' });
+    expect(byId.get('RQ-DIA5')).not.toHaveProperty('outcome');
+    expect(byId.get('RQ-DIA6')).not.toHaveProperty('outcome');
+    expect(byId.get('RQ-DIA7')).toMatchObject({ outcome: 'merged' });
+  });
+
   it('marks reverted merges without dropping the merged outcome', () => {
     const text = [
       launch('RQ-M'), outcome('RQ-M', 'MERGED'),
       line({ event: 'revert', job: 'RQ-M', lane: 'codex', ts: '2026-10-28T16:00:00.000Z' }),
     ].join('\n');
     expect(skillNudgeJobsFromLedger(text)[0]).toMatchObject({ outcome: 'merged', reverted: true });
+  });
+
+  it('marks a merged job reverted when its unambiguous PR claim stands in the revert set', () => {
+    const merge = (job: string, pr: number) => outcome(job, 'MERGED',
+      { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
+    const text = [
+      launch('RQ-REV1'), merge('RQ-REV1', 777),
+      launch('RQ-REV2'), merge('RQ-REV2', 778),
+    ].join('\n');
+    const keys = new Set(['ashlrai/phantom#777']);
+    const byId = new Map(skillNudgeJobsFromLedger(text, keys).map(job => [job.id, job]));
+    expect(byId.get('RQ-REV1')).toMatchObject({ outcome: 'merged', reverted: true });
+    expect(byId.get('RQ-REV2')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-REV2')).not.toHaveProperty('reverted');
+    // No keys, an empty set and an unmatched key all leave the fold untouched.
+    expect(skillNudgeJobsFromLedger(text)[0]).not.toHaveProperty('reverted');
+    expect(skillNudgeJobsFromLedger(text, new Set())[0]).not.toHaveProperty('reverted');
+    expect(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#999']))[0]).not.toHaveProperty('reverted');
+  });
+
+  it('never discounts a contested PR claim', () => {
+    const url = 'https://github.com/ashlrai/phantom/pull/779';
+    const text = [
+      launch('RQ-C1'), launch('RQ-C2'),
+      outcome('RQ-C1', 'MERGED', { pr_url: url }),
+      line({ event: 'publish', job: 'RQ-C2', pr_url: url, ts: '2026-10-28T15:30:00.000Z' }),
+    ].join('\n');
+    const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#779']))
+      .map(job => [job.id, job]));
+    expect(byId.get('RQ-C1')).toMatchObject({ outcome: 'merged' });
+    expect(byId.get('RQ-C1')).not.toHaveProperty('reverted');
+  });
+
+  it('binds the revert join to the standing verdict row, not earlier PR references', () => {
+    const text = [
+      launch('RQ-ERA'), outcome('RQ-ERA', 'MERGED',
+        { pr_url: 'https://github.com/ashlrai/phantom/pull/780' }),
+      launch('RQ-ERA'), outcome('RQ-ERA', 'MERGED',
+        { pr_url: 'https://github.com/ashlrai/phantom/pull/781' }),
+    ].join('\n');
+    const [job] = skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#780']));
+    expect(job).toMatchObject({ outcome: 'merged' });
+    expect(job).not.toHaveProperty('reverted');
+  });
+
+  it('excludes batch sessions and node-pool rows from PR claims', () => {
+    const url = 'https://github.com/ashlrai/phantom/pull/782';
+    const text = [
+      line({ event: 'launch', job: 'RQ-BATCH-9', batch_size: 1, pr_url: url,
+        ts: '2026-10-28T10:00:00-0400' }),
+      line({ schema: 'fleet.session-pool.v1', job: 'sess:1', jobId: 'ready:x', pr_url: url,
+        ts: '2026-10-28T10:00:00-0400' }),
+      launch('RQ-POOL'), outcome('RQ-POOL', 'MERGED', { pr_url: url }),
+    ].join('\n');
+    const byId = new Map(skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#782']))
+      .map(job => [job.id, job]));
+    expect(byId.get('RQ-POOL')).toMatchObject({ outcome: 'merged', reverted: true });
+  });
+
+  it('does not mark non-merged outcomes reverted through the standing set', () => {
+    const text = [
+      launch('RQ-NM'),
+      outcome('RQ-NM', 'CLOSED', { pr_url: 'https://github.com/ashlrai/phantom/pull/783' }),
+    ].join('\n');
+    const [job] = skillNudgeJobsFromLedger(text, new Set(['ashlrai/phantom#783']));
+    expect(job).toMatchObject({ outcome: 'failed' });
+    expect(job).not.toHaveProperty('reverted');
   });
 
   it('uses the last execution-side lane and ignores queue hints', () => {
@@ -207,6 +309,29 @@ describe('syncSkillNudgesFromJobsLedger', () => {
     const result = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
     expect(result).toMatchObject({ state: 'read', folded: 1, candidates: 0 });
     expect(cards).toHaveLength(0);
+  });
+
+  it('withholds candidates whose merged recovery PR stands reverted', async () => {
+    const failed = (id: string) => [
+      launch(id, 'codex', `2026-10-28T10:0${id.slice(-1)}:00-0400`),
+      finish(id, { failure_class: 'quota' }),
+      outcome(id, 'CLOSED'),
+    ];
+    const mergedJob = [
+      launch('RQ-REC', 'codex'), finish('RQ-REC', { failure_class: 'quota' }),
+      launch('RQ-REC', 'codex', '2026-10-28T13:00:00-0400'),
+      outcome('RQ-REC', 'MERGED', { pr_url: 'https://github.com/ashlrai/phantom/pull/790' }),
+    ];
+    const text = [...failed('RQ-G1'), ...failed('RQ-G2'), ...failed('RQ-G3'), ...mergedJob].join('\n');
+    const reverted = await syncSkillNudgesFromJobsLedger({
+      jobsText: text, now: NOW, revertedPrKeys: new Set(['ashlrai/phantom#790']),
+    });
+    expect(reverted).toMatchObject({ state: 'read', folded: 4, candidates: 0 });
+    expect(cards).toHaveLength(0);
+    // The same ledger without the standing key still seeds the draft.
+    const held = await syncSkillNudgesFromJobsLedger({ jobsText: text, now: NOW });
+    expect(held.candidates).toBe(1);
+    expect(cards).toHaveLength(1);
   });
 
   it('reports ledger read problems as state, never as an empty success', async () => {

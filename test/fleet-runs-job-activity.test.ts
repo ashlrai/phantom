@@ -149,6 +149,23 @@ describe('getFleetJobActivity', () => {
     expect(a.truncated).toBe(false);
   });
 
+  it('reads ledger event rows through the jobs-ledger field dialect', async () => {
+    const dir = await runsDir({
+      'metrics/jobs.jsonl': [
+        JSON.stringify({ jobId: 'JOB-D1', type: 'enqueue', timestamp: '2026-11-09T10:00:00+0000' }),
+        JSON.stringify({ id: 'JOB-D1', kind: 'launch', at: '2026-11-09T10:01:00+0000', model: 'gpt-5' }),
+        JSON.stringify({ job_id: 'JOB-D1', event: 'published', recordedAt: '2026-11-09T11:00:00+0000', pr: 'https://github.com/x/y/pull/2' }),
+        JSON.stringify({ jobId: 'JOB-OTHER', type: 'finish', ts: '2026-11-09T10:30:00+0000' }),
+      ].join('\n'),
+    });
+    const a = await getFleetJobActivity('JOB-D1', { runsDir: dir, ...opts });
+    const events = a.entries.filter(e => e.kind === 'event');
+    expect(events.map(e => (e as { event: string }).event)).toEqual(['enqueue', 'launch', 'publish']);
+    expect((events[1] as { summary: string }).summary).toContain('model=gpt-5');
+    expect((events[2] as { at: string | null }).at).toBe('2026-11-09T11:00:00+0000');
+    expect((events[2] as { summary: string }).summary).toContain('pr=https://github.com/x/y/pull/2');
+  });
+
   it('degrades each source independently over an empty runs dir', async () => {
     const dir = await runsDir({});
     const a = await getFleetJobActivity('JOB-EMPTY', { runsDir: dir, ...opts });

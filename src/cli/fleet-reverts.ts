@@ -1,11 +1,14 @@
 /**
- * `phm fleet reverts` — read-only 72h-window revert scan.
+ * `phm fleet reverts` — 72h-window revert scan, read-only unless `--record`.
  *
  * Feeds gh-shaped merged-PR exports and a local checkout's ref history into
  * the revert detector (`revert.scan.v1`): which merged PRs were reverted
  * within 72h of merge — the hold-rate evidence the router consumes. Never
- * fetches, merges, queues or writes; an unreadable export or unresolvable
- * ref degrades the report instead of implying coverage.
+ * fetches, merges or queues; `--record` is the only write, appending the
+ * detected `RevertOutcomeRecord`s to the revert-outcomes ledger so
+ * `revertedPrKeys` (lesson withholding) can see git-history reverts. An
+ * unreadable export or unresolvable ref degrades the report instead of
+ * implying coverage.
  */
 import { open } from 'node:fs/promises';
 import {
@@ -13,17 +16,22 @@ import {
   formatRevertScanReport,
   type RevertScanReport,
 } from '../core/improve/revert-scan.js';
+import {
+  recordRevertOutcomes,
+  type RevertRecordResult,
+} from '../core/improve/revert-ledger.js';
+import type { RevertOutcomeRecord } from '../core/improve/reverted.js';
 import type { ObserveExec } from '../core/improve/observe.js';
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PRS_FILES = 8;
 
-const usage = `Usage: phm fleet reverts --repo-dir <dir> --prs <file> [--prs <file>]... [--ref <ref>] [--json]
+const usage = `Usage: phm fleet reverts --repo-dir <dir> --prs <file> [--prs <file>]... [--ref <ref>] [--record] [--json]
 
-Read-only revert-outcome scan: checks merged PRs from gh-shaped exports
+Revert-outcome scan: checks merged PRs from gh-shaped exports
 against a local checkout's history for reverts landing within 72h of merge
 (the RevertOutcomeRecord evidence the router's hold-rate signal reads).
-Never fetches, merges, queues or writes; fetch the ref yourself first —
+Never fetches, merges or queues; fetch the ref yourself first —
 the report names exactly which ref and head commit were scanned.
 
   --repo-dir <dir>   Git checkout to scan (required).
@@ -31,6 +39,11 @@ the report names exactly which ref and head commit were scanned.
                      repeatable, at most ${MAX_PRS_FILES}. Produce with:
                      gh pr list --state merged --json url,number,mergeCommit,mergedAt --limit 1000
   --ref <ref>        Git ref to scan (default: origin/HEAD, then HEAD).
+  --record           Append detected RevertOutcomeRecords to the
+                     revert-outcomes ledger
+                     ($ASHLR_HOME/improve/revert-outcomes.jsonl); recorded
+                     reverts feed revertedPrKeys (lesson withholding).
+                     Default off — the scan stays read-only.
   --json             One JSON object on stdout.`;
 
 async function readText(path: string): Promise<string | null> {
@@ -52,17 +65,19 @@ async function readText(path: string): Promise<string | null> {
 export interface FleetRevertsDeps {
   read?: (path: string) => Promise<string | null>;
   exec?: ObserveExec;
+  record?: (records: readonly RevertOutcomeRecord[]) => RevertRecordResult;
 }
 
 interface Parsed {
   json: boolean;
+  record: boolean;
   repoDir?: string;
   prs: string[];
   ref?: string;
 }
 
 function parseArgs(args: string[]): Parsed | null {
-  const parsed: Parsed = { json: false, prs: [] };
+  const parsed: Parsed = { json: false, record: false, prs: [] };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     const next = args[i + 1];
@@ -72,6 +87,7 @@ function parseArgs(args: string[]): Parsed | null {
       return next;
     };
     if (arg === '--json' && !parsed.json) parsed.json = true;
+    else if (arg === '--record' && !parsed.record) parsed.record = true;
     else if (arg === '--repo-dir' && parsed.repoDir === undefined) {
       const value = take();
       if (value === null) return null;
@@ -110,10 +126,34 @@ export async function cmdFleetReverts(args: string[], deps: FleetRevertsDeps = {
     prs: texts,
     exec: deps.exec,
   });
+  // --record is the only write: detected records go to the revert-outcomes
+  // ledger so revertedPrKeys and the router outcome fold see reverts no
+  // other journal named. A corrupt ledger refuses the append and fails the
+  // command — evidence is never written over.
+  let recorded: RevertRecordResult | { error: string } | null = null;
+  if (parsed.record) {
+    const record = deps.record ?? ((records: readonly RevertOutcomeRecord[]) => recordRevertOutcomes(records));
+    try {
+      recorded = record(report.reverts);
+    } catch (err) {
+      recorded = { error: (err instanceof Error ? err.message : String(err)).slice(0, 300) };
+    }
+  }
   if (unreadable > 0) {
     process.stderr.write(`warning: ${unreadable} --prs file(s) unreadable\n`);
   }
-  process.stdout.write(parsed.json ? `${JSON.stringify(report)}\n` : `${formatRevertScanReport(report)}\n`);
-  // Every export unreadable means zero evidence; scan errors mean unknown, not clean.
-  return report.errors.length > 0 || unreadable === parsed.prs.length ? 1 : 0;
+  if (recorded !== null && 'error' in recorded) {
+    process.stderr.write(`revert ledger: ${recorded.error}\n`);
+  }
+  const body = recorded === null ? report : { ...report, recorded };
+  process.stdout.write(parsed.json ? `${JSON.stringify(body)}\n` : `${formatRevertScanReport(report)}${recorded === null ? '' : `\n${recordedLine(recorded)}`}\n`);
+  // Every export unreadable means zero evidence; scan errors or a refused
+  // ledger write mean unknown, not clean.
+  return report.errors.length > 0 || unreadable === parsed.prs.length || (recorded !== null && 'error' in recorded) ? 1 : 0;
+}
+
+function recordedLine(recorded: RevertRecordResult | { error: string }): string {
+  if ('error' in recorded) return 'revert ledger: append refused (detail on stderr)';
+  return `revert ledger: appended ${recorded.appended} record(s)` +
+    `${recorded.duplicates > 0 ? `, ${recorded.duplicates} duplicate(s) skipped` : ''}`;
 }

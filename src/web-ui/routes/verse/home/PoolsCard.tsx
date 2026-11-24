@@ -11,6 +11,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { fleetRunsQuery } from '../mobile/runs-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { PoolSpendRows } from './PoolSpendRows.js';
 import { PoolEndingBar, PoolEndingKey } from './PoolEndingBar.js';
 import { endingSummary, poolEnding, poolHours as hours } from './pool-ending-model.js';
 import ending from './pool-ending.module.css';
@@ -21,6 +22,11 @@ export const poolsQuery: QueryDef<RunwaySnapshot> = { key: 'home-pool-runway', f
   const raw = await apiGet<unknown>('/api/usage/runway', signal);
   if (!isRunwaySnapshot(raw)) throw new Error('Pool readings unavailable.');
   return raw;
+} };
+/** Room for local workers from `phm local capacity`; the Local tile shows its plain sentence. Unreadable stays the old words. */
+export const localRoomQuery: QueryDef<string | null> = { key: 'home-local-capacity', fetch: async signal => {
+  const raw = await apiGet<{ schema?: unknown; summary?: unknown }>('/api/fleet/local-capacity', signal);
+  return raw?.schema === 'local.capacity.v1' && typeof raw.summary === 'string' ? raw.summary : null;
 } };
 /** Local has no quota window: no share left, no reset, no bar. */
 const LOCAL = 'codex-local';
@@ -90,19 +96,23 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
   const read = useQuery(poolsQuery, { enabled: visible, freshMs: 0 });
   const refresh = useRefetch(poolsQuery);
   usePollWhileVisible(refresh, 60_000, { enabled: visible });
+  const room = useQuery(localRoomQuery, { enabled: visible, freshMs: 0 });
+  const refreshRoom = useRefetch(localRoomQuery);
+  usePollWhileVisible(refreshRoom, 60_000, { enabled: visible });
+  const roomText = room.status !== 'error' && typeof room.data === 'string' ? room.data : null;
   const jobs = useQuery(fleetRunsQuery, { enabled: visible && selected !== null, freshMs: 0 });
   const refreshJobs = useRefetch(fleetRunsQuery);
   usePollWhileVisible(refreshJobs, 15_000, { enabled: visible && selected !== null });
   const snapshot = read.status !== 'error' && isRunwaySnapshot(read.data) ? read.data : null;
   const rows: PoolName[] = [...POOLS, ...(snapshot?.pools.filter(row => !POOLS.some(([pool]) => pool === row.pool)).map(row => [row.pool, row.pool] as const) ?? [])];
-  const selectedName = rows.find(([pool]) => pool === selected)?.[1] ?? null;
+  const selectedName = rows.find(([pool]) => pool === selected)?.[1] ?? snapshot?.shares?.pools.find(row => row.pool === selected)?.pool ?? null;
   const workers = jobs.data?.workers?.filter(worker => worker.lane === selected) ?? [];
   // The runway's own sentence for the open pool. Local has no window, so there is none to give.
   const advice = selected === null || selected === LOCAL ? '' : snapshot?.pools.find(row => row.pool === selected)?.advice ?? '';
   return <section className={styles.card} aria-label="Pools"><h3>Pools</h3>
-    {snapshot ? <div className={bar.summary}>{poolsSummary(snapshot, rows).map(part => <span key={part}>{part}</span>)}</div> : null}
+    {snapshot && !snapshot.shares ? <div className={bar.summary}>{poolsSummary(snapshot, rows).map(part => <span key={part}>{part}</span>)}</div> : null}
     {read.status === 'error' ? <p role="status">Pool readings unavailable; usage and times are unknown.</p> : null}
-    <ul className={bar.tiles}>{rows.map(([pool, name]) => {
+    {!snapshot?.shares ? <ul className={bar.tiles}>{rows.map(([pool, name]) => {
       const local = pool === LOCAL;
       const reading = snapshot?.pools.find(row => row.pool === pool);
       const parts = poolParts(reading);
@@ -111,21 +121,22 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
       return <li key={pool} className={bar.tile} data-selected={open || undefined}>
         {/* The label is the whole reading in one sentence; the tile lays the same words out for the eye. */}
         <button type="button" className={bar.pool} data-warn={(!local && parts.early) || undefined}
-          aria-label={`${name}: ${local ? 'free, limited by memory' : poolLine(reading).text}`}
+          aria-label={`${name}: ${local ? roomText ?? 'free, limited by memory' : poolLine(reading).text}`}
           aria-expanded={open} aria-controls={open ? `${id}-jobs` : undefined} onClick={() => select(open ? null : pool)}>
           <span className={bar.who}><ProviderBadge of={pool} iconOnly size={14} /><span className={bar.name}>{name}</span></span>
           {local ? <span className={bar.figure}>free</span>
             : parts.leftPercent === null ? <span className={bar.figure} data-unknown>usage unknown</span>
               : <span className={bar.figure}>{parts.leftPercent}%<span className={bar.unit}>left</span></span>}
-          <span className={bar.detail} data-runway>{local ? 'limited by memory' : parts.runway}</span>
+          <span className={bar.detail} data-runway>{local ? roomText ?? 'limited by memory' : parts.runway}</span>
           {local ? null : <span className={bar.detail}>{parts.reset}</span>}
           {/* How the window ends at this burn, in the server's own verdict; an unread pool has nothing more to say. */}
           {local || end.words === null ? null : <span className={bar.detail} data-ending={end.kind}>{end.words}</span>}
         </button>
         {local ? null : <PoolEndingBar name={name} ending={end} />}
       </li>;
-    })}</ul>
-    {snapshot ? <PoolEndingKey summary={endingSummary(rows.filter(([pool]) => pool !== LOCAL).map(([pool]) => snapshot.pools.find(row => row.pool === pool)))} /> : null}
+    })}</ul> : null}
+    {snapshot?.shares ? <PoolSpendRows data={snapshot.shares} selected={selected} regionId={`${id}-jobs`} select={pool => select(selected === pool ? null : pool)} /> : null}
+    {snapshot && !snapshot.shares ? <PoolEndingKey summary={endingSummary(rows.filter(([pool]) => pool !== LOCAL).map(([pool]) => snapshot.pools.find(row => row.pool === pool)))} /> : null}
     {selected !== null && selectedName !== null ? <div id={`${id}-jobs`} role="region" aria-label={`${selectedName} running jobs`} className={bar.jobs}>
       {advice ? <p className={ending.advice}>Runway advice: {advice}</p> : null}
       <span className={bar.jobsTitle}>Running on {selectedName}</span>

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AGENTS_MESSAGES_USAGE, runAgentsMessagesCli } from '../src/cli/agents-messages.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
-import { buildAgentsMessages, formatAgentsMessagesText, readAgentsMessages, type AgentsMessages } from '../src/core/fleet/agents-messages.js';
+import { buildAgentsMessages, formatAgentsMessagesText, readAgentsMessages, type AgentsMessages, type AgentsMessagesFlags } from '../src/core/fleet/agents-messages.js';
 import { AGENT_MESSAGES_PATH, createFleetLiveMapApi } from '../src/core/verse/fleet-live-map-api.js';
 
 const T0 = Date.UTC(2026, 10, 18, 12, 0, 0), NOW = T0 + 60_000;
@@ -18,7 +18,7 @@ function store(said: Said[] = []) {
     { root, now: () => at }).status).toBe('posted'));
   return root;
 }
-const read = (root: string, input: { since?: string; limit?: string } = {}) => {
+const read = (root: string, input: AgentsMessagesFlags = {}) => {
   const result = readAgentsMessages(input, { root, now: () => NOW });
   if (!result.ok) throw new Error(result.error);
   return result.result;
@@ -65,7 +65,68 @@ describe('phm agents messages', () => {
     expect(read(root, { since: '30s' }).matched).toBe(0);
     expect(read(root, { limit: '1' })).toMatchObject({ matched: 3, messages: [{ summary: 'thanks, next the docs' }] });
     expect(readAgentsMessages({ since: 'soon' }, { root })).toEqual({ ok: false, error: '--since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
+    expect(readAgentsMessages({ before: 'soon' }, { root })).toEqual({ ok: false, error: '--before takes 10m, 2h, 1d, epoch ms or an ISO time.' });
     expect(readAgentsMessages({ limit: '0' }, { root })).toEqual({ ok: false, error: '--limit takes 1..1024.' });
+  });
+
+  it('--before keeps only messages received strictly before its cutoff, composing with --since into one [since, before) window', () => {
+    const root = store(chat);
+    // before at T0+1500 drops the T0+2000 row; the T0 and T0+1000 rows stay.
+    expect(read(root, { before: new Date(T0 + 1_500).toISOString() }).messages!.map(m => m.summary))
+      .toEqual(['on it?', 'please look at the build']);
+    expect(read(root, { before: new Date(T0 + 1_500).toISOString() }).matched).toBe(2);
+    // A message stamped exactly at the cutoff drops — adjacent windows never double-count it.
+    expect(read(root, { before: String(T0 + 2_000) }).matched).toBe(2);
+    // [since, before): since after T0 keeps only the T0+1000 row inside the window.
+    expect(read(root, { since: new Date(T0 + 500).toISOString(), before: new Date(T0 + 1_500).toISOString() }).messages!.map(m => m.summary))
+      .toEqual(['on it?']);
+    // An inverted window is an honest empty page, not an error.
+    expect(read(root, { since: new Date(T0 + 2_000).toISOString(), before: new Date(T0 + 1_000).toISOString() }))
+      .toMatchObject({ matched: 0, messages: [], pairs: [] });
+    // pairs and matched reflect only the windowed rows.
+    const windowed = read(root, { before: new Date(T0 + 1_500).toISOString() });
+    expect(windowed.pairs!.map(p => `${p.from}->${p.to}`)).toEqual(['lane:claude->leader', 'leader->lane:claude']);
+  });
+
+  it('the shared phm messages filters narrow messages, matched and pairs alike', () => {
+    const root = store([
+      [T0, 'leader', 'claude', { text: 'please look at the build', thread: 'build' }],
+      [T0 + 1_000, 'claude', 'leader', { text: 'on it?' }],
+      [T0 + 2_000, 'leader', 'claude', { text: 'thanks, next the docs' }],
+      [T0 + 3_000, 'claude', 'codex', { text: 'RQ-ONE-1 shipped the patch' }],
+      [T0 + 4_000, 'codex', 'group:build:general', { kind: 'note', thread: 'build', text: 'build notes here' }],
+      [T0 + 5_000, 'claude', 'leader', { text: 'answering you', inReplyTo: 'm1' }],
+    ]);
+    const summaries = (input: AgentsMessagesFlags) => read(root, input).messages!.map(m => m.summary);
+    // --kind keeps one classified kind; --contains is the scrubbed-summary substring search.
+    expect(summaries({ kind: 'ask' })).toEqual(['on it?']);
+    expect(summaries({ kind: 'reply' })).toEqual(['answering you']);
+    expect(summaries({ contains: 'DOCS' })).toEqual(['thanks, next the docs']);
+    // --from/--exclude-from decide on the sender's routing label.
+    expect(summaries({ from: 'claude' })).toEqual(['answering you', 'RQ-ONE-1 shipped the patch', 'on it?']);
+    expect(summaries({ excludeFrom: 'leader' })).toEqual(['answering you', 'build notes here', 'RQ-ONE-1 shipped the patch', 'on it?']);
+    // --job keeps the traffic naming one job; --thread is the strict v2 note/context match.
+    expect(summaries({ job: 'RQ-ONE-1' })).toEqual(['RQ-ONE-1 shipped the patch']);
+    expect(summaries({ thread: 'build' })).toEqual(['build notes here']);
+    // --channel keeps the room's posts; --in-reply-to keeps the citation;
+    // --id keeps the one envelope carrying that wire id.
+    expect(summaries({ channel: 'build' })).toEqual(['build notes here']);
+    expect(summaries({ inReplyTo: 'm1' })).toEqual(['answering you']);
+    expect(summaries({ id: 'm1' })).toEqual(['on it?']);
+    expect(summaries({ id: 'm-gone' })).toEqual([]);
+    // --agent/--with scope to the named participants.
+    expect(read(root, { agent: 'codex' }).matched).toBe(2);
+    expect(summaries({ agent: 'claude', with: 'codex' })).toEqual(['RQ-ONE-1 shipped the patch']);
+    // matched and pairs count only the filtered set, --limit still pages it.
+    const filtered = read(root, { from: 'claude', limit: '1' });
+    expect(filtered).toMatchObject({ matched: 3 });
+    expect(filtered.messages).toHaveLength(1);
+    expect(filtered.pairs!.map(p => `${p.from}->${p.to}`)).toEqual(['lane:claude->leader', 'lane:claude->lane:codex']);
+    // The same parser refuses what phm messages refuses.
+    expect(readAgentsMessages({ with: 'codex' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
+    expect(readAgentsMessages({ kind: 'bogus' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--kind takes one of ask, reply, handoff, status, blocker.' });
   });
 
   it('aggregates edge weights per node pair over the whole window, keeping the last 5 summaries', () => {
@@ -91,7 +152,7 @@ describe('phm agents messages', () => {
   });
 
   it('an unreadable bus is unknown, not zero', () => {
-    const result = buildAgentsMessages({ source: 'unavailable', rows: [], skipped: 2 }, { since: T0 }, NOW);
+    const result = buildAgentsMessages({ source: 'unavailable', matched: [], skipped: 2 }, { since: T0 }, NOW);
     expect(result).toMatchObject({ messages: null, pairs: null, matched: null, skipped: 2 });
     expect(formatAgentsMessagesText(result)).toBe('Agent messages: unknown (the agent bus could not be read).');
   });
@@ -103,6 +164,10 @@ describe('phm agents messages', () => {
     expect(await runAgentsMessagesCli(['--limit'], () => {}, line => err.push(line))).toBe(2);
     expect(await runAgentsMessagesCli(['--since', 'later'], () => {}, line => err.push(line))).toBe(2);
     expect(err.at(-1)).toBe('--since takes 10m, 2h, 1d, epoch ms or an ISO time.');
+    expect(await runAgentsMessagesCli(['--before', 'later'], () => {}, line => err.push(line))).toBe(2);
+    expect(err.at(-1)).toBe('--before takes 10m, 2h, 1d, epoch ms or an ISO time.');
+    expect(await runAgentsMessagesCli(['--before'], () => {}, line => err.push(line))).toBe(2);
+    expect(await runAgentsMessagesCli(['--before', '1h', '--before', '2h'], () => {}, line => err.push(line))).toBe(2);
   });
 
   it('the API serves the same read and refuses unknown params', async () => {
@@ -117,7 +182,22 @@ describe('phm agents messages', () => {
     const ok = await call(`${AGENT_MESSAGES_PATH}?since=1h&limit=1`);
     expect(ok).toMatchObject({ handled: true, status: 200, body: { schema: 'agents.messages.v1', version: 1, matched: 3 } });
     expect(ok.body!.messages).toHaveLength(1);
-    expect((await call(`${AGENT_MESSAGES_PATH}?agent=leader`)).status).toBe(400);
+    const windowed = await call(`${AGENT_MESSAGES_PATH}?before=${encodeURIComponent(new Date(T0 + 1_500).toISOString())}`);
+    expect(windowed).toMatchObject({ handled: true, status: 200, body: { matched: 2 } });
+    expect(windowed.body!.messages!.map(m => m.summary)).toEqual(['on it?', 'please look at the build']);
+    const filtered = await call(`${AGENT_MESSAGES_PATH}?from=leader`);
+    expect(filtered).toMatchObject({ handled: true, status: 200, body: { matched: 2 } });
+    expect(filtered.body!.messages!.map(m => m.summary)).toEqual(['thanks, next the docs', 'please look at the build']);
+    const threaded = await call(`${AGENT_MESSAGES_PATH}?kind=ask`);
+    expect(threaded).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
+    const byId = await call(`${AGENT_MESSAGES_PATH}?id=m1`);
+    expect(byId).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
+    expect(byId.body!.messages!.map(m => m.summary)).toEqual(['on it?']);
+    expect((await call(`${AGENT_MESSAGES_PATH}?bogus=1`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?id=has%20space`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?id=a&id=b`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');
+    expect((await call(`${AGENT_MESSAGES_PATH}?before=never`)).body!.error).toContain('--before');
+    expect((await call(`${AGENT_MESSAGES_PATH}?before=1h&before=2h`)).status).toBe(400);
   });
 });

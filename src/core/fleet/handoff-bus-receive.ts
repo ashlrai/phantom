@@ -21,7 +21,7 @@ import {
 } from './bus-inbox.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
-import { agentIdentityKeys } from '../agents/bus-identity.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { isWorkerHandoffBody } from './handoff-body.js';
 import { runContextWorker, type ContextWorkerIO } from './context-worker-run.js';
 
@@ -49,9 +49,8 @@ const token = (value: unknown): value is string =>
  */
 export function handoffRecipientMatches(to: string, recipient: string, options: BusInboxOptions): boolean {
   if (to === recipient) return true;
-  const identityOf = agentIdentityKeys({ root: options.root });
-  const target = identityOf?.(recipient);
-  return target !== undefined && identityOf?.(to) === target;
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(recipient, read.status === 'ok' ? read.registry : undefined)(to);
 }
 
 type Found = { status: 'ok'; receipt: BusInboxReceipt }

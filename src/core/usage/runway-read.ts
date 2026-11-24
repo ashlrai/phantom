@@ -5,7 +5,7 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { PACE_POOLS } from './pace.js';
+import { PACE_POOLS, projectUsagePace } from './pace.js';
 import { readDispatchStatus } from './spend.js';
 import { POOL_RUNWAY_SCHEMA, runway, runwayHeadline, sortRunways, type RunwaySnapshot } from './runway.js';
 
@@ -39,7 +39,7 @@ export function projectPoolRunway(raw: unknown, now = Date.now()): RunwaySnapsho
     return runway({ pool, usedPercent, burnPerHour: num(pace.burn_pct_per_hour) ? pace.burn_pct_per_hour : null, hoursToReset });
   });
   const sorted = sortRunways(pools);
-  return { schema: POOL_RUNWAY_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: runwayHeadline(sorted), pools: sorted };
+  return { schema: POOL_RUNWAY_SCHEMA, v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, headline: runwayHeadline(sorted), pools: sorted, shares: projectUsagePace(raw, now).shares };
 }
 
 export const runwayStatusPath = (runsDir = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs')): string =>

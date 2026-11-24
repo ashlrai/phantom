@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EMAIL_DROP_CONFIG_FILE, readEmailDropConfig, writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
@@ -47,7 +47,7 @@ describe('email drop configuration', () => {
     rmSync(path);
     symlinkSync(join(root, 'missing'), path);
     expect((await readEmailDropConfig(root)).state).toBe('invalid');
-    rmSync(path);
+    unlinkSync(path); // rmSync follows the link: a dangling symlink survives it on Node 25
     mkdirSync(path);
     expect((await readEmailDropConfig(root)).state).toBe('invalid');
   });

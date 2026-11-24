@@ -66,17 +66,20 @@ it('reports a missing endpoint', async () => {
 
 it('polls only while visible', async () => {
   vi.useFakeTimers();
-  const fetcher = vi.fn(async () => Response.json(fixture()));
+  const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json(fixture()));
   vi.stubGlobal('fetch', fetcher);
   const view = render(<FleetChannelsPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(fetcher).not.toHaveBeenCalled();
   await act(async () => { view.rerender(<FleetChannelsPane {...props} />); });
-  // The fleet-runs snapshot, owner thread and channel health, claim notices Slack trace and orchestration each read once per poll.
-  expect(fetcher).toHaveBeenCalledTimes(6);
+  // Include teammate tasks and the Slack trace's work-board read.
+  expect(fetcher).toHaveBeenCalledTimes(8);
+  for (const path of ['/api/verse/fleet/control/teammate-tasks', '/api/verse/fleet/work-board?limit=20']) {
+    expect(fetcher.mock.calls.filter(([url]) => url === path)).toHaveLength(1);
+  }
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(16);
   view.rerender(<FleetChannelsPane {...props} visible={false} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(16);
 });

@@ -90,7 +90,7 @@ export interface LedgerRow { row: Record<string, unknown>; id: string; lane: str
  * mergedAt read that field themselves (merge-latency, throughput).
  */
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 /**
  * The rest of the jobs-ledger dialect the finish/outcome readers share with
@@ -103,7 +103,7 @@ const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recor
  */
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
-const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
 
 const pickString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -113,13 +113,23 @@ const pickString = (row: Record<string, unknown>, keys: readonly string[]): stri
   return null;
 };
 
-/** First parseable stamp among the ledger's timestamp fields, in dialect order. */
-function ledgerAt(row: Record<string, unknown>): number | null {
+/** First parseable stamp (epoch ms) among the ledger's timestamp fields, in dialect order. */
+export function ledgerAtMs(row: Record<string, unknown>): number | null {
   for (const field of TS_KEYS) {
     const at = parseLedgerTs(row[field]);
     if (at !== null) return at;
   }
   return null;
+}
+
+/** Job id across job|job_id|jobId|id — first non-empty string. */
+export function ledgerJobId(row: Record<string, unknown>): string | null {
+  return pickString(row, JOB_ID_KEYS);
+}
+
+/** Raw first stamp string across ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt, unvalidated. */
+export function ledgerStamp(row: Record<string, unknown>): string | null {
+  return pickString(row, TS_KEYS);
 }
 
 /** Normalized lowercase event name across event|type|kind; 'published' folds to 'publish'. */
@@ -175,10 +185,10 @@ export function ledgerRows(ledger: string, now: number, hours: number, anyJob = 
       if (!value || typeof value !== 'object' || Array.isArray(value)) { malformed++; continue; }
       row = value as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const id = pickString(row, JOB_ID_KEYS) ?? (anyJob ? '' : null);
+    const id = ledgerJobId(row) ?? (anyJob ? '' : null);
     // The id names a log file, so refuse anything that could leave the runs dir.
     if (id === null || !(SAFE_ID.test(id) || (anyJob && id === ''))) continue;
-    const at = ledgerAt(row);
+    const at = ledgerAtMs(row);
     if (at === null || at > now || at < now - hours * 3_600_000) continue;
     rows.push({ row, id, lane: text(pickString(row, LANE_KEYS)), at });
   }

@@ -22,7 +22,6 @@
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  countQueuedDropJobPrompts,
   DROP_JOB_QUEUE_LIMIT,
   dropJobExists,
   DropJobExistsError,
@@ -33,6 +32,7 @@ import {
   type DropJobInput,
 } from '../fleet/drop-job-writer.js';
 import { extractJobPaths } from '../fleet/job-precheck.js';
+import { readFleetQueue } from '../fleet/runs-parked-queue.js';
 import { queuedCollisions, readQueuedPathClaims, type QueuedCollision, type QueuedPathClaims } from '../fleet/queued-path-claims.js';
 import { loadBacklog } from '../portfolio/backlog.js';
 import type { Backlog } from '../types.js';
@@ -126,7 +126,8 @@ export async function draftIdeas(
   const root = resolveDropJobRoot(deps.runsDir);
   if (await dropJobExists(root, id)) return { draftId: id, collisions, written: false, existing: true };
   if (collisions.length > 0 && input.confirmCollisions !== true) return { draftId: id, collisions, written: false, existing: false };
-  if (!deps.write && await countQueuedDropJobPrompts(root) >= DROP_JOB_QUEUE_LIMIT) throw new IdeasDraftError(507, 'the job queue is full');
+  // Prompt files are retained after launch; only READY rows represent waiting work.
+  if (!deps.write && (await readFleetQueue({ runsDir: root })).ready >= DROP_JOB_QUEUE_LIMIT) throw new IdeasDraftError(507, 'the job queue is full');
   try {
     await (deps.write ?? writeDropJob)(root, job);
   } catch (e) {

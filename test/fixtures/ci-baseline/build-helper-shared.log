@@ -1,0 +1,21 @@
+> phantom@0.0.0 build
+> npm run check:version && tsc -p tsconfig.json && node scripts/authority-surface.mjs && node scripts/copy-assets.mjs && node scripts/build-preparation-builtin.mjs && vite build --config vite.config.web.ts && node scripts/build-release-dependency-inventory.mjs && node scripts/build-identity.mjs
+
+
+> phantom@0.0.0 check:version
+> node scripts/sync-candidate-version.mjs --check
+
+{"version":"0.0.1","changed":[],"matches":true,"check":true}
+
+authority-surface: 321 files, 87 packages, 0 missing roots, 4 unresolved — digest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+[copy-assets] copied /home/runner/work/phantom/phantom/src/core/web/public -> /home/runner/work/phantom/phantom/dist/core/web/public
+vite v8.2.4 building client environment for production...
+transforming...
+✓ 4210 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                  0.14 kB │ gzip:  0.13 kB
+dist/assets/index-Bkt5-j3-.js  412.55 kB │ gzip: 98.77 kB
+✓ built in 45.67s
+release dependency inventory npm pack: npm pack exited 1
+##[error]Process completed with exit code 1.

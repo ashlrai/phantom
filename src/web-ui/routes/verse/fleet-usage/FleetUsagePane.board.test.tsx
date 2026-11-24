@@ -88,10 +88,10 @@ it('shows a machine-readable reset as a local time and marks an unmeasured windo
   expect(time).toHaveAttribute('dateTime', (body.accounts[1].windows[0] as { resetsAt: string }).resetsAt);
   expect(time?.textContent).toMatch(/\d/);
   const spark = within(codex).getByRole('meter', { name: 'Codex Team Spark used' });
-  expect(spark).toHaveAttribute('data-unknown');
+  expect(spark).toHaveAttribute('data-unread');
   expect(spark).toHaveAttribute('aria-valuetext', 'unknown');
   expect(spark).not.toHaveAttribute('aria-valuenow');
-  expect(within(codex).getByRole('meter', { name: 'Codex Team Primary used' })).not.toHaveAttribute('data-unknown');
+  expect(within(codex).getByRole('meter', { name: 'Codex Team Primary used' })).not.toHaveAttribute('data-unread');
   // Claude's reset is provider prose with no instant, so no clock time is derived for it.
   expect((screen.getByText('Claude Max').closest('li') as HTMLElement).querySelector('time')).toBeNull();
 });

@@ -13,10 +13,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'restock.py'
@@ -89,6 +92,61 @@ def line(job, text='routine fix', **attrs):
     p = attrs.pop('P', None)
     toks = ([f'P{p}'] if p is not None else []) + [f'{k}={v}' for k, v in attrs.items()]
     return f'- READY {job} ({", ".join(toks)}): {text}'
+
+
+class FamilyPauseTests(unittest.TestCase):
+    def test_real_yield_suppresses_siblings_keeps_healthy_and_resumes_after_merge(self):
+        jobs = ['CONSOLELAND800', 'CONSOLELAND800B', 'FLEETCORELAND800']
+        tmp = build('\n'.join(line('RQ-PHX-' + j, repo='phantom', tier='work') for j in jobs))
+        self.addCleanup(tmp.cleanup)
+        home, root = Path(tmp.name), SCRIPT.parents[2]
+        tools = home / 'bin'
+        tools.mkdir()
+        cli = [shutil.which('node'), str(root / 'node_modules/tsx/dist/cli.mjs'), str(root / 'src/cli/index.ts')]
+        (tools / 'phm').write_text('#!/bin/sh\nexec ' + shlex.join(cli) + ' "$@"\n')
+        (tools / 'phm').chmod(0o700)
+        now, history = datetime.now(timezone.utc), []
+        def event(job, hours, **fields):
+            return json.dumps(dict(job='RQ-PHX-' + job, ts=(now - timedelta(hours=hours)).isoformat(), **fields))
+        for i, job in enumerate(['CONSOLELAND794', 'CONSOLELAND794B', 'CONSOLELAND795', 'CONSOLELAND795B']):
+            history.extend([event(job, 10-i, event='launch'),
+                            event(job, 9.5-i, event='finish', empty=True, summary='source PR already merged')])
+        history.extend([event('FLEETCORELAND795', 5, event='launch'),
+                        event('FLEETCORELAND795', 4, event='finish', empty=False),
+                        event('FLEETCORELAND795', 3, event='outcome', state='MERGED')])
+        metrics = home / '.ashlr-runs/metrics/jobs.jsonl'
+        metrics.write_text('\n'.join(history))
+        with patch.dict(os.environ, {'PATH': str(tools) + ':' + os.environ['PATH']}):
+            result = restock(home, '--dry-run')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(dry_ids(result.stdout), ['RQ-PHX-FLEETCORELAND800'])
+            self.assertEqual(result.stderr.count('skip CONSOLELAND: 4 of last 4 empty'), 1)
+            q, parked_rows = home / '.ashlr-runs/queue', []
+            for kind, job in zip(['DEP', 'MERGERATE'], jobs[:2]):
+                prompt = q / 'prompts' / f'RQ-PHX-{job}.md'
+                prompt.write_text('DEPENDENCY GATE: RQ-PHX-DEP\nKeep the merge checks.\n')
+                parked_rows.append(f'PARKED-{kind}.devin\tRQ-PHX-{job}\tdevin\twork\tphantom\t{prompt}\n')
+            ready_before = ''.join(parked_rows)
+            (q / 'ready.tsv').write_text(ready_before)
+            metrics.write_text('\n'.join(history + [event('DEP', 1, event='outcome', state='MERGED')]))
+            (home / '.ashlr-runs/phantom-open-prs').write_text(f'{now.timestamp()} 0\n')
+            parked = restock(home, '--per-lane', '0', '--json')
+            self.assertEqual(parked.returncode, 0, parked.stderr)
+            self.assertEqual(json.loads(parked.stdout)['unpark'], [])
+            self.assertEqual((q / 'ready.tsv').read_text(), ready_before)
+            (q / 'ready.tsv').write_text('')
+            history.extend([event('CONSOLELAND799B', 2, event='launch'),
+                            event('CONSOLELAND799B', 1, event='outcome', state='MERGED')])
+            metrics.write_text('\n'.join(history))
+            resumed = restock(home, '--dry-run')
+            self.assertEqual(resumed.returncode, 0, resumed.stderr)
+            self.assertEqual(set(dry_ids(resumed.stdout)), {'RQ-PHX-' + j for j in jobs})
+            self.assertNotIn('skip CONSOLELAND:', resumed.stderr)
+            metrics.write_text('\n'.join(history[:-2]))
+            (tools / 'phm').write_text('#!/bin/sh\nexit 1\n')
+            unavailable = restock(home, '--dry-run')
+            self.assertEqual(unavailable.returncode, 0, unavailable.stderr)
+            self.assertEqual(set(dry_ids(unavailable.stdout)), {'RQ-PHX-' + j for j in jobs})
 
 
 class MuseLightTests(unittest.TestCase):
