@@ -6,7 +6,7 @@
 
 Mission: chasing open-source RSI (recursive self-improvement). Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments. Agents follow `AGENTS.md` at the repository root. Strategy: [recursive self-improvement and an open fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md).
 
-Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown review) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
+Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown editing) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
 
 Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent --json`. The copy-paste install, JSON commands, and MCP setup are in [llms-full.txt](llms-full.txt).
 
