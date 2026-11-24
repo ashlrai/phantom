@@ -4031,7 +4031,12 @@ See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).
 reader's newest-first
 `{from,to,kind,at,summary}` rows (null and exit 1 when unreadable); `--before`
 keeps only rows received strictly before its cutoff, composing with `--since`
-into one `[since, before)` window. The existing
+into one `[since, before)` window. `phm fleet map messages`, `phm fleet
+messages` and GET `/api/fleet/map/messages` share the `phm messages` filter
+vocabulary — agent/with, kind, priority, job, thread, channel, contains,
+from/exclude-from, in-reply-to and id — applied by the same
+`matchAgentMessages` pipeline every bus read uses, so a filtered question
+gets the same answer on each. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts
 are deduplicated by id before the since filter. The desktop's existing 2D/3D
 map overlays these messages for 10 seconds; clicking opens the text in place.
