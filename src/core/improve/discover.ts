@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Fifty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fifty-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -559,6 +559,22 @@
  *     for display, so an ask kind that kept reaching Mason — a self-
  *     answer coverage gap or an owner-gated need never resolved once —
  *     never became work;
+ *   - the queue-visit journal's recurring saturation and parked
+ *     visits: the per-attempt {id, station, pool, arrivedAt, startedAt?,
+ *     completedAt?} snapshots the daemon's visit-sync off-tick job
+ *     appends to queue/visits.jsonl under the Ashlr home — each a job
+ *     attempt's recorded dwell through a pipeline station (READY queue
+ *     wait, claimed worker service, publish slot, pr-ci CI dwell,
+ *     merge-queue dwell, the zero-dwell merged marker) — folded per
+ *     (kind, scope, name) cell: 'saturated' when the same
+ *     estimateQueueStats fold `phm queue stats` and the Fleet
+ *     Dashboard station graph run rates the cell's rho at or above the
+ *     documented 0.9 red band on distinct UTC days inside the window,
+ *     and 'stuck' when latest snapshots with no completedAt age past
+ *     the parked bar across distinct visits and days
+ *     (queueVisitBacklogItems below). Until now the journal's only
+ *     readers were those point-in-time reports, so a station that kept
+ *     rating red or visits that kept parking open never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -642,6 +658,7 @@ import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
 import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { asksLedgerBacklogItems } from './asks-backlog.js';
+import { queueVisitBacklogItems } from './queue-visit-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1529,6 +1546,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inheriting the items since the ledger describes this
   // install's ask traffic and carries no repository column.
   items.push(...await asksLedgerBacklogItems({ repo }));
+
+  // Queue-visit journal: the daemon's visit-sync off-tick job folds
+  // metrics/jobs.jsonl and the live READY rows into per-attempt station
+  // dwell snapshots appended to queue/visits.jsonl under the Ashlr home.
+  // Until now its only readers were `phm queue stats` and
+  // GET /api/queue/stats — the Fleet Dashboard's station graph,
+  // point-in-time reports someone had to run and read — so a station
+  // that kept rating red or visits that kept parking open never became
+  // work. Same bounded no-follow tail read at twice the writer's
+  // compaction bound and the writer's own visit contract; cells key
+  // (kind, scope, name) — 'saturated' on the dashboard's own rho >= 0.9
+  // red band recurring across distinct UTC days, 'stuck' on open
+  // snapshots aged past the parked bar across distinct visits and days
+  // — a cell emits only at its recurring bars inside the 7-day window,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes this
+  // install's dispatch pipeline and carries no repository column.
+  items.push(...await queueVisitBacklogItems({ repo }));
   return { items, errors };
 }
 
