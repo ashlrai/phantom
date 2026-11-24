@@ -134,7 +134,8 @@ describe('Leader state completeness', () => {
   it.each(['', '  \n', '{}'])('distinguishes empty input %j from measured zero and stale data', async text => {
     const root = fixture();
     writeFileSync(join(root, 'queue/status.json'), text);
-    expect(await snapshot(root)).toMatchObject({ queueState: 'empty', running: null, queued: null, merged24h: null });
+    expect(await snapshot(root)).toMatchObject({ queueState: 'empty', running: null, queued: null, merged24h: null,
+      collectedAt: new Date(now).toISOString(), queueObservedAt: null, collectionErrors: [{ source: 'queue', code: 'empty' }] });
     writeFileSync(join(root, 'queue/status.json'), JSON.stringify({ last_tick: new Date(now).toISOString(), lanes: { codex: { running: 0, queued: 0 } }, rollup_24h: { merged: 0 } }));
     const zero = await snapshot(root);
     expect(zero).toMatchObject({ queueState: 'fresh', running: 0, queued: 0, merged24h: 0 });
@@ -166,7 +167,9 @@ describe('Leader state completeness', () => {
   it('exposes empty guardian evidence and the off marker without inventing healthy mains', async () => {
     const root = fixture();
     writeFileSync(join(root, 'supervisor/status-main-guardian.md'), '# Main guardian status (2026-11-11 12:00:00)');
-    expect((await snapshot(root)).mains).toMatchObject({ guardianState: 'empty', known: false, green: null, total: null });
+    const empty = await snapshot(root);
+    expect(empty.mains).toMatchObject({ guardianState: 'empty', known: false, green: null, total: null });
+    expect(empty.collectionErrors).toContainEqual({ source: 'guardian', code: 'empty' });
     writeFileSync(join(root, 'queue/MAIN_GUARDIAN_OFF'), '');
     const result = await snapshot(root);
     expect(result.mains.guardianState).toBe('off');
@@ -186,6 +189,48 @@ describe('Leader state completeness', () => {
     expect(result.merged24h).toBe(source === 'queue' ? null : 12);
     expect(result.mains.guardianState).toBe(source === 'guardian' ? 'unavailable' : 'fresh');
     expect(result.ceo).toEqual(source === 'journal' ? [] : ['Work continues.']);
+    expect(result.collectionErrors).toContainEqual({ source, code: 'failed' });
+    expect(renderLeaderStatus(result)).toContain(`${source} failed`);
     expect(JSON.stringify(result) + renderLeaderStatus(result)).not.toContain('synthetic-private-error');
+  });
+
+  it('reports complete dated lane, merge and guardian evidence without collection errors', async () => {
+    const root = fixture();
+    const at = new Date(now).toISOString();
+    writeFileSync(join(root, 'queue/status.json'), JSON.stringify({ last_tick: at,
+      lanes: { codex: { running: 2, queued: 5 }, claude: { running: 0, queued: 0 } },
+      rollup_24h: { merged: 7, by_lane: { codex: { merged: 7 }, claude: { merged: 0 } } } }));
+    const result = await snapshot(root);
+    expect(result).toMatchObject({ collectedAt: at, queueObservedAt: at, collectionErrors: [],
+      running: 2, queued: 5, merged24h: 7, mains: { guardianState: 'fresh', green: 1 } });
+    expect(Date.parse(result.mains.observedAt!)).toBe(now);
+    expect(renderLeaderStatus(result)).toContain(`Status collected: ${at}. Queue checked: ${at}.`);
+  });
+
+  it.each([
+    ['{', 'invalid', null], ['[]', 'invalid', null],
+    [JSON.stringify({ last_tick: 'invalid' }), 'invalid', null],
+    [JSON.stringify({ last_tick: new Date(now - 60_001).toISOString() }), 'stale', new Date(now - 60_001).toISOString()],
+    [JSON.stringify({ last_tick: new Date(now + 1).toISOString() }), 'stale', new Date(now + 1).toISOString()],
+  ])('retains source dates and fixed diagnostics for %s', async (text, code, queueObservedAt) => {
+    const root = fixture();
+    writeFileSync(join(root, 'queue/status.json'), text);
+    const result = await snapshot(root);
+    expect(result).toMatchObject({ queueObservedAt, collectionErrors: [{ source: 'queue', code }],
+      running: null, queued: null, merged24h: null, mains: { known: true }, ceo: ['Work continues.'] });
+  });
+
+  it('reports missing and unreadable sources without manufacturing zeroes', async () => {
+    const root = fixture();
+    rmSync(join(root, 'supervisor/status-main-guardian.md'));
+    rmSync(join(root, 'leader/PLAN-LOG.md'));
+    const missing = await snapshot(root);
+    expect(missing).toMatchObject({ queueObservedAt: null, running: null, queued: null, merged24h: null,
+      mains: { known: false, green: null, red: null, total: null, unknown: null, observedAt: null },
+      collectionErrors: [{ source: 'queue', code: 'missing' }, { source: 'guardian', code: 'unavailable' }, { source: 'journal', code: 'missing' }] });
+    mkdirSync(join(root, 'queue/status.json'));
+    expect((await snapshot(root)).collectionErrors).toContainEqual({ source: 'queue', code: 'unavailable' });
+    writeFileSync(join(root, 'leader/PLAN-LOG.md'), '');
+    expect((await snapshot(root)).collectionErrors).toContainEqual({ source: 'journal', code: 'empty' });
   });
 });

@@ -6,7 +6,7 @@
  * reports counts and adapter states; this is the ordered read behind both
  * — what the owner said, what we answered, per-channel delivery receipts
  * and the awaiting-reply mark — with the CLI's channel/direction/since/
- * contains narrowing and unknown-stays-unknown honesty passed through
+ * beforeAt/contains narrowing and unknown-stays-unknown honesty passed through
  * untouched.
  *
  * Hermetic: injected readers and crafted owner-thread fixtures under temp
@@ -92,25 +92,28 @@ async function call(client: Client, args?: Record<string, unknown>) {
 }
 
 describe('fleet_comms_thread argument parsing', () => {
-  it('defaults limit to 50 and accepts the five thread filters', () => {
+  it('defaults limit to 50 and accepts the thread filters', () => {
     expect(parseFleetCommsThreadArgs({})).toEqual({ limit: FLEET_COMMS_THREAD_LIMIT_DEFAULT });
     expect(parseFleetCommsThreadArgs({ limit: 1 })).toEqual({ limit: 1 });
     expect(parseFleetCommsThreadArgs({ limit: FLEET_COMMS_THREAD_LIMIT_MAX })).toEqual({ limit: FLEET_COMMS_THREAD_LIMIT_MAX });
     expect(parseFleetCommsThreadArgs({ channel: 'telegram' })).toEqual({ limit: 50, filter: { channel: 'telegram' } });
     expect(parseFleetCommsThreadArgs({ direction: 'outbound' })).toEqual({ limit: 50, filter: { direction: 'outbound' } });
     expect(parseFleetCommsThreadArgs({ contains: 'deploy window' })).toEqual({ limit: 50, filter: { contains: 'deploy window' } });
+    expect(parseFleetCommsThreadArgs({ replyTo: 'inbound-key-1' })).toEqual({ limit: 50, filter: { replyTo: 'inbound-key-1' } });
     const withSince = parseFleetCommsThreadArgs({ since: '2h' });
     expect(withSince?.limit).toBe(50);
     expect(typeof withSince?.filter?.since).toBe('number');
     expect(withSince!.filter!.since!).toBeGreaterThan(0);
+    const withBefore = parseFleetCommsThreadArgs({ beforeAt: '2026-11-18T00:00:00.000Z' });
+    expect(withBefore).toEqual({ limit: 50, filter: { beforeAt: Date.parse('2026-11-18T00:00:00.000Z') } });
   });
 
   it('combines every filter into one narrowing', () => {
     expect(parseFleetCommsThreadArgs({
-      limit: 10, channel: 'slack', direction: 'inbound', since: '2026-11-18T00:00:00.000Z', contains: 'ship it',
+      limit: 10, channel: 'slack', direction: 'inbound', since: '2026-11-17T00:00:00.000Z', beforeAt: '2026-11-18T00:00:00.000Z', contains: 'ship it', replyTo: 'inbound-key-9',
     })).toEqual({
       limit: 10,
-      filter: { channel: 'slack', direction: 'inbound', since: Date.parse('2026-11-18T00:00:00.000Z'), contains: 'ship it' },
+      filter: { channel: 'slack', direction: 'inbound', since: Date.parse('2026-11-17T00:00:00.000Z'), beforeAt: Date.parse('2026-11-18T00:00:00.000Z'), contains: 'ship it', replyTo: 'inbound-key-9' },
     });
   });
 
@@ -119,7 +122,9 @@ describe('fleet_comms_thread argument parsing', () => {
       { limit: 0 }, { limit: FLEET_COMMS_THREAD_LIMIT_MAX + 1 }, { limit: 1.5 }, { limit: '5' }, { limit: null },
       { channel: 'pager' }, { channel: 7 }, { direction: 'sideways' }, { direction: true },
       { since: 'bogus' }, { since: 1700000000000 }, { since: null },
+      { beforeAt: 'bogus' }, { beforeAt: 1700000000000 }, { beforeAt: null }, { beforeAt: '-1' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
+      { replyTo: 'has space' }, { replyTo: 'short' }, { replyTo: 'x'.repeat(81) }, { replyTo: 42 }, { replyTo: null },
       { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp/x' }, { configDir: '/tmp/x' },
       { extra: 1 }, { json: true },
     ]) expect(parseFleetCommsThreadArgs(bad)).toBeNull();
@@ -197,6 +202,24 @@ describe('fleet_comms_thread reader', () => {
     const needleView = needle as ReturnType<typeof readOwnerThread>;
     expect(needleView.messages.map(message => message.seq)).toEqual([3]);
     expect(needleView.awaitingReply).toEqual(['m3']);
+
+    // beforeAt is the exclusive recorded-time ceiling: the 10:05 outbound drops, both 10:00 inbounds stay.
+    const window = await readFleetCommsThread(
+      { limit: 50, filter: { beforeAt: Date.parse('2026-11-18T10:03:00.000Z') } }, { options: ownerOptions(dir) });
+    const windowView = window as ReturnType<typeof readOwnerThread>;
+    expect(windowView.messages.map(message => message.seq)).toEqual([1, 3]);
+    expect(windowView.awaitingReply).toEqual(['m3']);
+
+    // replyTo keeps the exchange rooted at one key: the citing inbound plus the outbound that answers it.
+    const exchange = await readFleetCommsThread(
+      { limit: 50, filter: { replyTo: 'inbound-key-1' } }, { options: ownerOptions(dir) });
+    const exchangeView = exchange as ReturnType<typeof readOwnerThread>;
+    expect(exchangeView.messages.map(message => message.seq)).toEqual([1, 2]);
+    expect(exchangeView.awaitingReply).toEqual([]);
+    const unanswered = await readFleetCommsThread(
+      { limit: 50, filter: { replyTo: 'inbound-key-2' } }, { options: ownerOptions(dir) });
+    expect((unanswered as ReturnType<typeof readOwnerThread>).messages.map(message => message.seq)).toEqual([3]);
+    expect((unanswered as ReturnType<typeof readOwnerThread>).awaitingReply).toEqual(['m3']);
   });
 
   it('keeps awaitingReply null and unavailable true on a corrupt thread — unknown stays unknown', async () => {
@@ -238,7 +261,9 @@ describe('fleet_comms_thread MCP tool', () => {
         channel: { type: 'string', enum: ['desktop', 'telegram', 'email', 'imessage', 'slack'] },
         direction: { type: 'string', enum: ['inbound', 'outbound'] },
         since: { type: 'string' },
+        beforeAt: { type: 'string' },
         contains: { type: 'string', minLength: 1, maxLength: 512 },
+        replyTo: { type: 'string' },
       },
     });
   });
@@ -246,8 +271,9 @@ describe('fleet_comms_thread MCP tool', () => {
   it.each([
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }],
     [{ runsDir: '/tmp/x' }], [{ limit: 0 }], [{ limit: 201 }], [{ limit: '10' }],
-    [{ channel: 'pager' }], [{ direction: 'sideways' }], [{ since: 'bogus' }],
-    [{ contains: '' }], [{ extra: 1 }],
+    [{ channel: 'pager' }], [{ direction: 'sideways' }], [{ since: 'bogus' }], [{ beforeAt: 'bogus' }],
+    [{ contains: '' }], [{ replyTo: 'has space' }], [{ replyTo: 'short' }], [{ replyTo: 42 }],
+    [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const commsThread = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), commsThread });

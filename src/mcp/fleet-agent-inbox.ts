@@ -33,14 +33,14 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_AGENT_INBOX_LIMIT_MAX = BUS_INBOX_MAX_READ;
 export const FLEET_AGENT_INBOX_LIMIT_DEFAULT = 50;
 
-/** The printable-label rule `agent`, `thread`, `from`, `excludeFrom` and `job` share. */
+/** The printable-label rule `agent`, `thread`, `from`, `excludeFrom`, `job`, `inReplyTo` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const INBOX_KEYS = new Set([
   'agent', 'after', 'limit', 'matched',
-  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'channel', 'contains',
+  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id',
 ]);
-const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job'] as const;
+const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job', 'inReplyTo', 'id'] as const;
 
 /** The `readAgentInbox` page fields the MCP arguments fill — `after`, `limit` and `matched` ride beside them. */
 export interface FleetAgentInboxFilters {
@@ -51,8 +51,11 @@ export interface FleetAgentInboxFilters {
   kind?: InboxKind;
   job?: string;
   since?: number;
+  before?: number;
   channel?: string;
   contains?: string;
+  inReplyTo?: string;
+  id?: string;
 }
 
 export interface FleetAgentInboxArgs {
@@ -72,7 +75,8 @@ export interface FleetAgentInboxArgs {
  * tools/list schema, so the server re-validates on every call. `agent` is
  * required — the addressed read has no meaningful default — and every other
  * key takes the same value rules `phm agents bus inbox` flags and the other
- * bus reads share: printable routing labels, the P0–P3 priority enum, the
+ * bus reads share: printable routing labels (`id` the exact-envelope match),
+ * the P0–P3 priority enum, the
  * four delivery kinds, the channel-name schema, the shared `since` grammar
  * and the bounded `contains` needle normalized by `busReadContains`. Unknown
  * keys, wrong types, caller roots and malformed values are all refused
@@ -117,6 +121,13 @@ export function parseFleetAgentInboxArgs(args: Record<string, unknown>): FleetAg
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     filters.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    filters.before = resolved;
   }
   const contains = busReadContains(args.contains);
   if (contains === null) return null;

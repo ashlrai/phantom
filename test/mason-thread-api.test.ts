@@ -37,3 +37,35 @@ it('serves a message as Received and refuses writes and bad windows', async () =
   expect((await call('?since=soon')).status).toBe(400);
   expect((await call('', 'GET', false)).status).toBe(404);
 });
+
+it('bounds the thread by an exclusive before ceiling on the same grammar', async () => {
+  const owner = { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } } };
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'older note', idempotencyKey: 'desk-api-old', at: NOW - 300_000 }, owner);
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'newer note', idempotencyKey: 'desk-api-new', at: NOW - 60_000 }, owner);
+  const before = new Date(NOW - 120_000).toISOString();
+  const bounded = await call(`?before=${encodeURIComponent(before)}`);
+  expect(bounded.status).toBe(200);
+  expect(bounded.body.before).toBe(before);
+  expect(bounded.body.items.map((i: { text: string }) => i.text)).toEqual(['older note']);
+  const unbounded = await call('?since=1h');
+  expect(unbounded.body.before).toBeUndefined();
+  expect(unbounded.body.items.map((i: { text: string }) => i.text)).toEqual(['older note', 'newer note']);
+  expect((await call('?before=soon')).status).toBe(400);
+});
+
+it('slices the thread by channel, direction and contains query params', async () => {
+  const owner = { runsDir, busRoot: join(runsDir, 'bus'), now: () => NOW, settings, halted: false, paused: false,
+    mailbox: { async accept() { return { status: 'accepted' as const }; } } };
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'alpha note', idempotencyKey: 'desk-slice-a', at: NOW - 300_000 }, owner);
+  await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'beta note', idempotencyKey: 'desk-slice-b', at: NOW - 200_000 }, owner);
+  const texts = (body: { items: { text: string }[] } | null) => body!.items.map(i => i.text);
+  expect(texts((await call('?contains=ALPHA')).body)).toEqual(['alpha note']);
+  expect(texts((await call('?channel=desktop')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?channel=slack')).body)).toEqual([]);
+  expect(texts((await call('?direction=inbound')).body)).toEqual(['alpha note', 'beta note']);
+  expect(texts((await call('?direction=outbound')).body)).toEqual([]);
+  expect((await call('?channel=Bad Channel')).status).toBe(400);
+  expect((await call('?direction=sideways')).status).toBe(400);
+  expect((await call('?contains=%20%20%20')).status).toBe(400);
+});

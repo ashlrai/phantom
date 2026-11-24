@@ -400,6 +400,18 @@ unexpired envelopes in priority and acceptance order, with remaining TTL and
 `hasMore` for a truncated result. Reading never acknowledges. Ack checks the
 recipient and is idempotent; unknown IDs refuse.
 
+`phm bus inbox` takes the same read filters every other bus read shares, all
+ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
+(each resolved through the agent identity registry, so a registered identity's
+handle, `agent:` address, id and aliases all match, with exact-label matching
+when the ref resolves to nothing or the registry is unreadable), `--priority`
+keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
+`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
+bound the store acceptance time as one `[since, before)` window, `--contains`
+keeps envelopes whose scrubbed one-line summary carries the needle, and
+`--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
+that conversation label. `hasMore` reports truncation of the filtered set.
+
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
 unsafe or concurrently changing stores refuse rather than reporting an empty

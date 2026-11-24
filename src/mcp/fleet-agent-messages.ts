@@ -11,8 +11,10 @@
  * Every argument is optional and takes the same value rules the
  * `phm messages` flags and the API params share, all validated before any
  * store read: `since` the shared 15m/2h/1d/epoch-ms/ISO grammar resolved
- * to a safe non-negative epoch-ms integer, `agent`/`with`/`job`/`thread`/
- * `excludeFrom`/`inReplyTo` printable routing labels (`with` narrows
+ * to a safe non-negative epoch-ms integer and `before` the same grammar
+ * as the exclusive upper bound composing with `since` into one
+ * [since, before) window, `agent`/`with`/`job`/`thread`/
+ * `from`/`excludeFrom`/`inReplyTo`/`id` printable routing labels (`with` narrows
  * `agent` to the two-way talk between that agent and one other and
  * requires `agent`), `kind` one of ask/reply/handoff/status/blocker under
  * the CLI's case-insensitive match, `priority` one exact P0–P3 band,
@@ -42,14 +44,14 @@ import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { busReadContains } from '../core/agents/bus-unified.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
-/** The printable-label rule `agent`, `with`, `job`, `thread`, `excludeFrom` and `inReplyTo` share. */
+/** The printable-label rule `agent`, `with`, `job`, `thread`, `from`, `excludeFrom`, `inReplyTo` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const MESSAGE_KEYS = new Set([
-  'since', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
-  'contains', 'excludeFrom', 'inReplyTo', 'channel', 'limit',
+  'since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
+  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'limit',
 ]);
-const LABEL_KEYS = ['job', 'thread', 'excludeFrom', 'inReplyTo'] as const;
+const LABEL_KEYS = ['job', 'thread', 'from', 'excludeFrom', 'inReplyTo', 'id'] as const;
 
 /** The parsed arguments are the projection's own query — the MCP surface adds no filter the CLI/API do not share. */
 export type FleetAgentMessagesArgs = AgentMessagesQuery;
@@ -61,8 +63,10 @@ export type FleetAgentMessagesArgs = AgentMessagesQuery;
  * same value rules `parseAgentMessagesQuery` enforces for the CLI flags
  * and API params: `kind` lowercases into the classified-kind enum,
  * `priority` stays an exact P0–P3 member, the label keys and `channel`
- * take their grammar, `since` resolves through `parseSince` to a safe
- * non-negative epoch-ms integer, `contains` normalizes through
+ * take their grammar, `since`/`before` resolve through `parseSince` to a
+ * safe non-negative epoch-ms integer (`before` the exclusive upper bound
+ * composing with `since` into one [since, before) window), `contains`
+ * normalizes through
  * `busReadContains` and `limit` stays inside the projection's bound.
  * `with` without `agent` is refused exactly as `--with` without `--agent`
  * is. Unknown keys, wrong types, caller roots and malformed values are
@@ -104,6 +108,13 @@ export function parseFleetAgentMessagesArgs(args: Record<string, unknown>): Flee
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     query.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    query.before = resolved;
   }
   const agent = args.agent;
   if (agent !== undefined) {
