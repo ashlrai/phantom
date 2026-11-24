@@ -1,0 +1,133 @@
+# Unsigned per-OS CLI binaries for an existing Phantom release tag.
+#
+# Dispatch only. Not a required check. Does not sign, notarize, or create a
+# release. Linux desktop (Tauri/GTK) stays quarantined in release-desktop.yml.
+# This job reuses scripts/build-sea.mjs, the same Bun SEA build the desktop
+# sidecar uses, and attaches the binary to a release that already exists.
+#
+# Asset names match scripts/install.ps1 and scripts/install-release.sh:
+#   ashlr-windows-x64.exe
+#   ashlr-linux-x64
+
+name: Release CLI assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach unsigned CLI binaries to (vX.Y.Z)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-cli-assets-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: "1.3.14"
+  NODE_VERSION: "22.23.2"
+
+jobs:
+  cli-linux:
+    name: CLI asset (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - name: Reject a tag that is not a stable version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must look like vX.Y.Z" >&2
+            exit 1
+          fi
+
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the SEA CLI
+        run: node scripts/build-sea.mjs
+
+      - name: Attach the unsigned Linux CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          test -f dist-bin/ashlr
+          cp dist-bin/ashlr ashlr-linux-x64
+          sha256sum ashlr-linux-x64
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$TAG" ashlr-linux-x64 --repo "$GITHUB_REPOSITORY" --clobber
+
+  cli-windows:
+    name: CLI asset (windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - name: Reject a tag that is not a stable version
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'tag must look like vX.Y.Z' }
+
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the SEA CLI
+        run: node scripts/build-sea.mjs
+
+      - name: Attach the unsigned Windows CLI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path dist-bin/ashlr.exe)) { throw 'dist-bin/ashlr.exe was not built' }
+          Copy-Item dist-bin/ashlr.exe ashlr-windows-x64.exe
+          Get-FileHash -Algorithm SHA256 ashlr-windows-x64.exe | Format-List
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'release tag was not found' }
+          gh release upload $env:TAG ashlr-windows-x64.exe --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'release upload failed' }
