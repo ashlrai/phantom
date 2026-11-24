@@ -48,10 +48,16 @@ same own-property exact match `comms bus read|watch --in-reply-to`,
 `inReplyTo` filters apply, never the `replyTo` alias or a substring, so
 "who answered envelope
 X" is one filtered read of the whole fleet timeline, replies addressed to
-anyone — `--limit <n>`)
+anyone — `--id <id>` for only the envelope whose own wire id is strictly
+equal to the value — the same exact-envelope match `comms bus read|watch
+--id`, `fleet bus-follow --id`, `fleet_bus_inbox`'s `id`, `agents bus
+inbox`/`channel read --id` and the `fleet_agent_inbox`/`fleet_bus_channel`/
+`fleet_agent_messages`/`fleet_agent_wakes` MCP `id` filters apply, never a
+substring or a body citation, so "where did envelope X go" is one filtered
+read — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`, `from`, `excludeFrom`, `inReplyTo` and `limit` params. Both return `agent-messages.v1`: newest
+`contains`, `from`, `excludeFrom`, `inReplyTo`, `id` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
@@ -328,7 +334,7 @@ a channel. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
-[--in-reply-to <id>] [--matched]
+[--in-reply-to <id>] [--id <id>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
@@ -369,7 +375,11 @@ keeps only posts whose object body cites that envelope id through its own
 --in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet bus-follow
 --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and `inbox --in-reply-to`
 apply, never the `replyTo` alias or a substring — so "which room posts
-answer envelope X" is one filtered read. `--matched` reports `matched`, the
+answer envelope X" is one filtered read. `--id` keeps only the post whose
+own wire id is strictly equal to the value — the same exact-envelope
+match `comms bus read|watch --id`, `fleet bus-follow --id` and
+`fleet_bus_inbox`'s `id` apply, never a substring or a body citation —
+so "did envelope X reach the room" is one filtered read. `--matched` reports `matched`, the
 true pending total — every post the same filters accept across the whole
 retained store — while `messages` still caps at `--limit`; because that
 read scans to the store's end, `nextCursor` then resumes at the newest
@@ -387,7 +397,7 @@ as history. `fleet_bus_channel` (the isolated fleet MCP tool) serves the
 same read with the same dimensions as arguments — `channel` required,
 every channel-read filter as its MCP counterpart (`topic`, `from`,
 `excludeFrom`, `thread`, `priority`, `job`, `since`, `before`, `contains`,
-`inReplyTo`) and
+`inReplyTo`, `id`) and
 `matched` as a JSON boolean — under the identical `readAgentChannel`
 validation, so an MCP-connected agent reads a room's transcript, its
 presence-free posts, sender handles and live hold/job annotations without
@@ -441,7 +451,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
-[--contains <text>] [--in-reply-to <id>]`
+[--contains <text>] [--in-reply-to <id>] [--id <id>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -506,6 +516,11 @@ keeps only mail whose object body cites that envelope id through its own
 --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and `channel read
 --in-reply-to` apply, never the `replyTo` alias or a substring — so
 "which of my pending mail answers envelope X" is one filtered read.
+`--id` keeps only the row whose own wire id is strictly equal to the
+value — the same exact-envelope match `comms bus read|watch --id`,
+`fleet bus-follow --id`, `fleet_bus_inbox`'s `id` and `channel read --id`
+apply, never a substring or a body citation — so "is envelope X still
+pending for me" is one filtered read.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at
@@ -555,7 +570,7 @@ the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>]` lists wake
+[--channel <name>] [--contains <text>] [--id <id>]` lists wake
 hints for the agent and its
 channels. `--all` drops the addressee scope entirely — every hint in the
 bounded queue tail, registered identities' and bare coordination or
@@ -625,7 +640,14 @@ the citing `work.status` receipt's band behind a claim-holder `wh-…`
 hint (carried on the row's `claimHolder.priority`); a hint whose
 referent is `unresolved` or `unknown` names no provable band and never
 matches, an unreadable bus store makes the filtered read `unavailable`,
-and `matched` counts the proven matches on the resolved page. Claim-holder
+and `matched` counts the proven matches on the resolved page. `--id`
+keeps only the hint whose own id is strictly equal to the value — the
+triggering envelope's wire id on a `bus.send` hint, the `wh-…`
+claim-holder id on those — the same exact-id match `inbox --id` and
+`channel read --id` apply, decided on the queue row alone inside the
+queue-tail match like `--channel`/`--from`/`--before`, so it counts in
+`matched` and needs no referent resolution: "is the wake for envelope X
+still pending" is one filtered read. Claim-holder
 hints (`wh-…` ids) carry no envelope id of their own, so the read re-derives
 each one's citation against the live `work.status` receipts that could have
 generated it: a match annotates the row with `claimHolder` naming the status
@@ -642,7 +664,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

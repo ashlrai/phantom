@@ -108,9 +108,12 @@ describe('phm agents messages', () => {
     // --job keeps the traffic naming one job; --thread is the strict v2 note/context match.
     expect(summaries({ job: 'RQ-ONE-1' })).toEqual(['RQ-ONE-1 shipped the patch']);
     expect(summaries({ thread: 'build' })).toEqual(['build notes here']);
-    // --channel keeps the room's posts; --in-reply-to keeps the citation.
+    // --channel keeps the room's posts; --in-reply-to keeps the citation;
+    // --id keeps the one envelope carrying that wire id.
     expect(summaries({ channel: 'build' })).toEqual(['build notes here']);
     expect(summaries({ inReplyTo: 'm1' })).toEqual(['answering you']);
+    expect(summaries({ id: 'm1' })).toEqual(['on it?']);
+    expect(summaries({ id: 'm-gone' })).toEqual([]);
     // --agent/--with scope to the named participants.
     expect(read(root, { agent: 'codex' }).matched).toBe(2);
     expect(summaries({ agent: 'claude', with: 'codex' })).toEqual(['RQ-ONE-1 shipped the patch']);
@@ -187,7 +190,12 @@ describe('phm agents messages', () => {
     expect(filtered.body!.messages!.map(m => m.summary)).toEqual(['thanks, next the docs', 'please look at the build']);
     const threaded = await call(`${AGENT_MESSAGES_PATH}?kind=ask`);
     expect(threaded).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
+    const byId = await call(`${AGENT_MESSAGES_PATH}?id=m1`);
+    expect(byId).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
+    expect(byId.body!.messages!.map(m => m.summary)).toEqual(['on it?']);
     expect((await call(`${AGENT_MESSAGES_PATH}?bogus=1`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?id=has%20space`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?id=a&id=b`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');
     expect((await call(`${AGENT_MESSAGES_PATH}?before=never`)).body!.error).toContain('--before');
     expect((await call(`${AGENT_MESSAGES_PATH}?before=1h&before=2h`)).status).toBe(400);

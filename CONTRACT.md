@@ -3422,7 +3422,7 @@ with a `reason`); they never throw for bad input or storage faults.
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
-check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?}, options?)`
+check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -3454,7 +3454,11 @@ unfindable; `inReplyTo` keeps only mail whose object body cites that
 envelope id through its own `inReplyTo` field — the shared
 `busBodyInReplyToMatch` own-property exact match, never the `replyTo`
 alias or a substring — so "which of my pending mail answers envelope X"
-is one filtered read; `matched: true` scans the whole retained store
+is one filtered read; `id` keeps only the row whose own wire id is
+strictly equal to the value — the same exact-envelope match `comms bus
+read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`'s `id`
+apply, never a substring or a body citation — so "is envelope X still
+pending for me" is one filtered read; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -3540,7 +3544,13 @@ applies on the hint's own queue time, composing with `sinceAt`'s
 strictly-after boundary into one `(since, before)` window, decided on
 the queue row's `at` alone so it counts inside the queue-tail match
 like `channel`/`from`/`excludeFrom`, never fails closed on an
-unreadable bus store, and answers `invalid` outside epoch-ms),
+unreadable bus store, and answers `invalid` outside epoch-ms);
+`filter.id` keeps only the hint whose own id is strictly equal to the
+value — the triggering envelope's wire id on a `bus.send` hint, the
+`wh-…` claim-holder id on those — the same exact-id match the inbox
+and channel reads' `id` apply, decided on the queue row alone inside
+the queue-tail match so it counts in `matched` and needs no referent
+resolution, a malformed id answering `invalid`),
 `readAllWakes(sinceAt, options?, filter?)` (the fleet-wide companion —
 every hint the bounded queue tail holds with no addressee scope, so
 hints queued under bare coordination or routing labels the
@@ -3548,7 +3558,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
@@ -3562,7 +3572,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, id, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -3588,6 +3598,10 @@ object body cites that envelope id through its own `inReplyTo` field —
 the shared `busBodyInReplyToMatch` own-property exact match
 `readAgentInbox`'s `inReplyTo` applies, never the `replyTo` alias or a
 substring — so "which room posts answer envelope X" is one filtered read;
+`id` keeps only the post whose own wire id is strictly equal to the
+value — the same exact-envelope match `readAgentInbox`'s `id` and the
+raw bus reads' `--id` apply, never a substring or a body citation — so
+"did envelope X reach the room" is one filtered read;
 `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry

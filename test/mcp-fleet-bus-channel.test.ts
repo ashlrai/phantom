@@ -93,7 +93,7 @@ describe('fleet_bus_channel argument parsing', () => {
       from: 'agent:sender', excludeFrom: 'agent:bot',
       thread: 't-1', priority: 'P1', job: 'RQ-9',
       since: '1800000000000', before: '1700000000000', contains: '  Parser   Fix ',
-      inReplyTo: 'm-0',
+      inReplyTo: 'm-0', id: 'm-9',
     });
     expect(parsed).toMatchObject({
       channel: 'ops', after: 3, limit: 10, matched: true,
@@ -101,7 +101,7 @@ describe('fleet_bus_channel argument parsing', () => {
         topic: 'alerts', from: 'agent:sender', excludeFrom: 'agent:bot',
         thread: 't-1', priority: 'P1', job: 'RQ-9',
         since: 1800000000000, before: 1700000000000, contains: 'parser fix',
-        inReplyTo: 'm-0',
+        inReplyTo: 'm-0', id: 'm-9',
       },
     });
   });
@@ -115,6 +115,7 @@ describe('fleet_bus_channel argument parsing', () => {
       { channel: 'ops', from: 5 }, { channel: 'ops', excludeFrom: null }, { channel: 'ops', job: 'has space' },
       { channel: 'ops', thread: 'has space' }, { channel: 'ops', thread: '' }, { channel: 'ops', thread: 5 },
       { channel: 'ops', inReplyTo: 'has space' }, { channel: 'ops', inReplyTo: '' }, { channel: 'ops', inReplyTo: 5 },
+      { channel: 'ops', id: 'has space' }, { channel: 'ops', id: '' }, { channel: 'ops', id: 5 }, { channel: 'ops', id: 'x'.repeat(129) },
       { channel: 'ops', priority: 'P9' }, { channel: 'ops', priority: 1 }, { channel: 'ops', priority: 'p0' },
       { channel: 'ops', since: 'never' }, { channel: 'ops', since: 5 }, { channel: 'ops', since: '' },
       { channel: 'ops', before: 'never' }, { channel: 'ops', before: 5 }, { channel: 'ops', before: '' },
@@ -186,12 +187,12 @@ describe('fleet_bus_channel reader', () => {
     await readFleetBusChannel(parseFleetBusChannelArgs({
       channel: 'ops', topic: 'alerts', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     })!, { read });
     expect(seenPage).toMatchObject({
       topic: 'alerts', since: 1800000000000, before: 1700000000000, contains: 'parser fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     });
   });
 
@@ -228,6 +229,8 @@ describe('fleet_bus_channel MCP tool', () => {
     expect(tool?.inputSchema.properties?.['matched']).toMatchObject({ type: 'boolean' });
     expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['inReplyTo'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 

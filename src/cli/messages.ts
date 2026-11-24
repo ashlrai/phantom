@@ -1,5 +1,5 @@
 /** `phm messages`: thin argv layer over core/fleet/agent-messages.ts. */
-export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit <n>] [--text]
+export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>] [--limit <n>] [--text]
 Agent-to-agent messages on the local agent bus, newest first: id, ts, priority,
 from, to, kind (ask, reply, handoff, status, blocker), a one-line scrubbed
 summary, and the related job or PR when known. --before keeps only messages
@@ -40,14 +40,18 @@ the same own-property exact match comms bus read|watch --in-reply-to,
 fleet bus-follow --in-reply-to and fleet_bus_inbox's inReplyTo apply, never
 the replyTo alias or a substring — so "who answered envelope X" is one
 filtered read of the whole fleet timeline, replies addressed to anyone;
-JSON by default; --text for
+--id keeps only the envelope whose own wire id is strictly equal to the
+value — the same exact-envelope match comms bus read|watch --id, fleet
+bus-follow --id and fleet_bus_inbox's id apply, never a substring — so
+"where did envelope X go" is one filtered read of the whole fleet
+timeline; JSON by default; --text for
 people. Read-only.
 Damaged bus records are skipped and counted. Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 
 export async function cmdMessages(args: string[]): Promise<number> {
   if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { console.log(MESSAGES_USAGE); return 0; }
   let text = false;
-  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; limit?: string } = {};
+  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; channel?: string; limit?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--text') { text = true; continue; }
@@ -56,7 +60,7 @@ export async function cmdMessages(args: string[]): Promise<number> {
       : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority' : arg === '--job' ? 'job'
       : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--contains' ? 'contains'
       : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom' : arg === '--in-reply-to' ? 'inReplyTo'
-      : arg === '--limit' ? 'limit' : null;
+      : arg === '--id' ? 'id' : arg === '--limit' ? 'limit' : null;
     const value = args[i + 1];
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { console.error(MESSAGES_USAGE); return 2; }
     values[key] = value; i++;

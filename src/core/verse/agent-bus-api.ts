@@ -14,7 +14,7 @@
  * claims join); `limit` pages the filtered view through the shared
  * `sliceBusWorkFeedView` (1..200, reporting `matched`/`omitted`), and any other
  * parameter or value is a 400.
- * GET /api/verse/agent-bus/messages[?since=15m&before=2h&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&channel=eng&contains=parser&from=claude&excludeFrom=grok&inReplyTo=m-1&limit=50] is the same
+ * GET /api/verse/agent-bus/messages[?since=15m&before=2h&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&channel=eng&contains=parser&from=claude&excludeFrom=grok&inReplyTo=m-1&id=m-2&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
  * `before` keeps only messages received strictly before its cutoff on the same
  * grammar `since` takes — the exclusive upper bound composing with `since`
@@ -27,7 +27,9 @@
  * them, by the same sender rules the other bus reads apply; `inReplyTo` keeps only
  * envelopes whose object body cites that envelope id through its own
  * `inReplyTo` field — the same own-property exact match the raw bus reads
- * apply.
+ * apply; `id` keeps only the envelope whose own wire id is strictly equal
+ * to the value — the same exact-envelope match those raw reads' `id`
+ * filter applies.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -137,7 +139,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -168,6 +170,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           contains: params.get('contains') ?? undefined, from: params.get('from') ?? undefined,
           excludeFrom: params.get('excludeFrom') ?? undefined,
           inReplyTo: params.get('inReplyTo') ?? undefined,
+          id: params.get('id') ?? undefined,
           limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);
