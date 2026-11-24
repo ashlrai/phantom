@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -381,6 +381,18 @@
  *     pass — so a landing path that kept failing bundles, a close
  *     that kept erroring, or sessions that kept finishing
  *     unlandable never became work;
+ *   - the host-load journal's recurring blocked-launch evidence: the
+ *     host.load.history.v1 rows takeLoadSnapshot appends to
+ *     queue/host-load-history.jsonl under the fleet runs directory on
+ *     every applied self-tick while the dispatcher's admission-ctl
+ *     reports over_host blocking — at most one snapshot per ten
+ *     minutes, seven days kept — folded through the same
+ *     summarizeLoadHistory hour fold `phm host load --history` prints
+ *     (loadBacklogItems below). Until now the journal only ever
+ *     reached that report, the pulse and the digest's transient
+ *     blockedHourLine warning, plus the contributor cross-references
+ *     inside the sibling memory- and controller-pressure prompts, so
+ *     recurring host-load blocking never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -449,6 +461,7 @@ import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
 import { recutLoopBacklogItems } from './recut-loop-backlog.js';
 import { judgeBacklogItems } from './judge-backlog.js';
 import { autolandBacklogItems } from './autoland-backlog.js';
+import { loadBacklogItems } from './load-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1043,6 +1056,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the items since the journal carries no repository column — every
   // pass scans this install's connected Devin org.
   items.push(...await autolandBacklogItems({ repo }));
+
+  // Host-load journal: the self-tick's own blocked-launch attribution —
+  // the host.load.history.v1 rows takeLoadSnapshot appends to
+  // queue/host-load-history.jsonl while the dispatcher's admission-ctl
+  // reports over_host blocking, folded through the same
+  // summarizeLoadHistory hour fold `phm host load --history` prints —
+  // become backlog items too. Until now the journal only ever reached
+  // that report, the pulse and the digest's transient blockedHourLine
+  // warning (over ten blocked minutes in the last hour), plus the
+  // contributor cross-references inside the sibling memory- and
+  // controller-pressure prompts, so a host whose launches kept being
+  // held for load — whether the fleet's own jobs and model server were
+  // the cause or an owner-side app was — never became work. Same
+  // bounded tail read and the writer's own row contract; an item emits
+  // only at the recurring bars of distinct blocked hour buckets across
+  // distinct UTC days inside the window, the fleet-dominance refinement
+  // emits only while a fleet-side contributor holds a majority share of
+  // blocked-time CPU, an unreadable read yields nothing while a
+  // truncated tail folds lower-bound flagged, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's host and carries no repository column.
+  items.push(...await loadBacklogItems({ repo }));
   return { items, errors };
 }
 
