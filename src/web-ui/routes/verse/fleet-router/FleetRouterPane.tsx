@@ -95,14 +95,14 @@ function Route({ decision, view, now }: { decision: SeatDecision; view: BudgetVi
       <span className={styles.chip}>{decision.mode}</span>
     </p>
     <p className={styles.meta}>{decisionSummary(decision)}</p>
-    {tried.length ? <ol className={styles.route} aria-label="Try order">{tried.map(seat => <li key={seat.seatId} className={styles.seat} data-first={seat.rank === 1 || undefined}>
+    {tried.length ? <ol className={styles.route} aria-label="Try order">{tried.map(seat => <li key={seat.seatId} className={styles.seat} data-board-card data-first={seat.rank === 1 || undefined}>
       <span className={styles.rank} aria-hidden="true">{seat.rank}</span>
       <span className={styles.name}><BrandMark brand={seat.brand} size={16} />{seat.label}</span>
       <Usage seat={seat} now={now} />
     </li>)}</ol> : null}
     {held.length ? <>
       <h3 className={styles.sub}>Held back</h3>
-      <ul className={styles.route} aria-label="Held back">{held.map(seat => <li key={seat.seatId} className={styles.seat} data-held>
+      <ul className={styles.route} aria-label="Held back">{held.map(seat => <li key={seat.seatId} className={styles.seat} data-board-card data-held>
         <span className={styles.rank} aria-hidden="true">–</span>
         <span className={styles.name}><BrandMark brand={seat.brand} size={16} />{seat.label}</span>
         <span className={styles.usage}>{heldBackText(seat.held!) || 'The router gave no reason.'} Eligible again: {describeEligibleAgain(eligibleAgain(seat.held!), now)}.</span>

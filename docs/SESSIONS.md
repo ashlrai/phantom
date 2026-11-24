@@ -170,6 +170,23 @@ filter, ↑ and ↓ (or `j` and `k`) to move between sessions, Enter to open one
 the Worker log, and Esc to clear the typed filter. Narrowing happens in the
 window only; it sends no request and changes nothing for agents.
 
+A row above the conversation narrows it. **Everything**, **Messages** and
+**Work** each carry the number of entries they would show. Messages are the
+words exchanged: the brief, what you wrote, where it was routed, the Leader's
+replies, bus messages, and the session's notes and latest line. Work is
+everything else on record: steps, commands, changed files, output and the
+requests made of its job. The find box keeps only the entries whose label or
+text holds every word you type, and the three counts follow it, so you can see
+where the hits are before choosing. While anything is hidden the row says how
+many entries are shown, such as "3 of 41 shown", and **Show everything**
+brings the rest back. From anywhere in the conversation but a text field,
+press `/` to type in the find box and `1`, `2` or `3` to choose the view;
+Escape in the find box clears the words, and pressed again hands the keyboard
+back to the conversation. The view you choose is kept in this browser for
+every conversation; find words are not kept. Narrowing hides entries of the
+read already made and requests nothing, so it does not search anything the
+read left out, and a narrowed conversation is not counted as read to its end.
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
