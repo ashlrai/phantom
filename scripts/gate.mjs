@@ -532,7 +532,7 @@ export function buildCommands({ nodeBin, tscBin, tsBuildInfoFile }) {
  * both tsconfig projects, the same compiler `npm run typecheck` and hosted
  * fast-gate use — so there is no separate web step here.
  */
-export function phaseASpecs({ nodeBin, npmCmd, tscBin, eslintBin, gateDir }) {
+export function phaseASpecs({ nodeBin, npmCmd, tscBin, eslintBin, gateDir, mergeBase = null }) {
   const gate = (file) => join(gateDir, file);
   const [tsc, ...assets] = buildCommands({ nodeBin, tscBin, tsBuildInfoFile: gate('tsc.tsbuildinfo') });
   return [
@@ -542,16 +542,19 @@ export function phaseASpecs({ nodeBin, npmCmd, tscBin, eslintBin, gateDir }) {
     { name: 'realio-lane', cmd: npmCmd, args: ['run', '--silent', 'lint:realio-lane'] },
     { name: 'verse-sync-io', cmd: npmCmd, args: ['run', '--silent', 'lint:verse-sync-io'] },
     { name: 'docs', cmd: npmCmd, args: ['run', '--silent', 'check:docs'] },
-    { name: 'test-names', cmd: nodeBin, args: ['scripts/check-test-names.mjs'] },
+    // With a merge-base the duplicate-name scan is diff-scoped like the
+    // quarantine step: it fails only on collisions this change grew, while
+    // --full (no base) keeps the strict scan as the legacy-debt alarm.
+    { name: 'test-names', cmd: nodeBin, args: ['scripts/check-test-names.mjs', ...(mergeBase ? ['--base', mergeBase] : [])] },
   ];
 }
 
 /** Phase A: independent static checks, run in parallel. */
-function staticSteps() {
+function staticSteps(mergeBase) {
   const gate = (file) => join(GATE_DIR, file);
   // A tsbuildinfo whose outputs are gone would skip re-emitting them; start clean then.
   if (!existsSync(join(repoRoot, 'dist'))) rmSync(join(repoRoot, gate('tsc.tsbuildinfo')), { force: true });
-  return phaseASpecs({ nodeBin: node, npmCmd: npm, tscBin: bin.tsc, eslintBin: bin.eslint, gateDir: GATE_DIR });
+  return phaseASpecs({ nodeBin: node, npmCmd: npm, tscBin: bin.tsc, eslintBin: bin.eslint, gateDir: GATE_DIR, mergeBase });
 }
 
 /**
@@ -709,8 +712,8 @@ async function main() {
     return ok ? 0 : 1;
   }
 
-  say('phase A: build, typecheck-fast, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger (parallel)');
-  const phaseA = await Promise.all([...staticSteps(), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
+  say('phase A: build, typecheck-fast, eslint, realio-lane, verse-sync-io, docs, quarantine-ledger, test-names (parallel)');
+  const phaseA = await Promise.all([...staticSteps(changes.mergeBase), quarantineStep(changes.mergeBase)].map((step) => runStatic(step).then(record)));
   const buildFailed = phaseA.find((step) => step.name === 'build').status === 'fail';
   const phaseAFailed = phaseA.some((step) => step.status === 'fail');
 

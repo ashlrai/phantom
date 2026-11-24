@@ -70,6 +70,29 @@ const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
  */
 const HTML_FILE = /\.html?$/i;
 
+/**
+ * check-test-names.mjs scans test/ for its own TEST_FILE grammar
+ * (*.test.(ts|mts|cts|js|mjs)) while skipping fixtures/, node_modules/ and
+ * dist/ at any depth. A change can introduce a duplicate full test name only
+ * by touching one of those files, the checker itself, or its baseline. The
+ * fast gate's import graph cannot see that filesystem scan, which is how
+ * duplicate names accumulated on master. Mirror the script's skip dirs so a
+ * fixture-only churn does not pay for a full rescan; over-selecting a real
+ * test path is harmless because --base only fails on collisions the diff grew.
+ */
+const TEST_NAMES_SKIP_DIRS = new Set(['fixtures', 'node_modules', 'dist']);
+const TEST_NAMES_FILE = /^test\/.*\.test\.(?:ts|mts|cts|js|mjs)$/;
+const TEST_NAMES_OWN_FILES = new Set([
+  'scripts/check-test-names.mjs',
+  'scripts/check-test-names-baseline.json',
+]);
+
+function selectsTestNamesCheck(path) {
+  if (TEST_NAMES_OWN_FILES.has(path)) return true;
+  if (!TEST_NAMES_FILE.test(path)) return false;
+  return !path.split('/').slice(1, -1).some((dir) => TEST_NAMES_SKIP_DIRS.has(dir));
+}
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -87,6 +110,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     fleetRegistry: changed.some((path) => /^src\/cli\/fleet-[^/]*\.ts$/.test(path)),
     docsCheck: changed.some((path) => DOC_MARKDOWN.test(path) || !existing.has(path)),
     quarantineCheck: changed.some((path) => QUARANTINE_TEST_FILE.test(path) || path === QUARANTINE_LEDGER),
+    testNamesCheck: changed.some(selectsTestNamesCheck),
     rustFiles: changed.filter((path) => existing.has(path) && /\.rs$/.test(path)),
     swiftFiles: changed.filter((path) => existing.has(path) && /\.swift$/.test(path)),
     yamlFiles: changed.filter((path) => existing.has(path) && /\.ya?ml$/.test(path)),
@@ -1736,6 +1760,18 @@ function main() {
     }
   } else {
     console.log('PASS quarantine ledger skipped: no test file or quarantine ledger change');
+  }
+  if (selection.testNamesCheck) {
+    try {
+      // --base scopes the scan to collisions this diff grew; the strict scan
+      // stays the manual/gate:full alarm for legacy duplicates on the base.
+      run('duplicate test names', 'scripts/check-test-names.mjs', ['--base', (comparison ?? verificationBase(root)).base]);
+    } catch (error) {
+      console.log(`FAIL duplicate test names: ${error.message}`);
+      process.exitCode = 1;
+    }
+  } else {
+    console.log('PASS duplicate test names skipped: no test file change');
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');

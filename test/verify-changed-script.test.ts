@@ -20,12 +20,13 @@ describe('changed verification selection', () => {
       fleetRegistry: false,
       docsCheck: true,
       quarantineCheck: false,
+      testNamesCheck: false,
     });
   });
 
   it('excludes deleted files from lint while retaining deleted web paths for typecheck', () => {
     expect(selectChangedFiles(['src/gone.ts', 'src/web-ui/old screen.tsx'], [])).toEqual({
-      lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], detachedScriptFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false,
+      lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], detachedScriptFiles: [], webTypecheck: true, authorityDrift: true, fleetRegistry: false, docsCheck: true, quarantineCheck: false, testNamesCheck: false,
     });
   });
 
@@ -57,7 +58,7 @@ describe('changed verification selection', () => {
     expect(selectChangedFiles(['notes.md'], ['notes.md']).lintFiles).toEqual([]);
     const paths = ['a.js', 'b.cjs', 'c.mjs', 'd.ts', 'e.cts', 'f.mts', 'g.tsx', 'h.jsx'];
     expect(selectChangedFiles(paths, paths).lintFiles).toEqual(paths);
-    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], detachedScriptFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false });
+    expect(selectChangedFiles([], [])).toEqual({ lintFiles: [], pythonFiles: [], shellFiles: [], perlFiles: [], jsonFiles: [], jsonlFiles: [], xmlFiles: [], rustFiles: [], swiftFiles: [], yamlFiles: [], tomlFiles: [], cssFiles: [], snapFiles: [], patchFiles: [], htmlFiles: [], detachedScriptFiles: [], webTypecheck: false, authorityDrift: false, fleetRegistry: false, docsCheck: false, quarantineCheck: false, testNamesCheck: false });
   });
 
   it('selects the docs check for markdown changes and deletions, not modified code', () => {
@@ -86,6 +87,30 @@ describe('changed verification selection', () => {
       'queue/quarantine.tsv.bak', 'test/foo.test.ts.snap', 'latest/test.ts', 'contest/x.ts',
     ]) {
       expect(selectChangedFiles([path], [path]).quarantineCheck).toBe(false);
+    }
+  });
+
+  it('selects the duplicate test-name check for scanned test files, the checker and its baseline', () => {
+    for (const path of [
+      'test/foo.test.ts', 'test/nested/dir/suite.test.mts', 'test/x.test.js',
+      'test/y.test.mjs', 'test/z.test.cts',
+      'scripts/check-test-names.mjs', 'scripts/check-test-names-baseline.json',
+    ]) {
+      expect(selectChangedFiles([path], [path]).testNamesCheck).toBe(true);
+    }
+    // Over-selecting a deleted test path is harmless: --base only fails on
+    // collisions the diff grew, and a deletion can never grow one.
+    expect(selectChangedFiles(['test/gone.test.ts'], []).testNamesCheck).toBe(true);
+  });
+
+  it('skips the duplicate test-name check for paths the scanner never reads', () => {
+    for (const path of [
+      'src/web-ui/x.spec.ts', 'test/helper.ts', 'test/fixtures/x.test.ts',
+      'test/a/fixtures/deep/x.test.ts', 'test/node_modules/x.test.ts',
+      'test/dist/x.test.ts', 'test/foo.test.tsx', 'test/foo.test.ts.snap',
+      'latest/test.ts', 'contest/x.test.ts', 'queue/quarantine.tsv',
+    ]) {
+      expect(selectChangedFiles([path], [path]).testNamesCheck).toBe(false);
     }
   });
 });

@@ -420,6 +420,15 @@ describe('gate data files', () => {
     expect(pkg.scripts['typecheck:fast']).toContain('src/web-ui/tsconfig.json');
   });
 
+  it('scopes the test-names step to the merge-base, keeping the strict scan without one', () => {
+    const opts = { nodeBin: 'node', npmCmd: 'npm', tscBin: 'TSC', eslintBin: 'ESLINT', gateDir: '.ashlr-gate' };
+    const testNames = (specs: ReturnType<typeof phaseASpecs>) => specs.find((spec) => spec.name === 'test-names');
+    expect(testNames(phaseASpecs(opts))?.args).toEqual(['scripts/check-test-names.mjs']);
+    expect(testNames(phaseASpecs({ ...opts, mergeBase: 'abc123' }))?.args).toEqual([
+      'scripts/check-test-names.mjs', '--base', 'abc123',
+    ]);
+  });
+
   it('--check typechecks both tsconfig projects with the native compiler', () => {
     expect(checkTypeSpecs({ nodeBin: 'node', tsgoBin: 'TSGO' })).toEqual([
       { name: 'typecheck', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'tsconfig.json'] },

@@ -9,11 +9,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 
 const SCRIPT = fileURLToPath(new URL('../scripts/check-test-names.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('..', import.meta.url));
@@ -213,4 +213,137 @@ describe('check-test-names script', () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('check-test-names: OK');
   }, 120_000);
+});
+
+describe('check-test-names --base diff scope', () => {
+  let repo: string;
+
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+
+  const commitAll = (msg: string) => {
+    git('add', '-A');
+    git(
+      '-c', 'user.email=test@example.com',
+      '-c', 'user.name=test',
+      '-c', 'commit.gpgsign=false',
+      'commit', '-qm', msg,
+    );
+  };
+
+  const writeRepo = (rel: string, content: string) => {
+    const path = join(repo, rel);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, content);
+  };
+
+  const runBase = (ref: string, extra: string[] = []) => {
+    const r = spawnSync(
+      process.execPath,
+      [SCRIPT, '--dir', join(repo, 'test'), '--no-baseline', '--base', ref, ...extra],
+      { encoding: 'utf8' },
+    );
+    expect(r.error).toBeUndefined();
+    return { status: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+  };
+
+  const suite = (title: string) =>
+    `${VITEST}describe('suite', () => { it('${title}', () => { expect(1).toBe(1); }); });`;
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'check-test-names-base-'));
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('passes on a collision inherited unchanged from the base', () => {
+    writeRepo('test/a.test.ts', suite('same'));
+    writeRepo('test/b.test.ts', suite('same'));
+    commitAll('base');
+    const r = runBase('HEAD');
+    expect(r.status).toBe(0);
+    expect(r.out).toContain('no new duplicate full names');
+  });
+
+  it('fails when an uncommitted file adds a colliding name', () => {
+    writeRepo('test/a.test.ts', suite('same'));
+    commitAll('base');
+    writeRepo('test/b.test.ts', suite('same'));
+    const r = runBase('HEAD');
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('suite > same');
+    expect(r.out).toContain('new duplicate test names across files');
+  });
+
+  it('fails when a later commit introduces the collision, scoped to the older base', () => {
+    writeRepo('test/a.test.ts', suite('unique-a'));
+    commitAll('base');
+    const base = git('rev-parse', 'HEAD');
+    writeRepo('test/b.test.ts', suite('unique-a'));
+    commitAll('adds the duplicate');
+    const r = runBase(base);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('suite > unique-a');
+  });
+
+  it('fails when an existing collision gains another occurrence', () => {
+    writeRepo('test/a.test.ts', suite('same'));
+    writeRepo('test/b.test.ts', suite('same'));
+    commitAll('two-site collision');
+    const base = git('rev-parse', 'HEAD');
+    writeRepo('test/c.test.ts', suite('same'));
+    const r = runBase(base);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('suite > same');
+  });
+
+  it('passes when the diff only adds unique names', () => {
+    writeRepo('test/a.test.ts', suite('alpha'));
+    commitAll('base');
+    writeRepo('test/b.test.ts', suite('beta'));
+    const r = runBase('HEAD');
+    expect(r.status).toBe(0);
+  });
+
+  it('fails on a new within-file duplicate', () => {
+    writeRepo('test/a.test.ts', `${VITEST}describe('suite', () => { it('inner', () => { expect(1).toBe(1); }); });`);
+    commitAll('base');
+    writeRepo('test/a.test.ts', `${VITEST}describe('suite', () => {
+      it('inner', () => { expect(1).toBe(1); });
+      it('inner', () => { expect(2).toBe(2); });
+    });`);
+    const r = runBase('HEAD');
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('new duplicate test names within one file');
+  });
+
+  it('passes when an unchanged collision only moves to a renamed file', () => {
+    writeRepo('test/a.test.ts', suite('same'));
+    writeRepo('test/b.test.ts', suite('same'));
+    commitAll('collision');
+    const base = git('rev-parse', 'HEAD');
+    execFileSync('git', ['mv', 'test/a.test.ts', 'test/z.test.ts'], { cwd: repo });
+    commitAll('rename');
+    const r = runBase(base);
+    expect(r.status).toBe(0);
+  });
+
+  it('still fails on stale baseline entries under --base', () => {
+    writeRepo('test/a.test.ts', suite('unique'));
+    writeRepo('baseline.json', JSON.stringify({ names: ['suite > gone'] }));
+    commitAll('base');
+    const r = runBase('HEAD', ['--baseline', join(repo, 'baseline.json')]);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('stale baseline entries');
+  });
+
+  it('exits 2 when the base ref cannot be resolved', () => {
+    writeRepo('test/a.test.ts', suite('unique'));
+    commitAll('base');
+    const r = runBase('no-such-ref');
+    expect(r.status).toBe(2);
+  });
 });
