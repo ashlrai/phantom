@@ -725,6 +725,48 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ id: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to bodies carrying that exact kind discriminator', () => {
+    const root = store();
+    post(root, T0, { id: 'n1', from: 'a', to: 'b', body: { kind: 'note', text: 'a note' } });
+    post(root, T0 + 1_000, { id: 'w1', from: 'a', to: 'b',
+      body: { kind: 'work.post', jobId: 'RQ-BK1', title: 'Fix the parser', repo: 'a/b',
+        provider: 'devin', claimKeys: ['repo:a/b'] } });
+    // The discriminator falls back through protocol.kind to type/schema the
+    // same way busBodyKind reads it — the match is the raw body's own field.
+    post(root, T0 + 2_000, { id: 'p1', from: 'a', to: 'b',
+      body: { protocol: { version: 1, kind: 'status' }, text: 'v1 wrapped' } });
+    post(root, T0 + 3_000, { id: 't1', from: 'a', to: 'b', body: { type: 'guardian-drain.v1', text: 'drain' } });
+    post(root, T0 + 4_000, { id: 's1', from: 'a', to: 'b', body: { schema: 'planner-cycle-result.v1', text: 'cycle' } });
+    // Case, padding, kindless bodies and non-string discriminators never match.
+    post(root, T0 + 5_000, { id: 'x1', from: 'a', to: 'b', body: { kind: 'Note', text: 'wrong case' } });
+    post(root, T0 + 6_000, { id: 'x2', from: 'a', to: 'b', body: { kind: ' note ', text: 'padded' } });
+    post(root, T0 + 7_000, { id: 'x3', from: 'a', to: 'b', body: { text: 'kindless reply', inReplyTo: 'n1' } });
+    post(root, T0 + 8_000, { id: 'x4', from: 'a', to: 'b', body: { kind: 42, text: 'numeric kind' } });
+    const hits = read(root, { bodyKind: 'work.post' });
+    expect(hits.messages.map(m => m.id)).toEqual(['w1']);
+    expect(hits.matched).toBe(1);
+    // Every discriminator source the shared read honors lists under its own
+    // value; an unrecognized printable value is an honest empty page.
+    expect(read(root, { bodyKind: 'note' }).messages.map(m => m.id)).toEqual(['n1']);
+    expect(read(root, { bodyKind: 'status' }).messages.map(m => m.id)).toEqual(['p1']);
+    expect(read(root, { bodyKind: 'guardian-drain.v1' }).messages.map(m => m.id)).toEqual(['t1']);
+    expect(read(root, { bodyKind: 'planner-cycle-result.v1' }).messages.map(m => m.id)).toEqual(['s1']);
+    expect(read(root, { bodyKind: 'never-seen' })).toMatchObject({ matched: 0, messages: [] });
+    // --body-kind composes with the other filters; matched counts only the
+    // rows every filter accepts and limit caps the page, not the count.
+    expect(read(root, { bodyKind: 'note', agent: 'a' }).messages.map(m => m.id)).toEqual(['n1']);
+    expect(read(root, { bodyKind: 'work.post', contains: 'missing' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { bodyKind: 'note', limit: 1 })).toMatchObject({ matched: 1, messages: [{ id: 'n1' }] });
+  });
+
+  it('parses --body-kind as a printable discriminator and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ bodyKind: 'work.post' })).toEqual({ ok: true, query: { bodyKind: 'work.post' } });
+    expect(parseAgentMessagesQuery({ bodyKind: 'wake', kind: 'reply', limit: '5' })).toEqual({ ok: true, query: { bodyKind: 'wake', kind: 'reply', limit: 5 } });
+    expect(parseAgentMessagesQuery({ bodyKind: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ bodyKind: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ bodyKind: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -735,11 +777,11 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&bodyKind=work.post&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2' }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2', bodyKind: 'work.post' }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?before=never')).status).toBe(400);
@@ -752,6 +794,7 @@ describe('phm messages projection', () => {
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?inReplyTo=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?id=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?bodyKind=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?id=a&id=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?from=a&from=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=a&excludeFrom=b')).status).toBe(400);

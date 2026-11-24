@@ -11,7 +11,7 @@
  * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
  * default window is throttled the same way; 503 carries the typed "unknown" body.
  *
- * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude] is
+ * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude&bodyKind=work.post] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
  * map node ids and per-line counts and last 5 summaries, for the map's cards.
  * Every `phm messages` filter is a param of the same name (camelCase where the
@@ -136,15 +136,16 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
     if (path === AGENT_MESSAGES_PATH) {
       // The same filter vocabulary `phm agents messages` and `phm messages`
       // share; dashed flags arrive camelCase, each param once.
-      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id'];
+      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind'];
       if ([...params.keys()].some(key => !keys.includes(key)) || keys.some(key => params.getAll(key).length > 1)) {
-        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo and id only, once each.' }); return true;
+        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id and bodyKind only, once each.' }); return true;
       }
       try {
         const pick = (key: string) => params.get(key) ?? undefined;
         const read = messages({ since: pick('since'), before: pick('before'), limit: pick('limit'), agent: pick('agent'), with: pick('with'),
           kind: pick('kind'), priority: pick('priority'), job: pick('job'), thread: pick('thread'), channel: pick('channel'),
-          contains: pick('contains'), from: pick('from'), excludeFrom: pick('excludeFrom'), inReplyTo: pick('inReplyTo'), id: pick('id') });
+          contains: pick('contains'), from: pick('from'), excludeFrom: pick('excludeFrom'), inReplyTo: pick('inReplyTo'), id: pick('id'),
+          bodyKind: pick('bodyKind') });
         if (!read.ok) sendJson(res, 400, { error: read.error });
         else sendJson(res, read.result.source === 'unavailable' ? 503 : 200, read.result);
       } catch { sendJson(res, 503, { error: 'Agent messages unavailable.' }); }

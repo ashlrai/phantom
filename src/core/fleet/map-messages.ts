@@ -7,10 +7,10 @@
  * the shared `phm messages` pipeline (agent-messages.ts) with the map's own
  * agent-to-agent rule and the same filter vocabulary `phm messages` parses —
  * agent/with, kind, priority, job, thread, channel, contains,
- * from/exclude-from, in-reply-to and id all match exactly the way that read
- * matches them, so a filtered question about the map feed gets the same
- * answer every other bus read gives. Display text and a short summary leave
- * this read, and both are passed through the shared secret scrub again here,
+ * from/exclude-from, in-reply-to, id and body-kind all match exactly the way
+ * that read matches them, so a filtered question about the map feed gets the
+ * same answer every other bus read gives. Display text and a short summary
+ * leave this read, and both are passed through the shared secret scrub again here,
  * so the raw envelope is never echoed. Names are routing labels, not proven
  * identities; an agent the map does not draw has a null node (unknown, never
  * guessed).
@@ -33,7 +33,7 @@ export interface MapMessagesFlags {
   since?: string; before?: string; limit?: string;
   agent?: string; with?: string; kind?: string; priority?: string; job?: string;
   thread?: string; channel?: string; contains?: string;
-  from?: string; excludeFrom?: string; inReplyTo?: string; id?: string;
+  from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string;
 }
 
 /** Key order is the JSON contract. `fromNode`/`toNode` are map node ids (`leader`, `lane:<name>`, `job:<id>`), null when the map does not draw that agent. */
@@ -122,6 +122,7 @@ export function parseMapMessagesQuery(input: MapMessagesFlags = {}, now = Date.n
     agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
     thread: input.thread, channel: input.channel, contains: input.contains,
     from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id,
+    bodyKind: input.bodyKind,
   }, now);
   if (!shared.ok) return shared;
   return { ok: true, query: { ...shared.query, since, before, limit } };
@@ -154,7 +155,7 @@ export function readMapMessages(input: MapMessagesFlags = {}, options: MapMessag
 
 /** The query keys the read accepts — the CLI filter dimensions plus `limit`. */
 const MAP_MESSAGES_QUERY_KEYS = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority',
-  'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id'] as const;
+  'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind'] as const;
 
 /** GET /api/fleet/map/messages[?since=15m&before=1h&limit=20&…]: 200 the messages, 400 a bad query, 503 the typed "unknown" read. */
 export function mapMessagesResponse(url: string, options: BusInboxOptions = {}): { status: 200 | 400 | 503; body: MapMessages | { error: string } } {
