@@ -44,22 +44,31 @@ export interface ReplyState {
   text: string;
 }
 
+/** HH:MM (UTC) of an ISO stamp, or "unknown" when the stamp is not a time. */
+function clock(asOf: string): string {
+  const t = Date.parse(asOf);
+  return Number.isNaN(t) ? 'unknown' : new Date(t).toISOString().slice(11, 16);
+}
+
+/** `STATE (as of HH:MM UTC, source: <file or route>)` then one line of evidence. */
 function line(r: Omit<ReplyState, 'text'>): string {
-  const when = `as of ${r.asOf} from ${r.source}`;
+  const head = `${r.state} (as of ${clock(r.asOf)}${clock(r.asOf) === 'unknown' ? '' : ' UTC'}, source: ${r.source})`;
   const who = r.owner !== null && r.claim !== null ? `owner ${r.owner}, claim ${r.claim}` : 'no owner yet';
   const dup = r.duplicateOf !== null ? `; repeat of ${r.duplicateOf}` : '';
   const e = r.evidence;
+  let body: string;
   switch (r.state) {
     case 'VERIFIED': {
       const v = e.verified;
-      const proof = v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${v.head}` : ''}` : v?.tests ? `tests ${v.tests}` : `artifact ${v?.artifact ?? 'unknown'}`;
-      return `VERIFIED: ${proof}; ${when}${dup}`;
+      body = v?.pr != null ? `PR ${v.pr}${v.head ? ` at ${v.head}` : ''}` : v?.tests ? `tests ${v.tests}` : `artifact ${v?.artifact ?? 'unknown'}`;
+      break;
     }
-    case 'BLOCKED': return `BLOCKED: waiting on ${e.blocked?.dependency ?? 'unknown'}; ${when}${dup}`;
-    case 'RUNNING': return `RUNNING: ${who}; ${when}${dup}`;
-    case 'ASSIGNED': return `ASSIGNED: ${who}; ${when}${dup}`;
-    default: return `RECEIVED: ${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}; ${when}${dup}`;
+    case 'BLOCKED': body = `waiting on ${e.blocked?.dependency ?? 'unknown'}`; break;
+    case 'RUNNING':
+    case 'ASSIGNED': body = who; break;
+    default: body = `${who}${r.missing.length ? ` (missing: ${r.missing.join(', ')})` : ''}`;
   }
+  return `${head}\n${body}${dup}`;
 }
 
 /** First request of the thread holding `id`, by arrival order; `id` itself when it has no thread. */

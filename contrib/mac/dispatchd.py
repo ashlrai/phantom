@@ -908,6 +908,19 @@ def _maxruntime_escalated(marker):
     try:
         with open(marker) as f: return "KILL" in {line.strip() for line in f}
     except OSError: return True
+def _maxruntime_unresolved(j):
+    """True while a timed-out job's watchdog escalation is unfinished: slot
+    accounting and the reaper must treat the job as live until group absence
+    is verified. Fails closed: an existing but unreadable marker is unresolved,
+    never escalated."""
+    mk = RUN + "/" + j + ".maxruntime"
+    try:
+        with open(mk) as f: escalated = "KILL" in {line.strip() for line in f}
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return not escalated
 def _maxruntime_done_identities(marker):
     done = set()
     try:
@@ -921,6 +934,22 @@ def _maxruntime_done_identities(marker):
         if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
             done.add((pid, start_time))
     return done
+def _maxruntime_killsent_identities(marker):
+    """Identities already sent SIGKILL. Escalation must not re-signal them,
+    and they stay unresolved until group absence is confirmed."""
+    killsent = set()
+    try:
+        with open(marker) as f: lines = f.read().splitlines()
+    except OSError: return killsent
+    for line in lines:
+        try: row = json.loads(line)
+        except (TypeError, ValueError): continue
+        if not isinstance(row, dict) or row.get("killsent") is not True: continue
+        pid, start_time = row.get("pid"), row.get("start")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(start_time, str) and start_time:
+            killsent.add((pid, start_time))
+    return killsent
+
 def _maxruntime_pending_identities(marker):
     """TERM candidates the first pass could not verify; a later non-pending
     row for the same identity -- or the same pid for an unknown-start
@@ -1002,13 +1031,17 @@ def job_watchdog():
                 if not _maxruntime_escalated(mk) and NOW - os.path.getmtime(mk) >= JOB_KILL_GRACE_S:
                     expected = _maxruntime_identities(mk)
                     done = _maxruntime_done_identities(mk)
-                    pending = [identity for identity in sorted(expected) if identity not in done]
+                    killsent = _maxruntime_killsent_identities(mk)
+                    # SIGKILL delivery is asynchronous: a successful killpg only
+                    # means the signal was sent, not that the group is gone.
+                    # Record killsent (never done) so the unresolved check
+                    # below keeps the slot until group absence is confirmed.
+                    pending = [identity for identity in sorted(expected) if identity not in done and identity not in killsent]
                     signalled = _kill_leaders(leaders, signal.SIGKILL, j, expected=set(pending)) if pending else []
                     if signalled:
                         with open(mk, "a") as f:
                             for pid, start_time in signalled:
-                                f.write(json.dumps({"pid": pid, "start": start_time, "done": True}, separators=(",", ":")) + "\n")
-                        done.update(signalled)
+                                f.write(json.dumps({"pid": pid, "start": start_time, "killsent": True}, separators=(",", ":")) + "\n")
                         ev("REAP TIMEOUT %s SIGKILL" % j)
                     unresolved = [identity for identity in expected if identity not in done and _maxruntime_identity_alive(identity)]
                     unresolved += [identity for identity in _maxruntime_pending_identities(mk)
@@ -1380,10 +1413,12 @@ for bp in glob.glob(R + "/*.base"):
     if not b or not JID.match(j): continue
     wt, pool = b[2], b[3]
     if bundle_member_of(j): continue   # a leased bundle line: its bundle session holds the lane slot
-    # Completion wins over launch grace, lingering processes and fresh artifacts.
+    # Completion wins over launch grace, lingering processes and fresh artifacts —
+    # but not over an unfinished watchdog escalation: a current-attempt receipt
+    # keeps the slot until group absence is verified (KILL), like any live job.
     # Keep the worktree/receipts for the existing publisher and reconciliation.
-    if published_current_attempt(j): continue
-    if j in alive:
+    if published_current_attempt(j) and not _maxruntime_unresolved(j): continue
+    if j in alive or _maxruntime_unresolved(j):
         if pool in running: running[pool] += 1
         if pool == "codex-local" and _is_local_mid(j): local_mid += 1
         continue
@@ -1428,7 +1463,7 @@ def reap_worktrees():
         j = os.path.basename(bp)[:-5]; b = base(j)
         if not b or not JID.match(j): continue
         wt, pool = b[2], b[3]
-        if j in alive or bundle_member_of(j):
+        if j in alive or _maxruntime_unresolved(j) or bundle_member_of(j):
             continue
         if not os.path.isdir(wt) or j in reaping or j in publishing: continue
         attempt = _attempts.get(j, {})
@@ -1637,7 +1672,7 @@ def ratelimited(lane, since):
 
 # ---- precheck: returns (code, reason) to skip, None to launch. Timeout/error/usage -> launch.
 PC_MAX = 8
-from launch_precheck import (precheck as shared_precheck, park_key, parked, park,
+from launch_precheck import (precheck as shared_precheck, dupcheck as shared_dupcheck, add_check_line, DUPCHECK_CODE, park_key, parked, park,
                              attempt_identity, empty_reason, read_attempts, with_prompt)
 PARK_PATH = Q + "/precheck-parked.json"
 park_state = jload(PARK_PATH, {})
@@ -1645,6 +1680,9 @@ if not isinstance(park_state, dict): park_state = {}
 
 def precheck(j, repo, pf):
     return shared_precheck(j, repo, rd(pf), H, R, _run)
+
+def dupcheck_gate(j, repo, pf):
+    return shared_dupcheck(j, repo, pf, H, R, _run)
 
 def market_metric(decision):
     # Separate event stream keeps existing lifecycle consumers compatible.
@@ -2325,6 +2363,12 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                 rest.append(line); continue
             if j in park_state:
                 park_state.pop(j); jsave(PARK_PATH, park_state)
+            if not pc:   # pre-launch dupcheck (phm queue dupcheck --gate): skip a row that is already on master, warn on a likely one
+                dc = dupcheck_gate(j, repo, pf)
+                if dc and dc[0] == "skip":
+                    pc = (DUPCHECK_CODE, dc[1])
+                    metric({"event": "dupcheck_skip", "job": j, "repo": repo, "lane": lane, "reason": dc[1], "evidence": dc[2]})
+                elif dc: add_check_line(pf, dc[1])
             if pc:
                 open(Q + "/precheck-skips.tsv", "a").write("%s\t%s\t%d\t%s\n" % (TS, j, pc[0], pc[1]))
                 metric({"event": "skipped_empty", "job": j, "repo": repo, "lane": lane, "code": pc[0]})

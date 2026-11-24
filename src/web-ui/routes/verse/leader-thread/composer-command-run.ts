@@ -6,7 +6,8 @@
  *
  * Writes that succeed also post one short inbox note ("[composer] /pause:
  * done") so the leaders see what Mason did. /drop, /open and /help are local, and
- * /status is read-only, so they post nothing.
+ * /status, /apps, /find, /lanes, /lane and the session commands (/who, /thread,
+ * /summary, /log) are read-only, so they post nothing. /app is a write like the others.
  */
 import { pauseFleet, resumeFleet } from '../../../data/mutations.js';
 import { describeControlError } from '../autonomy/use-guarded-action.js';
@@ -18,7 +19,11 @@ import { suggestId, type DropJobDraft } from '../fleet-queue/drop-job-model.js';
 import { openDropJobSheet } from '../fleet-queue/drop-job-sheet-store.js';
 import { normalizePaneId } from '../shell/dock-catalog.js';
 import { isLaneTargets } from '../ops/lane-targets-model.js';
+import { liveAppDeps, runAppCommand, runAppsCommand, type AppCommandDeps } from './composer-app-commands.js';
 import { commandArgError, helpLine, holdArgs, type ComposerCommandName } from './composer-commands.js';
+import { liveFindDeps, runFindCommand, type FindCommandDeps } from './composer-find-command.js';
+import { liveLaneDeps, runLaneCommand, runLanesCommand, type LaneCommandDeps } from './composer-lane-commands.js';
+import { isSessionCommand, liveSessionDeps, runSessionCommand, type SessionCommandDeps } from './composer-session-commands.js';
 import { sendLeaderInboxMessage } from './leader-inbox-data.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 
@@ -38,6 +43,14 @@ export interface ComposerCommandDeps {
   statusNow: () => Promise<string | null>;
   postNote: (text: string) => Promise<void>;
   now: () => number;
+  /** The reads and openers behind /who, /thread, /summary and /log; the live ones when left out. */
+  session?: SessionCommandDeps;
+  /** The reads and the one write behind /apps and /app; the live ones when left out. */
+  apps?: AppCommandDeps;
+  /** The search behind /find; the live one when left out. */
+  find?: FindCommandDeps;
+  /** The reads behind /lanes and /lane; the live ones when left out. */
+  lanes?: LaneCommandDeps;
 }
 
 export const liveComposerDeps: ComposerCommandDeps = {
@@ -86,6 +99,8 @@ export function commandGate(command: ComposerCommand): { reason: string; confirm
       confirmLabel: 'Yes, stop',
       destructive: true,
     } };
+    // Open and bring-to-front are the card's own unconfirmed buttons; there is no quit from here.
+    case 'app': return { reason: 'Opening an app requires the mutation token.', confirm: null };
     default: return null;
   }
 }
@@ -115,6 +130,7 @@ async function write(command: ComposerCommand, deps: Omit<ComposerCommandDeps, '
       if (!row || !row.held) throw new Error('The server did not confirm the lane hold.');
       return [`Held ${parts.lane} for ${parts.minutes} min`, 'done'];
     }
+    case 'app': return runAppCommand(command.arg, deps.apps ?? liveAppDeps);
     default: {
       const result = await deps.stopJob(command.arg);
       const outcome = stopOutcomeText(result);
@@ -129,6 +145,12 @@ export async function runComposerCommand(command: ComposerCommand, deps: Omit<Co
   const argError = commandArgError(command);
   if (argError) return argError;
   if (command.name === 'help') return helpLine();
+  // Read only: no token gate, no inbox note.
+  if (isSessionCommand(command.name)) return runSessionCommand({ name: command.name, arg: command.arg }, deps.session ?? liveSessionDeps);
+  if (command.name === 'find') return runFindCommand(command.arg, deps.find ?? liveFindDeps);
+  if (command.name === 'apps') return runAppsCommand(deps.apps ?? liveAppDeps, deps.now());
+  if (command.name === 'lanes') return runLanesCommand(deps.lanes ?? liveLaneDeps, deps.now());
+  if (command.name === 'lane') return runLaneCommand(command.arg, deps.lanes ?? liveLaneDeps, deps.now());
   if (command.name === 'open') {
     const id = normalizePaneId(command.arg)!;
     deps.openPane!(id);

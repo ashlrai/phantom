@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
+import { MARKET_LANE_ID } from './unfed-market.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
@@ -30,7 +31,8 @@ export interface FleetQueueV1 {
    * READY rows carrying no lane hint — the shared market's open rows, which
    * any capable executor may claim. They count in `ready`/`total` like every
    * READY row but are never attributed to a lane, so byLane/nextUp/groups
-   * cannot name them.
+   * cannot name them. Rows the market rejects (invalid_requirements) are not
+   * open supply: they land in `malformed` instead.
    */
   unhinted: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
@@ -48,8 +50,6 @@ export interface FleetQueueV1 {
 }
 
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
-/** Same lane-cell shape lane-console's parser applies before consulting requirements. */
-const LANE_CELL = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const PARKED = /^PARKED-([A-Za-z0-9_-]+)(?:\.([A-Za-z0-9][A-Za-z0-9._@-]{0,63}))?$/i;
 const DEP_REASON = /^(?:DEP|DEPENDENCY)$/i;
 const GATE_LINE = /DEPENDENCY\s+GATE[:\s]+([^\n]+)/i;
@@ -76,16 +76,41 @@ export function parseDependencyGateIds(text: string): string[] {
   return out;
 }
 
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` and
+ * metrics-outcomes accept: ids take job|job_id|jobId|id, events
+ * event|type|kind, and phases outcome|state|status plus the producer
+ * aliases phase|result|conclusion. Reconciler rows keep the PUBLISHED
+ * row's publish-shaped event while carrying a terminal outcome;
+ * batcher.project_row maps them to event:"outcome" at read time. */
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+
+const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
 /** MERGED job ids from a bounded jobs.jsonl metrics ledger. */
 export function mergedJobsFromJsonl(text: string): Set<string> {
   const merged = new Set<string>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { event?: unknown; state?: unknown; job?: unknown };
-      if (row.event === 'outcome' && row.state === 'MERGED' && typeof row.job === 'string' && JOB_ID.test(row.job)) {
-        merged.add(row.job);
-      }
+      const row = JSON.parse(line) as Record<string, unknown>;
+      const job = ledgerPick(row, LEDGER_JOB_KEYS);
+      const phase = ledgerPick(row, LEDGER_PHASE_KEYS)?.toUpperCase() ?? null;
+      if (!job || !JOB_ID.test(job) || phase !== 'MERGED') continue;
+      // Outcome evidence: an outcome/merged event, an eventless phase row
+      // (batcher/_vc_event infer outcome), or a reconciler row whose
+      // terminal phase arrives on a publish-shaped event.
+      const event = ledgerPick(row, LEDGER_EVENT_KEYS)?.toLowerCase() ?? null;
+      if (event !== null && event !== 'outcome' && event !== 'merged' &&
+          row['source'] !== 'metrics-outcomes-reconciler') continue;
+      merged.add(job);
     } catch { /* skip malformed ledger lines */ }
   }
   return merged;
@@ -299,17 +324,18 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
     // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
     // generic positional format [job, pool, tier, repo, title]. A lane cell
-    // that names no lane is the market's open hint only when the dialect's
-    // other guards hold, so probe those rows through the shared parser and
-    // keep the header verdict for anything else — malformed stays malformed
-    // instead of surfacing as a generic-positional row.
+    // the market would not accept as a preferred_lane — empty (open hint) or
+    // invalid (invalid_requirements) — needs the dialect's requirements-aware
+    // verdict, so probe those rows through the shared parser and keep the
+    // header verdict for anything else — malformed stays malformed instead
+    // of surfacing as a generic-positional row or a bogus lane.
     const dispatcherShape = positional && cells.length === 5 && JOB_ID.test(first) &&
       !/^READY$/i.test(first) && !PARKED.test(first) &&
       /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
-    const openProbe = dispatcherShape && !LANE_CELL.test(cells[2] ?? '');
+    const openProbe = dispatcherShape && !MARKET_LANE_ID.test(cells[2] ?? '');
     let result = parseReadyTsv(dispatcherShape && !openProbe ? `id\trepo\tpool\ttier\ttitle\n${line}`
       : positional ? input : `${header}\n${input}`);
-    if (openProbe && result.unhinted === 0) {
+    if (openProbe && result.unhinted === 0 && result.invalid === 0) {
       result = parseReadyTsv(`id\trepo\tpool\ttier\ttitle\n${line}`);
     }
     dropped += result.dropped;

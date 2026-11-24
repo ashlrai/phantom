@@ -4,7 +4,7 @@
  * caller-supplied release evidence only; it never proves publication or
  * verification.
  */
-import { markShipped, type EvidenceStatus, type ShippedReleaseNote } from './evidence.js';
+import { markShippedObservation, type EvidenceStatus, type ShippedReleaseNote } from './evidence.js';
 import { readLedger, writeLedger } from './store.js';
 
 export interface NoteShippedReleaseOptions {
@@ -23,7 +23,7 @@ export interface NoteShippedReleaseResult {
 export async function noteShippedRelease(release: ShippedReleaseNote, opts: NoteShippedReleaseOptions = {}): Promise<NoteShippedReleaseResult> {
   const ledger = await readLedger(opts.root);
   if (ledger.items.length === 0) return { updated: 0, matches: [] };
-  const matched = markShipped(ledger, release, opts.now ?? release.at ?? new Date().toISOString());
+  const matched = markShippedObservation(ledger, release, opts.now ?? release.at ?? new Date().toISOString());
   if (matched.length > 0) await writeLedger(ledger, opts.root);
   return { updated: matched.length, matches: matched.map(({ id, status }) => ({ id, status })) };
 }

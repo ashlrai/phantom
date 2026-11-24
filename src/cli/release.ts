@@ -1,10 +1,12 @@
 import { getReleaseStatus, formatReleaseStatus, getReleases, formatReleases } from '../core/release/status.js';
+import { releaseRepoLine } from '../core/release/release-repos.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
 import { collectReleaseNotes, formatReleaseNotes, formatReleaseNotesMarkdown, writeReleaseNotes } from '../core/release/notes.js';
 import { buildPrNotes, formatPrNotesMarkdown, ghPrSource, resolveRepo, type PrSource } from '../core/release/pr-notes.js';
+import { cadenceText, readReleaseCadence, CADENCE_REPOS, type CadenceV1 } from '../core/release/cadence.js';
 import { execFileSync } from 'node:child_process';
 
-export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release notes [--since <tag-or-date>] [--repo <name>] [--json] [--markdown] [--write]';
+export const RELEASE_USAGE = 'phm release status [--json | --text] [--file <release-state.json>]\nphm release cadence [--repos <a,b>] [--json]\nphm release notes [--since <tag-or-date>] [--repo <name>] [--json] [--markdown] [--write]';
 
 async function notesCommand(args: string[], prs: PrSource): Promise<number> {
   const json = args.includes('--json');
@@ -70,10 +72,41 @@ export function cmdReleases(args: string[]): number {
   return 0;
 }
 
-export async function cmdRelease(args: string[], deps: { prs?: PrSource } = {}): Promise<number> {
+const CADENCE_HELP = `${RELEASE_USAGE.split('\n')[1]}
+How stale is each repo's latest release (${CADENCE_REPOS.join(', ')}), read from public GitHub. Never tags or publishes.
+fresh: under 6 hours old, or nothing merged since. due: 6 to 24 hours old with merges since. stale: over 24 hours old with merges since.
+has_assets is false for a release with 0 assets. A value that could not be read is "unknown".
+--json prints phantom.release-cadence/v1 {schema,as_of,repos:[{repo,latest_tag,published_at,has_assets,hours_since,merged_since,status}]}.`;
+
+/** `phm release cadence`: one read, one table. Exit 0 whatever the verdicts; exit 2 for bad arguments. */
+async function cadenceCommand(args: string[], read: () => Promise<CadenceV1> | CadenceV1): Promise<number> {
+  const json = args.includes('--json');
+  const rest = args.filter(arg => arg !== '--json');
+  const flag = rest.indexOf('--repos');
+  const list = flag >= 0 ? rest[flag + 1]?.split(',').map(r => r.trim()).filter(Boolean) : undefined;
+  if (args.filter(arg => arg === '--json').length > 1 || rest.length !== (flag >= 0 ? 2 : 0) || (flag >= 0 && (!list?.length || list.some(r => !/^[a-z0-9][a-z0-9._-]*$/i.test(r))))) {
+    process.stderr.write(`${CADENCE_HELP.split('\n')[0]}\n`);
+    return 2;
+  }
+  const report = await read();
+  if (json) emit(report, true);
+  else process.stdout.write(`${cadenceText(report).join('\n')}\n`);
+  return 0;
+}
+
+export async function cmdRelease(args: string[], deps: { prs?: PrSource; cadence?: (repos?: string[]) => Promise<CadenceV1> } = {}): Promise<number> {
+  if (args[0] === 'cadence' && (args.includes('--help') || args.includes('-h'))) {
+    process.stdout.write(`${CADENCE_HELP}\n`);
+    return 0;
+  }
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(`${RELEASE_USAGE}\n`);
     return 0;
+  }
+  if (args[0] === 'cadence') {
+    const rest = args.slice(1), flag = rest.indexOf('--repos');
+    const repos = flag >= 0 ? rest[flag + 1]?.split(',').map(r => r.trim()).filter(Boolean) : undefined;
+    return cadenceCommand(rest, () => (deps.cadence ?? (r => readReleaseCadence({ repos: r })))(repos));
   }
   if (args[0] === 'notes') return notesCommand(args.slice(1), deps.prs ?? ghPrSource);
   const json = !args.includes('--text');
@@ -91,7 +124,7 @@ export async function cmdRelease(args: string[], deps: { prs?: PrSource } = {}):
   if (!file) {
     const report = await getReleaseStatus();
     if (json) emit(report, true);
-    else process.stdout.write(`${formatReleaseStatus(report)}\n`);
+    else process.stdout.write(`${report.releaseRepos.map(row => `${releaseRepoLine(row)}; ${row.state}: ${row.reason}`).join('\n')}\n\n${formatReleaseStatus(report)}\n`);
     return 0;
   }
   try {

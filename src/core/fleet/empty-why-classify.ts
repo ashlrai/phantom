@@ -1,3 +1,18 @@
+export const YIELD_EMPTY_LABELS = { no_eligible_source: 'no eligible source PR (or source PR already merged)', no_diff: 'worker finished with no changes', precheck_skip: 'precheck skipped the work', worker_error: 'worker failed', unknown: 'reason unknown' } as const;
+export type YieldEmptyReason = keyof typeof YIELD_EMPTY_LABELS;
+/** Reuse the EMPTY diagnostics; a bare EMPTY says nothing about its cause. */
+export function classifyYieldEmpty(text: string | null): YieldEmptyReason {
+  const tail = (text ?? '').split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
+  const diagnosis = diagnoseEmptyJob(tail, null);
+  if (/\bprecheck[ _-]?(?:code|exit|skip(?:ped)?)\b/i.test(tail)) return 'precheck_skip';
+  if (['sandbox or permission denial', 'provider quota or rate limit', 'timed out', 'tool error', 'test or typecheck failed and was reverted'].includes(diagnosis)
+    || /\bworker[_ -](?:error|failed)\b|\bexit(?: code)?[=: ]+[1-9]\d*\b|\btimeout\b|executable file not found/i.test(tail)) return 'worker_error';
+  if (/\bno eligible (?:source|PR|pull request|target)|\balready (?:merged|on master|on main|shipped|landed)\b|\bno_eligible_source\b/i.test(tail)
+    || diagnosis === 'already-on-master' || /\bNO[ _-]CANDIDATE\b/i.test(tail)) return 'no_eligible_source';
+  return /\bno[_ -]diff\b|\bno changes? (?:made|produced|needed)\b|\bfinished with no changes\b|\bnothing to commit\b|\bworking tree clean\b/i.test(tail)
+    || diagnosis === 'no-op change' ? 'no_diff' : 'unknown';
+}
+
 export const FLEET_EMPTY_WHY_LOG_LINES = 60;
 export const FLEET_EMPTY_WHY_REASONS = ['lint-env', 'interrupted', 'blocked', 'limit', 'other'] as const;
 export type FleetEmptyWhyReason = (typeof FLEET_EMPTY_WHY_REASONS)[number];
@@ -51,3 +66,31 @@ export const EMPTY_JOB_SUGGESTIONS: Record<EmptyJobDiagnosis, string> = {
   'tool error': 'repair the failing tool before retrying',
   unknown: 'record a concrete reason in the final job log',
 };
+
+/** A worker stopped because its model or plan hit a usage cap. `model` is null when the log does not name one. */
+export interface PoolCapHit { model: string | null; kind: 'model-limit' | 'plan-limit' | 'rate-limit' }
+
+// Specific wording first. The model name is a single word, so "reached your Fable limit" names Fable.
+const POOL_CAP_RULES: ReadonlyArray<readonly [PoolCapHit['kind'], RegExp]> = [
+  ['model-limit', /you(?:'|’)ve (?:reached|hit) (?:your|the) ([A-Za-z][\w.-]{1,40}) (?:usage )?limit\b/i],
+  ['plan-limit', /you(?:'|’)ve (?:reached|hit) (?:your|the) (?:usage|plan|weekly|daily|5-hour) limit\b|you(?:(?:'|’)ve| have) hit your usage limit|usage limit (?:reached|hit)\b|usage_limit_reached|exceeded your (?:current )?(?:usage|plan) (?:limit|quota)/i],
+  ['rate-limit', /\brate[ -]?limit(?:ed| exceeded| reached)\b|\bquota (?:exceeded|exhausted)\b|insufficient_quota|resource_exhausted/i],
+];
+
+/**
+ * Pure: does the final worker output say a model or plan limit was reached? Same tail window as the other
+ * empty reasons. Plain "auth failed" and ordinary empties return null, so they keep their own labels.
+ */
+export function detectPoolCap(log: string | null): PoolCapHit | null {
+  if (log === null) return null;
+  const tail = log.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
+  for (const [kind, pattern] of POOL_CAP_RULES) {
+    const match = pattern.exec(tail);
+    if (!match) continue;
+    const named = match[1]?.toLowerCase();
+    // "reached your usage limit" captures the word "usage"; that is a plan limit, not a model.
+    if (named && ['usage', 'plan', 'weekly', 'daily', 'rate', 'monthly', 'free'].includes(named)) return { model: null, kind: 'plan-limit' };
+    return { model: named ?? null, kind };
+  }
+  return null;
+}

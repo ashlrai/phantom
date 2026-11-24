@@ -8,16 +8,19 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
+import { buildStaleText, buildStaleness, buildUnidentifiedText, resolveBuildStaleLimits, savedBuildStaleLimits, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
+import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
+import { summarizeSkips, type SkippedJobsV1 } from './skipped-jobs.js';
 import type { ThroughputMark } from './throughput.js';
 
 export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste'] as const;
+export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'build-stale', 'skipped'] as const;
 export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
 export interface PulseAlertV1 {
   kind: PulseAlertKind;
-  /** The lane, or the pool for pool_waste; `fleet` for stalled. */
+  /** The lane, or the pool for pool_waste, or the repo for release_stale, or the short running commit for build-stale; `fleet` for stalled. */
   lane: string;
   /** ISO time the trouble began; null when it is a projection with no start (pool_waste). */
   since: string | null;
@@ -31,7 +34,15 @@ export interface PulseAlertsV1 {
   unknown: string[];
 }
 /** Every reader's output as it returned it; null when that reader failed. */
-export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null }
+export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; starved: StarvedRead | null; spend: SpendSnapshot | null;
+  /** Release cadence; absent means not checked, null means the read failed. */
+  releases?: CadenceV1 | null;
+  /** The live build (`phm doctor build`); absent means not checked, null means the read failed. */
+  build?: MaybeBuildReport;
+  /** Override the build-stale limits (50 commits, 24 hours). */
+  buildLimits?: BuildStaleLimits;
+  /** Precheck skips in the last SKIP_ALERT_HOURS; absent means not checked, null means the ledger could not be read. */
+  skips?: SkippedJobsV1 | null }
 
 export const STALL_MINUTES = 30;
 export const WASTING_JOBS = 20;
@@ -39,6 +50,8 @@ export const WASTING_JOBS = 20;
 export const WASTING_MIN_JOBS = 5;
 export const WASTING_RATE = 0.4;
 export const POOL_WASTE_PERCENT = 10;
+/** How far back a precheck skip counts toward the skipped alert. */
+export const SKIP_ALERT_HOURS = 6;
 /** How far back the ledger is scanned for the last launch, the last merge and the last 20 jobs per lane. */
 export const ALERT_LOOKBACK_H = 72;
 const MIN = 60_000;
@@ -49,7 +62,7 @@ const minutesText = (ms: number): string => ms >= 120 * MIN ? `${Math.floor(ms /
 /** Pure: the active alerts for these inputs at `now`. */
 export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAlertsV1 {
   const alerts: PulseAlertV1[] = [], unknown: string[] = [];
-  const { marks, starved, spend } = inputs;
+  const { marks, starved, spend, releases, build, buildLimits, skips } = inputs;
 
   if (!marks) unknown.push('Stalled, wasting: the job metrics file could not be read.');
   else {
@@ -96,6 +109,42 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
     if (!spend.pools.some(row => row.status !== 'unknown')) unknown.push(`Pool waste: ${spend.headline.replace(/^Unknown: /, '')}`);
   }
 
+  if (releases === null) unknown.push('Release cadence: GitHub releases could not be read.');
+  else if (releases) for (const row of releases.repos) {
+    const since = row.published_at === 'unknown' ? null : row.published_at;
+    if (row.status === 'unknown') { unknown.push(`Release cadence: ${row.repo} could not be read.`); continue; }
+    if (row.status === 'stale') alerts.push({ kind: 'release_stale', lane: row.repo, since,
+      detail: `${row.repo} last released ${row.latest_tag} ${Math.floor(row.hours_since as number)} hours ago and ${row.merged_since} PRs have merged since.`,
+      fix_hint: `Cut a release for ${row.repo}: phm release cadence.` });
+    else if (row.has_assets === false) alerts.push({ kind: 'release_stale', lane: row.repo, since,
+      detail: `${row.repo} ${row.latest_tag} was published with 0 assets, so nobody can download it.`,
+      fix_hint: `Re-run the release workflow for ${row.repo}: phm release cadence.` });
+  }
+
+  if (build === null) unknown.push('Live build: it could not be read.');
+  else if (build) {
+    const unidentified = buildUnidentifiedText(build);
+    if (unidentified) alerts.push({ kind: 'build-stale', lane: 'unidentified', since: null, detail: unidentified.detail, fix_hint: unidentified.fix });
+    else if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
+    const text = buildStaleText(build, now, buildLimits);
+    if (text && build.commit?.state === 'known') {
+      const behind = build.behind?.state === 'known' ? build.behind.since : null;
+      alerts.push({ kind: 'build-stale', lane: build.commit.sha.slice(0, 7), since: behind ?? null, detail: text.detail, fix_hint: text.fix });
+    }
+  }
+
+  if (skips === null) unknown.push('Skipped jobs: the job metrics file could not be read.');
+  else if (skips && (skips.repeated.length || skips.leader_skipped.length)) {
+    const parts = [
+      skips.repeated.length ? `${skips.repeated.join(', ')} ${skips.repeated.length === 1 ? 'was' : 'were'} skipped more than once` : '',
+      skips.leader_skipped.length ? `${skips.leader_skipped.join(', ')} ${skips.leader_skipped.length === 1 ? 'was' : 'were'} queued by the leader and skipped` : '',
+    ].filter(Boolean);
+    const first = skips.by_code.flatMap(g => g.jobs).map(j => Date.parse(j.at)).filter(Number.isFinite);
+    alerts.push({ kind: 'skipped', lane: 'fleet', since: first.length ? new Date(Math.min(...first)).toISOString() : null,
+      detail: `In the last ${SKIP_ALERT_HOURS} hours the precheck dropped jobs that may have been wrongly skipped: ${parts.join('; ')}.`,
+      fix_hint: 'See why: phm jobs skipped.' });
+  }
+
   const order = (a: PulseAlertV1) => PULSE_ALERT_KINDS.indexOf(a.kind);
   alerts.sort((a, b) => order(a) - order(b));
   return { schema: PULSE_ALERTS_SCHEMA, v: 1, as_of: new Date(now).toISOString(), alerts, unknown };
@@ -135,8 +184,12 @@ function readNotifyState(runsDir: string): NotifyState {
 export async function notifyPulseAlerts(pulse: PulseAlertsV1, opts: { runsDir: string; now: number; senders: PulseNoticeSenders }): Promise<PulseAlertV1[]> {
   const state = readNotifyState(opts.runsDir), sent: PulseAlertV1[] = [];
   const next: NotifyState = {};
-  // Keep only entries still inside the hour, so the file stays small.
-  for (const [key, at] of Object.entries(state)) if (opts.now - at < NOTIFY_EVERY_MS) next[key] = at;
+  // Keep only entries still inside the hour, so the file stays small. A build-stale entry is kept for as long as
+  // that commit stays stale (one notice per commit, not one an hour) and dropped once it recovers.
+  const stale = new Set(pulse.alerts.filter(a => a.kind === 'build-stale').map(alertKey));
+  for (const [key, at] of Object.entries(state)) {
+    if (key.startsWith('build-stale:') ? stale.has(key) : opts.now - at < NOTIFY_EVERY_MS) next[key] = at;
+  }
   for (const alert of pulse.alerts) {
     if (next[alertKey(alert)] !== undefined) continue;
     let took = false;
@@ -173,18 +226,29 @@ async function defaultSenders(runsDir: string): Promise<PulseNoticeSenders> {
   return senders;
 }
 
+/** Saved Settings limits (`fleet.buildStale`) under the ASHLR_BUILD_STALE_COMMITS / _HOURS env overrides; an unreadable config keeps the defaults. */
+async function buildLimitsFromConfig(env: NodeJS.ProcessEnv = process.env): Promise<BuildStaleLimits> {
+  let saved = savedBuildStaleLimits(undefined);
+  try { saved = savedBuildStaleLimits((await import('../config.js')).loadConfigReadOnly().fleet?.buildStale); } catch { /* defaults */ }
+  const { commits, hours } = resolveBuildStaleLimits(saved, env);
+  return { commits, hours };
+}
+
 /** Read every input once. Read-only; a reader that fails leaves its checks unknown. */
 export async function readPulseAlertInputs(runsDir: string, now: number): Promise<PulseAlertInputs> {
   const quiet = <T>(read: Promise<T>): Promise<T | null> => read.catch(() => null);
   const [{ readText }, { throughputMarks }, { readUsageSpend }] = await Promise.all([
     import('./empty-cause.js'), import('./throughput.js'), import('../usage/spend.js'),
   ]);
-  const [ledger, starved, spend] = await Promise.all([
+  const [ledger, starved, spend, releases] = await Promise.all([
     readText(join(runsDir, 'metrics', 'jobs.jsonl'), 32 * 1024 * 1024),
     quiet(import('./lane-console.js').then(m => m.getFleetLaneSnapshot()).then(snapshot => snapshot.starved)),
     quiet(readUsageSpend(join(runsDir, 'queue', 'status.json'), now)),
+    quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend };
+  const build = await quiet(import('./build-live.js').then(m => m.readBuildLive({ now: () => now })));
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: await buildLimitsFromConfig(),
+    skips: ledger === null ? null : summarizeSkips(ledger, now, SKIP_ALERT_HOURS) };
 }
 
 export interface ReadPulseAlertsOpts {
@@ -197,6 +261,6 @@ export interface ReadPulseAlertsOpts {
 export async function readPulseAlerts(opts: ReadPulseAlertsOpts = {}): Promise<PulseAlertsV1> {
   const now = opts.now ?? Date.now(), runsDir = opts.runsDir ?? defaultRunsDir();
   const pulse = buildPulseAlerts(await (opts.read ?? readPulseAlertInputs)(runsDir, now), now);
-  if (opts.notify && pulse.alerts.length) await notifyPulseAlerts(pulse, { runsDir, now, senders: opts.senders ?? await defaultSenders(runsDir) }).catch(() => []);
+  if (opts.notify) await notifyPulseAlerts(pulse, { runsDir, now, senders: opts.senders ?? (pulse.alerts.length ? await defaultSenders(runsDir) : {}) }).catch(() => []);
   return pulse;
 }

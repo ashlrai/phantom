@@ -8,8 +8,14 @@ What happens to an allowlisted message:
 1. It is read from `~/Library/Messages/chat.db`, opened read-only (`sqlite3 -readonly`
    on a `mode=ro` URI). Nothing is ever written to that database.
 2. Only the configured owner handle is receipted through the shared channel
-   receiver into local `MASON-INBOX.md` and the chief-of-staff queue. Other
-   allowlisted handles enter the local teammate inbox with a hashed sender ID,
+   receiver into local `MASON-INBOX.md` and the chief-of-staff queue. Each
+   verified-owner receipt is also copied into the unified owner thread
+   (`phm comms thread`, `phm comms status`) as a best-effort record — the same
+   copy the Telegram, email and Slack receivers get — gated by the iMessage
+   owner-thread adapter (`bridge = "loopback"` plus the owner identity);
+   without that configuration intake is unaffected and nothing is recorded.
+   The copy writes no second inbox entry and its bus mirror stays redacted.
+   Other allowlisted handles enter the local teammate inbox with a hashed sender ID,
    and each durable teammate row also mirrors onto the local agent bus as an
    untrusted `note` envelope on the `teammate.findings` topic (see the findings
    mirror below). Owner message bodies never enter the shared agent bus.

@@ -124,6 +124,8 @@ export type FleetLaneView = Omit<CoreFleetLaneView, 'slotTarget' | 'health' | 's
   /** Absent from an older server. */
   health?: CoreFleetLaneView['health'];
   startsInWindow?: number | null;
+  /** Lane capability table row (phm lanes caps); absent until the server reports it. */
+  caps?: import('../components/fleet/lane-caps.js').LaneCaps | null;
 };
 export type { LaneHealth, LaneHealthState } from '../../core/fleet/lane-badge.js';
 export type { StarvedLane } from '../../core/fleet/lane-starved.js';

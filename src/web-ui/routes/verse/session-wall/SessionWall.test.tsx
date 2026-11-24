@@ -9,6 +9,7 @@ import { mockViewport, type ViewportMock } from '../shell/viewport.test-support.
 import { SessionWallPane, WallView } from './SessionWall.js';
 import { narrowSessionWall, replyLine, wallHeadline } from './session-wall-model.js';
 import './session-wall.pane.js';
+import { forgetWallSeen } from './wall-seen.js';
 import { requestWallSession, takeRequestedWallSession } from './wall-selection.js';
 
 const AT = '2026-11-18T12:00:00.000Z';
@@ -59,7 +60,7 @@ const host = () => ({ openPane: vi.fn() });
 const card = (id: string) => screen.getByRole('button', { name: new RegExp(`^${id}, `) });
 
 let viewport: ViewportMock | null = null;
-beforeEach(() => { evictAll(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
+beforeEach(() => { evictAll(); forgetWallSeen(); setMutationToken('a'.repeat(64)); takeRequestedWorkerLogJob(); takeRequestedWallSession(); });
 afterEach(() => { cleanup(); viewport?.restore(); viewport = null; vi.unstubAllGlobals(); vi.restoreAllMocks(); clearMutationToken(); });
 
 it('registers a session-independent Conversations pane beside the Leader chat', () => {
@@ -310,7 +311,7 @@ it('narrows defensively: bad entries dropped, unsafe links removed, unknown kept
       messages: [message('latest', 'session', 'RQ-X', 'one'), message('latest', 'session', 'RQ-X', 'duplicate key'), { key: 'bus:1' }, 7, message('bus:2', 'sideways', '', 'two', { at: 'never', format: 'html' })] },
     { session: { id: 'RQ-X' } }, { session: {} }, { summary: [] }, 7] })!;
   expect(read.entries).toHaveLength(1);
-  expect(read.entries[0]!.session).toEqual({ id: 'RQ-X', kind: 'worker', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null, parentId: null, state: 'unknown', lastMessageAgeSeconds: null, prUrl: null });
+  expect(read.entries[0]!.session).toEqual({ id: 'RQ-X', kind: 'worker', lane: 'unknown', model: 'unknown', repo: 'unknown', jobId: null, parentId: null, state: 'unknown', lastMessageAgeSeconds: null, prUrl: null, helpers: null });
   expect(read.entries[0]).toMatchObject({ summary: ['ok'], messageCount: 2, messages: [{ key: 'latest', text: 'one', truncated: false }, { key: 'bus:2', side: 'record', label: 'Unlabelled', at: null, format: 'plain' }] });
   expect(wallHeadline(read)).toBe('1 of 45 sessions: 1 state unknown');
   // A body never gets to aim Mason's words at another session: the rule is applied here instead.

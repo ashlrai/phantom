@@ -35,8 +35,9 @@ export const AGENT_MAX_RUNTIMES = 16;
 export const CHANNEL_MAX_MEMBERS = 64;
 /** DM routing label prefix. `agent:<handle>` is the address every adapter writes to. */
 export const AGENT_ADDRESS_PREFIX = 'agent:';
-/** Prefixes owned by the unified bus; an alias may never shadow them. */
-const RESERVED_PREFIXES = ['agent:', 'group:', 'dm:', 'handoff:'];
+/** Prefixes owned by the unified bus; an alias may never shadow them, and a
+ *  label-addressed post may never claim one — each has a dedicated verb. */
+export const RESERVED_PREFIXES = ['agent:', 'group:', 'dm:', 'handoff:'];
 
 /** The CLIs that have a session adapter (src/core/agents/bus-cli-adapters.ts). */
 export const BUS_CLIS = ['claude', 'codex', 'devin', 'cursor', 'grok'] as const;
@@ -208,6 +209,18 @@ export function readAgentRegistry(options: AgentRegistryOptions = {}): RegistryR
 /** Maps one routing label to the stable id of the identity it proves, or undefined. */
 export type AgentIdentityKeyFor = (label: string) => string | undefined;
 
+/** The memoized label→identity-key lookup bound to one already-read registry. */
+function identityKeysFor(registry: AgentRegistry): AgentIdentityKeyFor {
+  const keys = new Map<string, string | undefined>();
+  return (label) => {
+    if (!keys.has(label)) {
+      const identity = resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase());
+      keys.set(label, identity?.id);
+    }
+    return keys.get(label);
+  };
+}
+
 /**
  * One registry read shared by every label a read filter compares: a label
  * resolves to its identity's stable id through handle, `agent:` address, id or
@@ -218,14 +231,74 @@ export type AgentIdentityKeyFor = (label: string) => string | undefined;
 export function agentIdentityKeys(options: AgentRegistryOptions = {}): AgentIdentityKeyFor | undefined {
   const read = readAgentRegistry(options);
   if (read.status !== 'ok') return undefined;
-  const registry = read.registry, keys = new Map<string, string | undefined>();
-  return (label) => {
-    if (!keys.has(label)) {
-      const identity = resolveAgent(registry, label) ?? resolveAgent(registry, label.toLowerCase());
-      keys.set(label, identity?.id);
-    }
-    return keys.get(label);
-  };
+  return identityKeysFor(read.registry);
+}
+
+/**
+ * One address filter as a predicate over envelope routing labels: the literal
+ * label, or any other label of the same registered identity when `label`
+ * resolves through `identityOf` — a filter naming `agent:<handle>` also
+ * matches the bare handle, stable id and aliases. A label that resolves to no
+ * identity, and an unreadable registry (`identityOf` undefined), keep
+ * exact-label matching: unknown identity state never widens a filter.
+ */
+export function agentAddressMatcher(identityOf: AgentIdentityKeyFor | undefined, label: string): (value: string) => boolean {
+  const key = identityOf?.(label);
+  if (key === undefined) return value => value === label;
+  return value => value === label || identityOf?.(value) === key;
+}
+
+/**
+ * One agent-ref address filter as a predicate over envelope routing labels —
+ * the read-filter counterpart of `agentAddressMatcher` for a caller-supplied
+ * ref (`--from`, `--exclude-from`, `--to`, `--owner`, `--agent`, a request's
+ * `to`/`from`): the literal ref, or any label of the identity the ref
+ * resolves to. The ref resolves through `resolveAgent` exactly — handle,
+ * `agent:` address, stable id or alias, never case-folded — so a spelling
+ * like `Devin` that names no registered identity keeps exact-label matching
+ * instead of inheriting handle `devin`'s whole label set; the envelope
+ * labels on the value side still fold through `identityOf` (exact first,
+ * then lowercase), the same split `agentPendingAddressMatcher` applies. An
+ * unreadable registry (`registry` undefined) or a ref resolving to no
+ * identity matches the literal ref only: unknown identity state never
+ * widens a filter.
+ */
+export function agentRefAddressMatcher(ref: string, registry: AgentRegistry | undefined,
+  identityOf: AgentIdentityKeyFor = registry === undefined ? () => undefined : identityKeysFor(registry)): (value: string) => boolean {
+  const key = registry === undefined ? undefined : resolveAgent(registry, ref)?.id;
+  if (key === undefined) return value => value === ref;
+  return value => value === ref || identityOf(value) === key;
+}
+
+/**
+ * "Addressed to this agent" for the pending-work surfaces — `bus next` claims
+ * and the `work mine` digest's next/handoffs sections: the literal `ref`, any
+ * label of the identity it resolves to, or a `group:<channel>:<topic>` address
+ * of a registry channel that identity belongs to — minus channel posts the
+ * identity sent itself, the same membership rule the inbox, wake and channel
+ * reads apply. `registry` undefined (unreadable) or a `ref` resolving to no
+ * identity contributes no channels and no labels beyond the literal `ref`, so
+ * matching never widens on unknown state. The predicate takes an envelope's
+ * `to` and `from` routing labels.
+ */
+export function agentPendingAddressMatcher(ref: string, registry: AgentRegistry | undefined): (to: string, from: string) => boolean {
+  const identity = registry === undefined ? undefined : resolveAgent(registry, ref);
+  const identityOf = registry === undefined ? undefined : identityKeysFor(registry);
+  // `ref` is an agent ref, so it resolves through `resolveAgent` exactly like
+  // the inbox, wake, channel and work-mine identity reads: a case-variant or
+  // otherwise unregistered spelling resolves to no identity and keeps
+  // exact-label matching only. The lowercase fallback `identityKeysFor`
+  // carries belongs to the envelope `to` labels on the right of the compare —
+  // a `Devin`-stamped recipient still reaches handle `devin` — never to the
+  // agent ref, which would otherwise inherit one identity's label matching
+  // while missing its channel membership.
+  const key = identity?.id;
+  const selfLabels = new Set(identity === undefined ? [] : agentLabels(identity));
+  const prefixes = registry === undefined || identity === undefined ? [] : registry.channels
+    .filter(channel => channel.members.includes(identity.handle))
+    .map(channel => `group:${channel.name}:`);
+  return (to, from) => to === ref || (key !== undefined && identityOf?.(to) === key) ||
+    (prefixes.length > 0 && !selfLabels.has(from) && prefixes.some(prefix => to.startsWith(prefix)));
 }
 
 type Mutation<T> = (registry: AgentRegistry, now: number) => RegistryFailure | { registry: AgentRegistry; value: T; changed: boolean };

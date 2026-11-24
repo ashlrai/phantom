@@ -8,6 +8,7 @@ import {
   throughput, topConstraint, type LoopReport,
 } from '../src/core/metrics/loop.js';
 import { collectLoop, latestCost, parseMergedPrs, parseReleases, readTail, writeLoop, type LoopReaders } from '../src/core/metrics/loop-collect.js';
+import { loopStagesText } from '../src/core/metrics/loop-stages.js';
 import { cmdMetricsLoop } from '../src/cli/metrics-loop.js';
 import { cmdMetrics } from '../src/cli/metrics.js';
 
@@ -46,6 +47,34 @@ describe('ledger parsing', () => {
     expect(jobLaneHours(a)).toBe(1);
     expect(jobLaneHours(jobs.get('RQ-B')!)).toBe(1);
     expect(jobLaneHours({ ...a, wallSeconds: null, finishedAt: null })).toBeNull();
+  });
+  it('reads the production ledger dialect: jobId/prUrl fields, type/kind events, inferred phases', () => {
+    const dialect = [
+      // metrics-outcomes-reconciler row copied from a publish row that used jobId/prUrl.
+      J({ event: 'publish', jobId: 'RQ-REC', prUrl: 'https://github.com/ashlrai/phantom/pull/55/', outcome: 'MERGED', mergedAt: iso(90), ts: iso(90), source: 'metrics-outcomes-reconciler' }),
+      // Eventless phase row: outcome inferred, mergedAt preferred over timestamp.
+      J({ job_id: 'RQ-EV', status: 'MERGED', pr: 'https://github.com/ashlrai/phantom/pull/56', timestamp: iso(85), mergedAt: iso(80) }),
+      // type/kind event fields, alternate timestamp and arrival spellings, pool lane alias.
+      J({ type: 'enqueued', id: 'RQ-T', pool: 'claude', at: iso(200) }),
+      J({ kind: 'launch', id: 'RQ-T', lane: 'claude', time: iso(190) }),
+      J({ kind: 'finish', id: 'RQ-T', wallS: 600, recordedAt: iso(150) }),
+      J({ type: 'published', id: 'RQ-T', url: 'https://github.com/ashlrai/phantom/pull/57', ts: iso(140) }),
+      // CLOSED reconciler row: resolved evidence, never an open claim or a merge.
+      J({ event: 'publish', job: 'RQ-C', outcome: 'CLOSED', url: 'https://github.com/ashlrai/phantom/pull/58', closedAt: iso(70), ts: iso(70), source: 'metrics-outcomes-reconciler' }),
+      // 'merged' event spelling.
+      J({ event: 'merged', job: 'RQ-M', ts: iso(60) }),
+    ].join('\n');
+    const jobs = jobTimelines(dialect, T0);
+    expect(jobs.get('RQ-REC')).toMatchObject({ mergedAt: T0 - 90 * 60_000, openedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/55' });
+    expect(jobs.get('RQ-EV')).toMatchObject({ mergedAt: T0 - 80 * 60_000, openedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/56' });
+    expect(jobs.get('RQ-T')).toMatchObject({
+      lane: 'claude', enqueuedAt: T0 - 200 * 60_000, launchedAt: T0 - 190 * 60_000,
+      finishedAt: T0 - 150 * 60_000, wallSeconds: 600, openedAt: T0 - 140 * 60_000,
+      mergedAt: null, prUrl: 'https://github.com/ashlrai/phantom/pull/57',
+    });
+    expect(jobs.get('RQ-C')).toMatchObject({ openedAt: null, mergedAt: null });
+    expect(jobs.get('RQ-M')).toMatchObject({ mergedAt: T0 - 60 * 60_000 });
+    expect(throughput(jobs, T0)).toMatchObject({ merged_6h: 3, opened_6h: 1 });
   });
   it('percentile interpolates', () => {
     expect(percentile([], 0.5)).toBeNull();
@@ -107,7 +136,7 @@ describe('lanes, capacity and hints', () => {
   });
 
   const report = (over: Partial<LoopReport> = {}): LoopReport => ({
-    schema: 'metrics.loop.v1', at: iso(0), sources: {},
+    schema: 'metrics.loop.v1', at: iso(0), sources: {}, truncated_sources: [],
     throughput: throughput(jobs, T0), idea_to_merged_minutes: ideaToMerged(jobs, T0),
     merged_to_installed_minutes: { missing: 'x' }, feedback_loop_minutes: { missing: 'x' }, cost_per_merged_pr: { usd: 1.5, at: iso(0), source: 's' },
     lanes: laneRows(jobs, slotLanes({ claude: { target: 8 }, grok: { target: 1 }, zai: { target: 0, held: true } }), null, T0),
@@ -130,6 +159,12 @@ describe('lanes, capacity and hints', () => {
     expect(h.nodes_with_spare).toEqual([{ node: 'local', spare: 12 }]);
     expect(h).toMatchObject({ advisory: true, bets_share: { reserved: 2, usable: 1 }, top_constraint: { name: 'idea-to-merge' } });
     expect(isMissing(selectionHints(report(), null).bets_share)).toBe(true);
+  });
+  it('carries the loop-wait summary into the hints when stage times are collected', () => {
+    const wait = { headline: 'Biggest wait: PR to merged, p50 2.5 h', slowest: { stage: 'pr_to_merged', p50_minutes: 150 }, since: iso(1440), jobs_truncated: true };
+    expect(selectionHints(report(), null, wait).loop_wait).toEqual({ headline: wait.headline, slowest: wait.slowest, since: wait.since, jobs_truncated: true });
+    expect(isMissing(selectionHints(report(), null).loop_wait)).toBe(true);
+    expect(isMissing(selectionHints(report(), null, null).loop_wait)).toBe(true);
   });
   it('names the binding constraint', () => {
     expect(topConstraint(report({ throughput: { missing: 'x' } })).name).toBe('measurement');
@@ -174,11 +209,11 @@ describe('collector readers', () => {
     expect(parseReleases(null)).toBeNull();
     expect(parseMergedPrs(JSON.stringify([{ number: 5, mergedAt: iso(1) }, { number: 'x', mergedAt: iso(1) }]))).toEqual([{ number: 5, mergedAt: T0 - 60_000 }]);
   });
-  it('reads a bounded tail without a partial first line', async () => {
+  it('reads a bounded tail without a partial first line and reports the cut', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tail-'));
     writeFileSync(join(dir, 'f'), 'aaaa\nbbbb\ncccc\n');
-    expect(await readTail(join(dir, 'f'), 7)).toBe('cccc\n');
-    expect(await readTail(join(dir, 'f'), 100)).toBe('aaaa\nbbbb\ncccc\n');
+    expect(await readTail(join(dir, 'f'), 7)).toEqual({ text: 'cccc\n', truncated: true });
+    expect(await readTail(join(dir, 'f'), 100)).toEqual({ text: 'aaaa\nbbbb\ncccc\n', truncated: false });
     expect(await readTail(join(dir, 'missing'), 10)).toBeNull();
     expect(await readTail(dir, 10)).toBeNull();
   });
@@ -195,7 +230,10 @@ function fakeReaders(runsDir: string, over: Partial<LoopReaders> = {}): LoopRead
   };
   return {
     runsDir, now: () => T0,
-    readText: async (path) => files[path.slice(runsDir.length + 1)] ?? null,
+    readText: async (path) => {
+      const text = files[path.slice(runsDir.length + 1)];
+      return text === undefined ? null : { text, truncated: false };
+    },
     gh: async (args) => args[0] === 'api'
       ? JSON.stringify([{ tag_name: 'v3.30.33', created_at: iso(600) }, { tag_name: 'v3.30.34', created_at: iso(60) }])
       : JSON.stringify([{ number: 101, mergedAt: iso(120) }]),
@@ -227,6 +265,19 @@ describe('collectLoop and writeLoop', () => {
     expect(r.resources.find(x => x.resource === 'grok')).toMatchObject({ kind: 'lane', measured: false });
     expect(c.share).toMatchObject({ freeSlots: 16, reserved: 1, readyBetRows: 2, usable: 1 });
     expect(c.hints.lanes[0]!.lane).toBe('claude');
+    expect(c.hints.loop_wait).toEqual({ headline: c.stages.headline, slowest: c.stages.slowest, since: c.stages.since, jobs_truncated: c.stages.jobs_truncated });
+    expect(r.truncated_sources).toEqual([]);
+    expect(c.stages.jobs_truncated).toBe(false);
+  });
+  it('names every ledger tail cut at the read cap instead of folding it silently', async () => {
+    const runs = mkdtempSync(join(tmpdir(), 'loop-trunc-'));
+    const c = await collectLoop(fakeReaders(runs, {
+      readText: async (path) => path.endsWith('jobs.jsonl') ? { text: LEDGER, truncated: true }
+        : path.endsWith('bets.jsonl') ? { text: '', truncated: true } : null,
+    }));
+    expect(c.report.truncated_sources).toEqual(['metrics/jobs.jsonl', 'metrics/bets.jsonl']);
+    expect(c.stages.jobs_truncated).toBe(true);
+    expect(loopStagesText(c.stages).join('\n')).toContain('tail was cut');
   });
   it('degrades to missing reasons when every reader fails', async () => {
     const runs = mkdtempSync(join(tmpdir(), 'loop-empty-'));
@@ -238,6 +289,7 @@ describe('collectLoop and writeLoop', () => {
     expect(r.resources.filter(x => x.kind === 'peer').every(x => !x.measured)).toBe(true);
     expect(c.share).toMatchObject({ reserved: 0, freeSlots: null });
     expect(c.hints.top_constraint.name).toBe('measurement');
+    expect(c.hints.loop_wait).toMatchObject({ headline: 'Biggest wait: unknown (job ledger unreadable)', slowest: null });
   });
   it('writes loop, hints and share files and merges the morning file', async () => {
     const runs = mkdtempSync(join(tmpdir(), 'loop-write-'));
@@ -249,6 +301,7 @@ describe('collectLoop and writeLoop', () => {
     const w = await writeLoop(runs, c, at);
     expect(JSON.parse(readFileSync(w.loop, 'utf8')).schema).toBe('metrics.loop.v1');
     expect(JSON.parse(readFileSync(w.hints, 'utf8')).schema).toBe('metrics.selection-hints.v1');
+    expect(JSON.parse(readFileSync(w.hints, 'utf8')).loop_wait.headline).toBe(c.stages.headline);
     expect(JSON.parse(readFileSync(w.share, 'utf8'))).toMatchObject({ schema: 'bets.share.v1', at: iso(0) });
     const morning = JSON.parse(readFileSync(join(runs, 'reports', `morning-${day}.json`), 'utf8'));
     expect(morning).toMatchObject({ headline: 'keep me', cost_per_merged_pr: 3, feedback_loop_minutes: 280, bets: { launched: 0 } });
@@ -284,6 +337,14 @@ describe('phm metrics loop CLI', () => {
     expect(out[0]).toContain('Idea to merged p50: 135 min (2 jobs)');
     expect(out[0]).toContain('Cost per merged PR: $3');
     expect(existsSync(join(runs, 'metrics', 'selection-hints.json'))).toBe(true);
+  });
+  it('names cut ledger tails in the human summary', async () => {
+    const runs = mkdtempSync(join(tmpdir(), 'loop-cli-t-'));
+    const out: string[] = [];
+    const readers = fakeReaders(runs, { readText: async (path) => path.endsWith('jobs.jsonl') ? { text: LEDGER, truncated: true } : null });
+    expect(await cmdMetricsLoop([], { out: l => out.push(l), readers })).toBe(0);
+    expect(out[0]).toContain('Truncated ledger tails (newest bytes only): metrics/jobs.jsonl');
+    expect(out[0]).toContain('tail was cut');
   });
   it('rejects unknown flags and prints help', async () => {
     const err: string[] = [], out: string[] = [];

@@ -8,6 +8,8 @@
  *  - usage: "40" is stored as a usage reading with source=mason and its own
  *    timestamp. readMasonUsage hands the newest one to the usage reader and the
  *    spend guard, which decide for themselves whether it is fresh enough.
+ *  - credit-decision: "yes" / "no" / "later" to a payment ask about a pool's credit is stored as a typed decision
+ *    (readCreditDecision) that other tools may read; nothing is spent and no lane target changes here.
  *  - approval: "yes" or "no" is stored as an approval record and nothing else.
  *    This module spends nothing and makes no billing call.
  * Never put a secret in a reply; a reply is a word or a percent.
@@ -18,7 +20,7 @@ import { join } from 'node:path';
 
 export const ASKS_LEDGER_FILE = 'asks-ledger.jsonl';
 
-export type AskLedgerType = 'answer' | 'usage-reading' | 'approval';
+export type AskLedgerType = 'answer' | 'usage-reading' | 'approval' | 'credit-decision' | 'fleet-action';
 export interface AskLedgerRecord {
   schema: 'asks.ledger.v1';
   type: AskLedgerType;
@@ -28,15 +30,19 @@ export interface AskLedgerRecord {
   subject: string | null;
   /** The surface the answer came through: cli, phone, desktop, telegram, ... */
   channel: string;
-  /** Always mason: only a verified-Mason source reaches the ledger. */
-  source: 'mason';
+  /** mason for every answer (only a verified-Mason source reaches the ledger); fleet for a fleet-action. */
+  source: 'mason' | 'fleet';
+  /** fleet-action: plain words for what the fleet did instead of asking, e.g. "read from sensor X at T". */
+  action?: string;
+  /** fleet-action: the ask that was not raised, one plain line. */
+  question?: string;
   /** ISO time of the answer. */
   at: string;
   reply: string;
-  /** usage-reading only. */
+  /** usage-reading and credit-decision. */
   pool?: string;
   pctUsed?: number;
-  /** approval only. */
+  /** approval and credit-decision. A `yes` means "use it": the record spends nothing and changes no lane. */
   decision?: 'yes' | 'no' | 'later';
 }
 
@@ -53,6 +59,9 @@ export function askLedgerRecordOf(input: AskLedgerInput): AskLedgerRecord {
   if (input.kind === 'usage' && input.subject) return { ...base, type: 'usage-reading', pool: input.subject, pctUsed: Number(input.reply) };
   if (input.kind === 'approval' && (input.reply === 'yes' || input.reply === 'no' || input.reply === 'later')) {
     return { ...base, type: 'approval', decision: input.reply };
+  }
+  if (input.kind === 'payment' && input.subject && (input.reply === 'yes' || input.reply === 'no' || input.reply === 'later')) {
+    return { ...base, type: 'credit-decision', pool: input.subject, decision: input.reply };
   }
   return { ...base, type: 'answer' };
 }
@@ -80,13 +89,19 @@ export function readAskLedger(runsDir?: string): AskLedgerRecord[] {
       if (!line) continue;
       try {
         const row = JSON.parse(line) as Partial<AskLedgerRecord> | null;
-        if (row && row.schema === 'asks.ledger.v1' && row.source === 'mason' && typeof row.at === 'string' && Number.isFinite(Date.parse(row.at))) {
+        if (row && row.schema === 'asks.ledger.v1' && (row.source === 'mason' || (row.source === 'fleet' && row.type === 'fleet-action' && typeof row.action === 'string')) && typeof row.at === 'string' && Number.isFinite(Date.parse(row.at))) {
           records.push(row as AskLedgerRecord);
         }
       } catch { /* one bad line must not hide the rest */ }
     }
     return records;
   } catch { return []; }
+}
+
+/** Newest first, at most `limit`: what the fleet did instead of asking Mason. */
+export function readFleetActions(options: { runsDir?: string; limit?: number } = {}): AskLedgerRecord[] {
+  return readAskLedger(options.runsDir).filter(row => row.type === 'fleet-action')
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, options.limit ?? 10);
 }
 
 export interface MasonUsageReading {
@@ -112,4 +127,16 @@ export function readMasonUsage(pool: string, options: { runsDir?: string; now?: 
     pool, pctUsed: newest.pctUsed!, source: 'mason', channel: newest.channel, fetchedAt: new Date(newest.at).toISOString(),
     ageMs: Math.max(0, (options.now ?? Date.now)() - Date.parse(newest.at)),
   };
+}
+
+export interface CreditDecision { pool: string; decision: 'yes' | 'no' | 'later'; askId: string; channel: string; at: string }
+
+/** Mason's newest answer to a credit ask for a pool (`yes` = use it), or null when none was given. Reads only. */
+export function readCreditDecision(pool: string, options: { runsDir?: string } = {}): CreditDecision | null {
+  let newest: AskLedgerRecord | null = null;
+  for (const row of readAskLedger(options.runsDir)) {
+    if (row.type !== 'credit-decision' || row.pool !== pool || !(row.decision === 'yes' || row.decision === 'no' || row.decision === 'later')) continue;
+    if (!newest || Date.parse(row.at) >= Date.parse(newest.at)) newest = row;
+  }
+  return newest ? { pool, decision: newest.decision!, askId: newest.askId, channel: newest.channel, at: new Date(newest.at).toISOString() } : null;
 }

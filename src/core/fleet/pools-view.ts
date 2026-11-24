@@ -9,6 +9,8 @@
  */
 import { burnRate, BURN_METHOD, BURN_MIN_SAMPLES, BURN_WINDOW_HOURS, type BurnSample } from '../usage/burn-rate.js';
 import { poolLabel } from '../usage/runway.js';
+import type { ModelCap } from './model-caps.js';
+import { effectivePoolReading, type PoolReadingState } from './pool-reading.js';
 import type { ResourceLaneRow, ResourceLedgerV1 } from './runs-resource-ledger.js';
 
 export const POOLS_SCHEMA = 'pools.v1';
@@ -46,6 +48,8 @@ export interface PoolRow {
   id: string;
   kind: 'subscription' | 'credits' | 'unmetered';
   usedPct: number | null;
+  /** `measured`: a current reading. `refilled`: the reset passed and no sensor has read the new window yet, so used is 0. `unknown`: no usable reading. */
+  state: PoolReadingState;
   /** Reset or expiry time as last reported; may be in the past for an expired window. */
   resetAt: string | null;
   hoursLeft: number | null;
@@ -63,6 +67,12 @@ export interface PoolRow {
   wasteRisk: PoolWasteRisk;
   /** Absolute balance for credits rows; not a percentage. */
   creditsRemaining: number | null;
+  /** `usd` when `creditsRemaining` is a US-dollar gift credit; absent when the unit is not reported. */
+  creditUnit?: 'usd';
+  /** Gift credit: when the balance was last read, whether its lane is closed, and whole days until it expires. */
+  creditAsOf?: string | null;
+  creditClosed?: boolean;
+  daysLeft?: number | null;
   held: boolean | null;
   /** Jobs running on the lane against its slot target, as the dispatcher last reported them. */
   running: number | null;
@@ -75,6 +85,8 @@ export interface PoolRow {
   asOf: string | null;
   /** Why the row is unknown; null when the risk is known. */
   reason: string | null;
+  /** Models of this lane that hit their own usage cap, from worker logs. Absent when none are known. */
+  cappedModels?: Array<{ model: string; cappedAt: string; resetAt: string | null }>;
   /** The verdict in plain words: "Claude: empty about 3 PM Thu, 27 h before reset: slow down". */
   summary: string;
 }
@@ -103,30 +115,80 @@ function clockWords(ms: number): string {
 }
 const hoursWords = (hours: number): string => `${Math.max(1, Math.round(hours))} h`;
 
+/** "Nov 24": month and day in UTC, so the same date reads the same on every surface. */
+export const monthDay = (iso: string): string => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/** A dollar gift has a balance, not a percent: name the balance, its reading date, the days left and a closed lane. */
+function giftRow(row: PoolRow, name: string, now: number): PoolRow {
+  const endMs = row.resetAt === null ? NaN : Date.parse(row.resetAt);
+  const daysLeft = Number.isFinite(endMs) ? Math.max(0, Math.floor((endMs - now) / 86_400_000)) : null;
+  const expired = Number.isFinite(endMs) && endMs <= now;
+  const balance = row.creditsRemaining === null ? 'balance unknown'
+    : `${row.creditAsOf ? `last reading ${monthDay(row.creditAsOf)}: ` : ''}about ${Math.round(row.creditsRemaining)} USD`;
+  const ends = expired ? 'expired' : daysLeft === null ? 'expiry unknown' : `expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'} (${monthDay(row.resetAt!)})`;
+  const reason = 'a dollar credit has a balance, not a percent used';
+  return { ...row, daysLeft, reason, summary: `${name}: ${balance}; ${ends}${row.creditClosed ? '; lane closed' : ''}` };
+}
+
+/** The first weekly boundary after `now`, counting whole weeks from a reset that has passed. */
+function nextWeeklyReset(resetMs: number, now: number): number {
+  const week = WEEK_HOURS * HOUR_MS;
+  return resetMs + Math.ceil((now - resetMs + 1) / week) * week;
+}
+
+/** Reset passed and no sensor has read the new window: 100% headroom, next reset one week on. */
+function refilledRow(row: PoolRow, name: string, resetAt: string, now: number): PoolRow {
+  const resetMs = Date.parse(resetAt);
+  const nextMs = nextWeeklyReset(resetMs, now);
+  const hoursLeft = (nextMs - now) / HOUR_MS;
+  const refilled = new Date(resetMs).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return { ...row, state: 'refilled', usedPct: 0, resetAt: row.kind === 'subscription' ? new Date(nextMs).toISOString() : row.resetAt,
+    hoursLeft: row.kind === 'subscription' ? round1(hoursLeft) : null,
+    elapsedPct: row.kind === 'subscription' ? round1(clampPct((WEEK_HOURS - hoursLeft) / WEEK_HOURS * 100)) : null,
+    reason: 'reset passed; treating as refilled until the next sensor reading', verdict: 'add work',
+    summary: `${name}: refilled at ${refilled}, waiting for first reading` };
+}
+
 function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSample[]): PoolRow {
   const evidence = lane.quotaEvidence;
   const asOf = evidence?.measuredQuota?.observedAt ?? lane.observation?.asOf ?? evidence?.statusQuota?.observedAt ?? null;
   const name = poolLabel(lane.lane);
   const row: PoolRow = {
     id: lane.lane, kind: lane.window === 'weekly' ? 'subscription' : lane.window === 'credits' ? 'credits' : 'unmetered',
-    usedPct: null, resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
+    usedPct: null, state: 'unknown', resetAt: lane.resetAt, hoursLeft: null, elapsedPct: null, burnPctPerHour: null, burnBasis: null,
     burn: { samples: 0, window_h: 0, method: 'none' }, projectedUnusedPct: null, projectedEmptyAt: null, verdict: 'unknown',
-    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, held: lane.held,
+    wasteRisk: 'unknown', creditsRemaining: lane.creditsRemaining, ...(lane.creditUnit ? { creditUnit: lane.creditUnit, creditAsOf: lane.creditAsOf ?? null, creditClosed: lane.creditClosed === true } : {}), held: lane.held,
     running: lane.running, target: lane.target, source: lane.observation?.source ?? lane.source, scopes: [], asOf,
     reason: null, summary: '',
   };
   const unknown = (reason: string): PoolRow => ({ ...row, reason, summary: `${name}: unknown: ${reason}` });
   if (row.kind === 'unmetered') return unknown('no usage window reported');
+  if (row.kind === 'credits' && row.creditUnit === 'usd') return giftRow(row, name, now);
   if (row.kind === 'credits') return unknown('credit balance has no total or expiry, so percent used is not known');
   if (lane.usedPct === null) return unknown('no reading');
-  const resetMs = lane.resetAt === null ? NaN : Date.parse(lane.resetAt);
+  const own: BurnSample[] = samples.filter(sample => sample.pool === lane.lane)
+    .map(sample => ({ at: sample.observed_at, used_pct: sample.used_pct, reset_at: sample.reset_at }));
+  const effective = effectivePoolReading({ used_pct: lane.usedPct, observed_at: asOf, reset_at: lane.resetAt },
+    own.map(sample => ({ used_pct: sample.used_pct, observed_at: sample.at })), now);
+  if (effective.state === 'refilled') return refilledRow(row, name, lane.resetAt!, now);
+  // A reading from the new window carries the old reset time; a weekly pool's next reset is whole weeks on.
+  const reportedMs = lane.resetAt === null ? NaN : Date.parse(lane.resetAt);
+  const resetPassed = Number.isFinite(reportedMs) && reportedMs <= now;
+  // The lane's own reading still carrying the old reset time is not a reading of the new window.
+  if (resetPassed && effective.observed_at === asOf) return unknown(`window reset at ${lane.resetAt}; no reading for the new window`);
+  const rolled = resetPassed && row.kind === 'subscription';
+  const resetMs = rolled ? nextWeeklyReset(reportedMs, now) : reportedMs;
   if (Number.isFinite(resetMs) && resetMs <= now) return unknown(`window reset at ${lane.resetAt}; no reading for the new window`);
-  const asOfMs = asOf === null ? NaN : Date.parse(asOf);
+  if (rolled) { row.resetAt = new Date(resetMs).toISOString(); }
+  const asOf2 = effective.observed_at;
+  const asOfMs = asOf2 === null ? NaN : Date.parse(asOf2);
   if (!Number.isFinite(asOfMs)) return unknown('reading has no capture time');
-  if (asOfMs > now) return unknown(`reading is dated in the future (${asOf})`);
-  if (now - asOfMs > POOLS_STALE_AFTER_MINUTES * 60_000) return unknown(`no reading since ${asOf}`);
+  if (asOfMs > now) return unknown(`reading is dated in the future (${asOf2})`);
+  if (now - asOfMs > POOLS_STALE_AFTER_MINUTES * 60_000) return unknown(`no reading since ${asOf2}`);
+  row.asOf = asOf2;
 
-  const usedPct = clampPct(lane.usedPct);
+  const usedPct = clampPct(effective.used_pct!);
+  row.state = 'measured';
   row.usedPct = round1(usedPct);
   // Per-model windows ride on the same current reading; one whose own reset has passed is unknown, like the pool's.
   row.scopes = (lane.quotaScopes ?? []).map(scope => {
@@ -143,9 +205,7 @@ function poolRow(lane: ResourceLaneRow, now: number, samples: readonly PoolSampl
 
   // Burn: a held lane spends nothing; otherwise the slope of the pool's own recent readings (the current reading is the
   // newest point); otherwise the dispatcher's reported figure. Never the window average: it hides a recent climb.
-  const own: BurnSample[] = samples.filter(sample => sample.pool === lane.lane)
-    .map(sample => ({ at: sample.observed_at, used_pct: sample.used_pct, reset_at: sample.reset_at }));
-  if (!own.some(sample => Date.parse(sample.at) >= asOfMs)) own.push({ at: new Date(asOfMs).toISOString(), used_pct: usedPct, reset_at: lane.resetAt });
+  if (!own.some(sample => Date.parse(sample.at) >= asOfMs)) own.push({ at: new Date(asOfMs).toISOString(), used_pct: usedPct, reset_at: row.resetAt });
   const fitted = burnRate(own, now);
   let burn: number | null;
   if (lane.held === true) {
@@ -193,14 +253,26 @@ const resetOrder = (row: PoolRow): number => {
  * `samples` are the stored usage readings (`readUsageSamples`); without them a pool falls back to the dispatcher's
  * reported burn, or says "not enough readings".
  */
-export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: readonly PoolSample[] = []): PoolsViewV1 {
-  const pools = ledger.lanes.map(lane => poolRow(lane, now, samples)).sort((a, b) =>
+export function buildPoolsView(ledger: ResourceLedgerV1, now: number, samples: readonly PoolSample[] = [], caps: readonly ModelCap[] = []): PoolsViewV1 {
+  const pools = ledger.lanes.map(lane => {
+    const row = poolRow(lane, now, samples);
+    const capped = caps.filter(cap => cap.lane === lane.lane);
+    if (!capped.length) return row;
+    const list = capped.map(cap => ({ model: cap.model, cappedAt: cap.capped_at, resetAt: cap.reset_at }));
+    return { ...row, cappedModels: list, summary: `${row.summary}; ${list.map(c => c.model).join(', ')} at its own limit` };
+  }).sort((a, b) =>
     (a.verdict === 'slow down' ? -1 : RISK_RANK[a.wasteRisk]) - (b.verdict === 'slow down' ? -1 : RISK_RANK[b.wasteRisk])
     || (resetOrder(a) === resetOrder(b) ? 0 : resetOrder(a) < resetOrder(b) ? -1 : 1)
     || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const gaps = ['API credit grants and cloud credits with an expiry are not in the resource ledger yet; credits rows show a balance only.'];
   if (ledger.sources.status !== 'healthy') gaps.unshift(`dispatcher status is ${ledger.sources.status}; lanes it would report may be absent.`);
   return { schema: POOLS_SCHEMA, generatedAt: new Date(now).toISOString(), staleAfterMinutes: POOLS_STALE_AFTER_MINUTES, pools, gaps };
+}
+
+/** Describe the model cap alongside the independently observed plan usage. */
+export function describeCap(cap: Pick<ModelCap, 'model' | 'capped_at'>, planUsedPct: number | null = null): string {
+  const label = cap.model.charAt(0).toUpperCase() + cap.model.slice(1);
+  return `${label} capped since ${cap.capped_at} (plan ${planUsedPct === null ? 'unknown' : `at ${Math.round(planUsedPct)}%`})`;
 }
 
 const cell = (value: number | null, unit: string): string => value === null ? 'unknown' : `${value}${unit}`;
@@ -213,6 +285,7 @@ export function formatPoolsText(view: PoolsViewV1): string {
     lines.push(row.summary);
     lines.push(`  risk ${row.wasteRisk}; used ${cell(row.usedPct, '%')}; resets ${row.resetAt ?? 'unknown'} (${cell(row.hoursLeft, 'h')} left); `
       + `burn ${cell(row.burnPctPerHour, '%/h')}${row.burnBasis ? ` (${row.burnBasis === 'least-squares' ? `${row.burnBasis}, ${row.burn.samples} readings over ${row.burn.window_h} h` : row.burnBasis})` : ''}; unused at reset ${cell(row.projectedUnusedPct, '%')}; empty ${row.projectedEmptyAt ?? (row.burnPctPerHour === null ? 'unknown' : 'not before reset')}; as of ${row.asOf ?? 'unknown'}`);
+    for (const cap of row.cappedModels ?? []) lines.push(`  ${describeCap({ model: cap.model, capped_at: cap.cappedAt }, row.usedPct)}; resets ${cap.resetAt ?? 'unknown'}`);
     for (const scope of row.scopes) lines.push(`  ${scope.id}: used ${cell(scope.usedPct, '%')}; resets ${scope.resetAt ?? 'unknown'} (${cell(scope.hoursLeft, 'h')} left)`);
   }
   for (const gap of view.gaps) lines.push(`Not covered: ${gap}`);

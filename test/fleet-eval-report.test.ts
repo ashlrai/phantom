@@ -1,13 +1,13 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildFleetEvalReport,
   foldJobsLedger,
   formatFleetEvalReport,
   parseGhPullRequests,
-  FLEET_EVAL_OBSERVATION_WINDOW_MS,
   type EvalObservationRow,
   type FleetEvalReport,
 } from '../src/core/fleet/eval-report.js';
@@ -64,6 +64,23 @@ describe('foldJobsLedger', () => {
     expect(fold.activity.filter((a) => a.kind === 'publish' && a.lane === 'devin')).toHaveLength(3);
     // Out-of-window launch (RQ-OLD) is not an activity event.
     expect(fold.activity.filter((a) => a.kind === 'launch')).toHaveLength(6);
+  });
+
+  it('reads alias timestamp fields and prefers mergedAt on terminal rows', () => {
+    const since = NOW - 7 * 86_400_000;
+    const text = [
+      JSON.stringify({ event: 'launch', job: 'RQ-T1', lane: 'devin', tier: 'work', recordedAt: '2026-11-05T00:00:00Z' }),
+      JSON.stringify({ event: 'finish', job: 'RQ-T1', lane: 'devin', exit_code: 0, updatedAt: '2026-11-05T01:00:00Z' }),
+      JSON.stringify({ event: 'publish', job: 'RQ-T1', url: 'https://github.com/ashlrai/phantom/pull/200', time: '2026-11-05T01:10:00Z' }),
+      // MERGED prefers mergedAt: the row stamp sits outside the window, the merge inside.
+      JSON.stringify({ event: 'outcome', job: 'RQ-T1', url: 'https://github.com/ashlrai/phantom/pull/200', state: 'MERGED', ts: '2026-10-20T00:00:00Z', mergedAt: '2026-11-05T10:00:00Z' }),
+    ].join('\n');
+    const fold = foldJobsLedger(text, since, NOW);
+    expect(fold.activity.filter((a) => a.kind === 'launch')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'finish')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'publish')).toHaveLength(1);
+    expect(fold.activity.filter((a) => a.kind === 'merged')).toHaveLength(1);
+    expect(fold.outcomes.get('https://github.com/ashlrai/phantom/pull/200')).toMatchObject({ state: 'MERGED' });
   });
 });
 
@@ -209,6 +226,22 @@ describe('buildFleetEvalReport', () => {
     const report = await build({ prsTexts: [await prsFixture(), '{broken'] });
     expect(report.sources.pullRequests).toMatchObject({ files: 2, rows: 8, ignored: 1, state: 'degraded' });
   });
+
+  it('carries a bounded jobs tail through sources.jobs.truncated', async () => {
+    const clean = `${JSON.stringify({
+      state: 'MERGED', mergedAt: '2026-11-06T00:00:00Z',
+      url: 'https://github.com/ashlrai/phantom/pull/900', job: 'RQ-TAIL',
+    })}\n`;
+    const report = await build({ jobsText: { text: clean, truncated: true }, prsTexts: [] });
+    expect(report.sources.jobs).toMatchObject({ state: 'healthy', truncated: true, rows: 1 });
+    expect(report.merges.total).toBe(1);
+    expect(report.merges.attributed).toBe(1);
+    expect(formatFleetEvalReport(report)).toContain('jobs healthy (truncated)');
+    // A bare string stays a complete, untruncated read.
+    const full = await build({ jobsText: clean, prsTexts: [] });
+    expect(full.sources.jobs.truncated).toBe(false);
+    expect(formatFleetEvalReport(full)).not.toContain('(truncated)');
+  });
 });
 
 describe('formatFleetEvalReport', () => {
@@ -237,7 +270,7 @@ describe('cmdFleetEvalReport', () => {
 
   it('prints JSON, wires args, and registers the verb', async () => {
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const deps = await depsFor();
     expect(await cmdFleetEvalReport(['--json', '--prs', 'prs.json'], deps)).toBe(0);
     const report = JSON.parse(String(out.mock.calls[0]![0])) as FleetEvalReport;
@@ -262,5 +295,32 @@ describe('cmdFleetEvalReport', () => {
     expect(await cmdFleetEvalReport(['--prs', 'missing.json'], deps)).toBe(0);
     expect(String(err.mock.lastCall![0])).toContain('1 --prs file(s) unreadable');
     expect(out).toHaveBeenCalled();
+  });
+
+  it('reads the newest bounded tail of an oversized jobs ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eval-report-tail-'));
+    const file = join(dir, 'jobs.jsonl');
+    // Append-only ledger larger than the 16 MiB tail window: the head sentinel
+    // must fall outside the window and the newest outcome row must still fold.
+    const limit = 16 * 1024 * 1024;
+    const recent = JSON.stringify({
+      state: 'MERGED', mergedAt: '2026-11-06T00:00:00Z',
+      url: 'https://github.com/ashlrai/phantom/pull/901', job: 'RQ-TAIL',
+    });
+    writeFileSync(file, 'HEAD-SENTINEL\n' + 'A'.repeat(limit) + '\n' + recent + '\n');
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const deps = {
+      observations: () => ({ sourceState: 'healthy', observations: [] }) as unknown as PostMergeObservationReadResult,
+      now: () => NOW,
+    };
+    expect(await cmdFleetEvalReport(['--jobs', file, '--json'], deps)).toBe(0);
+    const report = JSON.parse(String(out.mock.calls[0]![0])) as FleetEvalReport;
+    expect(report.sources.jobs).toMatchObject({ state: 'healthy', truncated: true, rows: 1 });
+    expect(report.merges.total).toBe(1);
+    expect(report.merges.attributed).toBe(1);
+    // Human output names the bounded window.
+    expect(await cmdFleetEvalReport(['--jobs', file], deps)).toBe(0);
+    expect(String(out.mock.lastCall![0])).toContain('jobs healthy (truncated)');
   });
 });

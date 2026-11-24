@@ -64,7 +64,7 @@ describe('known Mac apps API', () => {
   it('serves the same report as `phm apps --json` on GET only, local only', async () => {
     const res = await requestMac({ deps: { probe: null } });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ schema: 'phm.apps/1', version: 1, probe: 'missing' });
+    expect(res.body).toMatchObject({ schema: 'phm.apps/2', version: 2, probe: 'missing' });
     expect(res.body.apps.map((a: { id: string }) => a.id)).toEqual(['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'devin', 'safari']);
     expect((await requestMac({ method: 'POST', deps: { probe: null } })).status).toBe(405);
     expect((await requestMac({ address: '192.0.2.1', deps: { probe: null } })).status).toBe(403);

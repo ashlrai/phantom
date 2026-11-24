@@ -428,8 +428,17 @@ class MaxRuntimeTests(unittest.TestCase):
             {'pid': self.PID, 'signal': signal.SIGTERM},
             {'pid': self.PID, 'signal': signal.SIGKILL},
         ])
-        self.assertEqual(mk.read_text().splitlines()[-1], 'KILL')
+        rows = [json.loads(line) for line in mk.read_text().splitlines() if line != 'KILL']
+        self.assertTrue(any(row.get('killsent') is True and row.get('pid') == self.PID for row in rows))
+        self.assertFalse(any(row.get('done') is True for row in rows))
+        self.assertNotIn('KILL', mk.read_text().splitlines())
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGKILL', events(home))
+        # SIGKILL only sent the signal; KILL lands once the group is confirmed gone.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None}))
+        old = time.time() - 60; os.utime(mk, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(mk.read_text().splitlines()[-1], 'KILL')
 
     def test_reused_pid_is_not_terminated(self):
         home, run = self.hung(7300, current_start=self.REUSED_START_TIME)
@@ -504,8 +513,14 @@ class MaxRuntimeTests(unittest.TestCase):
             {'pid': self.PID, 'signal': signal.SIGKILL},
             {'pid': self.PID2, 'signal': signal.SIGKILL},
         ])
-        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+        self.assertNotIn('KILL', marker.read_text().splitlines())
         self.assertEqual(events(home).count('REAP TIMEOUT RQ-HUNG SIGKILL'), 2)
+        # Tick 4: both groups confirmed empty; escalation completes.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
 
     def test_partial_sigterm_retries_unrecorded_group_after_identity_recovers(self):
         # Only one of two live groups verifies on the first TERM tick: it is
@@ -536,14 +551,23 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertEqual(sorted(row['pid'] for row in rows if not row.get('pending')),
                          sorted([self.PID, self.PID2]))
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
-        # Tick 3 past grace: both termed groups escalate and KILL lands only
-        # after both are done.
+        # Tick 3 past grace: both termed groups are SIGKILL'd; the signals are
+        # only sent, so the job-wide KILL waits for confirmed group absence.
         old = time.time() - 60; os.utime(marker, (old, old))
         self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(self.killpg_calls(home)[-2:], [
             {'pid': self.PID, 'signal': signal.SIGKILL},
             {'pid': self.PID2, 'signal': signal.SIGKILL},
         ])
+        rows = [json.loads(line) for line in marker.read_text().splitlines() if line != 'KILL']
+        self.assertEqual(sorted(row['pid'] for row in rows if row.get('killsent')),
+                         sorted([self.PID, self.PID2]))
+        self.assertNotIn('KILL', marker.read_text().splitlines())
+        # Tick 4: both groups confirmed empty; escalation completes.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
 
     def test_pending_unknown_start_retries_when_inventory_recovers(self):
@@ -577,14 +601,23 @@ class MaxRuntimeTests(unittest.TestCase):
             {'pid': self.PID2, 'signal': signal.SIGTERM},
         ])
         self.assertIn('REAP TIMEOUT RQ-HUNG SIGTERM retry', events(home))
-        # Tick 3 past grace: both termed groups escalate and KILL lands only
-        # after both are done.
+        # Tick 3 past grace: both termed groups are SIGKILL'd; the signals are
+        # only sent, so the job-wide KILL waits for confirmed group absence.
         old = time.time() - 60; os.utime(marker, (old, old))
         self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(self.killpg_calls(home)[-2:], [
             {'pid': self.PID, 'signal': signal.SIGKILL},
             {'pid': self.PID2, 'signal': signal.SIGKILL},
         ])
+        rows = [json.loads(line) for line in marker.read_text().splitlines() if line != 'KILL']
+        self.assertEqual(sorted(row['pid'] for row in rows if row.get('killsent')),
+                         sorted([self.PID, self.PID2]))
+        self.assertNotIn('KILL', marker.read_text().splitlines())
+        # Tick 4: both groups confirmed empty; escalation completes.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
 
     def test_pending_unknown_start_survives_failed_probe(self):
@@ -648,11 +681,111 @@ class MaxRuntimeTests(unittest.TestCase):
         self.assertIn('REAP TIMEOUT RQ-HUNG identity-unknown retry', events(home))
         self.assertFalse(any(c['pid'] == self.PID2 and c['signal'] == signal.SIGKILL
                              for c in self.killpg_calls(home)))
-        # Tick 3: the group is finally empty (killpg 0 -> ESRCH); escalation completes.
-        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID2): None}))
+        # Tick 3: both groups are finally empty (killpg 0 -> ESRCH); escalation completes.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
         old = time.time() - 60; os.utime(marker, (old, old))
         self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+
+    def test_unresolved_group_holds_slot_and_blocks_reap(self):
+        # The watchdog marker staying open is not enough: slot accounting and
+        # the reaper must carry unresolved state too. A timed-out job whose
+        # wrappers are gone and unattributed, but whose group survives
+        # (worker not in the command/cwd inventory), keeps its lane slot and
+        # is not reaped until the group is affirmatively gone.
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.log').write_text('work\n')
+        old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)
+        marker = run / 'RQ-HUNG.maxruntime'
+        # Both wrappers exit; PID2's group keeps a surviving worker. Nothing
+        # attributes the job, so without the gate fix the slot frees and reap starts.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): self.PID2}))
+        self.write_ps(home, include_leader=False)
+        old = time.time() - 60; os.utime(marker, (old, old))
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertTrue(wt.is_dir())
+        self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
+        # Group finally empty: escalation completes.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+
+    def test_unreadable_marker_fails_closed_for_slot_and_reap(self):
+        # An existing but unreadable marker must never count as escalated:
+        # slot accounting and the reaper fail closed (job stays live).
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.log').write_text('work\n')
+        old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        marker = run / 'RQ-HUNG.maxruntime'
+        marker.write_text(json.dumps({'pid': 424242, 'start': 'x'}) + '\n')
+        os.chmod(marker, 0)
+        self.addCleanup(os.chmod, marker, 0o644)
+        self.write_ps(home, include_leader=False)
+        result = tick(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertTrue(wt.is_dir())
+        self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
+
+    def test_published_receipt_keeps_slot_until_group_verified_gone(self):
+        # A current-attempt RESULT EMPTY receipt must not release the lane slot
+        # while the watchdog escalation is unresolved: the surviving worker
+        # group still holds the slot until KILL, then the receipt releases it.
+        tmp = build(slots=held_lanes()); self.addCleanup(tmp.cleanup); home = Path(tmp.name).resolve()
+        r = home / '.ashlr-runs'; run = r / 'queue/run'
+        wt = home / 'Projects/ashlrai/wt/RQ-HUNG'; wt.mkdir(parents=True)
+        (r / 'RQ-HUNG.base').write_text(f'deadbeef x {wt} codex-cmp\n')
+        (r / 'RQ-HUNG.log').write_text('work\n')
+        old = time.time() - 3600; os.utime(r / 'RQ-HUNG.base', (old, old)); os.utime(r / 'RQ-HUNG.log', (old, old))
+        self.mock_watchdog_two(home, {self.PID: self.START_TIME, self.PID2: self.START_TIME2})
+        self.write_ps_two(home)
+        (run / 'RQ-HUNG.line').write_text(f'RQ-HUNG\tphantom\tcodex-cmp\twork\t/x\n')
+        (run / 'RQ-HUNG.dispatched').write_text('0')
+        t = time.time() - 7300; os.utime(run / 'RQ-HUNG.dispatched', (t, t))
+        self.assertEqual(tick(home).returncode, 0)   # tick 1: TERM both wrappers
+        marker = run / 'RQ-HUNG.maxruntime'
+        # Wrappers exit, PID2's group survives; the agent wrote its
+        # current-attempt RESULT EMPTY receipt before exiting.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): self.PID2}))
+        self.write_ps(home, include_leader=False)
+        (r / 'RQ-HUNG.publish').write_text('RESULT EMPTY\n')
+        old = time.time() - 60; os.utime(marker, (old, old))
+        result = tick(home)   # tick 2
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 1)
+        self.assertTrue(wt.is_dir())
+        self.assertFalse(any('REAP RQ-HUNG' in line for line in events(home)))
+        # Group finally empty: KILL completes, then the receipt releases the slot.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None, str(self.PID2): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)   # tick 3
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+        status = json.loads((r / 'queue/status.json').read_text())
+        self.assertEqual(status['lanes']['codex-cmp']['running'], 0)
 
     def test_gone_group_marks_sigkill_escalation_complete(self):
         home, run = self.hung(7300)
@@ -663,6 +796,36 @@ class MaxRuntimeTests(unittest.TestCase):
         (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None}))
         self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(self.killpg_calls(home), [{'pid': self.PID, 'signal': signal.SIGTERM}])
+        self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
+        self.assertIn('REAP TIMEOUT RQ-HUNG escalation-complete group-gone', events(home))
+
+    def test_sigkill_sent_holds_slot_until_group_confirmed_gone(self):
+        # SIGKILL delivery is asynchronous: killpg success only means the
+        # signal was sent. The slot and reap must stay held until a later
+        # tick proves the process group empty; killsent is never done.
+        home, run = self.hung(7300)
+        marker = run / 'RQ-HUNG.maxruntime'
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.mock_watchdog(home, self.START_TIME)
+        self.write_ps(home)
+        # Leader verified alive so SIGKILL fires; its group survives the signal.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): self.PID}))
+        self.assertEqual(tick(home).returncode, 0)
+        rows = [json.loads(line) for line in marker.read_text().splitlines() if line != 'KILL']
+        self.assertTrue(any(row.get('killsent') is True for row in rows))
+        self.assertFalse(any(row.get('done') is True for row in rows))
+        self.assertEqual(marker.read_text().splitlines()[-1] != 'KILL', True)
+        self.assertEqual(len([c for c in self.killpg_calls(home) if c['signal'] == signal.SIGKILL]), 1)
+        # Next tick: leader exited, group still alive -> no KILL, no re-signal.
+        (home / 'mock-pgids.json').write_text(json.dumps({str(self.PID): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
+        self.assertNotEqual(marker.read_text().splitlines()[-1], 'KILL')
+        self.assertEqual(len([c for c in self.killpg_calls(home) if c['signal'] == signal.SIGKILL]), 1)
+        # Group finally empty -> escalation completes.
+        (home / 'mock-groups.json').write_text(json.dumps({str(self.PID): None}))
+        old = time.time() - 60; os.utime(marker, (old, old))
+        self.assertEqual(tick(home).returncode, 0)
         self.assertEqual(marker.read_text().splitlines()[-1], 'KILL')
         self.assertIn('REAP TIMEOUT RQ-HUNG escalation-complete group-gone', events(home))
 

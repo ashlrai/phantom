@@ -31,7 +31,7 @@ function liveMap(talk: [string, string, number | null, number][]): FleetLiveMap 
 }
 const ref = (name: string) => ({ name, lane: name === 'leader' ? 'leader' : name.startsWith('RQ-') ? null : name });
 const msg = (id: string, from: string, to: string, secondsAgo: number, over: Partial<AgentMessage> = {}): AgentMessage => ({
-  id, ts: at(secondsAgo), from: ref(from), to: ref(to), kind: 'status', summary: `${id} text`, conversation: 'c', job: null, pr: null, ...over,
+  id, ts: at(secondsAgo), priority: 'P2', from: ref(from), to: ref(to), kind: 'status', summary: `${id} text`, conversation: 'c', job: null, pr: null, ...over,
 });
 const page = (messages: AgentMessage[], matched = messages.length): AgentMessages => ({ schema: 'agent-messages.v1', source: messages.length ? 'available' : 'missing', messages, matched, skipped: 0 });
 

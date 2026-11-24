@@ -19,6 +19,8 @@ export const PARTICIPANT_STATUSES = ['active', 'idle', 'offline', 'disabled'] as
 export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
+/** The dispatch tiers a `work.post` may declare, lightest first — the same values the queue tiers use. */
+export const WORK_TIERS = ['fast', 'mid', 'work', 'frontier'] as const;
 export const BODY_KINDS = [
   'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.result', 'work.release', 'wake',
 ] as const;
@@ -29,7 +31,7 @@ const label = z.string().regex(/^[\x21-\x7e]{1,128}(?![\s\S])/, 'printable ASCII
 const wakeTarget = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}(?![\s\S])/, 'label only: letters, digits, . _ : -')
   .refine((s) => !/[A-Za-z0-9]{32,}/.test(s), 'looks like a secret, not a label');
-const repoSlug = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![\s\S])/, 'owner/name');
+export const repoSlugSchema = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?![\s\S])/, 'owner/name');
 const text = z.string().min(1).max(BUS_V2_TEXT_MAX);
 const epochMs = z.number().int().nonnegative().safe();
 const leaseMs = z.number().int().min(CLAIM_MIN_LEASE_MS).max(CLAIM_MAX_LEASE_MS);
@@ -84,9 +86,11 @@ export function parseClaimKey(key: string): ParsedClaimKey | undefined {
 
 export const claimKeySchema = z.string().refine((k) => parseClaimKey(k) !== undefined, 'invalid claim key');
 
-/** Literal prefix of a glob: everything before the first wildcard character. */
+/** Literal prefix of a glob: everything before the first wildcard character.
+ * `globMatches` treats only `*` and `?` as wildcards — `[`, `{` and the rest
+ * are literal, so they never end the prefix. */
 export function literalPrefix(glob: string): string {
-  const i = glob.search(/[*?[{]/);
+  const i = glob.search(/[*?]/);
   return i === -1 ? glob : glob.slice(0, i);
 }
 
@@ -244,17 +248,33 @@ export function mayMutateClaim(claim: Claim, presentedToken: string, now: number
 const refs = z.array(z.string().min(1).max(256)).max(32);
 const jobId = label;
 
+/**
+ * `inReplyTo` cites the envelope id a conversational body answers — the same
+ * citation `postBusReply`, `comms bus post --reply-to` and the fleet reply
+ * verbs stamp, which `busReplyCitations`, the conversation projection and the
+ * pending-work sections already credit. It is a routing label, never proof
+ * the cited message existed or was received.
+ */
+const replyCitation = { inReplyTo: label.optional() } as const;
 export const noteBodySchema = z.object({
   kind: z.literal('note'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
 export const contextBodySchema = z.object({
   kind: z.literal('context'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
+/** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
+export const workDispatchSchema = z.object({
+  tier: z.enum(WORK_TIERS),
+  scope: text.max(4000), acceptance: text.max(2000),
+}).strict();
+export type WorkDispatch = z.infer<typeof workDispatchSchema>;
+
 export const workPostBodySchema = z.object({
   kind: z.literal('work.post'), jobId, title: z.string().min(1).max(256), provider: providerSchema.optional(),
-  repo: repoSlug, claimKeys: z.array(claimKeySchema).max(16),
-  dispatch: z.object({ tier: z.enum(['fast', 'mid', 'work', 'frontier']),
-    scope: text.max(4000), acceptance: text.max(2000) }).strict().optional(),
+  repo: repoSlugSchema, claimKeys: z.array(claimKeySchema).max(16),
+  dispatch: workDispatchSchema.optional(),
 }).strict();
 export const workResultBodySchema = z.object({
   kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
@@ -263,6 +283,9 @@ export const workResultBodySchema = z.object({
   outcome: z.enum(['reserved', 'admitted', 'complete', 'failed']),
   reason: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
 }).strict();
+/** The outcome codes a `work.result` body reports — reported evidence a
+ * worker/peer posted, never a feed job status. */
+export type WorkResultOutcome = z.infer<typeof workResultBodySchema>['outcome'];
 export const workClaimBodySchema = z.discriminatedUnion('op', [
   z.object({ kind: z.literal('work.claim'), op: z.literal('acquire'), jobId: jobId.optional(),
     claimKey: claimKeySchema, owner: label, leaseMs }).strict(),
@@ -287,15 +310,36 @@ export const busBodySchema = z.union([
 ]);
 export type BusBody = z.infer<typeof busBodySchema>;
 
+/**
+ * The conversation label a `note`/`context` body carries in `thread`, or null
+ * for every other body kind and shape. Thread reads match this field only: it
+ * is the one v2 body field that ties a question and its answer together.
+ */
+export function busBodyThread(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record['kind'] !== 'note' && record['kind'] !== 'context') return null;
+  const thread = record['thread'];
+  return typeof thread === 'string' && thread.length > 0 ? thread : null;
+}
+
 // ─── Work feed ──────────────────────────────────────────────────────
 
 export const workJobSchema = z.object({
   id: jobId,
   owner: label,
+  /** Routing label the work.post announcement was addressed to. */
+  to: label,
   provider: providerSchema,
-  repo: repoSlug,
+  repo: repoSlugSchema,
+  /** The announcement's own title and optional dispatch spec, carried so the feed names the work. */
+  title: z.string().min(1).max(256),
+  dispatch: workDispatchSchema.optional(),
   claimKeys: z.array(claimKeySchema).max(16),
   status: z.enum(WORK_STATUSES),
+  /** The newest status's optional detail — why the job sits in its current
+   * state. A newer status without one clears it; it is never accumulated. */
+  detail: text.max(1024).optional(),
   updatedAt: epochMs,
 }).strict();
 export type WorkJob = z.infer<typeof workJobSchema>;
@@ -314,6 +358,7 @@ export function busV2ContractSummary() {
     wakeKinds: [...WAKE_KINDS],
     bodyKinds: [...BODY_KINDS],
     workStatuses: [...WORK_STATUSES],
+    workTiers: [...WORK_TIERS],
     claimKeyForms: ['repo:<owner/name>', 'path:<owner/name>:<glob>', 'queue:<queue id>', 'pr:<owner/name>#<n>'],
     claimLeaseMs: { min: CLAIM_MIN_LEASE_MS, max: CLAIM_MAX_LEASE_MS },
     claimsGrantExecutionAuthority: false,

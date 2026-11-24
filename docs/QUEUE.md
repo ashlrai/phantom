@@ -306,7 +306,14 @@ The same window's `route_decision` rows are folded into `overrides`:
 each waiting job counts once, by its latest in-window decision — how many
 jobs the market decided and how many left their hinted lane, by reason
 (`resource_fit`, `preferred_lane_fallback`, `unknown_preference`) and by
-hinted-to-chosen lane. The same window's `claim` and `batch_claim` rows in
+hinted-to-chosen lane. The same collapsed decisions also fold their
+`rejected_lanes` into `rejections`: every lane the market refused each job,
+with the reason codes that say why (`missing_capability`, `quota_exhausted`,
+`saturated`, `lower_rank`, ...). `lanes` tallies each rejected lane per job
+with its reason counts and `byReason` counts each job once per reason
+across all its rejected lanes; `unrouted` counts decisions that chose no
+lane at all. Malformed entries or codes are skipped, never guessed.
+The same window's `claim` and `batch_claim` rows in
 `metrics/jobs.jsonl` fold into `claims`: launches that actually left their
 hinted lane, counted as events — a re-launched attempt is another real
 launch — by `lane_override` reason and by hinted-to-launched lane. This is
@@ -315,6 +322,20 @@ combined session makes after each member's own decision appear here and
 nowhere in `overrides`, and a decision overridden on paper but deferred
 before launch never counts. `claims.truncated` is true when the ledger
 exceeded the retained tail, so those counts are a lower bound.
+The same collapsed decisions also join the retained tail of
+`metrics/jobs.jsonl` into `decisionOutcomes`: each decided job counts once,
+by how its latest decision treated the hint — `hinted` (chose the declared
+preferred lane), `overridden` (recorded a well-formed `lane_override`),
+`open` (chose a lane with no declared preference), `unrouted` (chose no
+lane) or `unexplained` (left a declared preference with no well-formed
+override record) — then to the newest recorded outcome through the same
+fold `phm router outcomes` uses, so merged, closed-unmerged, reverted and
+still-unresolved jobs keep identical semantics. `byReason` recounts
+overridden jobs by override reason and `byClass` tallies outcomes per
+recorded `work_class` (`unclassified` when absent or outside the market's
+closed values). A missing jobs ledger leaves every decided job
+`unresolved` — unknown stays unknown — and `jobsTruncated` marks a
+tail-bound lower bound on outcomes.
 `--json` prints `fleet.unfed.v1`. `source` is `dispatcher` when status.json
 carries the block and `derived` when the running dispatcher predates it; a
 derived report compares lane counts with `ready.tsv` hints; when
@@ -343,7 +364,11 @@ and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes, no child processes, no network.
+is read-only: no writes, no child processes, no network. The isolated fleet
+MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
+the same `readUnfedReport` read this command and the tool share — with
+`windowHours` taking the `--window` bound; see
+[the fleet tool catalog](MCP-TOOLS.md#phantom-fleet--isolated-fleet-server-phm-mcp-fleet).
 
 ## Dispatch-neutral queue snapshot
 
@@ -574,11 +599,21 @@ interval, so never add them to obtain total wait. Blockers start at zero in
 each timing window; old state files start measuring on their next successful read.
 `checks` reflects the reported head check rollup, not merge-group check results.
 `stale` means GitHub reports BEHIND, not that a queued PR needs rebasing.
-These observations do not alter recut, retry, ownership or required-check gates.
+After an hour continuously observed as queued, `repos[].stalled` lists the
+entry. The cycle refreshes its head, holds, ownership, reviews and check status
+before using GitHub's `dequeuePullRequest` and the same head-pinned auto-merge
+path to restart eligible entries. `repos[].recovered` records successful
+re-enrollment requests, not completed merges. Recovery shares enqueue retry
+budgets; a failed re-enrollment is retried on a later cycle. New heads, failed
+reads and backward clocks reset the observation window. Dry runs only report.
+The typed `MergeQueueOptions.stalledMs` controls the timeout; required checks
+and reviews remain enforced by GitHub. Dequeueing loses the entry's position
+and restarts its merge-group checks, so the timeout is deliberately long.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
-are left alone and auto-merge stays armed. The offline scheduling fixture in
+keep auto-merge armed unless eligible for timed recovery. The offline scheduling
+fixture in
 `test/merge-queue-loop.test.ts` models a 60-second update and a 90-second
 conflict resolution: two ready PRs enroll after 0.1 and 0.2 seconds instead
 of 150.1 and 150.2 seconds, including when the update fails. These are fixture
@@ -682,6 +717,53 @@ a whole old or new snapshot. Files use mode 0600 and newly created directories
 use 0700. The existing dispatchd directory's permissions are not changed.
 Corrupt snapshots fail closed instead of becoming empty queues.
 
+## Check ready work against free slots
+
+Use these read-only reports when a lane has room but jobs are not starting:
+
+```sh
+phm fleet lane-starve
+phm fleet lane-starve --json
+phm fleet launchable
+phm fleet launchable --json
+```
+
+`lane-starve` lists lanes below their launch target with queued work. Its
+`ready` count splits into `filler` and `real` rows. Parked rows are excluded
+whether the `PARKED` marker is in the first column or the lane column.
+`queued` comes from the status snapshot, so it can differ from `ready`.
+
+`launchable` compares each lane's `free` slots with ready rows whose prompt
+file exists. It also excludes parked rows, jobs marked `drop` or `defer` in
+`skipped-empty.tsv`, and filler while `FILLER_HOLD` exists. Both commands use
+the launch target described below and read `~/.ashlr-runs/queue`; set
+`ASHLR_RUNS_DIR` to inspect another runs directory.
+
+`lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
+any lane has more free slots than launchable rows. Both exit 0 otherwise and
+2 for invalid arguments or unreadable required data. Their JSON schemas are
+`fleet.lane-starve.v1` and `fleet.launchable.v1`. Neither report launches work
+or removes a hold.
+
+## Inspect the processes using this computer
+
+```sh
+phm fleet hostload
+phm fleet hostload --json
+```
+
+This read-only report shows up to eight process families, ordered by CPU,
+with child builds and tests counted with their parent job. It also lists up
+to five unrecognized executable names with process counts, CPU and RSS memory;
+command arguments stay private. JSON includes `families`, `unknownCommands`,
+`fleetCpuPercent` and `totalCpuPercent`. CPU uses the process convention where
+100% is one core, so totals can exceed 100% on a multicore computer.
+
+An unknown executable is a classification gap, not proof that it belongs to
+the fleet. If process data cannot be read, `state` is `unknown` and the command
+exits 1; a known reading exits 0. Use the admission report below to see whether
+load is blocking new jobs.
+
 ## Load-aware admission
 
 `phm pool admission [--json]` is a read-only report of the dispatchd load gate:
@@ -696,7 +778,20 @@ off before they run out. The report shows it as `adaptiveCap`. An operator
 change batches related ready tasks into one agent session. See
 [adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
 
-`ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
+`ashlr fleet admission` shows one line explaining job starts from
+`~/.ashlr-runs/queue/admission-ctl.json`. The Fleet overview's **Job starts** card
+uses the same reader through `GET /api/verse/fleet/admission`. `--json` returns
+the typed measurements, `nextStartSeconds` and `startsPerHourCap` (`3600 / settle_s`;
+null for zero settle, which imposes no pacing cap). Missing, invalid or older-than-five-minute
+observations are unknown. Host blocks show the pacing window separately: its
+expiry does not promise a launch while the host remains busy. Exit codes are
+0 open, 1 blocked or settling, 2 unknown or bad arguments.
+`ASHLR_ADMISSION_CTL_PATH` overrides the admission file; `ASHLR_RUNS_DIR`
+overrides its default runs directory. This is a read-only observation of the
+launch guard; lane holds and other dispatcher gates can still prevent work.
+
+`ashlr fleet admission --details [--json]` preserves the earlier lane report
+and JSON shape. It reads that stored verdict from `queue/status.json`
 and says why each lane is waiting: held, at target, admission closed (the
 dispatcher is not admitting — load gate tripped or paused), blocked by the global
 cap, or ok. `global.closed` is the fleet verdict (cap, gate or pause) and
@@ -709,7 +804,7 @@ These lane reports count availability against the **launch target**: the lane's
 configured `target` tightened by the `effective_target` the fleet controller
 publishes after load shedding (`min(target, effective_target)`, the configured
 target when the shed is absent or unreadable). A lane running at its shed ceiling
-has no phantom room, so `fleet admission`, `fleet lane-idle`, `fleet lane-share`,
+has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet lane-share`,
 `fleet lane-starve`, `fleet starved`, `fleet launchable`, `fleet idle-lanes`,
 `fleet trim` and the idle-lane checks in `fleet doctor` and the bottleneck ideas
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
@@ -875,7 +970,15 @@ is executed by the planner. The planner does not install or change host scripts.
 
 Run `phm queue dedupe --json` to preview repeated READY jobs in the local router queue. Add `--apply` to mark repeats `SUPERSEDED-BY-<first id>`, or `--file <path>` to inspect another router queue. The first READY or CLAIMED line wins. Matching uses the repository, first named target file, and either normalized acceptance text or the same quoted acceptance phrase. Lines missing evidence are reported as unknown. This is a partial, text-based check; review quoted matches for different intended outcomes.
 
-Run `phm queue autofill --lane <lane> [--min <n>]` to keep a lane from running dry. When the lane has fewer than `--min` ready jobs (default: its slot target) it drafts the gap from `phm bets propose`, skips anything the bets check says already exists or that is already in the queue, and prints `{schema: "queue.autofill.v1", lane, running, target, queued, drafted, skipped}`. It is a dry run; `--apply` adds each draft as a READY job through the normal queue add path. A full lane prints "Lane is full."; counts that cannot be read stay `null` and nothing is drafted.
+Run `phm queue dupcheck <job-id|prompt-file> [--json]` before launching a job to see whether its work is already on master. It pulls the commands (`phm foo bar`), flags, file paths and panel names out of the goal and looks each up in the CLI command list, `docs/CLI-REFERENCE.md`, the file tree and the pull requests merged in the last 7 days in `metrics/jobs.jsonl`. It prints `likely_done`, `partial`, `new` or `unknown` (the goal names nothing to look up) with the matching file or PR; a job id is read from `queue/ready.tsv`. `--json` carries `schema: "queue.dupcheck.v1"`. Read-only; the dispatcher can call `dupcheckJob` from `src/core/queue/dupcheck.ts`. An existing file alone never proves the work is done.
+
+The dispatcher runs the same check as a gate before it claims a row: `phm queue dupcheck <prompt-file> --gate --json` (schema `queue.dupcheck-gate.v1`). High confidence (this job id already merged, or every named command, flag and file is there and a named flag exists) means `skip`: the row is dropped as `DONE-NOOP`, never launched, and the reason and evidence (matching file, command or merged job) are recorded. Medium confidence (`likely_done` without that proof) means `warn`: the row launches and `contrib/mac/launch_precheck.py` adds one `Check this first:` line to its prompt. Everything else launches as before. Each decision is one row in `metrics/dupcheck.jsonl`; the daemon's `empty-tag-sync` job and `phm jobs empty --record` add an `outcome` row when a launched or warned job ends EMPTY `already_done`. `phm queue dupcheck --stats [--json]` (schema `queue.dupcheck-stats.v1`) shows skips, warned and plain launches, launches that ended `already_done`, and false skips (a skipped job that was launched later). The gate fails open: if `phm` is missing, slow or answers anything unexpected, the row launches.
+
+`phm ideas list` reads the same ledger as its `dupcheck-gate` signal: two or more skipped jobs that were launched later become a `dupcheck-gate:false-skips` idea, and jobs the gate let through (launch or warn) that still ended `already_done` become a `dupcheck-gate:missed-duplicates` idea once at least 3 did so and they are at least 10% of let-through decisions. A missing or unreadable ledger leaves the signal unknown.
+
+Run `phm queue autofill --lane <lane> [--min <n>]` to keep a lane from running dry. When the lane has fewer than `--min` ready jobs (default: its slot target) it drafts the gap in this order: open items from `phm ideas` (`source: "idea"`), then "Not built:" / "Gaps:" lines from the logs of jobs that ended empty in the last 72 hours (`"follow-up"`), then `phm bets propose` (`"bet"`). It skips anything already queued, running or shipped, and any job family that `phm jobs empty --by-family` marks `stop` for the lane. Every queued prompt starts with "Step 0: search master, deliver only the delta; end with no change if it already exists." and the ship-partial rule. It prints `{schema: "queue.autofill.v1", lane, running, target, queued, drafted: [{id, source, goal, prompt, ...}], skipped}`. A source that cannot be read adds nothing. It is a dry run; `--apply` adds each draft as a READY job through the normal queue add path. A full lane prints "Lane is full."; counts that cannot be read stay `null` and nothing is drafted.
+
+`phm fleet self-tick` runs the same fill for you: in its planner-tick step, every lane that `phm fleet pulse --alerts` reports as starved is filled with `--apply`, at most 4 bets per lane and 12 in all per rolling hour. Each run that did or refused something is one `AUTOFILL {...}` line in `queue/dispatch-events.log` with `{schema: "queue.autofill.event.v1", ts, lane, drafted, applied, skipped, reason}`; a lane at its cap is skipped with reason "hourly cap". `phm queue autofill --status [--json]` prints `{schema: "queue.autofill.status.v1", ts, off, cap, last_runs}`: the last runs and the bets left this hour (`off` is `null` when the live config cannot be read). Kill switch: `phm fleet config set autofill.off 1 --reason "<why>"` makes the tick skip with reason "autofill off"; `phm fleet config unset autofill.off --reason "<why>"` turns it back on. Bets are read from the checkout the timer runs in.
 
 Run `phm queue supersede` to list queued jobs that a newer cycle of the same job replaces, for example `RQ-PHX-RECUTCOREC541` once `RQ-PHX-RECUTCOREC544` is queued. Jobs match when they share a repo and an id that differs only in its cycle: `C<number>`, `<number>S` or `<number>C` at the end, with two or more digits. Only the newest cycle stays; ids without a cycle, parked rows and running jobs are left alone, and a claimed or running newer cycle still replaces an older queued one. It reads `ready.tsv` and `router-queue.md` and changes nothing by default. Add `--apply` to copy the older `ready.tsv` rows to `superseded.tsv` beside it, mark their router lines `SUPERSEDED-BY-<newer id>` so restock does not add them again, remove the rows, and append one `SUPERSEDED <id> by <newer id>` line per job to `dispatch-events.log`. Nothing is deleted: to restore a job, paste its row back from `superseded.tsv`. A second run finds nothing to do. `--json` prints the typed `queue.supersede.v1` report (`applied`, `queued`, `count`, `superseded[]` with `id`, `repo`, `family`, `cycle`, `supersededBy`), and `phm queue batches` shows the count as `superseded`.
 
@@ -905,6 +1008,42 @@ is the sum of recorded job tokens divided by merged PRs; it is unknown if any
 job in the group lacks a token total or no PR merged. Missing measurements are
 unknown, and malformed lines are skipped and counted. The report describes
 recorded evidence, not necessarily every job or PR.
+
+The same command reports `drafted`, `rejected`, `launched` and `prs` by
+generator, with `rejections` counts by reason. Autofill `--apply` records
+decisions in `metrics/generation.jsonl` with job ID, timestamp, `src`
+(`autofill:idea`, `autofill:follow-up`, `autofill:bet`), event and rejection
+reason. Dry runs expose `trace` in their JSON without writing metrics.
+Drafted means accepted for queueing; an hourly cap is a rejection. Duplicate
+and completed targets retain their source; targets without an ID use a title
+hash. Counts deduplicate by source and target within the window; stages can
+overlap. Only draft evidence attributes later launches and PRs to that source.
+Rejections never claim another generator's results. `generationKnown: false`
+means the generation ledger is unavailable; `jobsKnown` does the same for the
+jobs ledger. Counts cover recorded evidence only.
+
+## Is each pool fed?
+
+Run `phm queue supply` for one plain line per pool: usage left, hours to reset, jobs queued for the pool, its starts
+per hour over the last 6 hours, and the hours of work queued (ready jobs divided by starts per hour). Pools that need work
+come first: "Claude: 0 jobs queued, 16% left, about 3 hours of usage idle" or "codex-personal: 104 jobs queued, plan used
+up until Sat 3:30 PM". `--json` returns `queue.supply.v1` for agents. It is read-only and built from `phm pools`, the
+ready queue and the dispatch events. A figure that cannot be read is `null` and shown as unknown, never zero. Ready jobs
+are counted by the lane on their queue row, so a job not yet placed on a lane is not counted.
+
+The hourly digest adds a `supply_low` line, naming the pool, when a pool that is behind (or has waste risk high or
+medium) has under an hour of work queued.
+
+## Which producer earns its slots?
+
+Run `phm jobs yield --by source` for a scoreboard per producer over the last 24 hours (`--since 7d` for a week). Each row
+has launches, PRs opened, merged, empty, aborted, merged per launch and median minutes to merge; the lowest merged per
+launch comes first, under one plain verdict line such as "filler: 2 merged of 40 launches, consider stopping it". A job's
+source is its `src=` tag on the queue line, else its id prefix: `leader` (ids ending `N<day><letter>Q8`), `core`
+(`RQ-PHX-`), `cl-stream` (`RQ-CL-`), `guardian` (`FIXUP-`), `filler` (one-test ids such as `RQ-MD3A111800Q8`), or `other`.
+`--by lane` ranks lanes the same way; `--by family` is the per-job-kind view with keep, watch and stop verdicts, which is
+also the default. `--json` returns `jobs.yield-by.v1`. A median that cannot be worked out is `null`, shown as unknown. A
+source needs 5 launches before it is judged. The hourly digest adds a `yield_low` line carrying the worst source.
 
 ## Waiting to launch
 
@@ -1017,9 +1156,14 @@ re-pinning before dispatcher installation; no live cutover is part of this chang
 Run `phm fleet parked --json` for the read-only `health` summary
 (`fleet.queue-health.v1`). It separates ready and parked counts and groups
 repeated precheck skips, including `RESTOCK`, by job, code and reason over the
-last 24 hours. READY rows whose lane cell is empty or names no lane are the
-market's open hint: they count in `ready`/`total`/`unhinted` and in the health
-ready count, but stay unattributed in `byLane` and `nextUp`. A repeat means at
+last 24 hours. A READY row's lane hint resolves like `work_market.requirements`:
+the requirements JSON's `preferred_lane` wins over the lane cell and explicit
+`null` is lane-open, while an absent key falls back to the lane cell. Rows with
+no honest lane — empty lane cell and no spec preference — are the market's open
+hint: they count in `ready`/`total`/`unhinted` and in the health ready count,
+but stay unattributed in `byLane` and `nextUp`. A row the market rejects
+(`invalid_requirements`: malformed spec, invalid `preferred_lane` or lane cell)
+is dead work — counted in `malformed`, never open supply. A repeat means at
 least two matching records; it does not prove
 a job is still blocked. `phm fleet ready-supply` reports the same lane-open
 rows as `unhinted` (`total`, `phantom`, `filler` split by the `RQ-PHX-` id

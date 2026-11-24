@@ -20,12 +20,17 @@ export function isNodeProvider(value: unknown): value is NodeProvider {
 
 /** Ordered allowlist of absolute install locations. PATH is never consulted. */
 export function providerBinaryCandidates(provider: NodeProvider, deps: ProviderBinaryDeps = {}): string[] {
-  if (!isNodeProvider(provider)) return [];
+  return isNodeProvider(provider) ? binaryCandidates(provider, deps) : [];
+}
+
+/** The same allowlist for any plain CLI name (used by the read-only node doctor). */
+export function binaryCandidates(name: string, deps: ProviderBinaryDeps = {}): string[] {
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(name)) return [];
   const home = deps.home ?? homedir();
   const dirs = ['/opt/homebrew/bin', '/usr/local/bin',
     ...(isAbsolute(home) ? [join(home, '.local', 'bin'), join(home, '.npm-global', 'bin')] : []),
     dirname(deps.execPath ?? process.execPath)];
-  return [...new Set(dirs.filter(dir => isAbsolute(dir)).map(dir => join(dir, provider)))];
+  return [...new Set(dirs.filter(dir => isAbsolute(dir)).map(dir => join(dir, name)))];
 }
 
 function executableFile(path: string): boolean {

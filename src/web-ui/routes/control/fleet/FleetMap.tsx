@@ -1,10 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { ComputeNode } from '../../../../core/fleet/compute-view.js';
 import type { MapSession } from '../../../../core/fleet/sessions-view.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { SessionLive } from '../../verse/company/SessionLive.js';
 import { Sheet } from '../../../components/primitives/Sheet.js';
-import { fleetComputeQuery, fleetMessageGraphQuery, fleetNodesPlanQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { fleetComputeQuery, fleetMapMessagesQuery, fleetMessageGraphQuery, fleetNodesPlanQuery, fleetSessionMapQuery } from './fleet-map-queries.js';
+import { MessageEdges } from './MessageEdges.js';
 import { age, bytes, cpuPercent, elapsed, fresh, number, prLink } from './fleet-map-model.js';
 import styles from './FleetMap.module.css';
 
@@ -43,6 +45,11 @@ export function FleetMap() {
   const compute = useQuery(fleetComputeQuery, { enabled: started, freshMs: 0 });
   const sessions = useQuery(fleetSessionMapQuery, { enabled: started, freshMs: 0 });
   const messages = useQuery(fleetMessageGraphQuery, { enabled: started, freshMs: 0 });
+  const [showMessages, setShowMessages] = useState(true);
+  const showMessagesRef = useRef(showMessages);
+  showMessagesRef.current = showMessages;
+  const liveMessages = useQuery(fleetMapMessagesQuery, { enabled: started && showMessages, freshMs: 0 });
+  const refreshLive = useRefetch(fleetMapMessagesQuery);
   // Badges are a plan, not a live reading: read once and again after 30 s, not on the 4 s tick (the read runs tailscale).
   const badges = useQuery(fleetNodesPlanQuery, { enabled: started, freshMs: 30_000 }).data ?? null;
   const refreshCompute = useRefetch(fleetComputeQuery), refreshSessions = useRefetch(fleetSessionMapQuery), refreshMessages = useRefetch(fleetMessageGraphQuery);
@@ -52,15 +59,15 @@ export function FleetMap() {
     const visibility = () => {
       const shown = document.visibilityState !== 'hidden';
       setVisible(shown); setNow(Date.now());
-      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); refreshMessages(); }
+      if (shown) { setStarted(true); refreshCompute(); refreshSessions(); refreshMessages(); if (showMessagesRef.current) refreshLive(); }
     };
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      setNow(Date.now()); refreshCompute(); refreshSessions(); refreshMessages();
+      setNow(Date.now()); refreshCompute(); refreshSessions(); refreshMessages(); if (showMessagesRef.current) refreshLive();
     }, 4000);
     document.addEventListener('visibilitychange', visibility);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
-  }, [refreshCompute, refreshSessions, refreshMessages]);
+  }, [refreshCompute, refreshSessions, refreshMessages, refreshLive]);
   useEffect(() => {
     if (!compute.data) return;
     const nodes = compute.data.nodes;
@@ -81,13 +88,14 @@ export function FleetMap() {
   const selectedJob = params.get('mapSession'), selectedNode = params.get('mapNode');
   const session = [...active, ...recent].find(s => s.job === selectedJob);
   const node = nodes.find(n => n.id === selectedNode);
+  const sessionNode = nodes.find(n => n.id === session?.nodeId);
   const select = (key: 'mapSession' | 'mapNode', id: string) => {
     const next = new URLSearchParams(params); next.delete('mapSession'); next.delete('mapNode'); next.set(key, id); setParams(next, { replace: true });
   };
   const close = () => { const next = new URLSearchParams(params); next.delete('mapSession'); next.delete('mapNode'); setParams(next, { replace: true }); };
   return <section className={styles.map} aria-labelledby="fleet-map-title">
     <header className={styles.header}>
-      <div><p className={styles.eyebrow}>LIVE TOPOLOGY · READ ONLY</p><h2 id="fleet-map-title">Fleet map</h2></div>
+      <div><p className={styles.eyebrow}>LIVE TOPOLOGY</p><h2 id="fleet-map-title">Fleet map</h2></div>
       <p className={styles.caption}>{visible ? 'Refreshes every 4s' : 'Updates paused'} · Compute updated {age(compute.data?.generatedAt, now)} · Sessions updated {age(sessions.data?.generatedAt, now)}</p>
     </header>
     <p className={styles.caption}>Heat = claimed slots / measured ceiling. Dashed zones have unknown capacity. CPU needs two fresh samples.</p>
@@ -124,9 +132,18 @@ export function FleetMap() {
         <ul className={styles.caption}>{group.edges.map(edge => <li key={edge.id}>{edge.from} → {edge.to} · {edge.count}</li>)}</ul>
       </li>)}</ul>}
     </section> : null}
+    <section className={styles.messages} aria-label="Live message edges">
+      <h3>Live messages</h3>
+      <label><input type="checkbox" checked={showMessages} onChange={e => setShowMessages(e.target.checked)} /> Show messages</label>
+      {showMessages ? (liveMessages.data ? <MessageEdges messages={liveMessages.data.messages} now={now} />
+        : <p className={styles.caption}>{liveMessages.status === 'error' ? 'Live messages unavailable.' : 'Loading live messages…'}</p>) : null}
+    </section>
     <Sheet open={selectedJob !== null || selectedNode !== null} onClose={close} titleId="fleet-map-detail" title={selectedJob ?? selectedNode}>
       {session ? <>
         <p className={styles.detailActivity}>{session.activity ?? 'Activity unknown'}</p>
+        {/* Same live window as the Verse map: the typed tail API plus the existing job controls. A session on another machine stays "unknown". */}
+        <SessionLive job={session.job} local={session.placement !== 'conflict' && (session.placement !== 'claim' || sessionNode?.local === true) && !['unknown', 'queued', 'parked'].includes(session.status)}
+          enabled known={{ lane: session.lane, model: session.model, repo: null, startedAt: null, tokens: null }} />
         <dl className={styles.details}>{Object.entries({ Callsign: 'unknown', Lane: session.lane, Model: session.model, Status: session.status, Machine: session.nodeId,
           Placement: session.placement, Elapsed: elapsed(session.elapsedSeconds), Branch: session.branch, Worktree: session.worktree, 'Owned files': 'unknown', Outcome: session.outcome,
         }).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value ?? 'unknown'}</dd></div>)}</dl>

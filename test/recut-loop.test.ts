@@ -214,6 +214,18 @@ describe('recutLoopTick', () => {
     expect(existsSync(dropDir)).toBe(false);
   });
 
+  it('recuts conflicting agent PRs from every bridge job family, not only RQ-PHX', async () => {
+    const items = [
+      item(18, { title: 'bridge: RQ-CL-DOCS-1795103686', job: null }),
+      item(19, { title: 'bridge: RQ-DVL-FLEET-1795098583', job: null }),
+    ];
+
+    const result = await recutLoopTick(deps(items));
+
+    expect(result.outcome).toBe('wrote');
+    expect(result.written.map((row) => row.pr).sort()).toEqual([18, 19]);
+  });
+
   it('skips a candidate whose head sha cannot be observed', async () => {
     const result = await recutLoopTick(deps([item(15)], { readHeadSha: async () => null }));
 

@@ -19,6 +19,7 @@ function fixture(remainingPaths = source.remainingPaths) {
   const title = `bridge: RQ-PHX-MR${createHash('sha256').update(`42:${head}`).digest('hex').slice(0, 32).toUpperCase()}`;
   let writes = 0, body = '', output = '';
   const liveReplacement: Record<string, unknown> = {};
+  const liveSource: Record<string, unknown> = {};
   const inspected = { ...source, remainingPaths };
   let afterSearch = () => {};
   const state = { sourceState: 'OPEN', moved: false, replacement: false, replacementState: 'OPEN', conflict: false, failMerge: false, auto: false, failWrite: false, failView: false, replacementNumber: 43, replacementCount: 1, unrelated: false };
@@ -28,7 +29,7 @@ function fixture(remainingPaths = source.remainingPaths) {
       if (!state.failMerge) state.auto = true;
       return { ok: !state.failMerge, stdout: '', stderr: 'never expose provider errors' };
     }
-    const pr = { number: 42, title: source.title, state: state.sourceState, headRefOid: state.moved ? 'b'.repeat(40) : head, baseRefName: 'main', isDraft: false, mergeStateStatus: 'DIRTY', autoMergeRequest: null };
+    const pr = { number: 42, title: source.title, state: state.sourceState, headRefOid: state.moved ? 'b'.repeat(40) : head, baseRefName: 'main', isDraft: false, mergeStateStatus: 'DIRTY', autoMergeRequest: null, ...liveSource };
     const replacement = { ...pr, number: state.replacementNumber, title, state: state.replacementState, mergeStateStatus: state.conflict ? 'DIRTY' : 'CLEAN', autoMergeRequest: state.auto ? {} : null };
     if (args[1] === 'view' && args[2] !== '42' && state.failView) return { ok: false, stdout: '', stderr: 'withheld' };
     const result = args[1] === 'view' ? args[2] === '42' ? pr : { ...replacement, ...liveReplacement }
@@ -41,9 +42,81 @@ function fixture(remainingPaths = source.remainingPaths) {
     write: async (_root, job) => { if (state.failWrite) throw new Error('write'); writes++; jobs.add(job.id); body = job.body; return { file: 'fake', bytes: 1, at: '' }; },
     output: text => { output = text; },
   });
-  return { run, state, inspected, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
+  return { run, state, inspected, liveSource, liveReplacement, calls, onSearch(fn: () => void) { afterSearch = fn; }, get writes() { return writes; }, get body() { return body; }, get report() { return JSON.parse(output); } };
 }
 describe('fleet merge-recover', () => {
+  it.each([
+    { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' },
+    { mergeable: 'CONFLICTING', mergeStateStatus: 'CLEAN' },
+    { mergeable: 'UNKNOWN', mergeStateStatus: 'DIRTY' },
+  ])('queues one recut per source head for either conflict signal: %j', async patch => {
+    const f = fixture(); Object.assign(f.liveSource, patch);
+    expect(await f.run(true)).toBe(0);
+    const firstBody = f.body;
+    expect(f.report.rows[0].action).toBe('recut-queued');
+    expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe('recut-queued');
+    expect(f.writes).toBe(1);
+    expect(f.body).toBe(firstBody);
+    expect(f.calls.filter(args => args[1] === 'view').every(args => args.at(-1)?.includes('mergeable'))).toBe(true);
+    // A new conflicting head must have its own request, with the new head pinned.
+    f.state.moved = true; f.inspected.head = 'b'.repeat(40);
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.writes).toBe(2);
+    expect(f.body).not.toBe(firstBody);
+    expect(f.body).toContain('b'.repeat(40));
+    expect(f.calls.some(args => args[1] === 'merge')).toBe(false);
+  });
+
+  it.each([
+    [{ mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }, 'source-changed'],
+    [{ state: 'CLOSED', mergeable: 'CONFLICTING' }, 'closed'],
+    [{ state: 'MERGED', mergeable: 'CONFLICTING' }, 'merged'],
+  ])('leaves clean or inactive sources alone: %j', async (patch, action) => {
+    const f = fixture(); Object.assign(f.liveSource, patch);
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe(action);
+    expect(f.writes).toBe(0);
+    expect(f.calls.some(args => ['list', 'merge'].includes(args[1]!))).toBe(false);
+    expect(await readdir(runsDir)).toEqual([]);
+  });
+
+  it.each(['CLEAN', 'BLOCKED', 'UNKNOWN'])('never arms a CONFLICTING replacement reporting %s', async mergeStateStatus => {
+    const f = fixture(); f.state.replacement = true;
+    Object.assign(f.liveReplacement, { mergeable: 'CONFLICTING', mergeStateStatus });
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe('replacement-conflict');
+    expect(f.writes).toBe(0);
+    expect(f.calls.some(args => args[1] === 'merge')).toBe(false);
+    expect(await readdir(runsDir)).toEqual([]);
+  });
+
+  it('rechecks both conflict signals before reserving a recut', async () => {
+    const f = fixture();
+    Object.assign(f.liveSource, { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' });
+    f.onSearch(() => { f.liveSource.mergeable = 'MERGEABLE'; });
+    expect(await f.run(true)).toBe(0);
+    expect(f.report.rows[0].action).toBe('source-changed');
+    expect(f.writes).toBe(0); expect(await readdir(runsDir)).toEqual([]);
+  });
+
+  it('takes a CONFLICTING source through one recut and head-pinned auto-merge', async () => {
+    const f = fixture();
+    Object.assign(f.liveSource, { mergeable: 'CONFLICTING', mergeStateStatus: 'UNKNOWN' });
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.writes).toBe(1);
+    expect(f.body).toContain('Never bypass required checks or the merge queue.');
+    f.state.replacement = true;
+    Object.assign(f.liveReplacement, { mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED', headRefOid: 'c'.repeat(40) });
+    expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
+    expect(f.calls.filter(args => args[1] === 'merge')).toEqual([
+      ['pr', 'merge', '43', '--repo', 'ashlrai/phantom', '--auto', '--match-head-commit', 'c'.repeat(40)],
+    ]);
+    f.state.replacementState = 'CLOSED';
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('replacement-closed');
+    expect(f.writes).toBe(1);
+  });
+
   it('carries an automatic recut through publication and re-arms its replacement without bypassing checks', async () => {
     const f = fixture();
     expect(await f.run(true)).toBe(0); expect(await f.run(true)).toBe(0);
@@ -63,6 +136,19 @@ describe('fleet merge-recover', () => {
     f.state.replacementState = 'MERGED';
     expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('replacement-merged');
     expect(f.writes).toBe(1);
+  });
+
+  it('recovers a non-PHX agent PR once and explains unresolved conflicts in plain words', async () => {
+    const f = fixture(); f.inspected.title = 'bridge: RQ-CL-DOCS-1795103686';
+    expect(await f.run(true)).toBe(0); expect(f.report.rows[0].action).toBe('recut-queued');
+    expect(await f.run(true)).toBe(0); expect(f.writes).toBe(1);
+    f.state.replacement = true; f.state.conflict = true;
+    expect(await f.run(true)).toBe(0);
+    const row = f.report.rows[0];
+    expect(row.action).toBe('replacement-conflict');
+    expect(row.reason).toMatch(/original PR stays open/);
+    expect(f.writes).toBe(1);
+    expect(f.calls.some(args => args[1] === 'merge' || args[1] === 'close')).toBe(false);
   });
 
   it('defaults to a mutation-free conflict preview', async () => {

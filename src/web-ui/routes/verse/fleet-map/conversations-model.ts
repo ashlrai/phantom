@@ -34,8 +34,9 @@ export function narrowConversations(raw: unknown): Conversation[] | null {
     const waiting = state === 'waiting' && w && text(w.on) && time(w.since) && typeof w.ms === 'number' && w.ms >= 0 ? { on: text(w.on)!, since: time(w.since)!, ms: w.ms } : null;
     const links = Array.isArray(row.links) ? row.links.flatMap(l => object(l) && text(l.a) && text(l.b) && time(l.lastAt) && typeof l.count === 'number'
       ? [{ a: text(l.a)!, b: text(l.b)!, count: l.count, lastAt: time(l.lastAt)! }] : []) : [];
+    const jobs = Array.isArray(row.jobs) ? row.jobs.flatMap(j => { const t = text(j); return t === null ? [] : [t]; }) : [];
     return [{ id, participants, subject: text(row.subject) ?? 'unknown', messageCount: typeof row.messageCount === 'number' ? row.messageCount : messages.length,
-      lastAt, state, stateText: CONVERSATION_STATE_WORDS[state], waiting, links, messages }];
+      lastAt, state, stateText: CONVERSATION_STATE_WORDS[state], waiting, jobs, links, messages }];
   });
 }
 export const conversationsQuery: QueryDef<Conversation[] | null> = {

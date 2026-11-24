@@ -67,6 +67,13 @@ function headingTime(line: string): { at: number; basis: NonNullable<LeaderLiven
   return at === null ? null : { at, basis: 'explicit-zone' };
 }
 
+/** Time of the newest `## <date>` heading in PLAN-LOG text; null when absent, malformed, ambiguous or in the future. */
+export function newestHeadingAt(text: string, now: number): { at: number; basis: NonNullable<LeaderLiveness['time_basis']> } | null {
+  const last = text.split('\n').filter(l => /^## \d{4}-\d{2}-\d{2}/.test(l)).pop();
+  const parsed = last ? headingTime(last) : null;
+  return parsed && parsed.at <= now ? parsed : null;
+}
+
 export async function readLeaderLiveness(root: string, now = Date.now()): Promise<LeaderLiveness> {
   const out: LeaderLiveness = { source: 'leader/PLAN-LOG.md', as_of: null, time_basis: null, age_seconds: null, age_hours: null,
     flagged_red: null, mismatch_source: 'queue/dispatch-events.log', mismatch_window_hours: 24, mismatch_count: null,
@@ -77,9 +84,8 @@ export async function readLeaderLiveness(root: string, now = Date.now()): Promis
   ]);
   if (plan.state === 'healthy') {
     // Newest dated heading decides; if it is malformed, ambiguous or in the future the age stays unknown.
-    const last = plan.text.split('\n').filter(l => /^## \d{4}-\d{2}-\d{2}/.test(l)).pop();
-    const parsed = last ? headingTime(last) : null;
-    if (parsed && parsed.at <= now) {
+    const parsed = newestHeadingAt(plan.text, now);
+    if (parsed) {
       out.as_of = new Date(parsed.at).toISOString();
       out.time_basis = parsed.basis;
       out.age_seconds = Math.floor((now - parsed.at) / 1000);

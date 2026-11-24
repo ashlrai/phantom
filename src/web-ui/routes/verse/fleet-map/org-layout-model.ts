@@ -1,11 +1,11 @@
 /**
  * The Map pane's "By org" layout: the leader on top, then one box per lane holding the lane and its
- * jobs (a box named "unassigned" holds anything with no known parent), then computers and pools in a
+ * jobs (a box named "Other" holds anything with no known parent), then computers and pools in a
  * bottom row. Same nodes and ids as the row layout, so lines, logos and message counts are unchanged.
  * The choice of layout is remembered like the 2D/3D choice.
  */
 import type { FleetLiveMap } from '../../../../core/fleet/live-map.js';
-import { fleetOrgGroups, type FleetOrgGroups, type OrgGroupCounts } from '../../../../core/fleet/org-groups.js';
+import { fleetOrgGroups, PLANNER_GROUPS, type FleetOrgGroups, type OrgGroupCounts } from '../../../../core/fleet/org-groups.js';
 import { NODE_H, NODE_W, type MapLayout, type PlacedNode } from './map-model.js';
 
 export type MapLayoutMode = 'rows' | 'org';
@@ -17,10 +17,12 @@ export function saveMapLayout(mode: MapLayoutMode): void {
   try { globalThis.localStorage?.setItem(MAP_LAYOUT_KEY, mode); } catch { /* storage blocked: the choice lasts this visit */ }
 }
 
-export interface OrgBox { id: string; label: string; counts: OrgGroupCounts; x: number; y: number; width: number; height: number }
+/** A planner line inside the guardian or loops box: the boxes hold text, not map nodes. */
+export interface OrgBoxMember { id: string; label: string; state: string }
+export interface OrgBox { id: string; label: string; counts: OrgGroupCounts; members?: OrgBoxMember[]; x: number; y: number; width: number; height: number }
 export interface OrgLayout extends MapLayout { boxes: OrgBox[] }
 
-const PAD = 16, GAP = 12, HEADER = 34, BOX_W = NODE_W + 24, BAND = 40, COLUMN = 156;
+const LINE = 22, PAD = 16, GAP = 12, HEADER = 34, BOX_W = NODE_W + 24, BAND = 40, COLUMN = 156;
 
 /** "claude: 2 running", with unknown spelled out when some state is not reported. */
 export function orgBoxLabel(box: Pick<OrgBox, 'label' | 'counts'>): string {
@@ -45,6 +47,13 @@ export function layoutByOrg(map: FleetLiveMap, groups: FleetOrgGroups = fleetOrg
   let tallest = 0;
   root.children.forEach((id, column) => {
     const group = byId.get(id)!;
+    if (PLANNER_GROUPS.has(id)) {
+      const members = group.children.map(child => ({ id: child, label: byId.get(child)!.label, state: byId.get(child)!.status ?? 'unknown' }));
+      const height = HEADER + members.length * LINE + GAP;
+      boxes.push({ id, label: group.label, counts: group.counts, members, x: PAD + column * (BOX_W + GAP), y: boxTop, width: BOX_W, height });
+      tallest = Math.max(tallest, height);
+      return;
+    }
     const items = (group.role === 'group' ? group.children.flatMap(members) : members(id)).filter(item => source.has(item));
     const x = PAD + column * (BOX_W + GAP);
     const height = HEADER + items.length * (NODE_H + GAP) + GAP;

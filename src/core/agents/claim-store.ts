@@ -21,7 +21,8 @@ const TEAM_MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 const RESOURCE_MAX_LEASE_MS = 3_600_000;
 const LABEL = /^[\x21-\x7e]{1,256}$/;
 
-export type CoordinationOrigin = 'resource' | 'message' | 'team' | 'board';
+export const COORDINATION_ORIGINS = ['resource', 'message', 'team', 'board'] as const;
+export type CoordinationOrigin = (typeof COORDINATION_ORIGINS)[number];
 export type CoordinationState = 'live' | 'released' | 'completed';
 
 interface StoredClaim {
@@ -127,10 +128,21 @@ function pathsOverlap(teamPath: string, glob: string): boolean {
   const left = normPath(teamPath);
   const right = normPath(glob);
   if (!left || !right || left.split('/').includes('..') || right.split('/').includes('..')) return false;
-  const wild = (value: string) => /[*?[{]/.test(value);
+  // `globMatches` wildcards are `*`/`?` only — `[`, `{` and friends are
+  // literal characters, so a team path like `src/[id]` is still a concrete
+  // prefix claim and must keep its `/**` subtree coverage below.
+  const wild = (value: string) => /[*?]/.test(value);
   if (!wild(left) && !wild(right)) return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   const sampleRepo = 'o/n';
-  return claimKeysOverlap(`path:${sampleRepo}:${left}`, `path:${sampleRepo}:${right}`);
+  const leftKey = `path:${sampleRepo}:${left}`;
+  const rightKey = `path:${sampleRepo}:${right}`;
+  // A team path is a prefix claim — `claimsOverlap` covers the path itself
+  // and everything beneath it — whether or not it carries `*`/`?` filename
+  // characters. The pair overlaps when the bus glob matches the bare path
+  // or any path under it, so the subtree joins the intersection as
+  // `left/**`. Checking only the bare globs let a bus glob covering the
+  // subtree slip past a live team claim.
+  return claimKeysOverlap(leftKey, rightKey) || claimKeysOverlap(`${leftKey}/**`, rightKey);
 }
 
 function teamHitsKey(target: ClaimTarget, key: string): boolean {
@@ -175,7 +187,7 @@ function validLease(origin: CoordinationOrigin, leaseMs: number): boolean {
 }
 
 function validAcquire(input: CoordinationAcquire, now: number): boolean {
-  if (!['resource', 'message', 'team', 'board'].includes(input.origin)) return false;
+  if (!COORDINATION_ORIGINS.includes(input.origin)) return false;
   if (!LABEL.test(input.key) || !LABEL.test(input.owner) || !LABEL.test(input.sourceId)) return false;
   if (!validLease(input.origin, input.leaseMs) || !integer(input.leaseUntil) || input.leaseUntil <= now) return false;
   if (input.leaseUntil - now > input.leaseMs) return false;
@@ -215,7 +227,7 @@ function directoryFor(root: string): string {
 function claimOk(row: unknown): row is StoredClaim {
   if (!row || typeof row !== 'object') return false;
   const value = row as StoredClaim;
-  return (['resource', 'message', 'team', 'board'] as const).includes(value.origin) &&
+  return COORDINATION_ORIGINS.includes(value.origin) &&
     (['live', 'released', 'completed'] as const).includes(value.state) &&
     LABEL.test(value.key) && LABEL.test(value.owner) && /^[a-f0-9]{64}$/.test(value.token) &&
     LABEL.test(value.sourceId) && validLease(value.origin, value.leaseMs) && integer(value.leaseUntil) &&
@@ -394,6 +406,16 @@ export function acquireCoordination(input: CoordinationAcquire): CoordinationRes
       !(drafted.origin === 'team' && row.owner === drafted.owner));
     if (conflict) return { status: 'conflict' as const, holder: { owner: conflict.owner, key: conflict.key, leaseUntil: conflict.leaseUntil } };
     const index = data.claims.findIndex(row => row.origin === drafted.origin && row.sourceId === drafted.sourceId);
+    const held = index >= 0 ? data.claims[index] : undefined;
+    // A source id names one operation, so only its owner may retry it into a new
+    // row; the same id presented by a different owner is a conflict, never a
+    // silent takeover that kills the holder's fencing token. Board leases are
+    // entity upserts — a task handoff deliberately moves itemId to a new owner —
+    // so that origin keeps last-writer-wins. An expired row is dead weight either
+    // way and stays replaceable, as the seat-handoff fencing tests rely on.
+    if (held && drafted.origin !== 'board' && held.owner !== drafted.owner && live(held, now)) {
+      return { status: 'conflict' as const, holder: { owner: held.owner, key: held.key, leaseUntil: held.leaseUntil } };
+    }
     if (index >= 0) data.claims[index] = drafted;
     else data.claims.push(drafted);
     return { status: 'acquired' as const, token: drafted.token, leaseUntil: drafted.leaseUntil };

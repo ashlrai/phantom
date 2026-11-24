@@ -21,8 +21,10 @@
  *   GET    /api/verse/leader/thread?limit=&before=      → {messages} oldest first
  *                                                        (limit 1–200, default 50;
  *                                                        before = message id or ISO)
- *   GET    /api/verse/leader/thread/merged[?since=<hours>] → inbox + outbox + plan-log replies as one thread
+ *   GET    /api/verse/leader/thread/merged[?since=<hours>&before=<hours>] → inbox + outbox + plan-log replies as one thread
  *                                                        (leader-thread-merged-api.ts; read-only)
+ *   GET    /api/verse/leader/health                     → fleet.leader-health.v1: passes failed in a row,
+ *                                                        hours since a good one, the cause (leader-health-api.ts)
  *   POST   /api/verse/leader/thread {text, replyTo?}   → {message, reply, directive?}
  *   GET    /api/verse/leader/questions/<questionId> → exact saved question + capability
  *   POST   /api/verse/leader/questions/<questionId>/answer {text} → {message, reply}
@@ -73,6 +75,7 @@ import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { handleLeaderAttachment, VERSE_LEADER_ATTACHMENT_PATH } from './leader-attachment-api.js';
 import { handleLeaderAttachmentList } from './leader-attachment-list-api.js';
 import { handleLeaderAttachmentRead } from './leader-attachment-read-api.js';
+import { handleLeaderHealth, VERSE_LEADER_HEALTH_PATH } from './leader-health-api.js';
 import { handleLeaderThreadMerged, VERSE_LEADER_THREAD_MERGED_PATH } from './leader-thread-merged-api.js';
 import { VERSE_LEADER_PATH, type LeaderAction, type LeaderMemo, type LeaderStateV1 } from '../vision/leader-types.js';
 import { leaderRoot, listMemoIds, readLeaderMemo } from '../vision/leader-memo.js';
@@ -838,6 +841,7 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
     return true;
   }
   if (path === VERSE_LEADER_THREAD_MERGED_PATH) return handleLeaderThreadMerged(ctx, req, res, method);
+  if (path === VERSE_LEADER_HEALTH_PATH) return handleLeaderHealth(ctx, req, res, method);
   if (path === '/api/verse/leader/attachments') return handleLeaderAttachmentList(ctx, req, res, method);
   if (path === VERSE_LEADER_ATTACHMENT_PATH) return handleLeaderAttachment(ctx, req, res, method);
   if (path.startsWith(`${VERSE_LEADER_ATTACHMENT_PATH}/`)) {
@@ -1003,8 +1007,10 @@ export const handleLeaderApi: ApiModule = async (ctx, req, res, path, method) =>
         let seat: LeaderStateV1['seat'];
         try {
           const { readLeaderSeat, pickSeat, leaderSeatLine, leaderChip } = await import('../fleet/leader-seat.js');
+          const { buildSeatSwap, readSeatPools } = await import('../fleet/leader-seat-swap.js');
           const report = await (hooks.leaderSeat ?? readLeaderSeat)();
-          seat = { ...pickSeat(report), line: leaderSeatLine(report), chip: leaderChip(report) };
+          const swap = report.current.lane ? buildSeatSwap(report, await readSeatPools(process.env['ASHLR_RUNS_DIR'] || join(homedir(), '.ashlr-runs'), now()), now()) : null;
+          seat = { ...pickSeat(report), line: swap?.line ?? leaderSeatLine(report), chip: leaderChip(report) };
         } catch { seat = undefined; }
         sendJson(res, 200, seat ? { ...state, seat } : state);
         return true;

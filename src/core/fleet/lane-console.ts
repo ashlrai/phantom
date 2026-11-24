@@ -29,10 +29,12 @@
  *                        dispatcher's own dialect — `job repo lane tier
  *                        prompt-path [requirements-json]` plus its two
  *                        PARKED-<reason>[.<lane>] encodings — is recognized
- *                        natively so the lane column lands on `pool`. An empty
- *                        lane cell is the market's open hint: the requirements'
- *                        `preferred_lane` supplies the lane when it honestly
- *                        names one, and a row that still names none counts as
+ *                        natively so the lane column lands on `pool`. The
+ *                        effective hint resolves like work_market.requirements:
+ *                        the requirements' `preferred_lane` wins over the lane
+ *                        cell (explicit null is lane-open), and a row the
+ *                        market would reject counts as dropped, never supply.
+ *                        READY rows the market may place anywhere count as
  *                        `unhinted`, never guessed onto a lane. READY rows
  *                        give queue depth; in-flight statuses give live jobs;
  *                        timestamped LAND rows give merges/hour.
@@ -62,7 +64,10 @@
  * (`phm fleet lanes --queue-dir <abs>`).
  */
 
-import { readFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
+import { scrubSecrets } from '../util/scrub.js';
+import { HELD_LOOKBACK_MS, summarizeLaneHeld, type LaneHeld, type LaunchFile } from './lane-held.js';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { readingIsFresh } from '../usage/sensor-reading.js';
@@ -71,6 +76,7 @@ import type { PoolBudgetSnapshot, PoolBudgetView } from './pool-budget.js';
 import { readLaneTargets } from './runs-lane-targets.js';
 import { laneHealthFor, type LaneHealth } from './lane-badge.js';
 import { parseStarvedState, readStarved, STARVED_STATE_FILE, type StarvedRead } from './lane-starved.js';
+import { readySpecCell, resolveReadyMarketRow } from './unfed-market.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.lanes.v1 wire shape.
@@ -112,6 +118,8 @@ export interface FleetLaneCreditView {
 }
 
 export interface FleetLaneView {
+  /** Recent launch-file holds; absent when the newest launch went through. */
+  held?: LaneHeld;
   /** Lane id — a router pool name exactly as written in the queue/usage data. */
   lane: string;
   /** READY jobs queued for this lane (null when ready.tsv was absent/degraded). */
@@ -294,32 +302,19 @@ async function readBounded(path: string, maxBytes: number): Promise<string | nul
 interface ParsedTsv {
   rows: FleetLaneQueueRow[];
   dropped: number;
+  /** Dispatcher rows the work market would reject (invalid_requirements): bad spec, invalid preferred_lane or lane cell. Dead work — counted, never supply. */
+  invalid: number;
   /** Dispatcher rows recognized but carrying no lane hint — open market rows the dispatcher may place on any lane. */
   unhinted: number;
   /** The validated job id and repo of each lane-open row, for supply classification without a lane. */
   unhintedRows: { id: string; repo: string }[];
 }
 
-/** work_market preferred_lane spellings: lowercase lane ids only. */
-const MARKET_PREF = /^[a-z][a-z0-9-]*$/;
-
-/**
- * The lane a requirements cell declares via preferred_lane, when it honestly
- * names one — the same lenient read unfed-market.ts applies. An absent, null
- * or invalid preference means the row is lane-open.
- */
-function requirementsLaneHint(cell: string | undefined): string | null {
-  if (cell === undefined || !cell.startsWith('{')) return null;
-  let spec: unknown;
-  try { spec = JSON.parse(cell); } catch { return null; }
-  const value = record(spec)?.['preferred_lane'];
-  return typeof value === 'string' && MARKET_PREF.test(value) ? value : null;
-}
-
-/** A recognized dispatcher row: attributed to a lane, or lane-open (the market places it anywhere). */
+/** A recognized dispatcher row: attributed to a lane, lane-open, or market-invalid. */
 type DispatcherRow =
   | { readonly kind: 'row'; readonly row: FleetLaneQueueRow }
   | { readonly kind: 'open'; readonly id: string; readonly repo: string }
+  | { readonly kind: 'drop' }
   | null;
 
 /**
@@ -331,8 +326,11 @@ type DispatcherRow =
  *   job repo PARKED-<reason>[.<lane>] tier prompt [requirements] lane-column parked
  *   PARKED-<reason>[.<lane>] job lane tier repo prompt [req]     status-first parked
  * Returns null unless every cell validates — the generic positional reader
- * then applies its own contract to the line. A ready row whose lane cell is
- * empty is the market's open hint: 'open' when no honest lane remains.
+ * then applies its own contract to the line. A ready row's effective lane
+ * hint resolves exactly like work_market.requirements: the requirements'
+ * preferred_lane wins over the lane column (explicit null is the open hint),
+ * the lane cell is the fallback only when the spec names none, and a row the
+ * market would reject is 'drop' — dead work, counted, never supply.
  */
 function dispatcherQueueRow(cells: string[]): DispatcherRow {
   const first = cells[0] ?? '';
@@ -347,24 +345,29 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
   if (cells.length !== 5 && cells.length !== 6) return null;
   if (!JOB_ID.test(first) || KNOWN_STATUSES.has(first.toUpperCase())) return null;
   const extra = cells[5];
-  if (extra !== undefined && !extra.startsWith('{')) return null;
   const laneMarker = PARKED_MARKER.exec(cells[2] ?? '');
   if (laneMarker) {
     // Lane-column parked: job, repo, marker, tier, prompt[, requirements].
+    if (extra !== undefined && !extra.startsWith('{')) return null;
     const [id, repo, tier, prompt] = [cells[0]!, cells[1]!, cells[3]!, cells[4]!];
     if (!REPO_ID.test(repo) || !isQueueTier(tier) || !promptCell(prompt)) return null;
     return { kind: 'row', row: { id, status: cells[2]!.toUpperCase(), pool: laneMarker[1] ?? cells[2]!, tier, repo, title: prompt } };
   }
-  // Ready row: job, repo, lane, tier, prompt[, requirements]. The lane cell
-  // may be empty — the market's open hint — or otherwise not a lane id; the
-  // requirements' preferred_lane is then the only honest lane. A row that
-  // still names none is lane-open work, counted separately, never guessed
-  // onto the repo or another cell.
+  // Ready row: job, repo, lane, tier, prompt[, requirements]. The market's
+  // requirements() gives the spec's preferred_lane precedence over the lane
+  // column — explicit null means lane-open — and validates the whole spec
+  // before the market sees the row. Anything it rejects is invalid_requirements:
+  // dead work the dispatcher never launches, counted here as dropped, never
+  // guessed onto a lane or counted as open supply.
   const [id, repo, laneCell, tier, prompt] = [cells[0]!, cells[1]!, cells[2]!, cells[3]!, cells[4]!];
   if (!REPO_ID.test(repo) || isQueueTier(laneCell) || !isQueueTier(tier) || !promptCell(prompt)) return null;
-  const pool = LANE_ID.test(laneCell) ? laneCell : requirementsLaneHint(extra);
-  if (pool === null) return { kind: 'open', id, repo };
-  return { kind: 'row', row: { id, status: 'READY', pool, tier, repo, title: prompt } };
+  if (extra !== undefined && !extra.startsWith('{')) return { kind: 'drop' };
+  const spec = readySpecCell(extra);
+  if (spec === 'invalid') return { kind: 'drop' };
+  const resolved = resolveReadyMarketRow(cells, spec ?? {});
+  if (resolved === null) return { kind: 'drop' };
+  if (resolved.hint === null) return { kind: 'open', id, repo };
+  return { kind: 'row', row: { id, status: 'READY', pool: resolved.hint, tier, repo, title: prompt } };
 }
 
 /**
@@ -375,6 +378,7 @@ function dispatcherQueueRow(cells: string[]): DispatcherRow {
 export function parseReadyTsv(text: string): ParsedTsv {
   const rows: FleetLaneQueueRow[] = [];
   let dropped = 0;
+  let invalid = 0;
   let unhinted = 0;
   const unhintedRows: { id: string; repo: string }[] = [];
   let header: (keyof FleetLaneQueueRow)[] | null = null;
@@ -409,6 +413,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
       const dialect = dispatcherQueueRow(cells);
       if (dialect !== null) {
         if (dialect.kind === 'open') { unhinted++; unhintedRows.push({ id: dialect.id, repo: dialect.repo }); }
+        else if (dialect.kind === 'drop') { dropped++; invalid++; }
         else rows.push(dialect.row);
         continue;
       }
@@ -467,7 +472,7 @@ export function parseReadyTsv(text: string): ParsedTsv {
     }
     rows.push(row);
   }
-  return { rows, dropped, unhinted, unhintedRows };
+  return { rows, dropped, invalid, unhinted, unhintedRows };
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +595,7 @@ export function parseJobsJsonl(text: string): { events: LaneLedgerEvent[]; dropp
       }
       return null;
     };
-    const job = pick('job', 'id', 'jobId');
+    const job = pick('job', 'job_id', 'jobId', 'id');
     const poolRaw = pick('pool', 'lane', 'account');
     const pool = poolRaw && LANE_ID.test(poolRaw) ? poolRaw : null;
     const at = pick('ts', 'at', 'time', 'timestamp', 'landedAt', 'mergedAt', 'completedAt', 'recordedAt', 'updatedAt');
@@ -929,6 +934,22 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     else if (LIVE_STATUSES.has(row.status)) liveFromTsv.set(row.pool, (liveFromTsv.get(row.pool) ?? 0) + 1);
   }
 
+  // ── 8. held launches — `<job>.launch` files beside the queue directory ──
+  const jobLane = new Map<string, string>();
+  for (const row of queueRows) { if (row.id) jobLane.set(row.id, row.pool); }
+  for (const [job, pool] of queueState?.jobPool ?? []) jobLane.set(job, pool);
+  for (const event of ledgerEvents) if (event.job && event.pool) jobLane.set(event.job, event.pool);
+  const heldByLane = summarizeLaneHeld({
+    launches: await readLaunchFiles(dirname(queueDir), now.getTime()),
+    laneOf: job => jobLane.get(job) ?? null,
+    meterObservedAt: lane => {
+      const at = creditFor(lane, budgets, usage.latest, now.getTime()).observedAt;
+      return at ? Date.parse(at) : null;
+    },
+    now: now.getTime(),
+  });
+  for (const lane of heldByLane.keys()) lanes.add(lane);
+
   const views: FleetLaneView[] = [...lanes].map(lane => {
     const queueDepth = sources.queue.state !== 'missing'
       ? readyCounts.get(lane) ?? 0
@@ -951,7 +972,8 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     } : null;
     const startsInWindow = sawLaunch ? startJobs.get(lane)?.size ?? 0 : null;
     // Placeholder verdict; replaced once the starved read below has run.
-    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null }, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold };
+    return { lane, queueDepth, liveJobs, mergesPerHour, startsInWindow, health: { state: 'ok' as const, reason: 'ok', number: null }, credit: creditFor(lane, budgets, usage.latest, now.getTime()), slotTarget: row?.target ?? null, hold,
+      ...(heldByLane.has(lane) ? { held: heldByLane.get(lane)! } : {}) };
   });
 
   // Lanes doing something sort first; alphabetical inside each tier.
@@ -967,7 +989,7 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
   try { stateText = await readBounded(join(options.starvedStateDir ?? join(homedir(), '.ashlr', 'vision', 'leader'), STARVED_STATE_FILE), 16 * 1024); } catch { /* no record yet */ }
   const starved = readStarved(views.map(view => ({
     lane: view.lane,
-    floor: holds.get(view.lane)?.floor ?? null,
+    target: holds.get(view.lane)?.target ?? null,
     running: view.liveJobs,
     ready: view.queueDepth,
     held: view.hold?.held === true,
@@ -1007,6 +1029,31 @@ export async function getFleetLaneSnapshot(options: FleetLaneConsoleOptions = {}
     lanes: views,
     starved,
   };
+}
+
+/** Read recent regular launch files through a capped, no-follow descriptor. */
+async function readLaunchFiles(runsDir: string, nowMs: number): Promise<LaunchFile[]> {
+  let names: string[];
+  try { names = await readdir(runsDir); } catch { return []; }
+  const jobs = names.filter(n => /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}\.launch$/.test(n));
+  const found: LaunchFile[] = [];
+  for (let i = 0; i < jobs.length; i += 64) {
+    await Promise.all(jobs.slice(i, i + 64).map(async name => {
+      const file = await open(join(runsDir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => null);
+      if (!file) return;
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || info.size > 4096 || info.mtimeMs > nowMs || nowMs - info.mtimeMs > HELD_LOOKBACK_MS) return;
+        const buffer = Buffer.alloc(4096);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        const line = buffer.toString('utf8', 0, bytesRead).split(/\r?\n/).find(l => l.trim())?.trim() ?? '';
+        const firstLine = scrubSecrets(line).replace(/(?:~\/|\/)[^\s"'<>]*/g, '[path]').slice(0, 300);
+        found.push({ job: name.slice(0, -7), atMs: info.mtimeMs, firstLine });
+      } catch { /* A record removed mid-scan is not a launch. */ }
+      finally { await file.close(); }
+    }));
+  }
+  return found;
 }
 
 function readyPoolOf(rows: readonly FleetLaneQueueRow[], job: string): string | undefined {

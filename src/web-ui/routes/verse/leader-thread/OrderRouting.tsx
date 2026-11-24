@@ -3,10 +3,12 @@
  * Mason's messages in the Leader thread: one row per job the message became,
  * with the lane it was routed to, a four-step track (queued, launched,
  * published, merged) and the recorded result. A launched job opens its
- * Worker log or its conversation; a published one links its PR.
+ * Worker log or its conversation (in the Leader pane, beside the chat:
+ * leader-reading.ts); a published one links its PR.
  * Presentational: the facts come from thread-routing-model.
  */
 import { useState } from 'react';
+import { useIsReading } from './leader-reading.js';
 import { ROUTING_STAGES, type LineRouting, type RoutedJob } from './thread-routing-model.js';
 import styles from './order-routing.module.css';
 
@@ -26,7 +28,9 @@ interface RoutingActions {
 }
 
 function JobRow({ job, onOpenJob, onOpenConversation }: { job: RoutedJob } & RoutingActions) {
-  return <li className={styles.job} data-state={job.empty ? 'empty' : job.state}>
+  // Open in this Leader pane right now: the row and its button say so.
+  const reading = useIsReading(job.id);
+  return <li className={styles.job} data-state={job.empty ? 'empty' : job.state} data-reading={reading || undefined}>
     <Track job={job} />
     <span className={styles.lane} data-unknown={job.lane === null || undefined} title={job.lane === null ? 'No launch marker or queue row names a lane' : `Routed to ${job.lane}`}>{job.lane ?? 'lane unknown'}</span>
     {job.openable
@@ -36,7 +40,8 @@ function JobRow({ job, onOpenJob, onOpenConversation }: { job: RoutedJob } & Rou
       ? <a className={styles.word} href={job.href} target="_blank" rel="noreferrer">{job.word}</a>
       : <span className={styles.word}>{job.word}</span>}
     {job.openable && onOpenConversation
-      ? <button type="button" className={styles.talk} aria-label={`Open conversation with ${job.id}`} title="What this session was told, said and did" onClick={() => onOpenConversation(job.id)}>Conversation</button>
+      ? <button type="button" className={styles.talk} aria-label={`Open conversation with ${job.id}`} title="What this session was told, said and did"
+          aria-current={reading ? 'true' : undefined} data-conversation-door={job.id} onClick={() => onOpenConversation(job.id)}>{reading ? 'Conversation open' : 'Conversation'}</button>
       : null}
   </li>;
 }

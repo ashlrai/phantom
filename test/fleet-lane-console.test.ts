@@ -150,27 +150,50 @@ describe('parseReadyTsv', () => {
     // these rows and surface the repo name as a lane — or drop owner/name
     // repos outright. The requirements' preferred_lane is the only honest
     // lane left; a row naming none is lane-open work, counted as unhinted.
-    const { rows, dropped, unhinted, unhintedRows } = parseReadyTsv([
+    // Rows the market itself rejects — an invalid preferred_lane or an
+    // invalid spec-less lane cell — are invalid_requirements: dropped dead
+    // work, never open supply.
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
       'RQ-OPEN-A\tphantom\t\twork\t/Users/x/prompts/a.md',
       'RQ-OPEN-B\tashlrai/phantom\t\tmid\tprompts/b.md\t{"preferred_lane":null}',
       'RQ-OPEN-C\tphantom\t\tfrontier\tprompts/c.md\t{"preferred_lane":"claude"}',
       'RQ-OPEN-D\tphantom\t\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
       'RQ-OPEN-E\tphantom\tnot a lane!\twork\tprompts/e.md',
     ].join('\n'));
-    expect(dropped).toBe(0);
-    expect(unhinted).toBe(4);
+    expect(dropped).toBe(2);
+    expect(invalid).toBe(2);
+    expect(unhinted).toBe(2);
     // Lane-open rows keep their validated id and repo for supply counts; the
-    // row that resolved a preferred_lane is not among them.
+    // row that resolved a preferred_lane and the invalid rows are not among them.
     expect(unhintedRows).toEqual([
       { id: 'RQ-OPEN-A', repo: 'phantom' },
       { id: 'RQ-OPEN-B', repo: 'ashlrai/phantom' },
-      { id: 'RQ-OPEN-D', repo: 'phantom' },
-      { id: 'RQ-OPEN-E', repo: 'phantom' },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'RQ-OPEN-C', status: 'READY', pool: 'claude', tier: 'frontier', repo: 'phantom' });
     expect(rows.map(r => r.pool)).not.toContain('phantom');
     expect(rows.map(r => r.pool)).not.toContain('ashlrai/phantom');
+  });
+
+  it('resolves the requirements preferred_lane ahead of the lane cell like the market', () => {
+    // work_market.requirements setdefaults preferred_lane from the lane cell
+    // only when the spec does not name one: restock's sixth column is
+    // authoritative, explicit null reopens the row to any lane, and a spec
+    // without the key leaves the legacy lane-cell hint in place.
+    const { rows, dropped, invalid, unhinted, unhintedRows } = parseReadyTsv([
+      'RQ-SPEC-A\tphantom\tdevin\twork\tprompts/a.md\t{"preferred_lane":"claude"}',
+      'RQ-SPEC-B\tphantom\tdevin\twork\tprompts/b.md\t{"preferred_lane":null}',
+      'RQ-SPEC-C\tphantom\tdevin\twork\tprompts/c.md\t{"needs":["git"]}',
+      'RQ-SPEC-D\tphantom\tdevin\twork\tprompts/d.md\t{"preferred_lane":"CLAUDE!"}',
+      'RQ-SPEC-E\tphantom\tdevin\twork\tprompts/e.md\tnot json',
+    ].join('\n'));
+    expect(dropped).toBe(2);
+    expect(invalid).toBe(2);
+    expect(unhinted).toBe(1);
+    expect(unhintedRows).toEqual([{ id: 'RQ-SPEC-B', repo: 'phantom' }]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 'RQ-SPEC-A', status: 'READY', pool: 'claude', tier: 'work', repo: 'phantom' });
+    expect(rows[1]).toMatchObject({ id: 'RQ-SPEC-C', status: 'READY', pool: 'devin', tier: 'work', repo: 'phantom' });
   });
 
   it('keeps generic positional rows on the generic contract', () => {
@@ -235,6 +258,12 @@ describe('parseJobsJsonl', () => {
     expect(events).toHaveLength(5);
     expect(events.map(e => e.merge)).toEqual([true, false, true, true, true]);
     expect(events[2]!.pool).toBeNull(); // pool unresolved here — the snapshot layer maps it
+  });
+  it('reads the job_id spelling from the jobs-ledger dialect', () => {
+    const { events, dropped } = parseJobsJsonl('{"job_id":"RQ-9","pool":"devin","to":"LAND","at":"2026-10-28T01:40:00Z"}');
+    expect(dropped).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ job: 'RQ-9', merge: true });
   });
 });
 

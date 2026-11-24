@@ -1,7 +1,8 @@
 /** Throughput pane: the `phm throughput` report as one board. Headline, a row of figures each over its own hourly line,
- * the launched → published → merged flow, two hourly charts and a card per lane (ThroughputBoard.tsx).
- * The window switch asks the same route for 6 hours, 24 hours or 7 days; nothing is summed in the browser. */
-import { useState } from 'react';
+ * the fleet's hours as a row of bars, the launched → published → merged flow, two hourly charts and a card per lane
+ * (ThroughputBoard.tsx). The window switch asks the same route for 6 hours, 24 hours or 7 days, so no window total is
+ * summed in the browser. The rows of bars are one reading cursor (HourBars.tsx): the bar held is kept here, by its start. */
+import { useMemo, useState } from 'react';
 import type { ThroughputCounts, ThroughputReport } from '../../../../core/fleet/throughput.js';
 import { ChartContainer } from '../../../components/charts/ChartContainer.js';
 import type { ChartStatus } from '../../../components/charts/ChartFrame.js';
@@ -9,19 +10,19 @@ import { Funnel } from '../../../components/charts/Funnel.js';
 import { LineChart } from '../../../components/charts/LineChart.js';
 import { Button } from '../../../components/primitives/Button.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
-import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
-import type { QueryDef } from '../../../data/queries.js';
 import type { PaneProps } from '../panes/pane-registry.js';
+import { cursorAt } from '../models/model-work-model.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { ThroughputHours } from './HourBars.js';
+import { cursorBars } from './throughput-cursor-model.js';
 import { ThroughputFigures, ThroughputFiguresSkeleton, ThroughputLanes } from './ThroughputBoard.js';
 import styles from './fleet-throughput.module.css';
+import { THROUGHPUT_QUERIES, THROUGHPUT_WINDOWS, type ThroughputWindow } from './throughput-query.js';
 
-const WINDOWS = [{ value: '6', label: '6 hours' }, { value: '24', label: '24 hours' }, { value: '168', label: '7 days' }] as const;
-type Window = (typeof WINDOWS)[number]['value'];
-const queryFor = (hours: Window): QueryDef<ThroughputReport> => ({ key: `fleet-throughput-${hours}`, fetch: signal => apiGet(`/api/verse/fleet/runs/throughput?hours=${hours}&by=lane`, signal) });
-// One stable definition per window, so switching back reuses the last reading while it refreshes.
-const QUERIES: Readonly<Record<Window, QueryDef<ThroughputReport>>> = { 6: queryFor('6'), 24: queryFor('24'), 168: queryFor('168') };
+// The window reads live in throughput-query.ts: Home's Merged PRs card shares the 24 hour one.
+const WINDOWS = THROUGHPUT_WINDOWS, QUERIES = THROUGHPUT_QUERIES;
+type Window = ThroughputWindow;
 const shown = (value: number | null): string => value === null ? 'unknown' : String(value);
 const minutes = (seconds: number | null): number | null => seconds === null ? null : Math.round(seconds / 6) / 10;
 const percent = (rate: number | null): string => rate === null ? 'unknown' : `${Math.round(rate * 100)}%`;
@@ -34,6 +35,10 @@ function Report({ report }: { report: ThroughputReport }) {
   const hours = report.buckets, total = report.totals;
   const quiet = known && !total.launched && !total.published && !total.merged && !total.finished;
   const timed = hours.some(hour => hour.median_publish_to_merge_s !== null);
+  // The reading cursor: the start of the bar held on every row. A refresh that moves the window on lets go by itself.
+  const [cursor, setCursor] = useState<string | null>(null);
+  const fleet = useMemo(() => known ? cursorBars(hours) : [], [known, hours]);
+  const held = fleet[cursorAt(fleet, cursor) ?? -1] ?? null;
   const unknown = 'Unknown: the job metrics file could not be read.';
   // Stated outright: a window with merges but no launches is still a flow, and an unreadable file is unknown, never an empty one.
   const flow: ChartStatus = !known ? { kind: 'unknown', reason: 'the job metrics file could not be read.' }
@@ -45,7 +50,8 @@ function Report({ report }: { report: ThroughputReport }) {
     {' '}<span className={styles.main} data-main={report.main}>Main is {report.main}.</span> Updated {when(report.as_of)}.</p>
     {report.malformed_lines ? <p className={styles.note}>Metrics lines skipped because they could not be read: {report.malformed_lines}.</p> : null}
     {total.merge_time_unknown ? <p className={styles.note}>Merged PRs with no publish time, left out of the median: {total.merge_time_unknown}.</p> : null}
-    <ThroughputFigures report={report} />
+    <ThroughputFigures report={report} held={held} />
+    <ThroughputHours bars={fleet} cursor={cursor} onCursor={setCursor} />
     <Funnel title="Delivery flow" description={`Jobs launched, PRs published and PRs merged in the last ${report.hours} hours.`} status={flow} formatValue={String}
       caveat={flow.kind === 'ready' ? 'Each count is what happened inside this window, not one batch followed through: a PR merged here may have been launched before it.' : undefined}
       stages={[{ id: 'launched', label: 'Launched', value: total.launched }, { id: 'published', label: 'Published', value: total.published }, { id: 'merged', label: 'Merged', value: total.merged }]} />
@@ -61,11 +67,11 @@ function Report({ report }: { report: ThroughputReport }) {
         height={120} formatY={value => `${value} min`} ariaLabel="Median minutes from publish to merge per hour" />
     </ChartContainer>
     </div>
-    <ChartContainer title="Lanes" description="Most PRs merged first. The bar compares a lane with the one that merged most; the line is its own merges each hour."
+    <ChartContainer title="Lanes" description="Most PRs merged first. The bar compares a lane with the one that merged most; the row of bars is its jobs launched across the window, against the busiest bar on any lane."
       empty={!report.groups.length} emptyMessage={known ? 'No lane activity in this window.' : unknown}
       table={report.groups.length ? <table><caption>Throughput by lane</caption><thead><tr><th>Lane</th>{HEAD}</tr></thead>
         <tbody>{report.groups.map(group => <tr key={group.name}><td>{group.name}</td>{cells(group.totals)}</tr>)}</tbody></table> : undefined}>
-      <ThroughputLanes groups={report.groups} />
+      <ThroughputLanes groups={report.groups} cursor={cursor} onCursor={setCursor} />
     </ChartContainer>
   </>;
 }
@@ -83,7 +89,7 @@ export function ThroughputPane({ visible }: PaneProps) {
     <div className={styles.head}><h2>Throughput</h2><Segmented size="sm" aria-label="Window" options={WINDOWS} value={hours} onChange={setHours} /></div>
     {/* A failed refresh keeps the last report on screen; it must not read as current. */}
     {report && read.status === 'error' ? <p className={styles.note} data-stale role="status">Could not refresh. Showing the last reading.</p> : null}
-    {report ? <Report report={report} />
+    {report ? <Report key={report.hours} report={report} />
       : read.status === 'error' || read.data
         ? <div className={styles.unread}><p className={styles.meta} role="status">Throughput: unknown (the report could not be read).</p><Button size="sm" onClick={refresh}>Try again</Button></div>
         : <><p className={styles.meta} role="status">Reading throughput…</p><ThroughputFiguresSkeleton /></>}

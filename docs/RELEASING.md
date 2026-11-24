@@ -228,7 +228,19 @@ What runs without a per-release approval:
   tags. A green open release PR for the next patch is still enqueued only
   after its required checks are green and its queue state is observed; an
   already-queued PR is never re-enqueued. The Release PR workflow independently
-  checks green master, cadence and version carriers.
+  checks green master, cadence and version carriers. When the merge queue's
+  newest event for that PR is a removal that postdates the head commit and
+  the head trails master, the green head checks are stale evidence the queue
+  already rejected, so the train plans a head-pinned `updatePullRequestBranch`
+  merge (never a rewrite) instead of enqueue: the new head's own checks
+  re-verify the exact revision, which either re-greens for enqueue or goes
+  red so release-please regenerates, ending the re-enqueue loop a doomed
+  merge group would otherwise repeat every cadence tick. When that base
+  compare cannot be read or returns no recognized status, the
+  head-trails-master evidence is unknown rather than clear: the train plans
+  no write to that pull request — neither enqueue nor a blind sync — while
+  still completing the rest of the observation, and retries the compare on
+  the next tick.
 - Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
   release gate is green. The train treats that tagged SHA as the candidate
   when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
@@ -558,8 +570,15 @@ lanes retain their separate ownership.
 `phm release status` emits `phantom.release-status.v2` JSON by default; use
 `--text` for people. The existing `repos` rows remain; `release` contains the
 same Phantom fields as the Fleet goals Release card and its **See log** action.
-Only local refs, `release-sign/last-released-tag` and SHA-bound autorun receipts
-and logs are read. No network checks run. Tags alone do not prove publication;
+`releaseRepos` adds the same typed commit status shown in the desktop and mobile
+Releases cards: repo, latestTag, tagDate, commitsSinceTag, state and reason.
+Local git is tried first; incomplete, shallow or missing clones fall back to
+bounded public remote-tag reads. Confirmed tagless remotes are `due` (no release
+yet); `unknown` means both reads lacked complete evidence, with the reason shown.
+With commits waiting, over 20 commits or 7 days is `due`, over 14 days is `stale`;
+zero waiting commits is `ok`. The cards show all seven repos without another tap.
+`release` still reads only local refs, `release-sign/last-released-tag` and
+SHA-bound autorun receipts and logs. Tags alone do not prove publication;
 publication time needs a saved release record. Missing evidence is JSON `null`.
 Signed assets and updater HTTP are the last recorded check, dated `recordedAt`.
 Merged PRs count distinct merge/squash PR numbers on the default branch's first
@@ -577,13 +596,42 @@ days, the PRs merged since and a verdict: `fresh`, `due`, `no release yet` or
 merged since it; an old tag with nothing merged since is fresh. `--json` emits
 `phantom.releases.v1` with `version`, `repos` and `next`, the single most
 overdue repo, or `null` when nothing is due. The Metrics pane shows the same
-report as a Releases card, read from `GET /api/fleet/releases`.
+legacy report plus `releaseRepos` from `phm release status --json`, read from
+`GET /api/fleet/releases`. Both cards render those shared commit rows.
 
 The command only reports. It reads local clones under `~/Projects/ashlrai`,
 makes no network calls and never tags or publishes; open the release PR through
 the repo's own release workflow. Fetch the clones first for current numbers. A
 missing clone or an unreadable tag date is `unknown`. A shallow clone is counted
 only when its history reaches back to the latest tag.
+
+### Compare publication with later merges
+
+```sh
+phm fleet publication-evidence --repo phantom
+phm fleet publication-evidence --repo phantom --json
+```
+
+This read-only report separates the latest published stable release, drafts,
+prereleases and PRs merged into the default branch after the stable release's
+publication time. Omit `--repo` to inspect all enrolled repositories. It reads
+GitHub through `gh` and local clones under `~/Projects/ashlrai`; use
+`--root /absolute/path/to/clones` to choose another parent directory. Local
+`origin/HEAD` must identify each clone's default branch. Fetch clones first
+for current refs; the report does not fetch them.
+
+JSON uses `phantom.publication-evidence.v1`. Each repository has `published`,
+`drafts`, `prereleases`, `mergedAfterPublication`, `lag`, `reason`, `next` and
+separate `localTag` facts. `next` suggests `no new merged PRs`, `write changelog`,
+`review release` or `unknown`. These are suggestions; the command changes no
+files and starts no release.
+
+Merged-after-publication is a timing count, not proof of which commits an
+artifact contains or what is installed. Missing or incomplete evidence stays
+unknown, including capped GitHub results, a missing stable baseline or an
+unknown default branch. Local tag commit counts also stay unknown in shallow
+clones. A successful read can contain unknown fields; inspect `lag` and
+`reason` before using the count.
 
 ### Draft release notes
 

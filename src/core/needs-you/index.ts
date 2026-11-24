@@ -27,6 +27,7 @@ export * from './classify.js';
 
 export const NEEDS_YOU_SCHEMA = 'phantom.needs-you.v1';
 export const NEEDS_YOU_RESOLVE_SCHEMA = 'phantom.needs-you.resolve.v1';
+export const NEEDS_YOU_BATCH_SCHEMA = 'phantom.needs-you.batch.v1';
 export const NEEDS_YOU_AUDIT_FILE = 'needs-you-auto.jsonl';
 const TITLE_MAX = 80;
 const AUDIT_READ_MAX = 256 * 1024;
@@ -77,6 +78,16 @@ export interface NeedsYouResolveReport {
   hardLimit: number;
 }
 
+export interface NeedsYouBatch {
+  schema: typeof NEEDS_YOU_BATCH_SCHEMA;
+  ledger: NeedsYouList['ledger'];
+  count: number;
+  /** One message for one phone tap; empty when nothing needs Mason. */
+  message: string;
+  /** Numbered as in the message: reply "<n> <answer>" per item. */
+  items: Array<{ n: number; id: string; ref: string; title: string; reason: string; answers: string[] }>;
+}
+
 export interface NeedsYouOptions extends Pick<NeedsMasonOptions, 'runsDir' | 'bus'> {
   now?: () => number;
   resolve?: typeof resolveNeedsMason;
@@ -113,6 +124,20 @@ export function listNeedsYou(options: NeedsYouOptions = {}): NeedsYouList {
     schema: NEEDS_YOU_SCHEMA, ledger: ledger.status,
     counts: { hardLimit: hardLimit.length, auto: auto.length }, hardLimit, auto,
   };
+}
+
+/** Every hard-limit item as one message with a one-word reply each. Read-only; auto items never appear. */
+export function batchNeedsYou(options: NeedsYouOptions = {}): NeedsYouBatch {
+  const list = listNeedsYou(options);
+  const items = list.hardLimit.map((item, i) => ({
+    n: i + 1, id: item.id, ref: item.ref, title: item.title, reason: item.reason, answers: item.answers,
+  }));
+  const message = items.length ? [
+    `${items.length} ${items.length === 1 ? 'thing needs' : 'things need'} you:`,
+    ...items.map(i => `${i.n}. ${i.title} (${i.reason}) — ${i.answers.join(' or ')}`),
+    `Reply with one word each, like: ${items.map(i => `${i.n} ${i.answers[0]}`).join(', ')}`,
+  ].join('\n') : '';
+  return { schema: NEEDS_YOU_BATCH_SCHEMA, ledger: list.ledger, count: items.length, message, items };
 }
 
 /** Resolve every auto item with its forward action; a dry run reports the same records and writes nothing. */

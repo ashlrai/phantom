@@ -96,6 +96,23 @@ test('accepted witness boundaries weight observed latency and discard expired or
   f.advance(86_400_001); expect(projectFleetAwareness(f.state, f.now()).hosts.every(h => h.latency.samples === 0)).toBe(true);
 });
 
+test('a producer withdrawal is a fence, not latency evidence; accepted completions still count', () => {
+  const f = fixture();
+  const worker = f.add('worker', { hostId: 'mac', slots: 4 });
+  f.enqueue('fenced');
+  const nodes = new DriveNodes(f.store, { now: f.now });
+  expect(nodes.pull(worker)!.claim.jobId).toBe('fenced');
+  f.advance(31_000); // claim, node and leader leases all lapse
+  expect(f.run('withdraw', ['--job', 'fenced'])).toMatchObject({ state: 'withdrawn' });
+  const rejoined = f.add('worker', { hostId: 'mac', slots: 4 });
+  f.enqueue('real');
+  const second = nodes.pull(rejoined)!;
+  f.advance(2000);
+  expect(nodes.complete(second.claim, 'result:real')).toBe(true);
+  const host = projectFleetAwareness(f.state, f.now()).hosts.find(h => h.hostId === 'mac')!;
+  expect(host.latency).toEqual({ samples: 1, medianMs: 2000, windowMs: 86_400_000 });
+});
+
 test('capacity cannot bypass owner/capability/auth fences and status stays scoped', () => {
   const f = fixture(); f.add('node');
   const nodes = new DriveNodes(f.store, { now: f.now });

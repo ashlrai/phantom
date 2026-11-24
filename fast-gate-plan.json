@@ -1,0 +1,14 @@
+{
+  "paths": [
+    "test/doc-facts.test.ts"
+  ],
+  "mode": "related",
+  "reason": "changed sources",
+  "tests": [
+    "test/doc-facts.test.ts"
+  ],
+  "capped": 0,
+  "deferred": [],
+  "node": [],
+  "shards": []
+}
