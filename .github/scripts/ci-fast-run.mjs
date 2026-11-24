@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global process, console */
+/* global AbortController, process, console */
 // Runs the tests chosen by ci-fast-select.mjs (RQ-CI-FASTGATE-1). Vitest goes
 // through scripts/test-ci.mjs (hermetic HOME, watchdog). The fallback shards run
 // as parallel processes. Failing test files are written for merge-group
@@ -15,7 +15,7 @@ import { proveReuse } from './ci-green-reuse.mjs';
 export function failedTestFiles(log) {
   const found = new Set();
   for (const line of stripVTControlCharacters(log).split('\n')) {
-    const m = /^\s*(?:FAIL|×|✗)\s+(?:(?:\|[^|]*\||[^\s/|]+)\s+)?((?:test|\.github\/tests)\/[^\s>]+\.test\.(?:ts|mjs))/.exec(line);
+    const m = /^\s*(?:FAIL|×|✗)\s+(?:(?:\|[^|]*\||[^\s/|]+)\s+)?((?:test|\.github\/tests|src\/web-ui)\/[^\s>]+\.test\.(?:tsx|ts|mjs))/.exec(line);
     if (m) found.add(m[1]);
   }
   return [...found].sort();
@@ -28,16 +28,38 @@ export function shardWorkers(cpus, shards) {
   return Math.max(1, Math.floor(cpus / Math.max(1, shards)));
 }
 
-function run(command, args) {
+const BAIL = '--bail=1';
+
+function withBail(args) {
+  if (args[0] !== 'scripts/test-ci.mjs' || args.includes(BAIL)) return args;
+  return [args[0], BAIL, ...args.slice(1)];
+}
+
+export function run(command, args, signal) {
   return new Promise((done) => {
     let log = '';
+    let settled = false;
     const child = spawn(command, args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const finish = (result) => { if (!settled) { settled = true; done(result); } };
+    const stop = () => { child.kill('SIGTERM'); };
+    if (signal) {
+      if (signal.aborted) stop();
+      else signal.addEventListener('abort', stop, { once: true });
+    }
     const take = (stream, sink) => stream.on('data', (chunk) => { log += chunk; sink.write(chunk); });
     take(child.stdout, process.stdout);
     take(child.stderr, process.stderr);
-    child.on('error', (error) => done({ code: 1, log: `${log}\nspawn error: ${error.message}` }));
-    child.on('close', (code) => done({ code: code ?? 1, log }));
+    child.on('error', (error) => finish({ code: 1, log: `${log}\nspawn error: ${error.message}` }));
+    child.on('close', (code) => finish({ code: code ?? 1, log }));
   });
+}
+
+export async function settleJobs(jobs, runJob = run) {
+  const controller = new AbortController();
+  return Promise.all(jobs.map((job) => runJob(job.command, job.args, controller.signal).then((result) => {
+    if (result.code !== 0) controller.abort();
+    return result;
+  })));
 }
 
 function reusedPriorGreen() {
@@ -52,6 +74,22 @@ function reusedPriorGreen() {
   }
 }
 
+export function commandsFor(plan, cpus = availableParallelism()) {
+  const jobs = [];
+  if (plan.mode === 'fallback') {
+    const live = (plan.shards ?? []).filter((shard) => shard.length);
+    const workers = shardWorkers(cpus, live.length);
+    for (const shard of live) jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]) });
+  } else if (plan.tests?.length) {
+    jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', ...plan.tests]) });
+  }
+  if (plan.web?.length) {
+    jobs.push({ command: process.execPath, args: withBail(['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', ...plan.web]) });
+  }
+  if (plan.node?.length) jobs.push({ command: process.execPath, args: ['--test', ...plan.node] });
+  return jobs;
+}
+
 export async function main(planPath, outPath) {
   if (reusedPriorGreen()) {
     writeFileSync(outPath, JSON.stringify({ failed: [], ok: true, reused: true }, null, 2));
@@ -59,16 +97,7 @@ export async function main(planPath, outPath) {
     return 0;
   }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
-  const jobs = [];
-  if (plan.mode === 'fallback') {
-    const live = plan.shards.filter((shard) => shard.length);
-    const workers = shardWorkers(availableParallelism(), live.length);
-    for (const shard of live) jobs.push(run(process.execPath, ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]));
-  } else if (plan.tests.length) {
-    jobs.push(run(process.execPath, ['scripts/test-ci.mjs', ...plan.tests]));
-  }
-  if (plan.node.length) jobs.push(run(process.execPath, ['--test', ...plan.node]));
-  const results = await Promise.all(jobs);
+  const results = await settleJobs(commandsFor(plan));
   const failed = failedTestFiles(results.map((r) => r.log).join('\n'));
   const bad = results.some((r) => r.code !== 0);
   writeFileSync(outPath, JSON.stringify({ failed, ok: !bad }, null, 2));
@@ -76,7 +105,7 @@ export async function main(planPath, outPath) {
     console.error(`fast-gate tests failed${failed.length ? `: ${failed.join(', ')}` : ' (no file name parsed)'}`);
     return 1;
   }
-  console.log(`fast-gate tests passed: ${plan.tests.length} vitest + ${plan.node.length} node files`);
+  console.log(`fast-gate tests passed: ${plan.tests.length} vitest + ${(plan.web ?? []).length} web + ${plan.node.length} node files`);
   return 0;
 }
 

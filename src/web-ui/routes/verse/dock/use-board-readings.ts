@@ -10,6 +10,7 @@
  *   Lanes     GET /api/verse/fleet/runs               (`phm fleet runs`)
  *   Capacity  GET /api/verse/runs-history?hours=24    (the board's default window)
  *   Supply    GET /api/verse/fleet/runs               (the same snapshot Lanes reads)
+ *   Throughput GET /api/verse/fleet/runs/throughput?hours=24&by=lane   (`phm throughput`, the board's default window)
  *
  * A read is only made while the row is on screen and lists that board. A read that has not answered, last failed,
  * or holds a body this row cannot vouch for gives no reading: a failed refresh keeps the old data in the cache, and
@@ -19,6 +20,7 @@ import type { RunsHistory } from '../../../../core/fleet/runs-history.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { runsHistoryQuery } from '../fleet-capacity/capacity-queries.js';
 import { fleetPoolsQuery } from '../fleet-pools/pools-query.js';
+import { THROUGHPUT_QUERIES } from '../fleet-throughput/throughput-query.js';
 import { routerRoutesQuery } from '../fleet-router/router-model.js';
 import { rowsFromAccounts } from '../fleet-usage/usage-pane-model.js';
 import { modelCheckQuery, modelRegistryQuery } from '../models/models-queries.js';
@@ -28,7 +30,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { projectAccountsSnapshot } from '../usage/usage-contract.js';
 import { verseAccountsQuery } from '../usage/usage-queries.js';
 import {
-  capacityReading, lanesReading, modelsReading, poolsReading, routerReading, supplyReading, usageReading, type BoardReading,
+  capacityReading, lanesReading, modelsReading, poolsReading, routerReading, supplyReading, throughputReading, usageReading, type BoardReading,
 } from './resource-board-readings.js';
 
 /** Long enough that a recent read by the board itself, or by Home, is reused instead of asked for again. */
@@ -42,6 +44,8 @@ const SLOW_POLL_MS = 60_000;
 /** One stable definition each, so the row and the boards share a cache entry: fleet work, and the board's default day. */
 const FLEET_ROUTES = routerRoutesQuery(true);
 const DAY_HISTORY = runsHistoryQuery(24);
+/** The Throughput board's default window; Home's Merged PRs card reads the same entry. */
+const DAY_THROUGHPUT = THROUGHPUT_QUERIES[24];
 
 /** A reading is only taken from a read that last succeeded. */
 const settled = <T,>(read: { status: string; data: T | undefined }): T | undefined => read.status === 'error' ? undefined : read.data;
@@ -51,7 +55,7 @@ export function useBoardReadings(ids: readonly string[], on: boolean): ReadonlyM
   const want = (id: string): boolean => on && ids.includes(id);
   const wantPools = want('fleet-pools'), wantUsage = want('fleet-usage'), wantRouter = want('fleet-router'), wantModels = want('models');
   const wantLanes = want('fleet-lanes'), wantCapacity = want('fleet-capacity'), wantSupply = want('fleet-supply');
-  const wantRuns = wantLanes || wantSupply;
+  const wantRuns = wantLanes || wantSupply, wantThroughput = want('fleet-throughput');
 
   const pools = useQuery(fleetPoolsQuery, { enabled: wantPools, freshMs: READING_POLL_MS });
   const runs = useQuery(opsRunsQuery, { enabled: wantRuns, freshMs: READING_POLL_MS });
@@ -60,6 +64,7 @@ export function useBoardReadings(ids: readonly string[], on: boolean): ReadonlyM
   const registry = useQuery(modelRegistryQuery, { enabled: wantModels, freshMs: SLOW_POLL_MS });
   const check = useQuery(modelCheckQuery, { enabled: wantModels, freshMs: SLOW_POLL_MS });
   const history = useQuery(DAY_HISTORY, { enabled: wantCapacity, freshMs: SLOW_POLL_MS });
+  const throughput = useQuery(DAY_THROUGHPUT, { enabled: wantThroughput, freshMs: SLOW_POLL_MS });
   usePollWhileVisible(useRefetch(fleetPoolsQuery), READING_POLL_MS, { enabled: wantPools, refreshOnShow: false });
   usePollWhileVisible(useRefetch(opsRunsQuery), READING_POLL_MS, { enabled: wantRuns, refreshOnShow: false });
   usePollWhileVisible(useRefetch(verseAccountsQuery), SLOW_POLL_MS, { enabled: wantUsage, refreshOnShow: false });
@@ -67,6 +72,7 @@ export function useBoardReadings(ids: readonly string[], on: boolean): ReadonlyM
   const refetchRegistry = useRefetch(modelRegistryQuery), refetchCheck = useRefetch(modelCheckQuery);
   usePollWhileVisible(() => { refetchRegistry(); refetchCheck(); }, SLOW_POLL_MS, { enabled: wantModels, refreshOnShow: false });
   usePollWhileVisible(useRefetch(DAY_HISTORY), SLOW_POLL_MS, { enabled: wantCapacity, refreshOnShow: false });
+  usePollWhileVisible(useRefetch(DAY_THROUGHPUT), SLOW_POLL_MS, { enabled: wantThroughput, refreshOnShow: false });
 
   const out = new Map<string, BoardReading>();
   const put = (id: string, wanted: boolean, reading: BoardReading | null): void => { if (wanted && reading) out.set(id, reading); };
@@ -94,5 +100,9 @@ export function useBoardReadings(ids: readonly string[], on: boolean): ReadonlyM
 
   const historyNow: RunsHistory | null | undefined = settled(history);
   put('fleet-capacity', wantCapacity, historyNow ? capacityReading(historyNow, Date.now()) : null);
+
+  // Any other payload (an older server, an error body) is not a measurement.
+  const throughputNow = settled(throughput);
+  put('fleet-throughput', wantThroughput, throughputNow?.schema === 'throughput.v1' ? throughputReading(throughputNow) : null);
   return out;
 }

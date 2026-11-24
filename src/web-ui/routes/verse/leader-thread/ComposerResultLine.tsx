@@ -7,12 +7,16 @@
  * Leader's own messages.
  *
  * An answer of several lines (`/find`) is a headline over a list, a row a
- * line; a row that ends in a quoted line (“…”) shows the quote as what was said.
+ * line; a row that ends in a quoted line (“…”) shows the quote as what was said,
+ * and a job's row from `/find` ends in "Open at this line": the conversation
+ * opens at the line quoted, with the words marked (fleet-sessions/thread-found.ts).
  */
 import { Fragment, type ReactNode } from 'react';
+import { openThreadAtFound } from '../fleet-sessions/thread-found.js';
 import { clockTime } from '../leader/thread-model.js';
 import { pullUrl, splitRefs } from '../fleet/job-refs.js';
 import leaderStyles from '../leader/leader.module.css';
+import { foundRowPlace } from './composer-find-command.js';
 import { useIsReading } from './leader-reading.js';
 import styles from './composer-result.module.css';
 
@@ -48,9 +52,11 @@ export function ComposerResultLine({ text, at, onOpenConversation }: {
   return <div className={`${leaderStyles.system} ${styles.result} ${styles.block}`} data-composer-result data-rows={rows.length}>
     <p className={styles.head}>{withRefs(head, onOpenConversation)}{time}</p>
     <ul className={styles.rows}>{rows.map((row, index) => {
-      const quoted = ROW_QUOTE.exec(row);
+      const quoted = ROW_QUOTE.exec(row), place = quoted ? foundRowPlace(row) : null;
       return <li key={index} className={styles.row} data-quoted={quoted ? '' : undefined}>
-        {quoted ? <>{withRefs(quoted[1]!, onOpenConversation)}<q className={styles.quote}>{withRefs(quoted[2]!, onOpenConversation)}</q></> : withRefs(row, onOpenConversation)}
+        {quoted ? <>{withRefs(quoted[1]!, onOpenConversation)}<q className={styles.quote}>{withRefs(quoted[2]!, onOpenConversation)}</q>
+          {place && <> <button type="button" className={styles.atLine} data-found-door={place.id} aria-label={`Open ${place.id} at this line`}
+            onClick={() => { openThreadAtFound(place.id, place.words, place.key); onOpenConversation(place.id); }}>Open at this line</button></>}</> : withRefs(row, onOpenConversation)}
       </li>;
     })}</ul>
   </div>;

@@ -1,7 +1,8 @@
 /**
  * routes/verse/dock/ResourceBoardsNav.tsx — the switcher the dock draws above
  * every resource board (Pools, Usage, Router, Models, Lanes, Capacity,
- * Supply), so they read as one surface instead of seven tabs to hunt for.
+ * Supply, Throughput), so they read as one surface instead of eight tabs to
+ * hunt for.
  *
  * Choosing a board puts it in the place of the one on screen (the dock keeps
  * one tab), unless that board already has a tab of its own, which is then
@@ -12,8 +13,8 @@
  * Every name can carry a live reading, so the row is the status line of the
  * whole surface: pools running empty early or behind, accounts at a limit,
  * kinds of work with no seat, models the router refuses, lanes held or slots
- * running, the share of target slots filled, and opening slots with no job
- * waiting. Each comes from the read its own board draws from and is shared
+ * running, the share of target slots filled, opening slots with no job
+ * waiting, and PRs merged in the last 24 hours (or a red main). Each comes from the read its own board draws from and is shared
  * with it through the cache (use-board-readings.ts lists the reads). A board
  * with nothing worth a word, or whose read has not answered or last failed,
  * shows its name alone.

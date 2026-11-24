@@ -4,6 +4,8 @@ import { clearMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { stubSurfaceFetch } from '../command/fetch-stub.test-support.js';
 import { LIVE_SESSIONS_API } from '../fleet-sessions/sessions-model.js';
+import { forgetEarlier, wantsEarlier } from '../fleet-sessions/thread-depth.js';
+import { forgetFoundPlace, takeFoundPlace } from '../fleet-sessions/thread-found.js';
 import { msg } from '../leader/thread-fixtures.test-support.js';
 import { SESSION_FIND_API } from '../session-wall/wall-find.js';
 import { takeRequestedWallSession } from '../session-wall/wall-selection.js';
@@ -25,7 +27,7 @@ const SUITE = found(['suite'], [
 
 // No mutation token is held: /find only reads.
 beforeEach(() => { evictAll(); clearMutationToken(); takeRequestedWallSession(); });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); forgetEarlier(); forgetFoundPlace(); });
 
 async function setup(search: unknown) {
   const net = stubSurfaceFetch({ routes: {
@@ -63,9 +65,17 @@ describe('/find in the Leader reply box', () => {
 
     // Finding opens nothing by itself; a named job does, a job named inside a quoted line included.
     expect(takeRequestedWallSession()).toBeNull();
-    expect(within(first!).getAllByRole('button').map(button => button.textContent)).toEqual(['RQ-A', 'RQ-Z']);
+    expect(within(first!).getAllByRole('button').map(button => button.textContent)).toEqual(['RQ-A', 'RQ-Z', 'Open at this line']);
+    // A row with no quoted line has no line to open at.
+    expect(within(second!).queryByRole('button', { name: /at this line/ })).toBeNull();
     fireEvent.click(within(second!).getAllByRole('button', { name: 'Open the conversation with RQ-Z' })[0]!);
     expect(takeRequestedWallSession()).toBe('RQ-Z');
+    expect(takeFoundPlace('RQ-Z')).toBeNull();
+
+    // "Open at this line" opens the job's conversation and names the line quoted, to be read from the whole conversation.
+    fireEvent.click(within(first!).getByRole('button', { name: 'Open RQ-A at this line' }));
+    expect([takeRequestedWallSession(), wantsEarlier('RQ-A')]).toEqual(['RQ-A', true]);
+    expect(takeFoundPlace('RQ-A')).toEqual({ id: 'RQ-A', words: ['suite'], key: 'latest' });
     expect(net.posted).toEqual([]);
   });
 

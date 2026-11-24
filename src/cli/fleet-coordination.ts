@@ -6,7 +6,7 @@ import {
 
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
 import { parseCoordinationInboxFilters, projectCoordinationInbox, type CoordinationInboxFilters } from '../core/fleet/coordination-inbox.js';
-import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
+import { parseCoordinationReturnsFilters, projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
 import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
 
@@ -18,7 +18,7 @@ export const FLEET_COORDINATION_HELP = [
   '  return <claim-id> --agent name --lease <lease> (--pr n --head sha | --tests text | --artifact text | --blocked dependency) [--ttl-seconds 86400] [--json] — evidence, not authority; does not merge, verify or close anything; agent labels do not authenticate senders (the lease fences only release).',
   '  handoff <claim-id> --agent name --lease <lease> --to name [--ttl-seconds 3600] [--json]',
   '  board [--json]',
-  '  returns [--json] — RESULT receipts from coordination return, newest first; evidence, not authority.',
+  '  returns [--claim <id>] [--repo owner/name] [--result VERIFIED|BLOCKED] [--from name] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — RESULT receipts from coordination return, newest first; evidence, not authority. The filters narrow the parsed set before the newest-50 page, so a filtered read reaches receipts the unfiltered cap hides: --claim keeps one claim id\'s receipts, --repo one repo (case-insensitive), --result one verdict, --from one sender label, --since/--before keep receipts inside one [since, before) window on their at stamp, --contains keeps receipts whose repo, verdict, evidence kind or evidence text carries the text (case-insensitive).',
   '  post --from name --to name --message "text" [--id id] [--ttl-seconds 3600] [--json]',
   '  inbox --agent name [--from sender] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — filters narrow the addressed read: --from keeps posts one sender label wrote (proposals carry no sender and drop out), --since/--before keep records inside one [since, before) window on their at stamp, --contains keeps messages whose body and proposals whose repo+task carry the text (case-insensitive).',
   '  assign --repo owner/repo --task "work" --to name [--ttl-seconds 3600] [--json]',
@@ -28,7 +28,8 @@ export const FLEET_COORDINATION_HELP = [
 const VALUES: Record<string, string[]> = {
   claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
-  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [], returns: [],
+  handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [],
+  returns: ['--claim', '--repo', '--result', '--from', '--since', '--before', '--contains'],
   post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent', '--from', '--since', '--before', '--contains'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
@@ -63,7 +64,11 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
   };
   if (sub === 'returns') {
     const now = (deps.now ?? Date.now)();
-    const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now);
+    const parsed = parseCoordinationReturnsFilters({ claim: values['--claim'], repo: values['--repo'],
+      result: values['--result'], from: values['--from'], since: values['--since'],
+      before: values['--before'], contains: values['--contains'] }, now);
+    if (!parsed.ok) return invalid();
+    const result = projectCoordinationReturns(readFleetBoard({ reap: false, now }), now, parsed.filters);
     output(result);
     return result.state === 'known' ? 0 : 1;
   }
