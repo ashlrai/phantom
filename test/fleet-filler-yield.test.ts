@@ -87,3 +87,16 @@ it('filler-yield prints json, exits 1 on red and 0 otherwise, and rejects bad fl
 it('filler-yield is registered as a fleet verb', async () => {
   expect((await FLEET_SUBCOMMAND_LOADERS['filler-yield']!()).cmdFleetFillerYield).toBe(cmdFleetFillerYield);
 });
+
+it('counts merges from metrics-outcomes reconciler rows', async () => {
+  const iso = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  const report = await fleetFillerYield(read(
+    JSON.stringify({ event: 'launch', job: J(1), repo: 'phantom', ts: iso(1) }),
+    JSON.stringify({ outcome: 'MERGED', jobId: J(1), prUrl: 'https://github.com/o/r/pull/1', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+    JSON.stringify({ event: 'launch', job: J(2), repo: 'phantom', ts: iso(1) }),
+    JSON.stringify({ event: 'publish', job: J(2), url: 'https://github.com/o/r/pull/2', outcome: 'CLOSED', source: 'metrics-outcomes-reconciler', ts: iso(0.5) }),
+  ), 6, now);
+  expect(report.repos).toEqual([
+    { repo: 'phantom', launches: 2, skips: 0, empty_finishes: 0, merged: 1, rows: 4, yield: 0.5, red: false },
+  ]);
+});

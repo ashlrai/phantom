@@ -84,3 +84,14 @@ describe('cmdFleetSupply', () => {
     expect(err).toHaveBeenCalled();
   });
 });
+
+it('counts merges from metrics-outcomes reconciler rows', async () => {
+    const r = await fleetSupply(reader([
+      row('RQ-X-FILL01', 'launch', 1),
+      JSON.stringify({ outcome: 'MERGED', jobId: 'RQ-X-FILL01', prUrl: 'https://github.com/o/r/pull/9', source: 'metrics-outcomes-reconciler', ts: hoursAgo(0.5) }),
+      JSON.stringify({ event: 'publish', job: 'RQ-X-FILL02', url: 'https://github.com/o/r/pull/10', class: 'pr', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', ts: hoursAgo(0.5) }),
+    ]), now);
+    const batches = r.batches as Exclude<typeof r.batches, 'unknown'>;
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.total).toEqual({ launch: 1, skipped_empty: 0, precheck_skip: 0, pr_opened: 1, merged: 2 });
+  });

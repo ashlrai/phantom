@@ -6,6 +6,13 @@ model calls, writes, routing changes or sending. The CLI only reads a ledger.
 
 ## Interface and commands
 
+The filler-yield, lane-yield and supply readers use
+`jobs-ledger-dialect.ts`'s `ledgerJobId(row)` and `ledgerRowOutcome(row)`.
+The latter returns the resolved outcome or null. A reconciler's terminal
+`outcome`/`status` takes precedence over copied publish state; a plain publish
+claim with no reconciler source does not establish a merge. Yield readers
+credit repeated merge rows once per job; supply retains its per-row counts.
+
 `phm fleet metrics --json` (or `metrics series --json`) returns
 `fleet.metrics-series.v1`, shared with the Metrics pane through
 `GET /api/verse/fleet/runs/metrics` (`series`). It streams the same
