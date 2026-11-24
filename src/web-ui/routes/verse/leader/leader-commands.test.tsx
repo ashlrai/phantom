@@ -83,9 +83,9 @@ describe('⌘K', () => {
   });
 });
 
-function LeaderCardHarness({ seatNames, state = leaderState('live') }: { seatNames?: ReadonlyMap<string, string>; state?: ReturnType<typeof leaderState> } = {}) {
+function LeaderCardHarness({ seatNames, state = leaderState('live'), burnLine }: { seatNames?: ReadonlyMap<string, string>; state?: ReturnType<typeof leaderState>; burnLine?: string } = {}) {
   const actions = useSurfaceActions();
-  return <LeaderCard read={{ value: state, available: true, reason: null }} loading={false} actions={actions} seatNames={seatNames} />;
+  return <LeaderCard read={{ value: state, available: true, reason: null }} loading={false} actions={actions} seatNames={seatNames} burnLine={burnLine} />;
 }
 
 describe('Command’s Leader card', () => {
@@ -99,6 +99,16 @@ describe('Command’s Leader card', () => {
     expect(screen.getByText('Improve Phantom; keep "Ashlrverse"')).toBeInTheDocument();
     expect(screen.getByText('Build Phantom')).toBeInTheDocument();
     expect(JSON.stringify(state)).toBe(raw);
+  });
+
+  it('shows the Claude burn sentence under the seat, and nothing when there is none', () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] } } });
+    const sentence = 'Claude is at 63%, spending about 6 points an hour; empty about 9 AM today, 6 days before its reset.';
+    render(<LeaderCardHarness burnLine={sentence} />);
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+    cleanup();
+    render(<LeaderCardHarness />);
+    expect(screen.queryByText(/Claude is at/)).toBeNull();
   });
 
   it('shows the current seat and its fallback, and nothing when the seat is unknown', () => {

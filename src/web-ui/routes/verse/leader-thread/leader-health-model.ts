@@ -80,24 +80,27 @@ const fixOf = (cause: string | null) => (cause !== null && /\brun claude login\b
 /**
  * `read` is the narrowed document, or null/undefined when there is none.
  * `wasFailing` is whether this pane has shown a failure notice since it
- * mounted: only then is a count of zero worth a line.
+ * mounted: only then is a count of zero worth a line. `to` is the job the
+ * reply box under the notice is aimed at, when it is not the Leader's own:
+ * such a message is written to the Leader's inbox with `@<job>` in front, so
+ * it waits on the same passes, and the notice says so by name.
  */
-export function leaderHealthNotice(read: LeaderHealthRead | null | undefined, wasFailing: boolean): LeaderHealthNotice | null {
+export function leaderHealthNotice(read: LeaderHealthRead | null | undefined, wasFailing: boolean, to: string | null = null): LeaderHealthNotice | null {
   if (!read || read.failures === null) return null;
   if (read.failures === 0) {
     if (!wasFailing) return null;
     return {
       state: 'recovered', headline: 'The Leader is passing again.',
-      detail: 'It reads what you sent on its passes, as before.', lastGood: lastGoodWords(read.hoursSinceSuccess), cause: null, fix: null,
+      detail: to === null ? 'It reads what you sent on its passes, as before.' : `It reads what you send to ${to} on its passes, as before.`, lastGood: lastGoodWords(read.hoursSinceSuccess), cause: null, fix: null,
     };
   }
   const down = read.failures >= LEADER_DOWN_FAILURES;
+  // Aimed at a worker, the words still land in the Leader's inbox: the notice names the worker and says why it waits.
+  const lead = to === null ? (down ? 'It is not reading you. ' : '') : `A message to ${to} goes through the Leader${down ? ', and it is not reading you' : ''}. `;
   return {
     state: down ? 'down' : 'failed',
     headline: down ? `The Leader’s last ${read.failures} passes failed.` : 'The Leader’s last pass failed.',
-    detail: down
-      ? 'It is not reading you. What you send is kept in its inbox until a pass succeeds.'
-      : 'What you send is kept in its inbox; the next pass may read it.',
+    detail: `${lead}What you send is kept in its inbox${down ? ' until a pass succeeds.' : '; the next pass may read it.'}`,
     lastGood: lastGoodWords(read.hoursSinceSuccess), cause: read.cause, fix: fixOf(read.cause),
   };
 }

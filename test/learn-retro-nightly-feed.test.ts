@@ -110,6 +110,22 @@ describe('foldFleetJobs', () => {
     ]);
   });
 
+  it('reads merged/closed event names as verdicts when no phase field resolves', () => {
+    const rows = [
+      fleetRow({ event: 'merged', state: undefined, ts: '2026-10-25T22:00:00.000Z' }),
+      fleetRow({ job: 'RQ-TEST-2', event: 'closed', state: undefined, ts: '2026-10-25T22:30:00.000Z' }),
+      // A resolved phase stays authoritative over the event name.
+      fleetRow({ job: 'RQ-TEST-3', event: 'merged', state: 'OPEN', ts: '2026-10-25T22:40:00.000Z' }),
+      fleetRow({ job: 'RQ-TEST-4', event: 'merged', state: 'CLOSED', ts: '2026-10-25T22:50:00.000Z' }),
+    ];
+    const jobs = foldFleetJobs(rows.map((row) => JSON.stringify(row)).join('\n'), NOW);
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    expect(byId.get('RQ-TEST-1')).toMatchObject({ status: 'succeeded', updatedAt: '2026-10-25T22:00:00.000Z' });
+    expect(byId.get('RQ-TEST-2')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T22:30:00.000Z' });
+    expect(byId.has('RQ-TEST-3')).toBe(false);
+    expect(byId.get('RQ-TEST-4')).toMatchObject({ status: 'failed', updatedAt: '2026-10-25T22:50:00.000Z' });
+  });
+
   it('counts a later revert as failure and skips rows without provable attribution', () => {
     const rows = [
       fleetRow({ state: 'MERGED', ts: '2026-10-25T22:00:00.000Z' }),
@@ -146,6 +162,27 @@ describe('foldFleetJobs', () => {
     expect(byId.get('RQ-REV-BOTH')).toMatchObject({ status: 'failed' });
     expect(byId.get('RQ-NO-REV')).toMatchObject({ status: 'succeeded' });
     expect(byId.get('RQ-REV-OLD')).toMatchObject({ status: 'succeeded', updatedAt: '2026-10-25T22:00:00.000Z' });
+  });
+
+  it('never reads a task_outcome session word as a job status', () => {
+    const member = (job: string, outcome: string, ts: string) => ({
+      event: 'task_outcome', job, batch: 'RQ-BATCH-p-1', repo: 'ashlrai/phantom',
+      lane: 'work', outcome, ts,
+    });
+    const rows = [
+      // 'failed'/'deferred'/'unreported' session words mean the member line
+      // went back to ready.tsv — bookkeeping, never a lifecycle verdict.
+      member('RQ-MEMBER-FAILED', 'failed', '2026-10-25T22:00:00.000Z'),
+      member('RQ-MEMBER-DEFERRED', 'deferred', '2026-10-25T22:05:00.000Z'),
+      member('RQ-MEMBER-DONE', 'done', '2026-10-25T22:10:00.000Z'),
+      // The retried member's own terminal row still resolves normally.
+      member('RQ-MEMBER-RETRY', 'failed', '2026-10-25T22:15:00.000Z'),
+      fleetRow({ job: 'RQ-MEMBER-RETRY', event: 'outcome', state: 'CLOSED', ts: '2026-10-25T23:00:00.000Z' }),
+    ];
+    const jobs = foldFleetJobs(rows.map((row) => JSON.stringify(row)).join('\n'), NOW);
+    expect(jobs).toEqual([
+      { v: 1, id: 'RQ-MEMBER-RETRY', repo: 'ashlrai/phantom', arm: 'work', playbook: null, status: 'failed', updatedAt: '2026-10-25T23:00:00.000Z' },
+    ]);
   });
 
   it('derives repo from a GitHub PR URL and arm from model when no lane exists', () => {

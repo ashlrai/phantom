@@ -25,7 +25,17 @@
 .figureValue { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .figureValue b { color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
 .figure { margin: 0; min-width: 0; }
+.plot { position: relative; }
 .chart { display: block; width: 100%; height: 3.5rem; overflow: visible; }
+/* The sample being read: a rule down every chart at the same moment and a ring on this chart's running count. They glide
+   between samples so the eye can follow a step; the motion tokens drop to nothing when reduced motion is asked for. */
+.rule, .ring { position: absolute; pointer-events: none; transition: left var(--duration-instant) var(--ease-standard), bottom var(--duration-instant) var(--ease-standard); }
+.rule { top: 0; bottom: 0; width: 1px; margin-left: -0.5px; background: var(--text-primary); opacity: .7; }
+.ring { width: 9px; height: 9px; margin: 0 0 -4.5px -4.5px; border: 2px solid var(--data-seq-4); border-radius: var(--radius-full); background: var(--bg-surface); }
+/* Takes the pointer and the keyboard for the whole plot. Vertical swipes still scroll the board on a touch screen. */
+.scrub { position: absolute; inset: 0; border-radius: var(--radius-sm); cursor: crosshair; touch-action: pan-y; }
+.scrub:focus { outline: none; }
+.scrub:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .running, .target { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .running { stroke: var(--data-seq-4); }
 .area { fill: var(--data-seq-4); opacity: .14; }
@@ -35,6 +45,12 @@
 .held { fill: var(--status-unknown-solid); opacity: .2; }
 .axis { display: flex; justify-content: space-between; gap: var(--space-2); margin: var(--space-1) 0 0; color: var(--text-tertiary); font-size: var(--text-2xs-size); font-variant-numeric: tabular-nums; }
 .axis span { text-align: center; }
+/* A sample's own line under its chart: when it was taken, then what the chart held. Same height as the scale it replaces. */
+.axis[data-reading] { color: var(--text-primary); }
+.axis[data-reading] time { color: var(--text-secondary); white-space: nowrap; }
+.axis[data-reading] span { text-align: right; font-weight: var(--font-weight-medium); }
+.moment { margin: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.moment time { margin-right: var(--space-1); color: var(--text-secondary); }
 /* Labelled readings: as many columns as fit, a small label over its value and, under it, what the value counts. */
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
 .fact { display: flex; flex-direction: column; min-width: 0; }
@@ -47,6 +63,7 @@
 .watched, .gap { position: absolute; top: 0; bottom: 0; min-width: 2px; }
 .watched { background: var(--data-seq-4); }
 .gap { background: var(--status-warning-solid); }
+.stripRule { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text-primary); pointer-events: none; }
 .muted { margin: 0; color: var(--text-tertiary); }
 .stall { margin: 0; color: var(--status-warning-fg); }
 .truth { margin: 0; color: var(--text-tertiary); }

@@ -76,7 +76,11 @@ export interface PlannerAutorunInput {
   slate?: PlannerSlateLane[];
   /** The slate login the failed pass ran on, when known. */
   failedLane?: string | null;
+  /** Whether the declared fallback list (queue/planner-candidates.json) is missing, unreadable or fine. Absent: not read. */
+  slateState?: PlannerSlateState;
 }
+
+export type PlannerSlateState = 'missing' | 'invalid' | 'ok';
 
 /** One planner login and whether its pool is used up (reading at 100%, reset still ahead). */
 export interface PlannerSlateLane { provider: string; out: boolean; resetAt: string | null }
@@ -103,11 +107,17 @@ export interface PlannerAutorunDecision {
   poolsOut?: PlannerPoolOut[];
   /** planner-failing skip: the earliest reset among poolsOut, ISO; null when none is known. */
   nextResetAt?: string | null;
+  /** The fallback list's state when the tick read it. */
+  slate?: PlannerSlateState;
 }
 
 const DEFAULT_MIN_GAP_MINUTES = 25;
 const DEFAULT_LOW_SUPPLY = 24;
 const DEFAULT_SUPPLY_FLOOR = 6;
+
+/** Plain words for a slate the planner cannot fall back on; one spelling for every surface. */
+export const SLATE_MISSING_WORDS = 'No planner fallback list declared at queue/planner-candidates.json; only the usual login can run. `phm fleet planner-slate --propose` prints one for Security to declare.';
+export const SLATE_INVALID_WORDS = 'The planner fallback list at queue/planner-candidates.json cannot be read, so no fallback can run; only the usual login can. `phm fleet planner-slate --propose` prints a replacement for Security to declare.';
 
 /** "Non-finite or negative numbers count as 0." */
 const nonneg = (value: number): number => (Number.isFinite(value) && value > 0 ? value : 0);
@@ -161,6 +171,7 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
     ({
       v: 1, run, reason, phxReady, freeSlots, lastPassAt, minutesSinceLastPass: minutesSince, detail,
       ...(run && fallback ? { lane: fallback.lane, fallbackFrom: fallback.from } : {}),
+      ...(input.slateState === undefined ? {} : { slate: input.slateState }),
     });
 
   if (input.orchOff) {
@@ -181,7 +192,9 @@ export function decidePlannerAutorun(input: PlannerAutorunInput): PlannerAutorun
         const why = (health.reason === 'usage-limit' || health.reason === 'auth-rejected') && out.length > 0
           ? `${out.map((p) => `${p.lane}${p.resetAt ? ` (back ${resetWords(p.resetAt)})` : ''}`).join(', ')} out of usage (${health.reason})${first ? `; the first resets ${resetWords(first)}` : ''}.`
           : `The planner is already failing (${health.reason ?? 'no reason recorded'}).`;
-        return { ...done(false, 'planner-failing', `${why} Another pass would pile onto a dead login.`), poolsOut: out, nextResetAt: first };
+        const gap = input.slateState === 'missing' ? ` ${SLATE_MISSING_WORDS}`
+          : input.slateState === 'invalid' ? ` ${SLATE_INVALID_WORDS}` : '';
+        return { ...done(false, 'planner-failing', `${why}${gap} Another pass would pile onto a dead login.`), poolsOut: out, nextResetAt: first };
       }
       fallback = { lane: next.provider, from };
     }
@@ -240,14 +253,14 @@ export async function readPlannerAutorunInput(runsDir: string, now: number): Pro
     orchOff: switches?.switches.some((row) => row.id === 'ORCH_OFF' && row.on) ?? false,
     nowMs: now,
     queueUnreadable,
-    ...(slate === null ? {} : { slate: slate.lanes, failedLane: failedLaneOf(health, slate) }),
+    ...(slate === null ? {} : { slate: slate.lanes, failedLane: failedLaneOf(health, slate), slateState: slate.state }),
   };
 }
 
 /** Slate logins in order, each with its pool state from the same readings `phm pools` shows. */
-async function readSlateLanes(runsDir: string, now: number): Promise<{ lanes: PlannerSlateLane[]; lastProvider: string | null }> {
+async function readSlateLanes(runsDir: string, now: number): Promise<{ lanes: PlannerSlateLane[]; lastProvider: string | null; state: PlannerSlateState }> {
   const slate = await readPlannerCandidates(runsDir);
-  if (slate.source !== 'ok') return { lanes: [], lastProvider: null };
+  if (slate.source !== 'ok') return { lanes: [], lastProvider: null, state: slate.source };
   const view = await readResourceLedger({ runsDir, now: () => now })
     .then(async (ledger) => buildPoolsView(ledger, now, await readUsageSamples({ runsDir, nowMs: now })))
     .catch(() => null);
@@ -258,7 +271,7 @@ async function readSlateLanes(runsDir: string, now: number): Promise<{ lanes: Pl
       && Number.isFinite(resetMs) && resetMs > now;
     return { provider, out, resetAt: row?.resetAt ?? null };
   });
-  return { lanes, lastProvider: slate.lastProvider };
+  return { lanes, lastProvider: slate.lastProvider, state: 'ok' };
 }
 
 /** The login that ran the failed pass: the LEADER row's executor, else the slate's lastProvider. */

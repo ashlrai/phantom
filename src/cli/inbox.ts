@@ -1092,6 +1092,8 @@ Run \`ashlr inbox <subcommand> --help\` for subcommand usage.`;
  * Returns a process exit code (0 = success, non-zero = error/usage).
  */
 export async function cmdInbox(args: string[]): Promise<number> {
+  // `phm inbox acks` is the plain-words door to `phm fleet inbox-acks`.
+  if (args[0] === 'acks') return (await import('./fleet-inbox-acks.js')).cmdFleetInboxAcks(args.slice(1));
   const col = makeColors(process.stdout.isTTY === true);
 
   // ── Parse args ─────────────────────────────────────────────────────────

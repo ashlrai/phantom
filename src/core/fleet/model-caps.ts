@@ -34,11 +34,27 @@ export function activeCaps(caps: readonly ModelCap[], now: number, lastSuccess: 
   });
 }
 
+export interface ModelCapDetection { model: string; capped: true; until?: string }
+
+/** Only model-specific limit evidence can create a cap. */
+export function detectModelCap(text: string | null): ModelCapDetection | null {
+  const hit = detectPoolCap(text);
+  if (hit?.kind !== 'model-limit' || !hit.model || !SAFE.test(hit.model)) return null;
+  const match = /\b(?:resets?|try again) (?:at|on|after) (\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})(?![\w:+.-])/i.exec(text ?? '');
+  const until = match?.[0].split(' ').at(-1);
+  const [, year, month, day, hour, minute, second] = match ?? [];
+  const valid = match && Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1
+    && Number(day) <= new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate()
+    && Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59
+    && until && Number.isFinite(Date.parse(until));
+  return valid ? { model: hit.model, capped: true, until } : { model: hit.model, capped: true };
+}
+
 /** Pure: read one finished worker's log. Returns the new mark, or null when the log shows no cap or names no model. */
 export function capFromLog(log: string | null, lane: string, now: number, resetAt: string | null = null): ModelCap | null {
-  const hit = detectPoolCap(log);
-  if (!hit?.model || !SAFE.test(hit.model)) return null;
-  return { model: hit.model, capped_at: new Date(now).toISOString(), source: 'worker-log', lane, reset_at: resetAt };
+  const hit = detectModelCap(log);
+  if (!hit) return null;
+  return { model: hit.model, capped_at: new Date(now).toISOString(), source: 'worker-log', lane, reset_at: resetAt ?? hit.until ?? null };
 }
 
 /** Pure: add a mark, replacing an older one for the same lane and model. */

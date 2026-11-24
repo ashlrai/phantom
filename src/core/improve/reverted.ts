@@ -1,9 +1,11 @@
 /**
- * Which PRs were reverted after merging, from both places `phm improve observe`
- * records it: the outcome ledger (registered self-improvement PRs) and cloud
- * tasks (`outcome.revertedBy`). Keys are `prKey(repo, number)`. A ledger
- * outcome counts only while its last observation is a revert, so a re-landed
- * change is not in the set.
+ * Which PRs were reverted after merging, from every place the evidence is
+ * recorded: the outcome ledger (registered self-improvement PRs), cloud
+ * tasks (`outcome.revertedBy`) and the revert-outcomes ledger
+ * (`phm fleet reverts --record` detections of fleet PRs). Keys are
+ * `prKey(repo, number)`. A ledger outcome counts only while its last
+ * observation is a revert, so a re-landed change is not in the set; the same
+ * newest-record rule resolves recorded scan detections.
  *
  * The other half is the 72h-window revert detector the router reads:
  * `detectRevertOutcomes` / `revertOutcomeRecords` scan a default-branch
@@ -22,14 +24,20 @@ import type { CloudTaskV1 } from '../cloud/types.js';
 import { prKey } from './lesson-trial.js';
 import { revertsCommitBody, type ObserveExec } from './observe.js';
 import { readLedger, scoreOutcomes, type LedgerRecord } from './outcomes.js';
+import { readRevertOutcomeRecords, standingRevertKeys, type RevertLedgerRead } from './revert-ledger.js';
 
 export function revertedPrKeys(
   tasks: readonly CloudTaskV1[] = listCloudTasks(Number.MAX_SAFE_INTEGER),
   records: readonly LedgerRecord[] = readLedger().records,
+  scan: RevertLedgerRead = readRevertOutcomeRecords(),
 ): Set<string> {
   const keys = new Set<string>();
   for (const o of scoreOutcomes(records)) if (o.reverted && o.pr) keys.add(prKey(o.pr.repository, o.pr.number));
   for (const t of tasks) if (t.outcome?.revertedBy && t.pr) keys.add(prKey(t.repo, t.pr.number));
+  // Recorded `phm fleet reverts --record` detections: git-history reverts of
+  // fleet PRs that no jobs-ledger or cloud-task row ever named. A non-intact
+  // ledger contributes nothing — corrupt evidence withholds nothing.
+  if (scan.intact) for (const key of standingRevertKeys(scan.records)) keys.add(key);
   return keys;
 }
 

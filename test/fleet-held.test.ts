@@ -71,6 +71,18 @@ describe('fleet held: launched but not actually running', () => {
     ]);
   });
 
+  it('reads launch, finish and publish facts through the jobs-ledger field dialect', () => {
+    const tail = [
+      { job_id: 'dial-one', type: 'launch', pool: 'claude', at: ago(180) },
+      { jobId: 'dial-one', kind: 'finish', timestamp: ago(120) },
+      { id: 'dial-two', event: 'published', lane: 'claude', recordedAt: ago(90) },
+      { job_id: 'dial-two', type: 'finish', at: ago(100) },
+    ].map(row => JSON.stringify(row)).join('\n');
+    expect(fleetNotRunning({ lanes: [], launches: [], metricsTail: tail, now })).toEqual([
+      { job_or_lane: 'dial-one', kind: 'finished_no_publish', since: ago(120), reason: 'Finished with no publish record', unblock: 'Republish this job or requeue it' },
+    ]);
+  });
+
   it('leaves out a lane with target 0, fresh launches, published jobs and week-old records', async () => {
     const names = (await read(await fixture())).notRunning!.map(row => row.job_or_lane);
     for (const name of ['devin', 'grok', 'claude', 'zai', 'fresh-one', 'pub-one', 'merged-one', 'cursor-old', 'old-one']) expect(names).not.toContain(name);

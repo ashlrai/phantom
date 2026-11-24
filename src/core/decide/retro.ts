@@ -56,7 +56,8 @@ export function rootCauseCategoryHeuristic(code: string, detail = ''): RetroCaus
   if (c === 'verify:typecheck') return 'type-error';
   if (c === 'verify:lint') return 'lint-failure';
   if (c === 'verify:build') return 'build-failure';
-  if (c === 'revert:ci-red' || c === 'revert:post-merge-red' || c === 'gate:required-check-failed') return 'test-failure';
+  if (c === 'revert:ci-red' || c === 'revert:post-merge-red' || c === 'gate:required-check-failed'
+    || c.startsWith('revert-failed:')) return 'test-failure';
   if (c === 'verify:timeout' || c === 'cloud:timeout' || c === 'gate:checks-timeout') return 'timeout';
   if (c === 'cloud:auth' || c === 'cloud:rate-limited' || c === 'cloud:budget' || c === 'cloud:seat-unavailable') return 'auth-or-quota';
   if (c === 'gate:diff-does-not-apply' || c === 'cloud:checkout-failed') return 'stale-base';

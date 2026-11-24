@@ -224,6 +224,965 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   The file is validated and holds at most 200 items. The Leader turns
   code-change actions from its memos into items with ids like
   `leader-<memoId>-<n>`. Its class-C actions still go to Needs you.
+- **Discovered items** are added by `phm improve discover` and the
+  scheduler's refresh: a red default branch, issues someone with triage
+  rights labelled `phantom`, evidence-backed proposals, the fleet's own
+  outcome learning — recurring breakage, revert, dirty, fixup and low-merge
+  patterns the jobs ledger and dispatch log already prove become items
+  whose ids embed the stable `improve-<hash>` job id, so refreshes add only new
+  patterns — the nightly local retro's proposals, the recurring
+  verification, scope, safety, review and execution findings it mines from
+  fleet, cloud and Devin job records (`~/.ashlr/learn/retro-proposals.json`,
+  otherwise only visible through `phm improve nightly`) — and the fleet
+  outcome metrics' advisory policy suggestions, the measured empty-lane
+  prompt-template flags and within-tier model routing hints
+  `phm fleet metrics suggest|weekly` computes from the same jobs ledger
+  (otherwise only visible in that report) — and the local pre-merge
+  gate ledger's recurring step failures, the per-step pass/fail tallies
+  every gated worker run records to `metrics/local-gate.jsonl` and
+  `phm fleet vitals` folds (otherwise only visible in that report) — and
+  the pass^k eval's regression alerts, the task, pass^k and dimension
+  regressions the nightly golden-set eval journals to
+  `~/.ashlr/eval/passk/alerts.jsonl` (otherwise only visible through
+  `phm eval passk alerts`). An alert identity becomes an item while the
+  newest persisted eval report still shows the regression or the journal
+  shows it recurring across eval reports — and the fleet friction fold's
+  firing categories, the dispatch→merge drags `phm friction` scores over
+  a 7-day window across jobs.jsonl, the dispatch event log, ready.tsv,
+  guardian state, lane slots, overrides and its own note ledger
+  (otherwise only visible in that report). A friction category becomes an
+  item while its own open condition holds — the primary signal or a
+  declared open-on signal counted something in the window — and no
+  operator note suppresses it; a note marked `fixed` whose signal is back
+  emits as regressed, while `in-progress` and `wontfix` notes stay out —
+  and the resident daemon's own tick ledger, the per-phase ledgers and
+  whole-tick reasons `daemon.json` retains for the last 100 ticks
+  (otherwise only visible through `phm daemon status`, which prints just
+  the last tick's phases and outcome). A tick phase becomes an item while
+  its degraded, timed-out, abandoned, budget-starved or failing off-tick
+  outcomes recur inside a 7-day window — one settled off-tick run failure
+  observed on many ticks counts once — and a whole-tick reason becomes an
+  item while `state-persistence-failed` or `activation-refused` recurs;
+  policy reasons like `budget-exhausted` never do. A missing or unreadable
+  state file emits nothing —
+  and the cross-model review journal's recurring findings, the reject
+  reason codes and review failures `fleet/cross-review.jsonl` records for
+  each repository's pull requests (otherwise only visible through
+  `phm router outcomes`/`phm fleet router-weights` tallies and the audit
+  log). A finding becomes an item while its recorded rows span enough
+  distinct pull requests inside the recency window — a producer whose
+  diffs keep failing independent review for the same reason, or a
+  reviewer pipeline that keeps failing before a verdict — and the
+  empty-job tag ledger's recurring
+  actionable tags, the `job.empty-tag.v1` rows the daemon's empty-tag-sync
+  and `phm jobs empty --record` write to `metrics/empty-tags.jsonl`
+  (otherwise only visible through the `phm empties`-family reports and the
+  router's outcome fold). A finish becomes an item while its recorded tag
+  is `blocked` or `unknown` at least three times inside the same 72-hour
+  window the sync uses, or while finishes with no tag row at all are the
+  window's majority — the signature of a dead or starved empty-tag-sync;
+  gate-skipped finishes never count, and the explained `already_done`,
+  `no_change_needed` and `pool_cap` tags never become work. A missing jobs
+  ledger or an unjoinable tags ledger emits nothing —
+  and the signed post-merge observation ledger's recurring adverse
+  outcomes, the reverted, regressed and followed-up rows the
+  outcome-watcher and post-merge-stability passes record to
+  `fleet/post-merge-observations.jsonl` (otherwise only visible through
+  `phm fleet eval-report` and the standing merge pass's internal pacing
+  read). The same fold `phm fleet eval-report` prints joins them through
+  `metrics/jobs.jsonl` into per-lane, per-tier and per-repo durability
+  tallies over a 30-day window; a group becomes an item while its
+  recorded adverse outcomes reach the recurring bar — lane and tier
+  cells emit only for the fleet's own repository since they describe
+  this repo's executor machinery, and a repo cell emits only when the
+  fold's recorded repository name matches the discovery target. A
+  degraded observation read or a missing jobs ledger emits nothing, and
+  prompts quote only the measured merged/adverse counts and the
+  deterministic/heuristic confidence split — never a durability rate the
+  gh-less fold cannot support —
+  and the resident ci-rerun journal's recurring fail verdicts and failed
+  rerun calls, the probable-flake classifications whose reruns keep
+  concluding failure and the `gh run rerun --failed` calls that keep
+  erroring, journaled to `ci-reruns/journal.jsonl` under the Phantom state
+  directory by the daemon's ci-rerun pass (otherwise only visible through
+  `phm ci reruns` and `phm daemon status`'s last-pass status). A test
+  becomes an item while its recorded fail verdicts reach the recurring
+  bar across at least two distinct heads inside the journal's own
+  7-day window — the probable-flake classification is not holding, so
+  the grouping or the test itself needs work — and a repository becomes
+  an item while its failed rerun calls reach the recurring bar and
+  outnumber the window's successful calls, the signature of a rerun loop
+  that cannot fire. Verdict rows without a recorded test id never emit,
+  and a missing or unreadable journal emits nothing —
+  and the lost-launch report's corroborated losses, the launches whose
+  `<ID>.launch` first line records the launcher dying or whose launch
+  event has no finish/publish row and no open run marker once the grace
+  passed, folded from `metrics/jobs.jsonl` by `phm jobs lost`
+  (otherwise only visible through that report and supply-doctor's 24 h
+  count; outcome learning censors the silent vanishes as unresolved
+  attempts that never count). A (lane, class) cell becomes an item while
+  its corroborated losses reach the recurring bar inside the 72-hour
+  window — jobs the dispatcher still counts as running are excluded, so
+  a long job never queues work — and an unreadable ledger or run-marker
+  directory emits nothing —
+  and the swapout-rate ledger's recurring memory evidence, the per-sample
+  `free_pct`/`swap_gb`/`swapouts_per_min` rows the daemon's swapout-sync
+  job folds from the bridge's memstat.json into
+  `metrics/swapout-rate.jsonl` under the fleet runs directory
+  (otherwise only visible through `phm fleet vitals`' swapout_rate
+  section and the console's memory-guard card — reports someone had to
+  open, even though the ledger exists to tune the lane-autopilot
+  MEMORY_GUARD constants the code itself marks unmeasured). A sample
+  becomes recorded-pressure evidence when any recorded field meets a
+  severe line — free below the guard's low line, any swapout activity,
+  or swap past the backstop — and a complete three-field reading becomes
+  withheld-raise evidence when `memoryAllowsRaise` refuses it. An axis
+  becomes an item while its condition holds on at least half of the
+  judged samples in at least six distinct hour buckets spanning two UTC
+  days inside the 7-day window; partial rows never count as blocked or
+  clear, a missing or unreadable ledger emits nothing, and unknown
+  fields stay unknown rather than reading as zero —
+  and the fleet-controller ledger's recurring control evidence, the
+  per-tick `fleet-controller.ledger.v1` rows the dispatcher's fleet
+  controller appends to `metrics/fleet-controller.jsonl` under the fleet
+  runs directory (and its single `.1` rotation; otherwise only visible
+  through `phm fleet admission --details`, `phm amplify` and
+  `phm fleet status` — reports someone had to run and read). A
+  fail-closed signature, degraded reading, shed driver, ambiguous lane,
+  shed umbrella, unapplied would-shed plan, blind merge objective or
+  mostly-unmeasured quality receipt becomes an item while its recorded
+  condition holds on at least half of a tick-hour's rows in enough
+  distinct hour buckets across two UTC days inside the 7-day window —
+  umbrella cells at six hours, per-key cells at four — and a missing or
+  unreadable ledger emits nothing. Truncated ledger tails are stated in
+  the prompt as a lower bound, never hidden —
+  and the trajectory outcome projection's recurring adverse skill
+  tallies, the per-(skill, revision) selection counts and deterministic
+  post-merge realized verdicts `trajectoryLearning.skillOutcomes`
+  publishes for learned skill cards once the skill-observation sample
+  gate passes (otherwise only visible through
+  `phm skills list --outcomes` and `phm fleet status` — reports someone
+  had to run and read, even though the skill library is the
+  self-improvement loop's own memory). A (skill, revision) row becomes
+  an item while its reverted + regressed + followed-up realized
+  outcomes reach the recurring bar inside the 7-day window, only while
+  that exact revision is still the corpus's newest card and its status
+  is candidate or verified — superseded and withdrawn revisions were
+  already handled — and only on a healthy corpus, since a degraded card
+  history cannot prove which revision is live; a withheld projection, a
+  degraded ledger or another repository emits nothing —
+  and the precheck-skip ledger's recurring skip evidence, the
+  `queue/precheck-skips.tsv` rows the dispatchd claim loop appends for
+  every job its empty-run precheck or dupcheck gate finishes as
+  DONE-NOOP without a model call (otherwise only visible through
+  `phm fleet precheck-repeats`, `phm fleet parked`'s queue-health
+  tallies and `phm fleet queue`'s skip sections — reports someone had
+  to run and read). A (code, reason-shape) group becomes an item while
+  its recorded skips span enough distinct job ids inside the 7-day
+  window — reasons group on a digit-normalized shape since they embed
+  job- and PR-specific numbers — and a job id becomes an item while
+  its recorded skips reach the same recurring bar, the signature of a
+  producer resurrecting finished work. A degraded ledger read or a
+  missing file emits nothing —
+  and the producer-yield scoreboard's recurring no-land sources, the
+  per-source launches, PRs, merges, empties and aborts
+  `phm jobs yield --by source` folds from `metrics/jobs.jsonl` and the
+  queue's `src=` tags into `jobs.yield-by.v1` — the same fold the leader
+  digest's `yield_low` line reads (otherwise only visible through that
+  report and the digest). A producer — leader bets, Core planner rows,
+  cl-stream docs jobs, guardian fixups or restock filler — becomes an
+  item while its launches reach the fleet's own judging count inside the
+  7-day window, its merged-per-launch stays under the fleet's own
+  poor-yield threshold and at least three recorded finishes ended empty
+  or aborted; launches still in flight carry no verdict and never count,
+  the `other` catch-all never emits, and a missing or unreadable jobs
+  ledger emits nothing —
+  and the InferenceGateway shadow journal's recurring divergence, the
+  observe-only gateway-vs-legacy comparison rows the daemon appends to
+  `fabric/gateway-shadow-<UTC-day>.jsonl` under the Phantom state
+  directory when `foundry.fabric.gatewayShadow` is on (otherwise only
+  visible through `readGatewayShadow`/`divergenceStats` in
+  src/core/fabric/gateway-shadow.ts — code with no caller, so the journal
+  had no reader at all). A safety-relevant divergence — the gateway
+  would have dispatched an item the legacy path blocked on throttle,
+  budget or resource pause — becomes an item while such rows reach three
+  inside the 7-day window, the CONTRACT-M334 stage-3 bar being zero; a
+  divergence item emits while the window holds at least 50 shadowed
+  decisions and the measured divergence rate reaches the stage-2
+  tolerance of 2%, naming the largest recorded backend disagreements. A
+  missing or unreadable fabric directory emits nothing, and rows emit
+  only for the fleet's own repository since the shadow covers this
+  install's dispatches —
+  and the fleet recheck verdict history's recurring non-clean cells, the
+  per-pass `fleet.recheck-record.v1` rows the self-tick recheck-record
+  step and `phm fleet recheck-record` append to
+  `fleet/recheck-log.jsonl` under the Ashlr home (otherwise only visible
+  through `phm fleet recheck-record --last`, the verse recheck history
+  parameter and the fleet MCP recheck tool — reports someone had to run
+  and read). A cell becomes an item while it is recorded on at least
+  three in-window rows inside the 7-day window: an overall UNKNOWN or
+  BLOCKED verdict, a runtime/claims/bridge/task section state, or a
+  missing reason normalized so count-carrying variants group as one —
+  UNKNOWN (the section's evidence never arrived) and BLOCKED (a
+  positively identified gap) stay separate cells since they are
+  different problems, reasons group across the per-section lists but
+  never the flattened overall list, VERIFIED-only history emits
+  nothing, and a missing or unreadable log emits nothing —
+  and the stuck-job reaper's own audit ledgers, the ghost-close rows the
+  stray-stop reaper appends to `queue/stuck-jobs.jsonl` when a run marker
+  outlives its dead process and the `by:'stuck-jobs'` kill rows it audits
+  to `queue/job-stops.jsonl` when a job past the stuck bar had to be
+  SIGTERMed/SIGKILLed (otherwise only visible through `phm jobs stuck`'s
+  live marker view and `phm job show`'s per-job window — both ledgers
+  were write-only audit with no trend fold, while the lost-launch feed
+  excludes open-marker jobs by design). A (kind, lane) cell becomes an
+  item while its distinct job count reaches the recurring bar of three
+  inside the 72-hour window; lane and repo attribution joins
+  `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
+  than suppressing the reaper evidence, each class reads only its own
+  ledger so one missing file silences only its class, truncated tails
+  are stated as lower bounds, and rows emit only for the fleet's own
+  repository since the reaper is this install's machinery —
+  and the cloud lesson holdout trial's adverse verdicts, the
+  randomized served-vs-holdout landing comparison `lessonTrial`
+  (src/core/improve/lesson-trial.ts) folds from the cloud task files
+  under `~/.ashlr/cloud/tasks` and the revert ledgers — overall and
+  per knowledge note — that `phm improve lessons` prints and the
+  Verse Lessons view exposes as `knowledge.trial` (otherwise only
+  visible through those reports — a 'hurts' verdict never became
+  work). A scope becomes an item only while its verdict is `hurts` —
+  the 95% interval excluding zero on the negative side, served runs
+  landing measurably worse than the identical prompt held out — and a
+  per-note row only while its note is still `approved`, since that is
+  the state that keeps it eligible for injection; rejected, pending
+  and unresolvable notes emit nothing, `helps`, `no-difference` and
+  `unknown` emit nothing, a withheld trial (a task-store or ledger
+  read failure) or a failed knowledge read emits nothing for the
+  per-note rows, and another repository emits nothing —
+  and the work market journal's recurring unfed-capacity and
+  route-decision evidence, the per-tick `route_decision` and
+  `unfed_capacity` rows dispatchd's market_metric appends to
+  `metrics/work-market.jsonl` under the fleet runs directory
+  (otherwise only visible through `phm fleet unfed`, `phm route
+  explain` and the router outcome/weight folds — reports someone had
+  to run and read). A lane becomes an item while its recorded unfed
+  ticks span enough distinct UTC days inside the 7-day window — free
+  target slots while runnable rows waited under other lanes' hints —
+  a (lane, reason-code) cell becomes an item while distinct jobs keep
+  recording that lane's rejection for the same non-mechanical code
+  across days (lower_rank, saturated, held and hysteresis_* never
+  emit — the market working as designed), and unrouted decisions and
+  unknown_preference overrides become umbrella items at the same
+  recurring bar; route decisions collapse to each job's latest
+  in-window row, a missing or unreadable journal emits nothing,
+  truncated tails are stated as lower bounds, and rows emit only for
+  the fleet's own repository since the journal describes this
+  install's dispatcher and lanes —
+  and the pre-launch dupcheck gate's precision ledger, the
+  queue.dupcheck-event.v1 rows `phm queue dupcheck --gate` records for
+  every claimed job — skip, warn or launch — plus the outcome rows
+  empty-tag-sync and `phm jobs empty --record` append when a
+  let-through job finishes EMPTY already_done, folded through the same
+  per-job semantics `phm queue dupcheck --stats` and the Ideas list's
+  dupcheck-gate signal compute (otherwise only visible through those
+  reports — recurring missed duplicates or wrong skips never became
+  work). A cell becomes an item only at the Ideas list's recurring
+  bars, anchored inside the 7-day window — missed duplicates need
+  three let-through jobs ending already_done at a missed share of a
+  tenth, false skips need two skipped jobs recorded launching or
+  warning later — a missing or unreadable ledger emits nothing,
+  malformed lines and unknown actions drop like the stats reader's own
+  parse, and another repository emits nothing since the ledger carries
+  no repository column —
+  and the improve outcome ledger's recurring adverse evidence, the
+  digest-chained scorecard `phm improve register`, the scheduler's
+  `syncCloudBacklogOutcomes`, `phm improve measure`, `promote` and
+  `observe` append to `improve/outcomes.jsonl` under the Ashlr home
+  (otherwise only visible through `phm improve outcomes`, the
+  north-star vision read and the backlog's own area-leverage ranking —
+  reports and joins someone had to run, so the self-improvement
+  loop's own measured verdicts never became work). A signal becomes
+  an item at the recurring bar of three distinct proposals: registered
+  proposals with a recorded PR but no `measured` event past the
+  24-hour grace — registration is automated but the later verbs are
+  manual and unscheduled, so the scorecard starves — is a
+  current-state stall tally; in-window `measured` events that keep
+  returning no value become an item at three recorded events across
+  two distinct proposals, quoting the recorded reasons; measured
+  regressions (declared metric worse at head than merge base) and
+  merged-then-reverted observations become items at three distinct
+  proposals whose establishing event lands inside the 7-day window,
+  the re-land rule clearing a revert a later merge supersedes. A
+  missing ledger reads as empty while a broken chain emits nothing,
+  proposals whose last observation is a revert never count as
+  measurement stalls, and rows emit only for the fleet's own
+  repository since the verbs and scheduler sync are this repo's
+  machinery —
+  and the typed-routing decision journal's recurring unavailability
+  and degradation, the per-tick `route.explain.v1` rows dispatchd's
+  observe_typed_route appends to `metrics/route.explain.jsonl` after
+  each advisory `phm route decide` sample (otherwise only visible
+  through `phm route explain`'s typed_decisions digest — a report
+  someone had to run and read). An item emits only while the evidence
+  spans enough distinct UTC days inside the 7-day window at the
+  recurring row and share bars — 'unavailable' samples (the whole
+  decide call failing before a decision exists) must reach a tenth of
+  all valid records, and a decideRoute failure code
+  (backend-unavailable, deadline, schema-invalid) must ride a
+  twentieth of observed decisions while also carrying the
+  deterministic-fallback marker, so a degraded code a later backend
+  recovered never counts; path and policy codes never emit, a missing
+  or unreadable journal emits nothing, malformed lines and decisions
+  outside the producer's allowlist drop like the digest reader's own
+  parse, truncated tails are stated as lower bounds, and another
+  repository emits nothing since the journal describes this install's
+  dispatcher —
+  and the branch gardener's audit journal, the per-repo `result` rows
+  the launchd branch gardener (contrib/mac/branch-gardener.py,
+  docs/BRANCH-GARDENER.md) appends to
+  `metrics/branch-gardener.jsonl` under the fleet runs directory on
+  every scheduled pass (otherwise only visible as append-only audit —
+  the journal had no reader at all). A repository becomes an item
+  while its recorded `result` events inside the 7-day window show
+  recurring evidence of three kinds: branches whose `flag` rows — the
+  gardener's documented triage list of PR-less branches with unique or
+  recent commits and branches whose tip moved after their PR — persist
+  across flag observations spanning at least a day, at two or more
+  distinct branches; `failed-or-uncertain` delete rows — branches
+  inside atomic `git push --delete` batches that errored or timed out,
+  so the remote ref may or may not be gone — reach three rows across
+  two distinct UTC days; or errored result events reach two distinct
+  UTC days, the signature of evidence gathering that keeps failing and
+  leaving that repo's branches unclassified. Only `result` events
+  fold — plan, delete-intent and deleted rows repeat the same
+  classifications — repo matching is exact owner/name since each
+  audited remote owns its own branch namespace, a missing or
+  unreadable journal emits nothing, and truncated tails are stated in
+  the prompt as lower bounds —
+  and the reward-signal ledger's recurring per-pool not-held collapse,
+  the resolved-job rows the daemon's reward-sync off-tick job folds
+  from `metrics/jobs.jsonl` into `metrics/reward-signals.jsonl` under
+  the Ashlr home — one scrubbed reward-signal.v1 row per job whose PR
+  lifecycle reached an authoritative resolution, `merged:true` for a
+  verified merge and `merged:false` for a PR closed unmerged or a merge
+  later reverted (otherwise only visible through `phm
+  router-calibration`, the eval harness's `readRewardSignals`, the
+  dashboard's `latestRewardSignals` and the `phm router outcomes`
+  join — reports and joins someone had to run and read, so a dispatch
+  pool whose resolved work kept not holding never became work even
+  though the ledger exists to score which arm deserves the next
+  dispatch). A pool becomes an item while its in-window resolved rows
+  reach the recurring bars — enough rows, enough not-held rows, a
+  strict majority not held and evidence spanning distinct UTC days
+  inside the 7-day window — with rows whose pool field went unrecorded
+  grouping as the calibration arm's own 'unknown' cell, in-flight jobs
+  absent by design and never counted; a missing or unreadable ledger
+  emits nothing, rows failing the writer's closed contract drop like
+  the substrate readers' own parse, truncated tails are stated as lower
+  bounds, and another repository emits nothing since the ledger is
+  this install's dispatch record —
+  and the job-control steering ledger's recurring unacknowledged
+  requests, the fleet.job.control.v1 rows `phm job <action>`, POST
+  /api/verse/fleet/runs/control and the desktop job detail append to
+  `queue/job-control.jsonl` under the fleet runs directory — requests
+  still standing at 'requested' because the documented dispatcher
+  contract's apply-and-acknowledge side has no consumer (otherwise only
+  visible through the session-thread display, which renders a standing
+  request as "The dispatcher has not applied it yet." — the ledger's
+  only readers were display surfaces, so steering verbs that are dead
+  letters never became work). The cell becomes an item while
+  unacknowledged requests inside the 7-day window reach three, cover
+  two distinct job ids and span two distinct UTC days — one job's
+  retries or one afternoon of trials never emit — with the synchronous
+  'applied'/'refused' paths quoted as context, a missing or unreadable
+  ledger emitting nothing, truncated tails stated as lower bounds, and
+  rows emitting only for the fleet's own repository since the ledger is
+  this install's steering record —
+  and the jobs ledger's recurring usage-capture gaps, the
+  `usage_missing` provenance labels dispatchd's `job_usage()`
+  (contrib/mac/dispatchd.py — `devin_usage()` reading the Devin
+  sessions.db, `claude_usage()` reading the claude result JSON usage
+  block, and the 'tokens used' log-line fallback) writes on every
+  finish row in `metrics/jobs.jsonl` under the fleet runs directory
+  when a lane's own usage evidence cannot be flattened — sessions.db
+  missing or unreadable, no session for the worktree, incomplete or
+  unreported Devin usage, a missing claude result usage block, a
+  tokens line absent from the log (otherwise only visible through
+  `phm fleet router-weights`'s usage_missing/usage_sources coverage
+  tallies and `phm router outcomes`'s per-job fields — reports
+  someone had to run and read, so a capture path that kept failing
+  starved the router's weight, calibration and cost evidence while
+  looking like ordinary absent data). Each job collapses to its
+  newest in-tail finish row — a retry whose later finish captured
+  usage is evidence the gap closed, not that it persists — and a
+  label becomes an item only while its standing finishes reach the
+  recurring bars of distinct jobs across distinct UTC days inside
+  the 7-day window; lane and repo attribution joins the same tail's
+  jobTimelines fold and degrades to 'unknown'/'unattributed' rather
+  than suppressing the gap evidence, a missing or unreadable ledger
+  emits nothing, malformed lines, non-finish events, node-pool
+  producer schemas and unsafe job ids drop like the sibling
+  jobs-ledger readers' own parse, truncated tails are stated as
+  lower bounds, and rows emit only for the fleet's own repository
+  since the capture paths are this install's dispatcher and lanes —
+  and the fleet runtime journal's recurring adverse dispatch
+  evidence, the fleet.runtime dispatch rows tick-hooks-live's
+  afterDispatch appends to fleet/runtime/runs.jsonl under the ASHLR
+  home — one row per work-item outcome carrying the route decision
+  behind it (backend, lane, seatId, the SeatRouter seatDecision with
+  per-seat exclusion details, the park/split RouteHold, the
+  skipReason, the harness version) alongside landing rows for merges
+  and reverts (otherwise only visible through the Fleet live
+  projection behind `phm fleet lane-slots`/`phm lanes`/`phm map`, the
+  ops board and scheduling's work-history join — display and
+  attribution surfaces, while tick.json keeps only the LAST tick's
+  held list, so recurring holds, chronic seat exclusions and
+  repeating skip codes never became work). A (seat, reason-kind)
+  exclusion becomes an item only for evidence-broken kinds —
+  unknown-usage, unreachable, signed-out, other — while
+  capacity-truth and policy kinds stay silent; a (hold kind, repo)
+  cell emits only for seat-evaluated parks (policy holds carry no
+  seatDecision) and splits; a skip cell needs a code-shaped reason
+  on a hold-free non-dispatched row; every cell reaches the
+  recurring bars of distinct items across distinct UTC days inside
+  the 7-day window, a missing or unreadable journal emits nothing,
+  landing rows and malformed lines drop like the sibling readers'
+  own parse, the current and rotated .1 tails read bounded at the
+  writer's RUNS_JOURNAL_MAX_BYTES with truncation stated as lower
+  bounds, and rows emit only for the fleet's own repository since
+  the journal is this install's dispatch record —
+  and the queue generation journal's recurring candidate refusals,
+  the queue.generation-event.v1 decisions planAutofill's trace
+  (src/core/fleet/queue-autofill.ts) records and the autofill runner
+  and supply-floor pass append to metrics/generation.jsonl under the
+  fleet runs directory on every applied pass — 'drafted' and
+  'rejected' rows per candidate with the refusal reason, otherwise
+  only visible through `phm queue yield`'s queue.generator-yield.v1
+  report, the metrics panel and queue-autofill's per-pass candidate
+  ranking — surfaces that steer one pass at a time or that someone
+  had to run and read). A (src, reason) cell becomes an item only
+  while its recorded rejections reach the recurring bars of four
+  events across two distinct UTC days inside the 7-day window, with
+  the src's drafted events tallied as refusal-share context; the
+  'unknown' src catch-all never emits, a missing or unreadable
+  ledger emits nothing, malformed lines and foreign-schema rows drop
+  like the writers' own contract, truncated tails read as lower
+  bounds, and another repository emits nothing since the journal
+  carries no repository column —
+  and the incident-gate decision ledger's recurring failure classes
+  and stuck tightenings, the per-class rows `ashlr fleet
+  incident-gate --apply` appends to
+  `fleet/incident-gates.jsonl` under the Ashlr home (~/.ashlr/fleet)
+  after mining `metrics/jobs.jsonl` and `dispatch-events.log` under
+  the fleet runs directory for repeated failure signatures —
+  lane-error, test-failure and merge-conflict classes that cross the
+  >=3-fresh-signals bar (otherwise only visible as append-only audit:
+  appendIncidentGateLedger has no reader and the verb has no report
+  mode, so the fleet's own incident response never became work). A
+  class becomes an item while its watermark-advancing rows — applied
+  tightenings, or lane-hold refusals that record manual-hold or an
+  unknown lane — span two distinct UTC days inside the 7-day window:
+  each refire needed fresh failure signals, so the bounded holds keep
+  treating a cause that stays unfixed. A second item emits while the
+  class's tightenings that never landed — 'error' rows and
+  repo-cooldown refusals, which leave the watermark stuck so the same
+  signals re-fire every --apply run — span two distinct UTC days, the
+  signature of a broken apply path rather than a transient. lane-error
+  rows carry this install's lane scope and emit only for the fleet's
+  own repository; test-failure and merge-conflict rows carry the
+  qualified owner/repo scope and emit only when it matches the
+  discovery target exactly, case-insensitive. Only writer-appended
+  rows count — dry-run evaluations leave no trace — rows failing the
+  writer's closed contract or whose cls disagrees with its gate drop
+  like the sibling readers' own parse, a missing or unreadable ledger
+  emits nothing, truncated tails are stated as lower bounds, and
+  secret-shaped detail text is scrubbed before it reaches a prompt,
+  and the Jev decision ledger's recurring fallback-dominant kinds, the
+  DecisionRecords `decide()` appends to `jev/decisions/YYYY-MM-DD.jsonl`
+  under the Ashlr home for every wired call site — engine-error
+  classification, task-class, the judge/taste/red-team verdicts,
+  completion-claim, retro-root-cause, needs-you-priority,
+  interrupt-worthiness, lane-choice, resource-choice, trigger-triage,
+  action-class and operator-intent (otherwise only visible through
+  `phm jev status [--day]` and the Verse Jev card — day-scoped reports
+  someone had to run and read, so a kind whose Jev path kept losing
+  across a week, or a provider-side fallback reason recurring across
+  kinds, never became work). Deliberate-off fallbacks — no-key,
+  disabled, killed, kind-disabled, no-input — are filtered before the
+  write, so every recorded fallback is a decision Jev was eligible for
+  and lost; a kind becomes an item only while its in-window decisions,
+  fallback rows across distinct UTC days and fallback share reach the
+  recurring bars inside the 7-day window, day files read bounded with
+  truncation stated as lower bounds, estimated cost stays unknown
+  rather than zero when calls were unpriced, a missing day file means
+  no decisions were recorded while an unreadable one emits nothing,
+  malformed lines and off-contract rows drop like the writer's own
+  contract, and rows emit only for the fleet's own repository since
+  every call site is this install's own code and the ledger carries no
+  repository column,
+  and the scheduled worktree reap's removal-attempt journal, the
+  per-attempt rows `removeSafe` in `src/core/fleet/worktrees.ts` appends
+  to `queue/worktree-reap.jsonl` under the fleet runs directory every
+  time the self-tick's planner-tick stage runs the reap — failed git
+  removals, unsafe-path refusals and the unpushed-commits /
+  uncommitted-changes holds that strand finished jobs' worktrees
+  (otherwise only visible through `phm worktrees --reap --status`'s
+  last-run summary and the worktrees report's ReaperHealth verdict —
+  reports someone had to run and read, while the journal's recurring
+  failures never folded into work). A (kind, lane) cell becomes an item
+  while its distinct job count reaches the recurring bar of three
+  inside the 7-day window — 'removed' successes and 'state-changed'
+  recheck refusals never emit — with lane and repo attribution joining
+  `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
+  than suppressing the reap evidence, truncated tails stated as lower
+  bounds, and rows emitting only for the fleet's own repository since
+  the reap is this install's machinery,
+  and the gap proposer's own queue-write journal, the {at, id, title,
+  repo} rows `phm jobs gaps --propose` — run by the fleet self-tick's
+  autofill harvest (autofill-run.ts harvestGaps → readJobGaps) —
+  appends to metrics/gap-proposed.jsonl under the fleet runs
+  directory for every successful drop-job write, where id is the
+  deterministic content key gapJobId = 'GAP' + the first ten hex chars
+  of sha256(normalizeTitle(title)), uppercased, and the minted queue
+  job id is RQ-PHX-<id>
+  (otherwise only visible through the proposer's own 24-hour dedupe
+  and `phm doctor supply`'s proposed count — a report someone had to
+  run, so a gap whose attempts keep finishing without the work
+  holding, and which the narrow dedupe windows let through again on
+  later ticks, never became work). A gap id becomes an item only
+  while its recorded queue writes reach the recurring bars of three
+  proposals across two distinct UTC days inside the 7-day window,
+  with each cell joined to the same gap job's launches, finishes,
+  publishes and resolved outcomes in metrics/jobs.jsonl so the prompt
+  quotes what the earlier attempts actually did; a missing or
+  unreadable proposal journal emits nothing, a withheld jobs ledger
+  degrades the tallies to unknown rather than suppressing the
+  proposal evidence or zero-filling it, malformed lines and
+  off-contract rows drop like the writer's own contract, truncated
+  tails are stated as lower bounds, and rows emit only for the
+  fleet's own repository since the proposer and its dedupe are this
+  install's machinery,
+  and the merge-bottleneck recut loop's own journals, the {at, pr, id,
+  headSha, baseSha?, file} rows `recutLoopTick` in
+  `src/core/fleet/recut-loop.ts` appends to `queue/recut-loop.jsonl`
+  under the fleet runs directory for every published recut job, plus
+  the pre-publication reservations it appends to
+  `queue/recut-loop-leases.jsonl` before each publish attempt
+  (otherwise only visible through the in-tick dedupe guards — the
+  24-hour same-head window, the in-flight scan, the empty-yield streak
+  and the caps — and the last-tick outcome kept in module state for the
+  health endpoint and the Verse recut-loop model, so a PR the loop
+  keeps re-cutting and reservations that never produced their
+  published-job row never became work). A PR number becomes an item
+  only while its recorded publishes reach the recurring bars of three
+  writes across two distinct UTC days inside the 7-day window, each
+  cell joined to the minted RQ-PHX-RECUT<pr>L<k> jobs' launches,
+  finishes, publishes and resolved outcomes in metrics/jobs.jsonl;
+  expired reservations whose (pr, id, headSha) triple never appears as
+  a same-tick write become one fleet-level item only while the write
+  tail is whole — a truncated write journal could hide the matching
+  row — and only once the orphans reach the same recurring bars, a
+  withheld jobs ledger degrades the tallies to unknown rather than
+  suppressing the journal evidence or zero-filling it, truncated tails
+  are stated as lower bounds, and items emit only for the fleet's own
+  repository since the loop is hardcoded to this install's
+  repository,
+  and the judge-trace ledger's recurring adverse ship verdicts, the
+  metadata-only JudgeTrace rows `judgeProposal` in
+  `src/core/fleet/manager.ts` appends to
+  `~/.ashlr/judge-traces/YYYY-MM-DD.jsonl` for every proposal the
+  inbox merge path judges before auto-merge, with append-only outcome
+  patches materialized by `readJudgeTracesDetailed` — 'rejected' when
+  `setStatus` turns the proposal rejected, 'reverted' and
+  'followed-up' reserved for the post-merge observation writers,
+  'merged' reserved for the proof-bound release writer (otherwise
+  only visible through `phm fleet judge-traces` and
+  `phm fleet judge-health` — reports someone had to run — plus the
+  build-only counterfactual replay nothing schedules, so a judge
+  engine whose ship verdicts kept resolving to work that did not
+  hold never became work). A judge engine becomes an item only while
+  its qualified adverse ship outcomes — rejected before landing, or
+  reverted/followed-up after — reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window anchored on
+  each trace's realized-evidence time; review, noise and harmful
+  verdicts tally as validated-caution context only, a qualified
+  merged outcome counts as held work rather than adverse, the
+  bounded materializing read treats a degraded or incomplete ledger
+  as no evidence rather than folding partial rows, unqualified
+  outcome labels never guess, and rows emit only for the fleet's own
+  repository since every judgeProposal call site is this install's
+  merge path,
+  and the fleet host disk sample files' recurring freeze-line evidence,
+  the {at, free_gb} rows the self-tick appends to
+  `queue/host-disk-samples.json` under the fleet runs directory (one
+  reading per 5 minutes, 48 hours kept) and the contrib/mac
+  disk-growth.py sampler keeps in `queue/disk-growth-history.json`
+  (otherwise only visible through `phm host disk`, `phm fleet
+  vitals`' disk section, `phm host top`'s disk trend, the hourly
+  digest's disk_low blocker and the Ideas disk-trend signal — reports
+  and a transient warning someone had to see, so a host whose disk
+  kept trending into the lane-freeze line never became work). Each
+  judged hour's closing verdict is the same diskBurn/diskLowLine
+  computation `phm host disk` runs against the freeze line
+  `compact.lanes.raise_freeze_below_gb`; an axis becomes an item only
+  while its verdict recurs in at least six distinct judged hour
+  buckets spanning two UTC days inside the 7-day window — below the
+  freeze line, or falling with under 24 hours of runway — a missing,
+  degraded or invalid sample file degrades only its own coverage,
+  malformed rows drop like the writer's contract, and rows emit only
+  for the fleet's own repository since the samples describe this
+  install's host,
+  and the Devin autoland decision journal's recurring adverse
+  outcomes, the per-decision DevinAutolandDecision rows
+  `runDevinAutoland` in `src/core/devin/autoland.ts` appends to
+  `devin/autoland.jsonl` under the Ashlr home on every apply pass —
+  the resident daemon's ten-minute autoland timer and manual
+  `phm devin autoland --apply` runs (otherwise only visible through
+  the pass's own idempotency checks — already-landed, backoff,
+  gave-up, supersede retries — and `phm devin autoland --json`,
+  which prints just the current pass, so a landing path that kept
+  failing bundles, a superseded-PR close that kept erroring, or
+  sessions that kept finishing without the required attachments
+  never became work). A failure class becomes an item only while its
+  distinct units — session ids for per-session decisions, pass ids
+  for pass-scoped ones — reach the recurring bars of three across
+  two distinct UTC days inside the 7-day window, covering
+  land-failed/gave-up landings, pending-supersede/supersede-gave-up
+  closes, archive-failed cleanup, missing-attachments sessions,
+  session-failed throws, pass-failed passes and no-identity stalls;
+  gave-up rows fold into their path's cell as terminal tallies,
+  killed/paused/scanned and the success and pacing decisions never
+  emit since they are deliberate state or the pipeline working, a
+  missing journal is a clean empty source while an unreadable read
+  yields nothing rather than folding partial evidence, truncated
+  tails are stated as lower bounds, malformed lines and off-contract
+  rows drop like the writer's own contract, and rows emit only for
+  the fleet's own repository since the journal carries no repository
+  column — every pass scans this install's connected Devin org,
+  and the host-load history journal's recurring blocked-launch
+  evidence, the `host.load.history.v1` {at, load1, hostMax,
+  contributors:[{name, sharePercent}]} rows `takeLoadSnapshot` in
+  `src/core/fleet/load-history.ts` appends to
+  `queue/host-load-history.jsonl` under the fleet runs directory —
+  at most one per ten minutes and only while the dispatcher's
+  queue/admission-ctl.json reports over_host blocking, so every
+  recorded row is a blocked moment by construction (otherwise only
+  visible through `phm host load --history`'s summarizeLoadHistory
+  fold, the pulse and the hourly digest's blockedHourLine warning —
+  which prints only while the last hour tops
+  BLOCKED_LINE_OVER_MINUTES — and the contributor cross-references
+  inside the sibling memory- and controller-pressure prompts, so a
+  host whose launches kept being held for load never became work).
+  The fold is summarizeLoadHistory itself, so an hour bucket's
+  blockedMinutes and a contributor's sharePercent mean exactly what
+  the report prints; an item emits only while at least six distinct
+  hour buckets each recorded at least BLOCKED_LINE_OVER_MINUTES
+  blocked minutes across two UTC days inside the 7-day window — the
+  same worth-saying line the digest applies — and a second item
+  refines that claim only while the window's top contributor is
+  fleet-side machinery ('fleet jobs' or 'local model server', the
+  two labels contributorsOf attributes to this install) holding at
+  least half of blocked-time CPU share, since an owner-side dominant
+  app has no repo-side fix, a missing or unreadable journal emits
+  nothing, truncated tails are stated as lower bounds, malformed
+  lines drop like the writer's contract, and rows emit only for the
+  fleet's own repository since the journal describes this install's
+  host and carries no repository column,
+  and the fleet self-tick run-record journal's recurring adverse
+  evidence, the per-run `fleet.self-tick-record.v1` lines
+  appendSelfTickLine in `src/core/fleet/self-tick-last.ts` appends to
+  `queue/self-tick.jsonl` under the fleet runs directory on every
+  `ashlr fleet self-tick` pass — the launchd/systemd-scheduled
+  maintenance cadence — ran or bounced off the single-runner lock,
+  carrying the run's mode, ran/busy state, failedSteps with error
+  text, the planner-tick intake hooks' folded outcomes and any
+  empty-family auto-stop proposals (otherwise only visible through
+  `phm fleet self-tick --last`/`--status`, which read only
+  queue/self-tick-last.json — the LAST run — so a step failing every
+  tick, a pass bouncing off its lock, an intake hook throwing or
+  silently going unrecorded, and an empty producer family re-earning
+  its 12-hour auto-stop each expiry never became work). A cell — a
+  failed step, the busy state, a hook's failed or not-recorded
+  outcome, or a family auto-stop — becomes an item only while its
+  in-window records reach the recurring bars of three across two
+  distinct UTC days inside the 7-day window; skipped steps and hooks,
+  ran hooks, clean runs and single lock collisions are the writer's
+  deliberate-off or working vocabulary and never emit, rows written
+  before familyStops existed carry no such key and read as no stop
+  evidence, malformed lines and off-contract rows drop like the
+  writer's contract with entries inside a valid row dropped rather
+  than folded, a truncated tail is stated as a lower bound, and rows
+  emit only for the fleet's own repository since the journal
+  describes this install's machinery and carries no repository
+  column,
+  and the autonomous-action audit journal's recurring adverse
+  outcomes, the per-action {ts, action, repo, sandboxId, summary,
+  result} rows audit() in `src/core/sandbox/audit.ts` appends to
+  `~/.ashlr/audit/<UTC-date>.jsonl` — one append-only partition per
+  UTC day under the account home, never rotated or deleted — on
+  every audited action across the daemon loop, the inbox apply and
+  merge path, plugins, sandbox lifecycle, verify commands and verse
+  surfaces (otherwise only visible through `ashlr audit`'s human
+  tail, the verse control-api's bounded recent window and `phm
+  fleet` status's newest-eight list, so an action a gate kept
+  refusing or machinery kept failing never became work). A cell —
+  an action's 'refused' or 'error' result — becomes an item only
+  while its in-window records reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window; 'ok' rows,
+  including the deliberate-off vocabulary several call sites record
+  as ok with explanatory summaries, never emit, malformed lines and
+  off-contract rows drop like the writer's contract, partitions
+  outside the window and non-partition names are never read, a
+  truncated partition tail is stated as a lower bound, and rows emit
+  only for the fleet's own repository since the journal describes
+  this install's machinery and carries no repository column,
+  and the desktop render-crash journal's recurring fingerprints, the
+  per-crash {at, surface, message, stack?, componentStack?,
+  appVersion?, fingerprint} rows recordDesktopError in
+  `src/core/verse/desktop-error-report.ts` appends to
+  `<runs>/desktop/errors.jsonl` — with a single errors.1.jsonl
+  rotation once the live file passes 2 MiB — on every caught render
+  crash the console's error boundaries report through
+  `src/web-ui/lib/report-desktop-error.ts` to POST
+  /api/verse/desktop-errors (otherwise only visible through `ashlr
+  fleet desktop-errors`, a report someone had to run with a
+  24-hour window and a 50-group cap, so a crash recurring day after
+  day in this repo's own console never became work). A cell — one
+  fingerprint, the writer's sha256 of surface + first stack frame +
+  message — becomes an item only while its in-window records reach
+  the recurring bars of three across two distinct UTC days inside
+  the 7-day window; every record is already a post-dedupe sighting
+  (the writer drops a repeat fingerprint inside ten minutes), so
+  units count distinct sightings, malformed lines and off-contract
+  rows drop like the writer's contract, a truncated ledger tail is
+  stated as a lower bound, and rows emit only for the fleet's own
+  repository since the journal describes this install's console and
+  carries no repository column.
+  Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
+  cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
+  memory-pressure, fleet-controller, skill-outcome, precheck-skip,
+  source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
+  work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
+  reward, job-control, usage-gap, runtime-journal, generator-yield,
+  incident-gate, jev-decisions, worktree-reap, gap-proposal,
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
+  audit-trail, desktop-console and fleet-self-tick items carry priority 3;
+  fleet items name the fleet repo label in the prompt, nightly items keep the
+  proposal's advisory framing and name the evidence record ids to
+  inspect, policy items keep the suggestion's advisory framing and name
+  the jobs-ledger evidence references — they emit only for the fleet's
+  own repository, since the advice describes this repo's lanes, models
+  and tiers — and local-gate items name the gate ledger and keep the
+  find-the-gate-or-the-worker-output framing, emitting only for the
+  fleet's own repository since the gate is this repo's machinery.
+  Pass^k items name the alerts journal and keep the reproduce-with-
+  `phm eval passk` framing, emitting only for the fleet's own repository
+  since the eval machinery is this repo's. Friction items name the fold's
+  sources and keep the find-the-machinery-or-queue-path framing, emitting
+  only for the fleet's own repository since the drag is this repo's
+  dispatch, queue and lane machinery. Tick-health items name the state
+  ledger and keep the inspect-the-phase-deadlines framing, emitting only
+  for the fleet's own repository since the daemon is this install's
+  machinery. Cross-review items name the review
+  journal and keep the find-why-review-keeps-failing framing, emitting
+  only when a review row's recorded repository matches the discovery
+  target — findings on another repository's pull requests never land on
+  this one. Empty-tag items name the tag and jobs ledgers and keep the
+  find-the-tag-vocabulary-or-the-sync framing, emitting only for the
+  fleet's own repository since the tag machinery is this repo's.
+  Post-merge items name the observation and jobs ledgers and the
+  eval-report fold, keep the find-why-merges-keep-not-holding framing,
+  and emit lane and tier cells only for the fleet's own repository while
+  repo cells emit only for the repository the fold recorded. Ci-rerun
+  items name the rerun journal and the `phm ci reruns`/`phm ci baseline`
+  commands, keep the find-which-side-is-wrong framing for fail verdicts
+  and the find-why-the-calls-error framing for call failures, and emit
+  only when a journal row's recorded repository matches the discovery
+  target. Lost-launch items name the jobs-lost report and the runs-dir
+  evidence, keep the find-which-side-owns-the-cause framing — pinned ops
+  machinery versus the queue/job lifecycle this repository owns — and
+  emit only for the fleet's own repository since the launch machinery is
+  this install's. Memory-pressure items name the swapout-rate ledger,
+  `phm fleet vitals` and the lane-memory-pressure throttle, keep the
+  find-what-is-holding-the-memory framing for recorded pressure and the
+  retune-the-unmeasured-guard-constants framing for withheld raises —
+  with the same owner-side no-change escape — and emit only for the
+  fleet's own repository since the evidence describes this install's
+  host and fleet machinery. Disk-pressure items name the two sample
+  files, `phm host disk`, the digest's disk_low warning and the
+  worktree/reap surfaces, keep the
+  find-what-is-consuming-the-disk framing for below-freeze hours and
+  the find-the-sustained-burn framing for runway hours — with the same
+  owner-side no-change escape — and emit only for the fleet's own
+  repository since the samples describe this install's host.
+  Fleet-controller items name the controller
+  ledger, `phm fleet admission --details` and the pinned
+  contrib/mac machinery boundary, keep the find-why-the-controller-keeps-
+  doing-this framing per cell — dead readings, mis-tuned or mis-firing
+  shed bands, broken hold attribution, a blind merge feed, an
+  unmeasured quality cohort — and emit only for the fleet's own
+  repository since the ledger describes this install's dispatcher.
+  Skill-outcome items name the
+  trajectory-learning projection, the skill-use and card ledgers and
+  the `phm skills list --outcomes` report, keep the
+  association-not-causation framing — shadow selections never steered
+  those runs — with the same owner-side no-change escape for a card
+  withdrawal, which is a host-signed ledger act, and emit only for the
+  fleet's own repository since the learned-skill machinery is this
+  repo's. Precheck-skip items name the skip ledger and the
+  `phm fleet precheck-repeats`/`phm fleet parked`/`phm fleet queue`
+  folds, keep the find-which-producer-keeps-minting-or-resurrecting-
+  finished-work framing — pinned contrib/mac precheck machinery
+  versus the queue producers and dedup this repository owns — and
+  emit only for the fleet's own repository since the ledger records
+  this install's dispatch skips and carries no repository column.
+  Source-yield items name the yield-by fold, the jobs and
+  router-queue ledgers and the `phm jobs yield --by source` /
+  `phm jobs producers` reports, keep the association-not-causation
+  framing — a bad yield may be misrouting, starvation or host state,
+  not a broken producer — with the same owner-side no-change escape,
+  and emit only for the fleet's own repository since the producers are
+  this install's machinery. Gateway-shadow items name the shadow journal,
+  the CONTRACT-M334 exit criteria and the gateway/legacy routing modules,
+  keep the find-which-side-is-wrong framing — a missing gateway guard
+  versus an over-blocking legacy path — with the same owner-side
+  no-change escape when shadow is off or the gateway already flipped,
+  and emit only for the fleet's own repository since the shadow covers
+  this install's dispatches and carries no repository column. Recheck
+  items name the verdict log, the
+  `phm fleet recheck-record` verb and the self-tick recheck-record
+  step, keep the find-why-the-fleet's-own-verification-keeps-failing
+  framing — a degraded evidence path versus a positively identified gap
+  this repository owns — and emit only for the fleet's own repository
+  since the recheck verifies this install's claimed state. Stuck-job
+  items name the two reaper ledgers, `phm jobs stuck` and the pinned
+  contrib/mac machinery boundary, keep the find-which-side-owns-the-cause
+  framing per class — the launch→reap handoff dropping finish evidence
+  versus jobs hanging past the stuck bar — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository since
+  the reaper is this install's machinery. Lesson-trial
+  items name the holdout trial, the `phm improve lessons` report and the
+  cloud task store, keep the find-why-served-runs-land-worse framing —
+  scope matching or injection assembly in learn/retro/inject.ts, the
+  retro suggestion pipeline, or a biased arm assignment or landing fold —
+  with the same owner-side no-change escape, since approving, editing or
+  rejecting a lesson note is a Verse act only the owner takes, and emit
+  only for the fleet's own repository since the trial covers this
+  install's cloud runs. Work-market items name the market journal,
+  `phm fleet unfed` and the pinned contrib/mac machinery boundary, keep
+  the find-why-capacity-keeps-going-unused-or-jobs-keep-failing-
+  requirements framing per cell — stale lane advertisements versus
+  drifting queue specs and hint vocabulary, mechanical rejection codes
+  excluded — with the same owner-side no-change escape, and emit only
+  for the fleet's own repository since the journal describes this
+  install's dispatcher and carries no repository column. Dupcheck items
+  name the dupcheck ledger, `phm queue dupcheck --stats` and the gate
+  module src/core/queue/dupcheck.ts, keep the
+  find-which-side-owns-the-miss framing per cell — gate recall versus
+  producers minting already-done work — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository since
+  the gate is this repo's machinery and the ledger carries no
+  repository column. Improve-outcome items name the outcome ledger,
+  the `phm improve outcomes` report and the measure/promote/observe
+  verbs, keep the find-which-pipeline-stage-is-failing framing per
+  signal — an unscheduled measurement stage, a broken metric-runner
+  contract, intake shipping work that fails its own declared metric,
+  or championed changes that do not hold — and emit only for the
+  fleet's own repository since the verbs and scheduler sync are this
+  repo's machinery. Branch-gardener items name the audit journal, the
+  gardener script and its docs, keep the per-bucket framing — triage
+  the persistently flagged branches, find why the atomic deletes keep
+  failing, find which evidence source keeps the audits erroring — with
+  the same owner-side no-change escape, and emit only when a journal
+  row's recorded repository matches the discovery target, since each
+  audited remote owns its own branch namespace. Generator-yield items
+  name the generation journal, `phm queue yield` and the
+  queue-autofill refusal checks, keep the
+  which-side-owns-the-refusals framing per cell — candidate sources
+  minting work the fleet already refuses versus refusal checks or
+  capability/stop-verdict vocabulary drift — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository
+  since the journal describes this install's queue intake and carries
+  no repository column. Incident-gate items name the decision ledger,
+  the `ashlr fleet incident-gate` verb and the mining sources, keep
+  the find-why-the-class-keeps-recurring-or-the-tightening-keeps-
+  failing framing per bucket — an unfixed lane, credential, quota,
+  test or merge cause versus a broken apply path (slots.json or
+  runs-dir writability, the repo-hold store, the KILL switch) — with
+  the same owner-side no-change escape, and emit lane-error cells only
+  for the fleet's own repository while repo-scoped cells match the
+  discovery target's owner/repo exactly. Jev items name the decision
+  ledger, `phm jev status`, and the decide registry, ledger and call
+  sites, keep the which-side-is-losing framing per kind — miscalibrated
+  thresholds or drifting question maps and interpret functions versus
+  a degraded TypeSafe provider path versus owner-side key, quota or
+  budget state — with the same owner-side no-change escape for a kind
+  that legitimately falls back by design, and emit only for the fleet's
+  own repository since the ledger is this install's decision record and
+  carries no repository column. Worktree-reap items name the reap
+  journal, `phm worktrees --reap --status` and the pinned contrib/mac
+  machinery boundary, keep the find-why-removals-keep-failing-or-
+  worktrees-keep-stranding framing per kind — a broken removal path,
+  unsafe paths the minting side should never produce, unpushed commits
+  the publish path dropped, or dirty worktrees the finish path left —
+  with the same owner-side no-change escape, and emit only for the
+  fleet's own repository since the reap is this install's machinery.
+  Gap-proposal items name the proposal
+  journal, `phm jobs gaps`, the `phm jobs yield`/`phm jobs empty`
+  folds and the gap extraction and dedupe sources, keep the
+  find-why-this-gap-keeps-coming-back-unsatisfied framing per gap id —
+  gap extraction minting work master already has versus failed or
+  aborted attempts versus launches that never happened versus a dedupe
+  leg that cannot see the landing — with the same owner-side
+  no-change escape for legitimate re-discovery of a recurring gap, and
+  emit only for the fleet's own repository since the proposer and its
+  dedupe are this install's machinery. Judge items name the
+  judge-trace ledger, `phm fleet judge-traces`,
+  `phm fleet judge-health` and the judgeProposal call site in
+  src/core/fleet/manager.ts, keep the find-which-side-is-wrong
+  framing — a miscalibrated verdict, rubric or engine-resolution
+  drift versus rejections that trace to pipeline gates orthogonal to
+  judge quality — with the same owner-side no-change escape for a
+  retired engine, a rolled-forward window or healthy judge-health
+  evidence, and emit only for the fleet's own repository since the
+  ledger records this install's merge-path verdicts and carries no
+  repository column. Devin-autoland items name the decision journal,
+  `phm devin autoland`, the landings ledger and the Devin land path in
+  src/core/devin/, keep the find-which-side-is-failing framing per
+  class — the fork-only publish path, merge-base or bundle handling
+  versus gh close/auth versus terminate/archive versus the attachment
+  contract versus Devin API or identity state — with the same
+  owner-side no-change escape for transient outages, deliberate pause
+  or key scope only Mason can change, and emit only for the fleet's
+  own repository since the journal records this install's passes and
+  carries no repository column. Host-load items name the history
+  journal, `phm host load --history`, the digest and pulse warnings
+  and the takeLoadSnapshot writer in src/core/fleet/load-history.ts,
+  keep the find-what-is-loading-the-host framing — recurring fleet
+  jobs or model-server dominance meaning this fleet's own parallelism,
+  worker footprints or model-server concurrency versus owner-side
+  apps and pinned ops machinery — with the same owner-side no-change
+  escape for a rolled-forward window or pinned caps, and emit only
+  for the fleet's own repository since the journal records this
+  install's host and carries no repository column. Audit-trail items
+  name the audit journal, `ashlr audit`, `src/core/sandbox/audit.ts`
+  and the action's call sites under src/, keep the
+  deliberate-hold-versus-misfire framing for refusals and the
+  find-which-call-path-is-failing framing for errors, with the same
+  owner-side no-change escape for a correctly configured hold, a
+  rolled-forward window or pinned ops machinery, and emit only for
+  the fleet's own repository since the journal records this
+  install's actions and carries no repository column. Desktop-console
+  items name the crash journal, `ashlr fleet desktop-errors`,
+  `src/core/verse/desktop-error-report.ts` and the reporting call
+  sites under src/web-ui, keep the find-the-throwing-surface framing —
+  the surface's error boundary catching a recurring fault versus a
+  crash a restart or deploy already fixed — with the same owner-side
+  no-change escape for a rolled-forward window or pinned ops
+  machinery, and emit only for the fleet's own repository since the
+  journal records this install's console and carries no repository
+  column. They
+  launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
   after it ends `merged` or its session reported `no-change` (the work was

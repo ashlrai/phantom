@@ -1,16 +1,32 @@
 /** Read-only projection of retained bus receipts; routing labels grant no authority. */
 import { validateBusEnvelope } from '../fleet/bus-envelope.js';
 import {
-  participantSchema, providerSchema, workFeedSchema, workPostBodySchema, workStatusBodySchema,
-  type Participant, type WorkJob,
+  participantSchema, providerSchema, workFeedSchema, workPostBodySchema, workResultBodySchema, workStatusBodySchema,
+  type Participant, type WorkJob, type WorkResultOutcome,
 } from './bus-v2-schema.js';
 
-/** The retained envelopes a job's state cites: its announcement and newest status. */
+/** The newest live `work.result` receipt citing a job — reported outcome
+ * evidence only; it never moves the job's status, detail or `updatedAt`. */
+export interface WorkFeedResultCitation {
+  /** Wire id of the `work.result` receipt; `agents bus show <id>` resolves it. */
+  id: string;
+  /** Routing label that posted the result — untrusted evidence, never authority. */
+  from: string;
+  outcome: WorkResultOutcome;
+  /** The result's bounded reason code when it carries one. */
+  reason?: string;
+  /** Receipt time in ms. */
+  receivedAt: number;
+}
+
+/** The retained envelopes a job's state cites: its announcement, newest status and newest result report. */
 export interface WorkFeedCitation {
   /** Wire id of the `work.post` receipt that announced the job. */
   post: string;
   /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
   status: string | null;
+  /** Newest `work.result` receipt citing the job, when one is retained. */
+  result?: WorkFeedResultCitation;
 }
 
 /** The retained receipt a feed refusal is attributable to. */
@@ -122,6 +138,18 @@ export function projectBusWorkFeed(receipts: readonly unknown[], participants: r
       jobs.set(job.id, next);
       // Every job was announced by a post that recorded its citation above.
       citations.get(job.id)!.status = checked.value.id;
+    } else if (body.kind === 'work.result') {
+      // Reported outcome evidence, never a state move: a schema-clean result
+      // citing an announced job records the newest report under cursor order.
+      // A malformed one stays opaque noise like any other non-feed body —
+      // skipped, never a projection refusal — and an orphan result is
+      // ignored exactly like an orphan status.
+      const result = workResultBodySchema.safeParse(body);
+      if (!result.success || !jobs.has(result.data.jobId)) continue;
+      citations.get(result.data.jobId)!.result = { id: checked.value.id, from,
+        outcome: result.data.outcome,
+        ...(result.data.reason === undefined ? {} : { reason: result.data.reason }),
+        receivedAt: row.receivedAt };
     }
   }
   return { status: 'ok', feed: workFeedSchema.parse({ v: 2, jobs: [...jobs.values()] }), citations };

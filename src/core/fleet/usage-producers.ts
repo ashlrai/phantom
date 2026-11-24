@@ -123,15 +123,15 @@ export function buildUsageProducers(input: UsageProducersInput): UsageProducersR
     const { rows } = ledgerRows(input.ledger, now, hours + OUTCOME_LOOKBACK_HOURS, true);
     const launches = new Map<string, { lane: string; model: string | null; at: number }[]>();
     for (const { row, id, at } of rows) {
-      const event = row.event ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
-      const url = prKey(String(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? ''));
+      const event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string') ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
+      const url = prKey(String([row.url, row.prUrl, row.pr_url, row.pr, row.html_url].find((v): v is string => typeof v === 'string') ?? ''));
       if (event === 'outcome' || event === 'merged') {
         outcomesKnown = true;
-        if (url && (event === 'merged' || (row.state ?? row.outcome ?? row.status) === 'MERGED')) merged.add(url);
+        if (url && (event === 'merged' || (row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion) === 'MERGED')) merged.add(url);
       }
       if ((event === 'publish' || event === 'published') && url) publishKnown = true;
       if (event !== 'launch' || !id || at < since) continue;
-      const lane = label(row.lane ?? row.pool) ?? 'unknown';
+      const lane = label(row.lane) ?? label(row.pool) ?? label(row.arm) ?? 'unknown';
       const list = launches.get(id) ?? [];
       list.push({ lane, model: label(row.model), at });
       launches.set(id, list);
@@ -151,8 +151,8 @@ export function buildUsageProducers(input: UsageProducersInput): UsageProducersR
       const lane = laneOf.get(id);
       if (!lane || at < since) continue;
       const t = lanes.get(lane)!;
-      const event = row.event;
-      const url = prKey(String(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? ''));
+      const event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
+      const url = prKey(String([row.url, row.prUrl, row.pr_url, row.pr, row.html_url].find((v): v is string => typeof v === 'string') ?? ''));
       if ((event === 'publish' || event === 'published') && url) t.prs.add(url);
       const wall = typeof row.wall_s === 'number' && Number.isFinite(row.wall_s) && row.wall_s >= 0 ? row.wall_s : null;
       if (event === 'finish' && wall !== null) { t.wallSeconds += wall; t.wallJobs++; }

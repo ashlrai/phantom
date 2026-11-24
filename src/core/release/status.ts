@@ -8,6 +8,7 @@ export { getLocalReleaseStatus } from '../fleet/release-chain-status.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { AUTONOMY_REPOS } from './autonomy-audit.js';
 import { readBehindReleases, type InstalledBuild } from './drift.js';
+import { readReleaseRepos, type ReleaseRepoStatus } from './release-repos.js';
 
 export interface ReleaseStatusRow {
   repo: string;
@@ -30,7 +31,7 @@ export interface ReleaseStatusRow {
 }
 /** One merged PR as plain text: its number and title. */
 export interface ReleasePrTitle { number: number; title: string }
-export interface ReleaseStatusReport { schema: 'phantom.release-status.v2'; repos: ReleaseStatusRow[]; release: ReleaseSummary }
+export interface ReleaseStatusReport { schema: 'phantom.release-status.v2'; repos: ReleaseStatusRow[]; releaseRepos: ReleaseRepoStatus[]; release: ReleaseSummary }
 export interface ReleaseStatusDeps { root?: string; roots?: readonly string[]; repos?: readonly string[]; now?: number; repoPath?: string; runsDir?: string; cadenceMinutes?: number; installed?: () => InstalledBuild }
 const DAY_MS = 86_400_000;
 export const RELEASE_PR_TITLES_SHOWN = 5;
@@ -80,7 +81,10 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
     if (!existsSync(join(path, '.git'))) return { ...empty, reason: `not found (tried ${tried.join(', ') || 'no folders'})` };
     const remoteHead = git('symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD') || null;
     const defaultBranch = remoteHead?.startsWith('origin/') ? remoteHead.slice(7) : null;
-    const tag = git('for-each-ref', '--sort=-creatordate', '--count=1', '--format=%(refname:strip=2)%09%(creatordate:unix)', 'refs/tags');
+    // The newest tag reachable from the default branch (a tag on a side branch is not "the latest release");
+    // without a default-branch ref, fall back to the newest tag by date.
+    const reachable = remoteHead ? git('describe', '--tags', '--abbrev=0', `refs/remotes/${remoteHead}`) : null;
+    const tag = git('for-each-ref', ...(reachable ? [`refs/tags/${reachable}`] : ['--sort=-creatordate', '--count=1', 'refs/tags']), '--format=%(refname:strip=2)%09%(creatordate:unix)');
     const [latestTag, seconds] = tag?.split('\t') ?? [];
     const timestamp = seconds && /^\d+$/.test(seconds) ? Number(seconds) * 1000 : NaN;
     const ageDays = Number.isFinite(timestamp) ? Math.max(0, Math.floor(((deps.now ?? Date.now()) - timestamp) / DAY_MS)) : null;
@@ -106,8 +110,25 @@ export function readReleaseRows(deps: ReleaseStatusDeps = {}): ReleaseStatusRow[
   });
 }
 
+/**
+ * One plain line per repo from the rows: "phantom: v0.42.1, 3 days ago, 212 commits since". A missing clone reads
+ * "not checked out here", a clone without tags "never released", and anything unreadable "unknown", never 0.
+ */
+export function releaseTagLines(rows: readonly ReleaseStatusRow[]): string[] {
+  return rows.map(row => {
+    const name = row.repo.replace(/^ashlrai\//, '');
+    if (!row.path) return `${name}: not checked out here`;
+    if (!row.readable) return `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
+    if (!row.latestTag) return row.reason === 'no tags in this clone' ? `${name}: never released` : `${name}: unknown${row.reason ? ` (${row.reason})` : ''}`;
+    const age = row.ageDays === null ? 'unknown age' : row.ageDays === 0 ? 'today' : `${count(row.ageDays, 'day')} ago`;
+    return `${name}: ${row.latestTag}, ${age}, ${row.unreleasedCommits === null ? 'unknown' : count(row.unreleasedCommits, 'commit')} since`;
+  });
+}
+
 export async function getReleaseStatus(deps: ReleaseStatusDeps = {}): Promise<ReleaseStatusReport> {
-  return { schema: 'phantom.release-status.v2', repos: readReleaseRows(deps), release: await getLocalReleaseStatus(deps) };
+  const releaseRepos = await readReleaseRepos({ now: deps.now, repos: deps.repos,
+    ...(deps.root || deps.roots ? { paths: (repo: string) => releaseRoots(deps).map(root => join(root, repo)) } : {}) });
+  return { schema: 'phantom.release-status.v2', repos: readReleaseRows(deps), releaseRepos, release: await getLocalReleaseStatus(deps) };
 }
 
 export const RELEASES_SCHEMA = 'phantom.releases.v1';
@@ -133,6 +154,8 @@ export interface ReleaseCadenceRow {
   behindReleases?: number;
 }
 export interface ReleasesReport {
+  /** Commit-based status shared with `phm release status --json`; absent on older servers. */
+  releaseRepos?: ReleaseRepoStatus[];
   schema: typeof RELEASES_SCHEMA; version: 1; checkedAt: string; dueWhen: typeof RELEASE_DUE;
   counts: Record<ReleaseVerdict, number>; repos: ReleaseCadenceRow[];
   /** The single most overdue repo, or null when nothing is due. This report never tags or publishes. */

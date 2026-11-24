@@ -12,6 +12,7 @@ import { evictAll } from '../../../data/cache.js';
 import * as client from '../../../data/client.js';
 import { fleetRunsFixture } from '../fleet/fleet-runs-fixtures.test-support.js';
 import { JOB_CONTROL_PATH } from '../fleet-job-log/job-control-action.js';
+import { LEADER_HEALTH_API } from '../leader-thread/leader-health-model.js';
 import { SessionThread } from './SessionThread.js';
 import { narrowSessionThread, SESSION_THREAD_API, sourcesLine, steerable } from './session-thread-model.js';
 
@@ -60,8 +61,8 @@ describe('steering a session from its conversation', () => {
     open();
     const controls = await row();
     expect(within(controls).getAllByRole('button').map(button => button.textContent)).toEqual(['Pause', 'Stop', 'Move…']);
-    // The lanes are not asked for until Move is opened.
-    expect(get.mock.calls.map(([path]) => path)).toEqual([`${SESSION_THREAD_API}?id=RQ-A`]);
+    // The lanes are not asked for until Move is opened. The second read is whether the Leader, which a reply goes through, is passing.
+    expect(get.mock.calls.map(([path]) => path)).toEqual([`${SESSION_THREAD_API}?id=RQ-A`, LEADER_HEALTH_API]);
     fireEvent.click(within(controls).getByRole('button', { name: 'Pause' }));
     expect((await within(controls).findByText('Pause requested for RQ-A.')).getAttribute('data-tone')).toBe('waiting');
     expect(post).toHaveBeenCalledWith(JOB_CONTROL_PATH, { id: 'RQ-A', action: 'pause' }, TOKEN);

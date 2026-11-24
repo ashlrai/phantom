@@ -50,16 +50,17 @@ const PR_URL = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
  * job-latency.boundaryEvent, fleet/throughput.marksOf and
  * metrics/reward-feed.foldJobsLedgerRewards accept: job ids take
  * job|job_id|jobId|id, the event name event|type|kind, the phase
- * state|outcome|status, timestamps ts|timestamp|at|time|mergedAt|closedAt|
+ * state|outcome|status plus the producer aliases phase|result|conclusion,
+ * timestamps ts|timestamp|at|time|mergedAt|closedAt|
  * recordedAt|updatedAt (mergedAt/closedAt preferred on terminal rows), PR
- * links url|pr_url|prUrl|pr|html_url and the lane alias pool.
+ * links url|pr_url|prUrl|pr|html_url and the lane aliases pool|arm.
  */
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['state', 'outcome', 'status'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
-const LANE_KEYS = ['lane', 'pool'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
 
 const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
   for (const key of keys) {
@@ -381,6 +382,22 @@ export function betObservation(bet: Pick<Bet, 'id' | 'metric'>, jobs: Map<string
   };
 }
 
+/** The parts of the loop-stages report the hints carry; structural so loop.ts stays import-free of loop-stages.ts. */
+export interface LoopWaitSource {
+  headline: string;
+  slowest: { stage: string; p50_minutes: number } | null;
+  since: string;
+  jobs_truncated: boolean | null;
+}
+
+/** Where the loop waits, compacted for the hints file: the bottleneck line, the slowest stage and the window it covers. */
+export interface LoopWaitHint {
+  headline: string;
+  slowest: { stage: string; p50_minutes: number } | null;
+  since: string;
+  jobs_truncated: boolean | null;
+}
+
 export interface SelectionHints {
   schema: typeof HINTS_SCHEMA;
   at: string;
@@ -390,6 +407,8 @@ export interface SelectionHints {
   /** Nodes with spare capacity, most spare first. */
   nodes_with_spare: { node: string; spare: number }[];
   top_constraint: { name: string; evidence: string };
+  /** Per-stage wait evidence from the same jobs.jsonl tail, when collected with the report. */
+  loop_wait: LoopWaitHint | Missing;
   bets_share: { reserved: number; usable: number } | Missing;
 }
 
@@ -412,7 +431,7 @@ export function topConstraint(report: LoopReport): { name: string; evidence: str
   return { name: 'unknown', evidence: 'loop times missing; see loop report reasons' };
 }
 
-export function selectionHints(report: LoopReport, share: { reserved: number; usable: number } | null): SelectionHints {
+export function selectionHints(report: LoopReport, share: { reserved: number; usable: number } | null, stages?: LoopWaitSource | null): SelectionHints {
   const lanes = report.lanes.map(l => ({
     lane: l.lane, merged_6h: l.merged_6h, held: l.held,
     merged_per_lane_hour: isMissing(l.merged_per_lane_hour) ? null : l.merged_per_lane_hour,
@@ -423,6 +442,8 @@ export function selectionHints(report: LoopReport, share: { reserved: number; us
     .map(n => ({ node: n.node, spare: n.spare as number })).sort((a, b) => b.spare - a.spare || a.node.localeCompare(b.node));
   return {
     schema: HINTS_SCHEMA, at: report.at, advisory: true, lanes, nodes_with_spare: nodes, top_constraint: topConstraint(report),
+    loop_wait: stages ? { headline: stages.headline, slowest: stages.slowest, since: stages.since, jobs_truncated: stages.jobs_truncated }
+      : missing('loop stage times not collected'),
     bets_share: share ? { reserved: share.reserved, usable: share.usable } : missing('bets share not computed'),
   };
 }

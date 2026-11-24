@@ -10,9 +10,21 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string };
+type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
+
+// Job conclusions that mean the check never reached a verdict: cancelled,
+// timed out, awaiting action, failed to start, or marked stale. Their logs
+// may be partial or absent, so they are incomplete evidence — the run
+// cannot prove the ref's checks and reads unknown, never clean. `skipped`
+// and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
+// required-check-neutral), not incomplete checks, and stay ignored.
+const INCOMPLETE_JOB_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+// The same set plus `failure` for the run level: a completed run that
+// produced no jobs at all and did not succeed (startup_failure and
+// friends) carries no verifiable job evidence either.
+const INCOMPLETE_RUN_CONCLUSIONS = new Set([...INCOMPLETE_JOB_CONCLUSIONS, 'failure']);
 
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
@@ -42,6 +54,73 @@ const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[
 //   Bound candidate <sha> to event tree <tree>
 //   Bound candidate <sha> to event merge <sha> of base <sha>...
 const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
+
+// Gate jobs that never run ci-source-binding.mjs (secret-shape, quick,
+// clean-tree, authority-drift, fast-gate, secret-scan, the whole
+// dependency-audit job) still prove their checkout through the runner's
+// own echo of the checkout step's resolved inputs:
+//
+//   ##[group]Run actions/checkout@<pinned>
+//   with:
+//     ref: <resolved sha>
+//     ...
+//   ##[endgroup]
+//
+// Every analyzed `ref:` expression (`pull_request.head.sha`,
+// `merge_group.head_sha`, `github.sha`) resolves to the run's head SHA, so
+// the echo verifies exactly like the binding receipt -- but only when the
+// log records at least one checkout and every checkout step pins `ref:` to
+// that head. A checkout pinned to a branch, tag or PR ref resolves to a
+// non-SHA value and never verifies; an unpinned checkout falls back to the
+// event default (the merge commit on pull_request), and a second checkout
+// of anything else makes the workspace ambiguous, so either leaves the
+// job unverifiable.
+const CHECKOUT_GROUP = /^##\[group\]Run actions\/checkout@\S/;
+const CHECKOUT_GROUP_END = '##[endgroup]';
+const CHECKOUT_WITH = 'with:';
+const CHECKOUT_ENV = 'env:';
+const CHECKOUT_REF = /^ref:\s*([a-f0-9]{40})$/;
+
+function checkoutRefsVerify(output: string[], head: string): boolean {
+  let groups = 0;
+  let bad = false;
+  let inCheckout = false;
+  let inWith = false;
+  let ref: string | null = null;
+  const close = () => {
+    if (!inCheckout) return;
+    groups++;
+    if (ref !== head) bad = true;
+    inCheckout = false;
+    inWith = false;
+    ref = null;
+  };
+  for (const line of output) {
+    if (CHECKOUT_GROUP.test(line)) {
+      close();
+      inCheckout = true;
+      continue;
+    }
+    if (!inCheckout) continue;
+    if (line === CHECKOUT_GROUP_END) {
+      close();
+      continue;
+    }
+    if (line === CHECKOUT_WITH) {
+      inWith = true;
+      continue;
+    }
+    if (inWith && line === CHECKOUT_ENV) {
+      inWith = false;
+      continue;
+    }
+    if (!inWith) continue;
+    const found = CHECKOUT_REF.exec(line);
+    if (found !== null) ref = found[1]!;
+  }
+  close();
+  return groups > 0 && !bad;
+}
 
 // TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
 // repo-relative file, position and diagnostic code:
@@ -401,6 +480,44 @@ const VERSION_SYNC_SEMVER = /^\d+\.\d+\.\d+$/;
 const VERSION_SYNC_PREFIX = 'sync-candidate-version: ';
 const VERSION_SYNC_MAX = 4;
 
+// `npm run build` opens with check:version and tsc -- both parsed above --
+// then runs five node helpers and `vite build` (ci.yml's Build step, and
+// the `npm ci && npm run build` preambles in perf-budget.yml and
+// companion-smoke.yml). Each helper's failure output names itself:
+// authority-surface prints `authority-surface: <error>` on stderr while
+// its success summary and `roots not built yet` note stay unparsed;
+// copy-assets prints `[copy-assets] source not found:`; an uncaught
+// throw in any chain script prints node's `file://<abs>:<line>`
+// code-frame header naming the script; and the
+// build-release-dependency-inventory catch prints
+// `release dependency inventory` messages. Vite 8 (rolldown) diagnostics
+// print `[UNRESOLVED_IMPORT] Could not resolve '<spec>' in <importer>`
+// and its commonjs-external throw prints `[vite]: Rolldown failed to
+// resolve import "<spec>" from "<importer>"`; the importer resolves
+// through the same `/<repo>/<repo>/` checkout marker as TAP locations,
+// so the group keys on the real source file whose import closure decides
+// touched. All of these group under `(build)`: a parenthesized identity
+// can never resolve through a vitest pass line, so they classify
+// shared-baseline, pr-caused or unknown -- never probable-flake. Passing
+// builds, vite's `built in` summary, rolldown diagnostics whose file
+// lives only inside the code frame (PARSE_ERROR), OOM kills and
+// unrelated output stay unparsed.
+const BUILD_STEP_NAMES = '(build)';
+const BUILD_STEP_MAX = 24;
+const BUILD_AUTHORITY_SURFACE_OK = /^authority-surface: \d+ files, \d+ packages, \d+ missing roots, \d+ unresolved — digest \S+$/;
+const BUILD_AUTHORITY_SURFACE_NOTE = /^authority-surface: roots not built yet: /;
+const BUILD_VITE_UNRESOLVED = /\[UNRESOLVED_IMPORT\]\s*Could not resolve\s*'[^'\n]*'\s*in\s*(\S+)/;
+const BUILD_VITE_EXTERNAL = /\[vite\]: Rolldown failed to resolve import\s*"[^"\n]*"\s*from\s*"([^"\n]+)"/;
+const BUILD_UNCAUGHT_HEADER = /^file:\/\/.*\/(scripts\/[A-Za-z0-9][A-Za-z0-9._-]*\.mjs):\d+\s*$/;
+const BUILD_CHAIN_SCRIPTS = new Set([
+  'scripts/authority-surface.mjs',
+  'scripts/copy-assets.mjs',
+  'scripts/build-preparation-builtin.mjs',
+  'scripts/build-identity.mjs',
+  'scripts/build-release-dependency-inventory.mjs',
+  'scripts/sync-candidate-version.mjs',
+]);
+
 // Failure files whose real inputs sit outside any import closure: a gate
 // script reads data files directly, so the closure walk alone would miss
 // every input a PR could break. dependencies() seeds these before walking.
@@ -439,6 +556,7 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-site-lane.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mac-rotation.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-dep-graph.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-fast-select.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
@@ -449,6 +567,89 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // compiles and resolves it -- the manifest carrying the script and
   // pinned deps, its lockfile and the tsconfig tsx reads.
   'scripts/benchmark-memory.ts': ['package.json', 'package-lock.json', 'tsconfig.json'],
+  // The npm run build helpers read data files no import closure reaches.
+  // authority-surface walks the compiled authority closure, so the dist
+  // graph has no enumerable source closure and the toolchain manifests
+  // seed the provable inputs; copy-assets copies the web public assets
+  // and the toolgraph manifest verbatim; build-preparation-builtin reads
+  // the evaluator entries, the trusted preparation workflow source and
+  // the verify wrappers it bundles (the esbuild transitive graph stays
+  // unattributed); build-identity reads package.json. The
+  // release-dependency-inventory script imports compiled dist modules,
+  // so its closure cannot resolve at all -- its closed input list lives
+  // in BUILD_STEP_INPUTS instead.
+  'scripts/authority-surface.mjs': ['package.json', 'package-lock.json', 'tsconfig.json'],
+  'scripts/copy-assets.mjs': ['src/core/toolgraph/graph.json', 'src/core/web/public/app.js', 'src/core/web/public/index.html', 'src/core/web/public/styles.css'],
+  'scripts/build-preparation-builtin.mjs': [
+    'scripts/evaluators/preparation-verification-workflow.ts',
+    'scripts/evaluators/preparation-verification.mjs',
+    'scripts/evaluators/preparation-verification-fixture-runtime.ts',
+    'scripts/evaluators/preparation-verification-fixtures.ts',
+    'scripts/evaluators/preparation-verification-activity.mjs',
+    'scripts/evaluators/preparation-verification-child.mjs',
+    'scripts/evaluators/preparation-verification-controller.mjs',
+    'scripts/evaluators/preparation-verification-native.mjs',
+    'scripts/evaluators/preparation-verification-protocol.mjs',
+    'scripts/evaluators/preparation-verification-tool.mjs',
+    'scripts/evaluators/preparation-workload.mjs',
+    'src/core/resources/engineering-preparation.ts',
+    'src/core/run/verify-commands.ts',
+    'src/core/universe/fixed-evaluator.ts',
+  ],
+  'scripts/build-identity.mjs': ['package.json'],
+};
+
+// Closed input lists for build-step failures whose import closure cannot
+// resolve, keyed by failure file and consulted through the flatInputs
+// chain, so these groups never pick up the vitest harness ambient set.
+const BUILD_STEP_INPUTS: Record<string, readonly string[]> = {
+  // scripts/build-release-dependency-inventory.mjs imports compiled
+  // dist/core modules, so the import-closure walk fails closed; the
+  // closed set is the script itself, the npm pack inputs and the src
+  // modules its dist imports compile from.
+  'scripts/build-release-dependency-inventory.mjs': [
+    'scripts/build-release-dependency-inventory.mjs',
+    'package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc',
+    'src/core/daemon/runtime-release-dependency-inventory.ts',
+    'src/core/util/private-storage.ts',
+  ],
+};
+
+// The first-paint budget gate measures bundle bytes, not source: the
+// measured dist/ graph has no enumerable closure (the web-ui static
+// closure alone runs to hundreds of modules, past the import walk's
+// bound), so each arm's dependency set is a closed input list -- the
+// checker script, the vite config that folds the first-paint chunks
+// (including the presentation-format group members it names), the
+// manifests that pin the toolchain, the web-ui tsconfig esbuild reads,
+// and the arm's named manifest roots under the vite root. A PR touching
+// a root can grow that arm's measured closure; deeper src/web-ui or
+// src/core changes stay unattributed rather than guessed at, the same
+// convention the perf and memory gates use.
+const FIRST_PAINT_COMMON_INPUTS = [
+  'scripts/check-first-paint-budget.mjs',
+  'vite.config.web.ts',
+  'package.json',
+  'package-lock.json',
+  'src/web-ui/tsconfig.json',
+  'src/web-ui/index.html',
+  'src/web-ui/main.tsx',
+  'src/core/vision/leader-display-text.ts',
+  'src/web-ui/components/charts/format-metric.ts',
+  'src/web-ui/components/format/locale-format.ts',
+] as const;
+const FIRST_PAINT_CHAT_INPUTS = [
+  'src/web-ui/app/VerseConsoleApp.tsx',
+  'src/web-ui/routes/verse/sections/ChatSection.tsx',
+] as const;
+const FIRST_PAINT_PHONE_INPUTS = [
+  'src/web-ui/app/VerseMobileApp.tsx',
+  'src/web-ui/routes/verse/mobile/screens/HomeScreen.tsx',
+] as const;
+const FIRST_PAINT_INPUTS: Record<string, readonly string[]> = {
+  '(first-paint) chat': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_CHAT_INPUTS],
+  '(first-paint) phone': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_PHONE_INPUTS],
+  '(first-paint) gate': [...FIRST_PAINT_COMMON_INPUTS, ...FIRST_PAINT_CHAT_INPUTS, ...FIRST_PAINT_PHONE_INPUTS],
 };
 
 function parseVersionSyncFailures(log: string): Failure[] {
@@ -469,6 +670,67 @@ function parseVersionSyncFailures(log: string): Failure[] {
     }
     if (line.startsWith(VERSION_SYNC_PREFIX)) {
       out.push({ file: VERSION_SYNC_FILE, names: VERSION_SYNC_NAMES, testId: `${VERSION_SYNC_FILE} > ${VERSION_SYNC_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// A vite/rolldown build diagnostic names its importer either
+// repo-relative (`src/main.js` -- the build's cwd is the checkout root)
+// or absolute; the absolute form resolves through the same
+// `/<repo>/<repo>/` checkout marker as TAP locations. node_modules
+// paths, virtual modules and unresolvable absolutes stay unparsed
+// rather than guessed.
+function buildImporterFile(raw: string, repo: string | undefined): string | null {
+  let path = raw.replace(/\\/g, '/');
+  const query = path.indexOf('?');
+  if (query >= 0) path = path.slice(0, query);
+  if (path.startsWith('file://')) path = path.slice('file://'.length);
+  const repoName = repo?.split('/')[1];
+  if (repoName !== undefined) {
+    const marker = `/${repoName}/${repoName}/`;
+    const at = path.indexOf(marker);
+    if (at >= 0) path = path.slice(at + marker.length);
+  }
+  if (!path || path.startsWith('node_modules/') || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return path;
+}
+
+function parseBuildStepFailures(log: string, repo?: string): Failure[] {
+  const out: Failure[] = [];
+  const emit = (file: string, excerpt: string) => {
+    if (out.length >= BUILD_STEP_MAX) return;
+    out.push({ file, names: BUILD_STEP_NAMES, testId: `${file} > ${BUILD_STEP_NAMES}`, excerpt: clean(excerpt) });
+  };
+  for (const line of lines(log)) {
+    if (out.length >= BUILD_STEP_MAX) break;
+    if (line.startsWith('authority-surface: ')) {
+      if (!BUILD_AUTHORITY_SURFACE_OK.test(line) && !BUILD_AUTHORITY_SURFACE_NOTE.test(line)) emit('scripts/authority-surface.mjs', line);
+      continue;
+    }
+    if (line.startsWith('[copy-assets] source not found: ')) {
+      emit('scripts/copy-assets.mjs', line);
+      continue;
+    }
+    if (/^release dependency inventory(?: npm pack)?: /.test(line) || line === 'npm pack file report is missing' || line === 'npm runtime closure exceeds traversal depth') {
+      emit('scripts/build-release-dependency-inventory.mjs', line);
+      continue;
+    }
+    const uncaught = BUILD_UNCAUGHT_HEADER.exec(line);
+    if (uncaught !== null) {
+      if (BUILD_CHAIN_SCRIPTS.has(uncaught[1]!)) emit(uncaught[1]!, line);
+      continue;
+    }
+    const unresolved = BUILD_VITE_UNRESOLVED.exec(line);
+    if (unresolved !== null) {
+      const file = buildImporterFile(unresolved[1]!, repo);
+      if (file !== null) emit(file, line);
+      continue;
+    }
+    const external = BUILD_VITE_EXTERNAL.exec(line);
+    if (external !== null) {
+      const file = buildImporterFile(external[1]!, repo);
+      if (file !== null) emit(file, line);
     }
   }
   return out;
@@ -561,15 +823,21 @@ function parsePerfBudgetFailures(log: string): Failure[] {
 // or a still-exempt package name -- and emits only packages outside the
 // exempt set; a report exempt end to end passed its step and emits
 // nothing. `auditExceptions` carries master's exception list: `null`
-// means the file was unreadable or malformed, and audit reports then stay
-// unparsed rather than risk a phantom group for an accepted advisory.
+// means the file was unreadable or malformed, and npm audit reports then
+// stay unparsed rather than risk a phantom group for an accepted advisory.
 // Expiry is not re-checked: a report printed by a completed run was
-// governed by the exceptions valid at run time. OSV-Scanner table output
-// (the transport fallback) and cargo-audit output carry no audit v2
-// document and stay unparsed. Invalid reports (non-v2 schema, malformed
-// severity counts), reports with no preceding step echo, unrelated JSON
-// and clean reports (`total: 0`) stay unparsed. Like the other non-test
-// identities these groups can never resolve through a vitest pass line:
+// governed by the exceptions valid at run time. When npm's transport fails
+// all three bounded attempts the gate script falls back to the pinned
+// OSV-Scanner (`scan source --lockfile <lockfile> --format table`), whose
+// go-pretty table carries no audit v2 document: it parses separately
+// below, per printed row, because osv-scanner itself already applied the
+// step's IgnoredVulns config -- every row it prints is an unexcepted
+// advisory, so these groups do not need the exception list and still emit
+// when it is unreadable. Cargo-audit output carries no audit v2 document
+// and stays unparsed. Invalid reports (non-v2 schema, malformed severity
+// counts), reports with no preceding step echo, unrelated JSON and clean
+// reports (`total: 0`) stay unparsed. Like the other non-test identities
+// these groups can never resolve through a vitest pass line:
 // shared-baseline, pr-caused or unknown -- never probable-flake.
 export type DependencyAuditException = { id: string; package: string; graph: 'full' | 'raycast-production' };
 const DEPENDENCY_AUDIT_NAMES = '(dependency-audit)';
@@ -635,10 +903,97 @@ function exemptAuditPackages(vulnerabilities: Record<string, unknown>, exception
   return exempt;
 }
 
+// The fallback leg's go-pretty table: in the piped CI log terminalWidth is
+// 0, so osv-scanner renders StyleDefault's ASCII `+`/`-`/`|` box with no
+// colors, seven columns in this order, one `|` row per vulnerability and
+// `+`-ruled borders. The rounded unicode style only appears on a TTY and
+// stays unparsed. A vuln group's alias ids join inside the OSV URL cell
+// with newlines, so they continue onto following `|` lines whose other
+// cells are blank.
+const OSV_TABLE_HEADER = ['OSV URL', 'CVSS', 'Ecosystem', 'Package', 'Version', 'Fixed Version', 'Source'];
+const OSV_TABLE_BORDER = /^\+(?:-+\+)+$/;
+const OSV_URL = /^https:\/\/osv\.dev\/\S+$/;
+const OSV_DEV_SUFFIX = ' (dev)';
+const OSV_URLS_PER_PACKAGE = 8;
+
+interface OsvAuditPackage {
+  file: string;
+  names: string;
+  testId: string;
+  pkg: string;
+  ecosystems: string[];
+  versions: string[];
+  fixed: string[];
+  cvss: string[];
+  urls: string[];
+}
+
+// One `|`-delimited row of the table: exactly seven trimmed cells or null.
+// None of the printed columns can contain `|` (URLs, ecosystem names,
+// package names, versions, lockfile paths), so any other arity is not this
+// table's shape and stays unparsed rather than guessed at.
+function auditTableCells(line: string): string[] | null {
+  if (!line.startsWith('|') || !line.endsWith('|')) return null;
+  const cells = line.slice(1, -1).split('|').map(cell => cell.trim());
+  return cells.length === OSV_TABLE_HEADER.length ? cells : null;
+}
+
+function isOsvAuditHeader(cells: string[]): boolean {
+  return cells.every((cell, index) => cell === OSV_TABLE_HEADER[index]);
+}
+
+function pushUnique(list: string[], value: string, cap: number): void {
+  if (value !== '' && !list.includes(value) && list.length < cap) list.push(value);
+}
+
+// Consume the `|` rows of one OSV table starting at `start` (just past its
+// header) and fold them into `packages` keyed by the shared
+// `<lockfile> > (dependency-audit) <package>` testId. Returns the index of
+// the first line after the table so the caller's loop resumes there. Rows
+// are accepted only inside a recognized audit step echo and only when the
+// Source cell names the echoed lockfile (basename or repo-relative); the
+// scanner's own IgnoredVulns config already filtered excepted advisories,
+// so every surviving row is a real failure. ` (dev)` suffixes come off to
+// match the npm report's package identity.
+function collectOsvAuditTable(raw: string[], start: number, context: AuditStep, packages: Map<string, OsvAuditPackage>): number {
+  let j = start;
+  while (j < raw.length && OSV_TABLE_BORDER.test(raw[j]!)) j++;
+  let current: OsvAuditPackage | null = null;
+  for (; j < raw.length && raw[j]!.startsWith('|'); j++) {
+    const cells = auditTableCells(raw[j]!);
+    if (cells === null) continue;
+    const [url = '', cvss = '', ecosystem = '', packageCell = '', version = '', fixed = '', source = ''] = cells;
+    if (url !== '' && cells.slice(1).every(cell => cell === '')) {
+      if (OSV_URL.test(url) && current !== null) pushUnique(current.urls, url, OSV_URLS_PER_PACKAGE);
+      continue;
+    }
+    const pkg = packageCell.endsWith(OSV_DEV_SUFFIX) ? packageCell.slice(0, -OSV_DEV_SUFFIX.length) : packageCell;
+    const sourcePath = posix.normalize(source);
+    if (!OSV_URL.test(url) || !DEPENDENCY_AUDIT_PACKAGE.test(pkg) || pkg.length > 214 ||
+        (sourcePath !== posix.basename(context.file) && sourcePath !== context.file)) {
+      current = null;
+      continue;
+    }
+    const testId = `${context.file} > ${DEPENDENCY_AUDIT_NAMES} ${pkg}`;
+    let entry = packages.get(testId);
+    if (entry === undefined) {
+      entry = { file: context.file, names: `${DEPENDENCY_AUDIT_NAMES} ${pkg}`, testId, pkg, ecosystems: [], versions: [], fixed: [], cvss: [], urls: [] };
+      packages.set(testId, entry);
+    }
+    current = entry;
+    pushUnique(entry.urls, url, OSV_URLS_PER_PACKAGE);
+    pushUnique(entry.ecosystems, ecosystem, 4);
+    pushUnique(entry.versions, version, 8);
+    pushUnique(entry.fixed, fixed, 8);
+    pushUnique(entry.cvss, cvss, 8);
+  }
+  return j;
+}
+
 function parseAuditFailures(log: string, auditExceptions: readonly DependencyAuditException[] | null): Failure[] {
   const out: Failure[] = [];
-  if (auditExceptions === null) return out;
   const seen = new Set<string>();
+  const osvPackages = new Map<string, OsvAuditPackage>();
   // Timestamped job-log lines keep the document's and table's own columns:
   // the strip removes the stamp and its single separating space only, the
   // same convention as the check:docs and perf-budget report parsers, so a
@@ -658,7 +1013,17 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
         : null;
       continue;
     }
-    if (!line.startsWith('{')) continue;
+    // The OSV fallback table needs no exception list -- the scanner applied
+    // the step's IgnoredVulns config itself -- so it parses even when the
+    // npm fixpoint below cannot run.
+    if (context !== null) {
+      const cells = auditTableCells(line);
+      if (cells !== null && isOsvAuditHeader(cells)) {
+        i = collectOsvAuditTable(raw, i + 1, context, osvPackages) - 1;
+        continue;
+      }
+    }
+    if (auditExceptions === null || !line.startsWith('{')) continue;
     let doc: unknown;
     let end = i;
     try {
@@ -720,6 +1085,18 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       seen.add(testId);
       out.push({ file: step.file, names: namesField, testId, excerpt: clean([`${pkg} severity=${severity}`, ...advisories, ...(fixText === '' ? [] : [fixText])].join('\n')) });
     }
+  }
+  for (const entry of osvPackages.values()) {
+    if (out.length >= DEPENDENCY_AUDIT_MAX) break;
+    if (seen.has(entry.testId)) continue;
+    seen.add(entry.testId);
+    const meta = [
+      entry.ecosystems.length ? `ecosystem=${entry.ecosystems.join(',')}` : '',
+      entry.versions.length ? `version=${entry.versions.join(',')}` : '',
+      entry.fixed.length ? `fixed=${entry.fixed.join(',')}` : '',
+      entry.cvss.length ? `cvss=${entry.cvss.join(',')}` : '',
+    ].filter(part => part !== '').join(' ');
+    out.push({ file: entry.file, names: entry.names, testId: entry.testId, excerpt: clean([`${entry.pkg}${meta === '' ? '' : ` ${meta}`}`, ...entry.urls].join('\n')) });
   }
   return out;
 }
@@ -787,14 +1164,37 @@ const SECRET_SHAPE_FILE = '.github/tests/secret-shape/scrub.pl';
 const SECRET_SHAPE_NAMES = '(secret-shape)';
 const SECRET_SHAPE_COUNT = /^(\d+) allowed=(\d+)$/;
 const SECRET_SHAPE_MAX = 8;
+// The same step can also fail before the scanner prints its verdict: the
+// pinned-hash check rejects scrub.pl, the candidate base cannot be resolved
+// and the step refuses closed, or the script itself dies under perl. None
+// of those shapes carries a count line, so without these identities a
+// broken gate leaves every open PR unknown. They group under the workflow
+// that owns the pin and step as `.github/workflows/ci.yml >
+// (secret-shape-gate)`; the group's closed inputs are the workflow and the
+// scanner -- the only repo files the step executes -- so a PR touching
+// either is pr-caused. sha256sum's `: FAILED` line names the checklist
+// target verbatim, which keeps the check attributable inside this job's
+// log; the WARNING summary line alone is never enough.
+const SECRET_SHAPE_GATE_FILE = '.github/workflows/ci.yml';
+const SECRET_SHAPE_GATE_NAMES = '(secret-shape-gate)';
+const SECRET_SHAPE_PIN_FAILED = /^\.github\/tests\/secret-shape\/scrub\.pl: FAILED/;
+const SECRET_SHAPE_BASE_MISSING = /^secret-shape base is missing$/;
+const SECRET_SHAPE_PL_PATH = /\.github\/tests\/secret-shape\/scrub\.pl/;
+const SECRET_SHAPE_PL_FATAL = /syntax error|aborted due to compilation errors|BEGIN failed|requires explicit package name|Undefined subroutine|Can't call method|Search pattern not terminated|Unrecognized character/;
 
 function parseSecretShapeFailures(log: string): Failure[] {
   const out: Failure[] = [];
   for (const line of lines(log)) {
     if (out.length >= SECRET_SHAPE_MAX) break;
     const match = SECRET_SHAPE_COUNT.exec(line);
-    if (match === null || Number(match[1]) === 0) continue;
-    out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+    if (match !== null && Number(match[1]) !== 0) {
+      out.push({ file: SECRET_SHAPE_FILE, names: SECRET_SHAPE_NAMES, testId: `${SECRET_SHAPE_FILE} > ${SECRET_SHAPE_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (SECRET_SHAPE_PIN_FAILED.test(line) || SECRET_SHAPE_BASE_MISSING.test(line) ||
+        (SECRET_SHAPE_PL_PATH.test(line) && SECRET_SHAPE_PL_FATAL.test(line))) {
+      out.push({ file: SECRET_SHAPE_GATE_FILE, names: SECRET_SHAPE_GATE_NAMES, testId: `${SECRET_SHAPE_GATE_FILE} > ${SECRET_SHAPE_GATE_NAMES}`, excerpt: clean(line) });
+    }
   }
   return out;
 }
@@ -815,14 +1215,34 @@ const SECRET_SCAN_FILE = '.github/workflows/ci.yml';
 const SECRET_SCAN_NAMES = '(secret-scan)';
 const SECRET_SCAN_FOUND = /\bleaks found:\s*(\d+)\s*$/;
 const SECRET_SCAN_MAX = 8;
+// The job can also fail before gitleaks prints its verdict: the pinned
+// archive hash check rejects the download (sha256sum's `: FAILED` line
+// names the `gitleaks.tar.gz` checklist target, keeping it attributable
+// inside this job's log -- the WARNING summary alone is never enough),
+// or the commit range the scan covers cannot be resolved and the step
+// refuses closed. Neither shape carries a `leaks found:` line, so
+// without this identity a broken gate leaves every open PR unknown.
+// They group under the same workflow file as
+// `.github/workflows/ci.yml > (secret-scan-gate)`; the group's closed
+// inputs are the workflow and ci-fetch-range.mjs -- the script the
+// merge_group/push scan-base path executes -- so a PR touching either
+// is pr-caused.
+const SECRET_SCAN_GATE_NAMES = '(secret-scan-gate)';
+const SECRET_SCAN_ARCHIVE_FAILED = /(?:^|\/)gitleaks\.tar\.gz: FAILED/;
+const SECRET_SCAN_RANGE_REFUSED = /^secret scan refused an incomplete commit range$/;
 
 function parseSecretScanFailures(log: string): Failure[] {
   const out: Failure[] = [];
   for (const line of lines(log)) {
     if (out.length >= SECRET_SCAN_MAX) break;
     const match = SECRET_SCAN_FOUND.exec(line);
-    if (match === null || Number(match[1]) === 0) continue;
-    out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+    if (match !== null && Number(match[1]) !== 0) {
+      out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (SECRET_SCAN_ARCHIVE_FAILED.test(line) || SECRET_SCAN_RANGE_REFUSED.test(line)) {
+      out.push({ file: SECRET_SCAN_FILE, names: SECRET_SCAN_GATE_NAMES, testId: `${SECRET_SCAN_FILE} > ${SECRET_SCAN_GATE_NAMES}`, excerpt: clean(line) });
+    }
   }
   return out;
 }
@@ -858,6 +1278,20 @@ function parseVersionProvenanceFailures(log: string): Failure[] {
   return out;
 }
 
+// Closed input lists for the trust gates' bootstrap failures, consulted
+// through the flatInputs chain by failure names like the lint-guard and
+// test-runner maps. The scanner-verdict groups key on the scanner
+// definition alone (a diff or commit range has no enumerable repo input),
+// but a gate that never reached its verdict fails on the files the step
+// itself executes: the workflow carrying the pin, env wiring and step
+// definition, plus the pinned scanner for secret-shape and the
+// scan-base helper for secret-scan's merge_group/push path. The vitest
+// harness ambient set cannot reach any of them.
+const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
+  [SECRET_SHAPE_GATE_NAMES]: [SECRET_SHAPE_GATE_FILE, SECRET_SHAPE_FILE],
+  [SECRET_SCAN_GATE_NAMES]: [SECRET_SCAN_FILE, '.github/scripts/ci-fetch-range.mjs'],
+};
+
 // The ci.yml helper gates under .github/scripts/ are single-purpose node
 // invocations whose only failure output is the script's console.error
 // line plus the runner's `##[error]Process completed with exit code`
@@ -870,8 +1304,8 @@ function parseVersionProvenanceFailures(log: string): Failure[] {
 // is a `node --test` invocation or a whitelisted gate script, all gate
 // lines naming the same file. Mixed bash, heredocs, `uses:` actions,
 // non-whitelisted scripts (ci-pack-smoke and release-version-provenance
-// already have dedicated parsers; ci-fast-select never exits nonzero)
-// and other commands stay unattributed. When the step then fails, a
+// already have dedicated parsers) and other commands stay
+// unattributed. When the step then fails, a
 // `not ok` or vitest FAIL line in its own output means the companion
 // test runner owns the failure and the gate group is suppressed;
 // otherwise the gate script is the identity -- the file, its import
@@ -889,6 +1323,12 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-site-lane.mjs': '(site-lane)',
   'ci-mac-rotation.mjs': '(mac-rotation)',
   'ci-dep-graph.mjs': '(dep-graph)',
+  // ci-fast-select pairs its node --test companion in one step: a
+  // companion `not ok` still suppresses this group, but the script's
+  // selection-failure fallback does not cover infrastructure exits
+  // (plan-file writes, module load, the fallback planner itself), and
+  // without the group those crashes leave every open PR unknown.
+  'ci-fast-select.mjs': '(fast-select)',
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
@@ -975,6 +1415,98 @@ function parseCiScriptGateFailures(log: string): Failure[] {
   return out;
 }
 
+// The `Install dependencies` steps run a bare `npm ci` (with or without
+// --ignore-scripts/--no-audit/--no-fund): when the manifest pair or the
+// lockfile is broken on master, every fresh PR fails the same step before
+// any test runs, and npm's own `npm error <detail>` block is the only
+// evidence -- no vitest FAIL, TAP `not ok`, tsc diagnostic or report
+// shape names it, so without step attribution those PRs read unknown and
+// queue no fix. The same `##[group]Run` step tracking as the helper gates
+// applies, but a step qualifies only when every script line is a pure
+// `npm ci` invocation: `npm ci && npm run build` preambles, `npm install`
+// toolchain fetches, `uses:` actions, mixed bash and `npm run` script
+// steps (whose `npm error Lifecycle script` blocks this parser must not
+// claim) stay unattributed. The step fails only on npm's own diagnosis --
+// a runner kill or spawn death with no `npm error` line stays unknown.
+// Each failure groups under `package-lock.json > (install)`: the
+// manifest/lockfile pair plus shrinkwrap/.npmrc variants and the ci.yml
+// step definition are the closed input list a master fix restores (the
+// only workflow whose root install runs on analyzed refs with a
+// verifiable checkout), consulted through flatInputs like the other
+// gate maps, so these groups classify shared-baseline, pr-caused or
+// unknown -- never probable-flake.
+const INSTALL_STEP_FILE = 'package-lock.json';
+const INSTALL_STEP_NAMES = '(install)';
+const INSTALL_STEP_MAX = 8;
+const INSTALL_NPM_CI = /^npm\s+ci(?:\s+--?\S+)*$/;
+const INSTALL_NPM_ERROR = /^npm\s+(?:error|ERR!)\s+\S/;
+const INSTALL_STEP_INPUTS: Record<string, readonly string[]> = {
+  [INSTALL_STEP_NAMES]: ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', '.github/workflows/ci.yml'],
+};
+
+function parseInstallFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for npm's own error lines.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  let installCandidate = false;
+  let install = false;
+  const npmErrors: string[] = [];
+  const reset = () => {
+    phase = 'idle'; disqualified = false; installCandidate = false; install = false;
+    npmErrors.length = 0;
+  };
+  const resolveInstall = () => { install = installCandidate && !disqualified; };
+  for (const line of lines(log)) {
+    if (out.length >= INSTALL_STEP_MAX) break;
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      reset();
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        const first = run[1];
+        if (first !== undefined && first !== '') {
+          if (INSTALL_NPM_CI.test(first)) installCandidate = true; else disqualified = true;
+        }
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      if (line === '') continue;
+      if (INSTALL_NPM_CI.test(line)) installCandidate = true; else disqualified = true;
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (install && npmErrors.length > 0) {
+          out.push({ file: INSTALL_STEP_FILE, names: INSTALL_STEP_NAMES, testId: `${INSTALL_STEP_FILE} > ${INSTALL_STEP_NAMES}`, excerpt: clean(npmErrors.join('\n')) });
+        }
+        reset();
+        continue;
+      }
+      if (INSTALL_NPM_ERROR.test(line) && npmErrors.length < 8) npmErrors.push(line);
+    }
+  }
+  return out;
+}
+
 // The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 // authority 3/3 shard runs `npm run --silent bench:memory -- --check >
 // /dev/null`: the redirect discards the script's pretty-printed JSON
@@ -1034,6 +1566,386 @@ function parseMemoryBenchmarkFailures(log: string): Failure[] {
   return out;
 }
 
+// The `ci` job's "Lint" step on the ubuntu authority 3/3 shard runs
+// `npm run lint` (`eslint . && npm run lint:realio-lane && npm run
+// lint:verse-sync-io`). ESLint's stylish formatter prints each file with
+// messages as its absolute path followed by `line:col severity message
+// ruleId` table rows, then closes the run with a
+// `✖ N problems (X errors, Y warnings)` summary. A lint break prints no
+// vitest FAIL, TAP, typecheck or report shape, so without this shape a red
+// master marked every open PR unknown and queued no fix. Errors group per
+// file under a `<file> > (lint)` identity, like `(typecheck)`: eslint's
+// rules are per-file, so the unit a master fix restores is the file's own
+// content plus the flat config and dependency manifests -- never its
+// import closure -- and the vitest harness ambient set does not apply.
+// Only `error` rows are failures: `eslint .` exits nonzero on errors alone
+// and warnings never fail the step without --max-warnings, so a
+// warnings-only file emits nothing. Stylish prints `result.filePath`, an
+// absolute runner path, so headers resolve through the same
+// `/<work>/<repo>/<repo>/` checkout marker as TAP locations; anything else
+// stays unparsed. Like the other non-test identities it can never resolve
+// through a vitest pass line: shared-baseline, pr-caused or unknown --
+// never probable-flake.
+const LINT_NAMES = '(lint)';
+const LINT_INPUTS = ['eslint.config.js', 'package.json', 'package-lock.json'] as const;
+const LINT_MAX = 100;
+const LINT_MESSAGES_PER_FILE = 8;
+const LINT_SUMMARY = /^✖\s+\d+\s+problems?\s+\(\d+\s+errors?,\s+\d+\s+warnings?\)\s*$/;
+const LINT_MESSAGE = /^(\d+):(\d+)\s+(error|warning)\s/;
+const LINT_FILE_EXT = /\.(?:[jt]sx?|m[jt]s|c[jt]s)$/;
+
+// Stylish prints the linted file's absolute path as a bare header line.
+// Only paths under the Actions checkout marker resolve to repo-relative
+// files; every other absolute path stays unparsed rather than guessed at,
+// the same convention as tapRepoFile.
+function lintHeaderFile(line: string, repo: string | undefined): string | null {
+  if (!line.startsWith('/')) return null;
+  const repoName = repo?.split('/')[1];
+  if (repoName === undefined) return null;
+  const marker = `/${repoName}/${repoName}/`;
+  const at = line.indexOf(marker);
+  if (at < 0) return null;
+  const path = line.slice(at + marker.length);
+  if (!path || posix.normalize(path) !== path || path.includes('..') || posix.isAbsolute(path)) return null;
+  return LINT_FILE_EXT.test(path) ? path : null;
+}
+
+function parseLintFailures(log: string, repo: string | undefined): Failure[] {
+  const byFile = new Map<string, string[]>();
+  let sawSummary = false;
+  let current: string[] | null = null;
+  for (const line of lines(log)) {
+    if (LINT_SUMMARY.test(line)) { sawSummary = true; continue; }
+    const message = LINT_MESSAGE.exec(line);
+    if (message !== null) {
+      if (message[3] === 'error' && current !== null && current.length < LINT_MESSAGES_PER_FILE) current.push(line);
+      continue;
+    }
+    const file = lintHeaderFile(line, repo);
+    if (file === null) { current = null; continue; }
+    let parts = byFile.get(file);
+    if (parts === undefined) {
+      if (byFile.size >= LINT_MAX) { current = null; continue; }
+      parts = [];
+      byFile.set(file, parts);
+    }
+    current = parts;
+  }
+  if (!sawSummary) return [];
+  const out: Failure[] = [];
+  for (const [file, parts] of byFile) {
+    if (parts.length === 0) continue;
+    out.push({ file, names: LINT_NAMES, testId: `${file} > ${LINT_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
+// The lint step's per-file dependency sets: each guard greps source text
+// and never reads a file's imports, so -- like eslint -- the unit a master
+// fix restores is the failing file itself plus the guard's closed input
+// list, never the import closure walk.
+const LINT_GUARD_INPUTS: Record<string, readonly string[]> = {
+  [LINT_NAMES]: LINT_INPUTS,
+  // check-realio-lane-membership.mjs classifies every collected
+  // test/**/*.test.ts by text markers against the two lane manifests and
+  // the measured-fast allowlist, all imported by the checker itself.
+  '(realio-lane)': [
+    'scripts/check-realio-lane-membership.mjs',
+    'scripts/realio-lane-known-fast-spawns.mjs',
+    'scripts/realio-lane-inventory.mjs',
+    'test/config/realio-lane-membership.mjs',
+    'test/config/serial-cpu-lane-membership.mjs',
+  ],
+  // check-verse-sync-io.mjs scans src/core/verse/*-api.ts for synchronous
+  // fs/child-process calls; its only repo input is its own source.
+  '(verse-sync-io)': ['scripts/check-verse-sync-io.mjs'],
+};
+
+// `npm run lint:realio-lane` (scripts/check-realio-lane-membership.mjs)
+// runs after eslint in the same Lint step. With eslint green a red step
+// and no stylish block comes from one of the two trailing guards; this
+// one prints `[check-realio-lane-membership]` section headers followed by
+// bare repo-relative test paths -- the missing-members section adds one
+// indented reason line per file, the stale-entries and lane-overlap
+// sections list paths only. Gate-failing sections group per named path
+// under a `<file> > (realio-lane)` identity; the soft-signal advisory
+// section prints the same path shape but never fails the step, and the
+// ok line closes the report, so both stay unparsed. Section state ends
+// at a blank line once files were seen or at any `##[` step boundary, so
+// later steps' output cannot leak paths into a group. Like the other
+// parenthesized gate identities these can never resolve through a vitest
+// pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const REALIO_LANE_NAMES = '(realio-lane)';
+const REALIO_LANE_MAX = 64;
+const REALIO_LANE_PATH = /^(?:test|src\/web-ui)\/\S+\.test\.[cm]?[jt]sx?$/;
+const realioLanePath = (line: string) => REALIO_LANE_PATH.test(line)
+  && posix.normalize(line) === line && !line.includes('..') && !posix.isAbsolute(line);
+
+function parseRealioLaneFailures(log: string): Failure[] {
+  const byFile = new Map<string, { header: string[]; reason: string | null }>();
+  let section: 'missing' | 'stale' | 'overlap' | null = null;
+  let header: string[] = [];
+  let seenFile = false;
+  let pendingFile: string | null = null;
+  const close = () => { section = null; header = []; seenFile = false; pendingFile = null; };
+  for (const line of lines(log)) {
+    if (byFile.size >= REALIO_LANE_MAX) break;
+    if (line.startsWith('##[')) { close(); continue; }
+    if (line.startsWith('[check-realio-lane-membership]')) {
+      close();
+      if (line.includes('use a real-io marker')) { section = 'missing'; header = [line]; }
+      else if (line.includes('stale KNOWN_FAST_SPAWN_FILES entries') || line.includes('stale real-I/O or serial-CPU entries')) { section = 'stale'; header = [line]; }
+      else if (line.includes('cannot belong to both real-I/O and serial-CPU lanes')) { section = 'overlap'; header = [line]; }
+      continue;
+    }
+    if (section === null) continue;
+    if (realioLanePath(line)) {
+      if (!byFile.has(line)) {
+        if (byFile.size >= REALIO_LANE_MAX) { close(); break; }
+        byFile.set(line, { header: [...header], reason: null });
+      }
+      seenFile = true;
+      pendingFile = section === 'missing' ? line : null;
+      continue;
+    }
+    if (!seenFile) {
+      // Header zone: blanks and the wrapped second half of a section
+      // header precede the section's first file.
+      if (line !== '') header.push(line);
+      continue;
+    }
+    if (line === '') { close(); continue; }
+    // In the missing-members section the line after a file is its
+    // reason; everywhere else a non-path line carries no identity.
+    if (pendingFile !== null) {
+      const entry = byFile.get(pendingFile);
+      if (entry !== undefined) entry.reason = line;
+      pendingFile = null;
+    }
+  }
+  const out: Failure[] = [];
+  for (const [file, entry] of byFile) {
+    const parts = [...entry.header, file];
+    if (entry.reason !== null) parts.push(entry.reason);
+    out.push({ file, names: REALIO_LANE_NAMES, testId: `${file} > ${REALIO_LANE_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
+// `npm run lint:verse-sync-io` (scripts/check-verse-sync-io.mjs) is the
+// last command in the Lint step chain. It refuses synchronous
+// fs/child-process calls in src/core/verse/*-api.ts route files and
+// prints a count header then one
+// `<file>:<line>  <call>(…)  → <hint>` row per violation. Violations
+// group per route file under a `<file> > (verse-sync-io)` identity like
+// `(lint)`: the guard greps source text and never follows imports, so
+// the dependency set is the checker script alone and the vitest harness
+// ambient set does not apply. Rows are accepted only between the count
+// header and the next `##[` step boundary; the success line, the
+// allow-marker trailer and near-miss wording stay unparsed. Like the
+// other parenthesized gate identities these can never resolve through a
+// vitest pass line: shared-baseline, pr-caused or unknown -- never
+// probable-flake.
+const VERSE_SYNC_IO_NAMES = '(verse-sync-io)';
+const VERSE_SYNC_IO_MAX = 64;
+const VERSE_SYNC_IO_PER_FILE = 8;
+const VERSE_SYNC_IO_HEADER = /^verse-sync-io: \d+ synchronous call\(s\) in Phantom console route files/;
+const VERSE_SYNC_IO_VIOLATION = /^(src\/core\/verse\/\S+-api\.ts):\d+\s+\S+\(…\)\s+→\s+\S/;
+
+function parseVerseSyncIoFailures(log: string): Failure[] {
+  const byFile = new Map<string, string[]>();
+  let open = false;
+  for (const line of lines(log)) {
+    if (byFile.size >= VERSE_SYNC_IO_MAX) break;
+    if (line.startsWith('##[')) { open = false; continue; }
+    if (VERSE_SYNC_IO_HEADER.test(line)) { open = true; continue; }
+    if (!open) continue;
+    const match = VERSE_SYNC_IO_VIOLATION.exec(line);
+    if (match === null) continue;
+    const file = match[1]!;
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    let parts = byFile.get(file);
+    if (parts === undefined) {
+      parts = [];
+      byFile.set(file, parts);
+    }
+    if (parts.length < VERSE_SYNC_IO_PER_FILE) parts.push(line);
+  }
+  const out: Failure[] = [];
+  for (const [file, parts] of byFile) {
+    if (parts.length === 0) continue;
+    out.push({ file, names: VERSE_SYNC_IO_NAMES, testId: `${file} > ${VERSE_SYNC_IO_NAMES}`, excerpt: clean(parts.join('\n')) });
+  }
+  return out;
+}
+
+// The `ci` job's qualification lanes wrap the suite runs in
+// .github/scripts/ci-qualification-lane.mjs, which re-reads each Vitest
+// JSON report and refuses a case that passed only after a retry -- the
+// default reporter shows it green, so the step's only failure output is
+// this verdict on stderr:
+//   Test case passed only after a failed attempt (flaky): test/x.test.ts > suite title
+// `file` is the report's repo-relative module path (the script itself
+// rejects `..` and absolute paths); `names` is the JSON reporter's
+// space-joined ancestor titles plus the case title -- deliberately not
+// the default reporter's ` > ` chain, so the identity stays honest about
+// which evidence named it. It is not parenthesized, so a green master
+// module (`✓ file (N tests)`) resolves it like any vitest failure: a
+// one-off flake on an unaffected singleton becomes probable-flake and
+// rerun-failed, while a flake repeating across unaffected PRs -- or one
+// master itself prints -- groups shared-baseline for a stabilization
+// fix. Without this shape a flaky master leaves every open PR unknown
+// and queues nothing.
+const QUALIFICATION_FLAKY_MAX = 16;
+const QUALIFICATION_FLAKY_LINE = /^Test case passed only after a failed attempt \(flaky\): ((?:test|src\/web-ui)\/[^\s>]+\.test\.[cm]?[jt]sx?) > (.+)$/;
+
+function parseQualificationFlakyFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= QUALIFICATION_FLAKY_MAX) break;
+    const match = QUALIFICATION_FLAKY_LINE.exec(line);
+    if (match === null) continue;
+    const file = match[1]!, names = clean(match[2]!);
+    if (posix.normalize(file) !== file || file.includes('..') || posix.isAbsolute(file)) continue;
+    out.push({ file, names, testId: `${file} > ${names}`, excerpt: clean(line) });
+  }
+  return out;
+}
+
+// The `ci` job's "Capture pack smoke build snapshot" step on the ubuntu
+// authority 1/3 shard runs `npm run check:first-paint:built`
+// (scripts/check-first-paint-budget.mjs --no-build --out-dir
+// dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250)
+// between the pack-smoke capture and prepare commands. The gate walks the
+// Vite manifest's static-import closure of each first-paint root --
+// index.html -> main.tsx -> the Verse apps -> the chat/home screens --
+// sums the chunk bytes and fails the step when either arm exceeds its
+// budget. A budget break prints no vitest, typecheck, TAP or report shape,
+// so without this shape a red master marked every open PR unknown and
+// queued no fix. Each over-budget verdict groups per arm under
+// `scripts/check-first-paint-budget.mjs > (first-paint) <arm>`: the two
+// arms measure different closures against different budgets, so a phone
+// regression never merges into the chat group. The script's own error
+// path (`check-first-paint-budget: <message>` -- missing manifest,
+// renamed first-paint root, manifest import with no entry) groups under
+// `(first-paint) gate`. Like the other non-test identities these can
+// never resolve through a vitest pass line: shared-baseline, pr-caused or
+// unknown -- never probable-flake. The per-file `N.N KB  <file>` listing,
+// OK verdicts, --json reports, npm lifecycle noise and unrelated output
+// stay unparsed.
+const FIRST_PAINT_FILE = 'scripts/check-first-paint-budget.mjs';
+const FIRST_PAINT_MAX = 8;
+const FIRST_PAINT_OVER_BUDGET = /^OVER BUDGET: (chat|phone)\b.*\bfirst-paint critical JS \d+(?:\.\d+)? KB \(budget \d+(?:\.\d+)? KB\)$/;
+const FIRST_PAINT_GATE_ERROR = /^check-first-paint-budget: \S/;
+
+function parseFirstPaintFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  for (const line of lines(log)) {
+    if (out.length >= FIRST_PAINT_MAX) break;
+    const over = FIRST_PAINT_OVER_BUDGET.exec(line);
+    if (over !== null) {
+      const names = `(first-paint) ${over[1]}`;
+      out.push({ file: FIRST_PAINT_FILE, names, testId: `${FIRST_PAINT_FILE} > ${names}`, excerpt: clean(line) });
+      continue;
+    }
+    if (FIRST_PAINT_GATE_ERROR.test(line)) {
+      const names = '(first-paint) gate';
+      out.push({ file: FIRST_PAINT_FILE, names, testId: `${FIRST_PAINT_FILE} > ${names}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// Every `npm run test:ci` invocation -- the fast-gate affected-test
+// shards through ci-fast-run.mjs, the quick job's selected contract
+// test and the full lanes' hermetic steps -- runs inside
+// scripts/test-ci.mjs, which isolates HOME, pipes Vitest through a
+// private progress reporter and enforces an inactivity watchdog plus a
+// hard runtime cap; the complete partitions run under
+// scripts/test-ci-sharded.mjs, which plans shards from the measured
+// duration table and spawns the same wrapper per shard. When the
+// WRAPPER fails -- Vitest hangs past the idle window or the hard cap,
+// dies by signal, cannot spawn, the Node floor is unmet, or the shard
+// plan cannot be built -- the step goes red with no vitest FAIL, TAP
+// `not ok`, tsc diagnostic or report shape naming it, so every open PR
+// reads unknown and queues no fix. Each verdict groups under the
+// wrapper script as `scripts/test-ci.mjs > (test-ci)` or
+// `scripts/test-ci-sharded.mjs > (test-ci-sharded)`: a hang or crash
+// is usually caused by test content the runner cannot name, so the
+// dependency set is a closed input list -- the runner scripts, the
+// type-stripped memory-policy module test-ci reads as text, the
+// reporter and vitest config surface the spawned run executes under,
+// the shard plan's duration table and the runner the orchestrator
+// spawns, plus the toolchain manifests -- rather than the import
+// closure walk, which test-ci's computed data: import cannot survive;
+// the vitest harness ambient set does not apply. Like the other
+// non-test identities these can never resolve through a vitest pass
+// line: shared-baseline, pr-caused or unknown -- never
+// probable-flake. The heartbeat, capacity-observer, job-memory,
+// lifecycle (`started` / `exited`), aggregate (`FAIL (...)` /
+// `PASS (...)`), usage and report-summary lines are progress, cascade
+// or companion-runner evidence and stay unparsed: `exited <code>`
+// and `exited via <signal>` fire on ordinary test failures and on the
+// stopOthers SIGTERM cascade, so they can never be runner identities.
+const TEST_CI_FILE = 'scripts/test-ci.mjs';
+const TEST_CI_NAMES = '(test-ci)';
+const TEST_CI_SHARDED_FILE = 'scripts/test-ci-sharded.mjs';
+const TEST_CI_SHARDED_NAMES = '(test-ci-sharded)';
+const TEST_RUNNER_MAX = 8;
+
+// [test-ci] verdicts are the wrapper's own stderr lines; the bracketed
+// prefix belongs to it alone -- [test-ci-capacity], [test-ci:sharded]
+// and [job-memory] carry different prefixes, and heartbeat lines are
+// periodic progress, never verdicts.
+const TEST_CI_VERDICT = /^\[test-ci\] (?:Node >=22\.15\.0 is required\.|idle-timeout after \d+ms without output\.|hard-runtime-cap reached after \d+ms \(last output \d+ms ago\)|received SIG(?:INT|TERM); terminating the Vitest process tree\.|failed to start Vitest: \S|Vitest exited via signal \S)/;
+// [test-ci:sharded] verdicts are the balanced plan's refusal and the
+// per-shard spawn errors; every other bracketed line is lifecycle,
+// aggregate or usage output owned elsewhere or unparseable on purpose.
+const TEST_CI_SHARDED_VERDICT = /^\[test-ci:sharded\] (?:cannot plan balanced shards: \S|\S.* failed to start: \S)/;
+
+function parseTestRunnerFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  let ci = 0;
+  let sharded = 0;
+  for (const line of lines(log)) {
+    if (TEST_CI_VERDICT.test(line)) {
+      if (ci >= TEST_RUNNER_MAX) continue;
+      ci++;
+      out.push({ file: TEST_CI_FILE, names: TEST_CI_NAMES, testId: `${TEST_CI_FILE} > ${TEST_CI_NAMES}`, excerpt: clean(line) });
+      continue;
+    }
+    if (TEST_CI_SHARDED_VERDICT.test(line)) {
+      if (sharded >= TEST_RUNNER_MAX) continue;
+      sharded++;
+      out.push({ file: TEST_CI_SHARDED_FILE, names: TEST_CI_SHARDED_NAMES, testId: `${TEST_CI_SHARDED_FILE} > ${TEST_CI_SHARDED_NAMES}`, excerpt: clean(line) });
+    }
+  }
+  return out;
+}
+
+// The spawned Vitest run's direct repo inputs, shared by both runner
+// identities: the config that collects and times the suites, the
+// mock-compat config and setup files it loads, the lane-membership and
+// sequencer modules the config imports, and the toolchain manifests
+// pinning the runner and compiler.
+const TEST_RUNNER_COMMON_INPUTS = [
+  'vitest.config.ts',
+  'vitest.config.mock-compat.ts',
+  'test/setup/home.ts',
+  'test/setup/home-isolation-guard.ts',
+  'test/config/realio-lane-membership.mjs',
+  'test/config/serial-cpu-lane-membership.mjs',
+  'test/config/weighted-sequencer.mjs',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+] as const;
+const TEST_RUNNER_INPUTS: Record<string, readonly string[]> = {
+  [TEST_CI_NAMES]: [TEST_CI_FILE, 'src/core/run/tool-path.ts', 'scripts/vitest-progress-reporter.mjs', ...TEST_RUNNER_COMMON_INPUTS],
+  [TEST_CI_SHARDED_NAMES]: [TEST_CI_SHARDED_FILE, 'scripts/test-shard-plan.mjs', 'scripts/test-ci.mjs', 'test/helpers/test-durations.json', ...TEST_RUNNER_COMMON_INPUTS],
+};
+
 export function parseBaselineFailures(log: string, repo?: string, auditExceptions: readonly DependencyAuditException[] | null = []): Failure[] {
   const result: Failure[] = [];
   const typecheck = new Map<string, Failure>();
@@ -1083,6 +1995,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseBuildStepFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parsePerfBudgetFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
@@ -1111,7 +2027,35 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseInstallFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parseMemoryBenchmarkFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseLintFailures(log, repo)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseRealioLaneFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseVerseSyncIoFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseQualificationFlakyFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseFirstPaintFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
+  for (const failure of parseTestRunnerFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
   }
@@ -1133,9 +2077,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
-  async function logs(run: Run, head: string) {
+  async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    // A job that never reached a verdict — cancelled while queued, timed
+    // out, awaiting action, failed to start, or marked stale — is
+    // incomplete evidence even when its log is absent or empty: the run
+    // cannot prove the ref's checks, so the caller reads unknown rather
+    // than clean. The flag is computed from the job list itself, so a
+    // never-started job counts the same as one whose partial log would
+    // otherwise verify or drop silently.
+    let incomplete = data.jobs.some(job => INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -1158,6 +2110,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
+      // Gate jobs that never run ci-source-binding.mjs prove the checkout
+      // through the runner's resolved `with: ref:` echo instead; it
+      // verifies only when every checkout step in the log pins `ref:` to
+      // the head.
+      if (checkoutRefsVerify(output, head)) {
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
       // Aggregator jobs that never check out the workspace (Merge Gate,
       // release autotag) cannot emit the checkout SHA this check requires.
       // Their logs are dropped from evidence only when they carry nothing
@@ -1166,7 +2126,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
-    return result;
+    // A completed run that instantiated no jobs at all and did not
+    // succeed — startup_failure and friends — has no job list to mark
+    // incomplete, so the run's own conclusion carries the verdict.
+    if (!incomplete && data.jobs.length === 0 && run.conclusion !== undefined && INCOMPLETE_RUN_CONCLUSIONS.has(run.conclusion)) {
+      incomplete = true;
+    }
+    return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
@@ -1175,7 +2141,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   for (const run of masterRuns ?? []) {
     if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }
     const evidence = await logs(run, run.head_sha);
-    if (evidence) masterLogs.push(...evidence); else masterKnown = false;
+    // An incomplete check (cancelled, timed-out, ...) keeps its verified
+    // job evidence — a sibling failure is still real master evidence —
+    // but the run cannot prove master green, so known drops to false.
+    if (evidence) { masterLogs.push(...evidence.entries); if (evidence.incomplete) masterKnown = false; }
+    else masterKnown = false;
   }
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
   const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
@@ -1194,11 +2164,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     else if (fetched.ok && fetched.source !== null) auditExceptions = parseAuditExceptions(fetched.source);
   }
   const masterFailures = masterLogs.flatMap(l => parseBaselineFailures(l.text, repo, auditExceptions));
+  // Parenthesized identities are gate checks, not vitest tests: only
+  // '(suite)' resolves through pass evidence, because the file loading is
+  // what failed. '(lint)', '(typecheck)' and the other gate names can never
+  // be flakes even when their file happens to be a test path a green-module
+  // line could otherwise match.
+  const filePassable = (names: string) => names === SUITE_NAMES || !names.startsWith('(');
   // A suite failure has no per-test pass line to match: the file loading and
   // running at all is what resolves it. The default reporter's green-module
   // line (`✓ file (N tests)`) is the same evidence at file granularity -- a
   // green module means every test it contains passed on master.
-  const passes = (f: Failure) => masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
+  const passes = (f: Failure) => filePassable(f.names) && masterKnown && !masterFailures.some(m => m.testId === f.testId) && masterLogs.some(l => l.conclusion === 'success' && lines(l.text).some(line => {
     const m = PASS_LINE.exec(line);
     if (m) return m[1] === f.file && (f.names === SUITE_NAMES || m[2] === f.names);
     return FILE_PASS_LINE.exec(line)?.[1] === f.file;
@@ -1487,21 +2463,34 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
+    let incomplete = false;
     const found: (Failure & { runId: number })[] = [];
     for (const run of latest) {
       if (run.status !== 'completed') { known = false; continue; }
       const evidence = await logs(run, pr.headRefOid);
+      // A run with an incomplete check — a job cancelled, timed out,
+      // awaiting action, failed to start or gone stale, or a jobless
+      // run that did not succeed — cannot prove the head's checks, so
+      // the PR reads unknown rather than fresh.
       if (!evidence) { known = false; continue; }
-      for (const log of evidence.filter(l => l.conclusion === 'failure')) {
+      if (evidence.incomplete) { known = false; incomplete = true; continue; }
+      for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
         const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
     }
-    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
+    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      const deps = await dependencies(failure.file);
+      // Lint-guard, first-paint, test-runner and install-step failures are
+      // per-file/per-arm/per-runner/per-manifest like eslint: the checkers
+      // grep source text, measure bundle bytes, wrap the suite run or read
+      // the dependency manifests, and never read a file's imports, so the
+      // dependency set is each gate's closed input list rather than the
+      // import closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only
       // the generator-input deps decide touched. The version-sync gate reads
@@ -1509,10 +2498,12 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // exactly its lockfile input set, the pack-smoke/artifact gates
       // plain .mjs scripts plus their enumerated manifests, the memory
       // benchmark gate a tsx script plus its import closure and seeded
-      // toolchain inputs, and the secret-shape/secret-scan/
-      // version-provenance trust gates have no vitest harness at all, so
-      // the ambient set cannot reach any of them.
-      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
+      // toolchain inputs, the eslint/realio-lane/verse-sync-io lint guards
+      // and the first-paint budget arms read closed input lists outside
+      // the harness, and the secret-shape/
+      // secret-scan/version-provenance trust gates have no vitest harness
+      // at all, so the ambient set cannot reach any of them.
+      const ambient = failure.names === GENERATED_NAMES || failure.names === VERSION_SYNC_NAMES || failure.names === PACK_SMOKE_NAMES || failure.names === HOSTED_ARTIFACT_NAMES || failure.names === SECRET_SHAPE_NAMES || failure.names === SECRET_SCAN_NAMES || failure.names === VERSION_PROVENANCE_NAMES || failure.names === MEMORY_BENCHMARK_NAMES || failure.names === BUILD_STEP_NAMES || flatInputs !== undefined || failure.names.startsWith(`${DEPENDENCY_AUDIT_NAMES} `) || CI_SCRIPT_GATE_FILES.has(failure.file) ? new Set<string>() : await harnessAmbient(failure.file);
       const touched = pr.files?.some(f => f.path === failure.file) ? true : deps && ambient && pr.files?.length < 100 ? pr.files.some(f => deps.has(f.path) || ambient.has(f.path)) : null;
       observations.push({ pr, failure, touched, runId: failure.runId });
     }

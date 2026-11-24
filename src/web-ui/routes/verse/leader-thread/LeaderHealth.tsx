@@ -10,6 +10,12 @@
  * screen, the first read that counts no failure says the Leader is passing
  * again, until it is dismissed. Read-only: one GET a minute while the pane is
  * on screen, and Check again for a read now.
+ *
+ * The same notice sits above a session's reply box (fleet-sessions/
+ * SessionThread.tsx, with `to` naming the worker the box is aimed at) and at
+ * the top of the Conversations wall, because those words go through the same
+ * inbox. Every copy reads one cache entry, so a screen with several opens
+ * on one request; each copy on screen then refreshes it once a minute.
  */
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../../../components/primitives/clipboard.js';
@@ -38,7 +44,15 @@ function CopyFix({ command }: { command: string }) {
   </>;
 }
 
-export function LeaderHealth({ visible }: { visible: boolean }) {
+export interface LeaderHealthProps {
+  visible: boolean;
+  /** The job the reply box under the notice is aimed at; absent where the box writes to the Leader itself. */
+  to?: string | null;
+  /** Where it is drawn, for its margins only: the Leader pane (the default), a session's conversation, or the top of the Conversations wall. */
+  place?: 'thread' | 'wall';
+}
+
+export function LeaderHealth({ visible, to = null, place }: LeaderHealthProps) {
   const read = useQuery(leaderHealthQuery, { enabled: visible, freshMs: LEADER_HEALTH_POLL_MS });
   const refetch = useRefetch(leaderHealthQuery);
   usePollWhileVisible(refetch, LEADER_HEALTH_POLL_MS, { enabled: visible });
@@ -46,12 +60,12 @@ export function LeaderHealth({ visible }: { visible: boolean }) {
   const [wasFailing, setWasFailing] = useState(false);
   useEffect(() => { if (failing) setWasFailing(true); }, [failing]);
 
-  const notice = leaderHealthNotice(read.data, wasFailing);
+  const notice = leaderHealthNotice(read.data, wasFailing, to);
   if (notice === null) return null;
   const recovered = notice.state === 'recovered';
   // A kept reading whose refresh failed is still shown, and says it is old.
   const stale = read.error !== undefined;
-  return <section className={styles.health} aria-label="Leader health" data-state={notice.state} role={notice.state === 'down' ? 'alert' : 'status'}>
+  return <section className={styles.health} aria-label="Leader health" data-state={notice.state} data-place={place} role={notice.state === 'down' ? 'alert' : 'status'}>
     <p className={styles.head}>
       <span className={styles.dot} aria-hidden="true" />
       <strong className={styles.headline}>{notice.headline}</strong>

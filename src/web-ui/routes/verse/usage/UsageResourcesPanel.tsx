@@ -8,6 +8,7 @@
  * rule — never a bar, never a number. Unreadable reads say so in words.
  */
 import type { ReactNode } from 'react';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { useQuery } from '../../../data/hooks.js';
 import sectionStyles from './usage.module.css';
 import styles from './usage-resources.module.css';
@@ -41,7 +42,8 @@ function ResourceCell({ view, localLanes, generatedAt = null }: { view: Resource
   return (
     <li className={styles.cell} data-state={localSlots ? 'local-slots' : view.state} data-resource={view.id}>
       <div className={styles.cellHead}>
-        <span className={styles.cellName}>{view.label}</span>
+        {/* By id, not label: "Ultra (Cursor + Grok pool)" is neither company's alone, so it keeps a monogram. */}
+        <span className={styles.cellName}><BrandMark brand={view.id} size={14} inline />{view.label}</span>
         {view.stateText ? <span className={styles.cellState}>{view.stateText}</span> : null}
       </div>
 

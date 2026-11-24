@@ -293,7 +293,10 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   last pass ran. The pane reads `GET /api/verse/leader/health` (read session
   required; the same `fleet.leader-health.v1` document as
   `phm fleet leader-health --json`) once a minute while it is on screen, and
-  the server shares one reading for 15 seconds.
+  the server shares one reading for 15 seconds. The same notice shows above a
+  session's reply box and on the Conversations wall, because those messages
+  go through the same inbox; see
+  [Sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md).
 
 ---
 
@@ -561,7 +564,8 @@ reads it.
 
 ## From the CLI
 
-`phm leader thread` shows one chat: your `leader/MASON-INBOX.md` entries and the
+`phm leader thread --legacy` preserves the earlier chat format: your
+`leader/MASON-INBOX.md` entries and the
 leader's replies (`leader/MASON-OUTBOX.md` and the latest “Reply for Mason”
 block in each `leader/PLAN-LOG.md` entry), oldest first. It prints JSON by
 default (`id`, `ts`, `direction`, `channel`, `text`, `state`); add `--text` for
@@ -574,11 +578,18 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 `phm leader say "<text>"` sends through the verified local-owner inbox writer
 (the same path as `phm leader inbox --text`) and prints the new message id.
 The desktop inbox box and the phone box show the same chat above their Send.
-For the whole conversation with the channel of each message, run
-`phm leader thread --since <hours> [--json]` (or GET
-`/api/verse/leader/thread/merged`): each entry has `at`, `from` (`mason`,
-`leader`, `teammate` or `unknown`), `channel`, `text` and `source`. A reply in
-both the outbox and the PLAN-LOG shows once, and an entry with no readable date
+The default `phm leader thread` shows the whole conversation as plain lines.
+Add `--json` for the `leader.thread.v1` shape or `--text` for explicit plain
+lines. Optionally filter with `--since <hours|date>` and `--before <hours|date>`
+or keep the newest n with `--limit <n>`. `since` keeps entries at or after its
+cutoff and `before` keeps entries strictly before its own, so the pair reads
+one `[since, before)` window — the same bound pair every other comms read
+applies; an entry with no readable date cannot be placed inside or outside
+the window, so neither bound ever drops it. The same view is available at GET
+`/api/verse/leader/thread/merged?since=…&before=…&limit=…`. Each entry has `at`, `from` (`mason`,
+`leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
+numbers named in the text). Without `--since`/`--before`, no time filter is applied.
+A reply in both the outbox and the PLAN-LOG shows once, and an entry with no readable date
 keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader
 conversation. For dated PLAN-LOG replies alone, newest first, use
@@ -587,7 +598,8 @@ journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--limit 20] [--text]
+ashlr leader thread [--since 24] [--before 2] [--limit 20] [--json]
+ashlr leader thread --legacy [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>
 ashlr leader veto <actionId> [--note "why"]      # or: veto --memo <memoId>
@@ -657,3 +669,25 @@ allowance, native context allocation or verified funding observations.
 Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Recent Q8 PRs can also be discovered from GitHub when queue history is absent. The file is replaced atomically; this command does not merge or publish anything.
 
 The resident daemon refreshes this snapshot at startup and every 15 minutes. GitHub search also discovers recent Q8 PRs independently of local history; `sources.github` is `partial` when search or a PR lookup fails or the search reaches its page limit. The schedule requires the resident daemon to be running.
+
+The compact brief (`leader.compact-brief.v1`) reads cached GitHub release evidence,
+then local git tags for each missing repository. Its `release` counts include this
+fallback; `releaseRepos` gives the tag, tag date, commits since the tag, state,
+source and unknown reason. Local git is due over 20 commits or over seven days;
+otherwise it is ok. On `phm leader brief --json` or `phm fleet release-backlog
+--json`, shallow clones or missing local tags fall back to public remote version
+tags (highest stable version), their dates and GitHub compare counts. Each remote
+read has a five-second budget; readings are cached for ten minutes.
+Background compact reads use that cache without network calls. An unreachable
+remote stays unknown with a plain reason; an unreadable count stays null.
+Missing clones or default-branch refs stay unknown. Tags are not publication proof.
+The same evidence appears in `phm fleet release-backlog --json` under `repos[].git`.
+
+Default clone paths are `~/Projects/ashlrai/wt/guardian-<repo>`, then
+`~/.ashlr-runs/phm-live` for Phantom, then `~/Projects/ashlrai/<repo>`.
+Set `PHANTOM_RELEASE_CLONES` to a JSON object such as
+`{"phantom":"/path/to/phantom","locus":"/path/to/locus"}` to replace that list;
+unlisted repositories stay unknown with reason `no local clone`. Local reads use
+`origin/HEAD` (or `origin/master`, then `origin/main` if unset) and have a
+five-second budget per clone. Remote reads use `git ls-remote` against the public
+AshlrAI URL, without fetching or changing clones. Local refs reflect their last fleet refresh.

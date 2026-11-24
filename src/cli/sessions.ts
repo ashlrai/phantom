@@ -1,7 +1,8 @@
 /**
  * `phm sessions`: the tree of every fleet agent session (no verb), one session's
  * live log (tail; cmdJobTail in job.ts), one session as a conversation (thread), every
- * session as a short conversation (threads), MCP gateway
+ * session as a short conversation (threads), words looked for in every
+ * session's whole conversation (find), MCP gateway
  * sessions (list, revoke) and resumable agent sessions (create, show, resume,
  * terminate; list shows both kinds). Thin handler: logic lives in
  * src/core/fleet/live-sessions.ts, src/core/gateway-sessions.ts and
@@ -19,7 +20,8 @@ import { getFleetSessions } from '../core/fleet/runs-sessions.js';
 import { renderSessionThreadText, SESSION_ID_RE, type SessionThreadDepth, type SessionThreadV1 } from '../core/fleet/session-thread.js';
 import { readSessionThread } from '../core/fleet/session-thread-read.js';
 import { renderSessionThreadsText, type SessionThreadsV1 } from '../core/fleet/session-threads.js';
-import { readSessionThreads } from '../core/fleet/session-threads-read.js';
+import { readSessionFind, readSessionThreads } from '../core/fleet/session-threads-read.js';
+import { FIND_QUERY_CHARS, findWords, renderSessionFindText, type SessionFindV1 } from '../core/fleet/session-find.js';
 import { reconcileSessions, renderSessionReconciliation } from '../core/fleet/session-reconciliation.js';
 
 const USAGE = `Usage:
@@ -43,8 +45,15 @@ const USAGE = `Usage:
   phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]
                                       Every session as a short conversation on one screen:
                                       its summary and its newest 3 messages, yours included,
-                                      leader first. Up to 40 sessions. Read only; exit 1
+                                      leader first. Up to 40 sessions, running ones before
+                                      ended ones. Read only; exit 1
                                       when the session list could not be read.
+  phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]
+                                      The sessions whose whole conversation holds every
+                                      word, with the messages that hold one. Looks through
+                                      what thread <id> --all shows, in up to 120
+                                      sessions. Read only; exit 1 when the session list
+                                      could not be read.
   phm sessions list [--json]          Show gateway sessions and agent sessions
   phm sessions reconcile [--json]     Check local runs: live, finished or unknown. Read only.
   phm sessions revoke <id> [--json]   Block a gateway session's next tool call
@@ -206,6 +215,41 @@ export async function cmdSessionThreads(args: string[],
   return unreadable ? 1 : 0;
 }
 
+const FIND_USAGE = 'Usage: phm sessions find <words> [--lane <lane>] [--repo <repo>] [--live] [--json]\n';
+
+/**
+ * `phm sessions find <words> [--lane L] [--repo R] [--live] [--json]`: the sessions whose whole conversation holds every word.
+ * Exit 0 read (finding nothing is still a read), 1 sessions unreadable, 2 usage.
+ */
+export async function cmdSessionFind(args: string[],
+  read: (query: string, filter: { lane: string | null; repo: string | null; live?: boolean }) => Promise<SessionFindV1> = (query, filter) => readSessionFind(query, filter)): Promise<number> {
+  let values: { json?: boolean; live?: boolean; lane?: string; repo?: string }, positionals: string[];
+  try {
+    ({ values, positionals } = parseArgs({ args, strict: true, allowPositionals: true,
+      options: { json: { type: 'boolean' }, live: { type: 'boolean' }, lane: { type: 'string' }, repo: { type: 'string' } } }));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : 'Invalid arguments'}\n${FIND_USAGE}`);
+    return 2;
+  }
+  const query = positionals.join(' ');
+  if (query.length > FIND_QUERY_CHARS || findWords(query).length === 0) {
+    process.stderr.write(`Give the words to look for: each two characters or more, ${FIND_QUERY_CHARS} characters in all.\n${FIND_USAGE}`);
+    return 2;
+  }
+  for (const key of ['lane', 'repo'] as const) {
+    if (values[key] !== undefined && !SESSION_FILTER_RE.test(values[key])) {
+      process.stderr.write(`--${key} takes a ${key} name such as claude or phantom.\n${FIND_USAGE}`);
+      return 2;
+    }
+  }
+  const found = await read(query, { lane: values.lane ?? null, repo: values.repo ?? null, ...(values.live ? { live: true } : {}) });
+  const unreadable = found.sources.sessions === 'unavailable';
+  if (values.json) console.log(JSON.stringify(found, null, 2));
+  else if (unreadable) process.stderr.write(`${found.gaps.join('\n')}\n`);
+  else console.log(renderSessionFindText(found));
+  return unreadable ? 1 : 0;
+}
+
 export async function cmdReconcileSessions(args: string[], read: typeof getFleetSessions = getFleetSessions): Promise<number> {
   let values;
   try {
@@ -230,6 +274,7 @@ export async function cmdSessions(args: string[]): Promise<number> {
   if (sub === 'reconcile') return cmdReconcileSessions(args.slice(1));
   if (sub === 'thread') return cmdSessionThread(args.slice(1));
   if (sub === 'threads') return cmdSessionThreads(args.slice(1));
+  if (sub === 'find') return cmdSessionFind(args.slice(1));
   if (sub === 'tail') return (await import('./job.js')).cmdJobTail(args.slice(1), {}, 'session');
 
   if (sub === 'list' && more.length === 0) {

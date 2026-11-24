@@ -7,18 +7,35 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-A job proves its checkout either by echoing `git log -1 --format=%H` followed
-by the head SHA, or by the `Bound candidate <sha> to event tree|merge ...`
-receipt `.github/scripts/ci-source-binding.mjs` prints after verifying
-`git rev-parse HEAD` equals the candidate revision; the bound revision must
-equal the analyzed head exactly. Jobs that never check out the workspace
-(aggregators such as Merge Gate) cannot emit either receipt; their logs are
-dropped from evidence only when they carry no parseable failure or per-test
-pass output. The default reporter's green-module pass lines are expected
-from checkout jobs that never bound a receipt, so they neither verify nor
-poison a run; any other consumable evidence in an unverifiable log keeps the
-run unknown. Unreadable, incomplete, capped, or unverified logs are unknown,
-never clean.
+A job proves its checkout one of three ways: echoing `git log -1
+--format=%H` followed by the head SHA; printing the `Bound candidate <sha>
+to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`
+emits after verifying `git rev-parse HEAD` equals the candidate revision;
+or, for gate jobs that never run the binding script (secret-shape, quick,
+clean-tree, authority-drift, fast-gate, secret-scan and the whole
+dependency-audit job), recording `actions/checkout` steps whose resolved
+`with: ref:` input is the analyzed head in every checkout group of the log.
+The bound revision or checkout ref must equal the analyzed head exactly; an
+unpinned checkout (which falls back to the event's merge commit on pull
+requests), a non-SHA ref or a second checkout of anything else leaves the
+job unverifiable. Jobs that never check out the workspace (aggregators such
+as Merge Gate) cannot emit any proof; their logs are dropped from evidence
+only when they carry no parseable failure or per-test pass output. The
+default reporter's green-module pass lines are expected from checkout jobs
+that never bound a receipt, so they neither verify nor poison a run; any
+other consumable evidence in an unverifiable log keeps the run unknown.
+Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
+`action_required`, `startup_failure` or `stale` — is incomplete evidence
+even when its log is absent or empty: the run cannot prove the ref's
+checks, so the PR reads `unknown` rather than `fresh` — freshness reason
+`incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
+and master's known state drops while the run's verified job logs still
+feed failure parsing. `skipped` and `neutral` conclusions are
+deliberate non-verdicts, not incomplete checks. A completed run that
+instantiated no jobs at all reads the same way when its own conclusion is
+not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
+no job list to mark incomplete, so the run's conclusion carries it.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
@@ -27,6 +44,22 @@ A suite that fails to load (transform, parse, or collection error) prints
 `<file> > (suite)` identity, capture the suite's error line, and count as
 passing on master when the file shows any pass evidence -- the file loading
 and running is what resolves a suite failure.
+The `ci` job's qualification lanes wrap the suite runs in
+`.github/scripts/ci-qualification-lane.mjs`, which re-reads each Vitest
+JSON report and refuses a case that passed only after a retry -- the
+default reporter shows it green, so the step's only failure output is
+`Test case passed only after a failed attempt (flaky): <file> > <name>`
+on stderr. `<file>` is the report's repo-relative module path under
+`test/` or `src/web-ui/` and `<name>` is the JSON reporter's space-joined
+ancestor titles plus the case title, not the default reporter's ` > `
+chain, so the group keys on the identity the evidence itself printed.
+Because it names a real test, the usual dependency closure and pass
+evidence apply: a green master module resolves a one-off flake on an
+unaffected singleton to `probable-flake`/`rerun-failed`, while a flake
+repeated across unaffected PRs -- or printed by master itself -- groups
+`shared-baseline` for a stabilization fix. Verdicts naming paths outside
+the suite roots, missing case names and near-miss wording stay unparsed,
+so an unrecognized lane failure still reads unknown rather than guessed.
 TypeScript diagnostics from `tsc`/`tsgo` non-pretty output
 (`src/core/foo.ts(41,9): error TS2322: ...`) group per file under a
 `<file> > (typecheck)` identity: a typecheck or build break prints no vitest
@@ -37,6 +70,54 @@ every diagnostic line for one file merges into a single failure excerpt. A
 `(typecheck)` identity can never be resolved by a vitest pass line, so these
 groups classify as `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`.
+
+The `ci` job's "Lint" step on the ubuntu authority 3/3 shard runs
+`npm run lint` (`eslint . && npm run lint:realio-lane && npm run
+lint:verse-sync-io`). ESLint's stylish formatter prints each file with
+messages as its absolute path followed by `line:col severity message
+ruleId` rows and closes the run with a `✖ N problems (X errors, Y
+warnings)` summary; a lint break prints no vitest, typecheck or TAP line,
+so without this shape a red master marked every open PR unknown. Error
+rows group per file under a `<file> > (lint)` identity -- warnings never
+fail the step without `--max-warnings`, so warnings-only files emit
+nothing -- and stylish's absolute `result.filePath` headers resolve
+through the same `/<work>/<repo>/<repo>/` checkout marker as TAP
+locations; runs without the summary line, paths outside the marker and
+non-lintable paths stay unparsed. ESLint's rules are per-file, so the
+dependency set is the failing file itself plus `eslint.config.js`,
+`package.json` and `package-lock.json`: a file the failing source merely
+imports does not count as touched, and the vitest harness ambient set
+does not apply. Like `(typecheck)` it can never resolve through a vitest
+pass line, so these groups classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. The pass-line guard covers every
+parenthesized gate identity, which also closes the hole where a
+`(typecheck)` failure on a test path could read a green module line as a
+master pass.
+
+The same step's two trailing guards get the same per-file treatment.
+`npm run lint:realio-lane`
+(scripts/check-realio-lane-membership.mjs) prints
+`[check-realio-lane-membership]` section headers followed by bare
+test paths: unclassified real-io markers under a missing-members
+header (each with its reason line), stale lane-manifest or
+measured-fast-allowlist entries, and real-I/O/serial-CPU overlaps.
+Each named path groups under `<file> > (realio-lane)`; the
+soft-signal advisory section prints the same path shape but never
+fails the step and stays unparsed, as do the ok line, non-test paths
+and sections cut off by a `##[` step boundary. `npm run
+lint:verse-sync-io` (scripts/check-verse-sync-io.mjs) prints a
+`verse-sync-io: N synchronous call(s)` count header then
+`<file>:<line>  <call>(…)  → <hint>` rows for synchronous fs or
+child-process calls in `src/core/verse/*-api.ts` route files; each
+route file groups under `<file> > (verse-sync-io)`, with rows accepted
+only between the header and the next step boundary. Both guards grep
+source text and never read a file's imports, so their dependency sets
+are closed input lists -- the realio checker plus its two lane
+manifests, the measured-fast allowlist and the lane-inventory helper;
+the verse checker script alone -- and the vitest harness ambient set
+does not apply to either. Like `(lint)` they can never resolve through
+a vitest pass line: `shared-baseline`, `pr-caused` or `unknown` --
+never `probable-flake`.
 
 The `.github/tests/*.test.mjs` contract suites run under `node --test`, which
 prints TAP on the Node 22 CI image. `not ok N - name` results resolve their
@@ -104,6 +185,37 @@ Passing reports (`matches: true`), write-mode results, empty or unknown
 `changed` entries, non-semver versions, malformed or multi-line JSON, and
 unrelated output stay unparsed.
 
+After `tsc`, `npm run build` runs five node helpers and `vite build`
+(ci.yml's Build step, and the `npm ci && npm run build` preambles in
+perf-budget.yml and companion-smoke.yml). Each helper's failure output
+names itself and groups under `<file> > (build)`: authority-surface
+prints `authority-surface: <error>` on stderr (its success summary and
+`roots not built yet` note stay unparsed), copy-assets prints
+`[copy-assets] source not found:`, an uncaught throw in any chain script
+prints node's `file://<abs>:<line>` code-frame header naming the script
+(only the six chain scripts -- authority-surface, copy-assets,
+build-preparation-builtin, build-identity,
+build-release-dependency-inventory and sync-candidate-version -- are
+attributed), and the release-dependency-inventory catch prints
+`release dependency inventory` messages. Vite 8 (rolldown) diagnostics
+print `[UNRESOLVED_IMPORT] Could not resolve '<spec>' in <importer>`
+and its commonjs-external throw prints `[vite]: Rolldown failed to
+resolve import "<spec>" from "<importer>"`; the importer resolves
+repo-relative or through the same `/<repo>/<repo>/` checkout marker as
+TAP locations, so the group keys on the real source file whose import
+closure decides touched. Helper groups seed their direct data inputs as
+static inputs (authority-surface's toolchain manifests, copy-assets'
+web public assets and toolgraph manifest, build-preparation-builtin's
+evaluator entries and trusted preparation sources, build-identity's
+package.json); the release-dependency-inventory script imports compiled
+dist modules so its closure cannot resolve and it uses a closed input
+list instead. Like the other non-test identities these groups can never
+resolve through a vitest pass line and classify `shared-baseline`,
+`pr-caused` or `unknown` -- never `probable-flake`. Passing builds,
+vite's `built in` summary, rolldown diagnostics whose file lives only
+inside the code frame (PARSE_ERROR), node_modules or virtual-module
+importers, OOM kills and unrelated output stay unparsed.
+
 The advisory `perf-budget` workflow times the cold paths in
 `perf/budgets.json` and prints one pretty-printed
 `ashlr.perf-budget-report.v1` JSON document before exiting non-zero.
@@ -144,7 +256,7 @@ gate script's exemption fixpoint -- a package stays exempt while every
 and emits only packages outside the exempt set; a report exempt end to
 end passed its step and emits nothing. The analyzer reads the exception
 file once from master: an absent file means no exceptions, while an
-unreadable or malformed file leaves audit reports unparsed (unknown)
+unreadable or malformed file leaves npm audit reports unparsed (unknown)
 rather than risk a phantom group for an accepted advisory; exception
 expiry is not re-checked because a completed run was governed by the
 exceptions valid at run time. Each lockfile's dependency set is its
@@ -153,10 +265,32 @@ file and the audit script (seeded as static inputs), and the vitest
 harness ambient set does not apply. Like the other non-test identities
 these groups can never resolve through a vitest pass line and classify
 `shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
-OSV-Scanner table output (the transport fallback) and cargo-audit output
-carry no audit v2 document and stay unparsed, as do invalid reports
-(non-v2 schema, malformed severity counts), reports with no preceding
-step echo, clean reports (`total: 0`) and unrelated JSON.
+Invalid reports (non-v2 schema, malformed severity counts), reports with
+no preceding step echo, clean reports (`total: 0`) and unrelated JSON
+stay unparsed, as does cargo-audit output.
+
+When npm's transport fails all three bounded attempts the gate script
+falls back to the pinned OSV-Scanner (`scan source --lockfile
+<lockfile> --format table`), which prints a `Total N packages affected`
+summary and a go-pretty table -- `| OSV URL | CVSS | Ecosystem | Package
+| Version | Fixed Version | Source |` rows between `+`-ruled borders.
+In the piped CI log the scanner renders its ASCII StyleDefault box (the
+rounded unicode style only appears on a TTY and stays unparsed). Each
+data row groups per package under the same `<lockfile> >
+(dependency-audit) <package>` identity the npm reports use, since
+bumping the dependency or adding a reviewed exception is the same unit
+a master fix restores; a vuln group's alias ids continue onto
+blank-cell rows and join the package's advisory list, ` (dev)` suffixes
+come off to match the npm identity, and rows merge per package so one
+group carries the printed advisory URLs (bounded). Rows are accepted only inside
+a recognized step echo and only when the Source cell names the echoed
+lockfile; the scanner's own `IgnoredVulns` config already filtered
+excepted advisories, so these groups emit even when the exception file
+is unreadable -- the npm fixpoint is the only audit shape that needs it.
+Near-miss headers, other table shapes (license, deprecated, OS-package
+summaries), wrong-arity rows, invalid package names and sources naming
+another file stay unparsed, as do clean scans (the table only renders
+when vulnerabilities exist).
 
 The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 authority 3/3 shard runs `npm run --silent bench:memory -- --check >
@@ -212,6 +346,38 @@ line and classify `shared-baseline`, `pr-caused` or `unknown` -- never
 `Offline partition comparison refused:`), empty messages, non-prefixed
 assert output and unrelated lines stay unparsed.
 
+The same `Capture pack smoke build snapshot` step then runs
+`npm run check:first-paint:built` --
+`scripts/check-first-paint-budget.mjs --no-build --out-dir
+dist/core/web/public/next --budget-kb 354 --mobile-budget-kb 250` --
+which walks the Vite manifest's static-import closure of each
+first-paint root (`index.html` -> `main.tsx` -> the Verse apps and
+their chat or home screens), sums the chunk bytes and prints one
+verdict per arm: `OVER BUDGET: chat first-paint critical JS <kb> KB
+(budget <kb> KB)` and `OVER BUDGET: phone (/verse/m) first-paint
+critical JS <kb> KB (budget <kb> KB)`. Each over-budget verdict groups
+per arm under `scripts/check-first-paint-budget.mjs > (first-paint)
+chat` / `> (first-paint) phone` -- the arms measure different closures
+against different budgets, so a phone regression never merges into
+the chat group -- and the script's own `check-first-paint-budget:
+<message>` error path (a renamed first-paint root, a manifest import
+with no entry, a missing manifest) groups under `> (first-paint)
+gate`. The measured dist/ graph has no enumerable closure -- the
+web-ui static closure alone runs to hundreds of modules, past the
+import walk's bound -- so each identity's dependency set is a closed
+input list: the checker script, `vite.config.web.ts` (which folds
+the first-paint chunks and names the presentation-format group
+members), `package.json`, `package-lock.json`,
+`src/web-ui/tsconfig.json`, `src/web-ui/index.html`,
+`src/web-ui/main.tsx` and the arm's named manifest roots; the gate
+identity takes the union of both arms. The vitest harness ambient set
+does not apply. Like the other non-test identities these groups can
+never resolve through a vitest pass line and classify
+`shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`. OK verdicts, the per-file `N.N KB  <file>` listing,
+`--json` reports, npm lifecycle noise and unrelated output stay
+unparsed.
+
 The PR-visible trust gates fail with no vitest, typecheck or TAP line
 naming them, so each gets its own count-or-verdict identity. The
 `secret-shape` job pipes the candidate diff through the pinned
@@ -244,6 +410,31 @@ Clean scans (`0 allowed=<n>`, `no leaks found`, `leaks found: 0`), the
 provenance pass lines, unrelated `::error::` annotations and unrelated
 lines stay unparsed.
 
+Either scanner step can also fail before it prints a verdict, which used
+to leave every open PR unknown because no count or summary line exists.
+The `secret-shape` step's pinned-hash check prints
+`.github/tests/secret-shape/scrub.pl: FAILED` (or `FAILED open or read`)
+when the workflow pin and the script disagree, `secret-shape base is
+missing` when the candidate base cannot be resolved, and perl's own fatal
+diagnostics (`syntax error`, `aborted due to compilation errors`,
+`BEGIN failed`, `requires explicit package name`, `Undefined subroutine`,
+`Can't call method`, `Search pattern not terminated`,
+`Unrecognized character`) when the script dies -- all grouped under
+`.github/workflows/ci.yml > (secret-shape-gate)`. The `secret-scan` job's
+pinned-archive check prints `<path>/gitleaks.tar.gz: FAILED` on a hash
+mismatch and the scan step prints `secret scan refused an incomplete
+commit range` when the range cannot be resolved -- grouped under
+`.github/workflows/ci.yml > (secret-scan-gate)`. sha256sum's WARNING
+summary line alone, `: OK` check lines, archives other workflows pin
+(`cargo-audit.tgz`, `osv-scanner-download`), non-fatal perl warnings and
+partial refusal text stay unparsed. A gate-bootstrap group's dependency
+set is the closed list of repo files its step executes -- the workflow
+itself plus `scrub.pl` for secret-shape and `ci-fetch-range.mjs` for
+secret-scan's merge-group/push scan-base path -- with no vitest harness
+ambient set, so a PR touching any of them is `pr-caused` and the rest
+classify `shared-baseline`, `pr-caused` or `unknown` -- never
+`probable-flake`.
+
 The ci.yml helper gates under `.github/scripts/` fail with only the
 script's `console.error` line plus the runner's
 `##[error]Process completed with exit code` step marker -- no vitest,
@@ -252,8 +443,8 @@ step in a `##[group]Run <script>` block, so the analyzer attributes the
 marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
-`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-inputs`, `ci-green-reuse`
-and `ci-mcp-selection` group under
+`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
+`ci-green-reuse` and `ci-mcp-selection` group under
 `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
 unattributed, and a `not ok` or vitest `FAIL` line in the step's own
@@ -265,6 +456,60 @@ groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`. Scripts whose pure steps only appear in jobs the
 analyzer's evidence never sees (macOS/Windows lanes, release
 pipelines, merge-group-only attribution) are not listed.
+
+The `Install dependencies` steps run a bare `npm ci` (with or without
+`--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
+lockfile on master fails every fresh PR before any test runs and npm's
+own `npm error <detail>` block is the only evidence. The analyzer
+tracks the same `##[group]Run` step boundaries, but a step qualifies
+only when every script line is a pure `npm ci` invocation: `npm ci &&
+npm run build` preambles, `npm install` toolchain fetches, `uses:`
+actions, mixed bash, `npm run` script steps (whose `npm error Lifecycle
+script` blocks must not be claimed) and steps that die without an
+`npm error` line stay unattributed. Failures group under
+`package-lock.json > (install)`; the dependency set is the closed input
+list -- `package.json`, `package-lock.json`, `npm-shrinkwrap.json`,
+`.npmrc` and `.github/workflows/ci.yml`, the only workflow whose root
+install runs on analyzed refs with a verifiable checkout -- with no
+vitest harness ambient set, so a PR touching any of them is
+`pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`.
+
+The test runners' own watchdog verdicts get the same treatment.
+`scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
+fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick
+job's selected contract test and the full lanes' hermetic steps --
+with a private HOME, an inactivity watchdog and a hard runtime cap,
+and `scripts/test-ci-sharded.mjs` plans the complete partitions from
+the measured duration table before spawning the same wrapper per
+shard. When the wrapper itself fails -- Vitest hangs past the idle
+window or the hard cap, dies by signal, cannot spawn, the Node floor
+is unmet, or the shard plan cannot be built -- the step prints only
+its bracketed verdict (`[test-ci] idle-timeout ...`, `[test-ci]
+hard-runtime-cap ...`, `[test-ci] received SIGINT|SIGTERM ...`,
+`[test-ci] failed to start Vitest: ...`, `[test-ci] Vitest exited
+via signal ...`, `[test-ci] Node >=22.15.0 ...`, `[test-ci:sharded]
+cannot plan balanced shards: ...`, `[test-ci:sharded] <shard> failed
+to start: ...`) with no vitest FAIL, TAP, typecheck or report shape
+naming it, so a stalled or crashed runner used to leave every open PR
+unknown. Verdicts group under `scripts/test-ci.mjs > (test-ci)` and
+`scripts/test-ci-sharded.mjs > (test-ci-sharded)`; each identity's
+dependency set is a closed input list -- the runner scripts, the
+type-stripped memory-policy module the wrapper reads as text, the
+reporter and vitest config surface the spawned run executes under,
+the shard plan's duration table and the wrapper the orchestrator
+spawns, plus the toolchain manifests -- since the wrapper's computed
+`data:` import gives no enumerable closure and the vitest harness
+ambient set does not apply. A hang is usually caused by test content
+the runner cannot name, so test files never count as touched: a
+master stall still groups `shared-baseline` for a fix brief. Like the
+other non-test identities these groups can never resolve through a
+vitest pass line and classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`. Heartbeat, capacity-observer,
+job-memory, lifecycle (`started`/`exited`), aggregate
+(`FAIL (...)`/`PASS (...)`), usage and report-summary lines stay
+unparsed: `exited` lines fire on ordinary test failures and on the
+stop-others SIGTERM cascade, so they can never be runner identities.
 
 Two unaffected fresh PRs sharing a test produce `queue-master-fix` and a ready
 brief. Test/import changes produce `pr-caused`; a singleton unaffected failure

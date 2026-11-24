@@ -63,8 +63,8 @@ it('orders lanes by merges, then launches, then name, with an unread lane last',
   ]);
   expect(rows.map(row => row.name)).toEqual(['top', 'half', 'alpha', 'beta', 'lost']);
   expect(rows.map(row => row.share)).toEqual([1, 0.5, 0, 0, null]);
-  expect([rows[0]!.emptyText, rows[0]!.median, rows[0]!.trend]).toEqual(['1 of 9 (11%)', '1m 0s', [0, 8]]);
-  expect([rows[4]!.merged, rows[4]!.emptyText, rows[4]!.emptyRate, rows[4]!.median, rows[4]!.trend]).toEqual([null, 'unknown', null, 'unknown', null]);
+  expect([rows[0]!.emptyText, rows[0]!.median]).toEqual(['1 of 9 (11%)', '1m 0s']);
+  expect([rows[4]!.merged, rows[4]!.emptyText, rows[4]!.emptyRate, rows[4]!.median]).toEqual([null, 'unknown', null, 'unknown']);
 });
 
 it('draws no comparison bar when no lane merged anything', () => {

@@ -8,6 +8,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { listWorkBoard, WORK_BOARD_DEFAULT_LIMIT, WORK_BOARD_MAX_LIMIT } from '../core/comms/work-board.js';
+import { WORK_ITEM_STATES, type WorkItemState } from '../core/comms/work-item-state.js';
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildSlackBridgeStatus } from '../core/agents/slack-status.js';
 import { defaultTailnetPeersDeps, readTailnetPeers } from '../core/fleet/tailnet-peers.js';
@@ -23,6 +24,33 @@ import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, re
 import {
   MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
 } from './fleet-inbox.js';
+import {
+  FLEET_AGENT_INBOX_LIMIT_DEFAULT, FLEET_AGENT_INBOX_LIMIT_MAX,
+  parseFleetAgentInboxArgs, readFleetAgentInbox, type FleetAgentInboxArgs,
+} from './fleet-agent-inbox.js';
+import { parseFleetAgentWorkArgs, readFleetAgentWork, type FleetAgentWorkArgs } from './fleet-agent-work.js';
+import { parseFleetAgentWakesArgs, readFleetAgentWakes, type FleetAgentWakesArgs } from './fleet-agent-wakes.js';
+import { parseFleetAgentMessagesArgs, readFleetAgentMessages, type FleetAgentMessagesArgs } from './fleet-agent-messages.js';
+import { parseFleetAgentChannelsArgs, readFleetAgentChannels, type FleetAgentChannelsArgs } from './fleet-agent-channels.js';
+import { parseFleetAgentIdentityArgs, readFleetAgentIdentity, type FleetAgentIdentityArgs } from './fleet-agent-identity.js';
+import { parseFleetAgentConversationsArgs, readFleetAgentConversations, type FleetAgentConversationsArgs } from './fleet-agent-conversations.js';
+import { parseFleetAgentRosterArgs, readFleetAgentRoster } from './fleet-agent-roster.js';
+import { CONVERSATION_STATES } from '../core/fleet/agent-conversation-model.js';
+import {
+  AGENT_MESSAGE_KINDS, AGENT_MESSAGES_CONTAINS_MAX, AGENT_MESSAGES_DEFAULT_LIMIT, AGENT_MESSAGES_MAX_LIMIT,
+} from '../core/fleet/agent-messages.js';
+import {
+  FLEET_BUS_CHANNEL_LIMIT_DEFAULT, FLEET_BUS_CHANNEL_LIMIT_MAX,
+  parseFleetBusChannelArgs, readFleetBusChannel, type FleetBusChannelArgs,
+} from './fleet-bus-channel.js';
+import { parseFleetBusShowArgs, readFleetBusShow, type FleetBusShowArgs } from './fleet-bus-show.js';
+import { parseFleetBusThreadArgs, readFleetBusThread, type FleetBusThreadArgs } from './fleet-bus-thread.js';
+import { parseFleetBusStatusArgs, readFleetBusStatus } from './fleet-bus-status.js';
+import { parseFleetBusClaimsArgs, readFleetBusClaims, type FleetBusClaimsArgs } from './fleet-bus-claims.js';
+import { parseFleetBusBoardArgs, readFleetBusBoard, type FleetBusBoardArgs } from './fleet-bus-board.js';
+import { parseFleetSeatHandoffsArgs, readFleetSeatHandoffs } from './fleet-seat-handoffs.js';
+import { parseFleetBotSeatsArgs, readFleetBotSeats } from './fleet-bot-seats.js';
+import { parseFleetChannelsOverviewArgs, readFleetChannelsOverview } from './fleet-channels-overview.js';
 import { parseFleetRuntimeArgs, readFleetRuntime } from './fleet-runtime.js';
 import { SURFACES } from '../core/fleet/surface-owner.js';
 import { NOTE as SESSION_HANDOFF_NOTE, parseFleetSessionHandoffArgs, readFleetSessionHandoff } from './fleet-session-handoff.js';
@@ -32,6 +60,7 @@ import { parseFleetSurfaceOwnerArgs, readFleetSurfaceOwner } from './fleet-surfa
 import { parseFleetClaimExecutionArgs, readFleetClaimExecution } from './fleet-claim-execution.js';
 import { readFleetLanes } from './fleet-lanes.js';
 import { parseFleetSelfTickLastArgs, readFleetSelfTickLast } from './fleet-self-tick.js';
+import { parseFleetUnfedArgs, readFleetUnfed, type FleetUnfedArgs } from './fleet-unfed.js';
 import { MAX_FLEET_RECHECK_HISTORY, DEFAULT_FLEET_RECHECK_HISTORY, parseFleetRecheckArgs, parseFleetRecheckHistoryArgs,
   readFleetRecheckTool, readFleetRecheckHistoryTool, type FleetRecheckHistoryArgs } from './fleet-recheck.js';
 import { readFleetUsageResets } from './fleet-usage-resets.js';
@@ -87,13 +116,31 @@ import { parseFleetDiskForecastArgs, readFleetDiskForecast } from './fleet-disk-
 import { parseFleetGmailArchivePlanLatestArgs, readFleetGmailArchivePlanLatest, type FleetGmailArchivePlanLatestArgs } from './fleet-gmail-archive-plan-latest.js';
 import { parseFleetGmailTriageLatestArgs, readFleetGmailTriageLatest } from './fleet-gmail-triage-latest.js';
 import { parseFleetCommsInboxArgs, readFleetCommsInbox, type FleetCommsInboxArgs } from './fleet-comms-inbox.js';
+import { FLEET_WORK_FEED_LIMIT_DEFAULT, FLEET_WORK_FEED_LIMIT_MAX, parseFleetWorkFeedArgs,
+  readFleetWorkFeed, type FleetWorkFeedArgs } from './fleet-work-feed.js';
+import { BUS_WORK_FEED_CONTAINS_MAX } from '../core/agents/bus-work-feed-read.js';
+import { PROVIDERS, WORK_STATUSES, WORK_TIERS } from '../core/agents/bus-v2-schema.js';
+import { COORDINATION_ORIGINS } from '../core/agents/claim-store.js';
+import { UNIFIED_INBOX_CONTAINS_MAX, UNIFIED_INBOX_KINDS, UNIFIED_INBOX_SOURCES } from '../core/comms/unified-inbox.js';
+import { BUS_PRIORITIES } from '../core/fleet/bus-envelope.js';
+import { BUS_PROTOCOL_KINDS } from '../core/fleet/bus-protocol.js';
+import { BUS_READ_CONTAINS_MAX, INBOX_KINDS } from '../core/agents/bus-unified.js';
 import { parseFleetCommsReadinessArgs, readFleetCommsReadiness } from '../core/mcp/fleet-comms-readiness.js';
+import { parseFleetCommsStatusArgs, readFleetCommsStatus } from './fleet-comms-status.js';
+import { FLEET_COMMS_THREAD_LIMIT_DEFAULT, FLEET_COMMS_THREAD_LIMIT_MAX,
+  parseFleetCommsThreadArgs, readFleetCommsThread, type FleetCommsThreadArgs } from './fleet-comms-thread.js';
+import { FLEET_OWNER_HISTORY_LIMIT_DEFAULT, FLEET_OWNER_HISTORY_LIMIT_MAX,
+  parseFleetOwnerHistoryArgs, readFleetOwnerHistory, type FleetOwnerHistoryArgs } from './fleet-owner-history.js';
+import { parseFleetCommsHealthArgs, readFleetCommsHealth } from './fleet-comms-health.js';
+import { OWNER_CHANNELS } from '../core/comms/leader-mailbox.js';
+import { OWNER_THREAD_CONTAINS_MAX } from '../core/comms/owner-thread.js';
 import { MAX_FLEET_IMESSAGE_ACKS, parseFleetImessageAcksArgs, parseFleetImessagePathArgs,
   readFleetImessageAcks, readFleetImessagePath, type FleetImessageAcksArgs } from './fleet-imessage-evidence.js';
 import { DEFAULT_FLEET_IMESSAGE_TASKS, MAX_FLEET_IMESSAGE_TASKS, parseFleetImessageTasksArgs,
   readFleetImessageTasks, type FleetImessageTasksArgs } from './fleet-imessage-tasks.js';
 import { parseFleetSlackEvidenceArgs, readFleetSlackEvidence,
   type FleetSlackEvidenceArgs } from './fleet-slack-evidence.js';
+import { readFleetSlackStatus } from './fleet-slack-status.js';
 
 import { FLEET_BATCH_LABEL_PATTERN, parseFleetJobPrecheckBatchArgs, readFleetJobPrecheckBatch, type FleetJobPrecheckBatchArgs } from './fleet-job-precheck-batch.js';
 import { JOB_PRECHECK_BATCH_MAX } from '../core/fleet/job-precheck-batch.js';
@@ -120,9 +167,11 @@ export interface FleetWorkBoardArgs {
   limit: number;
   /** Exact channel_ref filter; omitted keeps every channel. */
   thread?: string;
+  /** Classified-state filter; omitted keeps every state. */
+  state?: WorkItemState;
 }
 
-const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread']);
+const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state']);
 
 /** Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so unknown keys — including any caller `root` —,
@@ -130,12 +179,13 @@ const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread']);
  * before the store is touched. The board always reads the server-owned
  * default fleet root. */
 function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
-  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'];
+  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'], state = args['state'];
   if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
-    args['limit'] === null || args['thread'] === null ||
+    args['limit'] === null || args['thread'] === null || args['state'] === null ||
     typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
-    thread !== undefined && (typeof thread !== 'string' || thread.length > 512)) return null;
-  return { limit, thread: thread as string | undefined };
+    thread !== undefined && (typeof thread !== 'string' || thread.length > 512) ||
+    state !== undefined && (typeof state !== 'string' || !(WORK_ITEM_STATES as readonly string[]).includes(state))) return null;
+  return { limit, thread: thread as string | undefined, state: state as WorkItemState | undefined };
 }
 
 /** One bounded board read through the canonical listWorkBoard listing — the
@@ -143,7 +193,7 @@ function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardA
  * invocation clock stamped as `asOf`. */
 async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
   const now = Date.now();
-  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread });
+  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread, state: input.state });
   return { ...board, asOf: new Date(now).toISOString() };
 }
 
@@ -275,6 +325,23 @@ export interface FleetReaders {
   bus?: (limit: number) => Promise<unknown>;
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
+  agentInbox?: (input: FleetAgentInboxArgs) => Promise<unknown>;
+  agentWork?: (input: FleetAgentWorkArgs) => Promise<unknown>;
+  agentWakes?: (input: FleetAgentWakesArgs) => Promise<unknown>;
+  agentMessages?: (input: FleetAgentMessagesArgs) => Promise<unknown>;
+  agentChannels?: (input: FleetAgentChannelsArgs) => Promise<unknown>;
+  agentIdentity?: (input: FleetAgentIdentityArgs) => Promise<unknown>;
+  agentConversations?: (input: FleetAgentConversationsArgs) => Promise<unknown>;
+  agentRoster?: () => Promise<unknown>;
+  busChannel?: (input: FleetBusChannelArgs) => Promise<unknown>;
+  busShow?: (input: FleetBusShowArgs) => Promise<unknown>;
+  busThread?: (input: FleetBusThreadArgs) => Promise<unknown>;
+  busStatus?: () => Promise<unknown>;
+  busClaims?: (input: FleetBusClaimsArgs) => Promise<unknown>;
+  busBoard?: (input: FleetBusBoardArgs) => Promise<unknown>;
+  seatHandoffs?: () => Promise<unknown>;
+  botSeats?: () => Promise<unknown>;
+  workFeed?: (input: FleetWorkFeedArgs) => Promise<unknown>;
   workBoard?: (input: FleetWorkBoardArgs) => Promise<unknown>;
   runtime?: () => Promise<unknown>;
   peerLedger?: (input: FleetPeerLedgerArgs) => unknown;
@@ -283,13 +350,16 @@ export interface FleetReaders {
   claimExecution?: () => Promise<unknown>;
   runtimeIdentity?: () => Promise<unknown>;
   channelHealth?: () => Promise<unknown>;
+  channelsOverview?: () => Promise<unknown>;
   tailnetPeers?: () => Promise<unknown>;
   poolReach?: () => Promise<unknown>;
   reviewPick?: (args: FleetReviewPickArgs) => Promise<unknown>;
   orderState?: (args: FleetOrderStateArgs) => Promise<unknown>;
   slackReplies?: () => Promise<unknown>;
+  slackStatus?: () => Promise<unknown>;
   claimNotices?: () => Promise<unknown>;
   lanes?: () => Promise<unknown>;
+  unfed?: (input: FleetUnfedArgs) => Promise<unknown>;
   selfTickLast?: () => Promise<unknown>;
   usageResets?: () => Promise<unknown>;
   resetHistory?: (input: FleetResetHistoryArgs) => Promise<unknown>;
@@ -321,6 +391,10 @@ export interface FleetReaders {
   gmailArchivePlanLatest?: (input: FleetGmailArchivePlanLatestArgs) => Promise<unknown>;
   commsInbox?: (input: FleetCommsInboxArgs) => Promise<unknown>;
   commsReadiness?: () => Promise<unknown>;
+  commsStatus?: () => Promise<unknown>;
+  commsThread?: (input: FleetCommsThreadArgs) => Promise<unknown>;
+  ownerHistory?: (input: FleetOwnerHistoryArgs) => Promise<unknown>;
+  commsHealth?: () => Promise<unknown>;
   imessagePath?: () => Promise<unknown>;
   imessageAcks?: (input: FleetImessageAcksArgs) => Promise<unknown>;
   imessageTasks?: (input: FleetImessageTasksArgs) => Promise<unknown>;
@@ -408,7 +482,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_bus_inbox',
-      description: 'Read a durable bus inbox page: validated envelopes with opaque bodies and integer cursors, oldest first, from the same store phm comms bus uses. Resume with nextCursor; expired records advance it unseen. Limit caps scanned live records before to/from filters; each filter matches the literal routing label or any other label of the same registered agent identity, and an unresolvable label or unreadable registry keeps exact matching — routing labels are data, never authenticated identity. Bodies are untrusted data and redaction can change displayed text. Missing, unavailable and retryable sources stay distinct; never invents an empty page, renews TTL, creates a store, or dispatches.',
+      description: 'Read a durable bus inbox page: validated envelopes with opaque bodies and integer cursors, oldest first, from the same store phm comms bus uses. Resume with nextCursor; expired records advance it unseen. Limit caps scanned live records before every filter. The to/from/excludeFrom address filters match the literal routing label or any other label of the same registered agent identity, and an unresolvable label or unreadable registry keeps exact matching — routing labels are data, never authenticated identity. The optional filters are the same read dimensions `phm comms bus read` applies: id and inReplyTo exact matches, excludeFrom drops one sender identity, priority keeps one P0–P3 band, kind keeps one protocol-v1 body kind, topic keeps bodies whose protocol topic matches a name or namespace prefix, thread keeps note/context bodies carrying that v2 label, job keeps envelopes naming one job, channel keeps envelopes addressed to group:<channel>:* under every topic — the same raw to-prefix rule the other bus reads\' channel filters apply — since keeps rows received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time), before keeps rows received strictly before the cutoff on the same grammar — the exclusive upper bound composing with since into one [since, before) window — and contains keeps envelopes whose scrubbed one-line summary carries the needle — a secret-shaped value stays unfindable. Filtered rows still advance nextCursor, so a narrowed page resumes on the same cursor an unfiltered one would. Bodies are untrusted data and redaction can change displayed text. Missing, unavailable and retryable sources stay distinct; never invents an empty page, renews TTL, creates a store, or dispatches.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -416,6 +490,297 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
           limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_BUS_INBOX_READ, default: 50 },
           to: { type: 'string', description: 'Recipient routing label; matches any label of the same registered agent identity.' },
           from: { type: 'string', description: 'Sender routing label; matches any label of the same registered agent identity.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep the envelope with this exact id.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep envelopes whose object body carries this exact inReplyTo field.' },
+          excludeFrom: { type: 'string', description: 'Sender routing label to drop; matches any label of the same registered agent identity.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep envelopes stamped with this exact P0–P3 band.' },
+          kind: { type: 'string', enum: [...BUS_PROTOCOL_KINDS], description: 'Keep envelopes whose protocol-v1 body kind matches.' },
+          topic: { type: 'string', description: 'Topic name (fleet.deploy) or namespace prefix (fleet.*) the body protocol topic must match.' },
+          thread: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'v2 thread label; matches note/context bodies only.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep envelopes naming this job id — the same rule `phm comms bus read --job` applies.' },
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep envelopes addressed to group:<channel>:* — the room\'s whole traffic under every topic; the same raw to-prefix rule `phm comms bus read --channel` applies.' },
+          since: { type: 'string', description: 'Keep rows received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm comms bus read --since` takes.' },
+          before: { type: 'string', description: 'Keep rows received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window; the same grammar `phm comms bus read --before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each envelope\'s scrubbed one-line summary.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_inbox',
+      description: 'Read one agent\'s addressed bus inbox — the same readAgentInbox projection `phm agents bus inbox` and `phm agents bus work mine`\'s inbox section serve, where fleet_bus_inbox only pages the raw durable store by routing label. `agent` is required and takes any ref resolveAgent accepts — a handle, agent:<handle>, stable agt_ id or alias — resolved through the server-owned registry; an unregistered ref answers unknown-agent, never a guessed match. Each row reports its delivery kind (dm, channel, handoff or legacy), the resolved sender handle or null, and for claimable work and worker-handoff bodies the live held/holder evidence — null when a hold store cannot be read, never proven free — plus, on bodies naming a job, the live work-feed state of that job, so pending mail shows where its job stands without a lookup per message. thread keeps note/context bodies carrying that v2 label; from and excludeFrom narrow senders through the same identity-label matching — an unresolvable ref keeps exact-label matching and the two compose so a sender both included and excluded matches nothing; priority keeps one P0–P3 band; kind keeps one delivery kind; job keeps mail naming one job (a work.post/status/result or wake jobId, a worker-handoff taskId, or a job:<id> thread label); since keeps mail received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time); before keeps mail received strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window on receivedAt; channel keeps mail addressed to group:<name>:* of one registry channel the agent belongs to; contains keeps mail whose scrubbed one-line summary carries the needle as a case-insensitive substring; inReplyTo keeps only mail whose object body cites that envelope id through its own inReplyTo field — the shared own-property exact match `phm agents bus inbox --in-reply-to`, `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to` and `fleet_bus_inbox`\'s inReplyTo apply, never the replyTo alias or a substring, so "which of my pending mail answers envelope X" is one filtered read; `id` keeps only the mail whose own wire id is strictly equal to the value — the same exact-envelope match `phm agents bus inbox --id`, `comms bus read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`\'s `id` apply, never a substring or a body citation, so "is envelope X still pending for me" is one filtered read. after resumes at a persisted cursor and limit caps returned rows (1–100, default 50); matched additionally reports the true filtered total across the whole retained store while messages still caps at limit, and nextCursor is the honest resume point — under matched it is the newest shown row\'s cursor, never the store\'s end, so resuming never skips an unshown match. Read-only: routing labels are data, never authenticated identity; a missing or unreadable store, registry or hold table stays unavailable or retryable and held/job stay unknown, never an invented empty inbox; no caller root, path or cwd is accepted, and the tool never claims, acks, replies, posts or renews TTL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry.' },
+          after: { type: 'integer', minimum: 0, default: 0, description: 'Persisted cursor; rows at or below it are already handled.' },
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_AGENT_INBOX_LIMIT_MAX, default: FLEET_AGENT_INBOX_LIMIT_DEFAULT, description: 'Cap on returned rows after filtering.' },
+          matched: { type: 'boolean', description: 'Also report matched — the true filtered total across the whole retained store.' },
+          thread: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'v2 thread label; matches note/context bodies only.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref; matches every label of one registered identity, exact-label fallback when unresolvable.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref to drop under every label of one registered identity.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep mail stamped with this exact P0–P3 band.' },
+          kind: { type: 'string', enum: [...INBOX_KINDS], description: 'Keep only this delivery kind — dm, channel, handoff or legacy.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep mail naming this job id — the same rule `phm agents bus inbox --job` applies.' },
+          since: { type: 'string', description: 'Keep mail received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents bus inbox --since` takes.' },
+          before: { type: 'string', description: 'Keep mail received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window, the same grammar `phm agents bus inbox --before` takes.' },
+          channel: { type: 'string', description: 'Keep mail addressed to group:<name>:* of this registry channel the agent belongs to.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each row\'s scrubbed one-line summary.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only mail whose object body cites this envelope id through its own inReplyTo field — the same own-property exact match `phm agents bus inbox --in-reply-to` and the raw bus reads apply.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only mail whose own wire id is strictly equal to this value — the same exact-envelope match `phm agents bus inbox --id`, `comms bus read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`\'s `id` apply, never a substring or a body citation.' },
+        },
+        required: ['agent'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_work',
+      description: 'Read one agent\'s pending-work digest — the same readBusWorkMineWithSeats projection `phm agents bus work mine` serves, where fleet_agent_inbox answers only the addressed-mail slice and fleet_work_feed only the job list. The digest joins every pending surface for the agent in one read: live claims it holds under any of its labels (message-id claims resolved to the retained envelope they lease, each joined to the feed jobs its declared keys block), open and announced work-feed jobs with per-key hold coverage — each blocked key\'s shown holders (owner label, lease expiry, claim class) named inline, so a live worker reads differently from a stale lease without a claim list read — claimable work envelopes and worker-handoff assignments in bus-next order, the conversation threads waiting on its answer, its own unanswered asks, blocked threads it is a party to, wake hints, the next inbox page, legacy `phm bus` mailbox mail, the shared task board digest, its registry channels and its bot-seat handoff records — each section reporting its own read state, so one unreadable store degrades only its own section and unknown stays unknown, never an empty list passed off as fact. `agent` is required — a handle, agent:<handle>, stable agt_ id or alias resolved through the server-owned registry; an unregistered ref resolves to no identity — agent.handle and agent.identity stay null and every section falls back to exact-label matching under the typed ref, never a guessed match. `job` keeps only pending work provably naming that job id; `since` keeps only pending items whose recorded time reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time); `before` keeps only pending items whose recorded time is strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window on the sections whose stores keep a boundable timestamp — the inbox section applying it on receivedAt and the wakes section on the hint\'s queue time inside its own read, whose strictly-after `since` makes the wakes window (since, before) — while channels and seats carry no per-item historical timestamp and stay unfiltered; `contains` keeps only rows whose scrubbed display text carries the needle as a case-insensitive substring; `priority` keeps only pending items stamped with that exact P0–P3 band on the sections whose items carry a wire band — claims keep only message claims whose resolved leased envelope reports it — while feed jobs, announced jobs, thread sections, board rows, channels and seats carry no per-item band and stay unfiltered; `channel` keeps only pending items provably addressed to `group:<name>:*` of one bus channel under the strict channel-name grammar — the same room prefix every bus `--channel` read matches — on the sections whose items carry an address, while board rows, channels and seats carry no per-item room and stay unfiltered — the same filters the `phm agents bus work mine` flags share, echoed back in the result. Read-only: routing labels are data, never authenticated identity; claims coordinate scope and grant no execution, claim, merge, push, spend or dispatch authority; a missing or unreadable store, registry, hold table, mailbox, board, wake queue or seat file stays unavailable or unknown inside its own section, never an invented empty digest; no caller root, path or cwd is accepted, and the tool never claims, acks, replies, posts, releases or writes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only pending work provably naming this job id — the same rule `phm agents bus work mine --job` applies.' },
+          since: { type: 'string', description: 'Keep only pending items whose recorded time reaches the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents bus work mine --since` takes.' },
+          before: { type: 'string', description: 'Keep only pending items whose recorded time is strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window (the wakes section\'s own window is (since, before), its since strictly-after), the same grammar `phm agents bus work mine --before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each row\'s scrubbed display text.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep only pending items stamped with this exact P0–P3 band on the sections whose items carry a wire band — the same match `phm agents bus work mine --priority` applies.' },
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only pending items provably addressed to group:<name>:* of this bus channel — the same room prefix `phm agents bus work mine --channel` applies.' },
+        },
+        required: ['agent'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_wakes',
+      description: 'Read wake hints — the same readAgentWakes/readAllWakes projections `phm agents bus wakes [--all]` serves, where fleet_agent_work\'s digest carries only a capped newest slice of the queue tail. `agent` is optional: supplied as a handle, agent:<handle>, stable agt_ id or alias it resolves through the server-owned registry and the read is that identity\'s queue — a ref that resolves to no identity but matches the printable-label rule keeps literal-to matching under scope \'label\', the same fallback the CLI read reports; omitted, the read is fleet-wide — every hint in the bounded queue tail across all addressees, registered identities\' and bare coordination/routing labels\' alike, each row\'s own `to` naming its addressee, reported under scope \'fleet\', the same read `phm agents bus wakes --all` serves, so a leader or comms pass sees who has pending hints in one read instead of one call per identity. Wake hints are the bus\'s notification layer: every bus.send hint resolves the live message it refers to — summary, priority, sender handle, channel, and for claimable work or a job citation the live held/holder plus job feed-state evidence — and every wh-… claim-holder hint re-derives the terminal work.status receipt that woke the holder, so "what should I look at" and "which wake was about X" are one filtered read without shelling out to `phm`. `since` keeps hints recorded strictly after the cutoff (15m, 2h, 1d, epoch ms or an ISO time — the wakes read\'s own boundary); `before` keeps hints recorded strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into the wakes read\'s own (since, before) window on queue time; `job` keeps hints provably naming one job id; `from`/`excludeFrom` narrow hint senders through the same identity-label matching — an unresolvable ref keeps exact-label matching and the two compose so a sender both included and excluded matches nothing; `channel` keeps only hints addressed to `group:<name>:*` of one channel under the strict channel-name grammar — the same room prefix `phm agents bus wakes --channel` and every other bus read\'s channel filter match, decided on the hint\'s own `to` label so it needs no referent resolution and composes with the addressee scope and every other filter; `priority` keeps hints in one exact P0–P3 band, decided on the resolved referent — the live message a bus.send hint points at or the citing work.status receipt behind a claim-holder wh-… hint, with unresolved or unknown referents never matching; `contains` keeps hints whose resolved referent text carries the needle as a case-insensitive substring; `id` keeps only the hint whose own id is strictly equal to the value — the triggering envelope\'s wire id on a bus.send hint, the wh-… claim-holder id on those — the same exact-id match `phm agents bus wakes --id` applies, decided on the queue row alone inside the queue-tail match so it counts in matched and needs no referent resolution. The page always reports matched — every hint the bounded queue tail accepted before its row cap — and truncated when the queue tail or cap cut matches beyond the shown slice, so a capped list is never passed off as the whole queue. Read-only: routing labels are data, never authenticated identity; a wake is a hint to read the inbox and grants no authority; a missing or unreadable store, registry, hold table or wake queue stays unavailable or unknown and referent/held/job evidence degrades to unknown, never an invented empty page or proven-free work; no caller root, path or cwd is accepted, and the tool never claims, acks, replies, posts or renews TTL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; an unresolvable printable ref keeps literal-to matching under scope \'label\'. Omit for the fleet-wide read — every hint in the bounded queue tail under scope \'fleet\', the same read `phm agents bus wakes --all` serves.' },
+          since: { type: 'string', description: 'Keep hints recorded strictly after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents bus wakes --since` takes.' },
+          before: { type: 'string', description: 'Keep hints recorded strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into the wakes read\'s own (since, before) window, the same grammar `phm agents bus wakes --before` takes.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep hints provably naming this job id — the same rule `phm agents bus wakes --job` applies.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref; matches every label of one registered identity, exact-label fallback when unresolvable.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref to drop under every label of one registered identity.' },
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only hints addressed to group:<name>:* of this channel — the same room prefix `phm agents bus wakes --channel` applies.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep hints in one exact P0–P3 band, decided on the resolved referent — the same match `phm agents bus wakes --priority` applies.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each hint\'s resolved referent text.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the hint whose own id is strictly equal to this value — the triggering envelope\'s wire id on a bus.send hint, the wh-… claim-holder id on those — the same exact-id match `phm agents bus wakes --id` applies.' },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_messages',
+      description: 'Read the fleet-wide agent-to-agent message timeline — the same readAgentMessages projection `phm messages`, GET /api/verse/agent-bus/messages and the desktop Messages/Org panes serve, where fleet_agent_inbox answers one agent\'s addressed mail, fleet_bus_channel one room\'s transcript and fleet_bus_inbox the raw store page — none lists every classified agent-to-agent message newest-first with its conversation, job and pr links in one read. Every argument is optional and takes the same value rules the `phm messages` flags and API params share: `since` keeps messages received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time); `before` keeps messages received strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window, the same rule every other bus read\'s `--before` applies; `agent` keeps the traffic one agent sent or received, matching through the server-side identity registry with exact-label fallback when a ref resolves to nothing; `with` narrows `agent` to the two-way talk between that agent and one other and requires `agent`; `kind` keeps one classified kind (ask, reply, handoff, status, blocker); `priority` keeps one exact P0–P3 band; `job` keeps the traffic that names one job — a row\'s job link, a live jobState citation or membership in the job:<id> conversation bucket; `thread` keeps only note/context bodies carrying that v2 thread label; `channel` keeps only envelopes addressed to group:<name>:* of one registry channel; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring; `from` keeps only the messages one sender wrote — the same sender-inclusion match `phm messages --from`, `comms bus read|watch --from`, `agents bus inbox|channel read|wakes --from`, `fleet bus-follow --from` and `fleet_agent_inbox`\'s `from` apply, deciding on each row\'s sender only so rows merely addressed to that agent stay out; `excludeFrom` drops mail sent under every registered spelling of one identity; `inReplyTo` keeps only envelopes whose object body cites that envelope id through its own inReplyTo field — the shared own-property exact match `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`\'s inReplyTo, `agents bus inbox --in-reply-to` and `agents bus channel read --in-reply-to` apply, never the replyTo alias or a substring, so "who answered envelope X" is one filtered read of the whole fleet timeline; `id` keeps only the envelope whose own wire id is strictly equal to the value — the same exact-envelope match `phm messages --id`, `comms bus read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`\'s `id` apply, never a substring, so "where did envelope X go" is one filtered read of the whole fleet timeline. `limit` caps returned messages newest-first (1–1024, default 50); `matched` always reports the true filtered total before the cap, `skipped` counts damaged bus rows and `source` keeps missing/unavailable honest — an unreadable store is never an invented empty timeline. Each row reports id, ts, priority, classified kind, resolved from/to name and lane, scrubbed summary, conversation, job and pr links, and jobState feed evidence on bodies citing a job. Read-only: routing labels are data, never authenticated identity; no caller root, path or cwd is accepted, and the tool never posts, claims, acks, replies or renews TTL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          since: { type: 'string', description: 'Keep messages received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm messages --since` takes.' },
+          before: { type: 'string', description: 'Keep messages received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window; the same grammar `phm messages --before` takes.' },
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; matches mail the agent sent or received.' },
+          with: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'The other agent in a two-way talk; requires `agent` — the same rule `phm messages --with` applies.' },
+          kind: { type: 'string', enum: [...AGENT_MESSAGE_KINDS], description: 'Keep only this classified kind — ask, reply, handoff, status or blocker.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep only messages stamped with this exact P0–P3 band.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep the traffic that names this job id — the same rule `phm messages --job` applies.' },
+          thread: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'v2 thread label; matches note/context bodies only — the same rule `phm messages --thread` applies.' },
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only envelopes addressed to group:<name>:* of this registry channel — the room\'s whole traffic under every topic.' },
+          contains: { type: 'string', minLength: 1, maxLength: AGENT_MESSAGES_CONTAINS_MAX, description: 'Case-insensitive substring over each message\'s scrubbed one-line summary.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref to keep under every label of one registered identity — the sender-inclusion counterpart of excludeFrom.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref to drop under every label of one registered identity.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only envelopes whose object body cites this envelope id through its own inReplyTo field — the same own-property exact match `phm messages --in-reply-to` applies.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the envelope whose own wire id is strictly equal to this value — the same exact-envelope match `phm messages --id`, `comms bus read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`\'s `id` apply, never a substring.' },
+          limit: { type: 'integer', minimum: 1, maximum: AGENT_MESSAGES_MAX_LIMIT, default: AGENT_MESSAGES_DEFAULT_LIMIT, description: 'Cap on returned messages, newest first.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_channels',
+      description: 'Read the agent-bus channel roster — the same listBusChannels projection `phm agents bus channel list [--agent]` serves, where fleet_bus_channel reads one room\'s transcript, fleet_agent_work reports the channels one agent belongs to inside its digest and fleet_agent_messages narrows traffic to one channel\'s group:<name>:* traffic — none answers "which channels exist and who is in them" fleet-wide, the directory an agent needs before posting to a room or picking a channel-scoped `to` address, without shelling out to `phm`. `agent` is optional — a handle, agent:<handle>, stable agt_ id or alias resolved through the server-owned registry; it narrows the roster to the channels that identity belongs to, and a ref that resolves to no identity answers unknown-agent, never a guessed membership. Every channel reports its name, creator, creation time and member handles in join order; members are routing labels that say who may post — not presence, attention or authority. Read-only: no caller root, path or cwd is accepted, and the tool never posts, joins, leaves or renames a channel; source missing is a verified-empty roster while an unreadable registry stays unavailable — never an invented empty list.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; narrows the roster to the channels the identity belongs to. Omit for the fleet-wide roster.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_identity',
+      description: 'Resolve one agent ref to its bus identity card — the same busAgentView projection `phm agents bus id show <ref>` serves, where every other bus read resolves refs through the server-owned registry but none answers "what is this ref" in one call: fleet_agent_inbox, fleet_agent_work, fleet_agent_wakes, fleet_agent_messages, fleet_agent_channels and fleet_agent_conversations each consume a resolved identity inside their own slice, and fleet_bus_status reports the registry\'s health, but an agent that sees a from/to/owner label in a message row, claim owner or channel member list has no read that turns it into the canonical agt_ id, handle, display name, aliases and runtimes — plus the agent:<handle> address mail to it carries and the registry channels whose member list names its handle — without shelling out to `phm`. `agent` is required — a handle, agent:<handle>, stable agt_ id or alias under the printable-label rule every bus read shares — because the shared fleet server has no per-caller PHM_AGENT_ID, so the no-ref self view `agents bus id show` serves would answer for the server, never the caller. A ref that resolves to no identity answers unknown — on a missing registry that is every ref, the same verified-empty verdict the CLI read reports — a malformed one invalid and an unreadable registry unavailable, never a guessed match. Read-only: no caller root, path or cwd is accepted — the registry root stays server-owned — and the tool never registers, aliases, joins channels or writes; an identity is a routing name and the labels it answers to, never authentication, presence or authority.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; the card answers for exactly this ref.' },
+        },
+        required: ['agent'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_conversations',
+      description: 'Read the shared agent-to-agent conversation threads — the same readAgentConversations projection `phm agents conversations` and GET /api/verse/fleet/control/agent-conversations serve, where fleet_agent_messages lists the flat newest-first timeline, fleet_agent_inbox answers one agent\'s addressed mail and fleet_agent_work carries one agent\'s pending digest — none answers the grouped question "which threads are agents waiting on each other in, who owes whom a reply, which thread is blocked or done, and what moved lately" in one read. Every argument is optional and takes the same value rules the CLI flags and API params share: `agent` keeps the threads one identity is in (handle, agent:<handle>, stable agt_ id or alias resolved through the server-owned registry); `job` keeps the threads that name one job — its job:<id> bucket or a member message citing it; `waitingOn` keeps the waiting threads one agent owes a reply on — its own labels or a group:<channel>:<topic> address of a channel it belongs to, never a thread whose waiting message the agent itself sent; `waiting`/`blocked` are JSON booleans for the --waiting/--blocked shortcuts (false is the same as absent); `state` keeps threads in one of waiting/answered/blocked/done — the general form of the two booleans, which stay conjunctive with it so a contradictory pair is an honest empty list; `since` keeps threads whose last activity reaches the cutoff (15m, 2h, 1d, epoch ms or an ISO time — whole threads, never partial message lists); `before` keeps threads whose last activity is strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window; `contains` keeps threads where at least one member message\'s scrubbed one-line subject carries the needle as a case-insensitive substring — never the raw body; `inReplyTo` keeps threads where at least one member message\'s body cites that envelope id through its own inReplyTo field — the same own-property exact match every bus read\'s --in-reply-to applies, never the replyTo alias or a substring; `channel` keeps threads where at least one member message is addressed to group:<channel>:* — the room\'s traffic under every topic, the same raw address prefix every bus read\'s --channel matches; `priority` keeps threads where at least one member message carries that exact P0..P3 band; `from` keeps threads where at least one member message was sent under that agent\'s labels and `excludeFrom` drops threads where any member message was sent under that agent\'s labels — the same sender rules every bus read\'s --from/--exclude-from apply; `limit` caps returned threads 1–1024, longest-waiting order kept. Each thread reports its participants, scrubbed subject, message count, last activity, state, waiting detail (on whom, for how long), job links, cross-links and member messages; `matched` reports every thread the filters kept before `limit`, `waiting` counts the unfiltered waiting threads, `skipped` counts damaged bus rows and `source` keeps missing/unavailable honest — an unreadable store or registry leaves conversations, matched and waiting null, never an invented empty list. Read-only: routing labels are data, never authenticated identity; no caller root, path or cwd is accepted — the store and registry roots stay server-owned — and the tool never posts, claims, acks, replies or writes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agent: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Agent ref — handle, agent:<handle>, stable agt_ id or alias — resolved through the server-side registry; keeps the threads that identity is in.' },
+          waiting: { type: 'boolean', description: 'Keep only threads waiting for a reply — the `phm agents conversations --waiting` / `?waiting=1` rule.' },
+          blocked: { type: 'boolean', description: 'Keep only threads a blocker or failed report left unanswered — the `--blocked`/`?blocked=1` rule.' },
+          state: { type: 'string', enum: [...CONVERSATION_STATES], description: 'Keep only threads in this one state — the general form of `waiting`/`blocked`, conjunctive with them.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only threads that name this job id — its job:<id> bucket or a member message citing it.' },
+          waitingOn: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the waiting threads this agent owes a reply on — its own labels or a channel address it belongs to, never a thread it is itself waiting on.' },
+          since: { type: 'string', description: 'Keep threads whose last activity is at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents conversations --since` takes.' },
+          before: { type: 'string', description: 'Keep threads whose last activity is strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window; the same grammar `phm agents conversations --before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each member message\'s scrubbed one-line subject.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only threads where a member message\'s body cites this envelope id through its own inReplyTo field.' },
+          channel: { type: 'string', description: 'Keep only threads where a member message is addressed to group:<channel>:* — the strict channel-name grammar.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep only threads where a member message carries this exact P0..P3 band.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only threads where a member message was sent under this agent\'s labels.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Drop threads where any member message was sent under this agent\'s labels.' },
+          limit: { type: 'integer', minimum: 1, maximum: 1024, description: 'Cap on returned threads, longest-waiting order kept; `matched` still reports the full filtered count.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_agent_roster',
+      description: 'Read the unified live session roster — the same collectAgentRoster projection `phm agents roster` and the native `phm_agent_roster` tool serve, where every other fleet_agent_* read answers a question about the bus itself (fleet_agent_inbox addressed mail, fleet_agent_work the pending-work digest, fleet_agent_wakes wake hints, fleet_agent_messages the classified timeline, fleet_agent_channels the channel roster, fleet_agent_identity one card, fleet_agent_conversations the grouped threads) and fleet_bus_status reports the bus stores\' health — none answers the presence question an agent asks before it routes, hands off or waits: "which agent sessions are actually running right now, on which provider, and what is each holding." The roster probes nine sources in parallel — Phantom\'s own live workers, Devin cloud, the Devin Desktop/CLI roster file, Codex, Claude, Cursor, Grok, Ollama and oMLX — each bounded by a short timeout, then joins the live coordination leases every session\'s claims come from. Each source reports its own ok/availability/error: a probe that times out, is missing or returns an unrecognized shape degrades only its own source to unknown with its reason — never an invented empty or populated list — and the result keeps observedAt and latencyMs honest about when and how long the observation took. Session titles, ownership, urls and blockers are scrubbed of secrets and control characters inside the projection and every string is scrubbed again at serialization; fencing tokens never leave the claim store. Takes no arguments — every probe target, store root and clock stays server-owned and any argument is refused. Read-only: probes run fixed read-only argv with a sanitized environment, loopback fetches are restricted to the local Ollama/oMLX status endpoints, the Devin cloud leg is a read-only authenticated session list, and the tool never claims, posts, sends, launches, holds or writes; session ids, titles, urls, orgs and claim owners are routing and observation data — never authenticated identity, presence proof or execution authority; a throwing roster read reports status unavailable, never an invented roster; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_channel',
+      description: 'Read one agent-bus channel transcript — the same readAgentChannel projection `phm agents bus channel read` serves, where fleet_bus_inbox only pages the raw durable store by routing label and fleet_agent_inbox answers one agent\'s addressed mail, never the room. `channel` is required — a registry channel name; a name no channel carries answers unknown-channel, never a guessed match, and reading needs no identity or membership: membership gates posting only. topic narrows to one group:<channel>:<topic> address; group.presence heartbeats never appear — they are expiring observations with their own read, not messages. from and excludeFrom narrow senders through the same identity-label matching — an unresolvable ref keeps exact-label matching and the two compose so a sender both included and excluded matches nothing; thread keeps note/context bodies carrying that v2 label; priority keeps one P0–P3 band; job keeps posts naming one job (a work.post/status/result or wake jobId, a worker-handoff taskId, or a job:<id> thread label); since keeps posts received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time); before keeps posts received strictly before its own cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window on receivedAt; contains keeps posts whose scrubbed one-line summary carries the needle as a case-insensitive substring; inReplyTo keeps only posts whose object body cites that envelope id through its own inReplyTo field — the shared own-property exact match `phm agents bus channel read --in-reply-to`, `phm agents bus inbox --in-reply-to`, `phm messages --in-reply-to` and the raw bus reads apply, never the replyTo alias or a substring, so "which room posts answer envelope X" is one filtered read; `id` keeps only the post whose own wire id is strictly equal to the value — the same exact-envelope match `phm agents bus channel read --id` and the raw bus reads\' `id` apply, never a substring or a body citation, so "did envelope X reach the room" is one filtered read of the transcript. Each row reports its topic, the resolved sender handle or null, and for claimable work and worker-handoff bodies the live held/holder evidence — null when a hold store cannot be read, never proven free — plus, on bodies naming a job, the live work-feed state of that job. after resumes at a persisted cursor and limit caps returned rows (1–100, default 50); matched additionally reports the true filtered total across the whole retained store while messages still caps at limit, and nextCursor is the honest resume point — under matched it is the newest shown row\'s cursor, never the store\'s end, so resuming never skips an unshown match. Read-only: routing labels are data, never authenticated identity; a missing or unreadable store or registry stays unavailable or retryable and held/job stay unknown, never an invented empty transcript; no caller root, path or cwd is accepted, and the tool never posts, claims, acks or renews TTL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Registry channel name — the group:<channel>:* room the transcript covers.' },
+          topic: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only posts addressed to group:<channel>:<topic>.' },
+          after: { type: 'integer', minimum: 0, default: 0, description: 'Persisted cursor; rows at or below it are already handled.' },
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_BUS_CHANNEL_LIMIT_MAX, default: FLEET_BUS_CHANNEL_LIMIT_DEFAULT, description: 'Cap on returned rows after filtering.' },
+          matched: { type: 'boolean', description: 'Also report matched — the true filtered total across the whole retained store.' },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref; matches every label of one registered identity, exact-label fallback when unresolvable.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender ref to drop under every label of one registered identity.' },
+          thread: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'v2 thread label; matches note/context bodies only.' },
+          priority: { type: 'string', enum: [...BUS_PRIORITIES], description: 'Keep posts stamped with this exact P0–P3 band.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep posts naming this job id — the same rule `phm agents bus channel read --job` applies.' },
+          since: { type: 'string', description: 'Keep posts received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `phm agents bus channel read --since` takes.' },
+          before: { type: 'string', description: 'Keep posts received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window, the same grammar `phm agents bus channel read --before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each post\'s scrubbed one-line summary.' },
+          inReplyTo: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only posts whose object body cites this envelope id through its own inReplyTo field — the same own-property exact match `phm agents bus channel read --in-reply-to` and the raw bus reads apply.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the post whose own wire id is strictly equal to this value — the same exact-envelope match `phm agents bus channel read --id`, `comms bus read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`\'s `id` apply, never a substring or a body citation.' },
+        },
+        required: ['channel'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_show',
+      description: 'Resolve one retained bus envelope by wire id — the same readBusEnvelopeById projection `phm agents bus show <id>` serves, the citation resolver every other bus read points at: inbox rows, channel posts, work postId/statusId/result receipts, handoff ids and wake-hint statusId citations all name ids only this read resolves without shelling out to `phm`. `id` is required — an envelope wire id or a `wh-…` claim-holder wake-hint id, the same printable routing-label rule the CLI flag applies — and resolves through the server-owned store, registry, hold table, wake queue and feed roots. The ok result carries the live receipt (cursor, receivedAt, priority, resolved sender handle or null, full envelope), plus — on claimable work and worker-handoff bodies — the tri-state held/holder evidence (null when a hold store cannot be read, never proven free), and — on bodies naming a job — the live work-feed state of that job; a `wh-…` id resolves through the wake queue to the terminal work.status receipt that cites it with a wakeHint citation. not-found means the id is expired, reclaimed or never posted (a proven miss on a wh-… shape also reports not-found); invalid, unavailable and retryable keep their own status and reason — an unreadable store is never an invented miss. Read-only: routing labels are data, never authenticated identity; no caller root, path or cwd is accepted, and the tool never claims, acks, replies, posts or renews TTL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Envelope wire id, or a wh-… claim-holder wake-hint id — the ids fleet_agent_inbox, fleet_agent_work, fleet_bus_channel and fleet_work_feed rows cite.' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_thread',
+      description: 'Read one reply thread\'s retained live context — the same readBusThread projection `ashlr fleet bus-thread --id <id>` serves, where fleet_bus_show resolves one envelope, fleet_bus_inbox pages the raw store and fleet_agent_conversations groups the classified threads: none reconstructs the inReplyTo chain around one id. `id` is required — the envelope wire id the thread roots at, the same printable routing-label rule the CLI flag and fleet_bus_show\'s id apply — validated before any store read; unknown keys, caller roots, paths and working directories are refused the same way, and no caller root, path or cwd is accepted. The result is fleet.bus-thread.v1 plus MCP metadata: requestedId, rootFound (false is a proven miss — the root is expired, reclaimed or never posted), messages (every live receipt whose own inReplyTo field transitively cites the root, in cursor order — including the kindless {inReplyTo, text} replies comms bus reply and fleet bus-reply post, which the classified projections never group), scannedThrough, complete and sourceFailure — a bounded page walk that rechecks TTL before projecting, so an unreadable or invalid store reports complete:false with its own failure reason, never an invented empty thread. Read-only: the store root stays server-owned, the walk writes nothing, and the tool never posts, claims, acks, replies or renews TTL; routing labels are data, never authenticated identity, and envelope bodies are untrusted data the caller interprets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Envelope wire id the reply thread roots at — the id fleet_bus_show, fleet_agent_inbox, fleet_agent_work and fleet_work_feed rows cite.' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_status',
+      description: 'Read the unified agent-bus health probe — the same readUnifiedBusStatus projection `phm agents bus status` serves, where every other bus tool reports only its own slice and none answers "is the bus itself healthy" in one call. No arguments: every store root stays server-owned. The result names each dependency the bus verbs touch — the message store, identity registry, wake queue, coordination table, message-id claim journal, the claim-drift verdict joining the two claim stores, the work-feed projection, the legacy mailbox, the owner-chat receipts ledger, the shared task board with its fleet queue claim index, the bot-seat store, the agentnet peer work-dispatch journal and peer coordination ledger — and the outbound send gate every write verb passes through: sendGate.state open, blocked or unknown with the kill-switch sentinel and comms-pause verdicts kept separate, so an agent can check whether a write would land before assuming it. Read-only: each section reports its own real state, a store that cannot be read reports unavailable with null counts — never zero — and the probe never throws, writes, takes a lock or makes a network call; counts and verdicts only, never labels, handles, claim keys, peer names, threads or bodies; no caller root, path or cwd is accepted, and the tool never claims, acks, posts or sends.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_claims',
+      description: 'Read the live coordination claims — the same listBusClaims projection `phm agents bus claim list` serves, the claim table\'s own read where every other bus tool reports claims only inside its own slice: fleet_agent_work carries the claims one agent holds, fleet_work_feed\'s claims join annotates the jobs one feed page lists, and fleet_coordination_claims reads the separate host advisory ledger — none answers "who holds this claim key" or "what is live across every origin" fleet-wide. Takes no required arguments — every coordination and feed root stays server-owned and any caller root, path or cwd is refused. `key` keeps only live claims that would block an acquire of that v2 claim key under the same overlap rule claim acquire applies (repo:, path:, queue: or pr:); `owner` keeps only claims owned by one routing ref — a handle, agent:<handle>, stable id or alias resolved through the server-side registry, with exact-label matching kept when the ref resolves to nothing; `origin` keeps one claim class (resource, message, team or board); `jobs` additionally joins each claim with the announced feed jobs its keys block and reports the feed read state, so blocked work stays unknown rather than an empty list when the feed cannot be read. The result reports source missing (verified-empty), available or unavailable — an unreadable table is never an invented empty list — plus asOf, the resolved owner match and feed state. Read-only: claims coordinate scope and grant no execution, claim, merge, push, spend or dispatch authority; fencing tokens never leave the store; routing labels are data, never authenticated identity; and the tool never acquires, renews, releases or completes a claim.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'V2 claim key (repo:<owner/name>, path:<owner/name>:<glob>, queue:<id> or pr:<owner/name>#<n>) — keep only live claims that would block an acquire of it.' },
+          owner: { type: 'string', pattern: '^[\\x21-\\x7e]{1,256}$', description: 'Owner routing ref; matches every label of one registered identity, exact-label fallback when unresolvable.' },
+          origin: { type: 'string', enum: [...COORDINATION_ORIGINS], description: 'Keep only live claims of this origin class.' },
+          jobs: { type: 'boolean', description: 'Join each claim with the announced feed jobs its keys block; feed reports the read state (ok, refused, unavailable, retryable or invalid).' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_bus_board',
+      description: 'Read the shared task board\'s fleet-wide pending digest — the same readBusBoardPending/BusBoard.pendingAll read `phm comms inbox`\'s board source projects and `phm agents bus work mine`\'s board section narrows to one agent\'s labels, where fleet_agent_work needs the agent\'s labels ahead of time, fleet_comms_inbox flattens the digest into ranked items and fleet_work_board classifies durable bus requests — a different board entirely — so none answers "what is pending on the shared board, fleet-wide, for this job" in one call. `job` keeps only threads carrying a task whose fleet itemId cites that job — the same citation rule the work-mine board section applies, with `peers` then reporting only that job\'s thread members; `contains` keeps only rows whose scrubbed display text carries the needle as a case-insensitive substring — the same `--contains` rule every bus read shares; `since` (15m, 2h, 1d, epoch ms or ISO) keeps only deliveries whose createdAt reaches the cutoff and `before` keeps only deliveries recorded strictly before its own cutoff, the pair reading one [since, before) window — board tasks carry no timestamp, so under a time bound the task list is provably empty rather than padded with undated rows, and thread rollups list only while a surviving delivery remains. The result reports source missing (verified-empty — no state.json was ever written), available or unavailable — an unreadable board, malformed config, relative path override or disabled event bus is never an invented empty digest — plus the digest\'s peers, claims read state, thread rollups and the deliveries/tasks matched totals with 50-item caps and truncated flags; every task hold is open/held/ambiguous/unknown under the shared-queue claim index — unknown never proven open — and item content.text stays the stored untrusted text: canonical envelope JSON for deliveries, titles for tasks and threads. Read-only: the digest takes the board\'s local read lock but writes nothing and never acknowledges a delivery or claims a task; routing labels are data, never authenticated identity; claims coordinate scope and grant no execution, claim, merge, push, spend or dispatch authority; no caller root, path or cwd is accepted, and the tool never posts, acks, claims, hands off or releases.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only threads carrying a task whose fleet itemId cites this job id — the same citation rule the work-mine board section applies.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_READ_CONTAINS_MAX, description: 'Case-insensitive substring over each row\'s scrubbed display text — delivery post text, task and thread titles — the same --contains rule every bus read shares.' },
+          since: { type: 'string', description: 'Keep only deliveries whose createdAt reaches this cutoff: 15m, 2h, 1d, epoch ms or an ISO time. Board tasks carry no timestamp and never match under a time bound.' },
+          before: { type: 'string', description: 'Keep only deliveries recorded strictly before this cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window. Board tasks carry no timestamp and never match under a time bound.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_seat_handoffs',
+      description: 'Read the fleet-wide bot-seat handoff plan — the same planSeatHandoffs projection `phm bots handoffs`, the unified inbox seats source and `phm agents bus work mine`\'s seats section share, where fleet_agent_work narrows it to one agent\'s seats and fleet_comms_inbox keeps only eligible seats with pending records as ranked inbox items. No arguments: every seat, fleet, runs and node root stays server-owned and any argument is refused. Every roster seat reports its config seatId, bus participantId, projected lifecycle state (active, draining or idle) and handoff eligibility under the same rule plan and apply enforce, plus its pending handoff records — the deterministic handoffIds `phm bots handoff --seat <id> --apply` dedupes on — for eligible seats only; ineligible seats report eligible false with no records. apply stays false: the read never releases work, writes journals or notices, takes no lock and persists no lifecycle transition — unlike `phm bots seats`, whose roster read does persist seat state. A throwing plan read reports status unavailable, never an invented empty roster; seat ids and participant ids are routing labels, never authenticated identities, and the plan grants no claim, release, dispatch or execution authority; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_bot_seats',
+      description: 'Read the bot-seat roster — the same readBotSeats projection `phm bots seats --json` serves minus its persist-on-read lifecycle write, where fleet_seat_handoffs reports only the handoff plan (seatId, participantId, state, eligible, pending records) and fleet_agent_work narrows that plan to one agent\'s seats, so no existing tool answers "which seats can accept new work right now" — per-seat quota evidence, projected lifecycle state, acceptsNewWork and open claims/jobs — in one call. Takes no arguments — every seat, fleet, runs and node root stays server-owned and any argument is refused. Every roster seat reports its config seatId, kind, displayName, capabilities, bus participantId and participant view, projected lifecycle state (active, draining or idle), acceptsNewWork (active state plus measured quota — the same admission seatMayClaim applies), live quota evidence (measured usedPct/resetAt/asOf/source, or unknown with its reason — never an invented zero), its live coordination claims, in-flight node jobs and recent handoff records; seat secret-handle names and adapter internals stay out of the result. persisted stays false: the read shares listSeats\' seat-view projection but never writes the lifecycle transition `phm bots seats` persists, takes no lock and releases, claims or sends nothing. A throwing roster read reports status unavailable, never an invented empty roster; seat ids, participant ids, claim keys and owners are routing labels, never authenticated identities, and the roster grants no claim, release, dispatch or execution authority; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_work_feed',
+      description: 'Read the bus v2 work feed — the same readBusWorkFeed + projectBusWorkFeedView projection `phm fleet work-feed`, `phm agents bus work feed` and GET /api/verse/agent-bus/work-feed serve. status, job, repo, provider, tier, to, owner, since, before, contains and channel narrow the job list under the same parseBusWorkFeedQuery rules the CLI flags and the HTTP endpoint share — since inclusive and before exclusive on the job\'s last activity, so the pair reads one [since, before) window and older pages stay reachable past the newest-first limit cap; channel keeps only jobs announced to group:<channel>:* — the room traffic under every topic, the same address prefix agents bus inbox --channel and channel read match; claims joins live coordination holds onto each job, and open/claimable keep open-status candidates — open and claimable imply the claims join. to matches jobs addressed to that agent — the literal routing label, every label of one agent identity, and group:<channel>:<topic> addresses of registry channels the identity belongs to, minus channel posts the identity sent itself — while owner keeps jobs announced by that agent under every label of one agent identity, all through the server-side registry with exact-label matching kept when a ref resolves to nothing. limit caps returned jobs newest-first (1–200, default 50); matched reports the true filtered total before the cap and omitted the rest, and claims holds regroup under the shown jobs only. Read-only: routing labels are data, never authenticated identity; claims coordinate scope and grant no execution, claim or dispatch authority; an unreadable store, registry or hold table stays unavailable or unknown, never an empty feed; no caller root, path or cwd is accepted, and the tool never writes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_WORK_FEED_LIMIT_MAX, default: FLEET_WORK_FEED_LIMIT_DEFAULT },
+          claims: { type: 'boolean', description: 'Join live coordination holds onto each job (claims.source missing/available/unavailable; holds never leave the store).' },
+          open: { type: 'boolean', description: 'Keep queued/rescheduled jobs that declare claim keys, including unknown holds; implies claims.' },
+          claimable: { type: 'boolean', description: 'Keep only open jobs whose declared claim keys provably include a free one; implies claims.' },
+          status: { type: 'string', enum: [...WORK_STATUSES], description: 'Keep jobs in this feed status.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep the job with this exact id.' },
+          repo: { type: 'string', pattern: '^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$', description: 'Keep jobs announced for this owner/name repo (case-insensitive, the claim-key rule).' },
+          provider: { type: 'string', enum: [...PROVIDERS], description: 'Keep jobs announced for this provider.' },
+          tier: { type: 'string', enum: [...WORK_TIERS], description: 'Keep jobs whose announcement declared this dispatch tier; a job with no dispatch spec declares none and never matches.' },
+          to: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep jobs addressed to this agent — its routing labels and the group:<channel>:<topic> addresses of registry channels it belongs to.' },
+          owner: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep jobs announced by this agent.' },
+          since: { type: 'string', description: 'Keep jobs whose last activity — the newest status receipt time, or the announcement\'s while no status has moved the job — reaches the cutoff: 15m, 2h, 1d, epoch ms or an ISO time.' },
+          before: { type: 'string', description: 'Keep jobs whose last activity is strictly before this cutoff on the same field — 15m, 2h, 1d, epoch ms or an ISO time; with since it reads one [since, before) window.' },
+          contains: { type: 'string', minLength: 1, maxLength: BUS_WORK_FEED_CONTAINS_MAX, description: 'Case-insensitive substring over each job\'s scrubbed title, newest status detail and declared dispatch scope/acceptance.' },
+          channel: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$', description: 'Keep only jobs announced to group:<channel>:* — the room\'s traffic under every topic.' },
         },
         additionalProperties: false,
       },
@@ -423,12 +788,13 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_work_board',
-      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20) and `thread` keeps one exact channel_ref. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
+      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref and `state` keeps only items the classifier placed in that state — the response then also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
       inputSchema: {
         type: 'object',
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: WORK_BOARD_MAX_LIMIT, default: 20 },
           thread: { type: 'string', maxLength: 512, description: 'Exact channel_ref filter such as a Slack <team>/<channel>/<threadTs>.' },
+          state: { type: 'string', enum: [...WORK_ITEM_STATES], description: 'Keep only items classified into this state; matched reports the true filtered total before the display cap.' },
         },
         additionalProperties: false,
       },
@@ -492,6 +858,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_channels_overview',
+      description: 'Read the owner-channel matrix — the same readChannelsOverview projection `phm channels` and GET /api/channels serve, where fleet_channel_health answers only the Slack/iMessage bridge slice. One row per channel the owner can reach the Leader on (email, Telegram, iMessage, mobile, desktop app, Phantom page, terminal, Slack) reports connected, not-set-up, failing or unknown with last inbound/outbound times, 24 h message counts, verified senders, the one plain next step and a masked address (last four characters at most; reasons and next steps are path- and email-redacted by the projection). A channel whose source cannot be read reports unknown — never a guessed zero — and counts stay measured, so an agent can tell which channels can reach Mason and which are silently down in one call. Takes no arguments — every store root (config, inbox, email-drop, bridge health, remote-device registry) stays server-owned and any argument is refused. Read-only: the projection only joins existing reads, writes nothing and sends nothing; a throwing overview read reports status unavailable, never an invented healthy matrix; no caller root, path or cwd is accepted, and the tool grants no send, pairing, dispatch or merge authority.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_tailnet_peers',
       description: 'Read the sanitized tailnet peer list: self host name and each peer\'s name, OS, online, lastSeen, ageSeconds, reasons and asOf — the same readTailnetPeers evidence as `ashlr fleet tailnet-peers`. Evidence only; it grants no dispatch, claim, network or merge authority. No addresses, DNS names or keys are returned. The read is time-bounded: a throw or timeout returns { status: "unknown", reason } and never an invented peer list. Takes no arguments: no caller root, path or cwd is accepted, and the tool never writes anything.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -544,9 +916,27 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
       annotations,
     },
     {
+      name: 'fleet_slack_status',
+      description: 'Read the full offline Slack bridge status — the same buildSlackBridgeStatus report `phm channels slack status --json` serves: agent-network config and [slack] section state, bridge ids, phm_ credential reference names (never values), topic-to-channel mappings, team identity counts, comms confirmation, journal state with ignored-reason buckets, reply-binding counters, receipt-backed work items, readiness, the always-unknown transport triple and the next step. fleet_channel_health answers only the LIVE/DEGRADED verdict and fleet_slack_replies only the replies slice; this is the whole report in one call. Offline only — no socket, Web API call or credential read — and `config.path` reports its basename only, never an absolute host path. Unknown stays unknown: a missing or degraded journal stays missing/degraded and unreadable counts stay absent, never an invented zero. The read is bounded to 5 seconds: a throw or timeout returns { status: "unknown", reason } with no counts and no raw exception text. Evidence only; it grants no send, dispatch or merge authority. Takes no arguments (any argument is refused) and accepts no caller root, path or cwd; the tool never writes anything.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
       name: 'fleet_lanes',
       description: 'Read a persisted per-lane posture: running/target counts, hold state with holder attribution, reason and expiry, plus resource-ledger usage (used percent, credits remaining, reset time, burn rate, window). A persisted observation only — no tool starts, holds, releases, or otherwise changes a lane.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_unfed',
+      description: 'Read the shared work queue\'s per-resource utilization and unfed capacity — the same readUnfedReport assembly `phm fleet unfed --json` serves, where fleet_lanes reports each lane\'s posture (running/target/hold/usage) and fleet_work_feed lists the jobs themselves but neither answers "which lanes have free slots while runnable rows wait under another lane\'s hint, and why". The result is the fleet.unfed.v1 report: per lane running, target, held, utilization, headroom, readyHinted, waitingElsewhere, unfed and the blocked reason-code counts, plus waiting, invalidRows, unfedLanes, unfedSlots, the fleetStop verdict (admission_stopped, global_admission or null), source (dispatcher or derived), derivedReasons, statusAsOf and statusFresh — a stale or untimestamped snapshot is reported flagged, never hidden. The window folds cover the last windowHours (default 24, at most 168 — the same bound --window enforces): history (unfed ticks, slot-ticks lost and leading blocked reasons per lane), overrides (route decisions that left the hinted lane, by reason and hinted-to-chosen lane), rejections (per-lane refusal codes), claims (jobs.jsonl launches that left their hint — events, not distinct jobs) and decisionOutcomes (each decided job joined to its recorded merge outcome by how the hint fared). Honesty is the report\'s own: each fold keeps available/truncated/jobsAvailable flags so a missing market log or tail-truncated ledger stays a lower bound or unknown — never an invented zero — and an absent or unreadable queue/status.json reports { status: "unavailable" }, never an invented all-fed fleet. `windowHours` is the only argument; every store root stays server-owned — no caller root, path, cwd or runsDir is accepted — and the tool never writes, launches, holds, releases, claims or dispatches anything; counts, lane names and reason codes only, never job ids, task text or credentials.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          windowHours: { type: 'number', exclusiveMinimum: 0, maximum: 168, description: 'Fold window in hours for the history/override/claims/outcome/rejection sections — the same bound `phm fleet unfed --window` enforces; omitted means the 24-hour default.' },
+        },
+        additionalProperties: false,
+      },
       annotations,
     },
     {
@@ -871,8 +1261,71 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_comms_inbox',
-      description: 'Read the ranked unified comms inbox. Read-only; items quote private text.',
-      inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }, additionalProperties: false },
+      description: 'Read the ranked unified comms inbox — the same readUnifiedInbox projection `phm comms inbox` serves. Optional source, kind, severity, blocking, job, since, before and contains narrow the item list with the same rules as the CLI flags; the per-source pending reports stay the unfiltered store truth and an applied filter is echoed on the result. limit caps returned items (1–200, default 50). Read-only; items quote private text.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
+          source: { type: 'string', enum: [...UNIFIED_INBOX_SOURCES], description: 'Keep items from one unified-inbox source.' },
+          kind: { type: 'string', enum: [...UNIFIED_INBOX_KINDS], description: 'Keep items of one kind — the item\'s own classification, finer than source where one source emits several kinds (the bus source\'s bus-work/bus-handoff split, the board source\'s board-delivery/board-task split).' },
+          severity: { type: 'string', enum: ['info', 'warn', 'high'], description: 'Keep items of one severity.' },
+          blocking: { type: 'boolean', description: 'true keeps only blocking items; false keeps only non-blocking items.' },
+          job: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only items whose citation set names this job id.' },
+          since: { type: 'string', description: 'Keep items whose recorded appearance time reaches the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms inbox --since` takes.' },
+          before: { type: 'string', description: 'Keep items whose recorded appearance time is strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive upper bound composing with since into one [since, before) window, the same grammar `phm comms inbox --before` takes.' },
+          contains: { type: 'string', minLength: 1, maxLength: UNIFIED_INBOX_CONTAINS_MAX, description: 'Case-insensitive substring over each item\'s scrubbed title and detail.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_comms_status',
+      description: 'Read the owner comms status — the same readOwnerCommsStatus projection `phm comms status --json`, the native `ashlr_comms` tool and the owner-thread API serve, where fleet_comms_inbox lists only the pending owner items and none of the fleet reads answers "is the owner reply path alive" in one call. The result reports the kill-switch and comms-pause verdicts the owner-thread adapters answer to (the same gates fleet_bus_status\'s sendGate reports for bus writes, kept as separate verdicts), the live plus archived message count, inbound messages awaiting a recorded reply, recorded replies whose fanout delivery evidence cannot confirm (failed, pending or unknown — never delivered), the per-channel owner adapter rollup (configured, enabled, halted, fixed reason and next step, secret handle names at most — never values) and the teammate reply-gap read. An unreadable thread keeps every count null — unknown stays unknown, never an invented zero — and message text never enters the projection. Takes no arguments — the owner config dir and runs dir resolve the real account home server-side and cannot be retargeted by HOME or ASHLR_* variables, and any argument is refused. Read-only: the projection joins existing reads, writes nothing and sends nothing; a throwing read reports status unavailable, never an invented healthy status; routing and owner labels are untrusted data, and the tool grants no reply, send, pairing, dispatch or delivery authority; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations,
+    },
+    {
+      name: 'fleet_comms_thread',
+      description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts — the same readOwnerThread projection `phm comms thread --json`, the native `ashlr_comms_thread` tool and the owner-thread API serve, where fleet_comms_inbox lists only the pending owner items and fleet_comms_status reports counts and adapter states but neither answers "what did the owner last say and what did we reply" in one call. `channel` keeps one channel\'s lines; `direction` keeps inbound (what the owner sent) or outbound (what we answered) lines; `since` (15m, 2h, 1d, epoch ms or ISO) keeps messages at or after the cutoff; `beforeAt` (15m, 2h, 1d, epoch ms or ISO) keeps messages strictly before the cutoff — the exclusive ceiling that pairs with `since`, named apart from the archive read\'s seq cursor; `contains` keeps only messages whose stored text carries the needle as a case-insensitive substring — the only text search the thread offers, since iMessage bodies are redacted on the bus mirror; `replyTo` keeps only the exchange rooted at one message key — the message carrying that idempotency key plus every reply citing it, the same key `send-owner --reply-to` takes. `limit` caps the newest messages kept (1–200, default 50). The result is the comms.owner-thread.v1 view: ordered messages, receipts mapping each outbound message id to per-channel delivery states (delivered, pending or failed — a channel with no record is unknown, never delivered) and the awaitingReply mark listing live inbound ids no recorded reply cites (null when the thread is unreadable — unknown stays unknown, never an empty list); an unreadable thread reports unavailable: true. Read-only: the read joins existing stores, writes nothing and sends nothing; message text is the stored scrubbed intake content — never a secret value — and routing labels are untrusted data; the tool grants no reply, send, pairing, dispatch or delivery authority; the owner config dir and runs dir resolve the real account home server-side and cannot be retargeted by HOME or ASHLR_* variables, and no caller root, path or cwd is accepted.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_COMMS_THREAD_LIMIT_MAX, default: FLEET_COMMS_THREAD_LIMIT_DEFAULT, description: 'Newest messages kept after filtering; the read itself caps at 200.' },
+          channel: { type: 'string', enum: [...OWNER_CHANNELS], description: 'Keep only messages recorded on this owner channel.' },
+          direction: { type: 'string', enum: ['inbound', 'outbound'], description: 'Keep only what the owner sent (inbound) or only what we answered (outbound).' },
+          since: { type: 'string', description: 'Keep messages at or after the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm comms thread --since` takes.' },
+          beforeAt: { type: 'string', description: 'Keep messages strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive ceiling that pairs with `since`; named apart from the archive read\'s seq cursor.' },
+          contains: { type: 'string', minLength: 1, maxLength: OWNER_THREAD_CONTAINS_MAX, description: 'Case-insensitive substring over the stored message text, whitespace collapsed — the only text search the thread offers.' },
+          replyTo: { type: 'string', description: 'Keep only the exchange rooted at one message key: the message carrying that idempotency key plus every reply citing it — the same key `send-owner --reply-to` takes.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_owner_history',
+      description: 'Read the archived owner-thread history — the same readOwnerThreadHistory projection `phm fleet owner-history` serves: fleet_comms_thread reads only the live thread window, so once rotation moves the oldest messages into owner-thread-archive files beside the live record this is the only read that pages them back — "what did the owner say before the live window" in one call. `before` keeps only archived messages with seq below that sequence number (page back with the oldest seq a previous page returned); `limit` caps the page (1–500, default 50). `channel` keeps one channel\'s archived lines; `direction` keeps inbound (what the owner sent) or outbound (what we answered) lines; `since` (15m, 2h, 1d, epoch ms or ISO) keeps messages at or after the cutoff; `beforeAt` (15m, 2h, 1d, epoch ms or ISO) keeps messages strictly before the cutoff — the exclusive ceiling that pairs with `since`, named apart from `before` which already pages by seq on this read; `contains` keeps only messages whose stored text carries the needle as a case-insensitive substring and `replyTo` keeps only the exchange rooted at one message key — the message carrying that idempotency key plus every reply citing it; both are the same view slice fleet_comms_thread exposes, applied through the shared predicate so a filtered archive read keeps exactly the rows the live read would. The result is the comms.owner-thread-history.v1 view: the page\'s messages, `archives` (retained archive files found) and `skipped` (archive files unreadable or invalid — counted, never fatal); archive discovery, seq paging, overlap dedupe and per-message secret scrubbing stay the shared read\'s, so overlapping archive records never double-count. Message text is the stored scrubbed intake content — never a secret value — and routing labels are untrusted data; the tool grants no reply, send, pairing, dispatch or delivery authority; the runs dir resolves the real account home server-side and cannot be retargeted by HOME or ASHLR_* variables, no caller root, path or cwd is accepted, and a throwing read reports status unavailable, never an invented empty or healthy history.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          before: { type: 'integer', minimum: 1, description: 'Keep only archived messages with seq below this sequence number — page back with the oldest seq a previous page returned.' },
+          limit: { type: 'integer', minimum: 1, maximum: FLEET_OWNER_HISTORY_LIMIT_MAX, default: FLEET_OWNER_HISTORY_LIMIT_DEFAULT, description: 'Cap on archived messages returned; the read itself clamps at 500.' },
+          channel: { type: 'string', enum: [...OWNER_CHANNELS], description: 'Keep only archived messages recorded on this owner channel.' },
+          direction: { type: 'string', enum: ['inbound', 'outbound'], description: 'Keep only what the owner sent (inbound) or only what we answered (outbound).' },
+          since: { type: 'string', description: 'Keep archived messages at or after the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the same grammar `phm fleet owner-history --since` takes.' },
+          beforeAt: { type: 'string', description: 'Keep archived messages strictly before the cutoff: a duration (15m, 2h, 1d), epoch ms or an ISO time — the exclusive ceiling that pairs with `since`; named apart from `before` which already pages by seq on this read.' },
+          contains: { type: 'string', minLength: 1, maxLength: OWNER_THREAD_CONTAINS_MAX, description: 'Case-insensitive substring over the stored message text, whitespace collapsed — the only text search the thread offers.' },
+          replyTo: { type: 'string', description: 'Keep only archived messages in the exchange rooted at one message key: the message carrying that idempotency key plus every reply citing it.' },
+        },
+        additionalProperties: false,
+      },
+      annotations,
+    },
+    {
+      name: 'fleet_comms_health',
+      description: 'Read the comms transport health — the same readTelegramHealth projection `phm comms health --json` serves: the Telegram poller\'s last poll and last success timestamps, whether a poll landed inside the seven-minute liveness window (pollerAlive — a recent heartbeat, never delivery proof), the last seen update id, bot-token presence as a boolean (the value never leaves the process) and the Leader tick state (never, started, completed, failed or spawn-failed). fleet_channels_overview reports each channel\'s configured/connected row and fleet_comms_status the owner-thread adapters\' rollup; neither answers "is the Telegram poller actually polling and did the Leader tick last run" in one call. Takes no arguments — the config and comms state resolve under the process home, the same root `phm comms health` reads, and any argument is refused. Read-only: the projection joins existing reads, writes nothing, sends nothing, polls nothing and alters no comms configuration; a throwing read reports status unavailable, never an invented healthy status; a missing health file reports null timestamps and pollerAlive false — never-polled is a fact, not an error — and the tool grants no send, pair, setup, dispatch or delivery authority; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations,
     },
     {
@@ -1036,7 +1489,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
     // Low-level SDK servers do not validate arguments against tools/list schemas.
-    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_lanes' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
+    if (name !== 'fleet_staging_inventory' && name !== 'fleet_staging_inventory_retry' && name !== 'fleet_staging_inventory_batch' && name !== 'fleet_status' && name !== 'fleet_empties' && name !== 'fleet_loop' && name !== 'fleet_bus_hops' && name !== 'fleet_host_runs' && name !== 'fleet_bus_inbox' && name !== 'fleet_agent_inbox' && name !== 'fleet_agent_work' && name !== 'fleet_agent_wakes' && name !== 'fleet_agent_messages' && name !== 'fleet_agent_channels' && name !== 'fleet_agent_identity' && name !== 'fleet_agent_conversations' && name !== 'fleet_agent_roster' && name !== 'fleet_bus_channel' && name !== 'fleet_bus_show' && name !== 'fleet_bus_thread' && name !== 'fleet_bus_status' && name !== 'fleet_bus_claims' && name !== 'fleet_bus_board' && name !== 'fleet_seat_handoffs' && name !== 'fleet_bot_seats' && name !== 'fleet_work_feed' && name !== 'fleet_work_board' && name !== 'fleet_coordination_claims' && name !== 'fleet_coordination_returns' && name !== 'fleet_runtime_identity' && name !== 'fleet_runtime' && name !== 'fleet_peer_ledger' && name !== 'fleet_session_handoff' && name !== 'fleet_surface_owner' && name !== 'fleet_claim_execution' && name !== 'fleet_channel_health' && name !== 'fleet_channels_overview' && name !== 'fleet_tailnet_peers' && name !== 'fleet_pool_reach' && name !== 'fleet_review_pick' && name !== 'fleet_order_state' && name !== 'fleet_claim_notices' && name !== 'fleet_slack_replies' && name !== 'fleet_slack_evidence' && name !== 'fleet_slack_status' && name !== 'fleet_lanes' && name !== 'fleet_unfed' && name !== 'fleet_usage_resets' && name !== 'fleet_reset_history' && name !== 'fleet_reset_await' && name !== 'fleet_reset_group_await' && name !== 'fleet_reset_release_await' && name !== 'fleet_reset_follow' && name !== 'fleet_job_history' && name !== 'fleet_job_history_batch' && name !== 'fleet_job_current_batch' && name !== 'fleet_job_current' && name !== 'fleet_job_current_snapshot' && name !== 'fleet_job_patch' && name !== 'fleet_job_overlap' && name !== 'fleet_path_history' && name !== 'fleet_path_cochanges' && name !== 'fleet_job_precheck' && name !== 'fleet_job_precheck_batch' && name !== 'fleet_main_health' && name !== 'fleet_waste_risk' && name !== 'fleet_kept' && name !== 'fleet_trim' && name !== 'fleet_email_outbox' && name !== 'fleet_email_outbox_await' && name !== 'fleet_email_outbox_batch_await' && name !== 'fleet_email_diagnosis' && name !== 'fleet_gmail_triage_latest' && name !== 'fleet_disk_forecast' && name !== 'fleet_gmail_archive_plan_latest' && name !== 'fleet_comms_inbox' && name !== 'fleet_comms_status' && name !== 'fleet_comms_thread' && name !== 'fleet_owner_history' && name !== 'fleet_comms_health' && name !== 'fleet_comms_readiness' && name !== 'fleet_imessage_path' && name !== 'fleet_imessage_acks' && name !== 'fleet_imessage_tasks' && name !== 'fleet_ci_resume_inputs' && name !== 'fleet_ci_receipt_await' && name !== 'fleet_ci_receipt_await_batch' && name !== 'fleet_release_candidate' && name !== 'fleet_orchestration_read' && name !== 'fleet_intent_read' && name !== 'fleet_self_tick_last' && name !== 'fleet_recheck' && name !== 'fleet_recheck_history' && name !== 'fleet_bridge_check') {
       throw new McpError(ErrorCode.InvalidParams, 'Unknown fleet tool.');
     }
     if (args == null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1052,6 +1505,23 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const limit = args['limit'] ?? 20;
     const emptyHours = args['hours'] === undefined ? 24 : args['hours'];
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
+    const agentInboxArgs = name === 'fleet_agent_inbox' ? parseFleetAgentInboxArgs(args) : null;
+    const agentWorkArgs = name === 'fleet_agent_work' ? parseFleetAgentWorkArgs(args) : null;
+    const agentWakesArgs = name === 'fleet_agent_wakes' ? parseFleetAgentWakesArgs(args) : null;
+    const agentMessagesArgs = name === 'fleet_agent_messages' ? parseFleetAgentMessagesArgs(args) : null;
+    const agentChannelsArgs = name === 'fleet_agent_channels' ? parseFleetAgentChannelsArgs(args) : null;
+    const agentIdentityArgs = name === 'fleet_agent_identity' ? parseFleetAgentIdentityArgs(args) : null;
+    const agentConversationsArgs = name === 'fleet_agent_conversations' ? parseFleetAgentConversationsArgs(args) : null;
+    const agentRosterArgs = name === 'fleet_agent_roster' ? parseFleetAgentRosterArgs(args) : null;
+    const busChannelArgs = name === 'fleet_bus_channel' ? parseFleetBusChannelArgs(args) : null;
+    const busShowArgs = name === 'fleet_bus_show' ? parseFleetBusShowArgs(args) : null;
+    const busThreadArgs = name === 'fleet_bus_thread' ? parseFleetBusThreadArgs(args) : null;
+    const busStatusArgs = name === 'fleet_bus_status' ? parseFleetBusStatusArgs(args) : null;
+    const busClaimsArgs = name === 'fleet_bus_claims' ? parseFleetBusClaimsArgs(args) : null;
+    const busBoardArgs = name === 'fleet_bus_board' ? parseFleetBusBoardArgs(args) : null;
+    const seatHandoffsArgs = name === 'fleet_seat_handoffs' ? parseFleetSeatHandoffsArgs(args) : null;
+    const botSeatsArgs = name === 'fleet_bot_seats' ? parseFleetBotSeatsArgs(args) : null;
+    const workFeedArgs = name === 'fleet_work_feed' ? parseFleetWorkFeedArgs(args) : null;
     const workBoard = name === 'fleet_work_board' ? parseFleetWorkBoardArgs(args) : null;
     const reviewPick = name === 'fleet_review_pick' ? parseFleetReviewPickArgs(args) : null;
     const orderState = name === 'fleet_order_state' ? parseFleetOrderStateArgs(args) : null;
@@ -1075,7 +1545,12 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const emailOutboxAwait = name === 'fleet_email_outbox_await' ? parseFleetEmailOutboxAwaitArgs(args) : null;
     const emailOutboxBatchAwait = name === 'fleet_email_outbox_batch_await' ? parseFleetEmailOutboxBatchAwaitArgs(args) : null;
     const commsReadinessArgs = name === 'fleet_comms_readiness' ? parseFleetCommsReadinessArgs(args) : null;
+    const channelsOverviewArgs = name === 'fleet_channels_overview' ? parseFleetChannelsOverviewArgs(args) : null;
     const commsInboxArgs = name === 'fleet_comms_inbox' ? parseFleetCommsInboxArgs(args) : null;
+    const commsStatusArgs = name === 'fleet_comms_status' ? parseFleetCommsStatusArgs(args) : null;
+    const commsThreadArgs = name === 'fleet_comms_thread' ? parseFleetCommsThreadArgs(args) : null;
+    const ownerHistoryArgs = name === 'fleet_owner_history' ? parseFleetOwnerHistoryArgs(args) : null;
+    const commsHealthArgs = name === 'fleet_comms_health' ? parseFleetCommsHealthArgs(args) : null;
     const emailDiagnosisArgs = name === 'fleet_email_diagnosis' ? parseFleetEmailDiagnosisArgs(args) : null;
     const gmailTriageLatestArgs = name === 'fleet_gmail_triage_latest' ? parseFleetGmailTriageLatestArgs(args) : null;
     const diskForecastArgs = name === 'fleet_disk_forecast' ? parseFleetDiskForecastArgs(args) : null;
@@ -1090,6 +1565,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const orchestrationRead = name === 'fleet_orchestration_read' ? parseFleetOrchestrationReadArgs(args) : null;
     const intentRead = name === 'fleet_intent_read' ? parseFleetIntentReadArgs(args) : null;
     const selfTickLastArgs = name === 'fleet_self_tick_last' ? parseFleetSelfTickLastArgs(args) : null;
+    const unfedArgs = name === 'fleet_unfed' ? parseFleetUnfedArgs(args) : null;
     const sessionHandoffArgs = name === 'fleet_session_handoff' ? parseFleetSessionHandoffArgs(args) : null;
     const peerLedgerArgs = name === 'fleet_peer_ledger' ? parseFleetPeerLedgerArgs(args) : null;
     const recheckArgs = name === 'fleet_recheck' ? parseFleetRecheckArgs(args) : null;
@@ -1102,6 +1578,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_orchestration_read' ? orchestrationRead === null :
         name === 'fleet_intent_read' ? intentRead === null :
         name === 'fleet_self_tick_last' ? selfTickLastArgs === null :
+        name === 'fleet_unfed' ? unfedArgs === null :
         name === 'fleet_runtime' ? parseFleetRuntimeArgs(args) === null :
         name === 'fleet_peer_ledger' ? peerLedgerArgs === null :
         name === 'fleet_session_handoff' ? sessionHandoffArgs === null :
@@ -1118,6 +1595,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_ci_receipt_await' ? ciReceiptAwait === null :
         name === 'fleet_ci_resume_inputs' ? ciResumeInputs === null :
         name === 'fleet_comms_readiness' ? commsReadinessArgs === null :
+        name === 'fleet_channels_overview' ? channelsOverviewArgs === null :
         name === 'fleet_imessage_path' ? imessagePathArgs === null :
         name === 'fleet_imessage_acks' ? imessageAcks === null :
         name === 'fleet_imessage_tasks' ? imessageTasks === null :
@@ -1127,6 +1605,10 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_disk_forecast' ? diskForecastArgs === null :
         name === 'fleet_gmail_archive_plan_latest' ? gmailArchivePlanLatestArgs === null :
         name === 'fleet_comms_inbox' ? commsInboxArgs === null :
+        name === 'fleet_comms_status' ? commsStatusArgs === null :
+        name === 'fleet_comms_thread' ? commsThreadArgs === null :
+        name === 'fleet_owner_history' ? ownerHistoryArgs === null :
+        name === 'fleet_comms_health' ? commsHealthArgs === null :
         name === 'fleet_email_outbox_batch_await' ? emailOutboxBatchAwait === null :
         name === 'fleet_email_outbox_await' ? emailOutboxAwait === null :
         name === 'fleet_email_outbox' ? emailOutbox === null :
@@ -1146,6 +1628,23 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_reset_release_await' ? resetReleaseAwait === null :
         name === 'fleet_reset_follow' ? resetFollow === null :
         name === 'fleet_bus_inbox' ? inbox === null :
+        name === 'fleet_agent_inbox' ? agentInboxArgs === null :
+        name === 'fleet_agent_work' ? agentWorkArgs === null :
+        name === 'fleet_agent_wakes' ? agentWakesArgs === null :
+        name === 'fleet_agent_messages' ? agentMessagesArgs === null :
+        name === 'fleet_agent_channels' ? agentChannelsArgs === null :
+        name === 'fleet_agent_identity' ? agentIdentityArgs === null :
+        name === 'fleet_agent_conversations' ? agentConversationsArgs === null :
+        name === 'fleet_agent_roster' ? agentRosterArgs === null :
+        name === 'fleet_bus_channel' ? busChannelArgs === null :
+        name === 'fleet_bus_show' ? busShowArgs === null :
+        name === 'fleet_bus_thread' ? busThreadArgs === null :
+        name === 'fleet_bus_status' ? busStatusArgs === null :
+        name === 'fleet_bus_claims' ? busClaimsArgs === null :
+        name === 'fleet_bus_board' ? busBoardArgs === null :
+        name === 'fleet_seat_handoffs' ? seatHandoffsArgs === null :
+        name === 'fleet_bot_seats' ? botSeatsArgs === null :
+        name === 'fleet_work_feed' ? workFeedArgs === null :
         name === 'fleet_reset_history' ? history === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
         (limited && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maxLimit)) ||
@@ -1170,6 +1669,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_claim_execution' ? await (readers.claimExecution ?? readFleetClaimExecution)()
         : name === 'fleet_runtime_identity' ? await (readers.runtimeIdentity ?? readFleetRuntimeIdentity)()
         : name === 'fleet_channel_health' ? await readFleetChannelHealth(readers.channelHealth)
+        : name === 'fleet_channels_overview' ? await (readers.channelsOverview ?? readFleetChannelsOverview)()
         : name === 'fleet_tailnet_peers' ? await readFleetTailnetPeers(readers.tailnetPeers)
         : name === 'fleet_pool_reach' ? await readFleetPoolReach(readers.poolReach)
         : name === 'fleet_review_pick' ? await (readers.reviewPick ?? readFleetReviewPick)(reviewPick as FleetReviewPickArgs)
@@ -1177,6 +1677,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_claim_notices' ? await readFleetClaimNotices(readers.claimNotices)
         : name === 'fleet_slack_replies' ? await readFleetSlackReplies(readers.slackReplies)
         : name === 'fleet_lanes' ? await (readers.lanes ?? readFleetLanes)()
+        : name === 'fleet_unfed' ? await (readers.unfed ?? readFleetUnfed)(unfedArgs as FleetUnfedArgs)
         : name === 'fleet_self_tick_last' ? await (readers.selfTickLast ?? (() => readFleetSelfTickLast()))()
         : name === 'fleet_recheck' ? await (readers.recheck ?? (() => readFleetRecheckTool()))()
         : name === 'fleet_recheck_history' ? await (readers.recheckHistory ?? readFleetRecheckHistoryTool)(recheckHistory as FleetRecheckHistoryArgs)
@@ -1211,10 +1712,15 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_disk_forecast' ? await (readers.diskForecast ?? readFleetDiskForecast)()
         : name === 'fleet_gmail_archive_plan_latest' ? await (readers.gmailArchivePlanLatest ?? (async (a: FleetGmailArchivePlanLatestArgs) => readFleetGmailArchivePlanLatest(a)))(gmailArchivePlanLatestArgs as FleetGmailArchivePlanLatestArgs)
         : name === 'fleet_comms_inbox' ? await (readers.commsInbox ?? readFleetCommsInbox)(commsInboxArgs as FleetCommsInboxArgs)
+        : name === 'fleet_comms_status' ? await (readers.commsStatus ?? readFleetCommsStatus)()
+        : name === 'fleet_comms_thread' ? await (readers.commsThread ?? readFleetCommsThread)(commsThreadArgs as FleetCommsThreadArgs)
+        : name === 'fleet_owner_history' ? await (readers.ownerHistory ?? readFleetOwnerHistory)(ownerHistoryArgs as FleetOwnerHistoryArgs)
+        : name === 'fleet_comms_health' ? await (readers.commsHealth ?? readFleetCommsHealth)()
         : name === 'fleet_imessage_path' ? await (readers.imessagePath ?? readFleetImessagePath)()
         : name === 'fleet_imessage_acks' ? await (readers.imessageAcks ?? readFleetImessageAcks)(imessageAcks as FleetImessageAcksArgs)
         : name === 'fleet_imessage_tasks' ? await (readers.imessageTasks ?? readFleetImessageTasks)(imessageTasks as FleetImessageTasksArgs)
         : name === 'fleet_slack_evidence' ? await (readers.slackEvidence ?? readFleetSlackEvidence)(slackEvidenceArgs as FleetSlackEvidenceArgs)
+        : name === 'fleet_slack_status' ? await readFleetSlackStatus(readers.slackStatus)
         : name === 'fleet_ci_resume_inputs' ? await (readers.ciResumeInputs ?? readFleetCiResumeInputs)(ciResumeInputs as FleetCiResumeInputsArgs)
         : name === 'fleet_ci_receipt_await' ? await (readers.ciReceiptAwait ?? readFleetCiReceiptAwait)(ciReceiptAwait as FleetCiReceiptAwaitArgs, extra.signal)
         : name === 'fleet_ci_receipt_await_batch' ? await (readers.ciReceiptAwaitBatch ?? readFleetCiReceiptAwaitBatch)(ciReceiptAwaitBatch as FleetCiReceiptAwaitBatchArgs, extra.signal)
@@ -1222,6 +1728,23 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_intent_read' ? await (readers.intentRead ?? readFleetIntent)(intentRead as FleetIntentReadArgs)
         : name === 'fleet_release_candidate' ? await (readers.releaseCandidate ?? readFleetReleaseCandidate)(releaseCandidate as FleetReleaseCandidateArgs)
         : name === 'fleet_work_board' ? await (readers.workBoard ?? readFleetWorkBoard)(workBoard as FleetWorkBoardArgs)
+        : name === 'fleet_work_feed' ? await (readers.workFeed ?? readFleetWorkFeed)(workFeedArgs as FleetWorkFeedArgs)
+        : name === 'fleet_agent_inbox' ? await (readers.agentInbox ?? readFleetAgentInbox)(agentInboxArgs as FleetAgentInboxArgs)
+        : name === 'fleet_agent_work' ? await (readers.agentWork ?? readFleetAgentWork)(agentWorkArgs as FleetAgentWorkArgs)
+        : name === 'fleet_agent_wakes' ? await (readers.agentWakes ?? readFleetAgentWakes)(agentWakesArgs as FleetAgentWakesArgs)
+        : name === 'fleet_agent_messages' ? await (readers.agentMessages ?? readFleetAgentMessages)(agentMessagesArgs as FleetAgentMessagesArgs)
+        : name === 'fleet_agent_channels' ? await (readers.agentChannels ?? readFleetAgentChannels)(agentChannelsArgs as FleetAgentChannelsArgs)
+        : name === 'fleet_agent_identity' ? await (readers.agentIdentity ?? readFleetAgentIdentity)(agentIdentityArgs as FleetAgentIdentityArgs)
+        : name === 'fleet_agent_conversations' ? await (readers.agentConversations ?? readFleetAgentConversations)(agentConversationsArgs as FleetAgentConversationsArgs)
+        : name === 'fleet_agent_roster' ? await (readers.agentRoster ?? readFleetAgentRoster)()
+        : name === 'fleet_bus_channel' ? await (readers.busChannel ?? readFleetBusChannel)(busChannelArgs as FleetBusChannelArgs)
+        : name === 'fleet_bus_show' ? await (readers.busShow ?? readFleetBusShow)(busShowArgs as FleetBusShowArgs)
+        : name === 'fleet_bus_thread' ? await (readers.busThread ?? readFleetBusThread)(busThreadArgs as FleetBusThreadArgs)
+        : name === 'fleet_bus_status' ? await (readers.busStatus ?? readFleetBusStatus)()
+        : name === 'fleet_bus_claims' ? await (readers.busClaims ?? readFleetBusClaims)(busClaimsArgs as FleetBusClaimsArgs)
+        : name === 'fleet_bus_board' ? await (readers.busBoard ?? readFleetBusBoard)(busBoardArgs as FleetBusBoardArgs)
+        : name === 'fleet_seat_handoffs' ? await (readers.seatHandoffs ?? readFleetSeatHandoffs)()
+        : name === 'fleet_bot_seats' ? await (readers.botSeats ?? readFleetBotSeats)()
         : await (readers.busInbox ?? readFleetBusInbox)(inbox as FleetBusInboxArgs);
       // Scrub values before serialization: redaction regexes operate on prose
       // and may consume JSON quotes if applied to already serialized bytes.

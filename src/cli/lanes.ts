@@ -12,12 +12,16 @@ import { computeLaneYield, NEUTRAL_WEIGHT, type LaneYieldRow } from '../core/fle
 import { readFleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { buildFleetLiveSnapshot } from '../core/verse/fleet-live-api.js';
 import { computeLaneHealth, laneHealthLine, stuckBadge } from '../core/fleet/lane-health.js';
-import { readLanePressure } from '../core/fleet/lane-memory-pressure.js';
+import { readPauseState, pauseLine, defaultPauseDir, type PausePaths } from '../core/fleet/pause-state.js';
+import { readLanePressure, type ReadLanePressureDeps } from '../core/fleet/lane-memory-pressure.js';
+import { lanePoolWait, type PoolWait } from '../core/fleet/lane-pool-wait.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const USAGE = `Usage: phm lanes --json | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
+const USAGE = `Usage: phm lanes --json | phm lanes pool [--json] | phm lanes health [--json] | phm lanes fit --lane <lane> [--json]
        phm lanes yield [--json] [--since 24h] | phm lanes held [--json] | phm lanes caps [--check <prompt-file>] [--json]
        phm lanes pressure [--json]
+"phm lanes pool" says per lane whether queued rows wait on a used-up pool (98% used or more, nothing running):
+"waiting on a used-up pool until <time> (<n> rows)", "normal", or "no meter" (no pool reading, so unknown).
 Calls, error rate, p50 latency and deployed commit per lane over the last 12 h,
 plus a "stuck" badge with phase age for any run past its phase timeout.
 "phm lanes yield" shows merged PRs per launch over each lane's last 50 jobs, the empty rate and the
@@ -31,6 +35,7 @@ worktree); with --check it says which lanes can run the job in that prompt file.
 "phm lanes pressure" says, per lane, whether this Mac's memory is throttling it and why. Lanes whose model runs
 on this Mac (codex-local by default, or memory_class "local" in queue/slots.json) step down first; cloud lanes keep
 their target until memory is critical (under 15% free, or swap growing fast while memory is short). Read-only.
+Health and pressure also report global or local-model launch pause switches.
 Figures that cannot be measured print "unknown".`;
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n * 100)}%`;
@@ -77,11 +82,33 @@ async function lanesCaps(flags: string[]): Promise<number> {
   return 0;
 }
 
-export async function cmdLanes(args: string[]): Promise<number> {
+const laneWait = (l: { queued: number; running: number; seat?: { usedPct: number | null; resetAt: string | null } }, now: number): PoolWait =>
+  lanePoolWait({ queued: l.queued, running: l.running, usedPct: l.seat?.usedPct ?? null, resetAt: l.seat?.resetAt ?? null }, now);
+
+export interface LanesDeps extends PausePaths {
+  runsDir?: string;
+  pressure?: ReadLanePressureDeps;
+  snapshot?: typeof buildFleetLiveSnapshot;
+}
+
+export async function cmdLanes(args: string[], deps: LanesDeps = {}): Promise<number> {
+  const runsDir = deps.runsDir ?? defaultPauseDir();
   if (args.length === 1 && args[0] === '--json') {
-    const state = await readFleetRunsDirState();
+    const state = await readFleetRunsDirState({ runsDir });
+    const pause = await readPauseState(deps, runsDir);
     console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.dispatchd.v1', lastTick: state.lastTick,
-      sourceState: state.sources.status, lanes: state.lanes })));
+      sourceState: state.sources.status, pause, pauseLine: pauseLine(pause), lanes: state.lanes.map(l => ({ ...l, poolWait: laneWait(l, Date.now()) })) })));
+    return 0;
+  }
+  if (args[0] === 'pool') {
+    const flags = args.slice(1);
+    if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
+    const state = await readFleetRunsDirState();
+    const now = Date.now();
+    const lanes = state.lanes.map(l => ({ lane: l.lane, ...laneWait(l, now) }));
+    if (flags.length) console.log(JSON.stringify(sanitizePublicJson({ schema: 'lanes.pool.v1', lastTick: state.lastTick, lanes })));
+    else if (!lanes.length) console.log('No lane readings. Pool state is unknown.');
+    else for (const l of lanes) console.log(`${l.lane}: ${l.words}`);
     return 0;
   }
   if (args.length === 0 || ['--help', '-h'].includes(args[0]!)) {
@@ -121,9 +148,10 @@ export async function cmdLanes(args: string[]): Promise<number> {
   if (args[0] === 'pressure') {
     const flags = args.slice(1);
     if (flags.some(x => x !== '--json') || flags.length > 1) { console.error(USAGE); return 2; }
-    const report = await readLanePressure();
+    const report = await readLanePressure({ ...deps.pressure, pausePath: deps.pausePath, pauseLocalPath: deps.pauseLocalPath, runsDir });
     if (flags.length) console.log(JSON.stringify(sanitizePublicJson(report)));
     else {
+      if (report.pauseLine) console.log(report.pauseLine);
       for (const row of report.lanes) console.log(row.reason);
       for (const gap of report.gaps) console.log(`Note: ${gap}`);
     }
@@ -149,12 +177,15 @@ export async function cmdLanes(args: string[]): Promise<number> {
     console.error(USAGE);
     return 2;
   }
-  const { snapshot } = await buildFleetLiveSnapshot();
+  const { snapshot } = await (deps.snapshot ?? buildFleetLiveSnapshot)();
   const health = computeLaneHealth(snapshot);
+  const pause = await readPauseState(deps, runsDir);
   if (args.includes('--json')) {
-    console.log(JSON.stringify(sanitizePublicJson(health)));
+    console.log(JSON.stringify(sanitizePublicJson({ ...health, pause, pauseLine: pauseLine(pause) })));
     return 0;
   }
+  const paused = pauseLine(pause);
+  if (paused) console.log(paused);
   console.log(`Lane health, last ${health.window.hours} h (to ${health.window.until})`);
   for (const lane of health.lanes) {
     const badge = stuckBadge(lane);

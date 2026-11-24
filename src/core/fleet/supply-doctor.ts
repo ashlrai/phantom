@@ -18,6 +18,7 @@ import { lstat, open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { LostLaunch } from './lost-launches.js';
+import { liveStatePath } from './build-last.js';
 import { readBuildLive, type BuildLiveReport } from './build-live.js';
 import { readSelfTickStatus, type SelfTickStatus } from './self-tick-status.js';
 import { readDispatchEventsLog } from './dispatch-events-read.js';
@@ -232,7 +233,7 @@ export async function readSupplyDoctor(opts: SupplyDoctorOptions = {}): Promise<
       : { state: 'unknown', why: 'dispatch event log unreadable' },
     candidates: found ? { state: 'known', ...found } : { state: 'unknown', why: 'job metrics unreadable' },
     empty: emptyRead ? { state: 'known', total: emptyRead.total, top: topEmpty ? { reason: topEmpty[0], count: topEmpty[1] } : null } : { state: 'unknown', why: 'job metrics unreadable' },
-    build: (opts.readBuild ?? readBuildLive)(),
+    build: (opts.readBuild ?? (() => readBuildLive({ liveStatePath: liveStatePath(runsDir) })))(),
     selfTick: (opts.readSelfTick ?? readSelfTickStatus)(runsDir, nowMs),
     lost_launches: lost ? { state: 'known', count: lost.length, newest: lost.slice(0, 5) } : { state: 'unknown', why: 'job metrics unreadable' } } as SupplyDoctorReport;
   report.verdict = verdictOf(report);

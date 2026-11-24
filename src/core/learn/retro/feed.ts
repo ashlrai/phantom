@@ -31,15 +31,22 @@
  *     still fails closed.
  *   - TERMINAL EVIDENCE ONLY. Only explicit terminal outcomes become jobs:
  *     MERGED/succeeded states count as `succeeded`; FAILED/CLOSED-unmerged/
- *     reverted evidence counts as `failed` (revert evidence is the shared
- *     `hasRevertEvidence` vocabulary — a reverted flag, a revert event or
- *     state name, or a parseable reverted_at/revertedAt stamp — and it wins
- *     over merge or success fields on the same row); CANCELLED states count
- *     as `cancelled`. Non-terminal rows (launch, publish, running) contribute
- *     identity fields but never a status. DONE-NOOP/EMPTY and unknown states
- *     stay unknown — they are not emitted. Cloud/devin tasks follow the same
- *     rule, and a merged-then-reverted task is `failed` like a reverted fleet
- *     merge. Tasks superseded by a fleet PR are skipped: the carrying PR
+ *     reverted evidence counts as `failed`; CANCELLED states count as
+ *     `cancelled`. The terminal phase reads the
+ *     phase|state|outcome|status|result|conclusion dialect, with 'merged'/
+ *     'closed' event names resolving the same verdicts when no phase field
+ *     resolves. Revert evidence is the shared `hasRevertEvidence`
+ *     vocabulary — a reverted flag, a revert event or state name, or a
+ *     parseable reverted_at/revertedAt stamp — and it wins over merge or
+ *     success fields on the same row. Non-terminal rows (launch, publish,
+ *     running) contribute identity fields but never a status. A
+ *     `task_outcome` row's `outcome` is the batch member's session word
+ *     (done/skipped/failed/deferred/unreported — 'failed' means the line
+ *     went back to ready.tsv), never a lifecycle verdict.
+ *     DONE-NOOP/EMPTY and unknown states stay unknown — they are not
+ *     emitted. Cloud/devin tasks follow the same rule, and a
+ *     merged-then-reverted task is `failed` like a reverted fleet merge.
+ *     Tasks superseded by a fleet PR are skipped: the carrying PR
  *     reports its own outcome (the hourly sweep's scope rule).
  *   - ATTRIBUTION MUST BE REAL. A job is emitted only with a qualified
  *     `owner/repo` and a routing arm (fleet lane/pool/arm, `model:<model>`,
@@ -69,6 +76,7 @@ import { learnHome, NIGHTLY_MAX_BYTES, NIGHTLY_MAX_RECORDS, readNightlyFile } fr
 
 const JOB_ID_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
 /**
  * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
  * recordedAt|updatedAt — the same field set and order dispatchd `_vc_pick`
@@ -111,6 +119,23 @@ function stateOf(row: Record<string, unknown>): string {
 }
 
 /**
+ * Event names that carry a terminal merge verdict when no phase field
+ * resolves — the 'merged'/'closed' convention job-outcomes, the router
+ * outcome fold, the reward feed and the fleet yield readers share. A
+ * resolved phase stays authoritative over the event name; every other
+ * spelling stays unknown.
+ */
+const OUTCOME_EVENT_STATES: Readonly<Record<string, string>> = { merged: 'MERGED', closed: 'CLOSED' };
+
+/** Terminal phase across the state dialect, or the event-name verdict when no phase field resolves. */
+function outcomeStateOf(row: Record<string, unknown>): string {
+  const state = stateOf(row);
+  if (state !== '') return state;
+  const event = firstString(row, EVENT_KEYS);
+  return event === null ? '' : OUTCOME_EVENT_STATES[event.toLowerCase()] ?? '';
+}
+
+/**
  * The job's terminal outcome as one nightly status, or null while the job is
  * still in flight or its end state is not explicit evidence. A recorded revert
  * is a failure: the merge did not hold, so revert evidence wins over any merge
@@ -119,7 +144,13 @@ function stateOf(row: Record<string, unknown>): string {
  * revert event/state name, or a parseable reverted_at/revertedAt stamp).
  */
 function terminalStatus(row: Record<string, unknown>): NightlyJob['status'] | null {
-  const state = stateOf(row);
+  // task_outcome rows are batch-session bookkeeping, not lifecycle evidence:
+  // their `outcome` field is the member's BRIDGE_NOTES word (done/skipped/
+  // failed/deferred/unreported), where 'failed' means the line was requeued
+  // to ready.tsv alone. The member's real outcome arrives on its own
+  // publish/reconciler rows, so the session word never mints a job status.
+  if (firstString(row, EVENT_KEYS)?.toLowerCase() === 'task_outcome') return null;
+  const state = outcomeStateOf(row);
   if (hasRevertEvidence(row)) return 'failed';
   if (row['merged'] === true || SUCCEEDED_STATES.has(state)) return 'succeeded';
   if (FAILED_STATES.has(state) || row['merged'] === false || row['failed'] === true) return 'failed';

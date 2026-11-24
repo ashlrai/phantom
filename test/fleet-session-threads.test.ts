@@ -17,7 +17,7 @@ import type { FleetSessionV1, FleetSessionsV1 } from '../src/core/fleet/runs-ses
 import { buildLiveSessions } from '../src/core/fleet/live-sessions.js';
 import { buildSessionThread, type SessionThreadOutputRead, type SessionThreadOwnerRead } from '../src/core/fleet/session-thread.js';
 import {
-  buildSessionThreads, renderSessionThreadsText, threadSessions, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
+  buildSessionThreads, leftOutWords, pickSessions, renderSessionThreadsText, threadSessions, workOf, THREADS_MAX, THREADS_MESSAGES_SHOWN, THREADS_TEXT_CHARS, type SessionThreadsV1,
 } from '../src/core/fleet/session-threads.js';
 import { readSessionThreads } from '../src/core/fleet/session-threads-read.js';
 import { readFleetSessionMap } from '../src/core/fleet/sessions-view.js';
@@ -54,7 +54,7 @@ const activity = (job = 'RQ-A', brief = 'Fix the reply box.'): FleetJobActivityV
   ] as FleetJobActivityV1['entries'],
 });
 const message = (id: string, from: string, to: string, over: Partial<AgentMessage> = {}): AgentMessage => ({
-  id, ts: ago(5), from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
+  id, ts: ago(5), priority: 'P2', from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
 });
 const bus = (messages: AgentMessage[], source: AgentMessages['source'] = 'available'): AgentMessages => ({ schema: 'agent-messages.v1', source, messages, matched: messages.length, skipped: 0 });
 const replies = (texts: string[], sourceState: LeaderRepliesV1['sourceState'] = 'healthy'): LeaderRepliesV1 => ({
@@ -119,11 +119,37 @@ describe('buildSessionThreads', () => {
     const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map() }, NOW);
     expect(read.threads.map(entry => [entry.session.id, entry.reply.to, entry.reply.mention])).toEqual([['leader', 'leader', null], ['RQ-A', 'job', '@RQ-A'], ['RQ-QUIET', 'job', '@RQ-QUIET']]);
     for (const entry of read.threads) {
-      expect(Object.keys(entry).slice(-3)).toEqual(['control', 'reply', 'serves']);
+      expect(Object.keys(entry).slice(-4)).toEqual(['control', 'reply', 'serves', 'work']);
       expect(entry.control).toBeNull();
       expect(entry.serves).toBeNull();
       expect(entry.reply.hint).not.toBe('');
     }
+  });
+
+  it('carries what each job has done as values, the ones its summary states in words', async () => {
+    const changed = (state: 'live' | 'degraded' | 'missing') => ({ kind: 'files', state, baseSha: 'abc', files: [], totals: { files: 2, added: 40, removed: 3 }, truncated: false, refusals: [] });
+    const withFiles = (state: 'live' | 'degraded' | 'missing'): FleetJobActivityV1 => ({ ...activity(), entries: [...activity().entries, changed(state)] as FleetJobActivityV1['entries'] });
+    const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map<string, FleetJobActivityV1 | null>([['RQ-A', withFiles('live')], ['RQ-QUIET', null]]) }, NOW);
+    const [leader, worker, quiet] = read.threads as [SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number]];
+    expect(worker.work).toEqual({ pr: null, commands: 1, files: { count: 2, added: 40, removed: 3, partial: false }, step: { event: 'verify', summary: 'tests green', at: ago(4) } });
+    // The sentences and the values come from the same records.
+    expect(worker.summary).toContain('1 command seen, 2 files changed (+40 −3).');
+    expect(worker.summary).toContain(`Latest step: verify tests green at ${ago(4)}.`);
+    // The leader has no job; a failed activity read is not "nothing done".
+    expect([leader.work, quiet.work]).toEqual([null, null]);
+    expect(quiet.sources.activity).toBe('unavailable');
+    // A job whose activity was not asked for carries none either.
+    expect(buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none }, NOW).threads.map(entry => entry.work)).toEqual([null, null, null]);
+
+    // Each part that could not be read is null on its own: unknown, never zero.
+    expect(workOf(withFiles('degraded'))?.files).toEqual({ count: 2, added: 40, removed: 3, partial: true });
+    expect(workOf(withFiles('missing'))?.files).toBeNull();
+    expect(workOf(activity())?.files).toBeNull();
+    expect(workOf({ ...activity(), sources: { ...activity().sources, commands: 'degraded' } })?.commands).toBeNull();
+    const undated = { ...activity(), entries: [{ kind: 'event', at: 'soon', event: 'launch', summary: '' }] as FleetJobActivityV1['entries'] };
+    expect(workOf(undated)?.step).toEqual({ event: 'launch', summary: '', at: null });
+    expect(workOf({ ...activity(), entries: [] })).toEqual({ pr: null, commands: 1, files: null, step: null });
+    expect([workOf(null), workOf(undefined)]).toEqual([null, null]);
   });
 
   it('carries what Mason wrote: every message on the leader, the aimed ones on that worker, none on the rest', async () => {
@@ -267,9 +293,33 @@ describe('buildSessionThreads', () => {
     const list = await liveList(many);
     expect(threadSessions(list)).toMatchObject({ total: THREADS_MAX + 5 });
     const read = buildSessionThreads(list, { sessionsRead: true, bus: bus([]), activity: none }, NOW);
-    expect(read.counts).toMatchObject({ sessions: THREADS_MAX + 5, shown: THREADS_MAX });
+    // Every one of them is running, so the ones left out are running too, and the read says so.
+    expect(read.counts).toMatchObject({ sessions: THREADS_MAX + 5, shown: THREADS_MAX, unshown: { running: 5, ended: 0, unknown: 0 } });
     expect(read.threads).toHaveLength(THREADS_MAX);
-    expect(read.gaps).toContain(`5 more sessions not shown: the read holds ${THREADS_MAX}. Narrow it with a lane or repo, or ask for running ones only.`);
+    expect(read.threads[0]!.session.id).toBe('leader');
+    expect(read.gaps).toContain(`5 more sessions not shown (5 running): the read holds ${THREADS_MAX}, running sessions first. Narrow it with a lane or repo, or ask for running ones only.`);
+    // A list within the limit leaves nothing out.
+    expect(buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: none }, NOW).counts.unshown).toEqual({ running: 0, ended: 0, unknown: 0 });
+  });
+
+  it('leaves out finished sessions before failed ones, and both before a running one', () => {
+    type Listed = Parameters<typeof pickSessions>[0][number];
+    const node = (id: string, state: Listed['state'], spoke: number | null = null, kind: Listed['kind'] = 'worker') =>
+      ({ id, kind, state, lastMessageAt: spoke === null ? null : ago(spoke) }) as Listed;
+    // The list's own order: lane by lane, so the running session on the last lane comes last.
+    const listed = [node('leader', 'idle', null, 'leader'), node('DONE-OLD', 'done', 50), node('DONE-NEW', 'done', 5), node('FAILED', 'failed', 40),
+      node('DONE-UNDATED', 'done'), node('UNSURE', 'unknown'), node('RUN-LAST-LANE', 'running', 1)];
+    const ids = (max: number) => pickSessions(listed, max).kept.map(entry => entry.id);
+    expect(pickSessions(listed, 7)).toEqual({ kept: listed, left: { running: 0, ended: 0, unknown: 0 } });
+    // Kept in the list's order, whatever was dropped: the undated finished one goes first, then the one that spoke longest ago.
+    expect(ids(6)).toEqual(['leader', 'DONE-OLD', 'DONE-NEW', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(ids(5)).toEqual(['leader', 'DONE-NEW', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(ids(4)).toEqual(['leader', 'FAILED', 'UNSURE', 'RUN-LAST-LANE']);
+    expect(pickSessions(listed, 3)).toMatchObject({ kept: [{ id: 'leader' }, { id: 'UNSURE' }, { id: 'RUN-LAST-LANE' }], left: { running: 0, ended: 4, unknown: 0 } });
+    expect(pickSessions(listed, 2)).toMatchObject({ kept: [{ id: 'leader' }, { id: 'RUN-LAST-LANE' }], left: { running: 0, ended: 4, unknown: 1 } });
+    expect(pickSessions(listed, 1).left).toEqual({ running: 1, ended: 4, unknown: 1 });
+    expect([leftOutWords({ running: 0, ended: 0, unknown: 0 }), leftOutWords({ running: 0, ended: 4, unknown: 0 }), leftOutWords({ running: 1, ended: 4, unknown: 1 })])
+      .toEqual(['', '4 ended', '1 running, 4 ended, 1 with state unknown']);
   });
 
   it('renders every session for people on a few lines each', async () => {
@@ -277,7 +327,7 @@ describe('buildSessionThreads', () => {
       bus: bus([message('m1', 'leader', 'RQ-A', { summary: 'please\nrebase' })]) }, NOW));
     const lines = text.split('\n');
     expect(lines[0]).toBe('3 sessions: 1 running, 1 quiet, 1 state unknown.');
-    expect(text).toContain('\nRQ-A | worker | running\n  Worker on claude, fixture-model, in phantom. Running for 30m; spoke 2m ago.');
+    expect(text).toContain('\nRQ-A | worker | running\n  Brief opens: Fix the reply box.\n  Worker on claude, fixture-model, in phantom. Running for 30m; spoke 2m ago.');
     expect(text).toContain('  (2 earlier)\n');
     expect(text).toContain(`  > leader to RQ-A, status [${ago(5)}]: please rebase`);
     expect(text).toContain('\nRQ-QUIET | worker | quiet\n  Worker on codex, fixture-model, in phantom. Quiet: no output for 25m.\n  Nothing is recorded for this session yet.');
