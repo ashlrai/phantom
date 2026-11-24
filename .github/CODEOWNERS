@@ -430,6 +430,7 @@
 /test/fleet-backlog-recut-drop-nov01.test.ts @masonwyatt23
 /test/fleet-board.test.ts @masonwyatt23
 /test/fleet-budget-view.test.ts @masonwyatt23
+/test/fleet-bundle-m2.test.ts @masonwyatt23
 /test/fleet-bus-loop-request-context-01.test.ts @masonwyatt23
 /test/fleet-bus-loop-total-budget-nov01.test.ts @masonwyatt23
 /test/fleet-bus-work-loop-cwd-flag-01.test.ts @masonwyatt23
@@ -456,6 +457,7 @@
 /test/fleet-daily-reds.test.ts @masonwyatt23
 /test/fleet-dep-gate.test.ts @masonwyatt23
 /test/fleet-gate-run.test.ts @masonwyatt23
+/test/fleet-grants-m2.test.ts @masonwyatt23
 /test/fleet-graph-agent-live-01.test.ts @masonwyatt23
 /test/fleet-graph-context-budget-01.test.ts @masonwyatt23
 /test/fleet-graph-output-budget-nov01.test.ts @masonwyatt23

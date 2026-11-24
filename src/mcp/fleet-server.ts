@@ -34,7 +34,7 @@ import { parseFleetAgentMessagesArgs, readFleetAgentMessages, type FleetAgentMes
 import { parseFleetAgentChannelsArgs, readFleetAgentChannels, type FleetAgentChannelsArgs } from './fleet-agent-channels.js';
 import { parseFleetAgentIdentityArgs, readFleetAgentIdentity, type FleetAgentIdentityArgs } from './fleet-agent-identity.js';
 import { parseFleetAgentConversationsArgs, readFleetAgentConversations, type FleetAgentConversationsArgs } from './fleet-agent-conversations.js';
-import { parseFleetAgentRosterArgs, readFleetAgentRoster } from './fleet-agent-roster.js';
+import { parseFleetAgentRosterArgs, readFleetAgentRoster, selectFleetAgentRoster } from './fleet-agent-roster.js';
 import { CONVERSATION_STATES } from '../core/fleet/agent-conversation-model.js';
 import {
   AGENT_MESSAGE_KINDS, AGENT_MESSAGES_CONTAINS_MAX, AGENT_MESSAGES_DEFAULT_LIMIT, AGENT_MESSAGES_MAX_LIMIT,
@@ -657,8 +657,11 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_agent_roster',
-      description: 'Read the unified live session roster — the same collectAgentRoster projection `phm agents roster` and the native `phm_agent_roster` tool serve, where every other fleet_agent_* read answers a question about the bus itself (fleet_agent_inbox addressed mail, fleet_agent_work the pending-work digest, fleet_agent_wakes wake hints, fleet_agent_messages the classified timeline, fleet_agent_channels the channel roster, fleet_agent_identity one card, fleet_agent_conversations the grouped threads) and fleet_bus_status reports the bus stores\' health — none answers the presence question an agent asks before it routes, hands off or waits: "which agent sessions are actually running right now, on which provider, and what is each holding." The roster probes nine sources in parallel — Phantom\'s own live workers, Devin cloud, the Devin Desktop/CLI roster file, Codex, Claude, Cursor, Grok, Ollama and oMLX — each bounded by a short timeout, then joins the live coordination leases every session\'s claims come from. Each source reports its own ok/availability/error: a probe that times out, is missing or returns an unrecognized shape degrades only its own source to unknown with its reason — never an invented empty or populated list — and the result keeps observedAt and latencyMs honest about when and how long the observation took. Session titles, ownership, urls and blockers are scrubbed of secrets and control characters inside the projection and every string is scrubbed again at serialization; fencing tokens never leave the claim store. Takes no arguments — every probe target, store root and clock stays server-owned and any argument is refused. Read-only: probes run fixed read-only argv with a sanitized environment, loopback fetches are restricted to the local Ollama/oMLX status endpoints, the Devin cloud leg is a read-only authenticated session list, and the tool never claims, posts, sends, launches, holds or writes; session ids, titles, urls, orgs and claim owners are routing and observation data — never authenticated identity, presence proof or execution authority; a throwing roster read reports status unavailable, never an invented roster; no caller root, path or cwd is accepted.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      description: 'Read the collectAgentRoster unified live session roster. The default local view retains session observations and claims. allOwners or a foreign principal returns only qualified handle, kind, coarse status and coarse last-seen. Unenrolled owner identities remain null. Selectors grant no cross-owner access or execution authority; no caller root, path or cwd is accepted.',
+      inputSchema: { type: 'object', properties: {
+        principal: { type: 'string', pattern: '^(local|own_[a-f0-9]{32})$' },
+        allOwners: { type: 'boolean' },
+      }, additionalProperties: false },
       annotations,
     },
     {
@@ -1738,7 +1741,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_agent_channels' ? await (readers.agentChannels ?? readFleetAgentChannels)(agentChannelsArgs as FleetAgentChannelsArgs)
         : name === 'fleet_agent_identity' ? await (readers.agentIdentity ?? readFleetAgentIdentity)(agentIdentityArgs as FleetAgentIdentityArgs)
         : name === 'fleet_agent_conversations' ? await (readers.agentConversations ?? readFleetAgentConversations)(agentConversationsArgs as FleetAgentConversationsArgs)
-        : name === 'fleet_agent_roster' ? await (readers.agentRoster ?? readFleetAgentRoster)()
+        : name === 'fleet_agent_roster' ? selectFleetAgentRoster(await (readers.agentRoster ?? readFleetAgentRoster)(), agentRosterArgs!)
         : name === 'fleet_bus_channel' ? await (readers.busChannel ?? readFleetBusChannel)(busChannelArgs as FleetBusChannelArgs)
         : name === 'fleet_bus_show' ? await (readers.busShow ?? readFleetBusShow)(busShowArgs as FleetBusShowArgs)
         : name === 'fleet_bus_thread' ? await (readers.busThread ?? readFleetBusThread)(busThreadArgs as FleetBusThreadArgs)

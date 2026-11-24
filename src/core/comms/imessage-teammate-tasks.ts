@@ -1,5 +1,5 @@
 /** Fleet-originated tasks. Peer results are evidence to review, never operator authority. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
@@ -13,6 +13,8 @@ import { ensurePrivateDirectory } from '../verse/preferences.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { appendBusInbox } from '../fleet/bus-inbox.js';
+import { protocolOf, validateBusEnvelope } from '../fleet/bus-envelope.js';
 import { markTeammateTextsAnswered, readTeammateTexts } from './imessage-teammate-inbox.js';
 import { approvedTeammateHandle, reconcileTeammateMessage, sendApprovedTeammateMessage, type TeamTransportOptions } from './imessage-teammate-transport.js';
 
@@ -58,11 +60,17 @@ const storeSchema = z.object({ v: z.literal(1), tasks: z.array(taskSchema).max(1
 }).strict().refine(store => new Set(store.tasks.map(task => task.jobId)).size === store.tasks.length
   && new Set(store.tasks.map(task => task.token)).size === store.tasks.length);
 export type TeammateTaskInput = z.input<typeof inputSchema>;
+/** Bus-origin requests enter through the same guarded enqueue path as local requests. */
+export type TeammateTaskRequest = TeammateTaskInput | { envelope: unknown };
 type Task = z.infer<typeof taskSchema>;
 type Store = z.infer<typeof storeSchema>;
 export interface TeammateTaskOptions extends TeamTransportOptions {
   apply?: boolean; runsDir?: string; now?: () => number; signal?: AbortSignal;
   approved?: typeof approvedTeammateHandle; send?: typeof sendApprovedTeammateMessage; reconcile?: typeof reconcileTeammateMessage;
+  busRoot?: string;
+  /** Host-supplied provenance, never taken from wire labels, sender or body.
+   * Missing provenance stays unknown. M2 has no remote authentication path. */
+  busOrigin?: { principal: string | null; localPrincipal: string };
 }
 const paths = (options: TeammateTaskOptions) => {
   const dir = imessageStateDir(options.runsDir);
@@ -152,7 +160,29 @@ export function teammateTaskPeers(options: TeammateTaskOptions = {}) {
       .map(task => ({ kind: task.kind, jobId: task.jobId, rowid: task.result!.rowid, at: task.result!.at, evidence: 'peer-reported' })),
   })) };
 }
-export async function enqueueTeammateTask(input: TeammateTaskInput, cfg: AshlrConfig, options: TeammateTaskOptions = {}) {
+export async function enqueueTeammateTask(input: TeammateTaskRequest, cfg: AshlrConfig, options: TeammateTaskOptions = {}) {
+  if ('envelope' in input) {
+    const checked = validateBusEnvelope(input.envelope);
+    if (!checked.ok) throw new Error('Invalid teammate bus envelope');
+    const envelope = checked.value;
+    // Keep the original as inert context in the existing bus, including for
+    // unknown origins. A stored foreign task must not become claimable work.
+    const retained = appendBusInbox({ id: `teammate-data-${createHash('sha256').update(envelope.id).digest('hex')}`,
+      from: envelope.from, to: envelope.to, priority: envelope.priority, ttl: envelope.ttl,
+      body: { kind: 'context', text: scrubSecrets(JSON.stringify(envelope)) },
+    }, { root: options.busRoot, now: options.now });
+    if (!['posted', 'duplicate'].includes(retained.status)) throw new Error('Teammate envelope storage unavailable');
+    const origin = options.busOrigin;
+    if (!origin || !/^(?:local|own_[a-f0-9]{32})(?![\s\S])/.test(origin.localPrincipal)
+      || origin.principal !== origin.localPrincipal) {
+      return { schema: SCHEMA, state: 'data-only', dryRun: !options.apply };
+    }
+    const peer = envelope.to === 'agent:imsg-dot' ? 'dot' : envelope.to === 'agent:imsg-instinct' ? 'instinct' : null;
+    if (!peer || protocolOf(envelope.body)?.kind !== 'task') return { schema: SCHEMA, state: 'data-only', dryRun: !options.apply };
+    const task = inputSchema.safeParse((envelope.body as { task?: unknown }).task);
+    if (!task.success || task.data.peer !== peer) throw new Error('Invalid teammate bus task');
+    input = task.data;
+  }
   const parsed = inputSchema.safeParse(input);
   const now = (options.now ?? Date.now)();
   if (!parsed.success || !Number.isSafeInteger(now) || Date.parse(parsed.data.deadline) <= now) throw new Error('Invalid teammate task or deadline');

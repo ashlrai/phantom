@@ -1,7 +1,7 @@
 /** Portable metadata only. Profiles grant no project, transport or spending authority. */
 import { mkdir, readFile, writeFile, rename, rm, lstat, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
@@ -35,11 +35,16 @@ export function validateAgentProfile(value: unknown): AgentProfile {
 const root = (home: string): string => join(home, '.phantom', 'agents');
 async function safe(home: string, name: string): Promise<string> {
   if (!id.safeParse(name).success) throw new Error('Invalid agent profile id.');
-  for (const path of [join(home, '.phantom'), root(home), join(root(home), `${name}.toml`)]) {
+  const flat = join(root(home), `${name}.toml`), directory = join(root(home), name);
+  let hasDirectory = false, hasFlat = false;
+  for (const path of [join(home, '.phantom'), root(home), flat, directory, join(directory, 'profile.toml')]) {
     try { const stat = await lstat(path); if (stat.isSymbolicLink()) throw new Error('Symlinked agent profiles refused.'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
-  return join(root(home), `${name}.toml`);
+  try { hasDirectory = (await lstat(directory)).isDirectory(); } catch { /* absent */ }
+  try { hasFlat = (await lstat(flat)).isFile(); } catch { /* absent */ }
+  if (hasDirectory && hasFlat) throw new Error('Ambiguous agent profile location.');
+  return hasDirectory ? join(directory, 'profile.toml') : flat;
 }
 export async function readAgentProfile(name: string, home = homedir()): Promise<AgentProfile> {
   const path = await safe(home, name);
@@ -56,7 +61,16 @@ export async function listAgentProfiles(home = homedir()): Promise<AgentProfile[
   let names: string[];
   try { names = await readdir(root(home)); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-  return Promise.all(names.filter(n => n.endsWith('.toml')).sort().map(n => readAgentProfile(n.slice(0, -5), home)));
+  const ids = names.filter(n => n.endsWith('.toml')).map(n => n.slice(0, -5));
+  for (const name of names.filter(n => id.safeParse(n).success)) {
+    try {
+      const directory = await lstat(join(root(home), name));
+      if (directory.isSymbolicLink()) throw new Error('Symlinked agent profiles refused.');
+      if (directory.isDirectory() && (await lstat(join(root(home), name, 'profile.toml'))).isFile()) ids.push(name);
+    }
+    catch (error) { if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; }
+  }
+  return Promise.all([...new Set(ids)].sort().map(n => readAgentProfile(n, home)));
 }
 /** Serialized atomic writes. Caller version is an optimistic concurrency token. */
 export async function writeAgentProfile(value: unknown, home = homedir()): Promise<AgentProfile> {
@@ -94,9 +108,9 @@ export async function writeAgentProfile(value: unknown, home = homedir()): Promi
   } finally { await rm(tmp, { force: true }); await rm(lock, { recursive: true, force: true }); }
 }
 async function historyPath(name: string, version: number, home: string, create = false): Promise<string> {
-  await safe(home, name);
+  const profile = await safe(home, name);
   if (!Number.isSafeInteger(version) || version < 1) throw new Error('Invalid profile version.');
-  const dir = join(root(home), `${name}.versions`);
+  const dir = dirname(profile) === root(home) ? join(root(home), `${name}.versions`) : join(dirname(profile), 'versions');
   try { if (!(await lstat(dir)).isDirectory()) throw new Error('Invalid profile history directory.'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; if (create) await mkdir(dir, { mode: 0o700 }); }
   const path = join(dir, `${version}.toml`);
@@ -117,7 +131,7 @@ export async function agentProfileVersions(name: string, home = homedir()): Prom
   const current = await readAgentProfile(name, home);
   await historyPath(name, current.version, home);
   let names: string[];
-  try { names = await readdir(join(root(home), `${name}.versions`)); }
+  try { names = await readdir(dirname(await historyPath(name, current.version, home))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [current.version]; throw error; }
   const versions = [current.version];
   for (const file of names) {

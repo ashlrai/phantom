@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/fleet-bundle-m2.test.ts', // Sets and clears a real macOS immutable flag on a temporary fixture.
   'test/install-process.test.ts', // Runs isolated real Node and npm child processes.
   'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.

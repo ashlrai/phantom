@@ -20,6 +20,9 @@ import { scrubSecrets } from '../util/scrub.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from './bus-work-claims.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from './runs-live-workers.js';
+import { readAgentMesh } from '../agents/mesh.js';
+import { qualifiedAgentSchema } from '../agents/bus-identity.js';
+import { localPrincipalSchema, ownerPrincipalSchema, type LocalPrincipal } from './grants.js';
 
 export const AGENT_ROSTER_SCHEMA = 'agent-roster.v1' as const;
 export const ROSTER_PROBE_TIMEOUT_MS = 5_000;
@@ -45,6 +48,10 @@ export interface RosterClaimRef {
 }
 
 export interface RosterSession {
+  /** Routing metadata only. `local` has no enrolled owner identity in M2. */
+  principal?: LocalPrincipal | null;
+  kind?: 'local' | 'external';
+  handle?: string;
   provider: RosterSourceId;
   sessionId: string;
   title: string | null;
@@ -73,10 +80,13 @@ type RosterClaimsInspection = { source: 'claim-store' | 'bus-work-fallback' | 'm
 
 export interface AgentRoster {
   schema: typeof AGENT_ROSTER_SCHEMA;
+  principal?: LocalPrincipal;
   observedAt: string;
   latencyMs: number;
   sources: RosterSource[];
   sessions: RosterSession[];
+  /** Existing bus identity and mesh observations, never a second roster store. */
+  members?: RosterMember[];
   claims: { source: RosterClaimsInspection['source']; items: RosterClaimRef[] };
 }
 
@@ -89,6 +99,8 @@ export interface RosterExecResult {
 }
 
 export interface AgentRosterDeps {
+  localPrincipal?: LocalPrincipal;
+  readMesh?: typeof readAgentMesh;
   now?: () => number;
   timeoutMs?: number;
   listPhantom?: () => Promise<LiveWorkersSnapshot>;
@@ -576,6 +588,7 @@ async function runBounded(sourceId: RosterSourceId, observedAt: string, timeoutM
 }
 
 export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<AgentRoster> {
+  const principal = localPrincipalSchema.parse(deps.localPrincipal ?? 'local');
   const now = deps.now ?? Date.now;
   const timeoutMs = deps.timeoutMs ?? ROSTER_PROBE_TIMEOUT_MS;
   const started = now();
@@ -616,13 +629,24 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
     claims = { source: 'unavailable', items: [] };
   }
   const sessions = attachClaims(
-    sources.flatMap((item) => item.sessions),
+    sources.flatMap((item) => item.sessions).map(item => ({ ...item, principal, kind: 'local' as const })),
     claims.items,
   );
+  let members: RosterMember[] = [];
+  try {
+    members = (deps.readMesh ?? readAgentMesh)({ now }).agents.map(row => {
+      // Known teammate identities stay external even before their first mesh observation.
+      const external = row.source === 'imessage' || row.agent === 'imsg-dot' || row.agent === 'imsg-instinct';
+      return { handle: row.agent, principal: external ? null : principal,
+        kind: external ? 'external' : 'local', ...(external ? { principalReason: 'unverified' as const } : {}),
+        state: row.status, lastActivity: row.lastSeen === null ? null : isoMillis(row.lastSeen) };
+    });
+  } catch { /* Unavailable identity evidence never creates an identity or an owner. */ }
   const byId = new Map(sessions.map((item) => [`${item.provider}\0${item.sessionId}`, item]));
   const finished = now();
   return {
     schema: AGENT_ROSTER_SCHEMA,
+    principal,
     observedAt,
     latencyMs: Number.isSafeInteger(finished) && Number.isSafeInteger(started) ? Math.max(0, finished - started) : 0,
     sources: sources.map((item) => ({
@@ -630,8 +654,63 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
       sessions: item.sessions.map((row) => byId.get(`${row.provider}\0${row.sessionId}`) ?? row),
     })),
     sessions,
+    members,
     claims,
   };
+}
+
+export interface RosterMember {
+  handle: string;
+  principal: LocalPrincipal | null;
+  principalReason?: 'unverified';
+  kind: 'local' | 'external';
+  state: string;
+  lastActivity: string | null;
+}
+export interface RosterViewOptions { principal?: LocalPrincipal; allOwners?: boolean }
+export interface RosterViewEntry {
+  qualifiedHandle: { handle: string; owner: string } | null;
+  kind: 'local' | 'external';
+  status: 'active' | 'idle' | 'offline' | 'unknown';
+  lastSeen: string | null;
+}
+
+/** A selector is data, never identity or authority. No caller root or probe configuration is accepted. */
+export function parseRosterViewOptions(value: Record<string, unknown>): RosterViewOptions | null {
+  if (Object.keys(value).some(key => key !== 'principal' && key !== 'allOwners') ||
+      (value['allOwners'] !== undefined && typeof value['allOwners'] !== 'boolean') ||
+      (value['principal'] !== undefined && !localPrincipalSchema.safeParse(value['principal']).success) ||
+      (value['allOwners'] === true && value['principal'] !== undefined)) return null;
+  return value as RosterViewOptions;
+}
+
+/** Four explicit fields only. In M2 an unenrolled owner has no qualified handle; never substitute a session id. */
+export function projectRosterView(rows: readonly (RosterSession | RosterMember)[]): RosterViewEntry[] {
+  return rows.map(row => {
+    const qualified = qualifiedAgentSchema.safeParse({ handle: row.handle, owner: row.principal });
+    const time = row.lastActivity === null ? NaN : Date.parse(row.lastActivity);
+    const state = row.state.toLowerCase();
+    return {
+      qualifiedHandle: qualified.success ? qualified.data : null,
+      kind: row.kind === 'external' ? 'external' : 'local',
+      status: ['active', 'running', 'working'].includes(state) ? 'active'
+        : ['idle', 'waiting', 'listed'].includes(state) ? 'idle'
+          : ['offline', 'stopped', 'completed', 'ended'].includes(state) ? 'offline' : 'unknown',
+      lastSeen: Number.isFinite(time) ? new Date(Math.floor(time / 900_000) * 900_000).toISOString() : null,
+    };
+  });
+}
+
+export function selectAgentRoster(roster: AgentRoster, options: RosterViewOptions = {}): AgentRoster | RosterViewEntry[] {
+  if (options.allOwners || ownerPrincipalSchema.safeParse(options.principal).success) {
+    const rows = [...roster.sessions, ...(roster.members ?? [])];
+    return projectRosterView(options.allOwners ? rows : rows.filter(row => row.principal === options.principal));
+  }
+  // Legacy rows are local. Unknown and foreign principals never enter the detailed local view.
+  const local = (row: { principal?: LocalPrincipal | null }) => row.principal === undefined || row.principal === (roster.principal ?? 'local');
+  return { ...roster, sessions: roster.sessions.filter(local),
+    sources: roster.sources.map(source => ({ ...source, sessions: source.sessions.filter(local) })),
+    ...(roster.members ? { members: roster.members.filter(local) } : {}) };
 }
 
 /** `color` adds the provider brand glyph before each provider name; default off so piped output is unchanged. */
@@ -670,6 +749,8 @@ function isIso(value: unknown): value is string {
 function isSession(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
+  if (row['principal'] !== undefined && row['principal'] !== null && !localPrincipalSchema.safeParse(row['principal']).success) return false;
+  if (row['kind'] !== undefined && row['kind'] !== 'local' && row['kind'] !== 'external') return false;
   if (!ROSTER_SOURCES.includes(row['provider'] as RosterSourceId)) return false;
   if (typeof row['sessionId'] !== 'string' || !row['sessionId']) return false;
   if (!(row['title'] === null || typeof row['title'] === 'string')) return false;

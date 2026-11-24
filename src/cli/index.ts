@@ -3292,6 +3292,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'bundle': {
+        const { cmdBundle } = await import('./bundle.js');
+        process.exitCode = await cmdBundle(rest);
+        break;
+      }
+
       case 'connectors': {
         const { cmdConnectors } = await import('./connectors.js');
         process.exitCode = await cmdConnectors(rest);

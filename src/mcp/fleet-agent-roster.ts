@@ -24,22 +24,21 @@
  * fleet server scrubs every string again at serialization; fencing tokens
  * never leave the claim store.
  *
- * No arguments: every probe target, store root and clock stays server-owned,
- * so unknown keys, caller roots, paths and working directories are refused
- * before any probe runs. Read-only: the probes run fixed read-only argv with
- * a sanitized environment, loopback fetches are restricted to the local
- * Ollama/oMLX status endpoints, the Devin cloud leg is a read-only
- * authenticated session list, and the tool never claims, posts, sends,
- * launches, holds or writes. Session ids, titles, urls, orgs and claim
- * owners are routing and observation data — never authenticated identity or
- * execution authority. A throwing roster read reports `unavailable`, never
- * an invented roster.
+ * Optional principal/allOwners selectors use the four-field reduced view.
+ * Every probe target, store root and clock stays server-owned. No caller path
+ * is accepted; selectors grant no read, send, claim or execution authority.
  */
-import { collectAgentRoster, type AgentRoster } from '../core/fleet/agent-roster.js';
+import { collectAgentRoster, parseRosterViewOptions, selectAgentRoster, validateAgentRoster,
+  type AgentRoster, type RosterViewOptions } from '../core/fleet/agent-roster.js';
 
-/** The roster takes no caller input — every probe target and store root stays server-owned. */
-export function parseFleetAgentRosterArgs(args: Record<string, unknown>): Record<string, never> | null {
-  return Object.keys(args).length === 0 ? {} : null;
+/** Selectors only; every probe target and store root stays server-owned. */
+export const parseFleetAgentRosterArgs = parseRosterViewOptions;
+
+/** Projection happens after the server-owned reader, including injected readers. */
+export function selectFleetAgentRoster(value: unknown, options: RosterViewOptions): unknown {
+  if (!options.allOwners && !options.principal) return value;
+  if (validateAgentRoster(value)) throw new Error('Agent roster unavailable');
+  return selectAgentRoster(value as AgentRoster, options);
 }
 
 export interface FleetAgentRosterDeps {
