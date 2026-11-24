@@ -90,7 +90,7 @@ export function classifyWorkState(
   }
   const assigned = `owner ${e.owner!.trim()}, claim ${e.claimReceipt!.trim()}`;
 
-  // RUNNING: ASSIGNED plus live evidence no older than liveStaleMs.
+  // RUNNING: ASSIGNED plus current live evidence from this request or later.
   // Older evidence downgrades to ASSIGNED with stale=true.
   if (e.liveEvidenceAt === undefined) {
     return { ...base, state: 'ASSIGNED', reasons: [...reasons, assigned, 'no live evidence'], stale: false };
@@ -111,6 +111,9 @@ export function classifyWorkState(
       reasons: [...reasons, assigned, `live evidence ${mins}m old, older than ${Math.floor(liveStaleMs / 60_000)}m`],
       stale: true,
     };
+  }
+  if (liveMs < parseIso(e.receivedAt)) {
+    return { ...base, state: 'ASSIGNED', reasons: [...reasons, assigned, 'live evidence predates request, ignored'], stale: false };
   }
   return { ...base, state: 'RUNNING', reasons: [...reasons, assigned, 'live evidence current'], stale: false };
 }
