@@ -1,6 +1,6 @@
 /**
  * The Ideas loop engine: rank what the fleet should fix next from signals
- * Phantom already keeps locally. Six signals, each read through its existing
+ * Phantom already keeps locally. Seven signals, each read through its existing
  * parser; a signal that cannot be read is reported as `unknown` with a reason
  * and contributes no ideas, so nothing is ever invented from a missing file.
  *
@@ -10,6 +10,7 @@
  *   lanes with queued work idle    queue/status.json (parseIdleLanes)
  *   unspent subscription usage     queue/usage-readings.log, then $ASHLR_HOME's copy
  *   self-awareness loop diagnosis  metrics/selection-hints.json (phm metrics loop)
+ *   pre-launch dupcheck precision  metrics/dupcheck.jsonl (queue.dupcheck-event.v1)
  *
  * Output is stable: ideas are sorted by payoff score, then id; ids are derived
  * from the bottleneck itself (never from time), and numbers are rounded.
@@ -24,6 +25,7 @@ import {
   resolveDropJobRoot, validateDropJob, writeDropJob, type DropJobInput,
 } from './drop-job-writer.js';
 import { parseIdleLanes, type IdleLane } from './idle-lanes.js';
+import { parseDupcheckEvents, summarizeDupcheck, type DupcheckStats } from '../queue/dupcheck-gate.js';
 import { defaultUsageLogPaths, parseUsageJournals, type UsageJournalRow } from './lane-console.js';
 import { readFleetMainHealth, type FleetMainHealthRepo } from './main-health.js';
 import { readFleetQueue, readSource } from './runs-parked-queue.js';
@@ -32,7 +34,7 @@ import { enrichIdeas, validJobEvents } from './idea-context.js';
 import { minutesText, STAGE_NAMES, stageWords } from '../metrics/loop-stages.js';
 
 export const IDEA_LIST_SCHEMA = 'fleet.idea-list.v1';
-export const SIGNAL_NAMES = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage', 'loop-hints', 'vision', 'queue', 'mason-inbox', 'job-events'] as const;
+export const SIGNAL_NAMES = ['empty-launches', 'guardian-fixups', 'disk-trend', 'idle-lanes', 'unspent-usage', 'loop-hints', 'dupcheck-gate', 'vision', 'queue', 'mason-inbox', 'job-events'] as const;
 export type SignalName = typeof SIGNAL_NAMES[number];
 /** Window for the launch ledger: long enough to see a pattern, short enough to be current. */
 export const EMPTY_WINDOW_HOURS = 72;
@@ -87,6 +89,7 @@ export interface BottleneckSignals {
   idleLanes: Signal<IdleLane[]>;
   unspentUsage: Signal<UsageLeft[]>;
   loopHints: Signal<LoopHints>;
+  dupcheckGate: Signal<DupcheckStats>;
 }
 
 const round = (n: number, places = 1): number => Math.round(n * 10 ** places) / 10 ** places;
@@ -138,6 +141,11 @@ const LOOP_HINTS_MAX_BYTES = 256 * 1024;
 export const LOOP_HINTS_MAX_AGE_HOURS = 72;
 /** A loop stage only becomes an idea when its median wait reaches this many minutes. */
 export const LOOP_HINTS_MIN_STAGE_P50_MINUTES = 60;
+/** A skipped job that was launched later is a pattern at two or more; one can be a deliberate re-queue. */
+export const DUPCHECK_FALSE_SKIP_MIN = 2;
+/** Cleared jobs ending already_done need both a count and a share of let-through launches before they rank. */
+export const DUPCHECK_MISSED_MIN = 3;
+export const DUPCHECK_MISSED_RATE = 0.1;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -334,6 +342,40 @@ export function rankBottlenecks(signals: BottleneckSignals, now: number): IdeaLi
     }
   }
 
+  if (signals.dupcheckGate.ok) {
+    const d = signals.dupcheckGate.data;
+    if (d.false_skips >= DUPCHECK_FALSE_SKIP_MIN) {
+      ideas.push({
+        id: 'dupcheck-gate:false-skips', signal: 'dupcheck-gate',
+        title: `The pre-launch dupcheck gate skipped ${plural(d.false_skips, 'job')} that launched anyway`,
+        evidence: {
+          checked: d.checked, skips: d.skips, falseSkips: d.false_skips,
+          skipPrecision: d.skip_precision === null ? null : round(d.skip_precision, 2),
+          falseSkipJobs: d.false_skip_jobs.slice(0, 5).join(', ') || null,
+        },
+        payoff: { score: clampScore(30 + d.false_skips * 10), text: 'Skipped work stops needing a suppressed-then-relaunched cycle' },
+        task: `${d.false_skips} of ${d.skips} skipped jobs were launched later anyway. Read phm queue dupcheck --stats and metrics/dupcheck.jsonl: if the skips were wrong, tighten the gate in src/core/queue/dupcheck.ts; if rows are re-queued, make the re-queue carry what changed.`,
+      });
+    }
+    const missed = d.warned_ended_already_done + d.launched_ended_already_done;
+    const letThrough = d.warns + d.launches;
+    const missedRate = letThrough === 0 ? 0 : missed / letThrough;
+    if (missed >= DUPCHECK_MISSED_MIN && missedRate >= DUPCHECK_MISSED_RATE) {
+      ideas.push({
+        id: 'dupcheck-gate:missed-duplicates', signal: 'dupcheck-gate',
+        title: `${plural(missed, 'job')} the dupcheck gate cleared still finished empty as already_done`,
+        evidence: {
+          checked: d.checked, launches: d.launches, warns: d.warns,
+          launchedEndedAlreadyDone: d.launched_ended_already_done,
+          warnedEndedAlreadyDone: d.warned_ended_already_done,
+          missedRate: round(missedRate, 2),
+        },
+        payoff: { score: clampScore(20 + missed * 10), text: 'Already-done jobs stop spending a launch' },
+        task: `${missed} of ${letThrough} jobs the gate let through ended EMPTY already_done (${d.launched_ended_already_done} unflagged, ${d.warned_ended_already_done} warned). Improve dupcheck recall in src/core/queue/dupcheck.ts or make warned jobs stop before launch; see phm queue dupcheck --stats.`,
+      });
+    }
+  }
+
   ideas.sort((a, b) => b.payoff.score - a.payoff.score || a.id.localeCompare(b.id));
   return {
     schema: IDEA_LIST_SCHEMA,
@@ -342,7 +384,7 @@ export function rankBottlenecks(signals: BottleneckSignals, now: number): IdeaLi
     signals: [
       status('empty-launches', signals.emptyLaunches), status('guardian-fixups', signals.guardianFixups),
       status('disk-trend', signals.disk), status('idle-lanes', signals.idleLanes), status('unspent-usage', signals.unspentUsage),
-      status('loop-hints', signals.loopHints),
+      status('loop-hints', signals.loopHints), status('dupcheck-gate', signals.dupcheckGate),
     ],
   };
 }
@@ -351,15 +393,16 @@ export interface ReadBottleneckOptions { runsDir?: string; usageLogPaths?: reado
 
 const sourceReason = (path: string, state: string): string => state === 'missing' ? `${path} not found` : `${path} unreadable`;
 
-/** Read all six signals from disk; each failure becomes an unknown signal, never an exception. */
+/** Read all seven signals from disk; each failure becomes an unknown signal, never an exception. */
 export async function readBottleneckSignals(opts: ReadBottleneckOptions = {}): Promise<BottleneckSignals> {
   const now = opts.now ?? Date.now();
   const root = opts.runsDir ?? process.env.ASHLR_RUNS_DIR?.trim() ?? join(homedir(), '.ashlr-runs');
-  const [ledger, history, status, hints] = await Promise.all([
+  const [ledger, history, status, hints, dupcheck] = await Promise.all([
     readSource(join(root, 'metrics', 'jobs.jsonl'), LEDGER_BYTES, true),
     readSource(join(root, 'queue', 'disk-growth-history.json'), LEDGER_BYTES, false),
     readSource(join(root, 'queue', 'status.json'), 1024 * 1024, false),
     readSource(join(root, 'metrics', 'selection-hints.json'), LOOP_HINTS_MAX_BYTES, false),
+    readSource(join(root, 'metrics', 'dupcheck.jsonl'), LEDGER_BYTES, true),
   ]);
 
   const emptyLaunches: Signal<FamilyLaunches[]> = ledger.state === 'healthy' && validJobEvents(ledger.text, now)
@@ -398,7 +441,18 @@ export async function readBottleneckSignals(opts: ReadBottleneckOptions = {}): P
     ? parseSelectionHints(hints.text, now)
     : { ok: false, reason: sourceReason('metrics/selection-hints.json', hints.state) };
 
-  return { emptyLaunches, guardianFixups: guardian, disk, idleLanes, unspentUsage, loopHints };
+  // The gate ledger is append-only; the tail window covers its recent decisions. A file
+  // with lines but no readable dupcheck events is corrupt, not "no checks recorded".
+  let dupcheckGate: Signal<DupcheckStats>;
+  if (dupcheck.state !== 'healthy') dupcheckGate = { ok: false, reason: sourceReason('metrics/dupcheck.jsonl', dupcheck.state) };
+  else {
+    const events = parseDupcheckEvents(dupcheck.text);
+    dupcheckGate = events.length > 0 || !dupcheck.text.split('\n').some(line => line.trim())
+      ? { ok: true, data: summarizeDupcheck(events) }
+      : { ok: false, reason: 'metrics/dupcheck.jsonl contains no readable dupcheck events' };
+  }
+
+  return { emptyLaunches, guardianFixups: guardian, disk, idleLanes, unspentUsage, loopHints, dupcheckGate };
 }
 
 /** The Ideas list: read signals, rank, report. Backs `phm ideas` and GET /api/verse/fleet/control/ideas. */

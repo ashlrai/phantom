@@ -22,7 +22,7 @@ export const BURN_WINDOW_HOURS = 6;
 /** Under this many hours left, the digest carries a `disk_low` warning. */
 export const DISK_LOW_HOURS = 24;
 export const HOST_DISK_SAMPLES_FILE = join('queue', 'host-disk-samples.json');
-const SAMPLER_FILE = join('queue', 'disk-growth-history.json');
+export const DISK_GROWTH_HISTORY_FILE = join('queue', 'disk-growth-history.json');
 const MIN_SAMPLE_GAP_S = 5 * 60;
 const KEEP_SAMPLES_S = 48 * 3600;
 /** The window must span this long before a rate is believed. */
@@ -79,7 +79,7 @@ function readRows(path: string): HostDiskSample[] {
 /** Sampler rows plus this module's own rows, one per timestamp, oldest first. Junk and future rows are dropped. */
 export function readDiskSampleRows(runsDir: string, nowMs: number, extra: readonly HostDiskSample[] = []): HostDiskSample[] {
   const byAt = new Map<number, number>();
-  for (const { at, freeGb } of [...readRows(join(runsDir, SAMPLER_FILE)), ...readRows(join(runsDir, HOST_DISK_SAMPLES_FILE)), ...extra]) {
+  for (const { at, freeGb } of [...readRows(join(runsDir, DISK_GROWTH_HISTORY_FILE)), ...readRows(join(runsDir, HOST_DISK_SAMPLES_FILE)), ...extra]) {
     if (at >= 0 && freeGb >= 0 && at * 1000 <= nowMs) byAt.set(at, freeGb);
   }
   return [...byAt].map(([at, freeGb]) => ({ at, freeGb })).sort((a, b) => a.at - b.at);

@@ -35,7 +35,10 @@ phm docs --agent --json
 Outside contributors and their agents work on a focused branch, run local checks, and open a pull request from a fork. `Merge Gate` checks the pull request; see the guide for current required checks and merge-queue details.
 
 - [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): the fork, checks and merge path
+- [Which tests the fast gate runs](docs/CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): how changed paths select tests
+- [Protected paths wait for the owner](docs/CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): review for protected changes
 - [Changed-files verification](docs/verify-changed.md): verifier steps and pass records
+- [FAQ](docs/FAQ.md) and [Glossary](docs/GLOSSARY.md): common questions and Phantom terms
 
 Clone upstream as `origin` (the verifier compares against `origin/master`) and push to your fork:
 
