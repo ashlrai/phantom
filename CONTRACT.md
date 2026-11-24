@@ -3413,7 +3413,10 @@ proven never matches.
 predicate every caller-supplied agent ref shares — `inbox`/`channel read`
 `from`/`excludeFrom`, `comms bus read|watch` `--to`/`--from`/`--exclude-from`,
 `fleet bus-follow` `--from`/`--exclude-from`, `fleet_bus_inbox`'s `to`/`from`/
-`excludeFrom`, the work-feed `--owner` announcer match and request/handoff
+`excludeFrom`, the classified-messages reads' `to` (`phm messages`,
+`phm agents messages`, `phm bus recent`, `phm fleet map messages`,
+`phm fleet messages`, their API params and the `fleet_agent_messages` MCP
+`to`), the work-feed `--owner` announcer match and request/handoff
 correlation refs: the literal ref or any label of the identity `resolveAgent`
 proves it to be — the ref itself never case-folds, so a spelling like `Devin`
 naming no registered label keeps exact-label matching rather than inheriting
@@ -4104,7 +4107,7 @@ keeps only rows received strictly before its cutoff, composing with `--since`
 into one `[since, before)` window. `phm fleet map messages`, `phm fleet
 messages` and GET `/api/fleet/map/messages` share the `phm messages` filter
 vocabulary — agent/with, kind, priority, job, thread, channel, contains,
-from/exclude-from, in-reply-to, id and body-kind — applied by the same
+from/exclude-from, in-reply-to, id, body-kind and to — applied by the same
 `matchAgentMessages` pipeline every bus read uses, so a filtered question
 gets the same answer on each. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts

@@ -6,7 +6,7 @@
  * 160 characters), filtered by the map's agent-to-agent rule (fleet-edges.ts)
  * and by the same filter vocabulary `phm messages` parses — kind, priority,
  * job, thread, channel, contains, from/exclude-from, in-reply-to, id,
- * body-kind, agent/with —
+ * body-kind, to, agent/with —
  * with each sender and recipient resolved to the node id `phm map` draws
  * (map-edges.ts: `leader`, `lane:<name>`, `job:<id>`). An agent the map does not
  * draw reads "unknown"; its routing label stays in `fromName` / `toName`.
@@ -68,7 +68,7 @@ export interface AgentsMessagesFlags {
   since?: string; before?: string; limit?: string;
   agent?: string; with?: string; kind?: string; priority?: string; job?: string;
   thread?: string; channel?: string; contains?: string;
-  from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string;
+  from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string; to?: string;
 }
 /** Pure: the matched agent messages in, map-node rows and per-pair weights out. Same rows and clock, same JSON. */
 export function buildAgentsMessages(scan: { source: AgentsMessages['source']; matched: readonly AgentMessage[]; skipped?: number },
@@ -113,7 +113,7 @@ export function parseAgentsMessagesQuery(input: AgentsMessagesFlags, now: number
     agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
     thread: input.thread, channel: input.channel, contains: input.contains,
     from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id,
-    bodyKind: input.bodyKind, limit: input.limit,
+    bodyKind: input.bodyKind, to: input.to, limit: input.limit,
   }, now);
   if (!shared.ok) return shared;
   return { ok: true, query: { ...shared.query, since, before, limit: shared.query.limit ?? AGENTS_MESSAGES_DEFAULT_LIMIT } };

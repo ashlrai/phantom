@@ -174,6 +174,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           inReplyTo: params.get('inReplyTo') ?? undefined,
           id: params.get('id') ?? undefined,
           bodyKind: params.get('bodyKind') ?? undefined,
+          to: params.get('to') ?? undefined,
           limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);

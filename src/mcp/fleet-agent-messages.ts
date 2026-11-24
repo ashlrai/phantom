@@ -14,7 +14,7 @@
  * to a safe non-negative epoch-ms integer and `before` the same grammar
  * as the exclusive upper bound composing with `since` into one
  * [since, before) window, `agent`/`with`/`job`/`thread`/
- * `from`/`excludeFrom`/`inReplyTo`/`id`/`bodyKind` printable routing labels
+ * `from`/`excludeFrom`/`inReplyTo`/`id`/`bodyKind`/`to` printable routing labels
  * (`with` narrows `agent` to the two-way talk between that agent and one
  * other and requires `agent`), `kind` one of ask/reply/handoff/status/blocker
  * under the CLI's case-insensitive match, `priority` one exact P0–P3 band,
@@ -44,14 +44,14 @@ import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { busReadContains } from '../core/agents/bus-unified.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
-/** The printable-label rule `agent`, `with`, `job`, `thread`, `from`, `excludeFrom`, `inReplyTo`, `id` and `bodyKind` share. */
+/** The printable-label rule `agent`, `with`, `job`, `thread`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind` and `to` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const MESSAGE_KEYS = new Set([
   'since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
-  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'bodyKind', 'limit',
+  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'bodyKind', 'to', 'limit',
 ]);
-const LABEL_KEYS = ['job', 'thread', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind'] as const;
+const LABEL_KEYS = ['job', 'thread', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to'] as const;
 
 /** The parsed arguments are the projection's own query — the MCP surface adds no filter the CLI/API do not share. */
 export type FleetAgentMessagesArgs = AgentMessagesQuery;

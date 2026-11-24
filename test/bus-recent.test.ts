@@ -77,6 +77,11 @@ describe('phm bus recent', () => {
     expect(job.ok && job.result.messages!.map(m => m.summary)).toEqual(['RQ-ONE-1 shipped']);
     const byId = readBusRecent({ id: 'm1' }, { root, now: () => NOW });
     expect(byId.ok && byId.result.messages!.map(m => m.summary)).toEqual(['on it?']);
+    // --to decides on the recipient's routing label.
+    const to = readBusRecent({ to: 'claude' }, { root, now: () => NOW });
+    expect(to.ok && to.result.messages!.map(m => m.summary)).toEqual(['please look at the build']);
+    const toLeader = readBusRecent({ to: 'leader' }, { root, now: () => NOW });
+    expect(toLeader.ok && toLeader.result.messages!.map(m => m.summary)).toEqual(['on it?']);
     expect(readBusRecent({ with: 'codex' }, { root, now: () => NOW }))
       .toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
   });

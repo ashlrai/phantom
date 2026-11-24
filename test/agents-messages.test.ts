@@ -102,9 +102,13 @@ describe('phm agents messages', () => {
     expect(summaries({ kind: 'ask' })).toEqual(['on it?']);
     expect(summaries({ kind: 'reply' })).toEqual(['answering you']);
     expect(summaries({ contains: 'DOCS' })).toEqual(['thanks, next the docs']);
-    // --from/--exclude-from decide on the sender's routing label.
+    // --from/--exclude-from decide on the sender's routing label; --to decides
+    // on the recipient's — the same addressed-to rule the flat bus reads apply.
     expect(summaries({ from: 'claude' })).toEqual(['answering you', 'RQ-ONE-1 shipped the patch', 'on it?']);
     expect(summaries({ excludeFrom: 'leader' })).toEqual(['answering you', 'build notes here', 'RQ-ONE-1 shipped the patch', 'on it?']);
+    expect(summaries({ to: 'claude' })).toEqual(['thanks, next the docs', 'please look at the build']);
+    expect(summaries({ to: 'leader' })).toEqual(['answering you', 'on it?']);
+    expect(summaries({ to: 'codex', agent: 'claude' })).toEqual(['RQ-ONE-1 shipped the patch']);
     // --job keeps the traffic naming one job; --thread is the strict v2 note/context match.
     expect(summaries({ job: 'RQ-ONE-1' })).toEqual(['RQ-ONE-1 shipped the patch']);
     expect(summaries({ thread: 'build' })).toEqual(['build notes here']);
@@ -195,6 +199,9 @@ describe('phm agents messages', () => {
     const filtered = await call(`${AGENT_MESSAGES_PATH}?from=leader`);
     expect(filtered).toMatchObject({ handled: true, status: 200, body: { matched: 2 } });
     expect(filtered.body!.messages!.map(m => m.summary)).toEqual(['thanks, next the docs', 'please look at the build']);
+    const addressed = await call(`${AGENT_MESSAGES_PATH}?to=claude`);
+    expect(addressed).toMatchObject({ handled: true, status: 200, body: { matched: 2 } });
+    expect(addressed.body!.messages!.map(m => m.summary)).toEqual(['thanks, next the docs', 'please look at the build']);
     const threaded = await call(`${AGENT_MESSAGES_PATH}?kind=ask`);
     expect(threaded).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
     const byId = await call(`${AGENT_MESSAGES_PATH}?id=m1`);
@@ -204,6 +211,7 @@ describe('phm agents messages', () => {
     expect(byBodyKind).toMatchObject({ handled: true, status: 200, body: { matched: 0 } });
     expect((await call(`${AGENT_MESSAGES_PATH}?bogus=1`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=has%20space`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?to=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?bodyKind=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=a&id=b`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');

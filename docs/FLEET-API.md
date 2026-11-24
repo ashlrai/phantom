@@ -52,7 +52,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
-| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id, bodyKind | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id, bodyKind, to | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -518,7 +518,7 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
@@ -713,7 +713,7 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
@@ -731,7 +731,7 @@ rules and registered-identity resolution `phm messages --help` describes, so
 `--json` prints `agents.messages.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
 same read with a current read session; dashed flags arrive camelCase
-(`excludeFrom`, `inReplyTo`, `bodyKind`), each param once.
+(`excludeFrom`, `inReplyTo`, `bodyKind`, `to`), each param once.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and
