@@ -31,7 +31,7 @@
  */
 
 import { credentialSpawnSync as spawnSync, credentialExecFileSync as execFileSync } from '../core/integrations/secrets.js';
-import { existsSync, readlinkSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, readlinkSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -42,6 +42,10 @@ import { queryServeService } from './dashboard.js';
 import { desktopUpdateProfileForPackage, type DesktopUpdateProfile } from '../core/desktop/update-manifest.js';
 import { detectReleaseDirectory, updateReleaseDirectory } from '../core/update/release-directory.js';
 import { probeNpmRegistry } from '../core/update/registry.js';
+import {
+  DAEMON_LABEL, nextSchedule, parseResidentStatus, readResidentRequest, readSchedule, releaseRootFromCommand, residentRequest,
+  settleResidentRequest, tickDue, writeResidentRequest, writeSchedule, type ResidentRequest, type ResidentStatusRead,
+} from '../core/update/auto-update.js';
 
 // ---------------------------------------------------------------------------
 // ANSI helpers (non-TTY safe)
@@ -315,11 +319,13 @@ interface ParsedUpdateArgs {
   yes: boolean;
   /** M33: explicit channel override ('git' | 'npm'); default auto-detect. */
   channel?: 'git' | 'npm';
+  /** PCEB-10: unattended tick for the launchd updater (release layout only). */
+  auto: boolean;
   usageError?: string;
 }
 
 function parseUpdateArgs(args: string[]): ParsedUpdateArgs {
-  const result: ParsedUpdateArgs = { check: false, json: false, yes: false };
+  const result: ParsedUpdateArgs = { check: false, json: false, yes: false, auto: false };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -329,6 +335,8 @@ function parseUpdateArgs(args: string[]): ParsedUpdateArgs {
       result.json = true;
     } else if (arg === '--yes') {
       result.yes = true;
+    } else if (arg === '--auto') {
+      result.auto = true;
     } else if (arg === '--channel') {
       const val = args[++i];
       if (val !== 'git' && val !== 'npm') {
@@ -496,6 +504,7 @@ function printHelp(): void {
   console.log('  ' + bold('Flags:'));
   console.log('');
   console.log(`    ${cyan('--check')}   Report if an update is available without applying it.`);
+  console.log(`    ${cyan('--auto')}    Unattended tick for the release layout (launchd updater). Never relaunches the resident daemon; writes one operator request instead.`);
   console.log(`    ${cyan('--json')}    Emit UpdateResult JSON on stdout; human text to stderr.`);
   console.log('');
   console.log('  ' + bold('Safety:'));
@@ -551,13 +560,21 @@ export async function cmdUpdate(args: string[]): Promise<number> {
 
   // ── M33: channel routing — npm installs update via the registry, not git ──
   const channel = parsed.channel ?? detectChannel();
+  if (parsed.auto && channel !== 'release') {
+    // Only the immutable release layout updates unattended. npm-global and
+    // git checkouts are reported, never touched, so a stray agent is a no-op.
+    process.stdout.write(JSON.stringify({ schema: 'phantom.update.auto.v1', action: 'unsupported-layout', channel }) + '\n');
+    return 0;
+  }
   if (channel === 'release') {
-    const result = await updateReleaseDirectory(repoRoot, { check: parsed.check, services: () => {
+    const runningServices = () => {
       const services = [serviceStatus(), queryServeService()];
       if (services.some(service => service.registrationState === 'unknown')) throw new Error('Service state unavailable');
       if (process.platform !== 'darwin' && services.some(service => service.registrationState === 'present')) throw new Error('Service recovery requires launchd');
       return services.flatMap((service, index) => service.running ? [`gui/${process.getuid!()}/ai.ashlr.${index === 0 ? 'daemon' : 'serve'}`] : []);
-    } });
+    };
+    if (parsed.auto) return runAutoUpdateTick(repoRoot, runningServices);
+    const result = await updateReleaseDirectory(repoRoot, { check: parsed.check, services: runningServices });
     process.stdout.write((jsonMode ? JSON.stringify(result) : result.error ??
       (parsed.check ? `Phantom ${result.from} to ${result.to}` : result.log_line)) + '\n');
     return result.error ? 1 : 0;
@@ -981,4 +998,45 @@ export async function cmdUpdate(args: string[]): Promise<number> {
   }
 
   return smoke.ok ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// PCEB-10 / AUTO-UPDATER-LA-1: unattended release tick
+// ---------------------------------------------------------------------------
+
+async function runAutoUpdateTick(repoRoot: string, services: () => string[]): Promise<number> {
+  const now = Date.now();
+  const schedule = readSchedule();
+  if (!tickDue(schedule, now)) {
+    process.stdout.write(JSON.stringify({ schema: 'phantom.update.auto.v2', action: 'not-due', nextAt: new Date(schedule.nextAt).toISOString() }) + '\n');
+    return 0;
+  }
+  const run = (command: string, args: string[]) => spawnSync(command, args, { encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  let status: ResidentStatusRead | null = null;
+  // The daemon is never relaunched by the updater (hold), only paused for the
+  // swap and resumed in place; ai.ashlr.serve restarts onto the new release.
+  const gate = (candidateRoot: string) => {
+    const read = run(process.execPath, [join(candidateRoot, 'bin/ashlr'), 'authority', 'resident', 'status', '--json']);
+    status = parseResidentStatus(read.status === 0 ? read.stdout : null);
+    return { restart: true, reason: `resident daemon held for the operator (new release admission: ${status.code ?? 'unknown'})`, hold: [DAEMON_LABEL] };
+  };
+  const result = await updateReleaseDirectory(repoRoot, { services, restartGate: gate });
+  writeSchedule(nextSchedule(schedule, result.to, now));
+  let request: ResidentRequest | null = null;
+  if (result.updated && result.to && status) {
+    request = residentRequest(result.to, realpathSync(join(homedir(), '.local/share/ashlr/current')), status, now);
+    writeResidentRequest(request);
+  }
+  // Settle a request once the operator has moved the daemon onto `current`.
+  let settled = false;
+  if (process.platform === 'darwin' && readResidentRequest()) {
+    const printed = run('launchctl', ['print', `gui/${process.getuid!()}/${DAEMON_LABEL}`]);
+    const pid = printed.status === 0 ? /^\s*pid = (\d+)$/m.exec(printed.stdout ?? '')?.[1] : undefined;
+    if (pid) {
+      const ps = run('/bin/ps', ['-o', 'command=', '-p', pid]);
+      settled = settleResidentRequest(ps.status === 0 ? releaseRootFromCommand(ps.stdout ?? '') : null);
+    }
+  }
+  process.stdout.write(JSON.stringify({ schema: 'phantom.update.auto.v2', result, request: request ?? readResidentRequest(), settled }) + '\n');
+  return result.error ? 1 : 0;
 }
