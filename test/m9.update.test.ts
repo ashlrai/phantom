@@ -36,10 +36,12 @@ const mockSpawnSync = vi.fn();
 const mockExecFileSync = vi.fn();
 const mockServiceStatus = vi.fn();
 const mockServeServiceStatus = vi.fn();
+const mockFetch = vi.fn();
+vi.mock('node:child_process', () => ({ spawnSync: mockSpawnSync, execFileSync: mockExecFileSync }));
 
-vi.mock('node:child_process', () => ({
-  spawnSync: mockSpawnSync,
-  execFileSync: mockExecFileSync,
+vi.mock('../src/core/integrations/secrets.js', async () => ({
+  ...await vi.importActual<typeof import('../src/core/integrations/secrets.js')>('../src/core/integrations/secrets.js'),
+  credentialSpawnSync: mockSpawnSync, credentialExecFileSync: mockExecFileSync,
 }));
 
 vi.mock('../src/core/daemon/service.js', () => ({
@@ -102,6 +104,7 @@ function _freshRepoDir(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const d of createdDirs.splice(0)) {
     try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
   }
@@ -173,6 +176,7 @@ function mockHappyPath(): void {
 let cmdUpdate: (args: string[]) => Promise<number>;
 
 beforeEach(async () => {
+  vi.stubGlobal('fetch', mockFetch.mockResolvedValue(new Response(null, { status: 503 })));
   mockHappyPath();
   mockServiceStatus.mockReset();
   mockServiceStatus.mockReturnValue({
@@ -378,7 +382,9 @@ describe('cmdUpdate — installed service release gate', () => {
 
       expect(code).toBe(0);
       expect(stdoutBuf).not.toContain('Update blocked by resident service restriction');
-      expect(mockSpawnSync).toHaveBeenCalled();
+      if (channel === 'git') expect(mockSpawnSync).toHaveBeenCalled();
+      else expect(mockFetch).toHaveBeenCalledWith('https://registry.npmjs.org/%40ashlr%2Fphantom/latest',
+        expect.objectContaining({ credentials: 'omit' }));
     },
   );
 

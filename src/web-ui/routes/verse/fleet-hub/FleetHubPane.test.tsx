@@ -58,3 +58,22 @@ it('refreshes counts while visible and stops polling when hidden', async () => {
   await act(async () => { vi.advanceTimersByTime(10_000); });
   expect(runsCalls()).toHaveLength(2);
 });
+
+it('shows the Not actually running group first, and only when the list is not empty', async () => {
+  const view = render(<FleetHubPane visible />);
+  await screen.findByText('1/2 · 1 held');
+  expect(screen.queryByRole('region', { name: 'Not actually running' })).toBeNull();
+  view.unmount(); evictAll();
+  const notRunning = [
+    { job_or_lane: 'grok-one', kind: 'held_launch' as const, reason: 'ultra reading older than 8h', since: new Date(Date.now() - 3 * 86_400_000).toISOString(), unblock: 'Record a current Grok usage percent' },
+    { job_or_lane: 'cursor', kind: 'idle_lane' as const, reason: 'Lane held', since: null, unblock: 'unknown' },
+  ];
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...fixture, notRunning })));
+  render(<FleetHubPane visible />);
+  const group = await screen.findByRole('region', { name: 'Not actually running' });
+  expect(group.parentElement?.firstElementChild).toBe(group);
+  expect(group.textContent).toContain('Not actually running · 2');
+  expect(group.textContent).toContain('grok-one · ultra reading older than 8h · for 3 d');
+  expect(group.textContent).toContain('Next: Record a current Grok usage percent');
+  expect(group.textContent).toContain('cursor · Lane heldNext: unknown');
+});

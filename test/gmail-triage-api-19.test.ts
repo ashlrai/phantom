@@ -22,7 +22,16 @@ async function call(method = 'GET', allowDispatch = true) {
 
 describe('GET /api/verse/comms/gmail-triage', () => {
   it('serves null before a save and the saved object after', async () => {
-    expect((await call()).body).toEqual({ schema: GMAIL_TRIAGE_LATEST_SCHEMA, latest: null });
+    expect((await call()).body).toEqual({
+      schema: GMAIL_TRIAGE_LATEST_SCHEMA,
+      latest: null,
+      inboxes: null,
+      evidence: {
+        scope: 'unknown',
+        liveInboxTargetState: 'unknown',
+        archiveExecution: 'unverified',
+      },
+    });
     writeGmailTriageLatest(runsDir, { dir: 'mail', scanned: 2, updates: 1, drafted: 0, review: 0, failed: 0, unreadInSample: 2, target: 100, archiveCandidateCount: 0 });
     const { status, body } = await call();
     expect(status).toBe(200);

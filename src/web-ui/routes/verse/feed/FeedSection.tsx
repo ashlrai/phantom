@@ -13,7 +13,7 @@
  * note that some updates are missing. Only when every source is down does it
  * say the Feed is unavailable.
  */
-import type { FeedReport } from '../../../../core/feed.js';
+import type { FeedReport } from '../../../../core/feed-schema.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
@@ -40,9 +40,10 @@ import { ownerThreadQuery } from '../leader-thread/owner-thread-queries.js';
 import { updateStatusQuery } from '../sections/update-status-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { useActivity } from '../shell/useActivity.js';
-import { buildFeed, feedPaneLabel, filterFeed, type FeedFilter, type FeedKind } from './feed-model.js';
+import { buildFeed, feedPaneLabel, filterFeed, isSharedFeedReport, type FeedFilter, type FeedKind } from './feed-model.js';
 import { buildAwayDigest } from './away-digest.js';
 import { AwayDigestCard } from './AwayDigestCard.js';
+import { LeaderBetsCard } from './LeaderBetsCard.js';
 import { FeedAskButton } from './FeedAskButton.js';
 import { feedTellText } from './feed-tell-text.js';
 import { releaseFeedItems } from './release-feed-items.js';
@@ -51,7 +52,9 @@ import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import { useVerseUi } from '../useVerseUi.js';
 import { setFeedMutedKinds } from '../verse-ui-store.js';
 import { isFeedItemVisible } from './feed-mute.js';
+import { SharedFeed } from './SharedFeed.js';
 import styles from './feed.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
@@ -94,6 +97,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const releaseStages = useQuery(releaseStagesQuery, { enabled: visible, freshMs: 300_000 });
   const nativeUpdates = useDesktopUpdates();
   const activity = useActivity();
+  const activityData = activity.data?.sources && Array.isArray(activity.data.running) ? activity.data : null;
   const refetchShared = useRefetch(sharedFeedQuery);
   const refetchLeader = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetMergesQuery);
@@ -116,9 +120,10 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const ownerFailed = Boolean(owner.error) && owner.data === undefined;
   const ownerPaused = owner.data?.paused === true;
   const ownerLines = ownerPaused ? undefined : owner.data?.lines;
+  const sharedReady = isSharedFeedReport(shared.data);
   const failed = [leaderFailed, runsFailed, alertsFailed, ownerFailed].filter(Boolean).length;
   // Down means no source gave anything: the owner source only counts as up when it returned lines.
-  const allDown = !shared.data && leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
+  const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
   const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
   const updateItems = useMemo(
@@ -145,8 +150,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     return drafts?.oldestPendingAt ? { runId: `drafts:${drafts.oldestPendingAt}`, at: drafts.oldestPendingAt, drafts } : null;
   }, [commsRead]);
 
-  const feed = useMemo(() => buildFeed({
-    shared: shared.data,
+  const feed = useMemo(() => sharedReady ? [] : buildFeed({
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
@@ -156,9 +160,9 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     teammate: teammate?.error ? null : inboxView,
     comms,
     inboxPlans: inboxPlans.error ? undefined : inboxPlans.data,
-  }), [shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
+  }), [sharedReady, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
   const releaseItems = useMemo(() => releaseFeedItems(releaseStages.data, nativeUpdates, new Date().toISOString()), [releaseStages.data, nativeUpdates]);
-  const combinedFeed = useMemo(() => [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [feed, releaseItems]);
+  const combinedFeed = useMemo(() => sharedReady ? [] : [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [sharedReady, feed, releaseItems]);
   const filtered = filterFeed(combinedFeed.filter(item => isFeedItemVisible(item, feedMutedKinds)), filter);
   const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
   const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
@@ -173,22 +177,26 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // so the count stays while he reads and is gone next time.
   const newestAt = useRef<string | undefined>(undefined);
   // Only while visible: the render that hides the Feed must not replace what it last showed.
-  if (visible) newestAt.current = combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
+  if (visible) newestAt.current = sharedReady ? (isSharedFeedReport(shared.data) ? shared.data.items[0]?.at : undefined) : combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
   useEffect(() => {
     if (!visible) return undefined;
     return () => { if (newestAt.current) markSeen(newestAt.current); };
   }, [visible, markSeen]);
 
-  return <div className={styles.root}>
+  // The API answered: the Feed is exactly what `phm feed` returns. The rest below is the fallback for an older hub.
+  if (sharedReady) return <SharedFeed visible={visible} now={now} openPane={openPane} openJob={openJob} />;
+
+  return <div className={`${styles.root} ${compact.view}`}>
+    <LeaderBetsCard visible={visible} />
     {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
       {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
-      {activity.data && activity.data.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
-      {!activity.data ? <CardNote tone="unknown">{activity.status === 'unavailable' ? 'Running chat activity is unavailable.' : 'Loading running chats…'}</CardNote>
-        : activity.data.running.length === 0 ? activity.data.sources.chats === 'ok' ? <CardNote>No chats running in the latest activity snapshot.</CardNote> : null
+      {activityData && activityData.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
+      {!activityData ? <CardNote tone="unknown">{activity.data || activity.status === 'unavailable' ? 'Running chat activity is unavailable.' : 'Loading running chats…'}</CardNote>
+        : activityData.running.length === 0 ? activityData.sources.chats === 'ok' ? <CardNote>No chats running in the latest activity snapshot.</CardNote> : null
           : <ul className={styles.runningList}>
-            {activity.data.running.map(chat => <li key={chat.sessionId}>
+            {activityData.running.map(chat => <li key={chat.sessionId}>
               <button type="button" className={styles.runningButton} onClick={() => openChat(chat.sessionId)}>
                 <span>{chat.title || 'Untitled chat'}</span>
                 <span className={styles.runningDetail}>{chat.engine} · {liveLine(chat.live) ?? 'Running'}</span>
@@ -202,11 +210,10 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
       : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
-    <CardNote tone="unknown">{shared.data ? `Unknown sources: ${Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'leader replies' : name).join(', ') || 'none'}.` : 'Shared feed sources are unknown.'}</CardNote>
     {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
       : !allDown && shown.length === 0
-        ? <CardNote>{filter === 'all' ? 'Nothing new yet. Leader messages, alerts and merges land here as they happen.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
+        ? <CardNote>{filter === 'all' ? 'Nothing new yet. Merges, releases, failures, incidents and Leader replies appear here.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
         : null}
     {newCount > 0 ? <div className={styles.newBar}>
       <span>{newCount} new since you last looked</span>

@@ -53,7 +53,7 @@ async function importGateway() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mod = await (import('../core/mcp-gateway.js') as Promise<any>);
   return mod as {
-    startGateway: (registry: import('../core/types.js').McpRegistry) => Promise<void>;
+    startGateway: (registry: import('../core/types.js').McpRegistry, timeoutMs?: number, options?: { lazy?: boolean }) => Promise<void>;
     probeServer: (spec: McpServerSpec, timeoutMs?: number) => Promise<McpServerHealth>;
   };
 }
@@ -121,7 +121,7 @@ function discoverRegistryForMcpHost(discoverMcpServers: () => McpRegistry): McpR
 // Subcommand: run (default)
 // ---------------------------------------------------------------------------
 
-async function cmdMcpRun(): Promise<number> {
+async function cmdMcpRun(lazy = false): Promise<number> {
   await registerFleetTools();
   // Pure stdio — log only to stderr, never stdout
   try {
@@ -129,7 +129,7 @@ async function cmdMcpRun(): Promise<number> {
     const { startGateway } = await importGateway();
     const registry = discoverRegistryForMcpHost(discoverMcpServers);
     process.stderr.write(`[ashlr mcp] starting gateway with ${registry.servers.length} discovered server(s)\n`);
-    await startGateway(registry);
+    await startGateway(registry, undefined, { lazy });
     // The CLI dispatcher only sets exitCode; unrelated handles may still exist.
     setTimeout(() => process.exit(0), 100).unref();
     return 0;
@@ -958,6 +958,7 @@ function printHelp(): void {
 
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
+    ['run --lazy',                      'Defer downstream startup, including cold discovery, until a tool call.'],
     ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop, fleet_bus_hops, fleet_host_runs, fleet_bus_inbox; no companion probes).'],
     ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
     ['docs',                            'Read-only docs MCP on stdio (search, list_pages, get_page over the shipped Markdown docs; no network).'],
@@ -1092,8 +1093,13 @@ export async function cmdMcp(args: string[]): Promise<number> {
   }
 
   // Default / explicit "run"
-  if (!sub || sub === 'run') {
-    return cmdMcpRun();
+  if (!sub || sub === 'run' || sub === '--lazy') {
+    const flags = sub === 'run' ? args.slice(1) : args;
+    if (flags.some(flag => flag !== '--lazy') || flags.length > 1) {
+      process.stderr.write('Usage: phm mcp [run] [--lazy]\n');
+      return 2;
+    }
+    return cmdMcpRun(flags.includes('--lazy'));
   }
 
   if (sub === 'list') {

@@ -97,15 +97,16 @@ it('reads selected job identity and message counts from the shared org contract'
   const orgMap = fleetOrgMap(null);
   orgMap.nodes = [
     { id: 'leader', kind: 'leader', label: 'Leader', provider: 'unknown', status: 'unknown' },
-    { id: 'job:J1', kind: 'job', jobId: 'J1', label: 'Shared job label', provider: 'openai', status: 'stale' },
+    { id: 'job:J1', kind: 'job', jobId: 'J1', label: 'Shared job label', provider: 'OpenAI', status: 'stale' },
   ];
-  orgMap.edges = [{ id: 'message', kind: 'message', from: 'leader', to: 'job:J1', count: 3 }];
+  orgMap.edges = [{ id: 'message', kind: 'message', from: 'leader', to: 'job:J1', provider: 'unknown', count: 3 }];
   orgMap.sources.messages = 'available'; orgMap.messageWindowMinutes = 15; orgMap.unmappedMessages = 0;
   const props = { nodes: [node('a', 1)], jobs: [job('J1', 'a')], now: NOW, heat: true,
     yaw: 0, tilt: 0, zoom: 1, selection: 'J1', onSelect: vi.fn(), onOrbit: vi.fn() };
   const view = render(<ComputeScene3D {...props} orgMap={orgMap} />);
-  expect(screen.getByText('Shared job label · Provider: openai · Org status: stale')).toBeInTheDocument();
+  expect(screen.getByText('Shared job label · Provider: OpenAI · Org status: stale')).toBeInTheDocument();
   expect(screen.getByText('Leader → Shared job label · 3 messages')).toBeInTheDocument();
+  expect(screen.getByText('Leader → Shared job label · 3 messages').querySelector('[data-provider-badge="unknown"] svg')).toHaveTextContent('?');
   expect(screen.getByTestId('scene3d')).toHaveAccessibleName(/1 nodes, 1 agents shown/);
   view.rerender(<ComputeScene3D {...props} orgMap={null} />);
   expect(screen.getByText('Org map unknown.')).toBeInTheDocument();
@@ -129,4 +130,40 @@ it('toggles between the 2D machine list and the 3D scene on the same data', asyn
   expect(screen.getByText('RQ-A')).toBeInTheDocument();
   fireEvent.click(screen.getByText('2D'));
   expect(screen.queryByTestId('scene3d')).toBeNull();
+});
+
+it('badges every agent and message line with its provider, in 3D and in 2D', async () => {
+  const drawn: string[] = [], widths: unknown[] = [];
+  const ctx = new Proxy({}, { get: (_t, k) => k === 'fillText' ? (text: string) => { drawn.push(text); } : vi.fn(), set: (_t, k, v) => { if (k === 'lineWidth') widths.push(v); return true; } });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never);
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 1; });
+  const jobs = [{ ...job('J1', 'a'), lane: 'claude' }, { ...job('J2', 'a'), model: 'gpt-5.5' }, job('J3', 'a')];
+  expect(buildScene([node('a', 1)], jobs, NOW, true).agents.map(a => a.provider.name)).toEqual(['Anthropic', 'OpenAI', 'unknown']);
+  const orgMap = fleetOrgMap(null);
+  orgMap.nodes.push({ id: 'job:J1', kind: 'job', jobId: 'J1', label: 'One', provider: 'Anthropic', status: 'running' },
+    { id: 'job:J2', kind: 'job', jobId: 'J2', label: 'Two', provider: 'OpenAI', status: 'running' });
+  orgMap.edges.push({ id: 'message:job:J1:job:J2', kind: 'message', from: 'job:J1', to: 'job:J2', provider: 'Anthropic', count: 1 });
+  orgMap.sources.messages = 'available'; orgMap.unmappedMessages = 0;
+  const view = render(<ComputeScene3D nodes={[node('a', 1)]} jobs={jobs} orgMap={orgMap} now={NOW} heat yaw={0} tilt={15} zoom={1} selection={null} onSelect={() => {}} onOrbit={() => {}} />);
+  // One letter per agent, plus the sender's letter on the J1 → J2 line.
+  expect(drawn.filter(text => text === 'A')).toHaveLength(2);
+  expect(drawn.filter(text => text === 'O')).toHaveLength(1);
+  expect(drawn.filter(text => text === '?')).toHaveLength(1);
+  // The J1 → J2 line is drawn at the shared message thickness for one message, then the pen is reset.
+  expect(widths.slice(-2)).toEqual([1.75, 1]);
+  expect(screen.getByText('One → Two · 1 messages').querySelector('[data-provider-badge="Anthropic"]')).toBeTruthy();
+  view.unmount();
+
+  const compute = { schema: 'fleet.compute.v1', generatedAt: at(), localNodeId: 'a', truncated: false, sources: {}, dispatcherAt: null, lanes: {}, nodes: [node('a', 1)] };
+  const payloads: Record<string, unknown> = {
+    '/api/verse/fleet/control/compute': compute,
+    '/api/verse/fleet/control/sessions': { ...sessions, computeAt: at(), mapRecent: [], mapSessions: jobs },
+    '/api/fleet/lanes': { schema: 'fleet.lanes.v1', generatedAt: at(), lanes: [lane] },
+    '/api/verse/fleet/control/map': orgMap,
+  };
+  vi.stubGlobal('fetch', vi.fn(async (u: RequestInfo | URL) => Response.json(payloads[String(u)] ?? {}, { status: payloads[String(u)] ? 200 : 503 })));
+  render(<ComputeMap visible />);
+  expect((await screen.findByText('J1')).closest('button')!.querySelector('[data-provider-badge="Anthropic"]')).toHaveTextContent('Anthropic');
+  expect(screen.getByText('J3').closest('button')!.querySelector('[data-provider-badge="unknown"] svg')).toHaveTextContent('?');
+  expect((await screen.findByText('One → Two · 1 messages')).querySelector('[data-provider-badge="Anthropic"]')).toBeTruthy();
 });

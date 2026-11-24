@@ -1,0 +1,29 @@
+/* One card per channel. The grid collapses to one column at phone width
+ * (390 px) through min(100%, …), so nothing scrolls sideways; long values wrap. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; }
+.headline { margin: 0; font-size: var(--text-sm-size); }
+.message { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.card { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-left-width: 3px; border-radius: var(--radius-md); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.name { font-size: var(--text-sm-size); }
+.badge { border-radius: var(--radius-sm); padding: 0 var(--space-1); font-weight: 600; }
+.card[data-state='connected'] { border-left-color: var(--status-success-solid); }
+.card[data-state='connected'] .badge { color: var(--status-success-fg); background: var(--status-success-bg); }
+.card[data-state='failing'] { border-left-color: var(--status-danger-solid); }
+.card[data-state='failing'] .badge { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+.card[data-state='unknown'] { border-left-color: var(--status-unknown-fg); }
+.card[data-state='unknown'] .badge { color: var(--status-unknown-fg); background: var(--status-unknown-bg); }
+.card[data-state='not-set-up'] { border-left-color: var(--border-subtle); }
+.card[data-state='not-set-up'] .badge { color: var(--text-secondary); background: var(--border-subtle); }
+.reason { margin: 0; color: var(--text-primary); }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1) var(--space-3); margin: 0; }
+.facts dt { color: var(--text-secondary); }
+.facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.wide { grid-column: 1 / -1; }
+.mono { font-family: var(--font-mono); }
+.next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; }
+/* Rules card: name and picker share a row and wrap at phone width; the picker never outgrows the card. */
+.rule { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.ruleName { display: grid; flex: 1 1 10rem; min-width: 0; }
+.select { max-width: 100%; min-height: 2.75rem; font: inherit; }

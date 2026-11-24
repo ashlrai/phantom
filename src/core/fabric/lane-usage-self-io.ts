@@ -83,7 +83,8 @@ export function defaultReaders(o: ReaderOptions): Partial<Record<SelfLane, Sanct
     claude: async () => {
       const now = o.nowMs();
       const weekly = usableClaudeWeekly(await readClaudeQuotaReading(o.runsDir), now);
-      if (weekly) return { pctUsed: weekly.weekly.usedPct, resetAt: weekly.weekly.resetAt, source: 'claude-usage-reading' };
+      if (weekly) return { pctUsed: weekly.weekly.usedPct, resetAt: weekly.weekly.resetAt, source: 'claude-usage-reading',
+        ...(weekly.accountId ? { account_id: weekly.accountId } : {}) };
       const ev = parseClaudeUsage(readLatestClaudeRateLimitEvent({ nowMs: now }), now);
       return ev.pctUsed === null ? null : { pctUsed: ev.pctUsed, resetAt: ev.resetAt, source: 'claude-rate-limit-event' };
     },

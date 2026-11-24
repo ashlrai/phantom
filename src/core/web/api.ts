@@ -1,4 +1,6 @@
+import { agentChatResponse } from './agent-chat-route.js';
 import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
+import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
 /**
  * core/web/api.ts — M14 JSON API handler.
  *
@@ -24,6 +26,7 @@ import { handleWbAction, WB_ACTION_PATH } from './wb-action-api.js';
  *   GET /api/agent-os          -> authenticated observation-only Agent OS snapshot
  *   GET /api/host              -> read-only console, inference bind and Stop summary
  *   GET /api/bots/templates    -> starter bot templates; GET /api/bots -> bots created from them
+ *   GET /api/bots/seats        -> external bot seats, quota evidence, claims and recent handoffs (no dispatch)
  *   GET /api/events            -> Server-Sent Events stream
  *
  * Mutating routes (ONLY when ctx.allowDispatch === true + token header):
@@ -51,7 +54,7 @@ import { handleFrictionFeedback } from '../verse/feedback-api.js';
 import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { timingSafeEqual, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { basename, resolve as resolvePath, sep as pathSep } from 'node:path';
 import { realpathSync } from 'node:fs';
 
@@ -126,6 +129,8 @@ import { handleGrowthApi, isGrowthPath } from '../verse/growth-api.js';
 import { handleVerseMcpApi, isVerseMcpPath } from '../verse/mcp-control-api.js';
 // Desktop native-shell read API (GET /api/wb/v1/*).
 import { handleWbApi, isWbApiPath } from './wb-read-api.js';
+
+export { DEFAULT_MAX_BODY_BYTES, passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
 
 // ---------------------------------------------------------------------------
 // SSE registry — shared across all open SSE connections so server.ts can
@@ -740,51 +745,10 @@ async function buildVisionMissionSnapshot(cfg: AshlrConfig): Promise<Record<stri
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Write a JSON response. Never throws. */
-export function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  try {
-    const boundedBody = body && typeof body === 'object' && 'error' in body && (body as { error: unknown }).error != null
-      ? { ...body, error: String((body as { error: unknown }).error).slice(0, 512) }
-      : body;
-    const payload = JSON.stringify(sanitizePublicJson(boundedBody) ?? null);
-    res.writeHead(status, {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(payload);
-  } catch {
-    try {
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-      }
-      res.end('{"error":"internal error"}');
-    } catch {
-      // Socket already closed — swallow.
-    }
-  }
-}
-
 /** Write a 500 JSON error. Never throws. */
 function send500(res: ServerResponse, msg = 'internal error'): void {
   void msg; // retained at call sites for private diagnostics; never disclose it.
   sendJson(res, 500, { code: 'INTERNAL_ERROR', error: 'internal server error' });
-}
-
-/**
- * Constant-time string comparison to defend against timing attacks.
- * Returns true iff a === b (both strings, same bytes).
- */
-function safeEqual(a: string, b: string): boolean {
-  try {
-    // Both must be the same byte length for timingSafeEqual.
-    const ba = Buffer.from(a, 'utf8');
-    const bb = Buffer.from(b, 'utf8');
-    if (ba.length !== bb.length) return false;
-    return timingSafeEqual(ba, bb);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -794,46 +758,6 @@ function safeEqual(a: string, b: string): boolean {
 function parseWindow(raw: string | undefined): '1d' | '7d' | '30d' {
   if (raw === '1d' || raw === '7d' || raw === '30d') return raw;
   return '7d';
-}
-
-/** The default request-body cap every POST route shares. */
-export const DEFAULT_MAX_BODY_BYTES = 65_536;
-
-/**
- * Safely read the full request body as a string (bounded to 64 KB unless a
- * route passes its own cap). Rejects on oversized or errored requests.
- *
- * Exported so src/core/verse/verse-api.ts shares the exact same body cap. The
- * `maxBytes` override exists for ONE route (POST /api/verse/memory), whose
- * payload is a file that may itself be 64 KiB before JSON escaping; every
- * other caller keeps the default.
- *
- * Chunks are kept as raw bytes and decoded ONCE at the end. Decoding each
- * chunk on its own turns a multi-byte UTF-8 character that straddles a chunk
- * boundary into two U+FFFD replacement characters — silent corruption that
- * grows likelier the bigger the body (an em dash in a 100 KB memory file).
- */
-export function readBody(req: IncomingMessage, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let tooLarge = false;
-
-    req.on('data', (chunk: Buffer | string) => {
-      if (tooLarge) return;
-      const b = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
-      total += b.length;
-      if (total > maxBytes) {
-        tooLarge = true;
-        chunks.length = 0;
-        reject(new Error('request body too large'));
-        return;
-      }
-      chunks.push(b);
-    });
-    req.on('end', () => { if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8')); });
-    req.on('error', reject);
-  });
 }
 
 /**
@@ -849,40 +773,6 @@ function getQueryParam(url: string, name: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Read a single request header value (collapsing the string[] form Node uses
- * for repeated headers down to its first entry). Returns '' when absent.
- */
-function headerValue(req: IncomingMessage, name: string): string {
-  const raw = req.headers[name];
-  if (Array.isArray(raw)) return raw[0] ?? '';
-  return raw ?? '';
-}
-
-/**
- * The shared gate for the two mutating routes (POST /api/run and the web inbox
- * approve/reject). Enforces, in order:
- *   1. constant-time x-ashlr-token match  -> 401 on mismatch
- *   2. Content-Type: application/json     -> 415 otherwise (CSRF defence in
- *      depth; the token is the real control)
- * Writes the failure response itself and returns false when the request should
- * NOT proceed; returns true when both checks pass.
- *
- * Exported so src/core/verse/verse-api.ts's POST routes use the identical gate.
- */
-export function passesMutationGate(req: IncomingMessage, res: ServerResponse, token: string): boolean {
-  if (!safeEqual(headerValue(req, 'x-ashlr-token'), token)) {
-    sendJson(res, 401, { error: 'unauthorized: missing or invalid x-ashlr-token' });
-    return false;
-  }
-  const contentType = headerValue(req, 'content-type');
-  if (!contentType.toLowerCase().trim().startsWith('application/json')) {
-    sendJson(res, 415, { error: 'Content-Type must be application/json' });
-    return false;
-  }
-  return true;
 }
 
 /**
@@ -1344,11 +1234,39 @@ export async function handleApi(
   const method = (req.method ?? 'GET').toUpperCase();
 
   try {
+    if (path === '/api/agents/chat') {
+      const response = agentChatResponse(method, req.url ?? '');
+      sendJson(res, response.code, response.body);
+      return true;
+    }
     if (path.startsWith('/api/teams/') && await handleTeamInvites(req, res, ctx)) return true;
     if (path.startsWith('/api/bots') && ctx.botTemplatesApi && await ctx.botTemplatesApi(req, res, ctx)) return true;
+    if (path === '/api/usage/lanes' && method === 'GET') {
+      const { readLaneAllowance } = await import('../usage/lane-allowance.js');
+      sendJson(res, 200, await readLaneAllowance());
+      return true;
+    }
     if (path === '/api/usage/spend' && method === 'GET') {
       const { readUsageSpend } = await import('../usage/spend.js');
       sendJson(res, 200, await readUsageSpend());
+      return true;
+    }
+    if (path === '/api/usage/burn' && method === 'GET') {
+      // Same report as `phm fleet burn --json` (usage.burn.v1).
+      const { readBurnWho } = await import('../usage/burn-who.js');
+      sendJson(res, 200, await readBurnWho());
+      return true;
+    }
+    if (path === '/api/fleet/pace' && method === 'GET') {
+      // Same report as `phm fleet pace --json` (fleet.pace.v1).
+      const { readFleetPace } = await import('../fleet/pace-verdict.js');
+      sendJson(res, 200, await readFleetPace());
+      return true;
+    }
+    if (path === '/api/usage/runway' && method === 'GET') {
+      // Same snapshot as `phm pool runway --json` (pool.runway.v1).
+      const { readPoolRunway } = await import('../usage/runway-read.js');
+      sendJson(res, 200, await readPoolRunway());
       return true;
     }
     if (path === HOST_SUMMARY_PATH) {
@@ -1976,7 +1894,16 @@ export async function handleApi(
 
     if (path === '/api/fleet/release-chain' && method === 'GET') {
       const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
+      const { getLocalReleaseStatus } = await import('../fleet/release-chain-status.js');
+      sendJson(res, 200, { ...releaseChainResponse(), release: await getLocalReleaseStatus() });
+      return true;
+    }
+
+    if (path === '/api/fleet/releases' && method === 'GET') {
+      // Legacy PR cadence plus the commit status shared with `phm release status --json`.
+      const { getReleases } = await import('../release/status.js');
+      const { readReleaseRepos } = await import('../release/release-repos.js');
+      sendJson(res, 200, { ...getReleases(), releaseRepos: await readReleaseRepos() });
       return true;
     }
 
@@ -1987,17 +1914,78 @@ export async function handleApi(
       return true;
     }
 
-    // Read-only release-chain status: same local signing/feed evidence as
-    // `phm fleet release-chain`, same no-auth read class as /api/fleet/lanes.
-    if (path === '/api/fleet/release-chain' && method === 'GET') {
-      const { releaseChainResponse } = await import('./release-chain-api.js');
-      sendJson(res, 200, releaseChainResponse());
+    if (path === '/api/fleet/outcomes' && method === 'GET') {
+      // What each finished job produced (fleet.job-outcomes.v1), the report `phm fleet outcomes --lane <lane> --json` prints.
+      const hoursText = getQueryParam(req.url ?? '', 'hours') ?? '';
+      const hours = hoursText ? Number(hoursText) : 24;
+      if (!/^\d*\.?\d*$/.test(hoursText) || !Number.isFinite(hours) || hours <= 0 || hours > 2160) { sendJson(res, 400, { error: 'Use hours from 1 to 2160.' }); return true; }
+      const lane = getQueryParam(req.url ?? '', 'lane');
+      const { readJobOutcomes } = await import('../fleet/job-outcomes.js');
+      sendJson(res, 200, await readJobOutcomes({ hours, ...(lane && lane !== 'all' ? { lane } : {}) }));
+      return true;
+    }
+
+    if (path === '/api/fleet/worklog' && method === 'GET') {
+      // The numbers per hour and per day (fleet.worklog.v1), the report `phm fleet worklog --json` prints.
+      const { readFleetWorklog, worklogOptions } = await import('../fleet/worklog-numbers.js');
+      const options = worklogOptions(getQueryParam(req.url ?? '', 'hours') || undefined, getQueryParam(req.url ?? '', 'by') || undefined);
+      if (!options) { sendJson(res, 400, { error: 'Use hours from 1 to 168 and by=hour or by=day.' }); return true; }
+      sendJson(res, 200, sanitizePublicJson(await readFleetWorklog(options)));
+      return true;
+    }
+
+    if (path === '/api/fleet/empties' && method === 'GET') {
+      // Why each empty run ended empty (fleet.empties.why.v1), the `why` block of `phm fleet empties --json`.
+      const { readEmptiesWhy } = await import('../fleet/empties-why.js');
+      const raw = getQueryParam(req.url ?? '', 'hours') ?? '24';
+      const hours = /^\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+      if (!(hours > 0 && hours <= 2160)) { sendJson(res, 400, { error: 'Use a number of hours up to 2160, for example 24.' }); return true; }
+      const report = await readEmptiesWhy({ hours });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
+    if (path === '/api/fleet/stranded' && method === 'GET') {
+      // Finished work that never became a PR (fleet.stranded.work.v1), the report inside `phm fleet stranded --json`.
+      const { readStrandedWork, STRANDED_MAX_DAYS } = await import('../fleet/stranded-work.js');
+      const raw = getQueryParam(req.url ?? '', 'days') ?? '3';
+      const days = /^\d{1,2}$/.test(raw) ? Number(raw) : NaN;
+      const verify = getQueryParam(req.url ?? '', 'verify');
+      if (!(days >= 1 && days <= STRANDED_MAX_DAYS) || !['1', '0', undefined].includes(verify)) {
+        sendJson(res, 400, { error: `Use days from 1 to ${STRANDED_MAX_DAYS} and verify=1 to compare with the local main branch.` }); return true;
+      }
+      const report = await readStrandedWork({ days, verify: verify === '1' });
+      sendJson(res, report.known ? 200 : 503, report);
+      return true;
+    }
+
+    if (path === '/api/log' && method === 'GET') {
+      // One row per job (joblog.v1), the report `phm log --json` prints.
+      const { readJobLog } = await import('../fleet/job-log.js');
+      const { worklogHours } = await import('../fleet/worklog.js');
+      const param = (name: string) => getQueryParam(req.url ?? '', name) || undefined;
+      let hours: number;
+      try { hours = worklogHours(param('since') ?? param('hours')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 6h.' }); return true; }
+      try { sendJson(res, 200, await readJobLog(hours, { repo: param('repo'), lane: param('lane') })); }
+      catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
       return true;
     }
 
     if (path === '/api/worklog' && method === 'GET') {
-      const { readWorklog } = await import('../fleet/worklog.js');
-      try { sendJson(res, 200, await readWorklog()); }
+      const { readWorklog, filterWorklog, worklogHours, WORKLOG_KINDS } = await import('../fleet/worklog.js');
+      const param = (name: string) => getQueryParam(req.url ?? '', name);
+      const kind = param('kind');
+      let hours: number;
+      try { hours = worklogHours(param('hours') ?? param('since')); }
+      catch { sendJson(res, 400, { error: 'Use a positive number of hours, for example 6.' }); return true; }
+      if (kind && !(WORKLOG_KINDS as readonly string[]).includes(kind)) { sendJson(res, 400, { error: `Use one kind: ${WORKLOG_KINDS.join(', ')}.` }); return true; }
+      try {
+        const report = await readWorklog(hours);
+        report.rows = filterWorklog(report.rows, param('repo'), param('lane'), kind);
+        report.entries = filterWorklog(report.entries, param('repo'), param('lane'));
+        sendJson(res, 200, report);
+      }
       catch { sendJson(res, 503, { error: 'Jobs ledger is unreadable.' }); }
       return true;
     }
@@ -2005,6 +1993,12 @@ export async function handleApi(
     if (path === '/api/fleet/machine' && method === 'GET') {
       const { readFleetMachine } = await import('../fleet/machine.js');
       sendJson(res, 200, await readFleetMachine());
+      return true;
+    }
+
+    if (path === '/api/fleet/machines' && method === 'GET') {
+      const { readFleetMachines } = await import('./fleet-machines-route.js');
+      sendJson(res, 200, readFleetMachines());
       return true;
     }
 
@@ -2032,8 +2026,29 @@ export async function handleApi(
     // local usage readers. READ-ONLY bounded fs reads; never throws on
     // absent/degraded inputs; same no-auth read class as /api/fleet.
     if (path === '/api/fleet/lanes' && method === 'GET') {
-      const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
-      sendJson(res, 200, await getFleetLaneSnapshot());
+      const [{ getFleetLaneSnapshot }, { fleetLaneEmptyNotes }] = await Promise.all([
+        import('../fleet/lane-console.js'), import('../fleet/lane-empty-notes.js')]);
+      sendJson(res, 200, await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes }));
+      return true;
+    }
+
+    // ── GET /api/fleet/local-capacity ────────────────────────────────────
+    // How many local-model workers fit in free memory (local.capacity.v1), the same answer as
+    // `phm local capacity`. Read-only (vm_stat and the process table); unknown is workers: null.
+    if (path === '/api/fleet/local-capacity' && method === 'GET') {
+      const { readLocalCapacity } = await import('../fleet/local-capacity.js');
+      sendJson(res, 200, await readLocalCapacity());
+      return true;
+    }
+
+    // ── GET /api/fleet/lane-yield[?hours=24] ─────────────────────────────
+    // Merged PRs per launch for every lane (fleet.lane-yield.v1), the same report as
+    // `phm fleet yield --by lane`. Read-only; an unreadable ledger is known: false.
+    if (path === '/api/fleet/lane-yield' && method === 'GET') {
+      const [{ readLaneYield }, { runsRoot }, { join }] = await Promise.all([import('../fleet/lane-yield-board.js'), import('../metrics/loop-collect.js'), import('node:path')]);
+      const raw = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('hours') ?? 24);
+      const hours = Number.isFinite(raw) && raw > 0 && raw <= 168 ? raw : 24;
+      sendJson(res, 200, await readLaneYield(join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, Date.now()));
       return true;
     }
 
@@ -2069,6 +2084,35 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/message-graph ─────────────────────────────────────
+    // Recent agent messages as edges grouped by organization
+    // (fleet.message-graph.v1), the read behind `phm fleet message-graph
+    // --json` and the Fleet map's Messages list. READ-ONLY bus read; names,
+    // counts and times only, never message text. Same no-auth read class as
+    // /api/fleet/lanes; an unreadable bus is 503 with the typed unknown graph.
+    if (path === '/api/fleet/message-graph' && method === 'GET') {
+      const { messageGraphResponse } = await import('../fleet/message-graph.js');
+      let response: ReturnType<typeof messageGraphResponse>;
+      try { response = messageGraphResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Message graph unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
+    // ── GET /api/fleet/map/messages ──────────────────────────────────────
+    // The last agent-to-agent messages (fleet.map-messages.v1) for the live
+    // edges on the fleet map and the phone list; the read behind `phm fleet
+    // map messages --json`. READ-ONLY bus read; short scrubbed summaries, never
+    // bodies. Same no-auth read class as /api/fleet/message-graph.
+    if (path === '/api/fleet/map/messages' && method === 'GET') {
+      const { mapMessagesResponse } = await import('../fleet/map-messages.js');
+      let response: ReturnType<typeof mapMessagesResponse>;
+      try { response = mapMessagesResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Map messages unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
     // ── GET /api/fleet/sessions ──────────────────────────────────────────
     // Unified agent-session list (fleet.sessions.v1): queued/parked/
     // launching/running/publishing/exited/stale sessions plus a bounded
@@ -2080,6 +2124,12 @@ export async function handleApi(
     if (path === '/api/fleet/sessions' && method === 'GET') {
       const { getFleetSessions } = await import('../fleet/runs-sessions.js');
       sendJson(res, 200, await getFleetSessions());
+      return true;
+    }
+
+    // RQ-PHX-SLACKBRIDGEDESK671: offline Slack bridge state; same read class as /api/fleet/job.
+    if (path === '/api/fleet/slack-bridge' && method === 'GET') {
+      (await import('./slack-bridge-read-api.js')).handleSlackBridgeRead(res);
       return true;
     }
 
@@ -2139,6 +2189,39 @@ export async function handleApi(
         return true;
       }
       sendJson(res, 200, await getFleetJobActivity(id));
+      return true;
+    }
+
+    // fleet.job.tail.v1 — the `phm job tail` snapshot (status words, header,
+    // ledger events, redacted last N log lines). Same read class as above.
+    if (path === '/api/fleet/job/tail' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobTail } = await import('../fleet/runs-job-tail.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 200) {
+        sendJson(res, 400, { error: 'valid job id and lines (1..200) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobTail(id, { lines }));
+      return true;
+    }
+
+    // fleet.job.window.v1 — one job as one window (`phm job show`): plain
+    // state line and reason, facts with null for unknown, redacted log lines
+    // and a tail cursor. `after=<cursor>` returns only lines written since.
+    if (path === '/api/fleet/job/window' && method === 'GET') {
+      const { isFleetJobId } = await import('../fleet/runs-job-detail.js');
+      const { getFleetJobWindow } = await import('../fleet/runs-job-window.js');
+      const id = getQueryParam(req.url ?? '', 'id');
+      const lines = Number(getQueryParam(req.url ?? '', 'lines') ?? 40);
+      const rawAfter = getQueryParam(req.url ?? '', 'after');
+      const after = rawAfter === undefined ? null : /^\d{1,15}$/.test(rawAfter) ? Number(rawAfter) : NaN;
+      if (!id || !isFleetJobId(id) || !Number.isInteger(lines) || lines < 1 || lines > 200 || Number.isNaN(after)) {
+        sendJson(res, 400, { error: 'valid job id, lines (1..200) and after (a cursor) required' });
+        return true;
+      }
+      sendJson(res, 200, await getFleetJobWindow(id, { lines, after }));
       return true;
     }
 
@@ -2357,6 +2440,68 @@ export async function handleApi(
       return true;
     }
 
+    // RQ-NEEDSYOUN19NQ8: what truly waits on Mason (same JSON as
+    // `phm needs-you --json`) plus the auto-resolve audit records. GET is read
+    // class; POST /api/needs-you/resolve {dryRun?} resolves auto items only and
+    // is gated like every dispatch mutation.
+    if (path === '/api/needs-you' && method === 'GET') {
+      const { listNeedsYou, readNeedsYouAudit } = await import('../needs-you/index.js');
+      sendJson(res, 200, { ...listNeedsYou(), audit: readNeedsYouAudit().slice(-50) });
+      return true;
+    }
+    if (path === '/api/needs-you/resolve' && method === 'POST') {
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let b: unknown = null;
+      try { b = JSON.parse(await readBody(req, 256)); } catch { /* refused below */ }
+      const body = b && typeof b === 'object' && !Array.isArray(b) ? b as Record<string, unknown> : null;
+      if (!body || Object.keys(body).some((k) => k !== 'dryRun') || (body['dryRun'] !== undefined && typeof body['dryRun'] !== 'boolean')) {
+        sendJson(res, 400, { error: 'expected {dryRun?: boolean}' });
+        return true;
+      }
+      const { resolveAutoNeedsYou } = await import('../needs-you/index.js');
+      sendJson(res, 200, resolveAutoNeedsYou({ dryRun: body['dryRun'] === true }));
+      return true;
+    }
+
+    // RQ-CHANNELSN18BQ8: the messaging-channel overview (same JSON as
+    // `phm channels --json`, schema phantom.channels.v1). Read class, behind
+    // the read-session gate; addresses arrive masked and no secret is read.
+    if (path === '/api/channels' && method === 'GET') {
+      const { readChannelsOverview } = await import('../fleet/channels-overview.js');
+      sendJson(res, 200, await readChannelsOverview());
+      return true;
+    }
+
+    // RQ-NOTIFYROUTEN18JQ8: the owner's update rules (same JSON as
+    // `phm notify rules --json`, schema phantom.notify.rules.v1). GET is read
+    // class; POST {type, channel} changes one rule and is gated like every
+    // dispatch mutation.
+    if (path === '/api/notify/rules' && (method === 'GET' || method === 'POST')) {
+      const rules = await import('../comms/notify-rules.js');
+      if (method === 'GET') {
+        sendJson(res, 200, rules.readNotifyRules());
+        return true;
+      }
+      if (!ctx.allowDispatch) {
+        sendJson(res, 404, { error: 'not found' });
+        return true;
+      }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let b: Record<string, unknown> | null = null;
+      try { b = JSON.parse(await readBody(req, 1024)) as Record<string, unknown> | null; } catch { /* refused below */ }
+      if (!b || typeof b !== 'object' || Object.keys(b).some((k) => k !== 'type' && k !== 'channel')
+        || !rules.isNotifyRuleType(b['type']) || !rules.isNotifyChannel(b['channel'])) {
+        sendJson(res, 400, { error: 'expected {type, channel}: an update type and one of imessage, email, desktop' });
+        return true;
+      }
+      sendJson(res, 200, rules.setNotifyRule(b['type'], b['channel']));
+      return true;
+    }
+
     // POST /api/approvals/team/:id/decision {decision, team?}: the human's
     // click is the approval. Gated like every dispatch mutation (404 without
     // --allow-dispatch, token + JSON); identity is derived locally by
@@ -2405,9 +2550,23 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/leader-bets ───────────────────────────────────────────
+    // fleet.leader-bets.v1: the same read as `phm bets`; feeds the Feed's "Leader bets" card.
+    if (path === '/api/fleet/leader-bets' && method === 'GET') {
+      const { LEADER_BETS_MAX_HOURS, readLeaderBets } = await import('../fleet/leader-batches.js');
+      const raw = new URL(req.url ?? '', 'http://localhost').searchParams.get('hours');
+      const hours = raw === null ? undefined : /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (hours !== undefined && !(hours >= 1 && hours <= LEADER_BETS_MAX_HOURS)) sendJson(res, 400, { error: 'Use hours 1 to 8760.' });
+      else sendJson(res, 200, await readLeaderBets({ hours }));
+      return true;
+    }
+
     if (path === '/api/feed' && method === 'GET') {
-      const { readFeed } = await import('../feed.js');
-      sendJson(res, 200, await readFeed());
+      const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
+      const params = new URL(req.url ?? '', 'http://localhost').searchParams;
+      const query = parseFeedQuery({ limit: params.get('limit') ?? undefined, since: params.get('since') ?? undefined, kind: params.get('kind') ?? undefined });
+      if (!query) sendJson(res, 400, { error: FEED_QUERY_ERROR });
+      else sendJson(res, 200, await readFeed(query));
       return true;
     }
 
@@ -2710,6 +2869,37 @@ export async function handleApi(
       }
       const { readFleetUsageFeed } = await import('../resources/fleet-usage.js');
       sendJson(res, 200, await readFleetUsageFeed());
+      return true;
+    }
+
+    // ── GET /api/app/pools (pools.v1, the Pools pane; same data as `phm pools`) ──
+    if (path === '/api/app/pools') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const [{ readResourceLedger }, { buildPoolsView }, { readUsageSamples }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/usage-history.js'),
+      ]);
+      const now = Date.now();
+      const { readLiveCaps } = await import('../fleet/model-caps.js');
+      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now)));
+      return true;
+    }
+
+    // ── GET /api/app/pools/spenddown (pools.spenddown.v1, the spend-down chart; same data as `phm pools spenddown`) ──
+    if (path === '/api/app/pools/spenddown') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const [{ readResourceLedger }, { buildPoolsView }, { readSpendDown }, { readUsageSamples }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/pools-spenddown.js'), import('../fleet/usage-history.js'),
+      ]);
+      const now = Date.now();
+      sendJson(res, 200, await readSpendDown(buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now })), { nowMs: now }));
       return true;
     }
 

@@ -56,7 +56,25 @@
 .token[data-state='unknown'] { border-left: 3px dotted var(--status-unknown-solid); }
 .token[data-state='queued'] { border-left: 3px dashed var(--status-unknown-solid); }
 .token[data-state='idle'] { border-left: 3px solid var(--status-unknown-solid); }
-.detail { margin-top: var(--space-6); padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); }
+.detail { margin-top: var(--space-6); padding: var(--space-5); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); background: var(--bg-surface); overflow-wrap: anywhere; }
+/* A selected node opens the detail as a side panel: the map keeps column 1, the panel stays in view in column 2. */
+.root[data-panel] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 36%); column-gap: var(--space-5); align-content: start; }
+.root[data-panel] > * { grid-column: 1; }
+.root[data-panel] > .detail { grid-column: 2; grid-row: 1 / span 40; align-self: start; position: sticky; top: 0; margin-top: 0; max-height: calc(100vh - var(--space-6)); overflow: auto; }
+.root .close { float: right; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--space-2) var(--space-3); margin: var(--space-3) 0; font-size: var(--text-xs-size); }
+.facts dt { color: var(--text-secondary); }
+.facts dd { margin: 0; }
+.steer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-xs-size); }
+.steer [role='note'] { flex-basis: 100%; color: var(--text-secondary); }
+.tail { max-height: 44vh; min-height: 6rem; overflow: auto; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-xs-size); line-height: 1.5; }
+.tail [data-source='event'], .tail [data-source='status'] { color: var(--text-secondary); }
 @keyframes working { 50% { box-shadow: 0 0 0 2px var(--status-success-bg); } }
 @media (prefers-reduced-motion: reduce) { .token[data-state='running'] { animation: none; } .root button { transition: none; } }
 @media (max-width: 600px) { .root { padding: var(--space-3); } .machine { min-width: 0; flex-basis: 100%; } .host { flex-basis: 100%; } }
+/* Narrow screens: the panel is a bottom sheet over the map, and the map keeps room to scroll clear of it. */
+@media (max-width: 760px) {
+  .root[data-panel] { display: block; padding-bottom: 64vh; }
+  .root[data-panel] > .detail { position: fixed; inset: auto 0 0 0; z-index: 5; max-height: 62vh; border-radius: var(--radius-xl) var(--radius-xl) 0 0; box-shadow: var(--shadow-sm); }
+  .tail { max-height: 30vh; }
+}

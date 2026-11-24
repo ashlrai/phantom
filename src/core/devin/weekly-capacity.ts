@@ -33,6 +33,8 @@ const MAX_PAGES = 25;
 export type DevinWeeklyState = 'live' | 'stale' | 'unmeasured';
 
 export interface DevinWeeklyCapacity {
+  account_id?: string;
+  model?: string;
   used: number | null;
   limit: number | null;
   remaining: number | null;
@@ -69,6 +71,8 @@ export function devinWeeklyAllowance(section: AshlrConfig['devin'] | undefined, 
 }
 
 export interface DevinWeeklyInput {
+  accountId?: string;
+  model?: string;
   sessions: readonly DevinSession[] | null;
   /** False when the listing hit a page cap or a malformed row. */
   complete: boolean;
@@ -84,6 +88,8 @@ export function measureDevinWeekly(input: DevinWeeklyInput): DevinWeeklyCapacity
   const window = devinWeeklyWindow(input.resetAnchor, input.nowMs);
   const { limit, source: limitSource } = input.allowance;
   const base: DevinWeeklyCapacity = {
+    ...(input.accountId === undefined ? {} : { account_id: input.accountId }),
+    ...(input.model === undefined ? {} : { model: input.model }),
     used: null, limit, remaining: null, limit_source: limitSource,
     window_start: window ? iso(window.startMs) : null, reset_at: window ? iso(window.resetMs) : null,
     burn_rate_per_hour: null, sessions: null, source: null, observed_at: null, state: 'unmeasured', reason: null,
@@ -112,6 +118,8 @@ export function measureDevinWeekly(input: DevinWeeklyInput): DevinWeeklyCapacity
 }
 
 export interface DevinWeeklyDeps {
+  accountId?: string;
+  model?: string;
   nowMs?: number;
   section?: AshlrConfig['devin'];
   budgetTotal?: number | null;
@@ -126,13 +134,15 @@ export async function readDevinWeeklyCapacity(deps: DevinWeeklyDeps = {}): Promi
   let budgetTotal = deps.budgetTotal;
   try { section ??= loadConfig().devin; } catch { section = undefined; }
   try { if (budgetTotal === undefined) budgetTotal = readDevinBudget().acuBudgetTotal; } catch { budgetTotal = null; }
-  const input = { allowance: devinWeeklyAllowance(section, budgetTotal ?? null), resetAnchor: section?.weeklyResetAt, nowMs };
+  const input = { allowance: devinWeeklyAllowance(section, budgetTotal ?? null), resetAnchor: section?.weeklyResetAt, nowMs,
+    accountId: deps.accountId, model: deps.model ?? section?.fleetModel };
   if (!devinWeeklyWindow(input.resetAnchor, nowMs)) return measureDevinWeekly({ ...input, sessions: null, complete: false });
   try {
     let listPage = deps.listPage;
     if (!listPage) {
       const connected = await connectedClient();
       if ('error' in connected) return measureDevinWeekly({ ...input, sessions: null, complete: false, failure: 'Devin is not connected.' });
+      input.accountId = deps.accountId ?? connected.orgId;
       listPage = (after) => connected.client.listSessions(connected.orgId, { first: PAGE_SIZE, ...(after ? { after } : {}) });
     }
     const sessions: DevinSession[] = [];
@@ -184,7 +194,10 @@ export async function publishDevinWeeklyCapacity(deps: DevinWeeklyDeps & { file?
 /** resource-live.v1 observation. Null unless both the use and the reset are known. */
 export function devinWeeklyObservation(capacity: DevinWeeklyCapacity): ResourceLiveObservation | null {
   if (capacity.used === null || capacity.observed_at === null || capacity.source === null || capacity.reset_at === null) return null;
-  return { used: capacity.used, limit: capacity.limit, unit: 'acu', reset_at: capacity.reset_at, source: capacity.source, observed_at: capacity.observed_at };
+  return { used: capacity.used, limit: capacity.limit, unit: 'acu', reset_at: capacity.reset_at, source: capacity.source, observed_at: capacity.observed_at,
+    ...(capacity.account_id === undefined ? {} : { account_id: capacity.account_id }),
+    ...(capacity.model === undefined ? {} : { model: capacity.model }),
+    ...(capacity.window_start === null ? {} : { window_start: capacity.window_start }) };
 }
 
 /** Devin CLI free-preview models: zero cost until the preview ends. */
@@ -201,7 +214,7 @@ export function devinPreviewObservation(catalog: DevinModelCatalog | null, nowMs
   const free = devinCatalogModels(catalog).filter(model => model.pricing?.free === true
     && DEVIN_PREVIEW_MODELS.some(row => row.pattern.test(model.id) && Date.parse(row.expires_at) > nowMs));
   if (free.length === 0) return null;
-  return { used: null, limit: free.length, unit: 'models', reset_at: null, source: 'devin-cli-models-list', observed_at: iso(listedMs) };
+  return { used: null, limit: free.length, unit: 'models', reset_at: null, source: 'devin-cli-models-list', observed_at: iso(listedMs), model: free[0]!.id };
 }
 
 const show = (value: number | string | null): string => (value === null ? 'unknown' : String(value));

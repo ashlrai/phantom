@@ -107,10 +107,13 @@ export function claimNoticePassDeps(deps: ClaimNoticeCliDeps = {}, dryRun = fals
   return {
     readBoard: deps.readBoard ?? (() => readFleetBoard({ now: now() })),
     readPrevSnapshot: deps.readPrevSnapshot ?? files.readPrevSnapshot,
+    readPrevSnapshotState: deps.readPrevSnapshotState
+      ?? (deps.readPrevSnapshot ? undefined : files.readPrevSnapshotState),
     writePrevSnapshot: deps.writePrevSnapshot ?? files.writePrevSnapshot,
     readBindings: deps.readBindings ?? files.readBindings,
     readSentLedger: deps.readSentLedger ?? files.readSentLedger,
     appendSentLedger: deps.appendSentLedger ?? files.appendSentLedger,
+    noticeTime: deps.noticeTime ?? files.noticeTime,
     send: deps.send ?? claimNoticeSlackSender(
       deps.busRoot ?? join(ashlrHome(), 'fleet'), deps.readConfig ?? loadAgentNetworkConfig),
     now, dryRun,

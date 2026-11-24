@@ -635,6 +635,7 @@ interface Downstream {
 export async function startGateway(
   registry: McpRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  options: { lazy?: boolean } = {},
 ): Promise<void> {
   const startupParent = process.ppid;
   // This also catches aliases and opaque executable wrappers that structural
@@ -667,7 +668,7 @@ export async function startGateway(
     const env = downstreamEnv(spec, gatewayCfg);
     const cachePath = toolCachePath(spec, env);
     const tools = readToolCache(cachePath);
-    return { spec, env, cachePath, lazy: tools !== undefined, client: null, tools: tools ?? [], hasInventory: tools !== undefined, generation: 0, failures: 0, retryAfter: 0 };
+    return { spec, env, cachePath, lazy: options.lazy === true || tools !== undefined, client: null, tools: tools ?? [], hasInventory: tools !== undefined, generation: 0, failures: 0, retryAfter: 0 };
   });
   interface Route { downstream: Downstream; client: Client | null; original: string }
   const routes = new Map<string, Route>();
@@ -684,7 +685,7 @@ export async function startGateway(
     // not silently redirect its previously advertised name to a different peer.
     for (const d of downstreams) for (const tool of d.tools) {
       const key = `${d.spec.name}${NS}${tool.name}`;
-      if (isNativeTool(key) || owners.has(key)) rejectedRoutes.add(key);
+      if ((options.lazy && key === 'ashlr__discover') || isNativeTool(key) || owners.has(key)) rejectedRoutes.add(key);
       else owners.set(key, d);
     }
     for (const d of downstreams) {
@@ -755,7 +756,7 @@ export async function startGateway(
 
   await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d, true)));
   rebuildRoutes();
-  const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: {}, resources: {} } });
+  const server = new Server({ name: 'ashlr', version: gatewayVersion() }, { capabilities: { tools: { listChanged: true }, resources: {} } });
   const assertUsable = (): void => {
     refuseSharedJobGateway();
     if (closed) throw new Error('MCP gateway is closed');
@@ -768,6 +769,8 @@ export async function startGateway(
     assertUsable();
     const tools: { name: string; description?: string; inputSchema: unknown }[] = listNativeTools()
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }));
+    if (options.lazy && downstreams.length) tools.push({ name: 'ashlr__discover', description: 'Load one server on demand, then list tools again.',
+      inputSchema: { type: 'object', properties: { server: { type: 'string', enum: downstreams.map(d => d.spec.name) } }, required: ['server'], additionalProperties: false } });
     await Promise.all(downstreams.filter((d) => !d.lazy).map((d) => refresh(d)));
     assertUsable();
     // Completion order never changes route precedence or response order.
@@ -790,8 +793,8 @@ export async function startGateway(
         'ashlr/discovery': {
           servers: downstreams.map((d) => ({
             name: d.spec.name,
-            status: d.discoveryError !== undefined ? (d.hasInventory ? 'stale' : 'unavailable') : 'ready',
-            lastKnownToolCount: d.tools.length,
+            status: d.discoveryError !== undefined ? (d.hasInventory ? 'stale' : 'unavailable') : d.hasInventory ? 'ready' : 'deferred',
+            lastKnownToolCount: d.hasInventory ? d.tools.length : null,
             ...(d.discoveryError !== undefined ? { error: d.discoveryError } : {}),
           })),
           rejectedRoutes: [...rejectedRoutes],
@@ -817,6 +820,18 @@ export async function startGateway(
       return { isError: true, content: [{ type: 'text', text: blocked }] };
     }
     audit(requested, 'allow', request.params.arguments);
+    // Discovery is an explicit tool call: cold startup and tools/list spawn nothing.
+    // It follows the same policy/session checks; actual calls keep their own checks.
+    if (options.lazy && requested === 'ashlr__discover') {
+      const args = request.params.arguments ?? {};
+      const matches = downstreams.filter(d => d.spec.name === args.server);
+      if (Object.keys(args).length !== 1 || matches.length !== 1) throw new McpError(ErrorCode.InvalidParams, 'Choose one configured server');
+      const d = matches[0]!;
+      await refresh(d);
+      if (!d.client || d.discoveryError) return { isError: true, content: [{ type: 'text', text: d.discoveryError ?? 'Downstream unavailable' }] };
+      await server.sendToolListChanged();
+      return { content: [{ type: 'text', text: 'Server loaded. List tools again.' }] };
+    }
     let route = routes.get(requested);
     if (route?.downstream.lazy) {
       const d = route.downstream;

@@ -338,6 +338,14 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/disk-runway') {
     return (await import('./fleet-disk-runway-api.js')).handleFleetDiskRunwayApi(ctx, req, res, path, method);
   }
+  // The Ideas view: ranked bottlenecks and suggested jobs (GET), and "Queue it" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/ideas' || path === '/api/verse/fleet/control/ideas/queue' || path === '/api/verse/fleet/control/ideas/bets') {
+    return (await import('./fleet-ideas-api.js')).handleFleetIdeasApi(ctx, req, res, path, method);
+  }
+  // The Models panel: registry list and check (GET), and "Verify" (POST, gated in the module).
+  if (path === '/api/verse/fleet/control/models' || path === '/api/verse/fleet/control/models/check' || path === '/api/verse/fleet/control/models/verify') {
+    return (await import('./models-api.js')).handleModelsApi(ctx, req, res, path, method);
+  }
   if (path === '/api/verse/fleet/control/merge-graph') {
     return (await import('./fleet-merge-graph-api.js')).handleFleetMergeGraphApi(ctx, req, res, path, method);
   }
@@ -346,6 +354,33 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   }
   if (path === '/api/verse/fleet/control/map') {
     return (await import('./fleet-org-map-api.js')).handleFleetOrgMapApi(ctx, req, res, path, method);
+  }
+  // Literal paths: the whole-fleet graph behind `phm map` and the Map pane, and its message edges (`phm map edges`) and messages (`phm agents messages`).
+  if (path === '/api/verse/fleet/control/live-map' || path === '/api/verse/fleet/control/map-edges' || path === '/api/verse/fleet/control/agent-messages' || path === '/api/verse/fleet/control/agent-conversations' || path === '/api/verse/fleet/control/map-replay') {
+    return (await import('./fleet-live-map-api.js')).handleFleetLiveMapApi(ctx, req, res, path, method);
+  }
+  if (path === '/api/verse/fleet/control/org-groups') {
+    return (await import('./fleet-org-groups-api.js')).handleFleetOrgGroupsApi(ctx, req, res, path, method);
+  }
+  // Every running agent session, behind `phm sessions` and the Sessions pane.
+  if (path === '/api/verse/fleet/control/live-sessions') {
+    return (await import('./fleet-live-sessions-api.js')).handleFleetLiveSessionsApi(ctx, req, res, path, method);
+  }
+  // One session as a conversation, behind `phm sessions thread <id>`.
+  if (path === '/api/verse/fleet/control/session-thread') {
+    return (await import('./fleet-session-thread-api.js')).handleFleetSessionThreadApi(ctx, req, res, path, method);
+  }
+  // Every session as a short conversation, behind `phm sessions threads`.
+  if (path === '/api/verse/fleet/control/session-threads') {
+    return (await import('./fleet-session-threads-api.js')).handleFleetSessionThreadsApi(ctx, req, res, path, method);
+  }
+  // Words looked for in every session's whole conversation, behind `phm sessions find`.
+  if (path === '/api/verse/fleet/control/session-find') {
+    return (await import('./fleet-session-find-api.js')).handleFleetSessionFindApi(ctx, req, res, path, method);
+  }
+  // The joined Macs as one pool, behind `phm nodes pool` and the Machines card on Home.
+  if (path === '/api/verse/fleet/control/nodes-pool') {
+    return (await import('./fleet-nodes-pool-api.js')).handleFleetNodesPoolApi(ctx, req, res, path, method);
   }
   if (path === '/api/verse/fleet/control/claim-notices') {
     return (await import('./fleet-claim-notices-api.js')).handleFleetClaimNoticesApi(ctx, req, res, path, method);
@@ -359,6 +394,8 @@ export const handleFleetControlApi: ApiModule = async (ctx, req, res, path, meth
   if (path === '/api/verse/fleet/control/slack-trace') {
     return (await import('./fleet-slack-trace-api.js')).handleFleetSlackTraceApi(ctx, req, res, path, method);
   }
+  if (path === '/api/verse/fleet/control/interject-pr-check') return (await import('./fleet-interject-pr-check-api.js')).handleFleetInterjectPrCheckApi(ctx, req, res, path, method);
+  if (path === '/api/verse/fleet/control/work-trace') return (await import('./fleet-work-trace-api.js')).handleFleetWorkTraceApi(ctx, req, res, path, method);
   if (path === '/api/verse/fleet/control/compute') {
     return (await import('./fleet-compute-api.js')).handleFleetComputeApi(ctx, req, res, path, method);
   }

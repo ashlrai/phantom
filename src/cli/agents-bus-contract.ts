@@ -1,3 +1,4 @@
+import { runAgentsChat } from './agents-chat.js';
 import { isAbsolute } from 'node:path';
 import { cmdAgents } from './agents.js';
 import { busV2ContractSummary } from '../core/agents/bus-v2-schema.js';
@@ -8,11 +9,16 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
+ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--json]
 ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
+ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]
+ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
+ashlr agents roster [--json]
 ashlr agents bus contract [--json]
 ashlr agents bus channels list [--json]
 ashlr agents bus channels test <id> [--root <abs>] [--json]
+ashlr agents apps [<id> <verb>] [--json]  (docs/AGENT-APPS.md)
 ${AGENTS_BUS_UNIFIED_HELP}
 
 Profile verbs read ~/.phantom/agents (docs/AGENT-PROFILES.md).
@@ -28,8 +34,10 @@ export async function runAgentsCli(
   out: (text: string) => void = console.log,
   err: (text: string) => void = console.error,
 ): Promise<number> {
+  if (args[0] === 'chat') return runAgentsChat(args.slice(1), out, err);
   if (!args.length || ['help', '--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
   if (['list', 'show', 'validate', 'versions'].includes(args[0]!)) return cmdAgents(args, out, err);
+  if (args[0] === 'apps') return (await import('./agents-apps.js')).runAgentsAppsCli(args.slice(1), out, err);
   if (args[0] === 'bus' && AGENTS_BUS_UNIFIED_VERBS.has(args.find((arg, i) => i > 0 && arg !== '--json') ?? '')) {
     return runAgentsBusUnified(args.slice(1), out, err);
   }

@@ -16,6 +16,7 @@
 import { backlogItemKeywords, backlogItemTitle, type PaletteBacklogItem } from './palette-backlog.js';
 import { phoneItemTitle, phoneItemSubtitle, type PalettePhone } from './palette-phone.js';
 import { laneItemTitle, releaseItemTitle, type PaletteLane } from './palette-lanes.js';
+import type { CatalogCommand } from '../../../../core/commands/catalog.js';
 import { prLabel, safePrUrl } from '../fleet-job-log/worker-log-model.js';
 import type { VerseProject, VerseSeat, VerseSession } from '../../../data/api-types.js';
 import {
@@ -70,6 +71,7 @@ export interface PaletteItem {
     | { kind: 'lane-release'; lane: PaletteLane }
     | { kind: 'chat'; sessionId: string }
     | { kind: 'command'; commandId: string }
+    | { kind: 'cli'; command: CatalogCommand }
     | { kind: 'seat'; seatId: string; label: string }
     | { kind: 'project'; path: string; name: string }
     | { kind: 'argument'; argument: { kind: CommandArgumentKind; id: string; label: string } };
@@ -91,6 +93,8 @@ export interface PaletteInput {
   lanes?: readonly PaletteLane[];
   backlog?: readonly PaletteBacklogItem[];
   phone?: PalettePhone | null;
+  /** The `phm commands` catalog (palette-commands.ts). */
+  cli?: readonly CatalogCommand[];
   needsYou: readonly NeedsYouItem[];
   fleetNeedsYou?: ReadonlyArray<{ id: string; title: string; detail: string }>;
   running: readonly VerseActivityRunning[];
@@ -128,6 +132,7 @@ const GROUP_CAP: Readonly<Record<PaletteGroupId | 'recent' | 'lanes' | 'backlog'
   backlog: 21,
   actions: 8,
   'go-to': 6,
+  cli: 6,
   'seats-apps': 5,
   projects: 5,
 };
@@ -286,7 +291,7 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
       title: `Open pane: ${pane.title}`, subtitle: null, shortcut: null,
       monogram: null, engine: null,
-      keywords: [pane.title, ...pane.id.split('-'), ...(pane.description ? [pane.description] : []), ...(pane.id === 'goals' ? ['metrics', 'vision'] : []), ...(pane.keywords ?? [])],
+      keywords: [pane.title, ...pane.id.split('-'), ...(pane.description ? [pane.description] : []), ...(pane.id === 'goals' ? ['metrics', 'vision', 'milestone'] : []), ...(pane.keywords ?? [])],
       argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
     });
   }
@@ -392,6 +397,14 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
 
   for (const command of paletteCommands('actions')) items.push(commandItem(command, input.platform, 'actions'));
   for (const command of paletteCommands('go-to')) items.push(commandItem(command, input.platform, 'go-to'));
+
+  for (const command of input.cli ?? []) {
+    items.push({
+      key: `cli:${command.name}`, kind: 'command', group: 'cli', title: `phm ${command.name}`,
+      subtitle: command.description, shortcut: null, monogram: null, engine: null,
+      keywords: command.arguments, argument: null, tone: 'neutral', payload: { kind: 'cli', command },
+    });
+  }
 
   for (const seat of input.seats) {
     items.push({
@@ -518,7 +531,13 @@ export function paletteView(items: readonly PaletteItem[], rawQuery: string, rec
       if (only && item.group !== only) return;
       const score = trimmed === '' ? 0 : matchItem(item, trimmed);
       if (score === null) return;
-      push(item, score, order);
+      if (item.group !== 'cli') return push(item, score, order);
+      // CLI commands match on whole words typed, not scattered letters: a long
+      // description would otherwise match almost anything. And one never
+      // outranks the desktop's own action for the same words ("status" →
+      // Autonomy status), so Enter keeps doing what it did.
+      const text = [item.title, item.subtitle, ...item.keywords].join(' ').toLowerCase();
+      if (trimmed.toLowerCase().split(/\s+/).every((word) => text.includes(word))) push(item, score * 0.5, order);
     });
   }
 

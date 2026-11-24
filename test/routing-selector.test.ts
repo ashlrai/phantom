@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cmdSelect } from '../src/cli/select.js';
 import { importMarkdown } from '../src/core/queue/markdown.js';
 import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
-import { learnOutcomes } from '../src/core/routing/outcome-learning.js';
+import { learnFleetOutcomes, learnOutcomes } from '../src/core/routing/outcome-learning.js';
 import { fundedIds, parseCandidates, rankCandidates, readyLine } from '../src/core/routing/selector.js';
 import { selectorSchedule } from '../src/core/routing/selector-schedule.js';
 
@@ -47,6 +47,28 @@ describe('rankCandidates', () => {
     expect(learned.mergeRate).toBeCloseTo((3 + 1) / (4 + 2));
     expect(learned.predictedValue).toBeCloseTo(10 * learned.mergeRate);
     expect(cold).toMatchObject({ basis: 'default', mergeRate: 0.5, minutes: 30 });
+  });
+
+  it('learns merge rate and minutes from the jobs ledger without leaking token units into usage', () => {
+    const ledger = [
+      ...[1, 2, 3].flatMap((n) => [
+        JSON.stringify({ event: 'launch', job: `J-${n}`, repo: 'phantom', lane: 'devin', tier: 'code', model: 'swe-2-max', ts: `2026-11-01T0${n}:00:00+00:00` }),
+        JSON.stringify({ event: 'finish', job: `J-${n}`, lane: 'devin', tokens_total: 5000 * n, wall_s: 600 }),
+      ]),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-1', prUrl: 'https://github.com/ashlrai/phantom/pull/1', outcome: 'MERGED', mergedAt: '2026-11-01T01:30:00+00:00', ts: '2026-11-01T01:31:00+00:00' }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-2', prUrl: 'https://github.com/ashlrai/phantom/pull/2', outcome: 'CLOSED', closedAt: '2026-11-01T02:30:00+00:00', ts: '2026-11-01T02:31:00+00:00' }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-3', prUrl: 'https://github.com/ashlrai/phantom/pull/3', outcome: 'MERGED', mergedAt: '2026-11-01T03:30:00+00:00', ts: '2026-11-01T03:31:00+00:00' }),
+    ].join('\n');
+    const learning = learnFleetOutcomes('', ledger);
+    const { candidates } = parseCandidates([row({ id: 'RQ-L', jobType: 'code' })].join('\n'));
+    const pick = rankCandidates(candidates, learning).picks[0]!;
+    expect(pick.basis).toBe('learned');
+    // Two merges in three attempts; J-1 and J-3 each merged 30 minutes out.
+    expect(pick.mergeRate).toBeCloseTo((2 + 1) / (3 + 2));
+    expect(pick.minutes).toBeCloseTo(30);
+    // tokens_total (5000-15000) is not the estUsage unit: with no allowance
+    // reading the prior stays unknown and the default applies.
+    expect(pick.usage).toBe(0.3);
   });
 
   it('breaks ties by id, honors count and excludes funded ids', () => {
@@ -125,10 +147,34 @@ describe('phm select', () => {
     expect(existsSync(join(runs, 'selector', 'picks.jsonl'))).toBe(false);
   });
 
+  it('learns merge rate and minutes from <runs-dir>/metrics/jobs.jsonl', async () => {
+    const runs = tmp(); const bus = tmp();
+    mkdirSync(join(runs, 'selector'), { recursive: true });
+    mkdirSync(join(runs, 'metrics'), { recursive: true });
+    writeFileSync(join(runs, 'selector', 'candidates.jsonl'),
+      [row({ id: 'RQ-J1' }), row({ id: 'RQ-J2', jobType: 'docs' })].join('\n'));
+    writeFileSync(join(runs, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ event: 'launch', job: 'J-1', repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+      JSON.stringify({ event: 'finish', job: 'J-1', lane: 'devin', tokens_total: 9000, wall_s: 600 }),
+      JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: 'J-1', prUrl: 'https://github.com/ashlrai/phantom/pull/1', outcome: 'MERGED', mergedAt: '2026-11-01T00:30:00+00:00', ts: '2026-11-01T00:31:00+00:00' }),
+    ].join('\n'));
+    const r = await run(['--json', '--runs-dir', runs], runs, bus);
+    expect(r.code).toBe(0);
+    const json = JSON.parse(r.out);
+    const learned = json.picks.find((p: { id: string }) => p.id === 'RQ-J1');
+    const cold = json.picks.find((p: { id: string }) => p.id === 'RQ-J2');
+    expect(learned).toMatchObject({ basis: 'learned', minutes: 30 });
+    expect(learned.mergeRate).toBeCloseTo(2 / 3);
+    // tokens_total never enters the allowance-unit usage prior: the default applies.
+    expect(learned.usage).toBe(0.3);
+    expect(cold).toMatchObject({ basis: 'default' });
+  });
+
   it('fails on a missing candidate file and refuses bad flags', async () => {
     const runs = tmp(); const bus = tmp();
     expect((await run(['--runs-dir', runs], runs, bus)).code).toBe(1);
     expect((await run(['--top', 'x'], runs, bus)).code).toBe(2);
+    expect((await run(['--ledger'], runs, bus)).code).toBe(2);
     expect((await run(['--runs-dir', 'relative'], runs, bus)).code).toBe(2);
     expect((await run(['--json', '--json'], runs, bus)).code).toBe(2);
   });

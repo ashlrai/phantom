@@ -11,6 +11,13 @@ is keyed so the next loop iteration skips already-verified work.
 
 ## CLI commands
 
+Run `phm fleet status` for guardian freshness, launch service state, last exit
+code and recent log error counts together. `phm fleet status --json` and
+`phm fleet status-api --json` expose the same typed `guardian` evidence
+(`age`, `service`, `log`, `level`, `reason`, `nextStep`). Stale or unavailable
+evidence includes one next step; missing evidence stays unknown. This only
+reads status, launchd and a bounded log tail; it never starts guardian jobs.
+
 | Command | Role |
 |---------|------|
 | `ashlr fleet guardian-verify` | Runs verification passes until all manifest entries are pass or fail |

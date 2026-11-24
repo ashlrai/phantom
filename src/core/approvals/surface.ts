@@ -2,7 +2,7 @@
  * The human "needs you" projection shared by `phm approvals --json`,
  * `GET /api/approvals` and the desktop Approvals panel (RQ-DESK-APPROVALS-1).
  *
- * Five independent sections, each reporting its own honest state so a broken
+ * Six independent sections, each reporting its own honest state so a broken
  * source never reads as "nothing pending":
  *   - teamApprovals: pending approvals folded from the team event log
  *   - proposals:     pending inbox proposals; `revision` names the exact
@@ -15,6 +15,8 @@
  *   - pins:          packages staged under ~/.ashlr-runs/staged awaiting Security
  *                    (read-only; pins stay Security's, nothing here decides them)
  *   - holds:         explicit human holds from `$ASHLR_HOME/holds.json`
+ *   - asks:          one-tap decisions only Mason can make (fleet/approvals.ts,
+ *                    the NEEDS-MASON ledger), schema approvals.asks.v1
  *
  * Deciding a team approval goes through `decideApproval` with the identity
  * derived from the local OS user (`localHumanActor`), exactly like
@@ -28,6 +30,7 @@ import { listProposalsDetailed } from '../inbox/store.js';
 import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
 import { listDrafts } from '../cos/drafts.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { listApprovals, type ApprovalsList } from '../fleet/approvals.js';
 import {
   DEFAULT_TEAM, decideApproval, describeAccessAction, localHumanActor, teamState,
 } from '../teams/index.js';
@@ -99,6 +102,8 @@ export interface DraftApprovalItem {
 export interface Section<T> { state: SectionState; reason?: string; items: T[] }
 
 export interface ApprovalsProjection {
+  /** Version of this projection's JSON shape. */
+  schema: 'approvals.v1';
   generatedAt: string;
   team: string;
   teamApprovals: Section<TeamApprovalItem>;
@@ -106,6 +111,8 @@ export interface ApprovalsProjection {
   drafts: Section<DraftApprovalItem> & { truncated: boolean };
   pins: Section<StagedPinItem> & { root: string };
   holds: Section<HoldItem> & { path: string; configured: boolean };
+  /** Decisions only Mason can make, answered with one tap or word (`phm approvals answer`). */
+  asks: ApprovalsList;
 }
 
 const WALK_FILE_CAP = 2000;
@@ -276,6 +283,7 @@ export async function readPendingDrafts(runsDir?: string, maxItems = PENDING_SOU
 
 export async function buildApprovalsProjection(team = DEFAULT_TEAM, now = Date.now(), runsDir?: string): Promise<ApprovalsProjection> {
   return {
+    schema: 'approvals.v1',
     generatedAt: new Date(now).toISOString(),
     team,
     teamApprovals: readTeamApprovals(team),
@@ -283,6 +291,7 @@ export async function buildApprovalsProjection(team = DEFAULT_TEAM, now = Date.n
     drafts: await readPendingDrafts(runsDir),
     pins: readStagedPins(undefined, now),
     holds: readHolds(),
+    asks: listApprovals({ ...(runsDir ? { runsDir } : {}), now: () => now }),
   };
 }
 

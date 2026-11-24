@@ -16,6 +16,8 @@ import {
   listSkills,
   SKILL_LIST_MAX_LIMIT,
 } from '../core/fleet/skill-list.js';
+import { readSkillTrajectoryOutcomes } from '../core/fleet/skill-outcomes.js';
+import { formatInstalledPanel, readSkillsPanel } from '../core/fleet/installed-panels.js';
 
 const AUDIT_TIMEOUT_MS = 30_000;
 
@@ -91,10 +93,14 @@ export async function cmdSkillsAuditWorker(args: string[]): Promise<number> {
 
 function help(): void {
   console.log([
-    'Usage: ashlr skills list [--status candidate|verified|deprecated|revoked] [--limit N] [--json]',
+    'Usage: ashlr skills list [--status candidate|verified|deprecated|revoked] [--limit N] [--outcomes] [--json]',
+    '       ashlr skills list --all [--json]',
     '       ashlr skills audit <pack-path> [--json]',
     '',
     'list shows skills learned from merged PRs (newest revision each).',
+    '--outcomes joins per-revision trajectory outcome tallies; counts publish',
+    'only after the trajectory sample gate and stay withheld when unmeasured.',
+    'list --all shows every skill fleet agents have: Claude Code, Codex and learned.',
     'Audits an external skills/ catalog and evals/cases fixtures without',
     'executing scripts, importing prompts, or granting skill authority.',
   ].join('\n'));
@@ -105,7 +111,7 @@ function invalidUsage(json: boolean): number {
     process.stdout.write(`${JSON.stringify({
       schemaVersion: 1,
       error: { code: 'invalid-usage' },
-      usage: 'ashlr skills list [--status <s>] [--limit N] [--json] | ashlr skills audit <pack-path> [--json]',
+      usage: 'ashlr skills list [--status <s>] [--limit N] [--outcomes] [--json] | ashlr skills list --all [--json] | ashlr skills audit <pack-path> [--json]',
     })}\n`);
   } else {
     help();
@@ -114,12 +120,21 @@ function invalidUsage(json: boolean): number {
 }
 
 function cmdSkillsList(args: string[]): number {
+  if (args.includes('--all')) {
+    const rest = args.filter(arg => arg !== '--all');
+    if (args.length - rest.length !== 1 || rest.some(arg => arg !== '--json') || rest.length > 1) return invalidUsage(args.includes('--json'));
+    const panel = readSkillsPanel();
+    process.stdout.write(rest.length ? `${JSON.stringify(panel, null, 2)}\n` : `${formatInstalledPanel(panel, 'skills')}\n`);
+    return 0;
+  }
   let json = false;
+  let outcomes = false;
   let status: string | undefined;
   let limit: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--outcomes' && !outcomes) outcomes = true;
     else if (arg === '--status' && status === undefined && args[i + 1] !== undefined) status = args[++i];
     else if (arg === '--limit' && limit === undefined && /^\d+$/.test(args[i + 1] ?? '')) {
       limit = Number(args[++i]);
@@ -130,6 +145,7 @@ function cmdSkillsList(args: string[]): number {
   const report = listSkills({
     ...(status !== undefined ? { status } : {}),
     ...(limit !== undefined ? { limit } : {}),
+    ...(outcomes ? { skillOutcomes: readSkillTrajectoryOutcomes() } : {}),
   });
   process.stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : `${formatSkillList(report)}\n`);
   return 0;

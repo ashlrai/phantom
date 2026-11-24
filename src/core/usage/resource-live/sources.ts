@@ -29,8 +29,16 @@ import type { DevinModelCatalog } from '../../devin/models.js';
 import type { DevinWeeklyCapacity } from '../../devin/weekly-capacity.js';
 import { NEEDS_SIGNIN, type ResourceLiveSource, type ResourceLiveSources } from './source-types.js';
 import type { ResourceLiveTier } from './types.js';
+import type { CapacitySnapshot } from '../../routing/budget-store.js';
+import type { LiveSourcesConfig } from './config.js';
+import { capacitySource } from './capacity-source.js';
+import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
+import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
 
-export interface ResourceLiveSourceOptions {
+export interface ResourceLiveSourceOptions extends LiveSourcesConfig {
+  readCapacity?: () => CapacitySnapshot | null;
+  operatorPageReader?: OperatorUsagePageReader;
+  runAnthropicCost?: () => Promise<string>;
   /** Runs dir holding metrics/claude-quota.json and queue/resources.json. */
   runsDir: string;
   operatorHome?: string;
@@ -65,8 +73,9 @@ function claudeWeekly(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
       const weekly = usableClaudeWeekly(await (o.readClaudeQuota ?? readClaudeQuotaReading)(o.runsDir), nowMs);
       if (!weekly) return null;
       return { used: weekly.weekly.usedPct, limit: 100, unit: 'percent', reset_at: weekly.weekly.resetAt,
-        source: 'claude-usage', observed_at: weekly.observedAt };
+        source: 'claude-usage', observed_at: weekly.observedAt, ...(weekly.accountId ? { account_id: weekly.accountId } : {}) };
     } },
+    capacitySource('claude-weekly', o.codexSeatMap, o.readCapacity),
     { tier: 'own-call', read: (nowMs) => {
       const row = parseClaudeSensor((o.readClaudeEvent ?? (now => readLatestClaudeRateLimitEvent({ nowMs: now })))(nowMs), nowMs);
       if (!row || row.used === null) return null;
@@ -167,12 +176,14 @@ function devinPreview(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
 }
 
 export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): ResourceLiveSources {
+  const operator = (provider: 'claude' | 'codex-personal' | 'codex-cmp') => operatorPageSources(o.operatorPageFallback, provider, o.operatorPageReader);
   return {
-    'claude-weekly': [...claudeWeekly(o), ...visible(o, 'claude')],
+    'claude-weekly': [...claudeWeekly(o), ...visible(o, 'claude'), ...operator('claude')],
     'claude-fable': claudeFable(o),
-    'claude-api': o.accountsRoot ? [registry(o, 'claude-api-gift', 'official')] : [],
-    'codex-personal': [...codex(o, o.codexPersonalHome), ...visible(o, 'chatgpt-codex')],
-    'codex-cmp': codex(o, o.codexCmpHome),
+    'claude-api': [...(o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : []),
+      ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'official')] : [])],
+    'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
+    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.
     'devin-flash': devinPreview(o),

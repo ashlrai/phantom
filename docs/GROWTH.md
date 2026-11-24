@@ -12,7 +12,7 @@ Ranges are `1H`, `1D` (the default), `1W`, and `1M`. The desktop polls `GET /api
 
 | Series | Source | When it is `no data source` |
 | --- | --- | --- |
-| Merges per hour | `~/.ashlr-runs/metrics/jobs.jsonl` MERGED outcomes | The file is missing, unreadable, or larger than 32 MiB |
+| Merges per hour | `~/.ashlr-runs/metrics/jobs.jsonl` MERGED rows, including metrics-outcomes reconciler rows (`outcome`/`status` MERGED with `jobId`/`prUrl`/`mergedAt`) | The file is missing, unreadable, or larger than 32 MiB |
 | PRs opened | `metrics/growth-pulls-1d.json` for 1H and 1D. `metrics/growth-pulls-hourly.jsonl` for 1W and 1M | No complete export. Fleet proposals are not opened pull requests |
 | PRs merged | That export's `mergedAt` or hourly counts, otherwise PR urls on MERGED ledger rows | Neither source was read |
 | Releases | `metrics/growth-releases.jsonl` rows with `publishedAt` | The file is missing. `gh` is not called |

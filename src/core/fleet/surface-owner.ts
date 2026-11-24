@@ -107,7 +107,7 @@ export async function readSurfaceOwner(surface: string, deps: SurfaceOwnerDeps =
   let ownerSource: SurfaceOwnerReport['ownerSource'] = 'none';
   let board: FleetBoard;
   try {
-    board = (deps.board ?? readFleetBoard)({ now });
+    board = (deps.board ?? readFleetBoard)({ now, reap: false });
   } catch {
     board = { schema: 'fleet.coordination.v1', state: 'unknown', claims: [], messages: [], proposals: [], expiredClaims: null };
   }

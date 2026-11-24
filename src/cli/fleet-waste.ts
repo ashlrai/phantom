@@ -1,5 +1,6 @@
 /** Read-only waste counts from the host jobs ledger. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet waste [--hours 6] [--json]';
@@ -66,7 +67,7 @@ export async function fleetWaste(read: TaskCheckReader = readTaskCheckJobs, hour
   };
   for (const { row, at, id } of rows) {
     if (at < now - hours * 3_600_000) continue;
-    if (row.event === 'precheck_skip') add(row, id, true, false, false);
+    if (isPrecheckSkipRow(row)) add(row, id, true, false, false);
     if (row.event === 'finish') add(row, id, false, row.empty === true, row.pool_error !== null && row.pool_error !== undefined && row.pool_error !== '' && row.pool_error !== false);
   }
   for (const [id, launch] of launches) {

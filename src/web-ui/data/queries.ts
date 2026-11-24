@@ -7,6 +7,7 @@
  */
 import { apiGet } from './client.js';
 import type { BotManifest, BotTemplateSummary } from '../../core/agents/bot-templates.js';
+import type { listSeats } from '../../core/bots/seats.js';
 import type { UniverseGraph } from '../../core/universe/graph-types.js';
 import type {
   AgentOsSnapshotResponse,
@@ -452,4 +453,9 @@ export const botTemplatesQuery: QueryDef<{ templates: BotTemplateSummary[] }> = 
 export const botsQuery: QueryDef<{ bots: BotManifest[] }> = {
   key: 'bots',
   fetch: (signal) => apiGet<{ bots: BotManifest[] }>('/api/bots', signal),
+};
+
+export const botSeatsQuery: QueryDef<Awaited<ReturnType<typeof listSeats>>> = {
+  key: 'bot-seats',
+  fetch: (signal) => apiGet<Awaited<ReturnType<typeof listSeats>>>('/api/bots/seats', signal),
 };

@@ -5,6 +5,8 @@ import { delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetDirtyLanded, classifyDirtyLanded, type DirtyLandedReport, type FleetDirtyLandedDeps } from '../src/cli/fleet-dirty-landed.js';
 import { recutDropJob } from '../src/core/fleet/recut-drop-body.js';
+import { cmdFleetRecutSweep } from '../src/cli/fleet-recut-sweep.js';
+import * as gitOps from '../src/core/verse/git-ops.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 
@@ -77,6 +79,88 @@ describe('classifyDirtyLanded', () => {
 });
 
 describe('fleet dirty-landed', () => {
+  it.each(['base', 'topic'])('preserves missing work across a %s rename', async side => {
+    const dir = mkdtempSync(join(tmpdir(), 'recut-rename-')); dirs.push(dir);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+    writeFileSync(join(dir, 'a.txt'), 'original\n'); git('add', '.'); git('commit', '-qm', 'base');
+    git('checkout', '-qb', 'topic');
+    if (side === 'topic') git('mv', 'a.txt', 'b.txt');
+    else writeFileSync(join(dir, 'a.txt'), 'missing work\n');
+    git('commit', '-qam', 'topic'); const head = git('rev-parse', 'HEAD');
+    git('update-ref', 'refs/pull/1/head', head); git('checkout', '-q', 'master');
+    if (side === 'base') git('mv', 'a.txt', 'b.txt');
+    else writeFileSync(join(dir, 'b.txt'), 'original\n');
+    git('add', '.'); git('commit', '-qm', 'base advances');
+    expect(await cmdFleetDirtyLanded(['--json'], { gh: ghReturning([row(1, head)]), remote: dir })).toBe(0);
+    expect((JSON.parse(output[0]!) as DirtyLandedReport).prs[0]).toMatchObject({
+      class: side === 'base' ? 'needs-recut' : 'partly-landed', remainingPaths: ['a.txt'],
+    });
+  });
+
+  it.each(['landed', 'partial-path', 'partial-hunk', 'conflict', 'union-conflict'] as const)(
+    'selects only missing work after a squash and later same-file edits: %s', async state => {
+      const dir = mkdtempSync(join(tmpdir(), 'recut-yield-')); dirs.push(dir);
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const content = (first = 'original', last = 'original', middle = 'original') =>
+        [first, ...Array.from({ length: 10 }, (_, i) => `before ${i}`), middle,
+          ...Array.from({ length: 10 }, (_, i) => `after ${i}`), last, ''].join('\n');
+      git('init', '-q', '-b', 'master');
+      git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
+      for (const path of ['a.txt', 'b.txt']) writeFileSync(join(dir, path), content());
+      if (state === 'union-conflict') writeFileSync(join(dir, '.gitattributes'), '* merge=union\n');
+      git('add', '.'); git('commit', '-qm', 'base'); git('checkout', '-qb', 'topic');
+      writeFileSync(join(dir, 'a.txt'), content('shipped'));
+      writeFileSync(join(dir, 'b.txt'), content('shipped', 'shipped'));
+      git('commit', '-qam', 'original patch'); const head = git('rev-parse', 'HEAD');
+      git('update-ref', 'refs/pull/1/head', head); git('checkout', '-q', 'master');
+      writeFileSync(join(dir, 'a.txt'), content('shipped', 'original', 'newer base edit'));
+      const conflict = state.endsWith('conflict');
+      writeFileSync(join(dir, 'b.txt'), content(
+        conflict ? 'conflicting base edit' : state === 'partial-path' ? 'original' : 'shipped',
+        state === 'landed' ? 'shipped' : 'original', 'newer base edit'));
+      git('commit', '-qam', 'squashed work plus later edits');
+      const before = git('rev-parse', 'HEAD');
+      const gh = ghReturning([row(1, head, 'DIRTY', 'bridge: RQ-PHX-YIELD')]);
+      expect(await cmdFleetDirtyLanded(['--json'], { gh, remote: dir })).toBe(0);
+      const pr = (JSON.parse(output[0]!) as DirtyLandedReport).prs[0]!;
+      expect(pr.baseSha).toBe(before);
+      expect(pr.class).toBe(state === 'landed' ? 'landed' : conflict ? 'needs-recut' : 'partly-landed');
+      expect(pr.remainingPaths).toEqual(state === 'landed' ? [] : conflict ? ['a.txt', 'b.txt'] : ['b.txt']);
+      if (state === 'landed') expect(pr.reason).toBe('already-present-on-base');
+      const runs = join(dir, 'runs');
+      let report = '';
+      expect(await cmdFleetRecutSweep(['--json', '--apply', '--runs-dir', runs], {
+        gh, remote: dir, dropRoot: runs, output: text => { report = text; }, now: () => 0,
+      })).toBe(0);
+      expect(JSON.parse(report)).toMatchObject(state === 'landed'
+        ? { candidates: 0, planned: [], written: 0, skipped: [{ pr: 1, reason: 'already-present-on-base' }] }
+        : { candidates: 1, written: 1, planned: [{ pr: 1, remainingPaths: pr.remainingPaths }] });
+      expect(git('rev-parse', 'HEAD')).toBe(before);
+      expect(git('diff', '--exit-code')).toBe('');
+    });
+
+  it.each(['failed', 'timeout', 'truncated', 'malformed', 'diff-failed'] as const)(
+    'keeps recuts when the merge preview is %s', async failure => {
+      const { dir, t3 } = fixture();
+      const tree = execFileSync('git', ['rev-parse', 'master^{tree}'], { cwd: dir, encoding: 'utf8' }).trim();
+      const real = gitOps.defaultGitRunner;
+      vi.spyOn(gitOps, 'defaultGitRunner').mockImplementation(async (bin, args, opts) => {
+        if (args.includes('merge-tree')) return { code: failure === 'failed' ? 128 : 0,
+          stdout: failure === 'malformed' ? 'invalid' : tree, stderr: '', missing: false,
+          timedOut: failure === 'timeout', truncated: failure === 'truncated' };
+        if (failure === 'diff-failed' && args.includes(tree)) return {
+          code: 128, stdout: '', stderr: '', missing: false, timedOut: false, truncated: false,
+        };
+        return real(bin, args, opts);
+      });
+      expect(await cmdFleetDirtyLanded(['--json'], { gh: ghReturning([row(3, t3)]), remote: dir })).toBe(0);
+      expect((JSON.parse(output[0]!) as DirtyLandedReport).prs[0]).toMatchObject({
+        class: 'needs-recut', remainingPaths: ['c.txt'],
+      });
+    });
+
   it('classifies landed, partly-landed, needs-recut and unknown per dirty PR', async () => {
     const { dir, t1, t2, t3 } = fixture();
     const gh = ghReturning([

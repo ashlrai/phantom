@@ -18,6 +18,7 @@ import type { TypeSafeChoiceQuestion, TypeSafeNoulQuestion } from '../classify/t
 import { decide } from './decide.js';
 import { availableLanes, chooseLaneHeuristic, laneQuestion, type LaneContext, type WorkLane } from './lane.js';
 import type { DecideOptions, Decision } from './types.js';
+import { IMPACT_VERSION, rankImpactTemplates, type ImpactInput, type ImpactOverride } from '../metrics/impact.js';
 
 export interface TriggerInput {
   /** 'issue' | 'pr' | 'ci-failure' | 'alert' | 'schedule' | ... */
@@ -42,6 +43,9 @@ export interface TriagePlaybook {
 export interface TriageContext {
   readonly playbooks?: readonly TriagePlaybook[];
   readonly lanes?: LaneContext;
+  /** Optional recorded outcomes. Advice changes ranking only, never admission. */
+  readonly impactHistory?: readonly ImpactInput[];
+  readonly impactOverrides?: Readonly<Record<string, ImpactOverride>>;
 }
 
 export interface TriggerTriage {
@@ -58,6 +62,31 @@ export type TriageTriggerOptions = Omit<DecideOptions<TriggerTriage>, 'fallback'
 const NON_ENGINEERING_LABELS = /^(question|duplicate|invalid|wontfix|won't fix|discussion|support)$|^ashlr:non-code\//i;
 const NOT_WORK_TEXT = /\b(question:|how do i|is it possible|feature request\?|thank you|thanks for)\b/i;
 const EPIC_TEXT = /\b(epic|tracking issue|umbrella|meta:|roadmap|milestone|initiative)\b/i;
+
+/** The deterministic fallback and Jev receive identical historical advice. */
+function impactPlaybooks(context: TriageContext): readonly TriagePlaybook[] {
+  const playbooks = context.playbooks ?? [];
+  if (!context.impactHistory?.length) return playbooks;
+  let ranking: ReturnType<typeof rankImpactTemplates>;
+  try {
+    ranking = rankImpactTemplates(context.impactHistory, context.impactOverrides);
+  } catch {
+    // Invalid advisory evidence cannot make triage unavailable or invent credit.
+    return playbooks;
+  }
+  const byTemplate = new Map(ranking.map((row) => [row.template, row]));
+  return playbooks.map((playbook, index) => {
+    const row = byTemplate.get(playbook.id);
+    return {
+      index,
+      score: row?.score ?? 0,
+      playbook: row ? {
+        ...playbook,
+        when: `${playbook.when} Recorded impact (${IMPACT_VERSION}): mean reward ${row.meanReward}, UCB exploration bonus ${row.explorationBonus}, attempts ${row.attempts}. This is advisory history, not permission or a completion guarantee.`,
+      } : playbook,
+    };
+  }).sort((a, b) => b.score - a.score || a.index - b.index).map((entry) => entry.playbook);
+}
 
 function findPlaybook(trigger: TriggerInput, playbooks: readonly TriagePlaybook[]): string | null {
   const hay = `${trigger.title}\n${trigger.body ?? ''}\n${(trigger.labels ?? []).join(' ')}`.toLowerCase();
@@ -84,7 +113,7 @@ export function triageTriggerHeuristic(trigger: TriggerInput, context: TriageCon
     },
     context.lanes ?? {},
   );
-  return { work, lane, playbook: findPlaybook(trigger, context.playbooks ?? []) };
+  return { work, lane, playbook: findPlaybook(trigger, impactPlaybooks(context)) };
 }
 
 function triggerState(trigger: TriggerInput): string {
@@ -107,7 +136,7 @@ export async function triageTrigger(
   opts: TriageTriggerOptions = {},
 ): Promise<Decision<TriggerTriage>> {
   const open = availableLanes(context.lanes ?? {});
-  const playbooks = context.playbooks ?? [];
+  const playbooks = impactPlaybooks(context);
   const playbookIds = playbooks.map((p) => p.id);
 
   const questions: Record<string, TypeSafeChoiceQuestion | TypeSafeNoulQuestion> = {

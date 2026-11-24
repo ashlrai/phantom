@@ -155,8 +155,8 @@ describe('M468 desktop release workflow supply-chain policy', () => {
     expect(tauriBuildIndex).toBeGreaterThan(panicIndex);
 
     expect(desktopPackage.scripts['dev']).toBe('cargo tauri dev');
-    expect(desktopPackage.scripts['build']).toBe('cargo tauri build');
-    expect(desktopPackage.scripts['build:debug']).toBe('cargo tauri build --debug');
+    expect(desktopPackage.scripts['build']).toBe('node scripts/build-local.mjs');
+    expect(desktopPackage.scripts['build:debug']).toBe('node scripts/build-local.mjs --debug');
   });
 
   it('binds Cargo to the guard and fails closed across default Tauri bundle paths', () => {

@@ -23,8 +23,8 @@ export async function recordEvidence(name: EvidenceToolName, args: Record<string
       return { ok: true, ...result };
     }
     const ledger = await readLedger();
-    const { linkMergedPull } = await import('./evidence.js');
-    const matches = linkMergedPull(ledger, { repo: args.repo as string, number: args.number as number,
+    const { linkMergedPullObservation } = await import('./evidence.js');
+    const matches = linkMergedPullObservation(ledger, { repo: args.repo as string, number: args.number as number,
       title: args.title as string, branch: args.branch as string | undefined, url: args.url as string | undefined }, at);
     if (matches.length) await writeLedger(ledger);
     return { ok: true, updated: matches.length, matches: matches.map(({ id, status }) => ({ id, status })) };

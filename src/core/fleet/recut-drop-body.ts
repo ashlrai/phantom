@@ -1,12 +1,16 @@
 import type { DirtyLandedPr } from './dirty-landed-inspect.js';
 import { validateDropJob } from './drop-job-writer.js';
 
+/** Any fleet agent PR (`bridge: RQ-<job id>`), not only RQ-PHX jobs; other titles are never recut. */
+export const FLEET_BRIDGE_TITLE_RE = /^bridge: RQ-[A-Za-z0-9][A-Za-z0-9_-]*/;
+
 /** Keep the desktop's UTC id so both entry points spend the same drop id. */
 export function recutDropJob(pr: DirtyLandedPr, nowMs: number) {
   if (pr.base !== 'main' && pr.base !== 'master') return { reason: 'base' } as const;
   if (pr.diffAnomaly) return { reason: 'diff-anomaly' } as const;
+  if (pr.class === 'landed') return { reason: 'already-present-on-base' } as const;
   if (pr.class !== 'needs-recut' && pr.class !== 'partly-landed') return { reason: 'class' } as const;
-  if (!/^bridge: RQ-PHX-/.test(pr.title)) return { reason: 'title' } as const;
+  if (!FLEET_BRIDGE_TITLE_RE.test(pr.title)) return { reason: 'title' } as const;
   if (!pr.remainingPaths.length) return { reason: 'empty' } as const;
   if (pr.remainingPaths.length > 20) return { reason: 'too-wide' } as const;
   if (pr.remainingPaths.some(p => /^(?:\.github(?:\/|$)|src\/cli\/desktop\.ts(?:\/|$)|src\/core\/desktop(?:\/|$)|desktop\/src-tauri(?:\/|$))/.test(p))) {

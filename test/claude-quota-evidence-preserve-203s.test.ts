@@ -20,7 +20,7 @@ afterEach(async () => { await Promise.all(roots.splice(0).map(r => rm(r, { recur
 
 const usage = (over: Partial<ClaudeAccountUsageResult>): ClaudeAccountUsageResult => ({
   schemaVersion: 1, scope: 'claude-native-auth-status', status: 'observed', reason: 'usage-native-current',
-  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: null,
+  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: null, accountScope: null,
   startedAt: '2026-11-04T12:00:00Z', finishedAt: '2026-11-04T12:00:01Z', windows: [], ...over,
 });
 

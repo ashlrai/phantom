@@ -58,7 +58,7 @@ describe('Devin weekly capacity', () => {
       source: 'devin-api-v3-sessions', observed_at: new Date(NOW).toISOString(), reason: null,
     });
     expect(devinWeeklyObservation(got)).toEqual({ used: 14.5, limit: 250, unit: 'acu', reset_at: '2026-11-24T05:00:00.000Z',
-      source: 'devin-api-v3-sessions', observed_at: new Date(NOW).toISOString() });
+      source: 'devin-api-v3-sessions', observed_at: new Date(NOW).toISOString(), window_start: '2026-11-17T05:00:00.000Z' });
   });
 
   it('falls back to the configured budget for the allowance', async () => {
@@ -104,6 +104,24 @@ describe('Devin weekly capacity', () => {
   });
 });
 
+describe('weekly provenance', () => {
+  it('carries explicit account and configured model through measurement and observation', async () => {
+    const capacity = await readDevinWeeklyCapacity({ nowMs: NOW, accountId: 'org-test',
+      section: { weeklyResetAt: ANCHOR, weeklyAcuAllowance: 50, fleetModel: 'swe-2-high' }, listPage: fakeDevin([[]]).listPage });
+    expect(capacity).toMatchObject({ account_id: 'org-test', model: 'swe-2-high' });
+    expect(devinWeeklyObservation(capacity)).toMatchObject({ account_id: 'org-test', model: 'swe-2-high', window_start: capacity.window_start });
+    const overridden = await readDevinWeeklyCapacity({ nowMs: NOW, accountId: 'org-test', model: 'swe-2-max',
+      section: { weeklyResetAt: ANCHOR, fleetModel: 'swe-2-high' }, listPage: fakeDevin([[]]).listPage });
+    expect(overridden.model).toBe('swe-2-max');
+  });
+  it('does not invent unknown scope or observations for unmeasured capacity', () => {
+    const capacity = measureDevinWeekly({ sessions: null, complete: false, allowance: { limit: null, source: null }, resetAnchor: null, nowMs: NOW });
+    expect(capacity).not.toHaveProperty('account_id');
+    expect(capacity).not.toHaveProperty('model');
+    expect(devinWeeklyObservation(capacity)).toBeNull();
+  });
+});
+
 describe('Devin free-preview models', () => {
   const catalog = (ids: Array<[string, boolean]>): DevinModelCatalog => ({
     source: 'cache', fetchedAt: '2026-11-17T11:00:00.000Z', declaredFamilyCount: 1,
@@ -115,7 +133,7 @@ describe('Devin free-preview models', () => {
   it('counts free SWE-2 Lightning/Flash models until the preview expires', () => {
     const listed = catalog([['swe-2-max-lightning', true], ['swe-2-flash', true], ['swe-2-high', true], ['swe-2-medium-flash', false]]);
     expect(devinPreviewObservation(listed, NOW)).toEqual({ used: null, limit: 2, unit: 'models', reset_at: null,
-      source: 'devin-cli-models-list', observed_at: '2026-11-17T11:00:00.000Z' });
+      source: 'devin-cli-models-list', observed_at: '2026-11-17T11:00:00.000Z', model: 'swe-2-max-lightning' });
     expect(devinPreviewObservation(listed, Date.parse(DEVIN_FLASH_EXPIRES_AT) + 1)).toBeNull();
     expect(devinPreviewObservation({ ...listed, fetchedAt: null }, NOW)).toBeNull();
   });

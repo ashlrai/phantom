@@ -1,5 +1,5 @@
 import type { FleetEdges, FleetEdgeEndpoint } from '../../../../core/fleet/fleet-edges.js';
-import { BrandMark } from '../../../components/primitives/BrandMark.js';
+import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { apiGet } from '../../../data/client.js';
 import { useQuery } from '../../../data/hooks.js';
 import type { QueryDef } from '../../../data/queries.js';
@@ -7,9 +7,7 @@ import styles from './agent-edges.module.css';
 
 const query: QueryDef<FleetEdges> = { key: 'fleet-edges', fetch: signal => apiGet<FleetEdges>('/api/verse/agent-bus/edges', signal) };
 function Endpoint({ endpoint }: { endpoint: FleetEdgeEndpoint }) {
-  const provider = endpoint.provider?.toLowerCase();
-  const engine = provider === 'anthropic' || provider === 'claude' ? 'claude' : provider === 'openai' || provider === 'codex' ? 'codex' : provider === 'xai' || provider === 'grok' ? 'grok' : provider === 'devin' || provider === 'cognition' ? 'devin' : provider === 'ollama' ? 'local' : null;
-  return <span className={styles.endpoint}>{engine && <BrandMark brand={engine} />}<strong>{endpoint.address}</strong><small>{endpoint.provider ?? 'Provider unknown'}</small></span>;
+  return <span className={styles.endpoint}><ProviderBadge of={endpoint.provider} iconOnly size={16} /><strong>{endpoint.address}</strong><small>{endpoint.provider ?? 'Provider unknown'}</small></span>;
 }
 export function AgentEdges() {
   const result = useQuery(query, { freshMs: 15_000 });
