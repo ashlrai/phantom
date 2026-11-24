@@ -57,6 +57,26 @@ it('apply lands, terminates, archives and journals', async () => {
   expect(w.client.archiveSession).toHaveBeenCalledWith('org-test', id);
   expect(readFileSync(join(dir, 'autoland.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).decision)).toEqual(['landed', 'archived']);
 });
+it('retries failed cleanup after a published landing without landing again', async () => {
+  const w = world();
+  const pr = 'https://github.com/ashlrai/phantom/pull/2';
+  w.land.mockImplementationOnce(async () => {
+    save('landings.jsonl', [{ sessionId: id, pr }]);
+    return { v: 1, ok: true, mode: 'apply', sessionId: id, repo: 'phantom', job: 'J', steps: [], commitCount: 2,
+      publish: { pr, result: 'PR', sens: '', headSha: null } };
+  });
+  w.client.archiveSession.mockRejectedValueOnce(new Error('Archive denied'));
+
+  const first = await runDevinAutoland({ apply: true }, w.deps);
+  expect(codes(first)).toEqual(['landed', 'archive-failed']);
+  expect(w.land).toHaveBeenCalledOnce();
+
+  const retried = await runDevinAutoland({ apply: true }, w.deps);
+  expect(codes(retried)).toEqual(['already-landed', 'archived']);
+  expect(w.land).toHaveBeenCalledOnce();
+  expect(w.client.terminateSession).toHaveBeenCalledTimes(2);
+  expect(w.client.archiveSession).toHaveBeenCalledTimes(2);
+});
 it('manual or matching prior landing only retries cleanup; later bundles supersede', async () => {
   const w = world([session({ isArchived: true })]); const pr = 'https://github.com/ashlrai/phantom/pull/1';
   save('landings.jsonl', [{ sessionId: id, pr }]);

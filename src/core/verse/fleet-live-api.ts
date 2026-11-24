@@ -145,6 +145,7 @@ export interface InFlightDispatch {
 }
 
 export interface FleetLiveDeps {
+  liveJobs?(): Promise<import('../fleet/live-jobs.js').LiveJobsReport>;
   now(): number;
   policy(): EffectivePolicy | null;
   killSwitch(): 'active' | 'inactive' | 'unknown';
@@ -1434,6 +1435,7 @@ export async function buildFleetLiveSnapshot(d: FleetLiveDeps = deps): Promise<B
     });
 
   const snapshot: FleetLiveSnapshotV1 = {
+    liveJobs: await (d.liveJobs ?? (async () => (await import('../fleet/live-jobs.js')).readLiveJobs({ now: d.now })))(),
     v: 1,
     generatedAt,
     state,

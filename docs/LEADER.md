@@ -159,6 +159,19 @@ Channel adapters do not live here. After they authenticate the owner they call
 a caller. The desktop Leader pane
 shows the conversation, the open assignments and the org.
 
+When the Leader has asked you something and the conversation holds no answer
+yet, the Leader pane (⌘⌥L) pins it above the reply box as **The Leader is
+asking**, with how long it has waited. The question that has waited longest
+leads; ‹ and › step through the rest and a half-written answer stays with its
+question. A question with choices shows them: press 1 to 9 to choose and ⌘↵ to
+submit. Any other question takes a written answer, sent with Enter. Answers go
+to the Leader's question route, the one Needs you uses, and need the dispatch
+token; a read-only session can read the question but not answer it. The tray
+reads the newest 50 messages of the conversation, so an older question is
+answered from Needs you (⌘J). With nothing open the tray is not shown. The
+tray stays in place under **Needs you only**, and while a question is open
+that view says the Leader is asking instead of "Nothing needs you right now."
+
 ```sh
 phm leader status --json
 phm leader ask "fix the flaky test" --json
@@ -174,13 +187,46 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   0600, one scrubbed message per line). Above 1 MiB it is archived to
   `thread.1.jsonl`, keeping the newest 1,000 lines. Secrets, home paths and
   emails are scrubbed from your text and from the Leader's.
+- **Earlier messages:** the desktop Leader pane opens on the newest 50 thread
+  messages. When there are more, a row at the top of the conversation says how
+  many are shown and offers **Load earlier messages**, 50 at a time, from
+  `GET /api/verse/leader/thread?limit=50&before=<oldest id>`. With the
+  conversation focused and scrolled to its top, Up, Page Up or Home loads the
+  next page. Your reading position is kept, Find searches the loaded pages, and
+  **Show newest only** returns to the newest 50. The row marks the start of the
+  conversation held on this computer; messages archived to `thread.1.jsonl`
+  are not loaded. Inbox posts, owner-channel lines and bus replies keep their
+  own windows and do not reach further back.
 - **Channels:** Phantom, Telegram, CLI and System, shown as a badge on every
   message.
+- **When you are read:** the line under the reply box in the Leader pane (⌘⌥L)
+  says when the last leader pass ran, when the next is due (passes run every 15
+  minutes) and how many of your inbox messages no pass has read yet. A thin bar
+  above it fills across the interval. It turns amber when a pass is late and
+  red, with a button into the Journal, once a pass is more than 30 minutes
+  overdue. When the fleet read holds no pass time the line says unknown and
+  shows no count.
 - **Replies** use the same provider-neutral account/model routing as planning.
   Prepared Claude Code, Codex, Grok, included native Devin models and local
   resources can participate when their current capacity and signed Leader role
   permit it. A reply sees the last 30 messages. Missing capacity or a failed
   invocation produces a clear unavailable response.
+- **Kept draft:** the desktop Leader pane keeps what you have typed and not
+  sent. It is stored in this browser on this computer as you type, put back
+  when the pane opens again after a reload or a restart ("Draft restored,
+  last edited 2h ago", with Discard draft), and forgotten once you send or
+  discard it. A refused send keeps it. With two windows open, sending or
+  discarding in one clears the same text in the other. If the browser cannot
+  store it, the pane says the draft lasts only while it stays open. Near the
+  box's 6,000 character limit a counter shows the room left.
+- **Screenshots:** in the desktop Leader pane, paste an image into the reply
+  box, drop one on it, or press Attach screenshot (PNG, JPEG or WebP, up to
+  8 MiB). The image is stored on this machine and its `[screenshot: <path>]`
+  line joins your draft, shown as a chip under the box with Remove. Send
+  delivers the line with your text and the thread shows the image. Attaching
+  needs the same mutation token as sending. A kept draft or a recalled
+  message that carries a screenshot shows its picture on the chip again,
+  read back from this machine; without a token the chip names the file.
 - **Limits:** your message up to 4,000 characters; replies time out after 120
   seconds and cancel the owned native invocation. Conversation calls have no
   hidden daily ceiling. Attempts for replies, extractions and brief narratives
@@ -188,6 +234,54 @@ phm leader assign --rq RQ-EXAMPLE-1 --owner engineering --summary "fix the flaky
   govern memo/check-in cadence; they do not create a second conversation cap.
 - A reply goes to Telegram only when you wrote from Telegram. Memos, questions
   and updates are sent to Telegram as well as shown in the thread.
+- **Since you last looked:** when you come back to the Leader pane after two
+  minutes or more away, a card above the conversation counts what arrived in
+  between: Leader messages, how many of them need you, questions the Leader
+  asked that are still unanswered, bus replies, merged PRs and lanes that were
+  held or resumed. It shows the newest thing the Leader said. **Jump to first
+  new** scrolls to the first new line; **Caught up** or Esc closes the card.
+  The merged PR count covers the last hour only and says so after a longer
+  absence; it reads unknown when the fleet read has not answered. The first
+  visit shows no card. The last-looked time is kept in this browser profile
+  only.
+- **App actions:** the desktop Leader pane shows what Phantom did to this
+  Mac's apps where it happened in the conversation. Each open, focus, quit
+  and restart from the app action log (`phm apps log --json`) is a line with
+  its outcome ("Opened Xcode", "Refused to quit Slack"), the time it was
+  logged and the log's own detail. Actions with nothing said between them
+  form one **Mac apps** group; a group of more than four lists its newest
+  three until you choose **Show N earlier**, and says how many need a look
+  (refused, failed, waiting on you or with no result). **Mac host** opens the
+  pane that lists and opens apps; the conversation itself acts on nothing.
+  Only actions logged since the oldest message shown are placed, so loading
+  earlier messages brings earlier actions with them. **Find** searches them,
+  and **Needs you only** leaves them out. The **App actions** button in the
+  toolbar hides or shows them; the choice is kept in this browser profile,
+  and while they are hidden the log is not read. The log is read every 30
+  seconds while the pane is on screen. If it does not answer the toolbar says
+  **App actions unknown** and no line is drawn; a phone, which the log route
+  does not serve, shows none.
+- **Leader health:** when the Leader's own passes fail, the desktop Leader
+  pane says so just above the reply box, where you are about to write. One
+  failed pass is a warning. From two in a row, the count at which
+  `phm fleet leader-health` exits 1, the notice turns red and says the Leader
+  is not reading you: what you send is kept in its inbox until a pass
+  succeeds. It gives the number of failed passes, how long ago a pass last
+  succeeded (or that the dispatch log holds none), and the first line the
+  failing pass wrote as the cause, or "unknown" when it left no output. When
+  the cause names its own fix, as an expired Claude sign-in does, a button
+  copies that command. **Open the journal** opens the Leader journal and
+  **Check again** reads now. After a notice has been on screen, the first
+  read that counts no failure says the Leader is passing again until you
+  dismiss it. A healthy Leader, a log with no pass in it and a read that did
+  not answer show no notice; the line under the reply box still says when the
+  last pass ran. The pane reads `GET /api/verse/leader/health` (read session
+  required; the same `fleet.leader-health.v1` document as
+  `phm fleet leader-health --json`) once a minute while it is on screen, and
+  the server shares one reading for 15 seconds. The same notice shows above a
+  session's reply box and on the Conversations wall, because those messages
+  go through the same inbox; see
+  [Sessions](https://github.com/ashlrai/phantom/blob/master/docs/SESSIONS.md).
 
 ---
 
@@ -455,7 +549,8 @@ reads it.
 
 ## From the CLI
 
-`phm leader thread` shows one chat: your `leader/MASON-INBOX.md` entries and the
+`phm leader thread --legacy` preserves the earlier chat format: your
+`leader/MASON-INBOX.md` entries and the
 leader's replies (`leader/MASON-OUTBOX.md` and the latest “Reply for Mason”
 block in each `leader/PLAN-LOG.md` entry), oldest first. It prints JSON by
 default (`id`, `ts`, `direction`, `channel`, `text`, `state`); add `--text` for
@@ -468,6 +563,19 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 `phm leader say "<text>"` sends through the verified local-owner inbox writer
 (the same path as `phm leader inbox --text`) and prints the new message id.
 The desktop inbox box and the phone box show the same chat above their Send.
+The default `phm leader thread` shows the whole conversation as plain lines.
+Add `--json` for the `leader.thread.v1` shape or `--text` for explicit plain
+lines. Optionally filter with `--since <hours|date>` and `--before <hours|date>`
+or keep the newest n with `--limit <n>`. `since` keeps entries at or after its
+cutoff and `before` keeps entries strictly before its own, so the pair reads
+one `[since, before)` window — the same bound pair every other comms read
+applies; an entry with no readable date cannot be placed inside or outside
+the window, so neither bound ever drops it. The same view is available at GET
+`/api/verse/leader/thread/merged?since=…&before=…&limit=…`. Each entry has `at`, `from` (`mason`,
+`leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
+numbers named in the text). Without `--since`/`--before`, no time filter is applied.
+A reply in both the outbox and the PLAN-LOG shows once, and an entry with no readable date
+keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader
 conversation. For dated PLAN-LOG replies alone, newest first, use
 `phm leader replies --json --limit 20`. Readers check the last 256 KiB of each
@@ -475,7 +583,8 @@ journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--limit 20] [--text]
+ashlr leader thread [--since 24] [--before 2] [--limit 20] [--json]
+ashlr leader thread --legacy [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>
 ashlr leader veto <actionId> [--note "why"]      # or: veto --memo <memoId>
@@ -531,11 +640,11 @@ next run is due. Phantom does not show the health state yet.
 
 
 Model availability comes from each connected account's native catalog. Current
-native defaults are Opus 5.5, Fable 5.1 and GPT-6.1 Sol; routing can select the
+native defaults are Opus 5.5, Fable 5.1 and GPT-6.2 Sol; routing can select the
 other eligible variants on that same account. A published API model does not
 prove native CLI access. Hidden models are excluded from new automatic choices;
 older exact model tags remain readable and do not authorize newer versions.
-[OpenAI model details](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+[OpenAI model details](https://developers.openai.com/api/docs/models/gpt-6.2-sol)
 and [Claude model details](https://platform.claude.com/docs/en/models/overview)
 provide public API price estimates. Those prices do not replace subscription
 allowance, native context allocation or verified funding observations.
@@ -545,3 +654,25 @@ allowance, native context allocation or verified funding observations.
 Run `ashlr fleet leader-facts --json` to refresh `~/.ashlr-runs/leader/facts.json` before a leader pass. The `leader.facts.v1` snapshot joins leader-tagged router queue lines to jobs with a dated ledger event in the last 48 hours, then reads PR state, 24-hour merge counts, and latest release tags from GitHub. Repositories are those represented by the selected jobs. `null` means unknown; source status reports missing or damaged local evidence. Jobs with no dated ledger evidence have unknown age and are retained. Recent Q8 PRs can also be discovered from GitHub when queue history is absent. The file is replaced atomically; this command does not merge or publish anything.
 
 The resident daemon refreshes this snapshot at startup and every 15 minutes. GitHub search also discovers recent Q8 PRs independently of local history; `sources.github` is `partial` when search or a PR lookup fails or the search reaches its page limit. The schedule requires the resident daemon to be running.
+
+The compact brief (`leader.compact-brief.v1`) reads cached GitHub release evidence,
+then local git tags for each missing repository. Its `release` counts include this
+fallback; `releaseRepos` gives the tag, tag date, commits since the tag, state,
+source and unknown reason. Local git is due over 20 commits or over seven days;
+otherwise it is ok. On `phm leader brief --json` or `phm fleet release-backlog
+--json`, shallow clones or missing local tags fall back to public remote version
+tags (highest stable version), their dates and GitHub compare counts. Each remote
+read has a five-second budget; readings are cached for ten minutes.
+Background compact reads use that cache without network calls. An unreachable
+remote stays unknown with a plain reason; an unreadable count stays null.
+Missing clones or default-branch refs stay unknown. Tags are not publication proof.
+The same evidence appears in `phm fleet release-backlog --json` under `repos[].git`.
+
+Default clone paths are `~/Projects/ashlrai/wt/guardian-<repo>`, then
+`~/.ashlr-runs/phm-live` for Phantom, then `~/Projects/ashlrai/<repo>`.
+Set `PHANTOM_RELEASE_CLONES` to a JSON object such as
+`{"phantom":"/path/to/phantom","locus":"/path/to/locus"}` to replace that list;
+unlisted repositories stay unknown with reason `no local clone`. Local reads use
+`origin/HEAD` (or `origin/master`, then `origin/main` if unset) and have a
+five-second budget per clone. Remote reads use `git ls-remote` against the public
+AshlrAI URL, without fetching or changing clones. Local refs reflect their last fleet refresh.

@@ -154,7 +154,7 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.36; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.72; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
@@ -376,7 +376,9 @@ the item is simply inert — nothing breaks.
 window.__ASHLR_DESKTOP__?.reportTheme(resolvedTheme); // 'light' | 'dark'
 ```
 
-Call it once the theme resolves and on every change. The native window stores it
+Call it once the theme resolves and on every change, including the OS flipping
+light/dark while the preference is System (`trackThemeForShell` in
+`app/desktop-shell.ts` does both). The native window stores it
 next to the window geometry and paints the window background with the matching
 canvas colour (`#0b0b0d` dark / `#fafafa` light) **before the webview has
 painted** on the next launch. Without this call the app falls back to the macOS

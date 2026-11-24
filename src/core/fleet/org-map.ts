@@ -1,5 +1,5 @@
 import type { FleetLiveSnapshotV1 } from './fleet-types.js';
-import type { FleetSessionsV1 } from './runs-sessions.js';
+import type { FleetSessionV1, FleetSessionsV1 } from './runs-sessions.js';
 import type { FleetEdges } from './fleet-edges.js';
 import { providerFor, type ProviderName } from './provider.js';
 import type { FleetOrgTree } from './org-tree.js';
@@ -10,6 +10,12 @@ export interface FleetMapNode {
   jobId?: string; lane?: string; model?: string; repo?: string; ageSeconds?: number | null;
   /** Jobs only. Start instant, and whether a worker process was seen when the map was built. */
   startedAt?: string | null; processLive?: 'yes' | 'no' | 'unknown';
+  /** Jobs only. The publish record has a RESULT line, so the job is done, not running. */
+  published?: boolean;
+  /** Jobs only. Verified session PR URL; older maps may omit it. */
+  prUrl?: string | null;
+  /** Jobs only. Dispatch tier (frontier, work, ...) and the task title as one line; null when no source reported them. */
+  tier?: string | null; goal?: string | null;
 }
 /** `provider` is the sender's (`from`) provider: who is behind the reporting agent or the message. */
 export interface FleetMapEdge {
@@ -28,6 +34,11 @@ export interface FleetOrgMap {
 export const ORG_LANES = ['codex-personal', 'codex-cmp', 'claude', 'claude-api', 'devin', 'devin-flash', 'codex-local', 'zai', 'gemini', 'grok', 'cursor'] as const;
 const known = (value: string | null | undefined) => value?.trim() || 'unknown';
 const age = (value: number | null | undefined) => value != null && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+/** A title as one plain line of at most 120 characters; null when empty or only the job id. */
+function oneLine(title: string | null | undefined, jobId: string): string | null {
+  const line = (title ?? '').replace(/\s+/g, ' ').trim();
+  return !line || line === jobId ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line;
+}
 export function mapWindowMinutes(value: string | undefined): number {
   if (value === undefined) return 60;
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error('Minutes must be 1..1440');
@@ -60,24 +71,35 @@ export function fleetOrgMap(snapshot: FleetLiveSnapshotV1 | null, options: {
   ORG_LANES.forEach(addLane);
   snapshot?.lanes.forEach(lane => addLane(lane.lane));
   const jobs = new Set<string>();
-  const addJob = (jobId: string, lane: string | null, model: string | null, repo: string | null, status: string, seconds: number | null, startedAt: string | null, processLive: FleetMapNode['processLive'] = 'unknown', title = jobId) => {
+  interface JobFacts { jobId: string; lane: string | null; model: string | null; repo: string | null; status: string; seconds: number | null;
+    startedAt: string | null; processLive?: FleetMapNode['processLive']; title?: string | null; tier?: string | null; published?: boolean; prUrl?: string | null }
+  const addJob = ({ jobId, lane, model, repo, status, seconds, startedAt, processLive = 'unknown', title, tier = null, published = false, prUrl = null }: JobFacts) => {
     if (jobs.has(jobId)) return;
     jobs.add(jobId);
-    const parent = addLane(lane), id = `job:${jobId}`;
-    const node: FleetMapNode = { id, kind: 'job', label: title || jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
+    const parent = addLane(lane), id = `job:${jobId}`, goal = oneLine(title, jobId);
+    const node: FleetMapNode = { id, kind: 'job', label: goal ?? jobId, jobId, lane: known(lane), model: known(model), repo: known(repo),
       provider: providerFor(model, lane).name, status, ageSeconds: age(seconds),
-      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive };
+      startedAt: startedAt && Number.isFinite(Date.parse(startedAt)) ? startedAt : null, processLive, tier: tier?.trim() || null, goal, prUrl, ...(published ? { published } : {}) };
     nodes.push(node); reportsTo(node, parent);
   };
+  // A session row never carries its prompt; the engine snapshot's task title is the goal when both name the job.
+  const titles = new Map<string, string>();
+  for (const run of snapshot?.runs ?? []) for (const key of [run.id, run.taskId]) if (key) titles.set(key, run.title);
   // Session evidence wins over the older engine-only snapshot; stale claims never become running jobs.
+  const fromSession = (row: FleetSessionV1): JobFacts => ({ jobId: row.job, lane: row.lane, model: row.model, repo: row.repo, status: row.status,
+    seconds: row.elapsedSeconds, startedAt: row.startedAt, processLive: row.live, title: titles.get(row.job) ?? null, tier: row.tier, published: row.published === true, prUrl: row.prUrl ?? null });
   const sessionIds = new Set([...(sessions?.sessions ?? []), ...(sessions?.recent ?? [])].map(row => row.job));
   for (const row of sessions?.sessions ?? []) {
-    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(row.job, row.lane, row.model, row.repo, row.status, row.elapsedSeconds, row.startedAt, row.live);
+    if (!['queued', 'parked', 'finished', 'exited'].includes(row.status)) addJob(fromSession(row));
+  }
+  // Current readers move valid published attempts to the bounded recent tail.
+  for (const row of sessions?.recent ?? []) {
+    if (row.status === 'finished' && row.published === true) addJob(fromSession(row));
   }
   for (const row of snapshot?.runs ?? []) {
     const id = row.taskId || row.id;
     if (sessionIds.has(id) || sessionIds.has(row.id) || row.endedAt || row.outcome || ['queued', 'parked'].includes(row.phase)) continue;
-    addJob(id, row.lane, row.model, row.repo, row.phase, row.startedAt ? (now - Date.parse(row.startedAt)) / 1000 : null, row.startedAt, 'unknown', row.title);
+    addJob({ jobId: id, lane: row.lane, model: row.model, repo: row.repo, status: row.phase, seconds: row.startedAt ? (now - Date.parse(row.startedAt)) / 1000 : null, startedAt: row.startedAt, title: row.title });
   }
   // Resolve only exact observed addresses. Unknown peers are counted, never guessed into a lane.
   const byId = new Map(nodes.map(node => [node.id, node]));

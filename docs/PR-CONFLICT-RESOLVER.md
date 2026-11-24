@@ -91,6 +91,8 @@ The `pr.resolve-conflicts.v1` envelope carries `repo`, `dryRun`, `complete`, and
 insertion shape only, not verification success. Exit 0 means inspection
 completed, including `needs-agent` rows; exit 1 means evidence was unavailable,
 and exit 2 means invalid arguments.
+A conflicting PR with a deleted or unavailable source repository is reported
+with status `head-unavailable`; later PRs in the batch are still inspected.
 
 Hermetic git fixtures exercise the resolver without GitHub, real home state,
 or model calls:

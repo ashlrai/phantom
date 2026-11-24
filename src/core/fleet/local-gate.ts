@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { rollupFleetPrChecks } from './fleet-merge-state.js';
+import { readSource, type Source } from './runs-parked-queue.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export interface LocalGateExecResult { ok: boolean; stdout: string; stderr: string }
@@ -131,4 +132,107 @@ export async function runLocalGate(budgetSeconds = 180, deps: LocalGateDeps = {}
     (deps.warn ?? (message => process.stderr.write(message + '\n')))('warning: could not append local-gate metrics');
   }
   return report;
+}
+
+/**
+ * Read-back for the local-gate ledger `runLocalGate` appends to
+ * `<runs>/metrics/local-gate.jsonl`. Every gated worker run records one
+ * LocalGateReport — the pre-merge verdict plus per-step outcomes — but until
+ * now nothing consumed the ledger, so gate health (which step fails, how
+ * often, what the latest verdict was) was write-only evidence. The reader
+ * keeps the launch-cost contract: a bounded no-follow tail, malformed lines
+ * degrade the source without erasing valid rows, unknown stays unknown.
+ */
+export interface LocalGateStepTally { name: string; runs: number; failures: number }
+export interface LocalGateLastReport { verdict: 'pass' | 'fail'; seconds: number; failedSteps: string[] }
+export interface LocalGateEvidence {
+  source: Source;
+  /** 'known' once at least one structurally valid report was read. */
+  state: 'known' | 'unknown';
+  /** Valid reports inside the retained tail window. */
+  reports: number;
+  /** Lines that were not a LocalGateReport; they are ignored, never guessed. */
+  invalidRows: number;
+  passed: number;
+  failed: number;
+  /** Per-step run/failure tallies over the same window, worst first. */
+  steps: LocalGateStepTally[];
+  /** The newest valid report in ledger order; null when none parsed. */
+  last: LocalGateLastReport | null;
+}
+
+const LOCAL_GATE_LEDGER_RELATIVE = join('metrics', 'local-gate.jsonl');
+const LOCAL_GATE_TAIL_BYTES = 256 * 1024;
+const LOCAL_GATE_MAX_STEPS = 16;
+const LOCAL_GATE_MAX_STEP_NAME = 64;
+const LOCAL_GATE_MAX_TALLIES = 12;
+const LOCAL_GATE_MAX_FAILED_STEPS = 8;
+const GIT_SHA = /^[a-f0-9]{40}$/;
+
+interface ParsedGateStep { name: string; ok: boolean }
+interface ParsedGateReport { verdict: 'pass' | 'fail'; seconds: number; steps: ParsedGateStep[] }
+
+function finiteNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/** Structural check of one ledger row against the LocalGateReport the writer emits. */
+function parseLocalGateReport(value: unknown): ParsedGateReport | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (row.verdict !== 'pass' && row.verdict !== 'fail') return null;
+  if (typeof row.headSha !== 'string' || (row.headSha !== '' && !GIT_SHA.test(row.headSha))) return null;
+  if (typeof row.baseSha !== 'string' || (row.baseSha !== '' && !GIT_SHA.test(row.baseSha))) return null;
+  if (!finiteNonNegative(row.seconds)) return null;
+  if (!Array.isArray(row.steps) || row.steps.length > LOCAL_GATE_MAX_STEPS) return null;
+  const steps: ParsedGateStep[] = [];
+  for (const entry of row.steps) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const step = entry as Record<string, unknown>;
+    if (typeof step.name !== 'string' || step.name.length === 0 || step.name.length > LOCAL_GATE_MAX_STEP_NAME) return null;
+    if (typeof step.ok !== 'boolean' || !finiteNonNegative(step.seconds)) return null;
+    steps.push({ name: step.name, ok: step.ok });
+  }
+  return { verdict: row.verdict, seconds: row.seconds, steps };
+}
+
+/** Bounded tail read of the local-gate ledger; aggregates verdicts and per-step failures. */
+export async function readLocalGateEvidence(runsDir: string): Promise<LocalGateEvidence> {
+  const empty: LocalGateEvidence = { source: 'missing', state: 'unknown', reports: 0, invalidRows: 0, passed: 0, failed: 0, steps: [], last: null };
+  const source = await readSource(join(runsDir, LOCAL_GATE_LEDGER_RELATIVE), LOCAL_GATE_TAIL_BYTES, true);
+  if (source.state === 'missing') return empty;
+  const reports: ParsedGateReport[] = [];
+  let invalidRows = 0;
+  for (const line of source.text.split(/\r?\n/).filter(Boolean)) {
+    let parsed: ParsedGateReport | null = null;
+    try { parsed = parseLocalGateReport(JSON.parse(line)); } catch { parsed = null; }
+    if (parsed) reports.push(parsed); else invalidRows += 1;
+  }
+  const tallies = new Map<string, LocalGateStepTally>();
+  for (const report of reports) {
+    for (const step of report.steps) {
+      const tally = tallies.get(step.name) ?? { name: step.name, runs: 0, failures: 0 };
+      tally.runs += 1;
+      if (!step.ok) tally.failures += 1;
+      tallies.set(step.name, tally);
+    }
+  }
+  const steps = [...tallies.values()]
+    .sort((a, b) => b.failures - a.failures || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .slice(0, LOCAL_GATE_MAX_TALLIES);
+  const newest = reports.at(-1);
+  return {
+    source: invalidRows > 0 ? 'degraded' : source.state,
+    state: reports.length > 0 ? 'known' : 'unknown',
+    reports: reports.length,
+    invalidRows,
+    passed: reports.filter(report => report.verdict === 'pass').length,
+    failed: reports.filter(report => report.verdict === 'fail').length,
+    steps,
+    last: newest === undefined ? null : {
+      verdict: newest.verdict,
+      seconds: newest.seconds,
+      failedSteps: newest.steps.filter(step => !step.ok).map(step => step.name).slice(0, LOCAL_GATE_MAX_FAILED_STEPS),
+    },
+  };
 }

@@ -40,6 +40,8 @@ type Entry = { name: string; mtimeMs: number };
 type Step = { links?: {current: string; dest: string}; app?: { steps: Step[]; dest: string; source: string; sourceProof: {path: string} }; id: string; title: string; argv?: string[]; wait?: { kind: string }; versions?: unknown; identity?: string; sign?: { identity: string | null; entitlements: string } };
 const HASH = 'F6674FDA4EDE6D75028DA2165382E629553DD6D6';
 const INVENTORY = 'a'.repeat(64);
+const canonicalLauncher = readFileSync(new URL('../bin/ashlr', import.meta.url));
+const historicalLauncher = readFileSync(new URL('./fixtures/ashlr-3.30.24', import.meta.url));
 
 function ctx(overrides: Record<string, unknown> = {}) {
   return {
@@ -960,7 +962,7 @@ describe('local Workbench alias admission', () => {
 
 describe('exact installer orchestration', () => {
   it('holds the entire transaction when a renamed current pointer cannot be verified', async () => {
-    for (const failure of ['read', 'missing', 'cleanup'] as const) {
+    for (const failure of ['read', 'missing', 'cleanup', 'launcher'] as const) {
       const f = appIo(); const selected = selectLocalApp(HASH, f.io);
       const previous = {target: `${HOME}/.local/share/ashlr/releases/${SHA}`, dev: 1, ino: 85};
       const dest = `${HOME}/.local/share/ashlr/releases/${'f'.repeat(40)}`;
@@ -968,6 +970,8 @@ describe('exact installer orchestration', () => {
       let renamed = false; let restored = false; let temporary = false;
       const io = {...f.io, readCurrentPointer: () => previous,
         switchCurrentPointer: (path: string, before: unknown, target: string) => switchLocalCurrentPointer(path, before, target, `${path}.temporary`, {
+          repoRoot: REPO,
+          readLauncher: () => Buffer.from(renamed && failure === 'launcher' ? 'changed launcher' : 'canonical launcher'),
           readCurrentPointer: () => {if (!renamed) return previous; if (failure === 'missing') return null; if (failure === 'cleanup') return {...previous, target}; throw new Error('ownership read failed');},
           createLink: () => {temporary = true;}, rename: () => {renamed = true; temporary = false;}, exists: () => {if (renamed && failure === 'cleanup') throw new Error('cleanup read failed'); return temporary;}, unlink: () => {temporary = false;}}),
         restoreCurrentPointer: () => {restored = true;}, writeInstallJournal: (_dir: string, record: typeof records[number]) => {records.push(record);}};
@@ -1057,9 +1061,11 @@ describe('current release pointer observation', () => {
     const path = `${HOME}/.local/share/ashlr/current`; const target = `${HOME}/.local/share/ashlr/releases/${SHA}`;
     const stat = {dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1, isSymbolicLink: true};
     const io = {home: HOME, repoRoot: REPO, validateLocalPath: () => {}, lstat: () => stat as typeof stat | null,
-      readLink: () => target, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name: '@ashlr/hub', version: '3.25.0'}) : 'canonical launcher'};
+      readLink: () => target, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name: '@ashlr/hub', version: '3.25.0'}) : canonicalLauncher};
     expect(inspectCurrentPointer(path, {...io, lstat: () => null})).toBeNull();
     expect(inspectCurrentPointer(path, io)).toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
+    expect(inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? historicalLauncher : io.readBoundedFile(file)}))
+      .toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
     for (const name of ['@ashlr/hub', '@ashlr/phantom']) expect(inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name, version: '3.25.0'}) : io.readBoundedFile(file)})).toEqual({target, dev: 1, ino: 80, ctimeMs: 10, birthtimeMs: 1});
     for (const name of ['@other/phantom', '@ashlr/phantom-beta', 'ashlr']) expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file.endsWith('package.json') ? JSON.stringify({name, version: '3.25.0'}) : io.readBoundedFile(file)})).toThrow(/present current release/);
     for (const suffix of ['package.json', '/bin/ashlr']) {
@@ -1071,7 +1077,7 @@ describe('current release pointer observation', () => {
     let reads = 0;
     expect(() => inspectCurrentPointer(path, {...io, lstat: () => ++reads === 1 ? stat : null})).toThrow(/present current release/);
     expect(() => inspectCurrentPointer(path, {...io, readLink: () => {throw Object.assign(new Error('missing'), {code: 'ENOENT'});}})).toThrow(/present current release/);
-    expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? 'foreign launcher' : io.readBoundedFile(file)})).toThrow(/present current release/);
+    expect(() => inspectCurrentPointer(path, {...io, readBoundedFile: (file: string) => file === `${target}/bin/ashlr` ? Buffer.from('arbitrary modified launcher') : io.readBoundedFile(file)})).toThrow(/present current release/);
     expect(() => inspectCurrentPointer(path, {...io, lstat: () => ({...stat, isSymbolicLink: false})})).toThrow(/present current release/);
   });
 });

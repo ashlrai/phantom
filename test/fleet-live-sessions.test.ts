@@ -6,10 +6,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { FleetCompute } from '../src/core/fleet/compute-view.js';
 import { getFleetSessions, type FleetSessionV1, type FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
 import { readFleetSessionMap, type FleetSessionMap } from '../src/core/fleet/sessions-view.js';
-import { buildLiveSessions, renderLiveSessionsText, sessionsByLane } from '../src/core/fleet/live-sessions.js';
+import { buildLiveSessions, renderLiveSessionsText } from '../src/core/fleet/live-sessions.js';
 import { readLiveSessions } from '../src/core/fleet/live-sessions-read.js';
 import { createFleetLiveSessionsApi } from '../src/core/verse/fleet-live-sessions-api.js';
-import { cmdLiveSessions, cmdSessions } from '../src/cli/sessions.js';
+import { cmdLiveSessions, cmdReconcileSessions, cmdSessions } from '../src/cli/sessions.js';
+import { reconcileSessions } from '../src/core/fleet/session-reconciliation.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -48,7 +49,9 @@ describe('buildLiveSessions', () => {
   it('shows an empty fleet as empty, with no invented rows', async () => {
     const list = buildLiveSessions(await sessionMap([]), NOW);
     expect(list).toEqual({ schema: 'fleet.live-sessions.v1', generatedAt: ago(0), quietAfterMinutes: 10, filter: { lane: null, repo: null },
-      counts: { sessions: 0, quiet: 0, lanes: 0, otherComputers: 0 }, sessions: [], gaps: [] });
+      counts: { sessions: 0, quiet: 0, lanes: 0, otherComputers: 0 }, sessions: [], gaps: [], live: false,
+      tree: { schema: 'fleet.session-tree.v1', version: 1, generatedAt: ago(0), line: 'No agent sessions running.', roots: [],
+        counts: { sessions: 0, running: 0, idle: 0, done: 0, failed: 0, unknown: 0, leaders: 0, workers: 0, subagents: 0, orphans: 0, failedLastHour: 0 } } });
     expect(renderLiveSessionsText(list).split('\n')[0]).toBe('No agent sessions running.');
   });
 
@@ -68,7 +71,6 @@ describe('buildLiveSessions', () => {
       ['unknown', 'RQ-REMOTE-ONLY', 'unknown'],
     ]);
     expect(list.counts).toEqual({ sessions: 5, quiet: 1, lanes: 3, otherComputers: 2 });
-    expect(sessionsByLane(list).map(group => [group.lane, group.sessions.length])).toEqual([['claude', 2], ['codex-local', 2], ['unknown', 1]]);
     expect(list.sessions[1]).toEqual({ job: 'RQ-CLAUDE-A', lane: 'claude', model: 'fixture-model', repo: 'phantom', tier: 'frontier', status: 'running',
       startedAt: ago(30), ageSeconds: 1800, lastOutputAt: ago(2), lastOutputAgeSeconds: 120, quiet: false, prUrl: null,
       computer: 'node-here', thisComputer: true, unknown: {} });
@@ -122,13 +124,16 @@ describe('buildLiveSessions', () => {
     expect(JSON.stringify(await readLiveSessions({ now: NOW, readMap: async () => map }))).toBe(JSON.stringify(buildLiveSessions(map, NOW)));
   });
 
-  it('renders one block per lane with quiet, computer, PR and unknown reasons in plain words', async () => {
+  it('renders the tree with quiet, computer, PR and unknown reasons in plain words', async () => {
     const text = renderLiveSessionsText(buildLiveSessions(await mixedFleet(), NOW));
-    expect(text).toContain('5 running, 1 quiet (no output for 10+ min).');
-    expect(text).toContain('  RQ-CLAUDE-QUIET | phantom | frontier | fixture-model | running 50m | output 15m ago QUIET | on node-here (this computer)');
-    expect(text).toContain('  RQ-CODEX-FAR | lexicon | work | fixture-model | running 30m | output 2m ago | on node-far | https://github.com/ashlrai/lexicon/pull/7');
+    expect(text.split('\n')[0]).toBe('4 sessions running: 4 workers; 2 with state unknown; 1 quiet (no output for 10+ min)');
+    expect(text).toContain('\nleader | model unknown | repo unknown | state unknown | last spoke unknown\n');
+    expect(text).toContain('  RQ-CLAUDE-QUIET | claude | fixture-model | phantom | running | spoke 15m ago QUIET | on node-here (this computer)');
+    expect(text).toContain('  RQ-CODEX-FAR | codex-local | fixture-model | lexicon | running | spoke 2m ago | on node-far | https://github.com/ashlrai/lexicon/pull/7');
     expect(text).toContain('    model unknown: no launch record or model file names a model yet');
-    expect(text).toMatch(/^unknown:$/m);
+    expect(text).toContain('  RQ-REMOTE-ONLY | lane unknown | model unknown | repo unknown | state unknown | last spoke unknown | on node-far');
+    expect(text).not.toContain('RQ-DONE'); // its finish time is unknown, so it cannot be placed in the last hour
+    expect(text).toContain('note: Leader state, model and messages unknown: no source records the leader session yet.');
   });
 });
 
@@ -161,6 +166,20 @@ describe('phm sessions', () => {
     finally { log.mockRestore(); stderr.mockRestore(); stdout.mockRestore(); }
   };
 
+  it('exposes reconciliation as versioned JSON and plain text, excluding waiting jobs and refusing mutations', async () => {
+    const snapshot = inventory([session('WAIT', { status: 'queued' }), session('HELD', { status: 'parked' }),
+      session('QUIET', { status: 'stale', live: 'no' }), session('FRESH', { live: 'no' })]);
+    const read = vi.fn(async () => snapshot);
+    const json = await capture(() => cmdReconcileSessions(['--json'], read));
+    expect(json.status).toBe(0);
+    expect(JSON.parse(json.out)).toEqual(reconcileSessions(snapshot));
+    expect(JSON.parse(json.out).counts).toEqual({ live: 0, finished: 0, unknown: 2 });
+    expect((await capture(() => cmdReconcileSessions([], read))).out).toContain('QUIET | unknown');
+    expect((await capture(() => cmdSessions(['reconcile', '--apply']))).status).toBe(2);
+    expect((await capture(() => cmdSessions(['reconcile', 'JOB']))).status).toBe(2);
+    expect((await capture(() => cmdSessions(['reconcile', '--help']))).out).toContain('phm sessions reconcile');
+  });
+
   it('prints the list as JSON or text through the injected reader, passing the filters', async () => {
     const map = await mixedFleet();
     const read = vi.fn((filter: { lane?: string | null; repo?: string | null }) => readLiveSessions({ ...filter, now: NOW, readMap: async () => map }));
@@ -169,7 +188,7 @@ describe('phm sessions', () => {
     expect(read).toHaveBeenLastCalledWith({ lane: 'claude', repo: null });
     expect(JSON.parse(json.out)).toEqual(buildLiveSessions(map, NOW, { lane: 'claude' }));
     const text = await capture(() => cmdLiveSessions(['--repo', 'lexicon'], read));
-    expect(text.out).toContain('1 running for repo lexicon, 0 quiet');
+    expect(text.out).toContain('1 session running: 1 worker; 1 with state unknown (repo lexicon)');
   });
 
   it('refuses bad flags with usage and exit 2, and keeps the existing verbs and help', async () => {

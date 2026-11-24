@@ -2,6 +2,15 @@
 
 The resource ledger is a read-only snapshot of every fleet lane, API spend, and job-health signal that a dispatcher publishes. An agent reads it via the API route `GET /api/verse/leader/resources` or the CLI command `ashlr resources ledger --json`.
 
+Spend-down history: each read of `GET /api/verse/leader/resources` (and `phm fleet usage-history`) appends the per-pool
+used share to `metrics/usage-history.json` beside the ledger's other sources. Rows are `{pool, used_pct, observed_at,
+reset_at, source}`; a reading with the same value and reset time as the pool's last row is skipped, and rows older than
+14 days are dropped. `phm fleet usage-history [--pool <name>] [--json]` and
+`GET /api/verse/leader/resources/usage-history[?pool=<name>]` return each pool's current window against the straight
+line from 0% at window start (reset minus 7 days) to 100% at reset, with a pace word: `ahead`, `on pace`, `behind`
+(within 5 points of the line is on pace) or `unknown` (fewer than two readings, no reset time, or the reset passed).
+A drop in `used_pct` with the same or a later reset time starts a new window and is listed in `resets`.
+
 ## Interface: `ResourceLedgerV1`
 
 The top-level object returned by every reading.

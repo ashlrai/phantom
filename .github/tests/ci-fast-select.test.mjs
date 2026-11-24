@@ -31,12 +31,47 @@ function repo(t, files) {
   return { dir, commit, write };
 }
 
-test('docs-only diffs select zero tests', () => {
+test('docs-only diffs still classify as docs but select the suites that read them', (t) => {
   assert.equal(classifyPaths(['docs/guide.md', 'README.md']).mode, 'docs');
   assert.equal(classifyPaths([]).mode, 'docs');
   assert.equal(classifyPaths(['docs/guide.md', 'src/a.ts']).mode, 'related');
-  const r = plan({ cwd: process.cwd(), paths: ['docs/guide.md'] });
-  assert.deepEqual([r.mode, r.tests, r.node, r.shards], ['docs', [], [], []]);
+  const { dir, commit } = repo(t, {
+    'docs/guide.md': '# Guide\n',
+    'docs/other.md': '# Other\n',
+    'test/docs-repo-links.test.ts': 'export {};\n',
+    'test/guide-reader.test.ts': "import { readFileSync } from 'node:fs';\nreadFileSync('docs/guide.md', 'utf8');\n",
+    'test/join-reader.test.ts': "import { readFileSync } from 'node:fs';\nreadFileSync(join('docs', 'other.md'), 'utf8');\n",
+    'test/unrelated.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  const r = plan({ cwd: dir, paths: ['docs/guide.md'] });
+  assert.equal(r.mode, 'related');
+  assert.deepEqual(r.tests, ['test/docs-repo-links.test.ts', 'test/guide-reader.test.ts']);
+  const joined = plan({ cwd: dir, paths: ['docs/other.md'] });
+  assert.equal(joined.mode, 'related');
+  assert.deepEqual(joined.tests, ['test/docs-repo-links.test.ts', 'test/join-reader.test.ts']);
+  const empty = plan({ cwd: dir, paths: [] });
+  assert.deepEqual([empty.mode, empty.tests, empty.node, empty.shards], ['docs', [], [], []]);
+});
+
+test('docs selection defers dist-bound readers and caps like related selection', (t) => {
+  const files = {
+    'docs/guide.md': '# Guide\n',
+    'test/docs-repo-links.test.ts': 'export {};\n',
+    'test/guide-dist-reader.test.ts': "import './helpers/require-built-dist.js';\nreadFileSync('docs/guide.md', 'utf8');\n",
+  };
+  for (let i = 0; i < MAX_RELATED_TESTS + 5; i += 1) {
+    files[`test/guide-reader-${String(i).padStart(3, '0')}.test.ts`] = "readFileSync('docs/guide.md', 'utf8');\n";
+  }
+  const { dir, commit } = repo(t, files);
+  commit('seed');
+  const r = plan({ cwd: dir, paths: ['docs/guide.md'] });
+  assert.equal(r.mode, 'related');
+  assert.ok(r.tests.includes('test/docs-repo-links.test.ts'));
+  assert.ok(!r.tests.includes('test/guide-dist-reader.test.ts'));
+  assert.deepEqual(r.deferred, ['test/guide-dist-reader.test.ts']);
+  assert.equal(r.tests.length, MAX_RELATED_TESTS);
+  assert.ok(r.capped > 0);
 });
 
 test('global inputs fall back to a bounded broader set instead of skipping', () => {
@@ -49,6 +84,9 @@ test('global inputs fall back to a bounded broader set instead of skipping', () 
   assert.ok(r.tests.length > 0 && r.tests.length <= FALLBACK_SHARDS * 40);
   assert.deepEqual([...r.shards.flat()].sort(), r.tests);
   for (const t of TIER1_TESTS) assert.ok(r.tests.includes(t), `fallback keeps ${t}`);
+  const manifest = plan({ cwd: process.cwd(), paths: ['package.json'] });
+  assert.ok(manifest.tests.includes('test/package-files-allowlist.test.ts'));
+  assert.ok(manifest.shards.some((shard) => shard.includes('test/package-files-allowlist.test.ts')));
   assert.deepEqual(selectFallback({ cwd: process.cwd() }).tests, selectFallback({ cwd: process.cwd() }).tests);
 });
 
@@ -122,6 +160,27 @@ test('Tier-1 paths always add the named authority tests, even past the cap', (t)
   for (const name of TIER1_TESTS) assert.ok(codeowners.tests.includes(name), `CODEOWNERS adds ${name}`);
 });
 
+test('a diff touching a recorded Tier-1 closure member selects the closure invariant', (t) => {
+  const snapshot = 'test/fixtures/authority/tier1-closure.json';
+  const { dir, commit } = repo(t, {
+    'src/core/fleet/lane-console.ts': 'export const lc = 1;\n',
+    'src/core/fleet/unrelated.ts': 'export const u = 1;\n',
+    'test/lane-console.test.ts': "import '../src/core/fleet/lane-console.js';\n",
+    'test/unrelated.test.ts': "import '../src/core/fleet/unrelated.js';\n",
+    [snapshot]: JSON.stringify({ closure: ['src/core/fleet/lane-console.ts'] }),
+    'test/authority-tier1-closure-310b.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  const member = plan({ cwd: dir, paths: ['src/core/fleet/lane-console.ts'] });
+  assert.ok(member.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'closure member diff runs the invariant');
+  const snap = plan({ cwd: dir, paths: [snapshot] });
+  assert.ok(snap.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'snapshot regen runs the invariant');
+  const other = plan({ cwd: dir, paths: ['src/core/fleet/unrelated.ts'] });
+  assert.ok(!other.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'non-member diff does not');
+  const newRoot = plan({ cwd: dir, paths: ['src/core/memory/brand-new.ts'] });
+  assert.ok(newRoot.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'a new root-eligible file runs the invariant');
+});
+
 test('workflow and script edits select their node and m30 tests', (t) => {
   const { dir, commit } = repo(t, {
     'test/m30.ci.test.ts': 'export {};\n',
@@ -132,6 +191,27 @@ test('workflow and script edits select their node and m30 tests', (t) => {
   const r = plan({ cwd: dir, paths: ['.github/workflows/ci.yml', '.github/scripts/ci-x.mjs'] });
   assert.deepEqual(r.tests, ['test/m30.ci.test.ts']);
   assert.deepEqual(r.node, ['.github/tests/ci-x.test.mjs']);
+});
+
+test('CLI registry edits select the anti-drift suite that reads the dispatch switch as text', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/cli/index.ts': 'export {};\n',
+    'src/cli/completions.ts': 'export const c = 1;\n',
+    'src/cli/help.ts': 'export const h = 1;\n',
+    'src/cli/outbox.ts': 'export const o = 1;\n',
+    'test/cli-registry-drift.test.ts': 'export {};\n',
+    'test/unrelated.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  // index.ts has no import edge into the suite — it parses the switch as
+  // text — so only the named rule can select it.
+  for (const path of ['src/cli/index.ts', 'src/cli/completions.ts', 'src/cli/help.ts']) {
+    const r = plan({ cwd: dir, paths: [path] });
+    assert.equal(r.mode, 'related');
+    assert.ok(r.tests.includes('test/cli-registry-drift.test.ts'), `${path} selects the drift suite`);
+  }
+  const impl = selectRelated({ cwd: dir, paths: ['src/cli/outbox.ts'] });
+  assert.ok(!impl.tests.includes('test/cli-registry-drift.test.ts'), 'a command implementation alone does not');
 });
 
 test('changedPaths uses the merge-base diff and rejects a mismatched checkout', (t) => {

@@ -43,6 +43,24 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
+  'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Restarts real outbox processes after crashes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real channel health proof processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Exercises concurrent archive planner subprocesses.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local handoff API server.
+  'test/imessage-teammate-dispatch.test.ts', // Runs real teammate dispatch child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real loopback API server.
+  'test/recut-n1r4200s92.test.ts', // Runs real recut child processes.
+  'test/recut-top-a59.test.ts', // Binds a real loopback API server.
+  'test/recut-check.test.ts', // Builds a real git repo to prove refContained sees applied hunks.
+  'test/repo-tracked-artifacts.test.ts', // Inspects tracked artifacts through real Git subprocesses.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real settings API server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real settings API server.
+  'test/ui-settings.test.ts', // Binds a real settings API server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real web API server.
+  'test/work-trace-restart-proof-319s.test.ts', // Restarts real work trace child processes.
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
@@ -52,10 +70,12 @@ export const REAL_IO_TEST_FILES = [
   'test/recut-scripts-c497.test.ts', // Runs the desktop performance script in a real Node child.
   'test/release-notes.test.ts', // Creates real Git merge history and invokes the release CLI through tsx.
   'test/release-status.test.ts', // Creates real Git tags and remote refs for release status reads.
+  'test/release-git-backlog.test.ts', // Creates temporary Git tags, remote refs and shallow clones for the leader brief fallback.
   'test/verify-changed-master-overlay.test.ts', // Creates real Git branches and materializes master overlay fixtures.
   'test/acp-seat-client.test.ts', // Real hermetic ACP stdio fixture subprocesses.
   'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.
   'test/pr-resolve-conflicts.test.ts', // Creates real git histories/worktrees and imports verified supersede bundles.
+  'test/fleet-republish.test.ts', // publish-log filesystem fixtures
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
@@ -852,4 +872,5 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
+  'test/node-ready-bridge.test.ts', // spawns python3 flock holders and contrib/mac/batch_sessions.py against real temp queue dirs
 ];

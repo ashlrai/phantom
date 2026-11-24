@@ -13,13 +13,25 @@ const FIELDS = 'number,state,headRefName,headRefOid,headRepository,baseRefName,m
 const record = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
-function parsePr(value: unknown): ConflictPr | null {
+interface PrEnvelope {
+  number: number; state: string; headSha: string; headRef: string; headRepo: string | null; baseRef: string;
+}
+
+function parseEnvelope(value: unknown): PrEnvelope | null {
   const row = record(value), head = record(row?.['headRepository']);
   if (!row || !Number.isSafeInteger(row['number']) || (row['number'] as number) < 1
-    || ['state', 'headRefOid', 'headRefName', 'baseRefName'].some(key => typeof row[key] !== 'string')
-    || typeof head?.['nameWithOwner'] !== 'string') return null;
+    || ['state', 'headRefOid', 'headRefName', 'baseRefName'].some(key => typeof row[key] !== 'string')) return null;
+  const headRepo = typeof head?.['nameWithOwner'] === 'string' && head['nameWithOwner'].trim()
+    ? head['nameWithOwner'] : null;
   return { number: row['number'] as number, state: row['state'] as string, headSha: row['headRefOid'] as string,
-    headRef: row['headRefName'] as string, headRepo: head['nameWithOwner'], baseRef: row['baseRefName'] as string };
+    headRef: row['headRefName'] as string, headRepo, baseRef: row['baseRefName'] as string };
+}
+
+function parsePr(value: unknown): ConflictPr | null {
+  const envelope = parseEnvelope(value);
+  if (!envelope?.headRepo) return null;
+  return { number: envelope.number, state: envelope.state, headSha: envelope.headSha,
+    headRef: envelope.headRef, headRepo: envelope.headRepo, baseRef: envelope.baseRef };
 }
 
 export async function runPrConflictResolution(options: ConflictRunOptions): Promise<unknown> {
@@ -48,20 +60,31 @@ export async function runPrConflictResolution(options: ConflictRunOptions): Prom
   const rows = options.pr
     ? [await gh(['pr', 'view', String(options.pr), '--repo', options.repo, '--json', FIELDS])]
     : await gh(['pr', 'list', '--repo', options.repo, '--state', 'open', '--limit', String(options.limit), '--json', FIELDS]);
-  if (!Array.isArray(rows) || rows.some(row => !parsePr(row))) throw new Error('invalid PR snapshot');
+  if (!Array.isArray(rows)) throw new Error('invalid PR snapshot');
+  const snapshots = rows.map(value => {
+    const row = record(value), pr = parseEnvelope(value);
+    return row && pr ? { row, pr } : null;
+  });
+  if (snapshots.some(snapshot => !snapshot)) throw new Error('invalid PR snapshot');
   const prs = [];
-  for (const value of rows) {
-    const row = record(value)!;
-    if (row['state'] !== 'OPEN' || (row['mergeStateStatus'] !== 'DIRTY' && row['mergeable'] !== 'CONFLICTING')) continue;
-    const pr = parsePr(row)!;
-    prs.push(await resolvePrConflicts({ repo: options.repo, pr, defaultBranch,
+  for (const snapshot of snapshots) {
+    const { row, pr } = snapshot!;
+    if (pr.state !== 'OPEN' || (row['mergeStateStatus'] !== 'DIRTY' && row['mergeable'] !== 'CONFLICTING')) continue;
+    if (!pr.headRepo) {
+      prs.push({ number: pr.number, head: pr.headSha, dryRun: !options.apply, status: 'head-unavailable',
+        reason: 'The PR source repository is unavailable.', files: [], hunks: [], commands: [] });
+      continue;
+    }
+    const conflictPr: ConflictPr = { number: pr.number, state: pr.state, headSha: pr.headSha,
+      headRef: pr.headRef, headRepo: pr.headRepo, baseRef: pr.baseRef };
+    prs.push(await resolvePrConflicts({ repo: options.repo, pr: conflictPr, defaultBranch,
       remote: `https://github.com/${options.repo}.git`, hold, allowlist, apply: options.apply,
       outputDir: options.outputDir ?? join(root, 'conflictres'),
       refresh: async () => {
         const currentHold = await holds();
         const repo = options.repo.toLowerCase(), short = repo.split('/')[1]!;
-        if ([...currentHold].some(key => [`${repo}#${pr.number}`, `${short}#${pr.number}`].includes(key.toLowerCase()))) return null;
-        return parsePr(await gh(['pr', 'view', String(pr.number), '--repo', options.repo, '--json', FIELDS]));
+        if ([...currentHold].some(key => [`${repo}#${conflictPr.number}`, `${short}#${conflictPr.number}`].includes(key.toLowerCase()))) return null;
+        return parsePr(await gh(['pr', 'view', String(conflictPr.number), '--repo', options.repo, '--json', FIELDS]));
       },
       // publish.sh only supports fleet job branches and reviewed integrated merges.
       // No arbitrary-existing-head adapter exists: export a complete supersede bundle.

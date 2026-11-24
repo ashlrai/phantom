@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetMergeLatency, fleetMergeLatency, formatMergeLatency } from '../src/cli/fleet-merge-latency.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import { mergeQueueStatus } from '../src/core/fleet/merge-queue-status.js';
 
 const now = Date.parse('2026-11-02T18:00:00Z');
 const ago = (s: number) => new Date(now - s * 1000).toISOString();
@@ -9,6 +10,115 @@ const ev = (pr: number, type: string, secsAgo: number, extra: object = {}) =>
 const reader = (...rows: unknown[]) => async () => rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n');
 const SHA = 'a'.repeat(40);
 afterEach(() => vi.restoreAllMocks());
+
+const stageFixture = [
+  ev(1, 'blocked', 1200, { reason: 'required_checks' }), ev(1, 'eligible', 1000), ev(1, 'queued', 100), ev(1, 'merged', 10),
+  ev(2, 'blocked', 500, { reason: 'required_checks' }), ev(2, 'queued', 450), ev(2, 'eligible', 100), ev(2, 'merged', 10),
+  ev(3, 'queued', 80), ev(3, 'merged', 10),
+  ev(4, 'queued', 20), ev(4, 'merged', 10, { at: undefined }),
+  ev(5, 'blocked', 40000, { reason: 'required_checks' }), // Open waits do not inflate historical totals.
+  ev(6, 'blocked', 60000, { reason: 'required_checks' }), ev(6, 'eligible', 50000), ev(6, 'merged', 40000),
+];
+
+it('aggregates distinct queue stages through versioned CLI JSON, preserving missing timestamps and the window', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetMergeLatency(['--hours', '1', '--json'], { read: reader(...stageFixture), now })).toBe(0);
+  const timing = JSON.parse(log.mock.calls[0]![0] as string).queue_stage_timing;
+  expect(timing).toEqual({ schema: 'fleet.queue-stage-timing.v1', readOnly: true, requiredChecksPreserved: true, prs: 4,
+    largest_delay: 'queue_admission', stages: {
+      required_checks: { count: 2, missing: 2, total_s: 600, p50_s: 200, p90_s: 400, max_s: 400 },
+      queue_admission: { count: 2, missing: 2, total_s: 900, p50_s: 0, p90_s: 900, max_s: 900 },
+      merge: { count: 2, missing: 2, total_s: 180, p50_s: 90, p90_s: 90, max_s: 90 },
+    } });
+  const report = await fleetMergeLatency(reader(...stageFixture), now, 1);
+  expect((await fleetMergeLatency(reader(...stageFixture.toReversed()), now, 1)).queue_stage_timing).toEqual(timing);
+  expect(formatMergeLatency(report)).toContain('Largest observed queue delay: Waiting to join after readiness.');
+  expect(formatMergeLatency(report)).toContain('2 measured, 2 missing events); total observed 600s');
+});
+
+it.each(['required_checks', 'merge', null])('identifies %s as the largest measured delay, leaving ties unknown', async largest => {
+  const checks = largest === 'required_checks' ? 900 : 100;
+  const merge = largest === 'merge' ? 900 : 100;
+  const report = await fleetMergeLatency(reader(ev(1, 'blocked', checks + merge + 110, { reason: 'required_checks' }),
+    ev(1, 'eligible', merge + 110), ev(1, 'queued', merge + 10), ev(1, 'merged', 10)), now);
+  expect(report.queue_stage_timing?.largest_delay).toBe(largest);
+});
+
+it('keeps absent, ambiguous, reversed and lost-readiness spans unmeasured', async () => {
+  const report = await fleetMergeLatency(reader(ev(1, 'eligible', 100), ev(1, 'queued', 90), ev(1, 'queued', 80), ev(1, 'merged', 10),
+    ev(2, 'eligible', 10), ev(2, 'queued', 90), ev(2, 'merged', 20),
+    ev(3, 'eligible', 100), ev(3, 'queued', 90), ev(3, 'blocked', 80, { reason: 'required_checks' }), ev(3, 'merged', 10)), now);
+  expect(report.queue_stage_timing?.stages.queue_admission).toMatchObject({ count: 0, missing: 3, total_s: null });
+  expect(report.queue_stage_timing?.stages.merge).toMatchObject({ count: 0, missing: 3, total_s: null });
+  expect((await fleetMergeLatency(reader(), now)).queue_stage_timing).toMatchObject({ prs: 0, largest_delay: null,
+    stages: { required_checks: { count: 0, missing: 0, total_s: null, p50_s: null } } });
+  const zero = await fleetMergeLatency(reader(ev(1, 'eligible', 10), ev(1, 'queued', 10), ev(1, 'merged', 10)), now);
+  expect(zero.queue_stage_timing).toMatchObject({ largest_delay: null,
+    stages: { queue_admission: { count: 1, missing: 0, total_s: 0 }, merge: { count: 1, missing: 0, total_s: 0 } } });
+  expect((await fleetMergeLatency(async () => null, now)).queue_stage_timing).toBeNull();
+});
+
+it.each([undefined, 'invalid', '2099-01-01'])('keeps missing or unusable terminal time %s unmeasured', at => {
+  expect(mergeQueueStatus([{ type: 'queued', at: ago(100) }, { type: 'merged', at }], now)).toEqual({
+    stage: 'merged', since: null, waiting_s: null, delays_s: { queue: null, required_checks: null, conflict: null } });
+  expect(mergeQueueStatus([{ type: 'blocked', reason: 'conflict' }], now).waiting_s).toBeNull();
+});
+
+it('reports observed queue, check and conflict intervals through CLI JSON and plain output', async () => {
+  const read = reader(ev(1, 'eligible', 100), ev(1, 'queued', 90),
+    ev(1, 'blocked', 80, { reason: 'required_checks' }), ev(1, 'checks_passed', 60),
+    ev(1, 'conflict', 40), ev(1, 'queued', 30), ev(1, 'checks_passed', 20));
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetMergeLatency(['--json'], { read, now })).toBe(0);
+  const report = JSON.parse(log.mock.calls[0]![0] as string);
+  expect(report.queue_timelines[0]).toMatchObject({ ready_wait_s: null, eligible_to_merge_s: null,
+    status: { stage: 'conflict', since: ago(40), waiting_s: 40,
+      delays_s: { queue: 40, required_checks: 20, conflict: 40 } } });
+  expect(formatMergeLatency(report)).toContain('current stage conflict, wait 40s');
+});
+
+it('freezes merged intervals, retains untimed terminals, and measures open readiness', async () => {
+  const rows = [ev(1, 'eligible', 100), ev(1, 'queued', 90), ev(1, 'merged', 10), ev(1, 'conflict', 5),
+    ev(2, 'eligible', 80), ev(3, 'queued', 70), ev(3, 'closed', 20),
+    ev(4, 'queued', 60), ev(4, 'merged', 10, { at: undefined }), ev(5, 'merged', 10),
+    ev(6, 'eligible', 100, { at: 'invalid' }), ev(6, 'queued', 90),
+    ev(7, 'queued', 100), ev(7, 'conflict', 60), ev(7, 'eligible', 30), ev(7, 'merged', 10)];
+  const report = await fleetMergeLatency(reader(...rows), now);
+  expect(report.queue_timelines).toMatchObject([
+    { pr: 1, eligible_to_merge_s: 90, ready_wait_s: null, status: { stage: 'merged', since: ago(10), waiting_s: null, delays_s: { queue: 90, required_checks: null, conflict: null } } },
+    { pr: 2, ready_wait_s: 80, eligible_to_merge_s: null, status: { stage: 'queue', waiting_s: 80 } },
+    { pr: 3, ready_wait_s: null, status: { stage: 'closed', waiting_s: null, delays_s: { queue: 50 } } },
+    { pr: 4, eligible_to_merge_s: null, status: { stage: 'merged', since: null, waiting_s: null, delays_s: { queue: null } } },
+    { pr: 5, eligible_to_merge_s: null, status: { stage: 'merged', delays_s: { queue: null } } },
+    { pr: 6, ready_wait_s: null, eligible_to_merge_s: null },
+    { pr: 7, eligible_to_merge_s: 20, status: { stage: 'merged', waiting_s: null, delays_s: { queue: 60, conflict: 30 } } },
+  ]);
+  expect((await fleetMergeLatency(reader(...rows), now + 60000)).queue_timelines?.[0]).toEqual(report.queue_timelines?.[0]);
+  expect((await fleetMergeLatency(reader(...rows.reverse()), now)).queue_timelines).toEqual(report.queue_timelines);
+});
+
+it.each(['pending', 'failure'])('keeps required %s delays until aggregate success and invalidates readiness', async conclusion => {
+  const read = reader(ev(1, 'eligible', 100), ev(1, 'check_observed', 80, { required: true, conclusion }),
+    ev(1, 'check_observed', 60, { required: true, conclusion: 'success' }), ev(1, 'queued', 40),
+    ev(2, 'queued', 100), ev(2, 'check_observed', 80, { required: false, conclusion }));
+  expect((await fleetMergeLatency(read, now)).queue_timelines).toMatchObject([
+    { ready_wait_s: null, status: { stage: 'required_checks', since: ago(80), waiting_s: 80, delays_s: { queue: 20, required_checks: 80 } } },
+    { status: { stage: 'queue', waiting_s: 100, delays_s: { required_checks: null } } },
+  ]);
+});
+
+it('handles simultaneous membership and blockers without choosing between conflicting verdicts', async () => {
+  expect(mergeQueueStatus([{ type: 'eligible', at: ago(100) }, { type: 'checks_passed', at: ago(100) }], now))
+    .toMatchObject({ stage: 'queue', waiting_s: 100 });
+  const rows = [ev(1, 'queued', 100), ev(1, 'blocked', 100, { reason: 'required_checks' }),
+    ev(2, 'queued', 100), ev(2, 'blocked', 80, { reason: 'conflict' }), ev(2, 'eligible', 80)];
+  const report = await fleetMergeLatency(reader(...rows), now);
+  expect(report.queue_timelines).toMatchObject([
+    { status: { stage: 'required_checks', waiting_s: 100, delays_s: { queue: null, required_checks: 100 } } },
+    { status: { stage: 'unknown', waiting_s: null, delays_s: { queue: null, required_checks: null, conflict: null } } },
+  ]);
+  expect((await fleetMergeLatency(reader(...rows.reverse()), now)).queue_timelines).toEqual(report.queue_timelines);
+});
 
 it('selects the oldest actionable queue delay across all ages with deterministic repo and PR ties', async () => {
   const rows = [ev(2, 'queued', 200000), ev(2, 'conflict', 100, { head_sha: SHA }),
@@ -473,4 +583,54 @@ it('records retry_requested observations through the append and --record paths',
     await expect(recordMergeEvent(path, { ...ev(3, 'retry_requested', 500), at: undefined })).rejects.toThrow();
     await expect(recordMergeEvent(path, { ...ev(3, 'retry_failed', 500), at: undefined })).rejects.toThrow();
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+const waitOf = async (rows: unknown[], stalledAfter?: number) =>
+  (await fleetMergeLatency(reader(...rows), now, 24, stalledAfter)).pr_stages!.map(p => p.wait);
+
+it('reports per-stage timestamps, elapsed time and the next automatic action for queued, required-check wait and merged PRs', async () => {
+  const [queued, checks, merged] = await waitOf([
+    ev(1, 'opened', 900), ev(1, 'queued', 600),
+    ev(2, 'opened', 900), ev(2, 'queued', 800), ev(2, 'check_observed', 700, { required: true, conclusion: 'pending' }),
+    ev(3, 'opened', 900), ev(3, 'queued', 800), ev(3, 'checks_passed', 300), ev(3, 'merged', 100),
+  ]);
+  expect(queued).toMatchObject({ state: 'queued', elapsed_s: 900, stage_waiting_s: 600, stalled: false,
+    stage_times: { opened_at: ago(900), queued_at: ago(600), checks_passed_at: null, merged_at: null },
+    next: { action: 'merge_queue', automatic: true } });
+  expect(checks).toMatchObject({ state: 'required_checks', stage_waiting_s: 700, stalled: false, next: { action: 'required_checks', automatic: true } });
+  expect(checks.next.note).toContain('none are skipped');
+  expect(merged).toMatchObject({ state: 'merged', elapsed_s: 800, stage_waiting_s: null, stalled: false,
+    stage_times: { checks_passed_at: ago(300), merged_at: ago(100) }, next: { action: 'none', automatic: false } });
+  expect(merged.diagnosis).toBe('Merged after 13m.');
+});
+
+it('diagnoses a stalled required-check wait and keeps unmeasurable waits unknown', async () => {
+  const [stalled, notQueued, reversed] = await waitOf([
+    ev(1, 'opened', 9000), ev(1, 'queued', 8000), ev(1, 'check_observed', 7500, { required: true, conclusion: 'failure' }),
+    ev(2, 'opened', 500),
+    ev(3, 'opened', 100), ev(3, 'queued', 200), ev(3, 'merged', 50),
+  ], 3600);
+  expect(stalled).toMatchObject({ state: 'required_checks', stage_waiting_s: 7500, stalled: true });
+  expect(stalled.diagnosis).toContain('past the 1h 0m stall limit. Inspect pending or failed required checks; keep them enabled.');
+  expect(notQueued).toMatchObject({ state: 'not_queued', stage_waiting_s: 500, stalled: false, next: { action: 'enqueue', automatic: true } });
+  expect(reversed).toMatchObject({ state: 'merged', elapsed_s: null });
+  const [untimed] = await waitOf([ev(4, 'opened', 100), ev(4, 'merged', 10, { at: undefined })]);
+  expect(untimed).toMatchObject({ state: 'merged', elapsed_s: null, stage_times: { merged_at: null } });
+});
+
+it('names merge-retry when an auto-merge drop is retryable', async () => {
+  const [w] = await waitOf([ev(1, 'opened', 900), ev(1, 'queued', 800), ev(1, 'auto_merge_enabled', 700),
+    ev(1, 'blocked', 650, { reason: 'queue' }), ev(1, 'auto_merge_disabled', 600)]);
+  expect(w.next).toMatchObject({ action: 'merge_retry', automatic: true });
+});
+
+it('prints the typed wait diagnosis in JSON and plain words without changing the ledger', async () => {
+  const rows = [ev(1, 'opened', 900), ev(1, 'queued', 600), ev(2, 'opened', 900), ev(2, 'queued', 800), ev(2, 'checks_passed', 300), ev(2, 'merged', 100)];
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetMergeLatency(['--json'], { read: reader(...rows), now })).toBe(0);
+  const json = JSON.parse(log.mock.calls[0]![0] as string);
+  expect(json.pr_stages.map((p: { wait: { state: string } }) => p.wait.state)).toEqual(['queued', 'merged']);
+  const text = formatMergeLatency(await fleetMergeLatency(reader(...rows), now));
+  expect(text).toContain('PR is in the merge queue for 10m.');
+  expect(text).toContain('Next (automatic): The merge queue merges it after its merge-group checks pass.');
 });

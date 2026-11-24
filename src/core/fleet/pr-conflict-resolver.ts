@@ -33,7 +33,7 @@ export interface ConflictPr {
 export interface ConflictHunk { path: string; ours: string; base: string; theirs: string }
 export interface ConflictReport {
   number: number; head: string; base?: string; dryRun: boolean;
-  status: 'needs-agent' | 'would-resolve' | 'ready-supersede' | 'published';
+  status: 'needs-agent' | 'would-resolve' | 'ready-supersede' | 'published' | 'head-unavailable';
   reason: string; files: string[]; hunks: ConflictHunk[];
   commands: string[][]; commit?: string; bundle?: string;
   supersede?: { headRepo: string; headRef: string; base: string; publishVia: 'publish.sh'; instructions: string };

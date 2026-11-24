@@ -11,6 +11,7 @@
  *   ashlr devin launch "<task>" [--repo owner/name] [--base branch] [--title t] [--json]
  *   ashlr devin list [--all] [--json]
  *   ashlr devin refresh [--json]
+ *   ashlr devin review <pr-url|#n> [--repo owner/name] [--head sha] [--apply] [--dry-run] [--json]
  *   ashlr devin message <task-id> "<text>"
  *   ashlr devin budget [--acu N] [--spent N] [--per-session N] [--per-day N] [--reserve N]
  *                      [--pause-at PCT] [--usd-per-acu N] [--max-concurrent N] [--max-per-day N]
@@ -64,6 +65,8 @@ Usage:
   ashlr devin list [--all] [--json]
   ashlr devin refresh [--json]
       Read each live session's status and ACUs, and ask GitHub for its PR.
+  ashlr devin review <pr-url|#n> [--repo owner/name] [--head sha] [--apply] [--dry-run] [--json]
+      Plan a Devin Review (default), or request an advisory review with --apply.
   ashlr devin message <task-id> "<text>"
       Reply to a Devin session that is waiting for you.
   ashlr devin land --session <devin-session-id> [--repo phantom] [--base branch] [--job id] [--bundle name] [--apply] [--json]
@@ -430,6 +433,32 @@ async function cmdLand(deps: DevinCliDeps, args: string[]): Promise<number> {
   return 0;
 }
 
+async function cmdReview(deps: DevinCliDeps, args: string[]): Promise<number> {
+  const asJson = takeFlag(args, '--json');
+  const apply = takeFlag(args, '--apply');
+  const dry = takeFlag(args, '--dry-run');
+  const repo = takeOption(args, '--repo') ?? deps.originRepo(deps.cwd());
+  let head = takeOption(args, '--head');
+  if ((apply && dry) || args.length !== 1 || args[0]!.startsWith('--')) throw new UsageError('Expected one PR reference and valid review options.');
+  const review = await import('../core/devin/pr-review.js');
+  const ref = review.parseDevinPrRef(args[0]!, repo);
+  if (!ref) { deps.err('invalid-pr'); return 1; }
+  if (!apply) {
+    const plan = review.planDevinPrReview(ref, null);
+    if (asJson) json(deps, plan); else deps.out(JSON.stringify(plan, null, 2));
+    return 0;
+  }
+  if (!head) {
+    const host = await import('../core/fleet/host-merge.js');
+    const pr = await host.readPr(ref.repo, ref.number, host.defaultHostMergeDeps());
+    if (typeof pr === 'string') { deps.err('invalid-pr'); return 1; }
+    head = pr.headSha;
+  }
+  const result = await review.triggerDevinPrReviewOnce({ ...ref, headSha: head, origin: 'cli' });
+  if (asJson) json(deps, result); else deps.out(result.ok ? 'triggered' : `${result.reason}: ${result.detail}`);
+  return result.ok ? 0 : 1;
+}
+
 function cmdList(deps: DevinCliDeps, args: string[]): number {
   const asJson = takeFlag(args, '--json');
   const all = takeFlag(args, '--all');
@@ -595,7 +624,8 @@ function clean(text: string): string {
 const HELP_VALUE_OPTIONS = new Set([
   '--acu', '--fleet-concurrent', '--fleet-per-day', '--max-concurrent', '--max-per-day', '--pause-at', '--per-day',
   '--per-session', '--reserve', '--spent', '--usd-per-acu', '--base', '--email', '--org', '--repo', '--title',
-  '--inbox', '--outbox', '--cwd', '--model', '--stall-window-ms', '--timeout-ms', '--session', '--job', '--bundle',
+  '--inbox', '--outbox', '--cwd', '--model', '--stall-window-ms', '--timeout-ms',
+  '--session', '--job', '--bundle', '--head',
 ]);
 
 function wantsHelp(args: readonly string[]): boolean {
@@ -616,7 +646,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
     (sub ? print : printErr)(USAGE);
     return sub ? 0 : 2;
   }
-  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget', 'bus', 'land', 'autoland'];
+  const known = ['connect', 'disconnect', 'seat', 'enable', 'disable', 'fleet', 'status', 'launch', 'list', 'ls', 'refresh', 'message', 'budget', 'bus', 'land', 'autoland', 'review'];
   if (!known.includes(sub)) {
     printErr(`Unknown devin command "${sub}".\n\n${USAGE}`);
     return 2;
@@ -639,6 +669,7 @@ export async function runDevinCli(argv: string[], injected?: Partial<DevinCliDep
   const deps: DevinCliDeps = injected && isComplete(injected) ? injected : { ...(await defaultDeps()), ...injected };
   try {
     switch (sub) {
+      case 'review': return await cmdReview(deps, args);
       case 'bus': return await cmdBus(deps, args);
       case 'connect': return await cmdConnect(deps, args);
       case 'disconnect': return await cmdDisconnect(deps, args);

@@ -1,5 +1,7 @@
 # Router gateway
 
+Provider-neutral [failover chains](ROUTING.md#failover-chains) are advisory and dispatcher-unwired.
+
 See [Router catalog refresh](ROUTER-CATALOG.md) for model discovery and weekly review-only patches.
 
 The router gateway lets any agent ask for a model completion and have Phantom
@@ -168,6 +170,54 @@ No verified alternative means no call. A missing or invalid registry fails close
 (empty means unknown), `verified`, source URL, verified-on date, and the
 `unverified` and `stale` (verified over 30 days ago) flags. The desktop Models
 panel shows the same rows from `GET /api/verse/fleet/control/models`.
+
+`phm models check [--json] [--diff <file>]` is the one read-only answer to "can
+the router use this name?". For every model in the registry or chosen in
+`models.json` it reports provider, ID, lanes, source URL, the date it was last
+confirmed and a state: `confirmed`, `stale` (confirmed more than 14 days ago,
+still routable) or `unconfirmed` (no source; `routable` is `false`, the same
+answer the gateway gives). The JSON is `models.check.v1` with `version: 1`; a
+registry that cannot be read gives `registry: "unknown"` and no models. Exit 0
+means nothing needs doing. `--diff` takes a provider release-notes page saved to
+disk (the command never fetches) and lists `new`, `renamed` and `retired` IDs
+for that provider as leads to confirm; it changes nothing. The Models pane shows
+the same report from `GET /api/verse/fleet/control/models/check`.
+
+The check also compares the registry with what provider docs confirm, when a
+docs-watch job has written `$ASHLR_HOME/model-docs.json` as
+`{"schema": "models.docs.v1", "version": 1, "records": [...]}`. Each record
+has `provider`, `id`, `status` (`current`, `deprecated` or `retired`),
+`source_url` (https on the provider's own doc site, or the row is dropped),
+`seen_at` and an optional `replacement`. Nothing here fetches the list. Each
+model then carries `docs`: `confirmed`, `deprecated` (with `replacement` when the
+docs name one), `retired`, `unconfirmed` (the provider has records, this ID has
+none) or `unknown` (no list, or none for that provider). `missing` lists current
+docs models the registry lacks, and `summary` is the top line in plain words.
+The gateway uses the same function: a verified model that the docs call
+`retired` or do not name is skipped, and the next verified model on the lane is
+used. A docs list can only take a model away. With no list, `docs` is `unknown`
+and routing follows the registry alone.
+
+`phm models radar [--json] [--from <folder>] [--fetch]` finds models the day
+they ship. It reads saved release notes, one file per provider (`anthropic.md`,
+`openai.md`, `xai.md`, `google.md`, `zai.md`, `qwen.md`, `devin.md`; `.txt` and
+`.html` work too) from `--from`, or from `$ASHLR_HOME/model-radar` when no
+folder is given. `--fetch` first saves today's official pages into that folder,
+so a daily job runs one command: `phm models radar --fetch --json`. The report
+is `models.radar.v1` with `version: 1`: `new_models`, `retired_models` and
+`renamed`, each with `provider`, the `id` as the page writes it, the `line` it
+came from and `confidence`, plus `unchanged_count` and a one-line `summary`
+such as `2 new, 1 retired, 0 renamed`. Only an ID that fully matches the
+provider's exact ID shape is `high`; a marketing name such as "Claude Opus 7"
+is `low`. `patch` (`models.registry-patch.v1`, `applied: false`) holds the
+high-confidence changes only, and nothing applies it. A proposed new model is
+`unverified`, so the gateway keeps refusing it until
+`phm models verify <id> --provider <name> --source <url>` confirms it. A
+provider with no saved file, an empty one, or no recorded doc site is shown as
+`unknown` or `empty`, never as unchanged. `fetch` lists each page `--fetch`
+tried and whether it was saved (`null` when no fetch was asked for). Exit 0
+means every provider was read, no page failed for a whole provider and no
+high-confidence change is waiting.
 
 To qualify a new model on release day, confirm its exact ID in official docs, then
 run `phm models verify <id> --source <url>` (add `--provider <name>` for an ID that

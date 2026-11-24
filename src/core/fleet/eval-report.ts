@@ -13,7 +13,9 @@
  *   - the metrics jobs ledger (`~/.ashlr-runs/metrics/jobs.jsonl`):
  *     dispatchd's enqueue/claim/launch/finish/publish/outcome rows. Outcome
  *     rows keyed by PR URL carry `state` MERGED|CLOSED|OPEN, `mergedAt` and
- *     `ttm_s`; publish rows bind a job to its PR URLs.
+ *     `ttm_s`; publish rows bind a job to its PR URLs. The ledger is
+ *     append-only, so readers take its newest bounded tail; a cut window is
+ *     reported via `sources.jobs.truncated`, never implied complete.
  *   - optional gh-shaped merged-PR exports (`gh pr list --state merged
  *     --json ...` / `gh search prs --json ...`, a JSON array or JSONL):
  *     mergeCommit sha (the join key to the observation ledger),
@@ -57,9 +59,14 @@ export interface EvalObservationRow {
   confidence?: 'deterministic' | 'heuristic';
 }
 
+/** What a jobsText input may carry: raw ledger text, or the newest bounded
+ * tail plus its cut flag (`truncated` true exactly when older bytes were not
+ * read). A bare string is a complete, untruncated read. */
+export interface EvalReportJobsRead { text: string; truncated: boolean }
+
 export interface FleetEvalReportInput {
-  /** metrics/jobs.jsonl contents; null when the ledger is absent/unreadable. */
-  jobsText: string | null;
+  /** metrics/jobs.jsonl contents — full text or the newest bounded tail; null when the ledger is absent/unreadable. */
+  jobsText: string | EvalReportJobsRead | null;
   /** gh-shaped merged-PR exports; each entry is a JSON array or JSONL text. */
   prsTexts?: readonly string[];
   /** Observation ledger rows and source health, or null to skip the channel. */
@@ -131,7 +138,7 @@ export interface FleetEvalReport {
   generatedAt: string;
   window: { days: number; since: string; until: string };
   sources: {
-    jobs: { state: 'healthy' | 'missing' | 'degraded'; rows: number; events: number; ignored: number };
+    jobs: { state: 'healthy' | 'missing' | 'degraded'; truncated: boolean; rows: number; events: number; ignored: number };
     pullRequests: { state: 'absent' | 'healthy' | 'degraded'; files: number; rows: number; mergedRows: number; ignored: number };
     observations: { state: 'disabled' | 'healthy' | 'missing' | 'degraded'; rows: number };
   };
@@ -210,8 +217,22 @@ const ts = (row: Row, ...names: string[]): number | null => {
   return null;
 };
 
+/**
+ * jobs.jsonl timestamp dialect: ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt, with mergedAt/closedAt preferred on terminal rows —
+ * the same field set dispatchd `_vc_pick` and metrics/loop accept.
+ */
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+
+/** First parseable ledger stamp for a row in the given phase; MERGED prefers mergedAt, CLOSED closedAt. */
+const ledgerTs = (row: Row, phase: string): number | null => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const keys = preferred === null ? LEDGER_TS_KEYS : [preferred, ...LEDGER_TS_KEYS.filter(k => k !== preferred)];
+  return ts(row, ...keys);
+};
+
 const EVENT = (row: Row): string => (str(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const PHASE = (row: Row): string => (str(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
+const PHASE = (row: Row): string => (str(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
 const PR_URL_RE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\/?$/;
 
 /** Canonical join key for a GitHub PR URL; null when the value is not one. */
@@ -311,7 +332,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
   for (const row of parsed) {
     const event = EVENT(row);
     const phase = PHASE(row);
-    const atMs = ts(row, 'ts', 'timestamp', 'at', 'mergedAt', 'closedAt');
+    const atMs = ledgerTs(row, phase);
     const inWindow = atMs !== null && atMs >= sinceMs && atMs < untilMs;
     const job = jobOf(row);
     const pr = prUrlOf(row);
@@ -320,7 +341,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       counts.events++;
       const route = {
         atMs: atMs ?? 0,
-        lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'),
+        lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'),
         repo: str(row, 'repo'), model: str(row, 'model'),
       };
       if (job) jobFold(job).routes.push(route);
@@ -337,7 +358,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       const empty = row['empty'] === true;
       if (job) jobFold(job).finishes.push({ atMs: atMs ?? 0, failed, empty });
       if (inWindow) {
-        activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed, empty });
+        activity.push({ kind: 'finish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed, empty });
       }
       continue;
     }
@@ -345,7 +366,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
       counts.events++;
       if (job && pr) jobFold(job).urls.add(pr.key);
       if (inWindow) {
-        activity.push({ kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed: false, empty: false });
+        activity.push({ kind: 'publish', jobId: job, lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }
@@ -367,7 +388,7 @@ export function foldJobsLedger(text: string, sinceMs: number, untilMs: number): 
         });
       }
       if (inWindow && (phase === 'MERGED' || phase === 'CLOSED')) {
-        activity.push({ kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool'), tier: str(row, 'tier'), failed: false, empty: false });
+        activity.push({ kind: phase === 'MERGED' ? 'merged' : 'closed', jobId: job ?? (pr ? jobByUrl.get(pr.key) ?? null : null), lane: str(row, 'lane', 'pool', 'arm'), tier: str(row, 'tier'), failed: false, empty: false });
       }
       continue;
     }
@@ -612,8 +633,11 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
   const windowDays = Math.min(MAX_EVAL_DAYS, Math.max(1, Math.floor(input.windowDays ?? DEFAULT_EVAL_DAYS) || DEFAULT_EVAL_DAYS));
   const sinceMs = untilMs - windowDays * 86_400_000;
 
-  const fold = input.jobsText !== null
-    ? foldJobsLedger(input.jobsText, sinceMs, untilMs)
+  const jobsRead = input.jobsText === null ? null
+    : typeof input.jobsText === 'string' ? { text: input.jobsText, truncated: false }
+    : input.jobsText;
+  const fold = jobsRead !== null
+    ? foldJobsLedger(jobsRead.text, sinceMs, untilMs)
     : { jobByUrl: new Map<string, string>(), jobs: new Map<string, JobFold>(),
         outcomes: new Map<string, OutcomeRow>(), activity: [] as ActivityEvent[],
         counts: { rows: 0, events: 0, ignored: 0 } };
@@ -895,7 +919,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
       })))
     .sort((a, b) => b.lowerBound - a.lowerBound || b.resolved - a.resolved || a.name.localeCompare(b.name));
 
-  const jobsSource = input.jobsText === null ? 'missing'
+  const jobsSource = jobsRead === null ? 'missing'
     : fold.counts.ignored > 0 ? 'degraded' : 'healthy';
   const prsState = (input.prsTexts ?? []).length === 0 ? 'absent'
     : ghIgnored > 0 ? 'degraded' : 'healthy';
@@ -910,7 +934,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
       until: new Date(untilMs).toISOString(),
     },
     sources: {
-      jobs: { state: jobsSource, rows: fold.counts.rows, events: fold.counts.events, ignored: fold.counts.ignored },
+      jobs: { state: jobsSource, truncated: jobsRead?.truncated ?? false, rows: fold.counts.rows, events: fold.counts.events, ignored: fold.counts.ignored },
       pullRequests: {
         state: prsState, files: (input.prsTexts ?? []).length,
         rows: ghRows.length, mergedRows: ghMerged.length, ignored: ghIgnored,
@@ -974,6 +998,6 @@ export function formatFleetEvalReport(report: FleetEvalReport): string {
     lines.push('Most durable (Wilson lower bound): ' +
       report.ranked.slice(0, 5).map((r) => `${r.name} ${pct(r.durabilityRate)} n=${r.resolved}`).join(', '));
   }
-  lines.push(`Sources: jobs ${report.sources.jobs.state}, gh export ${report.sources.pullRequests.state}, observations ${report.sources.observations.state}`);
+  lines.push(`Sources: jobs ${report.sources.jobs.state}${report.sources.jobs.truncated ? ' (truncated)' : ''}, gh export ${report.sources.pullRequests.state}, observations ${report.sources.observations.state}`);
   return lines.join('\n');
 }

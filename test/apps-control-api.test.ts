@@ -28,8 +28,10 @@ afterEach(() => {
   if (oldRuns === undefined) delete process.env.ASHLR_RUNS_DIR; else process.env.ASHLR_RUNS_DIR = oldRuns;
   rmSync(root, { recursive: true, force: true });
 });
-const transport = (dirty = false) => vi.fn(async (name: string) => {
-  if (name === 'computer_list_apps') return ok('- Cursor (com.example.cursor): up to click only\n- Notes (com.example.notes): up to full control');
+const transport = (dirty = false, quit = false) => vi.fn(async (name: string) => {
+  // A pressed Quit closes Notes: it leaves the running list.
+  if (name === 'computer_ax_press') quit = true;
+  if (name === 'computer_list_apps') return ok(`- Cursor (com.example.cursor): up to click only${quit ? '' : '\n- Notes (com.example.notes): up to full control'}`);
   if (name === 'computer_ax_tree') return ok([
     { ref: 'e1', role: 'AXWindow', title: dirty ? 'Draft - Edited' : 'Project' },
     { ref: 'e2', role: 'AXMenuItem', title: 'Quit Cursor' },
@@ -62,8 +64,8 @@ describe('known Mac apps API', () => {
   it('serves the same report as `phm apps --json` on GET only, local only', async () => {
     const res = await requestMac({ deps: { probe: null } });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ schema: 'phm.apps/1', probe: 'missing' });
-    expect(res.body.apps.map((a: { id: string }) => a.id)).toEqual(['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'safari']);
+    expect(res.body).toMatchObject({ schema: 'phm.apps/2', version: 2, probe: 'missing' });
+    expect(res.body.apps.map((a: { id: string }) => a.id)).toEqual(['phantom', 'claude', 'codex', 'chatgpt', 'cursor', 'grok', 'devin', 'safari']);
     expect((await requestMac({ method: 'POST', deps: { probe: null } })).status).toBe(405);
     expect((await requestMac({ address: '192.0.2.1', deps: { probe: null } })).status).toBe(403);
     expect((await requestMac({ channel: 'mobile', deps: { probe: null } })).status).toBe(403);
@@ -129,6 +131,18 @@ describe('allowlisted console API', () => {
     expect(res).toMatchObject({ status: 202, body: { outcome: 'needs-you', code: 'unsaved-state' } });
     expect(dirty.mock.calls.map(c => c[0])).not.toContain('computer_ax_press');
     expect(readFileSync(join(root, 'NEEDS-MASON.md'), 'utf8')).toContain('unsaved work');
+  });
+
+  it('dry-runs a restart over the API: the steps come back, nothing is pressed', async () => {
+    writeFileSync(allowFile, JSON.stringify({ apps: [{ name: 'Notes', bundleId: 'com.example.notes' }] }));
+    const call = transport();
+    const launcher = { open: vi.fn(async () => ({ ok: true as const })), activate: vi.fn(async () => ({ ok: true as const })) };
+    const res = await request({ action: 'restart', app: 'Notes', dryRun: true }, { deps: { call, launcher } });
+    expect(res).toMatchObject({ status: 200, body: { schema: 'phm.apps.action/1', version: 1, outcome: 'dry-run', logged: false } });
+    expect(res.body.commands.at(-1)).toBe('/usr/bin/open -b com.example.notes');
+    expect(call.mock.calls.map(c => c[0])).toEqual(['computer_list_apps']);
+    expect(launcher.open).not.toHaveBeenCalled();
+    expect((await request({ action: 'open', app: 'Notes', dryRun: 'yes' })).status).toBe(400);
   });
 
   it('self actions and fleet job requests reach needs-you; resolution never executes them', async () => {

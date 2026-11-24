@@ -7,7 +7,7 @@ import {canonicalJson} from '../authority/canonical-json.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
-import {createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
+import {ConsumerInstallHeld, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
   type ConsumerInstallDependencies, type ConsumerInstallIo, type ConsumerTransaction} from './consumer-install.js';
 import {extractSignedAppArchive} from './qualified-update.js';
 import {verifyCompatibleUpdateManifest, verifyMinisign, verifyUpdateBundleRecord, type CompatibleUpdateManifest} from './update-manifest.js';
@@ -32,6 +32,11 @@ const semver=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const releasePattern=/^[a-f0-9]{40}$/;
 class Held extends Error {}
 function need(value:unknown,reason:string):asserts value {if(!value)throw new Held(reason);}
+function heldReason(error:unknown):string|null {
+  if(error instanceof Held)return error.message;
+  if(error instanceof ConsumerInstallHeld)return error.reason;
+  return null;
+}
 function versionAt(root:string):string {
   const pkg=JSON.parse(regular(join(root,'package.json'),65536).data.toString());
   need(pkg.name==='@ashlr/phantom' && typeof pkg.version==='string' && semver.test(pkg.version),'unmanaged-current');return pkg.version;
@@ -87,7 +92,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
       need(before.target===join(releases,journal.current.release)&&r.installed.version===journal.current.version,'current-changed');
       a.destination=join(releases,journal.previous.release);parents(deps.home,a.destination,false);directory(a.destination);
       need(versionAt(a.destination)===journal.previous.version,'no-rollback');
-      need(regular(join(a.destination,'bin/ashlr'),65536).data.equals(regular(join(deps.packageRoot,'bin/ashlr'),65536).data),'launcher-identity');
+      need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===journal.previous.version,'smoke-failed');
       a.journal=journal;r.candidate={version:journal.previous.version,release:journal.previous.release};r.previous={version:journal.current.version,release:journal.current.release};
       const surface=verifyAuthoritySurfaceAt(a.destination,'installed',{fresh:true});if(surface.ok)touchId(r,before.target,surface.digest!);
@@ -124,7 +129,7 @@ export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDepende
     if(r.daemon.restart.touchId===true)r.steps.push('phm authority grant (Touch ID)');
     r.steps.push('phm authority resident start (owner confirmation)');
     r.state='ready';const observed=freeze(r);admissions.set(observed,a);return observed;
-  }catch(error){r.reason=error instanceof Held?error.message:'inspection-unavailable';if(r.reason==='not-installed')r.steps=['phm desktop install'];return freeze(r);}
+  }catch(error){r.reason=heldReason(error)??'inspection-unavailable';if(r.reason==='not-installed')r.steps=['phm desktop install'];return freeze(r);}
 }
 function writeJournal(home:string,journal:Journal):void {
   const root=join(home,'.local/share/ashlr');parents(home,root,false);const temp=join(root,`.upgrade-${randomBytes(12).toString('hex')}`);
@@ -143,7 +148,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
       fs.mkdirSync(a.destination,{mode:0o700});created=directory(a.destination);extractPinnedRuntimeArchive(archive,a.destination);await packageReady(a.destination,{pins:a.pins,manifest:a.manifest});
     } else {
       parents(deps.home,a.destination,false);need(versionAt(a.destination)===r.candidate!.version,'no-rollback');
-      need(regular(join(a.destination,'bin/ashlr'),65536).data.equals(regular(join(deps.packageRoot,'bin/ashlr'),65536).data),'launcher-identity');
+      need(io.isCanonicalLauncher(join(a.destination,'bin/ashlr')),'launcher-identity');
       need(canonicalJson(JSON.parse(owned(join(deps.home,'.local/share/ashlr/upgrade.json'),8192).data.toString()))===canonicalJson(a.journal),'current-changed');
     }
     try {need(await deps.smokeVersion(join(a.destination,'bin/ashlr'))===r.candidate!.version,'smoke-failed');}catch {throw new Held('smoke-failed');}
@@ -166,7 +171,7 @@ export async function applyConsumerDesktopUpgrade(observed:ConsumerUpgradeResult
     if(created&&!switched) {
       try {const now=directory(a.destination);if(now.dev===created.dev&&now.ino===created.ino)fs.rmSync(a.destination,{recursive:true,force:true});}catch { /* Preserve uncertain ownership. */ }
     }
-    r.state='held';r.reason=error instanceof Held?error.message:'upgrade-unavailable';return freeze(r);
+    r.state='held';r.reason=heldReason(error)??'upgrade-unavailable';return freeze(r);
   }
 }
 export function createConsumerUpgradeDependencies():ConsumerUpgradeDependencies {

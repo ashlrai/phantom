@@ -16,6 +16,7 @@ and email bodies are excluded from general Slack forwarding.
 
 ```sh
 phm leader seat --json
+phm leader seat pick --json
 phm leader seat --tier workhorse --json
 phm leader inbox --json
 phm leader inbox --text "Synthetic engineering request" --json
@@ -26,6 +27,52 @@ phm leader tick --wait
 message after policy checks. The existing scheduled `leader tick` processes
 verified pending requests before its normal planning work; the comms poller
 wakes it for pending input. No new daemon or host installation is required.
+
+`seat` and `seat pick` return `leader.seat.v1`, `version: 1`: `current`
+(lane, model, lastSuccessAt), `currentSeat` (the current lane's own assessment),
+ordered `fallbacks`, `pick`, `next` (where the leader moves if the pick fails)
+and a nullable `reason`. Each seat carries its leader `cli` (`claude`, `codex`
+or `gemini`) and `rateLimitedAt`. Both are read-only recommendations; they do
+not switch or launch a leader. They exit 3 when no seat is available. The text
+form starts with one plain line, for example
+`Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex`; the Command Leader
+card shows the same line from `seat.line` on `GET /api/verse/leader`.
+
+```sh
+phm leader run --seat auto --prompt-file plan.md --dry-run
+```
+
+prints the exact headless command for the chosen seat, for example
+`claude -p --model <model> < plan.md` or `codex exec --model <model> - < plan.md`,
+without running it. The prompt is redirected from the file, so the command
+carries no environment values. `--json` returns `leader.run.dry-run.v1` with
+`seat` (`pool`, `model`, `cli`, `reason`, `next`) and `command` (`argv`,
+`stdin`, `text`). It exits 3 with the plain reason when no seat qualifies.
+The Org row uses the same report at `tree.leaderSeat` in
+`GET /api/verse/fleet/control/map`. `--tier` retains task-tier admission inspection.
+
+The pure score orders health (`ok`, `degraded`, `down`, `unknown`), then greatest
+included weekly percentage left before reset, then shortest successful leader
+pass in the past 12 hours, then lane ID alphabetically. Unknown numbers sort
+last. The current lane competes for the next pass; fallbacks omit it. Down,
+unknown, held, exhausted or paused lanes, unconfirmed models, lanes rate-limited
+or with a failed leader pass in the last hour, and lanes with no known leader
+command cannot win.
+An absent eligible seat returns `pick: null` and a reason. Model confirmation
+uses the existing registry; frontier model resolution uses the Models reader.
+
+The existing dispatchd reader supplies `queue/status.json`: `leader.lane`,
+`leader.model`, `leader.last_success_at`; per-lane `health` (or legacy `healthy`),
+`leader_pass_at`, `leader_pass_ms`, `rate_limited_at` and `leader_failed_at`;
+and `budget[lane].weekly_used_pct`, `observed_at`, `reset_at`. Without a weekly
+reading, a fresh `budget[lane].use_it_all` (`known`, not `stale`) supplies
+`used_pct` and `reset_at`, observed at the status tick. These optional fields
+are not synthesized. Status and
+quota evidence expire after five minutes; an elapsed reset invalidates quota.
+Missing quota or pass timing stays null and ranks last, never as zero.
+Current dispatchd does not publish leader identity, pass timing or most lane
+health. Those remain unknown until its producer supplies evidence. This change
+does not install a dispatcher or alter runtime failover/admission.
 
 Merge the `foundry` block in [the model-tier example](https://github.com/ashlrai/phantom/blob/master/examples/leader-model-tiers.json)
 into `~/.ashlr/config.json`. Use exact model IDs reported by configured seats;

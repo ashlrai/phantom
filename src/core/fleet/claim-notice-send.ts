@@ -56,6 +56,9 @@ export interface ClaimNoticeSendDeps {
   readSentLedger: () => ReadonlySet<string> | null;
   /** Ledger one delivered dedupeKey (timestamped row, no text). */
   appendSentLedger: (dedupeKey: string, at: number) => void;
+  /** Persist the first attempt clock BEFORE enqueue, so retries render identical
+   * timestamps even when enqueue succeeded but the sent ledger write failed. */
+  noticeTime?: (dedupeKey: string, now: number) => number;
   send: ClaimNoticeSend;
   now: () => number;
   /** Plan only: never send, ledger or write the snapshot. */
@@ -80,6 +83,7 @@ export interface ClaimNoticePassResult {
   baselined: boolean;
   planned: number;
   sent: number;
+  /** Failed notice deliveries or ledger appends, plus a failed snapshot write. */
   failed: number;
   skipped: number;
   deliveries: ClaimNoticeDelivery[];
@@ -112,7 +116,20 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   let bindings: readonly ClaimThreadBinding[] | null;
   try { bindings = deps.readBindings(); } catch { bindings = null; }
   if (bindings === null) return empty('bindings-unavailable', 'claim-bindings-unreadable');
-  const notices = planClaimThreadNotices(prev, next, bindings, now);
+  let notices = planClaimThreadNotices(prev, next, bindings, now);
+  if (!deps.dryRun && deps.noticeTime) {
+    const times = new Map<string, number>();
+    try {
+      for (const notice of notices) {
+        if (!sent.has(notice.dedupeKey)) times.set(notice.dedupeKey, deps.noticeTime(notice.dedupeKey, now));
+      }
+      notices = planClaimThreadNotices(prev, next, bindings, now, times);
+    } catch {
+      // An unreadable/unwritable attempt clock cannot safely mint a new payload
+      // under an id that may already have been enqueued. Keep the delta pending.
+      return empty('ledger-unavailable', 'notice-clock-unavailable');
+    }
+  }
   const delivery = (notice: ClaimThreadNotice, result: ClaimNoticeDelivery['result'],
     extra: Partial<ClaimNoticeDelivery> = {}): ClaimNoticeDelivery =>
     ({ threadKey: notice.threadKey, state: notice.state, dedupeKey: notice.dedupeKey,
@@ -156,11 +173,12 @@ export async function runClaimNoticePass(deps: ClaimNoticeSendDeps): Promise<Cla
   // send leaves prev unchanged so the transition re-plans next pass, while
   // the ledger fences the ones that did go out. A lost snapshot write only
   // replays the diff — the ledger still stops a second post.
+  let reason: string | undefined;
   if (failed === 0) {
-    try { deps.writePrevSnapshot(next); } catch { /* replay next pass */ }
+    try { deps.writePrevSnapshot(next); } catch { failed++; reason = 'snapshot-write-failed'; }
   }
   return {
-    status: 'completed', baselined, planned: notices.length, failed,
+    status: 'completed', ...(reason ? { reason } : {}), baselined, planned: notices.length, failed,
     sent: deliveries.filter(d => d.result === 'sent').length,
     skipped: deliveries.filter(d => d.result === 'ledgered').length,
     deliveries,
@@ -187,6 +205,7 @@ export interface ClaimNoticePaths {
   bindings: string;
   sent: string;
   prev: string;
+  clocks: string;
 }
 
 export function claimNoticePaths(root = claimNoticeDir()): ClaimNoticePaths {
@@ -194,6 +213,7 @@ export function claimNoticePaths(root = claimNoticeDir()): ClaimNoticePaths {
     bindings: join(root, 'claim-thread-bindings.jsonl'),
     sent: join(root, 'claim-notice-sent.jsonl'),
     prev: join(root, 'claim-notice-prev.json'),
+    clocks: join(root, 'claim-notice-clocks.jsonl'),
   };
 }
 
@@ -254,7 +274,8 @@ export function readClaimNoticeSent(sentPath: string): Set<string> | null {
 }
 
 /** claimId+repo → thread bindings, last row wins per pair so a corrected
- * binding supersedes rather than colliding. Invalid rows are skipped.
+ * binding supersedes rather than colliding. Any invalid nonblank row makes the
+ * entire file unavailable; a partial set could lose a pending transition.
  * `null` = the durable file exists but cannot be trusted (over the byte or
  * distinct-row budget, or present yet unopenable: a directory, symlink or
  * unreadable file). A genuinely ABSENT or empty file is a known-empty set
@@ -273,11 +294,11 @@ export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadB
   for (const line of read.text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as Record<string, unknown>;
-      if (row.v !== 1 || !bounded(row.claimId, 128) || !bounded(row.repo, 256)
+      const row: unknown = JSON.parse(line);
+      if (!record(row) || row.v !== 1 || !bounded(row.claimId, 128) || !bounded(row.repo, 256)
         || !bounded(row.threadKey, 256)
         || (row.pr !== undefined && !(Number.isSafeInteger(row.pr) && (row.pr as number) >= 0))
-        || (row.head !== undefined && !bounded(row.head, 128))) continue;
+        || (row.head !== undefined && !bounded(row.head, 128))) return null;
       const binding: ClaimThreadBinding = {
         claimId: row.claimId, repo: row.repo, threadKey: row.threadKey,
         ...(row.pr !== undefined ? { pr: row.pr as number } : {}),
@@ -285,7 +306,7 @@ export function readClaimThreadBindingsState(bindingsPath: string): ClaimThreadB
       };
       bindings.set(JSON.stringify([binding.claimId, binding.repo]), binding);
       if (bindings.size > SNAPSHOT_MAX_ROWS) return null;
-    } catch { /* skip a torn line */ }
+    } catch { return null; }
   }
   return [...bindings.values()];
 }
@@ -335,26 +356,42 @@ export function readClaimNoticePrev(prevPath: string): ClaimThreadSnapshot | nul
   return result.state === 'available' ? result.snapshot : null;
 }
 
-/** Persist this pass's snapshot atomically (temp file + rename); never
- * throws — a lost snapshot only replays, the ledger still fences sends. */
+/** Persist this pass's snapshot atomically (temp file + rename). */
 export function writeClaimNoticePrev(prevPath: string, snapshot: ClaimThreadSnapshot): void {
-  try {
-    ensurePrivateDirectory(dirname(prevPath));
-    writePrivateFileAtomic(prevPath, JSON.stringify({ v: 1, ...snapshot }));
-  } catch { /* replay next pass; the ledger prevents double posts */ }
+  ensurePrivateDirectory(dirname(prevPath));
+  writePrivateFileAtomic(prevPath, JSON.stringify({ v: 1, ...snapshot }));
 }
 
 /** The durable state half of {@link ClaimNoticeSendDeps}; the caller still
  * supplies readBoard, send and now. */
 export function claimNoticeFileDeps(root = claimNoticeDir()): Pick<ClaimNoticeSendDeps,
-  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger'> {
+  'readPrevSnapshot' | 'readPrevSnapshotState' | 'writePrevSnapshot' | 'readBindings' | 'readSentLedger' | 'appendSentLedger' | 'noticeTime'> {
   const paths = claimNoticePaths(root);
   return {
     readPrevSnapshot: () => readClaimNoticePrev(paths.prev),
     readPrevSnapshotState: () => readClaimNoticePrevState(paths.prev),
-    writePrevSnapshot: snapshot => writeClaimNoticePrev(paths.prev, snapshot),
+    writePrevSnapshot: snapshot => {
+      writeClaimNoticePrev(paths.prev, snapshot);
+      // Every notice is now ledgered and the snapshot is durable. Pending
+      // clocks may be retired only after that checkpoint, never before it.
+      writePrivateFileAtomic(paths.clocks, '');
+    },
     readBindings: () => readClaimThreadBindingsState(paths.bindings),
     readSentLedger: () => readClaimNoticeSent(paths.sent),
     appendSentLedger: (dedupeKey, at) => appendClaimNoticeSent(paths.sent, dedupeKey, at),
+    noticeTime: (key, at) => {
+      // Same bounded, private key+clock format as the sent ledger. No message
+      // text or thread content is stored. Never evict a pending retry clock.
+      const rows = readClaimNoticeSentRows(paths.clocks);
+      if (rows === null || !safeInt(at)) throw new Error('notice clock unavailable');
+      const prior = rows.find(row => row.key === key);
+      if (prior) {
+        if (prior.at > at) throw new Error('notice clock in future');
+        return prior.at;
+      }
+      if (rows.length >= CLAIM_NOTICE_SENT_MAX_KEYS) throw new Error('notice clock capacity');
+      appendClaimNoticeSent(paths.clocks, key, at);
+      return at;
+    },
   };
 }

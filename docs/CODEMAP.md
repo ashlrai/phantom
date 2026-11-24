@@ -29,12 +29,13 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Concern | Source starting points | Guide or contract |
 | --- | --- | --- |
 | Command dispatch and flags | `src/cli/index.ts`, `src/cli/args.ts`, matching `src/cli/<command>.ts` | [CLI reference](cli.md) |
-| Configuration, shared types, disk state | `src/core/config.ts`, `src/core/types.ts`, `schema/` | [Architecture: home layout](ARCHITECTURE.md#the-ashlr-home-layout) |
+| Configuration, shared types, disk state | `src/core/config.ts`, `src/core/types.ts` (entry point) and `src/core/types/` (declarations), `schema/` | [Architecture: home layout](ARCHITECTURE.md#the-ashlr-home-layout) |
 | Runs, engines, sandboxes and swarms | `src/core/run/`, `sandbox/`, `swarm/`, `spec/` | [Architecture](ARCHITECTURE.md), [mailbox engine](MAILBOX-ENGINE.md) |
 | Fleet scheduling and execution | `src/core/fleet/`, `daemon/`, `routing/`, `queue/`, `resources/` | [Fleet API](FLEET-API.md), [queue](QUEUE.md), [resource pools](RESOURCE-POOLS.md) |
 | Session recording/replay and risk | `src/fleet/` (distinct from `src/core/fleet/`) | [Replay boundary](../src/fleet/README.md) |
 | Diff classification | `src/planning/triviality.ts` | Callers and tests found via `rg classifyDiff` |
 | Agent coordination and message contracts | `src/core/agents/`, `comms/` | [Agent Bus v2](AGENT-BUS.md#v2), [channels contract](contracts/CONTRACT-CHANNELS.md) |
+| External bot seats and advisory adapters | `src/core/bots/seats.ts`, `src/core/bots/devin-bot-adapter.ts`, `src/cli/bots.ts`, `src/api/bot-templates.ts`, `src/web-ui/routes/bots/` | [Bot seats](BOT-SEATS.md): quota evidence, lifecycle, write-ahead handoffs and read-only console roster |
 | Authority, policy, security | `src/core/authority/`, `policy/`, `security/` | [Standing authority](STANDING-AUTHORITY.md), [runtime activation authority](RUNTIME_ACTIVATION_AUTHORITY.md) |
 | Console backend | `src/core/web/`, `verse/` | [Verse](VERSE.md), [architecture runtime map](ARCHITECTURE.md#current-runtime-map) |
 | Console frontend | `src/web-ui/main.tsx`, `app/`, `routes/`, `components/`, `hooks/`, `data/` | [Console layout](CONSOLE-LAYOUT.md); component tests are colocated |
@@ -69,6 +70,7 @@ imports, individual files, semantics or contract coverage.
 - `src/mcp/`
 - `src/planning/`
 - `src/raycast/`
+- `src/shared/`
 - `src/tui/`
 - `src/web-ui/`
 <!-- codemap:src:end -->
@@ -85,6 +87,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/automations/`
 - `src/core/autonomy/`
 - `src/core/autopilot/`
+- `src/core/bots/`
 - `src/core/brand/`
 - `src/core/bridge/`
 - `src/core/caps/`
@@ -137,6 +140,8 @@ imports, individual files, semantics or contract coverage.
 - `src/core/mcp/`
 - `src/core/memory/`
 - `src/core/metrics/`
+- `src/core/mobile/`
+- `src/core/needs-you/`
 - `src/core/nodes/`
 - `src/core/observability/`
 - `src/core/observe/`
@@ -145,12 +150,15 @@ imports, individual files, semantics or contract coverage.
 - `src/core/openai-agents/`
 - `src/core/org/`
 - `src/core/owner-assist/`
+- `src/core/plan/`
 - `src/core/playbooks/`
 - `src/core/plugins/`
 - `src/core/policy/`
 - `src/core/portfolio/`
 - `src/core/proactive/`
+- `src/core/providers/`
 - `src/core/prs/`
+- `src/core/publish/`
 - `src/core/quality/`
 - `src/core/queue/`
 - `src/core/radar/`
@@ -159,6 +167,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/release/`
 - `src/core/research/`
 - `src/core/resources/`
+- `src/core/router/`
 - `src/core/router-gateway/`
 - `src/core/routines/`
 - `src/core/routing/`
@@ -171,12 +180,14 @@ imports, individual files, semantics or contract coverage.
 - `src/core/spend/`
 - `src/core/steward/`
 - `src/core/strategy/`
+- `src/core/subagent/`
 - `src/core/swarm/`
 - `src/core/teams/`
 - `src/core/toolgraph/`
 - `src/core/tune/`
 - `src/core/types/`
 - `src/core/universe/`
+- `src/core/update/`
 - `src/core/usage/`
 - `src/core/util/`
 - `src/core/verse/`

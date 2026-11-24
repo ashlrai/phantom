@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +21,7 @@ let savedHome: string | undefined;
 let savedRuns: string | undefined;
 let savedAshlr: string | undefined;
 let savedExport: string | undefined;
-const now = Date.now();
+const now = Date.parse('2026-11-18T00:00:00.000Z');
 
 function item(id: string, status: IntentStatus): IntentItem {
   const date = new Date(now - 100_000).toISOString();
@@ -127,7 +127,7 @@ describe('intent observations in the real world reader', () => {
     });
     const model = await readWorldModel({ nowMs: now, force: true });
     expect(model.intents.stale.value).toBe(55);
-    expect(model.blindSpots.filter((spot) => spot.path.startsWith('intents.stale.'))).toHaveLength(50);
+    expect(model.blindSpots.filter((spot) => spot.path.startsWith('intents.stale.'))).toHaveLength(20);
   });
 
   it('reuses a warm cache without re-probing or rereading the ledger', async () => {
@@ -149,9 +149,10 @@ describe('intent observations in the real world reader', () => {
     delete old['intents'];
     await mkdir(join(worldCachePath(), '..'), { recursive: true });
     await writeFile(worldCachePath(), JSON.stringify(old));
+    await utimes(worldCachePath(), new Date(now), new Date(now));
     clearWorldCacheForTests();
 
-    const next = await readWorldModel({ nowMs: Date.now() });
+    const next = await readWorldModel({ nowMs: now });
     expect(next.cache.hit).toBe(false);
     expect(next.intents.items.value).toBe(0);
     expect(loadMergedRoster).toHaveBeenCalledTimes(2);

@@ -49,7 +49,8 @@ it.each([['local', 6, 'warning'], ['remote', 6, 'warning'], ['remote', 2, 'neutr
       '/api/verse/leader/resources', '/api/verse/authority', '/api/verse/budget',
       '/api/verse/authority/ledger', '/api/verse/fleet/live/queue',
       '/api/verse/fleet/control/switches', '/api/verse/release-pr',
-      '/api/verse/fleet/ci-runs', '/api/verse/usage-resources',
+      '/api/verse/fleet/ci-runs', '/api/verse/usage-resources', '/api/fleet/releases',
+      '/api/fleet/map/messages', // the phone's last-10 agent messages
     ]);
     expect([...paths].filter((path) => !existingPaths.has(path!))).toEqual([]);
   },

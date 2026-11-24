@@ -7,7 +7,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetClaimDrift } from '../src/cli/fleet-claim-drift.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
-import { acquireCoordination } from '../src/core/agents/claim-store.js';
 import type { ClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 
 const NOW = Date.parse('2026-11-13T18:13:00.000Z'), LEASE = NOW + 60_000;
@@ -71,11 +70,16 @@ it.each(['bus', 'coordination'] as const)('recovers from a malformed %s table on
   await probe(NOW, 'UNKNOWN', 2, 0);
   writeFileSync(file, healthy);
   await probe(NOW, 'VERIFIED', 0, 1);
-  // Supported writer replaces the same receipt's coordination owner; bus ownership stays intact.
-  const mismatch = acquireCoordination({ root, origin: 'message', key: `queue:${id}`,
-    owner: 'fake-agent-beta', sourceId: `${id}:${receipt.cursor}:${NOW}`,
-    leaseMs: LEASE - NOW, leaseUntil: LEASE, now: NOW });
-  expect(mismatch.status).toBe('acquired');
+  // A divergent on-disk owner is the drift a crashed dual-write leaves behind.
+  // The supported writer now refuses to mint it — a different owner presenting
+  // the same live sourceId conflicts — so the fixture edits the stored row.
+  const coordFile = join(root, 'coordination', 'claims.json');
+  const store = JSON.parse(readFileSync(coordFile, 'utf8')) as { claims: { owner: string; sourceId: string }[] };
+  expect(store.claims).toHaveLength(1);
+  expect(store.claims[0]!.sourceId).toBe(`${id}:${receipt.cursor}:${NOW}`);
+  expect(store.claims[0]!.owner).toBe(owner);
+  store.claims[0]!.owner = 'fake-agent-beta';
+  writeFileSync(coordFile, JSON.stringify(store));
   const drift = await probe(NOW, 'DRIFT', 1, 0);
   expect(drift.ownerMismatch[0]).toEqual({ id, cursor: receipt.cursor,
     receivedAt: new Date(NOW).toISOString(), leaseUntil: new Date(LEASE).toISOString(),

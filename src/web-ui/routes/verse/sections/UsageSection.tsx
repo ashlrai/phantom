@@ -41,7 +41,9 @@ import { StatTile, chartFormat } from '../../../components/charts/index.js';
 import { verseBootstrapQuery } from '../verse-queries.js';
 import { AccountCard } from '../usage/AccountCard.js';
 import { CodexBurnCard } from '../usage/CodexBurnCard.js';
+import { RunwayStrip } from '../usage/RunwayStrip.js';
 import { FleetLedgerCard } from '../usage/FleetLedgerCard.js';
+import { ProducersCard } from '../usage/ProducersCard.js';
 import { UsageResourcesPanel } from '../usage/UsageResourcesPanel.js';
 import { AccountDetail } from '../usage/AccountDetail.js';
 import { CapacityFacts } from '../usage/CapacityFacts.js';
@@ -451,6 +453,9 @@ export function UsageSection(): ReactNode {
           </div>
         ) : (
           <>
+            {/* Will each pool last until reset? Red rows run dry first (phm pool runway). */}
+            <RunwayStrip />
+            <ProducersCard />
             <CodexBurnCard now={now} />
             <FleetLedgerCard now={now} />
             {/*

@@ -28,6 +28,8 @@ export interface NeedsMasonOptions {
   /** Which surface resolved the item; recorded in the envelope body. Defaults to 'desktop'.
    *  'leader' (an agent relay) also sends the envelope as 'leader', never 'mason'. */
   source?: 'desktop' | 'telegram' | 'cli' | 'phone' | 'email' | 'leader';
+  /** Verified canonical id of who answered (approvals.ts), recorded in the envelope body. */
+  answeredBy?: string;
 }
 export type NeedsMasonResolveResult =
   | { ok: true; itemId: string; cursor: number; duplicate: boolean }
@@ -154,7 +156,8 @@ export function resolveNeedsMason(input: unknown, options: NeedsMasonOptions = {
     to: 'leaders', priority: 'P1', ttl: 7 * 24 * 60 * 60 * 1000,
     body: {
       kind: NEEDS_MASON_RESOLVED_KIND, itemId: id, source: options.source ?? 'desktop', item: item.text,
-      ...(note ? { reply: note } : {}), resolvedAt: new Date(now()).toISOString(),
+      ...(note ? { reply: note } : {}),
+      ...(options.answeredBy && /^[A-Za-z0-9._:@-]{1,64}$/.test(options.answeredBy) ? { answeredBy: options.answeredBy } : {}), resolvedAt: new Date(now()).toISOString(),
     },
   }, { ...options.bus, now: options.bus?.now ?? now });
   if (posted.status !== 'posted' && posted.status !== 'duplicate') return fail('unavailable', 'The bus did not accept the resolution.');

@@ -49,6 +49,9 @@ describe('claim keys and overlap', () => {
   it('computes literal prefixes and globs', () => {
     expect(literalPrefix('src/core/*.ts')).toBe('src/core/');
     expect(literalPrefix('docs/a.md')).toBe('docs/a.md');
+    // `[`/`{` are literal under globMatches, never wildcard characters.
+    expect(literalPrefix('src/[id]/*.tsx')).toBe('src/[id]/');
+    expect(literalPrefix('src/{gen}/**')).toBe('src/{gen}/');
     expect(globMatches('src/*.ts', 'src/a.ts')).toBe(true);
     expect(globMatches('src/*.ts', 'src/a/b.ts')).toBe(false);
     expect(globMatches('src/**', 'src/a/b.ts')).toBe(true);
@@ -64,6 +67,23 @@ describe('claim keys and overlap', () => {
     ['path:a/b:src/*.ts', 'path:a/b:src/core/**', false],
     ['path:a/b:docs/**', 'path:a/b:src/**', false],
     ['path:a/b:src/**', 'path:a/c:src/**', false],
+    // Wildcard-vs-wildcard intersections the literal-prefix heuristic missed:
+    // each pair shares at least one concrete path.
+    ['path:a/b:**/*.ts', 'path:a/b:src/*.ts', true],
+    ['path:a/b:src/**', 'path:a/b:**/x.ts', true],
+    ['path:a/b:docs/**', 'path:a/b:**/*.md', true],
+    ['path:a/b:a/*/c.ts', 'path:a/b:a/b/**', true],
+    ['path:a/b:**/*.test.ts', 'path:a/b:src/**', true],
+    ['path:a/b:**/foo.ts', 'path:a/b:src/bar/**', true],
+    ['path:a/b:src/*', 'path:a/b:**/x.ts', true],
+    ['path:a/b:*/x.ts', 'path:a/b:src/*.ts', true],
+    // Provable disjointness still holds under exact intersection.
+    ['path:a/b:**/*.ts', 'path:a/b:docs/*.md', false],
+    ['path:a/b:a/*/c.ts', 'path:a/b:a/b/d/**', false],
+    ['path:a/b:src/*.ts', 'path:a/b:src/core/*.test.ts', false],
+    // A literal path that is only a prefix of the other's pattern is not a
+    // shared path: 'src/' matches nothing 'src/*.ts' matches.
+    ['path:a/b:src/', 'path:a/b:src/*.ts', false],
     ['path:a/b:*.md', 'path:a/b:*.md', true],
     ['queue:q1', 'queue:q1', true],
     ['queue:q1', 'queue:q2', false],
@@ -106,8 +126,12 @@ describe('claims', () => {
 describe('body kinds and work feed', () => {
   const valid: Record<string, unknown>[] = [
     { kind: 'note', text: 'hi', refs: ['pr:1'] },
+    { kind: 'note', text: 're: hi', inReplyTo: 'msg-1' },
     { kind: 'context', text: 'ctx', thread: 't1' },
+    { kind: 'context', text: 'ctx', inReplyTo: 'msg-9' },
     { kind: 'work.post', jobId: 'j1', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'] },
+    { kind: 'work.post', jobId: 'j2', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'],
+      dispatch: { tier: 'work', scope: 'the scope', acceptance: 'the check' } },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'dot-main', leaseMs: 1000 },
     { kind: 'work.claim', op: 'renew', claimKey: 'queue:q', token: TOKEN, leaseMs: 1000 },
     { kind: 'work.status', jobId: 'j1', status: 'rescheduled' },
@@ -123,11 +147,19 @@ describe('body kinds and work feed', () => {
   it.each([
     { kind: 'note' },
     { kind: 'note', text: 'x', extra: 1 },
+    { kind: 'note', text: 'x', inReplyTo: 'has space' },
+    { kind: 'note', text: 'x', inReplyTo: 'x'.repeat(129) },
+    { kind: 'note', text: 'x', inReplyTo: 42 },
+    { kind: 'context', text: 'x', inReplyTo: 'line\nbreak' },
     { kind: 'work.status', jobId: 'j', status: 'paused' },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 3_600_001 },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 1, token: TOKEN },
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN, outcome: 'stolen' },
     { kind: 'work.post', jobId: 'j', title: 't', repo: 'nope', claimKeys: [] },
+    { kind: 'work.post', jobId: 'j', title: 't', repo: 'a/b', claimKeys: [],
+      dispatch: { tier: 'bogus', scope: 's', acceptance: 'a' } },
+    { kind: 'work.post', jobId: 'j', title: 't', repo: 'a/b', claimKeys: [],
+      dispatch: { tier: 'work', scope: 's' } },
     { kind: 'unknown', text: 'x' },
     { kind: 'work.post', jobId: 'j', title: 't', repo: 'a/b\n', claimKeys: [] },
     { kind: 'work.release', claimKey: 'queue:q', token: TOKEN + '\n', outcome: 'released' },
@@ -135,11 +167,24 @@ describe('body kinds and work feed', () => {
     expect(busBodySchema.safeParse(body).success).toBe(false);
   });
   it('validates work jobs', () => {
-    const job = { id: 'j1', owner: 'dot-main', provider: 'devin', repo: 'a/b', claimKeys: ['repo:a/b'],
-      status: 'running', updatedAt: 5 };
+    const job = { id: 'j1', owner: 'dot-main', to: 'leaders', provider: 'devin', repo: 'a/b', title: 'Fix it',
+      claimKeys: ['repo:a/b'], status: 'running', updatedAt: 5 };
     expect(workJobSchema.safeParse(job).success).toBe(true);
     expect(workJobSchema.safeParse({ ...job, status: 'paused' }).success).toBe(false);
     expect(workJobSchema.safeParse({ ...job, updatedAt: -1 }).success).toBe(false);
+    expect(workJobSchema.safeParse({ ...job, to: 'two words' }).success).toBe(false);
+    const { to: _to, ...withoutTo } = job;
+    expect(workJobSchema.safeParse(withoutTo).success).toBe(false);
+    // The job keeps the announcement's title and optional dispatch spec.
+    const { title: _title, ...withoutTitle } = job;
+    expect(workJobSchema.safeParse(withoutTitle).success).toBe(false);
+    expect(workJobSchema.safeParse({ ...job, title: '' }).success).toBe(false);
+    expect(workJobSchema.safeParse({ ...job,
+      dispatch: { tier: 'frontier', scope: 's', acceptance: 'a' } }).success).toBe(true);
+    expect(workJobSchema.safeParse({ ...job,
+      dispatch: { tier: 'bogus', scope: 's', acceptance: 'a' } }).success).toBe(false);
+    expect(workJobSchema.safeParse({ ...job,
+      dispatch: { tier: 'work', scope: 's', acceptance: 'a', extra: 1 } }).success).toBe(false);
   });
 });
 
@@ -156,6 +201,7 @@ describe('ashlr agents bus contract', () => {
     expect(j.schemaVersion).toBe(AGENT_BUS_V2_VERSION);
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
+    expect(j.workTiers).toEqual(['fast', 'mid', 'work', 'frontier']);
   });
   it('lists registered adapters and refuses channels that have none', async () => {
     const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);

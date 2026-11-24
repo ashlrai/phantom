@@ -42,10 +42,15 @@ it('returns the report for a temp ledger', async () => {
   expect(status).toBe(200);
   expect(body).toMatchObject({ schema: 'verse.merge-latency.v1', generatedAt: new Date(NOW).toISOString(), ledger: 'present' });
   expect(body.report.window_hours).toBe(6);
+  expect(body.report.queue_stage_timing).toMatchObject({ schema: 'fleet.queue-stage-timing.v1', prs: 1,
+    readOnly: true, requiredChecksPreserved: true, largest_delay: 'merge',
+    stages: { required_checks: { count: 0, missing: 1 }, queue_admission: { total_s: 60 }, merge: { total_s: 660 } } });
   expect(body.report.pr_stages).toEqual([expect.objectContaining({ pr: 7, queue_wait_s: 120, required_checks_s: 600, merge_s: 60 }),
     expect.objectContaining({ pr: 8, merge_s: null })]);
   expect(body.report.queue_timelines).toMatchObject([{ eligible_to_merge_s: 720,
-    ready_to_queue_s: 60, ready_in_queue_s: 660, dominant_delay: 'queue_execution' }, { pr: 8, current_dwell_s: 2760 }]);
+    ready_to_queue_s: 60, ready_in_queue_s: 660, dominant_delay: 'queue_execution',
+    status: { stage: 'merged', waiting_s: null, delays_s: { queue: 720 } } },
+    { pr: 8, current_dwell_s: 2760, status: { stage: 'required_checks', waiting_s: 2700 } }]);
   expect(body.report.oldest_actionable_delay).toMatchObject({ repo: 'fake/repo', pr: 8, since: at(14),
     waiting_s: 2760, reason: 'required_checks', next_action: 'inspect_checks' });
 });

@@ -1,26 +1,54 @@
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { buildFleetLiveSnapshot } from './fleet-live-api.js';
-import { getFleetSessions } from '../fleet/runs-sessions.js';
-import { readFleetEdges } from '../fleet/fleet-edges.js';
+import { getFleetSessions, type FleetSessionsV1 } from '../fleet/runs-sessions.js';
+import { readFleetEdges, type FleetEdges } from '../fleet/fleet-edges.js';
+import { getLaneModelSnapshot, type LaneModelSnapshot } from '../fleet/lane-models.js';
 import { fleetOrgMap, mapWindowMinutes, type FleetOrgMap } from '../fleet/org-map.js';
 import { fleetOrgTree, type FleetOrgTree } from '../fleet/org-tree.js';
-import { readFleetRunsDirState } from '../fleet/runs-dir-state.js';
+import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readResourceLedger, type ResourceLedgerV1 } from '../fleet/runs-resource-ledger.js';
+import type { LaneHealth } from '../fleet/lane-badge.js';
+import { buildLeaderSeat } from '../fleet/leader-seat.js';
+import { loadVerifiedRegistry, type VerifiedModelRegistryEntry } from '../fleet/model-verify.js';
+
+/** Every source the org reads. Tests pass fixtures; each reader may fail alone and its facts then read unknown. */
+export interface FleetOrgReaders {
+  registry: () => Promise<VerifiedModelRegistryEntry[]>;
+  live: () => Promise<Pick<Awaited<ReturnType<typeof buildFleetLiveSnapshot>>, 'snapshot'>>;
+  sessions: (clock: { now: () => number }) => Promise<FleetSessionsV1>;
+  runs: (clock: { now: () => number }) => Promise<FleetRunsDirState>;
+  ledger: (clock: { now: () => number }) => Promise<ResourceLedgerV1>;
+  models: () => Promise<LaneModelSnapshot>;
+  /** Lane health badges; may fail alone, then every lane's health reads null. */
+  laneHealth: () => Promise<{ lanes: readonly { lane: string; health?: LaneHealth | null }[] }>;
+  messages: (options: { now: () => number; windowMinutes: number }) => FleetEdges | null;
+  now: () => number;
+}
+export const fleetOrgReaders: FleetOrgReaders = { live: buildFleetLiveSnapshot, sessions: getFleetSessions, runs: readFleetRunsDirState,
+  registry: loadVerifiedRegistry,
+  ledger: readResourceLedger, models: () => getLaneModelSnapshot(),
+  laneHealth: async () => {
+    const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
+    const { fleetLaneEmptyNotes } = await import('../fleet/lane-empty-notes.js');
+    return getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes });
+  }, messages: readFleetEdges, now: Date.now };
 
 /** The org map, its tree and the pool-usage ledger it was built from (`phm map` also draws the ledger's resources). */
-export async function readFleetOrgSources(minutes = 60): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {
+export async function readFleetOrgSources(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<{ map: FleetOrgMap & { tree: FleetOrgTree }; usage: ResourceLedgerV1 | null }> {
   mapWindowMinutes(String(minutes));
-  const now = Date.now(), clock = { now: () => now };
+  const read = { ...fleetOrgReaders, ...readers }, now = read.now(), clock = { now: () => now };
   const settled = <T>(result: PromiseSettledResult<T>) => result.status === 'fulfilled' ? result.value : null;
-  const [live, sessions, runs, ledger] = await Promise.allSettled([buildFleetLiveSnapshot(), getFleetSessions(clock), readFleetRunsDirState(clock), readResourceLedger(clock)]);
-  const messages = readFleetEdges({ ...clock, windowMinutes: minutes });
+  const [live, sessions, runs, ledger, models, registry, health] = await Promise.allSettled([read.live(), read.sessions(clock), read.runs(clock), read.ledger(clock), read.models(), read.registry(), read.laneHealth()]);
+  let messages: FleetEdges | null = null;
+  try { messages = read.messages({ ...clock, windowMinutes: minutes }); } catch { /* messages then read unknown */ }
   const snapshot = settled(live)?.snapshot ?? null, usage = settled(ledger);
   const map = fleetOrgMap(snapshot, { sessions: settled(sessions), messages, minutes, now });
-  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes }) }, usage };
+  const leaderSeat = buildLeaderSeat(settled(runs), settled(models), settled(registry), now);
+  return { map: { ...map, tree: fleetOrgTree(map, { runs: settled(runs), usage, engineLanes: snapshot?.lanes, models: settled(models), leaderSeat, laneHealth: settled(health)?.lanes }) }, usage };
 }
-export async function readFleetOrgMap(minutes = 60): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
-  return (await readFleetOrgSources(minutes)).map;
+export async function readFleetOrgMap(minutes = 60, readers: Partial<FleetOrgReaders> = {}): Promise<FleetOrgMap & { tree: FleetOrgTree }> {
+  return (await readFleetOrgSources(minutes, readers)).map;
 }
 export function createFleetOrgMapApi(read = readFleetOrgMap): ApiModule {
   return async (ctx, req, res, path, method) => {

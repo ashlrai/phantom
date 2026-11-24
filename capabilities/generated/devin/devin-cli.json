@@ -12,6 +12,13 @@
           ],
           "command": "npx"
         },
+        "context7": {
+          "args": [
+            "-y",
+            "@upstash/context7-mcp@4.7.1"
+          ],
+          "command": "npx"
+        },
         "lexicon": {
           "args": [
             "-y",
@@ -57,7 +64,9 @@
       },
       "models": [
         "gpt-6.1-sol",
-        "gpt-6.1-terra"
+        "gpt-6.1-terra",
+        "gpt-6.2-astra",
+        "gpt-6.2-sol"
       ],
       "surface": "codex-cli",
       "via": "devin-subagent"
@@ -166,6 +175,13 @@
         "-p",
         "ashlr-plugin@1.36.4",
         "ashlr-mcp"
+      ],
+      "command": "npx"
+    },
+    "context7": {
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.7.1"
       ],
       "command": "npx"
     },

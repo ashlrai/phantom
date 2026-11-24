@@ -12,7 +12,7 @@ vi.mock('../src/core/cos/memory.js', () => ({ listMemory: vi.fn() }));
 vi.mock('../src/core/fleet/handoff-files.js', () => ({ readHandoffFiles: vi.fn() }));
 vi.mock('../src/core/verse/leader-attachment-list.js', () => ({ listLeaderAttachments: vi.fn() }));
 vi.mock('../src/core/fleet/bus-inbox.js', () => ({ listBusInboxAfter: vi.fn(), BUS_INBOX_MAX_MESSAGES: 1024 }));
-const asOf = '2026-11-17T12:00:00.000Z', now = () => new Date(asOf), deps = { now };
+const asOf = '2026-11-17T12:00:00.000Z', now = () => new Date(asOf), deps = { now, sources: { agentMemory: async () => [] } };
 const receipt = (cursor: number) => ({ cursor, receivedAt: now().getTime(), envelope: { id: `msg-${cursor}`, from: 'agent', to: 'leader', priority: 'P2' as const, ttl: 1000, body: 'Reviewed context' } });
 beforeEach(() => {
   vi.mocked(listLeaderFiles).mockResolvedValue([{ name: 'VISION.md', size: 20, modifiedAt: asOf, preview: 'Ship safely' }]);
@@ -24,7 +24,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 it('projects each kind and media with stable identities, plain titles and newest-first source times', async () => {
   const result = await readLibrary({}, deps);
-  expect(result.items.map(i => i.kind).sort()).toEqual(['context', 'file', 'file', 'memory', 'message']);
+  expect(result.items.map(i => i.kind).sort()).toEqual(['context', 'file', 'media', 'memory', 'message']);
   expect(result.items.at(-1)?.title).toBe('Use plain words');
   expect(result.items.find(i => i.title === 'Vision')?.source).toBe('leader/VISION.md');
   expect(result).toEqual(await readLibrary({}, deps));

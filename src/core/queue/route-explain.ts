@@ -1,10 +1,13 @@
 import { constants } from 'node:fs';
+import { planFallbackChain, readFallbackUsed } from '../router/fallback.js';
 import { open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { decidePairing, type PairingLane } from '../routing/pairing.js';
+import { readTypedDecisions } from '../router/typed-decisions.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
 import { loadRouteSources } from '../routing/decision-candidates.js';
+import { withRunwayYield } from './route-yield.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
 
@@ -73,9 +76,13 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
   let pairing: ReturnType<typeof decidePairing> | null = null;
   let decision: Awaited<ReturnType<typeof decideRoute>> | null = null;
   const posture = await postureEvidence(root);
-  const sources = await loadRouteSources(root);
+  const typed_decisions = await readTypedDecisions({ runsDir: root });
+  const sources = await withRunwayYield(root, await loadRouteSources(root), now * 1000);
   const request = routeRequestSchema.safeParse(sources.request);
   if (request.success) decision = await decideRoute(request.data, sources, { backends: [], nowMs: now * 1000 });
+  const fallback_chain = request.success && decision && 'lane' in decision && decision.lane
+    ? planFallbackChain(request.data, sources, decision.lane, now * 1000) : null;
+  const fallback_used = request.success && request.data.job ? await readFallbackUsed(root, request.data.job) : null;
   try {
     const input = JSON.parse(await readFile(join(root, 'queue', 'pairing-lanes.json'), 'utf8'));
     if (!Array.isArray(input?.lanes) || !input.lanes.every((row: PairingLane) => row &&
@@ -102,8 +109,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
       return { job, pool: receipt.pool, decidedAt: receipt.decided_at, wasteReason: typeof receipt.waste_reason === 'string' ? receipt.waste_reason : null,
         'route-moves-per-hour': receipt.moves.filter(t => t > now - 3600 && t <= now).length };
     });
-    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture };
+    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
   } catch {
-    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture };
+    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
   }
 }

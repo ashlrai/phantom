@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
 
 import {
   buildLeaderNeedsYou,

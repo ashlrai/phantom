@@ -209,7 +209,7 @@ below, not built here.
 
 ### Effects: `ashlr authority resident start | stop | status`
 
-The [managed desktop CLI upgrade](../desktop/README.md#upgrade-an-existing-managed-install)
+The [managed desktop CLI upgrade](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#upgrade-an-existing-managed-install)
 uses resident stop before switching the managed pointer, for upgrade and
 journaled rollback alike. `phm desktop install --upgrade --apply` never starts
 the resident or grants authority. Any surface-bound Touch ID re-grant and

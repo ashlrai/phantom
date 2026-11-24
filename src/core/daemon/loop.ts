@@ -207,6 +207,7 @@ import {
   tickPhasesSnapshot,
   TICK_PHASE_BACKLOG_REFRESH_MS,
   TICK_PHASE_CAPACITY_MS,
+  TICK_PHASE_NODE_BRIDGE_MS,
   TICK_PHASE_DISPATCH_PLAN_MS,
   TICK_PHASE_FRONTIER_PROBE_MS,
   TICK_PHASE_GRACE_MS,
@@ -214,6 +215,11 @@ import {
   TICK_PHASE_MAINTENANCE_MS,
   TICK_PHASE_REFLECTION_MS,
   TICK_PHASE_CI_RERUN_MS,
+  TICK_PHASE_REWARD_SYNC_MS,
+  TICK_PHASE_SKILL_NUDGE_MS,
+  TICK_PHASE_EMPTY_TAG_SYNC_MS,
+  TICK_PHASE_VISIT_SYNC_MS,
+  TICK_PHASE_SWAPOUT_SYNC_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
 import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
@@ -384,6 +390,9 @@ import {
 } from '../fleet/proposal-matching.js';
 import { loadConfig, resolveSubscriptionMaxPercent } from '../config.js';
 import { homedir, hostname as osHostname } from 'node:os';
+import { spawn as spawnChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ashlrHome } from '../cloud/store.js';
 import {
   buildResourceStrategyReport,
   fleetStatusForDirection,
@@ -420,6 +429,7 @@ import {
 } from '../fleet/generated-repair-lifecycle.js';
 import { generatedRepairLifecycleAttemptHash } from '../fleet/generated-repair-identity.js';
 import {
+  childRuntimeArgs,
   scheduleResolutionObserverChild,
   type ScheduledResolutionObserverChild,
 } from './resolution-observer-scheduler.js';
@@ -437,7 +447,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { withApprovedKnowledge, knowledgeBlockFor } from '../learn/retro/inject.js';
 import { revertedPrKeys } from '../improve/reverted.js';
-import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { recordKnowledgeHits, recordKnowledgeRuns } from '../learn/retro/store.js';
 import { withFleetPlaybook, prepareFleetPlaybook, type PreparedFleetPlaybook } from '../playbooks/lanes.js';
 import { recordPlaybookUse } from '../playbooks/store.js';
 import { ROUTING_SESSION_OVERHEAD_TOKENS } from '../fleet/dispatch-router.js';
@@ -1387,6 +1397,39 @@ const SEAT_SHADOW_MAX_IN_FLIGHT = 2;
  * make it Tier-1 code. No snapshot ⇒ no shadow (nothing honest to compare).
  * `foundry.seatRouterShadow: false` turns it off. Never throws, never awaited.
  */
+/**
+ * One `node-bridge` pass in a child spawned by path, not imported: the bridge and node router
+ * stay out of this module's Tier-1 import closure. Abort sends SIGTERM, then SIGKILL after 2 s.
+ */
+function runNodeBridgeChild(signal: AbortSignal): Promise<Record<string, unknown> | TickPhaseSkipped> {
+  const entry = fileURLToPath(new URL(import.meta.url.endsWith('.ts')
+    ? '../drive/nodes/ready-bridge-child.ts' : '../drive/nodes/ready-bridge-child.js', import.meta.url));
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawnChildProcess(process.execPath, [...childRuntimeArgs(), entry],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let out = '';
+    let hardKill: ReturnType<typeof setTimeout> | undefined;
+    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { if (out.length < 65_536) out += chunk; });
+    const abort = () => {
+      child.kill('SIGTERM');
+      hardKill = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      hardKill.unref();
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    const done = () => { signal.removeEventListener('abort', abort); if (hardKill) clearTimeout(hardKill); };
+    child.once('error', (error) => { done(); rejectChild(error); });
+    child.once('close', (code) => {
+      done();
+      if (signal.aborted) return rejectChild(signal.reason);
+      let summary: unknown = null;
+      try { summary = JSON.parse(out); } catch { /* reported below */ }
+      if (code !== 0 || !summary || typeof summary !== 'object') return rejectChild(new Error(`node-bridge child exited ${code}`));
+      const inert = (summary as Record<string, unknown>)['inert'];
+      resolveChild(typeof inert === 'string' ? skipTickPhase(inert) : summary as Record<string, unknown>);
+    });
+  });
+}
+
 function shadowSeatRouteBeside(cfg: AshlrConfig, item: WorkItem, backend: string): void {
   if ((cfg.foundry as Record<string, unknown> | undefined)?.['seatRouterShadow'] === false) return;
   if (seatShadowInFlight >= SEAT_SHADOW_MAX_IN_FLIGHT) return;
@@ -4605,6 +4648,7 @@ export async function tick(
           postMergeCreditReleased: postMergeCreditSweepResult.released,
           postMergeCreditSkipped: postMergeCreditSweepResult.skipped,
           postMergeCreditSourceComplete: postMergeCreditSweepResult.sourceComplete,
+          postMergeCreditSkippedByReason: postMergeCreditSweepResult.skippedByReason,
         }
         : {}),
       ...(producerMaintenanceSkippedByCadence ? { skippedByCadence: true } : {}),
@@ -4735,6 +4779,17 @@ export async function tick(
       settleObservation(observationOutcome, enqueued === undefined ? undefined : { backlogItems: enqueued });
     }
   };
+  // Lessons whose every cited PR was reverted are withheld, and the
+  // skill-nudge fold discounts merges the standing set proves did not
+  // hold; the reverted set is read at most once a minute. Declared before
+  // runReflectionMaintenance: the off-tick jobs it launches can run before
+  // later const declarations in this scope initialize.
+  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
+  const revertedKeys = (): ReadonlySet<string> => {
+    const now = Date.now();
+    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
+    return revertedCache.keys;
+  };
   const runReflectionMaintenance = async (): Promise<void> => {
     const ci = liveCfg.ciRerun;
     const lastCiLaunch = offTickJobsSnapshot().find(job => job.name === 'ci-rerun');
@@ -4744,6 +4799,18 @@ export async function tick(
         const { runCiRerunMaintenance } = await import('../fleet/ci-rerun.js');
         await runCiRerunMaintenance({ repos: ci.repos!, maxPerHour: ci.maxPerHour, signal });
       }, { deadlineMs: TICK_PHASE_CI_RERUN_MS, parentSignal: opts.signal, log: phaseLog });
+    }
+    // Host memory samples: fold the bridge's latest memstat.json reading
+    // into metrics/swapout-rate.jsonl — the tuning ledger MEMORY_GUARD's
+    // constants name but nothing wrote. One small file plus a bounded
+    // ledger tail per resident tick; dedup by sampled_at keeps appends at
+    // the bridge's own cadence. Best-effort and single-flight; writes only
+    // under the runs dir.
+    if (offTickMaintenance && !stopRequested()) {
+      launchOffTickJob('swapout-sync', async signal => {
+        const { syncSwapoutSamples } = await import('../fleet/swapout-sync.js');
+        await syncSwapoutSamples({ signal });
+      }, { deadlineMs: TICK_PHASE_SWAPOUT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     }
     if (
       stopRequested() ||
@@ -4760,6 +4827,41 @@ export async function tick(
         parentSignal: opts.signal,
         log: phaseLog,
       });
+      // Reward substrate producer: fold the jobs-ledger tail into
+      // reward-signals.jsonl on the same self-improvement cadence, with the
+      // standing revert set so a merge git history proves did not hold never
+      // counts as held. The sync is best-effort and append-only;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('reward-sync', async signal => {
+        const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
+        await syncRewardSignalsFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
+      }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+      // Shadow skill learning: fold the same jobs-ledger tail into candidate
+      // recovery skill cards, with the standing revert set so a merge that
+      // did not hold never seeds a "recovery" draft. Best-effort and
+      // deduplicated by skill id; launchOffTickJob keeps it single-flight.
+      launchOffTickJob('skill-nudge', async signal => {
+        const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
+        await syncSkillNudgesFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
+      }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
+      // Empty-job evidence: fold the same tail into empty-tags.jsonl and the
+      // dupcheck outcome rows `phm jobs empty --record` used to write only
+      // when run by hand. Best-effort and deduplicated by job id;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('empty-tag-sync', async signal => {
+        const { syncEmptyTagsFromJobsLedger } = await import('../fleet/empty-tag-sync.js');
+        await syncEmptyTagsFromJobsLedger({ signal });
+      }, { deadlineMs: TICK_PHASE_EMPTY_TAG_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+      // Queue station visits: fold the same jobs-ledger tail plus live READY
+      // rows into visits.jsonl, the journal `phm queue stats` and
+      // /api/queue/stats read. Best-effort and idempotent — planVisitSync
+      // refuses regressions and dedups against the journal; an unreadable
+      // journal skips the append rather than risking duplicates.
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('visit-sync', async signal => {
+        const { syncQueueVisits } = await import('../queue/visit-sync.js');
+        await syncQueueVisits({ signal });
+      }, { deadlineMs: TICK_PHASE_VISIT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     } else {
       await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
     }
@@ -5049,19 +5151,13 @@ export async function tick(
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
   };
-  // Lessons whose every cited PR was reverted are withheld; the reverted set is read at most once a minute.
-  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
-  const revertedKeys = (): ReadonlySet<string> => {
-    const now = Date.now();
-    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
-    return revertedCache.keys;
-  };
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
     return withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview, revertedPrKeys: revertedKeys });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview,
+        trajectoryId: `run:${runId}`, revertedPrKeys: revertedKeys });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -6529,6 +6625,11 @@ export async function tick(
   const batchParallelCeiling = dcfg.mode !== 'continuous' &&
     typeof liveCfg.daemon?.parallel === 'number' && Number.isSafeInteger(liveCfg.daemon.parallel) && liveCfg.daemon.parallel > 0
     ? liveCfg.daemon.parallel : null;
+  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers. No
+  // awaited stage (and no phase record) until ~/.ashlr/node-bridge.json exists.
+  if (existsSync(join(ashlrHome(), 'node-bridge.json'))) {
+    await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild);
+  }
   const fleetMonitor = localFleetMonitor();
   const localFleet: LocalFleetSettings = readLocalFleetSettings(routingCfg);
   fleetMonitor.setSettings(localFleet);
@@ -8329,7 +8430,10 @@ export async function tick(
               // no second resolution can substitute guidance or attribution.
               const prepared = preparedManagerPrompts.get(item.id)!;
               if (prepared.playbookUse) void recordPlaybookUse({ lane: 'fleet', key: attemptId, ...prepared.playbookUse });
-              if (prepared.knowledgeNoteIds.length) void recordKnowledgeHits(prepared.knowledgeNoteIds);
+              if (prepared.knowledgeNoteIds.length) {
+                void recordKnowledgeHits(prepared.knowledgeNoteIds);
+                void recordKnowledgeRuns(`run:${attemptId}`, prepared.knowledgeNoteIds);
+              }
             }
             recordUse(backend!);
             return { kind: 'started' as const, run };

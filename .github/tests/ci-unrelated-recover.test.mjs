@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  REPO, commitAttempts, main, mutationRequest, planRecovery, protectedJob, requiredChecks,
+  PAGE_CAP, REPO, SCAN_CAP, commitAttempts, loadSnapshot, main, mutationRequest, planRecovery, protectedJob, requiredChecks,
 } from '../scripts/ci-unrelated-recover.mjs';
 
 const master = 'b'.repeat(40);
@@ -222,6 +222,70 @@ function apiMap(over = {}) {
   };
 }
 
+function fullPullPages(autoMerge = true) {
+  const map = apiMap();
+  const path = `GET repos/${REPO}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=`;
+  const row = map[`${path}1`][0];
+  for (let page = 1; page <= PAGE_CAP; page += 1) {
+    map[`${path}${page}`] = Array.from({ length: 100 }, (_, index) => ({
+      ...row, number: (page - 1) * 100 + index + 1, auto_merge: autoMerge ? row.auto_merge : null,
+    }));
+  }
+  return map;
+}
+
+test('full PR pages keep a bounded recovery sample instead of aborting', async () => {
+  const { gh, calls } = route(fullPullPages());
+  const loaded = await loadSnapshot(gh, REPO);
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.capped, true);
+  assert.deepEqual(loaded.snapshot.pulls.map((row) => row.number), Array.from({ length: SCAN_CAP }, (_, i) => i + 1));
+  assert.deepEqual(loaded.snapshot.checks[head], [run({ id: 4 })]);
+  assert.equal(calls.filter((call) => call.args.at(-1).includes('/pulls?')).length, PAGE_CAP);
+  assert.equal(calls.some((call) => call.args.includes('POST')), false);
+});
+
+test('full PR pages without eligible candidates complete without mutations', async () => {
+  const { gh, calls } = route(fullPullPages(false));
+  const dir = mkdtempSync(join(tmpdir(), 'recover-'));
+  const logs = [];
+  try {
+    assert.equal(await main({ allowLocal: true, repo: REPO, gh, statePath: join(dir, 'state.json'), now: NOW, log: (line) => logs.push(line) }), 0);
+    assert.ok(logs.includes('recover note scan-capped kept=0'));
+    assert.ok(logs.includes('recover done actions=0'));
+    assert.equal(calls.some((call) => call.args.includes('PUT') || call.args.includes('POST')), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a candidate on the last full PR page is recovered once per head', async () => {
+  const map = fullPullPages(false);
+  map[`GET repos/${REPO}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=${PAGE_CAP}`].at(-1).auto_merge = {};
+  const dir = mkdtempSync(join(tmpdir(), 'recover-'));
+  try {
+    for (let pass = 0; pass < 2; pass += 1) {
+      const { gh, calls } = route(map);
+      assert.equal(await main({ allowLocal: true, repo: REPO, gh, statePath: join(dir, 'state.json'), now: NOW, log() {} }), 0);
+      const posts = calls.filter((call) => call.args.includes('POST'));
+      assert.equal(posts.length, pass === 0 ? 1 : 0);
+      if (posts.length) assert.equal(posts[0].args.at(-1), `repos/${REPO}/actions/runs/50/rerun-failed-jobs`);
+    }
+    assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).attempts.length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an unreadable later PR page still aborts before recovery', async () => {
+  const map = fullPullPages();
+  delete map[`GET repos/${REPO}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=2`];
+  const { gh, calls } = route(map);
+  const dir = mkdtempSync(join(tmpdir(), 'recover-'));
+  const logs = [];
+  try {
+    assert.equal(await main({ allowLocal: true, repo: REPO, gh, statePath: join(dir, 'state.json'), now: NOW, log: (line) => logs.push(line) }), 1);
+    assert.deepEqual(logs, ['recover abort reason=pulls-unreadable']);
+    assert.equal(calls.some((call) => call.args.includes('PUT') || call.args.includes('POST')), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('load and apply rerun once per head and do not repeat it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'recover-'));
   const statePath = join(dir, 'state.json');
@@ -283,4 +347,18 @@ test('an unreadable ruleset performs no recovery', async () => {
     assert.equal(code, 1);
     assert.equal(calls.some((call) => call.args.includes('PUT') || call.args.includes('POST')), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the sparse checkout includes every file the tests read', () => {
+  const workflow = readFileSync(new URL('../workflows/unrelated-pr-recover.yml', import.meta.url), 'utf8');
+  const block = workflow.match(/sparse-checkout: \|\n((?: {12}\S.*\n)+)/);
+  assert.ok(block, 'sparse-checkout block');
+  const listed = block[1].split('\n').map((line) => line.trim()).filter(Boolean);
+  for (const file of [
+    '.github/scripts/ci-unrelated-recover.mjs',
+    '.github/tests/ci-unrelated-recover.test.mjs',
+    '.github/workflows/unrelated-pr-recover.yml',
+  ]) {
+    assert.ok(listed.includes(file), `${file} missing from sparse-checkout`);
+  }
 });

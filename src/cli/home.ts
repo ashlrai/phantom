@@ -4,7 +4,7 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm home [--json] [--leader-seen <time>]
 Is the fleet healthy and moving: PRs merged in the last hour and 24 hours, median time to merge, main per repo, running jobs per lane,
-the resource most at risk of going unused before its reset, the last 5 work-log items and unread Leader replies. Read-only.
+the resource most at risk of going unused before its reset, the last 5 work-log items, unread Leader replies and what needs you (answer with phm asks answer). Read-only.
   --json                 print the typed summary (schema home.v1)
   --leader-seen <time>   when you last read the Leader thread (ISO time); replies after it count as unread
 Anything whose source is missing prints as unknown with the reason, never as zero.`;

@@ -94,7 +94,7 @@ function fixture(version='3.30.35') {
   const f=installFixture(version),old=join(f.home,'.local/share/ashlr/releases','a'.repeat(40));
   const packageRoot=join(f.root,'running');write(join(packageRoot,'bin/ashlr'),fs.readFileSync(resolve(import.meta.dirname,'../bin/ashlr')),0o755);
   write(join(old,'package.json'),JSON.stringify({name:'@ashlr/phantom',version:'3.30.24'}));
-  write(join(old,'bin/ashlr'),fs.readFileSync(resolve(import.meta.dirname,'../bin/ashlr')),0o755);
+  write(join(old,'bin/ashlr'),fs.readFileSync(resolve(import.meta.dirname,'fixtures/ashlr-3.30.24')),0o755);
   fs.symlinkSync(old,f.current);fs.mkdirSync(join(f.home,'.local/bin'),{recursive:true,mode:0o700});
   for(const name of ['ashlr','phm'])fs.symlinkSync(join(f.current,'bin/ashlr'),join(f.home,'.local/bin',name));
   f.published.set('https://github.com/ashlrai/phantom/releases/latest/download/latest.json',f.published.get(`https://github.com/ashlrai/phantom/releases/download/v${version}/latest.json`)!);
@@ -112,6 +112,7 @@ describe('managed consumer upgrade',()=> {
     const applied=await applyConsumerDesktopUpgrade(r);
     expect(applied).toMatchObject({state:'upgraded',applied:true,daemon:{stop:{performed:true},restart:{performed:false,ownerConfirmation:true}}});
     expect(f.deps.residentStop).toHaveBeenCalledTimes(1);expect(fs.realpathSync(f.current)).toBe(join(dirname(f.old),f.manifest.source.revision));expect(fs.existsSync(f.old)).toBe(true);
+    expect(fs.readFileSync(join(f.current,'bin/ashlr'))).toEqual(fs.readFileSync(resolve(import.meta.dirname,'../bin/ashlr')));
     const journal=join(f.home,'.local/share/ashlr/upgrade.json');
     expect(fs.statSync(journal).mode&0o777).toBe(0o600);expect(JSON.parse(fs.readFileSync(journal,'utf8'))).toMatchObject({schema:'desktop-upgrade-journal.v1',previous:{version:'3.30.24'},current:{version:'3.30.35'}});
     expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'inspection-required'});
@@ -128,6 +129,21 @@ describe('managed consumer upgrade',()=> {
     if(kind==='current'){fs.unlinkSync(f.current);fs.symlinkSync(f.home,f.current);}
     expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:kind==='missing'?'not-installed':kind==='links'?'unmanaged-links':'unmanaged-current'});
   });
+  it('preserves shared install guard reasons during inspection',async()=> {
+    const f=fixture();fs.chmodSync(join(f.home,'.local/share'),0o755);
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'unsafe-local-path'});
+    expect(f.deps.residentStop).not.toHaveBeenCalled();
+  });
+  it('preserves shared install guard reasons during apply',async()=> {
+    const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);
+    fs.chmodSync(join(f.home,'.local/share'),0o755);
+    expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'unsafe-local-path'});
+    expect(f.deps.residentStop).not.toHaveBeenCalled();
+  });
+  it('keeps unexpected inspection errors generic',async()=> {
+    const f=fixture();vi.mocked(f.deps.transaction).mockRejectedValue(new Error('unexpected transaction error'));
+    expect(await inspectConsumerDesktopUpgrade(f.deps,options)).toMatchObject({state:'held',reason:'inspection-unavailable'});
+  });
   it('removes only its newly created release when pre-switch smoke fails',async()=> {
     const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);vi.mocked(f.deps.smokeVersion).mockResolvedValue(null);
     expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'held',reason:'smoke-failed'});
@@ -136,6 +152,7 @@ describe('managed consumer upgrade',()=> {
   it('restores the pointer on a failed post-switch smoke',async()=> {
     const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);vi.mocked(f.deps.smokeVersion).mockResolvedValueOnce('3.30.35').mockResolvedValueOnce(null);
     expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'rolled-back',reason:'post-switch-smoke',applied:false});expect(fs.realpathSync(f.current)).toBe(f.old);
+    expect(f.io.readCurrentPointer(f.current)?.target).toBe(f.old);
   });
   it.each(['smoke','journal'])('reports rollback-held when restoration after %s failure is refused',async kind=> {
     const f=fixture(),r=await inspectConsumerDesktopUpgrade(f.deps,options);
@@ -154,9 +171,17 @@ describe('managed consumer upgrade',()=> {
     expect(r).toMatchObject({state:'ready',candidate:{version:'3.30.24'}});
     expect(JSON.stringify(r)).not.toContain(f.home);
     expect(await applyConsumerDesktopUpgrade(r)).toMatchObject({state:'reverted',applied:true});expect(fs.realpathSync(f.current)).toBe(f.old);
+    expect(fs.readFileSync(join(f.current,'bin/ashlr'))).toEqual(fs.readFileSync(resolve(import.meta.dirname,'fixtures/ashlr-3.30.24')));
+    expect(f.io.readCurrentPointer(f.current)?.target).toBe(f.old);
     const journal=JSON.parse(fs.readFileSync(join(f.home,'.local/share/ashlr/upgrade.json'),'utf8'));expect(journal.current.version).toBe('3.30.24');
     fs.unlinkSync(f.current);fs.symlinkSync(join(dirname(f.old),f.manifest.source.revision),f.current);
     expect(await inspectConsumerDesktopUpgrade(f.deps,{...options,mode:'rollback'})).toMatchObject({state:'held',reason:'current-changed'});
+  });
+  it('refuses rollback to a launcher outside canonical history',async()=> {
+    const f=fixture();expect((await applyConsumerDesktopUpgrade(await inspectConsumerDesktopUpgrade(f.deps,options))).state).toBe('upgraded');
+    write(join(f.old,'bin/ashlr'),'unlisted launcher',0o755);
+    const r=await inspectConsumerDesktopUpgrade(f.deps,{...options,mode:'rollback'});
+    expect(r).toMatchObject({state:'held',reason:'launcher-identity'});
   });
   it('reports ad-hoc app as owner work without blocking CLI unless required',async()=> {
     const f=fixture();fs.cpSync(f.appRoot,join(f.applications,'Phantom.app'),{recursive:true});

@@ -24,7 +24,7 @@ export async function cmdFleetStatusDigest(args: string[], deps: {
   const now = (deps.now ?? (() => new Date()))();
   if (json) {
     const facts = await gatherStatusDigestInput(root, now, deps.sources);
-    console.log(JSON.stringify({ schema: 'phantom.status-digest.v1', at: now.toISOString(), lines: buildStatusDigest(facts), facts }));
+    console.log(JSON.stringify({ schema: 'phantom.status-digest.v1', at: now.toISOString(), lines: buildStatusDigest(facts), blocker: facts.blocker ?? null, facts }));
   } else {
     const brief = deps.sources ? async (dir: string, at: Date): Promise<string> =>
       ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(dir, at, deps.sources))].join('\n') : undefined;

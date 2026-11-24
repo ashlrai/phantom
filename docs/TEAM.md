@@ -84,6 +84,28 @@ returning members must reacquire expired claims. Claims coordinate the local
 log only and do not grant GitHub permissions or enforce cross-machine exclusion.
 See the [team architecture](architecture/teams.md) for handoffs and trust limits.
 
+### Give a teammate a seat in the pool
+
+Only a team owner can do this, from their own terminal. It saves a record on
+this machine and prints a short note for you to pass on yourself. Phantom never
+sends an invite, email or message to anyone.
+
+```bash
+phm team add "Member B" --pools claude,devin --seats member-b-agent --share 30 --dry-run   # checks, saves nothing
+phm team add "Member B" --pools claude,devin --seats member-b-agent --share 30 --apply     # saves one record
+phm team --json
+phm team remove <id>
+```
+
+`--pools` names the lanes they bring (an unknown pool is refused and the known ones are listed). `phm team` lists each person with their pools, seats and running jobs; jobs are counted by pool, not by person, and show `unknown` when the fleet cannot be read. Their other computer joins with the existing `phm node join` ([NODES.md](NODES.md)); nothing here builds a second pairing. `--share` is the percent of each resource pool their agents may use; all shares
+together stay at 100 or less. `--verified` says you checked the sender ids
+yourself: only then does a message from that id count as theirs. Any other
+sender is unverified and is never acted on. The last owner cannot be removed.
+JSON output carries `schema` (`phantom.team.v1`) and `version`, with one
+`members` record per person: `id`, `display_name`, `role`, `channels`,
+`pool_share_pct`, `allowed_repos`, `created_at`. The Team panel in the desktop
+app shows the same records.
+
 ### Invite, join and remove a teammate
 
 An invite makes someone a team **member** and nothing else. It never carries a

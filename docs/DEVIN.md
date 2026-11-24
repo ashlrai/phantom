@@ -2,6 +2,38 @@
 
 # Devin in Phantom
 
+See [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) for provider-neutral bot metadata and routing.
+See [external bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) for quota-driven handoffs and the advisory
+Devin Bot adapter: the documented v3 API has no Bot messaging/status endpoints.
+
+## Devin Review
+
+`phm devin review https://github.com/owner/repo/pull/123 --json` plans a
+manual review without contacting Devin. A local reference also works:
+`phm devin review '#123' --repo owner/repo --head <sha> --apply --json`.
+Without `--head`, apply reads the live PR head from GitHub. `--apply` and
+`--dry-run` are mutually exclusive; dry run is the default.
+The service user needs UseReviewManual to trigger and ViewReview to read the
+latest provider review. The API key stays in the Authorization header;
+plans display only its Keychain handle name.
+
+Reviews require an enabled Devin lane and proven included weekly allowance.
+There is **no paid fallback** when plan headroom is unknown or exhausted.
+Set `devin.review.maxPerDay` to cap requests per local day (default 5;
+0 turns reviews off). The private append-only `pr-reviews.jsonl` in the
+Devin home reserves each lowercased repo/PR/head-SHA key under a lock before
+contact. Even ambiguous network failures consume that key and daily slot;
+a new commit gets a new key. Quota errors stop requests for the local day.
+
+Refusal codes: `disabled`, `invalid-pr`, `duplicate`, `daily-cap`,
+`missing-auth`, `unknown-plan`, `quota-exhausted`, `request-failed`.
+CLI exits 0 for a plan or triggered review, 1 for refusal, 2 for usage errors.
+Fleet reviews run only for verified fleet-bot PR heads outside held, moved,
+closed and unknown classes. Findings from `devin-ai-integration[bot]` are
+untrusted advisory evidence: they never change merge classification or gates,
+never merge or dismiss anything, and only supplement red-required fixup tasks.
+Fleet dry runs show a planned signal without network or journal writes.
+
 ## Headless ACP seat client
 
 The core `agents/acp-client.ts` runner supports generic ACP v1 agents over

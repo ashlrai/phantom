@@ -41,12 +41,47 @@ export interface JobControlReceiptV1 {
   duplicate: boolean;
 }
 
+/** One request from the control file, folded with the acknowledgement lines that share its requestId (the last status wins). */
+export interface JobControlLedgerRow {
+  requestId: string;
+  action: JobControlAction;
+  job: string;
+  lane: string | null;
+  status: JobControlStatus;
+  reason: string | null;
+  /** When the request was recorded. */
+  at: string;
+  /** The surface that asked (cli, desktop, mobile), or null when the row names none. */
+  by: string | null;
+}
+
 export function isJobControlAction(value: unknown): value is JobControlAction {
   return (JOB_CONTROL_ACTIONS as readonly unknown[]).includes(value);
 }
 
+export interface JobControlAvailability { available: boolean; reason: string | null }
+
+/**
+ * Whether Pause, Stop and Move can reach a session, with a plain reason when
+ * they cannot. One rule for the tail snapshot (`controls`) and the map's side
+ * panel. `undefined` is a server that does not say: no control API.
+ */
+export function jobControlAvailability(status: 'unknown' | 'finished' | 'no-log' | 'live' | 'remote' | undefined): JobControlAvailability {
+  const reason = status === undefined ? 'This Phantom server has no job control for this session.'
+    : status === 'unknown' ? 'No job control: this session is not recorded on this computer.'
+      : status === 'remote' ? 'No job control: this session runs on another computer.'
+        : status === 'finished' ? 'This session has finished, so there is nothing to pause, stop or move.' : null;
+  return { available: reason === null, reason };
+}
+
 const DONE: Record<JobControlAction, string> = { pause: 'Paused', resume: 'Resumed', stop: 'Stopped', move: 'Moved' };
 const ASKED: Record<JobControlAction, string> = { pause: 'Pause', resume: 'Resume', stop: 'Stop', move: 'Move' };
+
+/** A recorded request in a few words: "Pause requested", "Moved to codex", "Stop refused". */
+export function jobControlRecordLabel(row: Pick<JobControlLedgerRow, 'action' | 'lane' | 'status'>): string {
+  const to = row.lane === null ? '' : ` to ${row.lane}`;
+  return row.status === 'applied' ? `${DONE[row.action]}${to}` : `${ASKED[row.action]}${to} ${row.status === 'refused' ? 'refused' : 'requested'}`;
+}
 
 /** One plain sentence for a receipt: the CLI's text output and the inline desktop line. */
 export function jobControlText(receipt: JobControlReceiptV1): string {

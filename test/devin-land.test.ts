@@ -311,6 +311,39 @@ describe('DevinClient attachments', () => {
     await expect(client.downloadAttachment('org-1', 'u1', 'f.bundle', 3)).rejects.toThrow('larger than allowed');
     await expect(client.downloadAttachment('org-1', '../x', 'f.bundle', 3)).rejects.toThrow('not a Devin attachment');
   });
+
+  it('downloads listed names with spaces, Unicode and non-traversal consecutive dots as one path segment', async () => {
+    const names = ['file with spaces.bundle', 'résumé..bundle'];
+    const seen: string[] = [];
+    const client = new DevinClient({
+      apiKey: KEY,
+      fetch: async url => {
+        const path = String(url);
+        seen.push(path);
+        if (path.endsWith(`/sessions/${SESSION}/attachments`)) {
+          return new Response(JSON.stringify(names.map((name, index) => ({
+            attachment_id: `a${index}`, name, url: 'https://app.devin.ai/attachments/u1', source: 'devin',
+          }))));
+        }
+        return new Response('BUNDLE');
+      },
+    });
+
+    const attachments = await client.listSessionAttachments('org-1', SESSION);
+    expect(attachments.map(attachment => attachment.name)).toEqual(names);
+    for (const attachment of attachments) {
+      await client.downloadAttachment('org-1', 'u1', attachment.name, 100);
+    }
+    expect(seen.slice(1)).toEqual([
+      'https://api.devin.ai/v3/organizations/org-1/attachments/u1/file%20with%20spaces.bundle',
+      'https://api.devin.ai/v3/organizations/org-1/attachments/u1/r%C3%A9sum%C3%A9..bundle',
+    ]);
+
+    for (const name of ['..', '../escape.bundle', 'folder/name.bundle', 'folder\\name.bundle', 'file\0.bundle']) {
+      await expect(client.downloadAttachment('org-1', 'u1', name, 100)).rejects.toMatchObject({ code: 'invalid-request' });
+    }
+    expect(seen).toHaveLength(3);
+  });
 });
 
 describe('ashlr devin land (CLI)', () => {

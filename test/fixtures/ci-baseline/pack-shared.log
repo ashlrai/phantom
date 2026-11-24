@@ -1,0 +1,27 @@
+##[group]Run npm run check:pack-contracts
+npm run check:pack-contracts
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+TAP version 13
+# Subtest: pack contract smoke
+ok 1 - pack contract smoke
+1..1
+##[group]Run snapshot="$(node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP")"
+snapshot="$(node .github/scripts/ci-pack-smoke.mjs capture "$RUNNER_TEMP")"
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+pack smoke refused: source changed after build:
+M	src/core/fleet/ci-baseline.ts
+##[error]Process completed with exit code 1.
+##[group]Run npm run check:first-paint:built
+npm run check:first-paint:built
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+OK: chat first-paint critical JS 300.0 KB (budget 354 KB)
+OK: phone (/verse/m) first-paint critical JS 200.0 KB (budget 250 KB)
+##[group]Run node scripts/hosted-build-artifact.mjs capture --root "$SOURCE_DIR" --sha "$ASHLR_CI_SOURCE_SHA" --snapshot "$ASHLR_PACK_SMOKE_SNAPSHOT" --package-tarball "$TARBALL" --out "$handoff" --reports "${{ steps.web.outputs.lane_dir }}"
+node scripts/hosted-build-artifact.mjs capture --root "$SOURCE_DIR" --sha "$ASHLR_CI_SOURCE_SHA" --snapshot "$ASHLR_PACK_SMOKE_SNAPSHOT" --package-tarball "$TARBALL" --out "$handoff" --reports "web-lane"
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+hosted artifact refused: missing built artifact: dist/core/web/public/index.html
+##[error]Process completed with exit code 1.

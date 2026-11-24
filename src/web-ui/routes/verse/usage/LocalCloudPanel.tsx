@@ -19,6 +19,7 @@ import {
   seriesColor,
   type TableColumn,
 } from '../../../components/charts/index.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { percentText } from '../autonomy/format.js';
 import { COST_ESTIMATE_NOTE } from './series-model.js';
 import type { LocalCloudSplit, ProviderSlice } from './usage-model.js';
@@ -28,7 +29,7 @@ const LOCAL_COLOR = seriesColor(0);
 const CLOUD_COLOR = seriesColor(1);
 
 const COLUMNS: TableColumn<ProviderSlice>[] = [
-  { key: 'provider', label: 'Provider', render: (r) => r.provider },
+  { key: 'provider', label: 'Provider', render: (r) => <><BrandMark brand={r.provider} size={14} inline />{r.provider}</> },
   { key: 'tier', label: 'Tier', render: (r) => r.tier },
   { key: 'tokens', label: 'Tokens', numeric: true, render: (r) => chartFormat.formatCompact(r.tokens) },
   { key: 'cost', label: 'Cost', numeric: true, render: (r) => chartFormat.formatUsd(r.costUsd) },

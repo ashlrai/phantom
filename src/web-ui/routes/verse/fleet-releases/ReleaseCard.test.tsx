@@ -20,10 +20,19 @@ it('renders the shared release fields and opens its log with one action', async 
   fireEvent.click(screen.getByRole('button', { name: 'See log' }));
   expect(screen.getByText(/START v1.2.4/)).toBeTruthy();
 });
-it('renders unknown evidence and an unavailable log on an older server', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
+it('waits for an older-server response before showing the empty-log state', async () => {
+  let resolveResponse!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { resolveResponse = resolve; })));
   render(<ReleaseCard visible />);
-  expect(await screen.findByText('Published: unknown · time unknown')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'See log' }));
-  expect(screen.getByText('Log unknown: no local log was recorded.')).toBeTruthy();
+  expect(screen.getByText('Loading release log…')).toBeTruthy();
+  resolveResponse(new Response('{}'));
+  expect(await screen.findByText('Log unknown: no local log was recorded.')).toBeTruthy();
+  expect(screen.getByText('Published: unknown · time unknown')).toBeTruthy();
+});
+it('shows a fetch error instead of claiming that no log was recorded', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+  render(<ReleaseCard visible />);
+  fireEvent.click(screen.getByRole('button', { name: 'See log' }));
+  expect(await screen.findByText('Log unavailable: release status could not be fetched.')).toBeTruthy();
 });

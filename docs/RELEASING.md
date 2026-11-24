@@ -73,8 +73,11 @@ The existing [CI workflow](../.github/workflows/ci.yml) has two explicit modes:
   commit to `published_at` in
   [`.github/metrics/release-flow.json`](../.github/metrics/release-flow.json).
   The committed file is the baseline; each weekly run uploads a fresh copy.
-- On manual dispatch with `release_gate=true` (release-prep.yml once per master SHA, and Auto-tag on a tag): reuse a
-  completed successful **push** CI run for the exact master SHA. The unsigned
+- On manual dispatch with `release_gate=true` (release-prep.yml once per owed version while a run is outstanding, and Auto-tag on a tag): reuse a
+  completed successful **push** CI run for the exact master SHA. After both
+  release-gate jobs succeed on master, CI dispatches Auto-tag with that run's
+  `GITHUB_SHA` (a `GITHUB_TOKEN` dispatch does not emit a `workflow_run` event);
+  the tag-driven path remains scoped to its tag ref. The unsigned
   combined `Desktop release smoke` job reuses an immutable artifact for that
   source when available, otherwise builds once with cached compiler inputs.
   On that same runner, the smoke phase checks source/version/package identity,
@@ -162,7 +165,35 @@ reproducible evidence and a linked issue in the existing ledger.
 The Release PR workflow and the release train both wake every 5 minutes.
 `RELEASE_CADENCE_MINUTES` sets the requested interval, from 5 to
 1440 minutes, and defaults to 5. The train does not raise that value.
-It requests a patch bump, then synchronizes
+The cadence check evaluates the live master tip rather than the SHA that
+woke the workflow, reads its independent tip-pinned inputs concurrently to
+keep the verification window small, and tolerates master movement instead
+of demanding a still tip: when the tip moves mid-check the pass verifies
+the evaluated tip is still a bounded fast-forward ancestor of the live tip
+and that the version carriers are unchanged there, growing the green
+evidence distance by exactly the moved window; only a snapshot that
+genuinely changed — a version bump, a non-fast-forward move, or a tip that
+keeps moving past the bound — re-evaluates, a bounded number of times,
+instead of starving the release. A read budget exhausted mid-plan defers
+to the next wake rather than failing the job.
+Green evidence is the newest decisive completed master push CI run on the
+tip or a bounded ancestor whose required checks — read from the branch
+ruleset and protection and judged on that run's SHA through the check-runs
+API — are green, so an advisory job failure (for example authority drift,
+which is deliberately off Merge Gate needs) cannot starve a release while
+the merge queue's own authority stays green, and the release PR's own
+required checks remain the merge gate for the exact head that ships. While
+an open release PR's required checks are still running or green and
+awaiting the train's enqueue, the cadence reports not-due
+(`release-pr-checks-in-flight`) before reading any tip state: every
+release-please update force-pushes the branch and restarts CI on a new
+head, so during merge bursts the head never survived long enough for
+checks to finish and every release starved. Freezing updates — never the
+merge — lets the PR's own checks reach a verdict on a stable head; a
+decisively red verdict, an unreadable check inventory, a conflicting PR
+(whose heal is the rebase update), or a head whose required contexts have
+not all reported yet all leave updates allowed. It requests a patch bump,
+then synchronizes
 README, desktop and registry version carriers and the dated changelog in that
 release PR. Auto-tag creates the tag and draft only after the exact commit's
 required checks succeed. Signed publication then makes the complete updater
@@ -183,17 +214,33 @@ What runs without a per-release approval:
 
 - A green `release-please` pull request is merged when the cadence is due
   (default 5 minutes), and only
-  when its version is the next patch, its head is `release-please--*`, and
-  GitHub Actions checks on that head have no pending or failing results
-  (`skipped` path-filtered jobs do not count as failures). The merge uses the
+  when its version is the next patch, its head is `release-please--*`, the
+  pull request is conflict-free and not already in the merge queue (queue
+  membership is read through GraphQL; REST pull reads never expose it), and
+  the required checks on that head — currently `Merge Gate` — are green.
+  Advisory Actions runs neither block nor substitute for the required
+  context. The merge uses the
   existing release app token and has no admin flag.
 - A release-please tag whose commit is an ancestor of master (compare
   `tag...master` status `ahead`, or `identical` when it is master HEAD) is
   the candidate when required CI on that exact SHA is green. Diverged and
   red candidates are refused. The train does not retag and does not delete
   tags. A green open release PR for the next patch is still enqueued only
-  after its own checks are green. The Release PR workflow independently
-  checks green master, cadence and version carriers.
+  after its required checks are green and its queue state is observed; an
+  already-queued PR is never re-enqueued. The Release PR workflow independently
+  checks green master, cadence and version carriers. When the merge queue's
+  newest event for that PR is a removal that postdates the head commit and
+  the head trails master, the green head checks are stale evidence the queue
+  already rejected, so the train plans a head-pinned `updatePullRequestBranch`
+  merge (never a rewrite) instead of enqueue: the new head's own checks
+  re-verify the exact revision, which either re-greens for enqueue or goes
+  red so release-please regenerates, ending the re-enqueue loop a doomed
+  merge group would otherwise repeat every cadence tick. When that base
+  compare cannot be read or returns no recognized status, the
+  head-trails-master evidence is unknown rather than clear: the train plans
+  no write to that pull request — neither enqueue nor a blind sync — while
+  still completing the rest of the observation, and retries the compare on
+  the next tick.
 - Auto-tag can land `vX.Y.Z` on a later master commit once that commit's
   release gate is green. The train treats that tagged SHA as the candidate
   when `package.json` there is `@ashlr/phantom` at `X.Y.Z` and the same
@@ -203,6 +250,43 @@ What runs without a per-release approval:
   selected.
 - `auto-tag.yml` still creates `vX.Y.Z` and the draft after required checks
   on that commit.
+- Release prep dispatches its release-gate CI run with `GITHUB_TOKEN`, which
+  does not produce a `workflow_run` event. After Desktop release smoke and
+  Release suites both succeed on master, CI explicitly dispatches Auto-tag
+  with that run's `GITHUB_SHA`. Auto-tag validates the supplied lowercase
+  40-character SHA as current or an ancestor of master, then evaluates checks
+  and the release gate on that SHA instead of moving master HEAD. A manual
+  Auto-tag dispatch without `sha` retains its fail-closed behavior.
+- Release prep's decide step skips the dispatch entirely when the version
+  `package.json` carries at the master SHA is already tagged **and** its
+  GitHub release is published — the same nothing-to-do proof Auto-tag's
+  version step uses (`git/ref/tags/v<version>` plus `releases/tags/v<version>`,
+  which 404s drafts). Release-gate runs therefore exist only while a
+  version is owed: from its bump merge until tag + published release. A tag
+  whose release is still a draft, or whose release leg never ran, stays a
+  candidate so Auto-tag's heal path keeps its evidence; any failed or
+  incomplete read also fails open to dispatching. Because each dispatch
+  pins the master SHA that was tip at dispatch time and the release-gate
+  concurrency group is serial, the decide step also treats any unfinished
+  `workflow_dispatch` CI run on master — created within the last three
+  hours — as release-gate work already outstanding and dispatches nothing
+  further. During a merge burst this keeps at most one release-gate run
+  queued or running per owed version instead of one per moved tip; the
+  outstanding run's SHA is still tagged through Auto-tag's exact-SHA
+  dispatch when it completes. A stale or unreadable dispatch timestamp
+  fails open to dispatching, so a zombie queued run cannot gate releases
+  forever.
+- Only the release-please PR changes the release version. The `Quick
+  typecheck` job refuses a pull request that changes the `package.json`
+  version or `.release-please-manifest.json` unless its head is a
+  `release-please--*` branch of `ashlrai/phantom`
+  (`.github/scripts/release-version-provenance.mjs`). A hand bump that lands
+  anyway still gets a tag and draft from auto-tag. The train skips it as
+  `release_message_mismatch`, keeps admitting the last release-please tag and
+  merging the next release PR. That release then supersedes the orphan draft,
+  which stays unpublished. This happened with `v3.30.25` (#4098) and `v3.30.32`
+  (#4735). Recover with the next release-please patch. Do not retag, and do not
+  widen the release-subject match.
 - A `workflow_dispatch` of `ci.yml` with `release_gate=true` builds that
   candidate. The ref is the tag when the tag is behind master, and `master`
   when the SHAs match. Attestation uses the same ref, so the checkout SHA is
@@ -486,8 +570,15 @@ lanes retain their separate ownership.
 `phm release status` emits `phantom.release-status.v2` JSON by default; use
 `--text` for people. The existing `repos` rows remain; `release` contains the
 same Phantom fields as the Fleet goals Release card and its **See log** action.
-Only local refs, `release-sign/last-released-tag` and SHA-bound autorun receipts
-and logs are read. No network checks run. Tags alone do not prove publication;
+`releaseRepos` adds the same typed commit status shown in the desktop and mobile
+Releases cards: repo, latestTag, tagDate, commitsSinceTag, state and reason.
+Local git is tried first; incomplete, shallow or missing clones fall back to
+bounded public remote-tag reads. Confirmed tagless remotes are `due` (no release
+yet); `unknown` means both reads lacked complete evidence, with the reason shown.
+With commits waiting, over 20 commits or 7 days is `due`, over 14 days is `stale`;
+zero waiting commits is `ok`. The cards show all seven repos without another tap.
+`release` still reads only local refs, `release-sign/last-released-tag` and
+SHA-bound autorun receipts and logs. Tags alone do not prove publication;
 publication time needs a saved release record. Missing evidence is JSON `null`.
 Signed assets and updater HTTP are the last recorded check, dated `recordedAt`.
 Merged PRs count distinct merge/squash PR numbers on the default branch's first
@@ -497,13 +588,63 @@ and earliest ETA use local versions, tag time and `RELEASE_CADENCE_MINUTES`
 to ship. Autorun reports rc and the scrubbed log's last `Reason:` line.
 `--file <path>` still inspects a saved release-train state file.
 
+### See which repo is due a release
+
+`phm releases` lists the seven Ashlr repos with the latest tag, its age in
+days, the PRs merged since and a verdict: `fresh`, `due`, `no release yet` or
+`unknown`. A repo is due when its latest tag is over 7 days old or over 50 PRs
+merged since it; an old tag with nothing merged since is fresh. `--json` emits
+`phantom.releases.v1` with `version`, `repos` and `next`, the single most
+overdue repo, or `null` when nothing is due. The Metrics pane shows the same
+legacy report plus `releaseRepos` from `phm release status --json`, read from
+`GET /api/fleet/releases`. Both cards render those shared commit rows.
+
+The command only reports. It reads local clones under `~/Projects/ashlrai`,
+makes no network calls and never tags or publishes; open the release PR through
+the repo's own release workflow. Fetch the clones first for current numbers. A
+missing clone or an unreadable tag date is `unknown`. A shallow clone is counted
+only when its history reaches back to the latest tag.
+
+### Compare publication with later merges
+
+```sh
+phm fleet publication-evidence --repo phantom
+phm fleet publication-evidence --repo phantom --json
+```
+
+This read-only report separates the latest published stable release, drafts,
+prereleases and PRs merged into the default branch after the stable release's
+publication time. Omit `--repo` to inspect all enrolled repositories. It reads
+GitHub through `gh` and local clones under `~/Projects/ashlrai`; use
+`--root /absolute/path/to/clones` to choose another parent directory. Local
+`origin/HEAD` must identify each clone's default branch. Fetch clones first
+for current refs; the report does not fetch them.
+
+JSON uses `phantom.publication-evidence.v1`. Each repository has `published`,
+`drafts`, `prereleases`, `mergedAfterPublication`, `lag`, `reason`, `next` and
+separate `localTag` facts. `next` suggests `no new merged PRs`, `write changelog`,
+`review release` or `unknown`. These are suggestions; the command changes no
+files and starts no release.
+
+Merged-after-publication is a timing count, not proof of which commits an
+artifact contains or what is installed. Missing or incomplete evidence stays
+unknown, including capped GitHub results, a missing stable baseline or an
+unknown default branch. Local tag commit counts also stay unknown in shallow
+clones. A successful read can contain unknown fields; inspect `lag` and
+`reason` before using the count.
+
 ### Draft release notes
 
 Run `phm release notes` inside a repository for Markdown since its latest
 reachable stable version tag, or choose `--since v3.30.35`. It reads the current
 branch's mainline, including squash and ordinary GitHub PR merges. Fetch history
 and tags first when the requested range is unavailable. No network calls occur.
-`--json` returns `phantom.release-notes.v1` with `since`, `head`, `summary` and
+`--since` also takes a date (`2026-11-01`). `--markdown` prints the reader's
+version: a three-sentence summary, then short lists under plain headings (New
+in the app, Phone, Fleet and speed, Fixes, Docs, Under the hood), with test and
+recovery work as one count. The app's Settings shows the same notes through
+`GET /api/verse/app/whats-new`. `--json` returns `phantom.release-notes.v1`
+with `since`, `head`, `summary`, `headline`, `sections` and
 ordered `groups` (New, Improved, Fixed, Internal); entries carry text, PRs and
 commit SHAs. Direct commits without a PR retain their short SHA in Markdown.
 Opaque subjects use touched files as context, without inferring user benefits.

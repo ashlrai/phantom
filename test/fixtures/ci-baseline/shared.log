@@ -1,2 +1,2 @@
-FAIL test/example.test.ts > owner status > reports delivery
+FAIL  |unit| test/example.test.ts > owner status > reports delivery
 AssertionError: expected 'unknown' to be 'delivered'

@@ -40,6 +40,23 @@ it('counts code 13 rows by repo and first path, filters time, and limits results
   expect(await readSkipForecast(6, readers)).toEqual(report);
 });
 
+it('counts the live code-13 spellings: skipped_empty+code and precheck_parked', async () => {
+  const queue = '- READY RQ-L1 (repo=phantom): edit `src/live.ts`\n- READY RQ-L2 (repo=phantom): edit `src/parked.ts`';
+  const jobs = [
+    JSON.stringify({ event: 'skipped_empty', code: 13, job: 'RQ-L1', repo: 'phantom', ts: '2026-11-03T17:00:00Z' }),
+    JSON.stringify({ event: 'precheck_parked', code: 13, job: 'RQ-L2', repo: 'phantom', ts: '2026-11-03T17:00:00Z', retry_at: 1, attempt: 1 }),
+    JSON.stringify({ event: 'skipped_empty', code: 10, job: 'RQ-L1', repo: 'phantom', ts: '2026-11-03T17:00:00Z' }),
+    JSON.stringify({ event: 'skipped_empty', reason: 'task_empty_repeat_24h', job: 'RQ-L2', repo: 'phantom', ts: '2026-11-03T17:00:00Z' }),
+    JSON.stringify({ event: 'precheck_parked', code: 12, job: 'RQ-L1', repo: 'phantom', ts: '2026-11-03T17:00:00Z' }),
+  ].join('\n');
+  const report = await readSkipForecast(6, { readJobs: async () => jobs, readQueue: async () => queue, now: () => now });
+  expect(report).toMatchObject({ matched_skips: 2, unmatched_skips: 0 });
+  expect(report.top_paths).toEqual([
+    { repo: 'phantom', path: 'src/live.ts', skip_count: 1 },
+    { repo: 'phantom', path: 'src/parked.ts', skip_count: 1 },
+  ]);
+});
+
 it('offers JSON and plain output, validates flags before reads, and reports missing files', async () => {
   const readers = await fixture();
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});

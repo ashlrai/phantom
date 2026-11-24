@@ -7,7 +7,8 @@ import { emptyState, parseState, type NodesState, type NodesStore } from '../src
 import { executePool, initializePool, PRIMARY_TIMEOUT_MS, type PoolRole } from '../src/core/drive/nodes/pool.js';
 import { callPool, configurePool, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../src/core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../src/core/drive/nodes/ssh.js';
-import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
+import { probeNodeLanes, probeProviderBinaries } from '../src/core/drive/nodes/worker.js';
+import { providerBinaryCandidates, resolveProviderBinary } from '../src/core/drive/nodes/provider-binary.js';
 import type { spawnSync } from 'node:child_process';
 
 class MemoryStore implements NodesStore {
@@ -151,9 +152,27 @@ describe('SSH routing and device-local provider lanes', () => {
     expect(sshApprovalStep('main-mac')).toContain('StrictHostKeyChecking=ask main-mac true');
   });
   it('advertises only provider CLIs signed in on this device without reading their output', () => {
-    const run = vi.fn((command: string) => ({ status: command === 'codex' ? 0 : 1 })) as unknown as typeof spawnSync;
-    expect(probeNodeLanes(run)).toEqual(['codex']);
-    for (const call of vi.mocked(run).mock.calls) expect(call[2]).toMatchObject({ stdio: 'ignore', timeout: 5000 });
+    const run = vi.fn((command: string) => ({ status: command === '/opt/homebrew/bin/codex' ? 0 : 1 })) as unknown as typeof spawnSync;
+    expect(probeNodeLanes(run, {}, { home: '/Users/air', executable: () => true })).toEqual(['codex']);
+    for (const call of vi.mocked(run).mock.calls) expect(call[2]).toMatchObject({ stdio: 'ignore', timeout: 5000, shell: false });
+  });
+  it('omits codex when no allowlisted absolute binary exists, even if a PATH lookup would sign in', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    expect(probeNodeLanes(run, {}, { home: '/Users/air', execPath: '/nonexistent/node', executable: () => false })).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  });
+  it('probes and receipts the exact resolved binary in allowlist order, never a bare command', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const executable = (path: string) => path === '/usr/local/bin/codex' || path === '/Users/air/.local/bin/claude';
+    expect(probeProviderBinaries(run, { home: '/Users/air', execPath: '/x/bin/node', executable }))
+      .toEqual({ codex: '/usr/local/bin/codex', claude: '/Users/air/.local/bin/claude' });
+    expect(vi.mocked(run).mock.calls.map(c => c[0])).toEqual(['/usr/local/bin/codex', '/Users/air/.local/bin/claude']);
+    expect(vi.mocked(run).mock.calls[0]![1]).toEqual(['login', 'status']);
+    expect(providerBinaryCandidates('codex', { home: '/Users/air', execPath: '/Users/air/.nvm/v24/bin/node' })).toEqual([
+      '/opt/homebrew/bin/codex', '/usr/local/bin/codex', '/Users/air/.local/bin/codex', '/Users/air/.npm-global/bin/codex',
+      '/Users/air/.nvm/v24/bin/codex']);
+    expect(resolveProviderBinary('codex', { home: '/Users/air', executable: path => path === '/Users/air/.npm-global/bin/codex' }))
+      .toBe('/Users/air/.npm-global/bin/codex');
   });
 });
 
