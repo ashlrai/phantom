@@ -32,7 +32,7 @@ export interface PlanNode {
   /** Plain words. */
   why: string;
 }
-export interface PlanAssignment { job: string; node: string; why: string }
+export interface PlanAssignment { job: string; node: string; lane?: string; why: string }
 export interface NodesPlan {
   schema: typeof NODES_PLAN_SCHEMA;
   as_of: string;
@@ -44,7 +44,7 @@ export interface NodesPlan {
   reasons: string[];
 }
 
-function planNode(node: NodeRow): PlanNode {
+export function planNode(node: NodeRow): PlanNode {
   const down = node.reachable === false || node.stateCode === 'offline';
   // An unconfirmed state (stateCode 'unknown': e.g. a live registry heartbeat
   // whose reachability the tailnet cannot vouch for) cannot promise slots —
@@ -78,7 +78,7 @@ export function buildNodesPlan(view: NodesView, queue: QueueOrderV1 | null, extr
       if (!placement.node) { unassigned += 1; continue; }
       const left = remaining.get(placement.node);
       if (typeof left === 'number') remaining.set(placement.node, left - 1);
-      assignable.push({ job: job.id, node: placement.node, why: `${job.lane} lane: ${placement.explanation}` });
+      assignable.push({ job: job.id, node: placement.node, lane: job.lane, why: `${job.lane} lane: ${placement.explanation}` });
     }
   }
   return { schema: NODES_PLAN_SCHEMA, as_of: view.asOf, nodes, assignable, unassigned, reasons };

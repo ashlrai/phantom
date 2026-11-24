@@ -7,13 +7,24 @@
  * Counting model: every `launch` row inside the window is one run. A relaunched
  * job id is several runs. `finish` rows pair with the job's earliest unfinished
  * run, `publish` rows with its latest run, and the job's last `outcome` row is
- * credited once, to the run that opened the PR (else the latest run).
+ * credited once, to the run that opened the PR (else the latest run). A merge
+ * recorded as reverted (`hasRevertEvidence`) is credited as `reverted`, never
+ * as a held merge — the same rule the router outcome fold applies.
+ *
+ * Rows fold through the fleet's jobs-ledger dialect (the field sets below
+ * `yieldTally`): reconciler outcome rows keyed by `jobId`/`prUrl`/`outcome`/
+ * `status`, `type`/`kind` event spellings, the `pool` lane alias, timestamp
+ * aliases and eventless resolved-PR phases all count, so GitHub-resolved
+ * merges are not invisible.
  *
  * `jobYield()` reads the same tally as `phm jobs yield` (`jobs.yield.v1`): finer
  * job kinds, precheck skips, and a keep / watch / stop verdict per kind.
  */
 
+import { parseLedgerTs } from '../metrics/loop.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import type { JobsEmptyWhy } from './jobs-empty-why.js';
+import { classifyYieldEmpty, type YieldEmptyReason } from './empty-why-classify.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
 /**
@@ -81,6 +92,8 @@ export interface JobYieldFamily {
   skipped: number;
   prs: number;
   merged: number;
+  /** Launches whose merge was recorded as reverted; never counted in `merged`. */
+  reverted: number;
   /** Null when nothing launched (unknown, not zero). */
   merged_per_launch: number | null;
   verdict: JobVerdict;
@@ -99,6 +112,8 @@ export interface JobYieldReport {
   known: boolean;
   launches: number | null;
   merged: number | null;
+  /** Launches whose merge was recorded as reverted; null when the read is unknown. */
+  reverted: number | null;
   empty: number | null;
   skipped: number | null;
   /** Launch slots that went to kinds with a stop verdict. */
@@ -116,6 +131,8 @@ export interface YieldRow {
   launches: number;
   prs: number;
   merged: number;
+  /** Launches whose merge was recorded as reverted; never counted in `merged`. */
+  reverted: number;
   empty: number;
   aborted: number;
   /** Runs with a finish row; tokens and run seconds come only from these. */
@@ -144,14 +161,45 @@ interface Run {
   /** `at` is the launch time; `last` the newest timestamped row for the run (epoch ms). */
   job: string; lane: string; tier: string; repo: string; /** From the launch row; null when it named none. */ model: string | null; at: number; last: number;
   finished: boolean; empty: boolean; aborted: boolean;
+  empty_reason?: YieldEmptyReason;
   wall: number | null; tokens: number | null;
-  prs: Set<string>; merged: boolean;
+  prs: Set<string>; merged: boolean; reverted: boolean;
+  /** Epoch ms of the credited merge; null when its timestamp is unusable. */
+  mergedAt: number | null;
+  /** PR URL carried by the credited merge observation, when recorded. */
+  mergedPr?: string;
+  /** Launch source tag, falling back to producer. */
+  src: string | null;
 }
 
 const word = (value: unknown): string =>
   typeof value === 'string' && /^[\w.:@/-]{1,80}$/.test(value.trim()) ? value.trim() : 'unknown';
+const srcTag = (value: unknown): string | null => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.trim()) ? value.trim() : null;
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
+// Revert evidence uses the same field vocabulary the router outcome fold
+// honors: a reverted:true flag, a parseable reverted_at/revertedAt stamp, a
+// revert/reverted event name, or a revert/reverted terminal state field.
+const REVERT_NAMES: ReadonlySet<string> = new Set(['revert', 'reverted']);
+const REVERT_EVENT_KEYS = ['event', 'type', 'kind'];
+const REVERT_STATE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'];
+const hasRevertName = (row: Record<string, unknown>, keys: readonly string[]): boolean =>
+  keys.some(k => {
+    const v = row[k];
+    return typeof v === 'string' && REVERT_NAMES.has(v.trim().toLowerCase());
+  });
+/** True when one ledger row carries positive revert evidence for its job. Explicit `reverted:false` is not evidence. */
+export function hasRevertEvidence(row: Record<string, unknown>): boolean {
+  if (row['reverted'] === true) return true;
+  for (const k of ['reverted_at', 'revertedAt']) {
+    const v = row[k];
+    if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Date.parse(v))) return true;
+  }
+  return hasRevertName(row, REVERT_EVENT_KEYS) || hasRevertName(row, REVERT_STATE_KEYS);
+}
+/** Terminal outcome states that mean the recorded merge did not hold. */
+const REVERT_OUTCOMES: ReadonlySet<string> = new Set(['REVERT', 'REVERTED']);
 
 function median(values: number[]): number | null {
   if (!values.length) return null;
@@ -180,7 +228,7 @@ function jobYieldParts(runs: Run[], skips: Map<string, { repo: string; rows: num
   const rows = new Map<string, Omit<JobYieldFamily, 'merged_per_launch' | 'verdict' | 'reason'> & { ids: Set<string>; newest: boolean[] }>();
   const row = (family: string, job: string) => {
     let hit = rows.get(family);
-    if (!hit) rows.set(family, hit = { family, launches: 0, running: 0, empty: 0, skipped: 0, prs: 0, merged: 0, ids: new Set(), newest: [] });
+    if (!hit) rows.set(family, hit = { family, launches: 0, running: 0, empty: 0, skipped: 0, prs: 0, merged: 0, reverted: 0, ids: new Set(), newest: [] });
     hit.ids.add(job);
     return hit;
   };
@@ -193,15 +241,16 @@ function jobYieldParts(runs: Run[], skips: Map<string, { repo: string; rows: num
     hit.newest.push(run.merged);
     hit.prs += run.prs.size;
     if (run.merged) hit.merged++;
+    if (run.reverted) hit.reverted++;
     if (run.empty) hit.empty++;
-    if (!run.finished && !run.empty && !run.aborted && !run.merged && run.prs.size === 0) hit.running++;
+    if (!run.finished && !run.empty && !run.aborted && !run.merged && !run.reverted && run.prs.size === 0) hit.running++;
   }
   for (const [job, skip] of skips) row(jobKind(job, skip.repo !== 'unknown' ? skip.repo : repos.get(job)), job).skipped += skip.rows;
   const order: Record<JobVerdict, number> = { stop: 0, watch: 1, keep: 2 };
   const families = [...rows.values()].map(({ ids: _ids, newest, ...r }): JobYieldFamily => {
     const recentMerge = newest.slice(-JOB_RECENT_LAUNCHES).some(Boolean);
-    const reason = [`${r.merged} merged from ${plural(r.launches, 'launch', 'launches')}`, r.empty ? `${r.empty} empty` : '',
-      r.running ? `${r.running} still running` : '', r.skipped ? `${r.skipped} skipped before launch` : ''].filter(Boolean).join(', ');
+    const reason = [`${r.merged} merged from ${plural(r.launches, 'launch', 'launches')}`, r.reverted ? `${r.reverted} reverted` : '',
+      r.empty ? `${r.empty} empty` : '', r.running ? `${r.running} still running` : '', r.skipped ? `${r.skipped} skipped before launch` : ''].filter(Boolean).join(', ');
     return { ...r, merged_per_launch: r.launches ? r.merged / r.launches : null, verdict: jobVerdict({ ...r, recentMerge }), reason };
   }).sort((a, b) => order[a.verdict] - order[b.verdict] || b.launches - a.launches
     || (a.merged_per_launch ?? 0) - (b.merged_per_launch ?? 0) || a.family.localeCompare(b.family));
@@ -213,6 +262,7 @@ function jobYieldParts(runs: Run[], skips: Map<string, { repo: string; rows: num
     : `${stopSlots} of ${plural(runs.length, 'launch', 'launches')} went to ${plural(stops.length, 'job kind')} that ${stops.some(r => r.merged) ? 'rarely merge' : 'merged nothing'}`;
   return { ids: new Map([...rows].map(([family, r]) => [family, [...r.ids]])), report: {
     schema: 'jobs.yield.v1', version: 1, window_hours: hours, known: true, launches: runs.length, merged,
+    reverted: families.reduce((sum, r) => sum + r.reverted, 0),
     empty: families.reduce((sum, r) => sum + r.empty, 0), skipped: families.reduce((sum, r) => sum + r.skipped, 0),
     stop_slots: stopSlots, summary, families,
     stop_first: stops.slice(0, JOB_STOP_FIRST_LIMIT).map(r => ({ family: r.family, slots: r.launches, merged: r.merged, reason: r.reason })),
@@ -220,12 +270,14 @@ function jobYieldParts(runs: Run[], skips: Map<string, { repo: string; rows: num
 }
 
 export function unknownJobYield(hours: number): JobYieldReport {
-  return { schema: 'jobs.yield.v1', version: 1, window_hours: hours, known: false, launches: null, merged: null, empty: null, skipped: null,
+  return { schema: 'jobs.yield.v1', version: 1, window_hours: hours, known: false, launches: null, merged: null, reverted: null, empty: null, skipped: null,
     stop_slots: null, summary: 'Job yield: unknown (job metrics file unreadable)', families: [], stop_first: [] };
 }
 
 export function yieldVerdict(row: Omit<YieldRow, 'verdict'>): string {
-  const parts = [`${row.name}: ${plural(row.prs, 'PR')} from ${plural(row.launches, 'launch', 'launches')}`, `${row.merged} merged`, `${row.empty} empty`];
+  const parts = [`${row.name}: ${plural(row.prs, 'PR')} from ${plural(row.launches, 'launch', 'launches')}`, `${row.merged} merged`];
+  if (row.reverted) parts.push(`${row.reverted} reverted`);
+  parts.push(`${row.empty} empty`);
   if (row.aborted) parts.push(`${row.aborted} aborted`);
   parts.push(row.tokens_per_merged === null ? 'tokens per merged PR unknown' : `${Math.round(row.tokens_per_merged)} tokens per merged PR`);
   return parts.join(', ');
@@ -241,6 +293,7 @@ function summarize(name: string, runs: Run[]): YieldRow {
     launches: runs.length,
     prs: runs.reduce((sum, r) => sum + r.prs.size, 0),
     merged,
+    reverted: runs.filter(r => r.reverted).length,
     empty: runs.filter(r => r.empty).length,
     aborted: runs.filter(r => r.aborted).length,
     finished: finished.length,
@@ -270,6 +323,73 @@ function group(runs: Run[], key: (run: Run) => string): YieldRow[] {
   return rank([...groups].map(([name, members]) => summarize(name, members)));
 }
 
+/**
+ * jobs.jsonl field dialects, the same sets lane-yield-weight.computeLaneYield,
+ * queue/job-outcomes.parseJobOutcomeRows, metrics/reward-feed and
+ * metrics/loop.ledgerEvent accept: job ids take job|job_id|jobId|id, the event
+ * name event|type|kind ('published' normalizes to 'publish'), the phase
+ * state|outcome|status plus the producer aliases phase|result|conclusion,
+ * timestamps ts|timestamp|at|time|mergedAt|closedAt|
+ * recordedAt|updatedAt (mergedAt/closedAt preferred on terminal rows) and the
+ * lane aliases pool|arm. Eventless rows carrying a resolved PR phase
+ * (MERGED/CLOSED/OPEN) or PUBLISHED read as 'outcome'/'publish', the dispatchd
+ * _vc_event convention — that is how metrics-outcomes reconciler rows
+ * (`jobId`/`prUrl`/`outcome`/`status` + `source`) arrive.
+ */
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
+const LANE_KEYS = ['lane', 'pool', 'arm'] as const;
+const URL_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
+const TS_FIELDS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+/** Skip events that prove the job never took a slot; `applied:false` is a dry run. */
+const SKIP_EVENTS: ReadonlySet<string> = new Set(['precheck_skip', 'skipped_empty']);
+/** Named events whose phase is a resolved job outcome. */
+const OUTCOME_EVENTS: ReadonlySet<string> = new Set(['outcome', 'result', 'resolved', 'resolution']);
+const RESOLVED_PHASES: ReadonlySet<string> = new Set(['MERGED', 'CLOSED', 'OPEN']);
+
+const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+const phaseOf = (row: Record<string, unknown>): string => (firstString(row, PHASE_KEYS) ?? '').toUpperCase();
+
+/** First parseable stamp among the ledger's timestamp fields; MERGED prefers mergedAt, CLOSED closedAt. */
+const eventTs = (row: Record<string, unknown>, phase: string): number | null => {
+  const preferred = phase === 'MERGED' ? 'mergedAt' : phase === 'CLOSED' ? 'closedAt' : null;
+  const fields = preferred === null ? TS_FIELDS : [preferred, ...TS_FIELDS.filter(f => f !== preferred)];
+  for (const field of fields) {
+    const at = parseLedgerTs(row[field]);
+    if (at !== null) return at;
+  }
+  return null;
+};
+
+/** Named lifecycle event, or the phase-inferred 'publish'/'outcome' for eventless rows. */
+const ledgerEvent = (row: Record<string, unknown>, phase: string): string | null => {
+  const named = firstString(row, EVENT_KEYS)?.toLowerCase() ?? null;
+  if (named !== null) return named === 'published' ? 'publish' : named;
+  if (phase === 'PUBLISHED') return 'publish';
+  return RESOLVED_PHASES.has(phase) ? 'outcome' : null;
+};
+
+/**
+ * The outcome state a row resolves its job to, or null when it carries none.
+ * A resolved phase riding on a 'publish' event counts too: reconciler rows
+ * copied from publish rows keep `event:'publish'`. `merged:true` and a 'merged'
+ * event name are merge evidence on any post-launch row; an outcome row with no
+ * phase records nothing rather than an unknown that would overwrite a merge.
+ */
+const outcomeState = (row: Record<string, unknown>, event: string | null, phase: string): string | null => {
+  if (row['merged'] === true || event === 'merged') return 'MERGED';
+  if (event !== null && OUTCOME_EVENTS.has(event)) return phase !== '' ? phase : null;
+  if (event === 'publish' && RESOLVED_PHASES.has(phase)) return phase;
+  return null;
+};
+
 /** Incremental tally so callers can stream a large ledger line by line. */
 /** One launch as the tally sees it, after MERGED outcomes are credited. Read-only view for other reports. */
 export type YieldRun = Readonly<Omit<Run, 'prs'>> & { readonly prs: ReadonlySet<string> };
@@ -278,15 +398,23 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
-  const outcomes = new Map<string, string>();
+  const outcomes = new Map<string, { state: string; at: number | null; pr: string | null }>();
+  const revertedJobs = new Set<string>();
   const skips = new Map<string, { repo: string; rows: number }>();
-  /** Credit each MERGED job once. Safe to repeat. */
+  /** Credit each resolved job once. Safe to repeat. A recorded revert is never a held merge. */
   const settle = (): Run[] => {
-    for (const [job, state] of outcomes) {
-      if (state !== 'MERGED') continue;
+    for (const [job, { state, at, pr }] of outcomes) {
       const runs = byJob.get(job)!;
       const withPr = runs.filter(r => r.prs.size > 0);
-      (withPr[withPr.length - 1] ?? runs[runs.length - 1]!).merged = true;
+      const run = withPr[withPr.length - 1] ?? runs[runs.length - 1]!;
+      if (state === 'MERGED') {
+        if (revertedJobs.has(job)) run.reverted = true;
+        else {
+          run.merged = true;
+          run.mergedAt = at !== null && at >= run.at && at <= now ? at : null;
+          if (pr !== null) run.mergedPr = pr;
+        }
+      } else if (REVERT_OUTCOMES.has(state)) run.reverted = true;
     }
     return [...byJob.values()].flat();
   };
@@ -298,22 +426,30 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!value || typeof value !== 'object' || Array.isArray(value)) return;
         row = value as Record<string, unknown>;
       } catch { return; }
-      const job = word(row.job);
+      // Node-pool machinery rows are a different producer dialect —
+      // `job` is a per-attempt id, never a dispatchd launch. Without the
+      // schema gate a session-pool `launch` would mint a phantom run.
+      if (isNodePoolLedgerRow(row)) return;
+      const job = word(firstString(row, JOB_KEYS));
       if (job === 'unknown') return;
-      // Accept `+0000` offsets as well as ISO `+00:00`.
-      const at = typeof row.ts === 'string' ? Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')) : NaN;
+      const phase = phaseOf(row);
+      const event = ledgerEvent(row, phase);
+      const at = eventTs(row, phase);
       // Rows from before the window cannot belong to a run launched inside it.
-      if (Number.isFinite(at) && at < start) return;
+      if (at !== null && at < start) return;
+      // Revert evidence is job-scoped and sticky, like the router outcome fold:
+      // any row carrying it marks the job, whatever its event name.
+      if (hasRevertEvidence(row)) revertedJobs.add(job);
       const runs = byJob.get(job);
-      if (row.event === 'launch') {
-        if (!Number.isFinite(at) || at > now) return;
-        const run: Run = { job, lane: word(row.lane), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false };
+      if (event === 'launch') {
+        if (at === null || at > now) return;
+        const run: Run = { job, lane: word(firstString(row, LANE_KEYS)), tier: word(row.tier), repo: word(row.repo), model: typeof row.model === 'string' && row.model.trim() ? row.model.trim().slice(0, 80) : null, at, last: at, finished: false, empty: false, aborted: false, wall: null, tokens: null, prs: new Set(), merged: false, reverted: false, mergedAt: null, src: srcTag(row.src) ?? srcTag(row.producer) };
         if (runs) runs.push(run); else byJob.set(job, [run]);
         return;
       }
-      if (row.event === 'precheck_skip') {
+      if (event !== null && SKIP_EVENTS.has(event) && row['applied'] !== false) {
         // A skip takes no slot, so it counts with or without a launch; it needs a time inside the window.
-        if (!Number.isFinite(at) || at > now) return;
+        if (at === null || at > now) return;
         const skip = skips.get(job) ?? { repo: 'unknown', rows: 0 };
         if (skip.repo === 'unknown') skip.repo = word(row.repo);
         skip.rows++;
@@ -322,22 +458,31 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
       }
       if (!runs) return; // launched before the window, or never seen launching
       const latest = runs[runs.length - 1]!;
-      if (Number.isFinite(at) && at <= now && at > latest.last) latest.last = at;
-      if (row.event === 'finish') {
+      if (at !== null && at <= now && at > latest.last) latest.last = at;
+      if (event === 'finish') {
         const run = runs.find(r => !r.finished);
         if (!run) return;
         run.finished = true;
         run.empty ||= row.empty === true;
+        run.empty_reason = typeof row.exit_code === 'number' && row.exit_code !== 0 ? 'worker_error'
+          : classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
         run.wall = count(row.wall_s);
         run.tokens = count(row.tokens_total);
-      } else if (row.event === 'publish') {
+      } else if (event === 'publish') {
         const run = runs[runs.length - 1]!, kind = word(row.class);
-        if (kind === 'pr') run.prs.add(typeof row.url === 'string' && row.url ? row.url : `pr:${run.prs.size}`);
-        else if (kind === 'empty') run.empty = true;
+        // A publish row naming a PR url under any spelling is a PR claim; the
+        // eventless PUBLISHED spelling carries `prUrl` and no `class` at all.
+        const url = firstString(row, URL_KEYS);
+        if (kind === 'pr' || (kind === 'unknown' && url !== null)) run.prs.add(url ?? `pr:${run.prs.size}`);
+        else if (kind === 'empty') {
+          run.empty = true;
+          const reason = classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
+          if (reason !== 'unknown' && run.empty_reason !== 'worker_error') run.empty_reason = reason;
+        }
         else if (kind.startsWith('abort')) run.aborted = true;
-      } else if (row.event === 'outcome') {
-        outcomes.set(job, word(row.state).toUpperCase());
       }
+      const state = outcomeState(row, event, phase);
+      if (state !== null) outcomes.set(job, { state, at, pr: firstString(row, URL_KEYS) });
     },
     runs: settle,
     jobYield: () => jobYieldParts(settle(), skips, hours).report,

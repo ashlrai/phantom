@@ -23,6 +23,7 @@ describe('resource console scoped bootstrap', () => {
       if (!authenticated) return new Response(null, { status: 401 });
       if (path === '/api/resources/console') return json(scope);
       if (path === '/api/resources') return json(snapshot);
+      if (path === '/api/app/fleet-usage') return json({ schema: 'fleet-usage.v1', generatedAt: snapshot.sampledAt, lanes: [] });
       throw new Error(`Unexpected route: ${path}`);
     });
     vi.stubGlobal('fetch', request); const user = userEvent.setup();
@@ -35,7 +36,7 @@ describe('resource console scoped bootstrap', () => {
     await screen.findByRole('heading', { name: 'Routing board' });
     expect(screen.getByText('Phantom')).toBeInTheDocument();
     expect(screen.getByLabelText('Resource store')).toHaveTextContent(scope.root);
-    expect(request.mock.calls.map(([path]) => path)).toEqual(['/api/session', '/api/resources/console', '/api/resources']);
+    expect(request.mock.calls.map(([path]) => path)).toEqual(['/api/session', '/api/resources/console', '/api/resources', '/api/app/fleet-usage']);
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(request.mock.calls.filter(([path]) => path === '/api/resources')).toHaveLength(2));
     expect(EventSource).not.toHaveBeenCalled();

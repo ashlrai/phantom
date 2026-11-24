@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 
 export interface FleetBetsReaders {
   /** Text of ~/.ashlr-runs/leader/VISION.md, or null when missing. */
@@ -57,8 +58,10 @@ export function readBets(vision: string | null, jobs: string | null): FleetBetsR
     if (typeof id !== 'string' || !wanted.has(id) || typeof event !== 'string') continue;
     const at = parseTs(r.ts), byEvent = latest.get(id) ?? new Map();
     latest.set(id, byEvent);
-    const old = byEvent.get(event);
-    if (!old || (Number.isNaN(at) ? -Infinity : at) >= old.at) byEvent.set(event, { row: r, at: Number.isNaN(at) ? -Infinity : at });
+    // Both precheck-decline spellings share one newest-wins bucket.
+    const key = isPrecheckSkipRow(r) ? 'precheck_skip' : event;
+    const old = byEvent.get(key);
+    if (!old || (Number.isNaN(at) ? -Infinity : at) >= old.at) byEvent.set(key, { row: r, at: Number.isNaN(at) ? -Infinity : at });
   }
   const bets = ids.map((id): Bet => {
     const ev = latest.get(id), pick = (name: string) => ev?.get(name)?.row;

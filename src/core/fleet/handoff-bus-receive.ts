@@ -21,8 +21,8 @@ import {
 } from './bus-inbox.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
-import { agentIdentityKeys } from '../agents/bus-identity.js';
-import { isFleetJobId } from './runs-job-detail.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { isWorkerHandoffBody } from './handoff-body.js';
 import { runContextWorker, type ContextWorkerIO } from './context-worker-run.js';
 
 /** Bounded scan of the durable inbox, the same page cap the notice reader uses. */
@@ -35,13 +35,9 @@ export const HANDOFF_RECEIVE_END = '\nEND UNTRUSTED RETAINED BUS HANDOFF\n';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-const keys = (value: Record<string, unknown>, allowed: string[]): boolean =>
-  Object.keys(value).every(key => allowed.includes(key));
 /** Same printable-ASCII token rule the envelope applies to id/from/to. */
 const token = (value: unknown): value is string =>
   typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
-
-interface WorkerHandoffBody { taskId: string; prompt: string }
 
 /**
  * `--to` names one agent identity, not one literal label: a retained
@@ -53,17 +49,8 @@ interface WorkerHandoffBody { taskId: string; prompt: string }
  */
 export function handoffRecipientMatches(to: string, recipient: string, options: BusInboxOptions): boolean {
   if (to === recipient) return true;
-  const identityOf = agentIdentityKeys({ root: options.root });
-  const target = identityOf?.(recipient);
-  return target !== undefined && identityOf?.(to) === target;
-}
-
-/** Exact body schema emitted by `ashlr fleet handoff-send --apply`. */
-function isWorkerHandoffBody(body: unknown): body is WorkerHandoffBody {
-  return record(body) && keys(body, ['kind', 'taskId', 'prompt']) &&
-    body.kind === 'worker-handoff' &&
-    typeof body.taskId === 'string' && isFleetJobId(body.taskId) &&
-    typeof body.prompt === 'string' && body.prompt.trim().length > 0;
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(recipient, read.status === 'ok' ? read.registry : undefined)(to);
 }
 
 type Found = { status: 'ok'; receipt: BusInboxReceipt }

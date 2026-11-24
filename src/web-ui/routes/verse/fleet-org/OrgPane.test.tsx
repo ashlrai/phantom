@@ -112,3 +112,12 @@ it('shows the Leader chip as unknown when the leader read is down', async () => 
   render(<OrgPane {...props} />);
   expect(await screen.findByRole('status', { name: 'Leader' })).toHaveTextContent('Leader: unknown');
 });
+
+it('shows a Team row with each teammate and the pools they bring', async () => {
+  stub({ '/api/verse/team/people': { schema: 'phantom.team.v1', version: 1, team: 'default', orgState: 'absent', people: [
+    { id: 'person:sam', displayName: 'Sam', role: 'founder', identities: [], lanes: ['claude'], seats: ['sam-agent'], status: 'pending', poolSharePct: 30 }] }, [MAP]: orgMap(), [OFFICE]: { value: office } });
+  render(<OrgPane {...props} />);
+  const row = await screen.findByRole('region', { name: 'Team' });
+  expect(await within(row).findByText('Sam')).toBeInTheDocument();
+  expect(row).toHaveTextContent('pools: claude · 30% share');
+});

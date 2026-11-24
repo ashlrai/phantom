@@ -12,7 +12,7 @@
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ledgerRows, readText } from './empty-cause.js';
+import { ledgerEventName, ledgerLane, ledgerPhase, ledgerPrUrl, ledgerRows, readText } from './empty-cause.js';
 import { classifyEmptyRun, type EmptyRunReason } from './empties-why.js';
 import { finishesIn } from './empties.js';
 import { parsePublishResult } from './job-state.js';
@@ -35,12 +35,46 @@ export interface JobOutcomeInput {
   exitCode: number | null;
 }
 
+/**
+ * Terminal phase tokens that mark a row as carrying a job/PR outcome even when
+ * its event keeps a launch or publish spelling — the metrics-outcomes
+ * reconciler writes exactly that. The EMPTY family counts too: it is a
+ * terminal outcome, just not a PR merge.
+ */
+const OUTCOME_PHASES: ReadonlySet<string> = new Set([
+  'MERGED', 'CLOSED', 'OPEN',
+  'EMPTY', 'EMPTY_DONE', 'SKIPPED-EMPTY', 'DONE-NOOP', 'NOOP',
+  'FAILED', 'ERROR',
+]);
+/** Event names (post-normalization, lowercase) that name an outcome directly. */
+const OUTCOME_EVENTS: ReadonlySet<string> = new Set(['outcome', 'merged', 'closed']);
+
+/** True when the row records a job/PR outcome — a named outcome event or a terminal phase on any event spelling. */
+function isOutcomeRow(row: Row): boolean {
+  const eventName = ledgerEventName(row);
+  if (eventName !== null && OUTCOME_EVENTS.has(eventName)) return true;
+  const phase = ledgerPhase(row);
+  return phase !== null && OUTCOME_PHASES.has(phase);
+}
+
+/** The uppercased outcome state an outcome row carries; '' when an outcome event names no state. */
+function outcomeState(row: Row): string {
+  const phase = ledgerPhase(row);
+  if (phase !== null) return phase;
+  const eventName = ledgerEventName(row);
+  if (eventName === 'merged') return 'MERGED';
+  if (eventName === 'closed') return 'CLOSED';
+  return '';
+}
+
 /** Pure: the outcome of one finished job. Exit code is the last resort, never the first. */
 export function classifyJobOutcome(input: JobOutcomeInput): { outcome: JobOutcome; pr: string | null } {
-  const states = input.events.filter(row => row.event === 'outcome').map(row => String(row.state ?? '').toUpperCase());
+  const states = input.events.filter(isOutcomeRow).map(outcomeState);
   const parsed = input.publish === null ? null : parsePublishResult(input.publish);
   const publishedPr = parsed?.result?.kind === 'pr' ? parsed.result.url : null;
-  const rowPr = [...input.events].reverse().map(row => row.event === 'outcome' && typeof row.url === 'string' ? row.url : null).find(Boolean) ?? null;
+  const rowPr = [...input.events].reverse()
+    .map(row => (isOutcomeRow(row) ? ledgerPrUrl(row) : null))
+    .find((url): url is string => url !== null) ?? null;
   const pr = publishedPr ?? rowPr;
   if (states.includes('MERGED')) return { outcome: 'merged', pr };
   if (states.at(-1) === 'CLOSED') return { outcome: 'pr_closed', pr };
@@ -177,10 +211,10 @@ export async function readJobOutcomes(opts: ReadJobOutcomesOptions): Promise<Job
   }
   // A job is finished once the ledger shows a finish, a skip, or a merge observation.
   const finished = finishesIn(rows);
-  const outcomeOnly = [...byJob].filter(([id, events]) => !finished.some(f => f.id === id) && events.some(row => row.event === 'outcome' && typeof row.state === 'string' && ['MERGED', 'CLOSED'].includes(row.state.toUpperCase())));
+  const outcomeOnly = [...byJob].filter(([id, events]) => !finished.some(f => f.id === id) && events.some(row => isOutcomeRow(row) && ['MERGED', 'CLOSED'].includes(outcomeState(row))));
   const targets = [
     ...finished.map(f => ({ id: f.id, lane: f.lane, exit: f.exitCode, empty: f.empty })),
-    ...outcomeOnly.map(([id, events]) => ({ id, lane: String(events.find(row => typeof row.lane === 'string')?.lane ?? 'unknown'), exit: null as number | null, empty: false })),
+    ...outcomeOnly.map(([id, events]) => ({ id, lane: events.map(ledgerLane).find((lane): lane is string => lane !== null) ?? 'unknown', exit: null as number | null, empty: false })),
   ].filter(target => lane === null || target.lane === lane);
   const out: JobOutcomeRow[] = [];
   for (let i = 0; i < targets.length; i += 16) {

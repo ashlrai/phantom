@@ -168,7 +168,12 @@ and CLI exits. Run tests with a temporary HOME as required by the repository.
 ### Merge leverage mix
 
 `phm metrics leverage-mix --json` reports the last 24 hours of merged fleet
-PRs from `~/.ashlr-runs/metrics/jobs.jsonl`. Add `--prs prs.json` to enrich
+PRs from `~/.ashlr-runs/metrics/jobs.jsonl`. `phm metrics leverage [--hours N]`
+does the same per-class-per-hour count. Both read the ledger's newest bounded
+tail — the same 16 MiB window the other fleet readers use — so an oversized
+append-only ledger still reports recent merges and sets
+`sources.jobsTruncated: true` in the JSON (and a `(jobs ledger truncated)`
+note in text output) instead of implying full coverage. Add `--prs prs.json` to enrich
 those merges with paths from a GitHub export, for example
 `gh pr list --state merged --limit 1000 --json url,mergedAt,files > prs.json`.
 Export each relevant repository and combine the arrays for a fleet-wide view.

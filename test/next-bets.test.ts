@@ -13,7 +13,7 @@ const NONE: BetInputs = { lanes: null, pace: null, yield: null, mains: null, rel
 const lane = (name: string, running: number, target: number, queued = 0, held = false): FleetRunsLane =>
   ({ lane: name, running, target, queued, held, floor: null, ceiling: null, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null });
 const row = (name: string, launches: number, empty: number, merged = 0): YieldRow =>
-  ({ name, launches, empty, merged, prs: merged, aborted: 0, finished: launches, median_run_s: null, tokens: null, tokens_measured: 0, merged_per_launch: merged / launches, tokens_per_merged: null, verdict: '' });
+  ({ name, launches, empty, merged, reverted: 0, prs: merged, aborted: 0, finished: launches, median_run_s: null, tokens: null, tokens_measured: 0, merged_per_launch: merged / launches, tokens_per_merged: null, verdict: '' });
 const yields = (families: YieldRow[], tiers: YieldRow[] = []): YieldReport =>
   ({ schema: 'fleet.yield.v1', window_hours: 24, known: true, launches: 0, families, lanes: [], tiers });
 const red = (repo: string, fixJobs: string[] = [], emptyAttempts = 0): FleetMainHealthRepo =>

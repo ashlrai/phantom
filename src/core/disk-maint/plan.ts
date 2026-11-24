@@ -29,6 +29,8 @@
 import { lstatSync, readdirSync, statfsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { readSource, type Source } from '../fleet/runs-parked-queue.js';
+import { ledgerPhase } from '../fleet/empty-cause.js';
+import { ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { isKeptWorktree, readKeptWorktrees, measureWorktreeBytes, type KeptWorktrees } from '../worktree-retention.js';
 import { classifyWorktree, parseJobLedger } from '../../cli/disk.js';
 import { protectedReason, protectedRoots, resolveMaintRoots, type MaintRoots } from './protect.js';
@@ -154,21 +156,30 @@ interface ScanCtx {
   completedJobs: Set<string>;
 }
 
-/** A launch invalidates earlier completion evidence, even for a reused job id. */
+/** A launch or re-queue invalidates earlier completion evidence, even for a
+ * reused job id. Reads the jobs-ledger dialect: job|job_id|jobId|id,
+ * event|type|kind, phase aliases and eventless reconciler outcome rows. The
+ * last resolved outcome wins; a phase-less outcome row records nothing. */
 export function completedArtifactJobs(text: string): Set<string> {
   const states = new Map<string, { finished: boolean; merged: boolean }>();
   for (const line of text.split(/\r?\n/)) {
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
       if (!row || typeof row !== 'object') continue;
-      const id = row.job ?? row.job_id ?? row.id;
-      if (typeof id !== 'string' || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
-      if (row.event === 'launch' || row.event === 'queued') states.set(id, { finished: false, merged: false });
-      else if (row.event === 'finish' || row.event === 'outcome') {
-        const state = states.get(id) ?? { finished: false, merged: false };
-        if (row.event === 'finish') state.finished = true;
-        else state.merged = String(row.state ?? row.outcome ?? '').toLowerCase() === 'merged';
-        states.set(id, state);
+      const id = ledgerJobId(row);
+      if (id === null || !/^[A-Za-z0-9][\w.-]*$/.test(id)) continue;
+      const phase = ledgerPhase(row);
+      const event = ledgerLifecycleEvent(row, phase);
+      if (event === 'launch' || event === 'queued' || event === 'enqueue' || event === 'enqueued') {
+        states.set(id, { finished: false, merged: false });
+        continue;
+      }
+      const state = ledgerOutcomeState(row, event, phase);
+      if (event === 'finish' || state !== null) {
+        const entry = states.get(id) ?? { finished: false, merged: false };
+        if (event === 'finish') entry.finished = true;
+        if (state !== null) entry.merged = state === 'MERGED';
+        states.set(id, entry);
       }
     } catch { if (line.trim()) return new Set(); }
   }

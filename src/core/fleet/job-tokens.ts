@@ -9,6 +9,7 @@ import { yieldTally, type YieldRun } from './slot-yield.js';
 
 export const JOB_TOKENS_SCHEMA = 'jobs.tokens.v1';
 export const JOB_COST_SCHEMA = 'jobs.cost.v1';
+export const JOB_COVERAGE_SCHEMA = 'jobs.coverage.v1';
 /** Log tail read per job; the result object is the last line. */
 const LOG_TAIL_BYTES = 1_048_576;
 
@@ -226,4 +227,37 @@ export function jobsTokensLines(report: JobsTokens): string[] {
     report.tokens_total === null ? 'Tokens: unknown (no job reported usage)' : `Tokens: ${report.tokens_total}`,
     report.tokens_per_merged_pr === null ? 'Tokens per merged PR: unknown' : `Tokens per merged PR: ${Math.round(report.tokens_per_merged_pr)}`,
   ];
+}
+
+export interface CoverageRow {
+  /** Lane name, or `all` for the total row. */
+  lane: string;
+  jobs: number; measured: number;
+  /** Jobs with no usage anywhere: unknown, not zero. */
+  unknown: number;
+  /** measured / jobs; null with no jobs. */
+  coverage: number | null;
+  merged: number; merged_measured: number;
+}
+
+export interface JobsCoverage {
+  schema: typeof JOB_COVERAGE_SCHEMA; version: 1; window_hours: number; known: boolean;
+  total: CoverageRow;
+  lanes: CoverageRow[];
+}
+
+/** How many finished jobs per lane have known token use. Same measuring as `jobs cost`. */
+export async function buildJobsCoverage(lines: Iterable<string>, root: string, hours: number, now: number, read: Reader = readText): Promise<JobsCoverage> {
+  const cost = await buildJobsCost(lines, root, hours, now, 'lane', read);
+  const pick = (lane: string, r: CostRow): CoverageRow => ({ lane, jobs: r.jobs, measured: r.measured, unknown: r.jobs - r.measured, coverage: r.coverage, merged: r.merged, merged_measured: r.merged_measured });
+  return { schema: JOB_COVERAGE_SCHEMA, version: 1, window_hours: hours, known: true, total: pick('all', cost.total), lanes: cost.rows.map(r => pick(r.key, r)) };
+}
+
+export function jobsCoverageLines(report: JobsCoverage): string[] {
+  if (!report.known) return ['Coverage: unknown (job metrics file unreadable)'];
+  const head = ['lane', 'jobs', 'measured', 'unknown', 'coverage', 'merged measured'];
+  const body = [...report.lanes, report.total].map(r => [r.lane, String(r.jobs), String(r.measured), String(r.unknown), pctText(r.coverage), `${r.merged_measured}/${r.merged}`]);
+  const width = head.map((h, i) => Math.max(h.length, ...body.map(r => r[i]!.length)));
+  const fmt = (cells: string[]): string => cells.map((c, i) => i === 0 ? c.padEnd(width[i]!) : c.padStart(width[i]!)).join('  ');
+  return [`Token coverage of finished jobs in the last ${report.window_hours} hours`, fmt(head), ...body.map(fmt)];
 }

@@ -2,11 +2,11 @@ import { join } from 'node:path';
 import { classifyEmpty } from './empty-jobs.js';
 import { classifyEmptyReason, ledgerFinishes, type EmptiesFinish } from './empties.js';
 import { readText } from './empty-cause.js';
-import { diagnoseEmptyJob, FLEET_EMPTY_WHY_LOG_LINES } from './empty-why-classify.js';
+import { detectPoolCap, diagnoseEmptyJob, FLEET_EMPTY_WHY_LOG_LINES } from './empty-why-classify.js';
 import { jobKind } from './slot-yield.js';
 import { scrubSecrets } from '../util/scrub.js';
 
-export const JOB_EMPTY_REASONS = ['no-diff', 'already-on-main', 'precheck-catchable', 'tool-error', 'unknown'] as const;
+export const JOB_EMPTY_REASONS = ['pool-cap', 'no-diff', 'already-on-main', 'precheck-catchable', 'tool-error', 'unknown'] as const;
 export type JobEmptyReason = typeof JOB_EMPTY_REASONS[number];
 interface EmptyWhyJob { id: string; family: string; reason: JobEmptyReason; tokens: number | null }
 export interface JobsEmptyWhy {
@@ -18,6 +18,7 @@ export interface JobsEmptyWhy {
 function reason(finish: EmptiesFinish, log: string | null, publish: string | null): JobEmptyReason {
   log = log?.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n') ?? null;
   publish = publish?.split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n') ?? null;
+  if (detectPoolCap(log) || detectPoolCap(publish)) return 'pool-cap';
   const diagnosis = diagnoseEmptyJob(log, publish);
   const result = classifyEmpty(publish, log, finish);
   if (result.outcome === 'failed' || ['tool error', 'sandbox or permission denial', 'provider quota or rate limit', 'timed out', 'test or typecheck failed and was reverted'].includes(diagnosis)) return 'tool-error';

@@ -5,7 +5,7 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 
-export const FINAL_EMPTY_REASONS = ['already-shipped', 'no-change-needed', 'repo-rule', 'blocked-dependency', 'tool-missing', 'usage-out', 'timeout', 'unknown'] as const;
+export const FINAL_EMPTY_REASONS = ['already-shipped', 'no-change-needed', 'repo-rule', 'blocked-dependency', 'tool-missing', 'usage-out', 'sign-in-failed', 'lane-held', 'timeout', 'unknown'] as const;
 export type FinalEmptyReason = (typeof FINAL_EMPTY_REASONS)[number];
 export interface FinalEmptyVerdict { reason: FinalEmptyReason; /** The matched sentence, secrets scrubbed, at most 200 characters; null for unknown. */ sentence: string | null }
 
@@ -15,10 +15,12 @@ const QUOTE_MAX = 200;
 
 // Checked in order; the first rule with a matching sentence wins. Hard stops outrank "nothing to do" wording.
 const RULES: ReadonlyArray<readonly [Exclude<FinalEmptyReason, 'unknown'>, RegExp]> = [
-  ['usage-out', /\b(?:out of|ran out of|exhausted|hit (?:the |my |our |your )?)\s*(?:usage|quota|credits?|tokens)\b|\busage[ -]?limit\b|\brate[ -]?limit(?:ed)?\b|\bquota (?:exceeded|exhausted)\b|\binsufficient[_ ]quota\b|\b(?:HTTP|status(?: code)?) 429\b/i],
+  ['lane-held', /\blane (?:is |was )?held\b|\bheld\b[ :,-]+(?:the |a )?(?:weekly |daily |5-?hour |usage )?window\b|\bweekly window\b/i],
+  ['sign-in-failed', /\bauth(?:entication)?[ _-]?failed\b|\bnot (?:logged|signed) in\b|\b(?:log|sign)[ -]?in (?:again|required|failed|expired)\b|\binvalid credentials\b|\bunauthorized\b|\b(?:HTTP|status(?: code)?) 401\b/i],
+  ['usage-out', /\breached (?:your|the|our|my) [\w .-]{0,30}\b(?:limit|quota|cap)\b|\b(?:out of|ran out of|exhausted|hit (?:the |my |our |your )?)\s*(?:usage|quota|credits?|tokens)\b|\busage[ -]?limit\b|\brate[ -]?limit(?:ed)?\b|\bquota (?:exceeded|exhausted)\b|\binsufficient[_ ]quota\b|\b(?:HTTP|status(?: code)?) 429\b/i],
   ['timeout', /\btimed? ?out\b|\btimeout\b|\bdeadline exceeded\b|\btoo slow\b|\btook too long\b|\bexceeded (?:the |my )?time limit\b/i],
   ['repo-rule', /\bblocked by (?:a |the )?(?:repo(?:sitory)?|project) rules?\b|\b(?:repo(?:sitory)?|project) rules?\b[^.]{0,60}\b(?:forbid|prohibit|disallow|block|do(?:es)? not allow)|\b(?:forbidden|not allowed|prohibited) by\b|\bCODEOWNERS\b|\breserved for (?:the )?owner\b|\boff[- ]limits\b|\b(?:must|may|should) not (?:edit|touch|change|modify)\b|\bnever touch\b/i],
-  ['tool-missing', /\bcommand not found\b|\bENOENT\b|\b(?:EPERM|EACCES)\b|\bpermission denied\b|\bnot installed\b|\b(?:tool|binary|cli|executable|MCP server|dependency|gh)\b[^.]{0,40}\b(?:missing|unavailable|not found|not available)\b/i],
+  ['tool-missing', /\bcommand not found\b|\bno such file\b|\bmissing (?:the )?(?:file|tool|permission|access)\b|\bENOENT\b|\b(?:EPERM|EACCES)\b|\bpermission denied\b|\bnot installed\b|\b(?:tool|binary|cli|executable|MCP server|dependency|gh)\b[^.]{0,40}\b(?:missing|unavailable|not found|not available)\b/i],
   ['blocked-dependency', /\bblocked (?:on|by) (?:an? |the |another )?(?:other |open |upstream |earlier |prior )?(?:job|pr|pull request|issue|task|dependency|merge)\b|\bwaiting (?:on|for) (?:an? |the )?(?:other |open |upstream )?(?:job|pr|pull request|merge|dependency|review|owner)\b|\bdepends on\b|\bupstream (?:change|pr|job)\b/i],
   ['already-shipped', /\balready (?:on|in) (?:origin\/)?(?:master|main)\b|\balready (?:shipped|landed|merged|implemented|exists?|done|fixed|covered|present)\b|\b(?:open|existing) (?:pr|pull request)\b[^.]{0,60}\bcovers?\b|\bduplicate of\b/i],
   ['no-change-needed', /\bno (?:code )?changes? (?:is |are |was |were )?(?:needed|necessary|required)\b|\bnothing (?:left )?to (?:change|do|fix)\b|\bno[- ]op\b|\bended with no change\b|\balready correct\b/i],

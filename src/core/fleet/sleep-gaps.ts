@@ -232,7 +232,7 @@ export async function readFleetGaps(opts: ReadGapsOptions): Promise<FleetGapsRep
   const ticks = await readTicks(opts.runsDir, now, read);
   const ledger = await read(join(opts.runsDir, 'metrics', 'jobs.jsonl'));
   const launches = ledger === null ? null : ledgerRows(ledger, now, Math.ceil((now - since) / 3_600_000) + 1, true).rows
-    .filter(r => (r.row.event ?? null) === 'launch').map(r => r.at);
+    .filter(r => [r.row.event, r.row.type, r.row.kind].find(v => typeof v === 'string') === 'launch').map(r => r.at);
   let claudeLeftPct = opts.claudeLeftPct;
   if (claudeLeftPct === undefined) {
     claudeLeftPct = await import('../../cli/fleet-resources.js')

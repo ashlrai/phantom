@@ -8,7 +8,7 @@ import {
   readWorktreeReapStatus, runWorktreeReapTick, WORKTREE_REAP_CAP, WORKTREE_REAP_MIN_GAP_MS, WORKTREE_REAP_STATUS_SCHEMA,
 } from '../src/core/fleet/worktree-reap-tick.js';
 import type { WorktreesDeps } from '../src/core/fleet/worktrees.js';
-import type { WtAuditEntry, WtAuditReport } from '../src/core/fleet/wt-audit.js';
+import type { WtAuditEntry } from '../src/core/fleet/wt-audit.js';
 
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 let runs: string;
@@ -49,7 +49,7 @@ describe('self-tick worktree reap', () => {
     const status = await readWorktreeReapStatus(runs);
     expect(status.schema).toBe(WORKTREE_REAP_STATUS_SCHEMA);
     expect(status.off).toBe(false);
-    expect(status.last).toMatchObject({ total: 65, removed: 25, waiting: 35, bytesFreed: 25_000_000, bytesComplete: true, skipped: { 'open-pr': 5 } });
+    expect(status.last).toMatchObject({ total: 65, removed: 40, waiting: 20, bytesFreed: 40_000_000, bytesComplete: true, skipped: { 'open-pr': 5 } });
     expect(status.nextRunAfter).toBe(new Date(NOW + WORKTREE_REAP_MIN_GAP_MS).toISOString());
   });
 
@@ -74,9 +74,9 @@ describe('self-tick worktree reap', () => {
     const { deps, removed } = fixture(60, 0);
     expect((await tick(deps)).state).toBe('ran');
     expect(await tick(deps, NOW + 29 * 60_000)).toEqual({ state: 'skipped', reason: 'ran less than 30 minutes ago' });
-    expect(removed).toHaveLength(25);
+    expect(removed).toHaveLength(40);
     expect((await tick(deps, NOW + 31 * 60_000)).state).toBe('ran');
-    expect(removed).toHaveLength(50);
+    expect(removed).toHaveLength(80);
   });
 
   it('a dry run lists the candidates first and removes and records nothing', async () => {
@@ -87,7 +87,7 @@ describe('self-tick worktree reap', () => {
     expect(result.total).toBe(63);
     expect(result.candidates).toHaveLength(WORKTREE_REAP_CAP);
     expect(result.candidates.every(c => c.job.startsWith('RQ-M'))).toBe(true);
-    expect(result.waiting).toBe(35);
+    expect(result.waiting).toBe(20);
     expect(result.held).toEqual({ 'open-pr': 3 });
     expect(removed).toHaveLength(0);
     expect((await readWorktreeReapStatus(runs)).last).toBeNull();
@@ -125,16 +125,16 @@ describe('phm worktrees --reap --status', () => {
   it('prints typed JSON with a schema id, showing never-run as null', async () => {
     const { code, text } = await run(['--reap', '--status', '--json']);
     expect(code).toBe(0);
-    expect(JSON.parse(text)).toMatchObject({ schema: 'worktrees.reap-status.v1', off: false, last: null, lastNote: 'never-run', cap: 25 });
+    expect(JSON.parse(text)).toMatchObject({ schema: 'worktrees.reap-status.v1', off: false, last: null, lastNote: 'never-run', cap: 40 });
   });
 
   it('prints plain words after a run', async () => {
     const { deps } = fixture(60, 5);
     await tick(deps);
     const { text } = await run(['--reap', '--status']);
-    expect(text).toContain('removed 25');
+    expect(text).toContain('removed 40');
     expect(text).toContain('5 open pr');
-    expect(text).toContain('Freed: 25 MB.');
+    expect(text).toContain('Freed: 40 MB.');
   });
 
   it('rejects --status without --reap or beside --apply', async () => {

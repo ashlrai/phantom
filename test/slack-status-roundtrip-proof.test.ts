@@ -36,7 +36,7 @@ async function receive(user: string) {
     brief: async (dir, now) => ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(dir, now, {
       installedVersion: () => '3.30.36', publishedVersion: async () => '3.30.37',
       mergeFacts: async () => ({ shipped: [{ text: 'ashlrai/phantom#123: synthetic merge' }], mergeCountUnavailable: false }),
-      workClaims: undefined, peers: undefined, nodeRuns: undefined,
+      workClaims: undefined, peers: undefined, nodeRuns: undefined, mergeLatency: undefined,
     }))].join('\n'),
   }) });
   let settled = false;

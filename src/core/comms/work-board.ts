@@ -9,6 +9,7 @@
  * claims inspection, so a board response is one internally consistent
  * evidence projection even while the fleet churns; nothing is cached across
  * calls. */
+import { isGroupPresenceBody } from '../fleet/bus-group.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
@@ -71,16 +72,27 @@ export interface WorkBoardResult {
    * unknown, not absent. Optional so hand-built fixtures still compile;
    * listWorkBoard always sets it. */
   claims?: BusWorkClaimsInspection['source'];
+  /** Echo of the applied state filter; present only when `state` was given
+   * and the inbox scan settled — an unreadable inbox reports neither. */
+  state?: WorkItemState;
+  /** Requests whose classified state equals the applied `state`, counted
+   * across the whole settled scan before the display cap: the true filtered
+   * total, so `items` may be a newest-first slice of it. Present only
+   * alongside `state`; never a count of just the shown window. */
+  matched?: number;
 }
 
 /** A request is any envelope that does not answer another message: replies
  * name their request through `inReplyTo` (bus-reply-post) or `in_reply_to`
  * (peer-protocol bodies). Both absent or null counts as a request; the body
- * is untrusted, so only these two keys are ever read. */
+ * is untrusted, so only these two keys are ever read. A `group.presence`
+ * heartbeat is an observation with its own read (`groupPresence`), never a
+ * request. */
 export function isRequest(row: BusInboxReceipt): boolean {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return true;
   const record = body as Record<string, unknown>;
+  if (isGroupPresenceBody(record)) return false;
   if (record.kind === 'leader-reply' && typeof record.requestId === 'string') return false;
   return (record['inReplyTo'] === undefined || record['inReplyTo'] === null)
     && (record['in_reply_to'] === undefined || record['in_reply_to'] === null);
@@ -91,7 +103,7 @@ function limit(opts: { limit?: number }): number {
     ? Math.min(opts.limit!, WORK_BOARD_MAX_LIMIT) : WORK_BOARD_DEFAULT_LIMIT;
 }
 
-export function listWorkBoard(opts: { root: string; now: number; limit?: number; channelRef?: string }): WorkBoardResult {
+export function listWorkBoard(opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState }): WorkBoardResult {
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   // One claims inspection for the whole board, taken even when the inbox
   // scan fails so the result still reports the table's real state. A missing
@@ -122,9 +134,8 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
       requests.push(row);
     }
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
-    const kept = requests.slice(0, limit(opts));
     const asOf = new Date(now).toISOString();
-    const items = kept.map((row): WorkBoardItem => {
+    const toItem = (row: BusInboxReceipt): WorkBoardItem => {
       const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now);
       const classified = classifyWorkItem(evidence, asOf);
       const result = resultFor(classified.state, evidence);
@@ -141,7 +152,17 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
         claimReceipt: evidence.claimReceipt ?? null,
         ...(result ? { result } : {}),
       };
-    });
-    return { items, inbox: 'ok', truncated: requests.length > kept.length, claims: claimsSource };
+    };
+    if (opts.state === undefined) {
+      const kept = requests.slice(0, limit(opts));
+      return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length, claims: claimsSource };
+    }
+    // A state filter must classify every request before the display cap so
+    // `matched` is the true filtered total across the settled scan, never a
+    // count of the shown window — the same honesty rule `truncated` follows.
+    const matching = requests.map(toItem).filter(item => item.state === opts.state);
+    const kept = matching.slice(0, limit(opts));
+    return { items: kept, inbox: 'ok', truncated: matching.length > kept.length,
+      claims: claimsSource, state: opts.state, matched: matching.length };
   } catch { return empty; }
 }

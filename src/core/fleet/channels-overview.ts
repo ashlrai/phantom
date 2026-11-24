@@ -194,7 +194,7 @@ export function buildChannelsOverview(facts: ChannelFacts): ChannelsOverview {
     const lastSeenMs = typeof row.lastSeenAt === 'string' && row.lastSeenAt !== 'unknown' ? parseInboxAt(row.lastSeenAt) : NaN;
     const verifiedSenders: Unknowable<number> | null =
       channel === 'email' ? facts.verified.email
-        : channel === 'telegram' ? (row.paired === true ? 1 : 0)
+        : channel === 'telegram' ? (row.paired === 'unknown' ? 'unknown' : row.paired === true ? 1 : 0)
           : channel === 'mobile' ? facts.verified.mobile
             : null;
     rows.push({

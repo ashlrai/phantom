@@ -3,6 +3,8 @@ export const VERSE_FLEET_RUNS_GLANCE_PATH = '/api/verse/fleet/runs/glance';
 export const VERSE_FLEET_RUNS_INBOX_PATH = '/api/verse/fleet/runs/inbox';
 export const FLEET_RUNS_INBOX_MAX_CHARS = 6000;
 export interface FleetRunsV1 {
+  /** Fresh, structured observations explaining unused capacity; absent on older servers. */
+  whyIdle?: string[];
   v: 1; generatedAt: string;
   sources: Record<'runsDir'|'workers'|'inbox'|'codex'|'merges', 'healthy'|'degraded'|'missing'|'not-landed'>;
   lastTick: string|null; paused: boolean|null; memFreePct: number|null; diskFreeGb: number|null; switches: string[]; claudeLane: string|null;

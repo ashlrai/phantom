@@ -1,7 +1,7 @@
 /**
  * The Map pane's 3D layout: the same fleet.live-map.v1 nodes and edges as the 2D rows (`phm map --json`),
  * grouped by the one org tree the 2D "By org" layout reads (core/fleet/org-layout-3d.ts): depth is the
- * vertical axis, each lane or "unassigned" group is a cluster, children sit round their parent. Computers
+ * vertical axis, each lane or "Other" group is a cluster, children sit round their parent. Computers
  * and pools are not in the org, so they sit on a ring under it. Pure: no React, no DOM, no randomness.
  * Projection is a plain orbit camera, so no 3D library is needed.
  */

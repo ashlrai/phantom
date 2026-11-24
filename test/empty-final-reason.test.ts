@@ -13,6 +13,8 @@ const fixtures = [
   ['blocked-dependency', 'This job is blocked on another job that has not merged yet.'],
   ['tool-missing', 'The formatter failed: command not found.'],
   ['usage-out', 'I am out of usage for this window and cannot continue.'],
+  ['sign-in-failed', 'The worker stopped: auth_failed, please sign in again.'],
+  ['lane-held', 'This lane is HELD until the weekly window resets.'],
   ['timeout', 'The test suite was too slow and the run timed out.'],
 ] as const;
 

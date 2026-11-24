@@ -19,6 +19,7 @@
  *  - a seat with no chats has no row — an empty table is not a seat at 0%.
  */
 import type { ReactNode } from 'react';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { TableView, chartFormat, type TableColumn } from '../../../components/charts/index.js';
 import { percentText } from '../autonomy/format.js';
 import { formatTokens } from '../verse-readouts.js';
@@ -43,7 +44,7 @@ const COLUMNS: TableColumn<SeatEfficiencyRow>[] = [
     label: 'Seat',
     render: (r) => (
       <>
-        {r.label}
+        <BrandMark brand={r.engine} size={14} inline />{r.label}
         <span className={styles.limitWindow}>
           {` · ${ENGINE_LABEL[r.engine]}`}
           {r.retired ? ' · no longer connected' : ''}

@@ -60,6 +60,7 @@ export const AUTHORITY_PATH = '/api/verse/authority';
 export const AUTHORITY_DRAFT_PATH = '/api/verse/authority/draft';
 export const FLEET_LIVE_PATH = '/api/verse/fleet/live';
 export const LEADER_PATH = '/api/verse/leader';
+export const BURN_PATH = '/api/usage/burn';
 export const LEARNING_PATH = '/api/verse/learning';
 export const FLEET_HISTORY_PATH = '/api/verse/fleet/history?days=90';
 
@@ -83,6 +84,7 @@ export const SURFACE_KEYS = Object.freeze({
   authorityEliteDraft: 'verse-authority-draft-elite',
   fleetLive: 'verse-fleet-live',
   leader: 'verse-leader',
+  burn: 'usage-burn',
   learning: 'verse-learning',
   fleetHistory: 'verse-fleet-history-90d',
   reasoningDigest: 'verse-reasoning-digest-30d',
@@ -173,6 +175,9 @@ export const authorityDraftQuery = optionalQuery(SURFACE_KEYS.authorityDraft, AU
 /** 3.15: the same draft with the one `elite-direct` rung (elite models land on green tests, no judge). */
 export const authorityEliteDraftQuery = optionalQuery(SURFACE_KEYS.authorityEliteDraft, `${AUTHORITY_DRAFT_PATH}?eliteDirect=1`, 'The elite-direct grant draft', narrow.draft);
 export const fleetLiveQuery = optionalQuery(SURFACE_KEYS.fleetLive, FLEET_LIVE_PATH, 'The live fleet view', narrow.fleetLive);
+/** The one plain sentence of `phm fleet burn`: who is spending the Claude plan, when it runs out. */
+export const burnQuery = optionalQuery<{ sentence: string }>(SURFACE_KEYS.burn, BURN_PATH, 'The Claude burn pace',
+  raw => isRecord(raw) && raw['schema'] === 'usage.burn.v1' && typeof raw['sentence'] === 'string' ? { sentence: raw['sentence'] } : null);
 export const leaderQuery = optionalQuery(SURFACE_KEYS.leader, LEADER_PATH, 'The Leader', narrow.leader);
 export const learningQuery = optionalQuery(SURFACE_KEYS.learning, LEARNING_PATH, 'Self-improvement', narrow.learning);
 export const fleetHistoryQuery = optionalQuery(SURFACE_KEYS.fleetHistory, () => fleetHistoryPath(), 'Fleet history', narrow.fleetHistory);

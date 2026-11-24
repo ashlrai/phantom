@@ -96,6 +96,16 @@ describe('mineIncidentSignals', () => {
     expect(mine.sources).toEqual({ jobs: 'read', events: 'missing' });
   });
 
+  it('reads jobs-ledger dialect spellings for ids, events, stamps and phases', () => {
+    const jobs = [
+      JSON.stringify({ type: 'launch', job_id: 'RQ-DIA-1', lane: 'codex', repo: 'phantom', tier: 'work', recordedAt: iso(NOW - H) }),
+      JSON.stringify({ kind: 'finish', id: 'RQ-DIA-1', lane: 'codex', repo: 'phantom', exit_code: 1, updatedAt: iso(NOW - H) }),
+      JSON.stringify({ type: 'outcome', jobId: 'RQ-DIA-2', conclusion: 'CLOSED', prUrl: 'https://github.com/ashlrai/phantom/pull/9', source: 'metrics-outcomes-reconciler', mergedAt: iso(NOW - H) }),
+    ];
+    const mine = mineIncidentSignals({ jobs: jobs.join('\n'), nowMs: NOW });
+    expect(mine.signals.filter((s) => s.cls === 'lane-error').map((s) => s.key)).toEqual(['lane-error:codex:exit-1']);
+    expect(mine.signals.filter((s) => s.cls === 'merge-conflict').map((s) => s.key)).toEqual(['merge-conflict:ashlrai/phantom']);
+  });
   it('classifies pool_error, failure_class, empty-diff and exit codes', () => {
     const jobs = [
       finish('RQ-A-1', { pool_error: 'Rate Limit!! 429' }),
@@ -112,6 +122,9 @@ describe('mineIncidentSignals', () => {
     const jobs = [
       row({ event: 'autobackoff_hold', job: 'RQ-B-1', lane: 'devin', pattern: 'devin_usage_limit', until: iso(NOW + H) }),
       row({ event: 'precheck_skip', job: 'RQ-C-9', repo: 'phantom', lane: 'codex', code: 13 }),
+      row({ event: 'skipped_empty', job: 'RQ-C-10', repo: 'phantom', lane: 'codex', code: 12 }),
+      row({ event: 'skipped_empty', job: 'RQ-C-11', repo: 'phantom', lane: 'codex', reason: 'task_empty_repeat_24h' }),
+      row({ event: 'skipped_empty', job: 'RQ-C-12', repo: 'phantom', lane: 'codex', code: 12, applied: false }),
       row({ event: 'task_outcome', job: 'RQ-D-2', batch: 'B1', lane: 'codex', repo: 'phantom', outcome: 'failed' }),
       row({ event: 'task_outcome', job: 'RQ-D-3', batch: 'B1', lane: 'codex', repo: 'phantom', outcome: 'done' }),
       row({ event: 'task_outcome', job: 'RQ-D-4', batch: 'B1', lane: 'codex', repo: 'phantom', outcome: 'unreported' }),
@@ -120,10 +133,11 @@ describe('mineIncidentSignals', () => {
     const keys = mine.signals.map((s) => s.key);
     expect(keys).toContain('lane-error:devin:ab-devin_usage_limit');
     expect(keys).toContain('test-failure:ashlrai/phantom:C:precheck-13');
+    expect(keys).toContain('test-failure:ashlrai/phantom:C:precheck-12');
     expect(keys).toContain('lane-error:codex:task-failed');
     expect(keys).toContain('test-failure:ashlrai/phantom:D:task-failed');
     expect(keys.some((k) => k.includes('deferred') || k.includes('done') || k.includes('unreported'))).toBe(false);
-    expect(mine.observed).toBe(3);
+    expect(mine.observed).toBe(4);
   });
 
   it('projects reconciler outcome rows and counts CLOSED-unmerged per repo', () => {

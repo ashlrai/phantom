@@ -51,6 +51,12 @@ const SNAPSHOT_QUERY = `query($name: String!, $cursor: String) {
 export const enqueueMergeQueuePr = (gh, repo, pr) => gh([
   'pr', 'merge', String(pr.number), '--repo', repo, '--auto', '--match-head-commit', pr.headSha,
 ]);
+export const dequeueMergeQueuePr = (gh, _repo, pr) => {
+  const payload = gh(['api', 'graphql', '-H', 'GraphQL-Features: merge_queue',
+    '-f', 'query=mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }',
+    '-f', `id=${pr.id}`]);
+  if (payload?.errors || !payload?.data?.dequeuePullRequest) throw new Error('dequeue refused');
+};
 // MERGE method only: a base merge commit on top of the head, never a rewrite.
 const UPDATE = `mutation($id: ID!, $oid: GitObjectID!) {
   updatePullRequestBranch(input: { pullRequestId: $id, expectedHeadOid: $oid, updateMethod: MERGE }) { pullRequest { number } }
@@ -202,6 +208,7 @@ async function cycle(args) {
       return readSnapshot(gh, repo, owners.claims);
     },
     enqueue: (repo, pr) => enqueueMergeQueuePr(gh, repo, pr),
+    dequeue: (repo, pr) => dequeueMergeQueuePr(gh, repo, pr),
     updateBranch: (_repo, pr) => ensureOk(run(UPDATE, pr)),
     readQueueIds: () => readQueueIds(queue),
     appendQueueLine: (line) => {

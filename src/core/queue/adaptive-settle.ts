@@ -49,6 +49,29 @@ const timestamp = (v: unknown): number => typeof v === 'number' && Number.isFini
 /** A short settle needs fresh evidence, even when the older admission report remains usable. */
 const fresh = (v: unknown, now: number): boolean => now - timestamp(v) >= 0 && now - timestamp(v) <= 60_000;
 
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
+ * ids job|job_id|jobId|id, events event|type|kind, phases
+ * outcome|state|status plus producer aliases, timestamps
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt. */
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_PHASE_KEYS = ['outcome', 'state', 'status', 'phase', 'result', 'conclusion'] as const;
+const LEDGER_TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+const ledgerTs = (row: Record<string, unknown>): number => {
+  for (const key of LEDGER_TS_KEYS) {
+    const at = timestamp(row[key]);
+    if (Number.isFinite(at)) return at;
+  }
+  return NaN;
+};
+
 export function recentLaunches(text: string | null, truncated: boolean, now: number): number | null {
   if (text === null || !Number.isFinite(now)) return null;
   const launches = new Set<string>();
@@ -56,15 +79,20 @@ export function recentLaunches(text: string | null, truncated: boolean, now: num
   for (const line of text.split('\n').filter(line => line.trim())) {
     try {
       const row = record(JSON.parse(line));
-      if (typeof row.event !== 'string') return null;
-      if (row.event !== 'launch') continue; // Reconciled outcomes legitimately carry older event times.
-      const at = timestamp(row.ts);
+      // Eventless rows carrying a phase marker are outcome rows (the
+      // batcher/_vc_event inference); a row with neither stays unknown.
+      let event = ledgerPick(row, LEDGER_EVENT_KEYS);
+      if (event === null && ledgerPick(row, LEDGER_PHASE_KEYS) !== null) event = 'outcome';
+      if (event === null) return null;
+      if (event !== 'launch') continue; // Reconciled outcomes legitimately carry older event times.
+      const at = ledgerTs(row);
       if (!Number.isFinite(at) || (truncated && at < previous) || at > now) return null;
       previous = at;
       if (at <= now - 600_000) covered = true;
       if (at > now - 600_000) {
-        if (typeof row.job !== 'string' || !row.job) return null;
-        launches.add(`${at}:${row.job}`);
+        const job = ledgerPick(row, LEDGER_JOB_KEYS);
+        if (!job) return null;
+        launches.add(`${at}:${job}`);
       }
     } catch { return null; }
   }

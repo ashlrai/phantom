@@ -60,6 +60,11 @@ export interface FleetDirtyLandedDeps {
   now?: () => Date;
   /** Stdout seam for the --json report; defaults to console.log. */
   output?: (text: string) => void;
+  /**
+   * Failure seam. `unavailable` = the open-PR list could not be read at all (no gh, not signed in,
+   * offline): nothing is wrong with any report. `malformed` = gh answered with something unreadable.
+   */
+  onFailure?: (kind: 'unavailable' | 'malformed', message: string) => void;
 }
 
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
@@ -122,13 +127,20 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
   }
 
   const gh = deps.gh ?? defaultGh;
-  const read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]);
-  if (!read.ok) { console.error('fleet dirty-landed: gh pr list failed'); return 1; }
+  const fail = (kind: 'unavailable' | 'malformed', message: string): number => {
+    console.error(`fleet dirty-landed: ${message}`);
+    deps.onFailure?.(kind, message);
+    return 1;
+  };
+  let read: { ok: boolean; stdout: string };
+  try { read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]); }
+  catch { return fail('unavailable', 'gh pr list could not run'); }
+  if (!read.ok) return fail('unavailable', 'gh pr list failed');
   let rows: unknown;
-  try { rows = JSON.parse(read.stdout); } catch { console.error('fleet dirty-landed: invalid gh response'); return 1; }
-  if (!Array.isArray(rows)) { console.error('fleet dirty-landed: invalid gh response'); return 1; }
+  try { rows = JSON.parse(read.stdout); } catch { return fail('malformed', 'invalid gh response'); }
+  if (!Array.isArray(rows)) return fail('malformed', 'invalid gh response');
   const parsed = rows.map(parseRow);
-  if (parsed.some(row => row === null)) { console.error('fleet dirty-landed: unreadable PR row'); return 1; }
+  if (parsed.some(row => row === null)) return fail('malformed', 'unreadable PR row');
   const dirty = (parsed as DirtyRow[]).filter(isConflicting);
 
   const prs: DirtyLandedPr[] = [];

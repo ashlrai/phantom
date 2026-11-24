@@ -48,7 +48,7 @@ it('shows the headline, the delivery flow, both hourly lines and the empty rate 
   const lanes = within(screen.getByRole('list', { name: 'Lanes, most merged first' })).getAllByRole('listitem');
   expect(lanes.map(lane => lane.getAttribute('data-lane'))).toEqual(['claude', 'grok', 'idle']);
   expect(within(lanes[0]!).getByText('38')).toBeTruthy();
-  expect(within(lanes[0]!).getByRole('img', { name: /^claude: PRs merged per hour: from 0 to 38/ })).toBeTruthy();
+  expect(within(lanes[0]!).getByRole('slider', { name: 'claude jobs launched, a bar per hour: most in one bar 50' })).toBeTruthy();
   expect(screen.getByRole('img', { name: 'grok: 5 of 5 finished jobs changed nothing (100%)' })).toBeTruthy();
   expect(screen.getByRole('img', { name: 'claude: 1 of 40 finished jobs changed nothing (3%)' })).toBeTruthy();
   // No job finished on the idle lane: its rate is not drawn as 0%.

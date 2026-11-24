@@ -6,6 +6,7 @@
  */
 import type { NodeResultsSummary } from '../drive/nodes/results-read.js';
 import type { DigestBlocker } from '../fleet/digest-blocker.js';
+import { spanText } from '../fleet/merge-latency.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export type Fact<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -26,6 +27,8 @@ export interface StatusDigestInput {
   updatePending: boolean | null;
   mergesLastHour: Fact<number>;
   mergesLast24h: Fact<number>;
+  /** True open-to-merge time (the PR's own created and merged times) over the last 24h; the median is null when no merged PR recorded both. Absent keeps the existing lines. */
+  mergeTime?: Fact<{ medianSeconds: number | null; known: number; merged: number }>;
   lanes: Fact<StatusDigestLane[]>;
   /** Hard-limit asks only (secrets, money, outside sends, data destruction). */
   needsMason: Fact<number>;
@@ -44,6 +47,16 @@ export interface StatusDigestInput {
   blocker?: DigestBlocker;
   /** `supply_low: Claude (0 queued, 16% left): add work` when a pool at risk of waste has under an hour of work queued; absent otherwise. */
   supplyLine?: string;
+  /** Worst source yield over 24 hours; absent when no source can be judged. */
+  yieldLine?: string;
+  /** The top waste alert (`pools.waste.v1`): "Gemini: 85% will go unused in 5 h. Sign in to Gemini once: run gemini in a terminal."; absent when none. */
+  wasteLine?: string;
+  /** Sign-in state and the fix for the blocked lane with the most unused plan. */
+  authLine?: string;
+  /** `Not live yet: 2 merged fleet files (...)` when merged fleet scripts differ from the installed copies; absent when all are live or the check cannot run. */
+  notLiveLine?: string;
+  /** Warning for a lane still cut after its cause cleared; absent when unknown. */
+  adaptLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -78,8 +91,11 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   const blocker = input.blocker && input.blocker.kind !== 'none' ? input.blocker : undefined;
   const lines = [
     ...(blocker ? [blocker.sentence] : []),
+    ...(input.wasteLine ? [input.wasteLine] : []),
+    ...(input.authLine ? [input.authLine] : []),
     `App: installed ${show(input.installedVersion, v => v)} · published ${show(input.publishedVersion, v => v)}${pending}`,
     `Merges: ${show(input.mergesLastHour, n => `${n} in the last hour`)} · ${show(input.mergesLast24h, n => `${n} in the last 24h`)}`,
+    ...(input.mergeTime ? [`Time to merge: ${show(input.mergeTime, t => t.medianSeconds === null ? `unknown (${t.merged} merged, none with GitHub's own created and merged times recorded)` : `median ${spanText(t.medianSeconds)} open to merge (${t.known} of ${t.merged} PRs known)`)}`] : []),
     `Lanes: ${lanes}`,
     `Needs Mason: ${show(input.needsMason, n => n === 0 ? 'none waiting' : `${n} hard-limit ask${n === 1 ? '' : 's'} waiting`)}`,
     `Top P0: ${show(input.topP0, p0 => p0 ? `${truncateP0(p0.text)} (${age(p0.ageMs)})` : 'none in the inbox')}`,
@@ -105,6 +121,9 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.gapLine && blocker?.kind !== 'asleep') lines.push(input.gapLine);
   if (input.diskLine && blocker?.kind !== 'disk_low') lines.push(input.diskLine);
   if (input.supplyLine) lines.push(input.supplyLine);
+  if (input.yieldLine) lines.push(input.yieldLine);
+  if (input.notLiveLine) lines.push(input.notLiveLine);
+  if (input.adaptLine) lines.push(truncateP0(input.adaptLine));
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;

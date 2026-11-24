@@ -9,6 +9,10 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { readSkillCardCorpus } from './skill-records.js';
+import type {
+  TrajectorySkillOutcomeRow,
+  TrajectorySkillOutcomeSummary,
+} from '../autonomy/trajectory-records.js';
 import type { SkillCard, SkillCardStatus } from '../types.js';
 
 export const SKILL_LIST_DEFAULT_LIMIT = 50;
@@ -31,6 +35,13 @@ export interface SkillListEntry {
   evidenceCount: number | 'unknown';
   proposalId: string | 'unknown';
   attestationPresent: boolean;
+  /**
+   * Trajectory outcome tallies for this exact skill revision, joined from
+   * `trajectoryLearning.skillOutcomes`. Present only when the caller asked
+   * for outcomes and this revision was observed on joined trajectories;
+   * absent means unmeasured, never zero.
+   */
+  outcomes?: TrajectorySkillOutcomeRow;
 }
 
 export interface SkillListReport {
@@ -42,12 +53,25 @@ export interface SkillListReport {
   total: number;
   corpus: 'missing' | 'healthy' | 'degraded';
   invalidRows: number | 'unknown';
+  /**
+   * Present only when outcomes were requested: 'observed' when per-skill
+   * trajectory tallies were joined, 'withheld' when the sample gate or
+   * ledger health kept them unpublished.
+   */
+  outcomeState?: 'observed' | 'withheld';
   skills: SkillListEntry[];
 }
 
 export interface SkillListOptions {
   status?: SkillCardStatus;
   limit?: number;
+  /**
+   * Trajectory outcome attribution to join per skill revision. Pass the
+   * summary from `readSkillTrajectoryOutcomes`: an object joins rows,
+   * explicit null marks outcomes as requested-but-withheld. Absent (or
+   * undefined) leaves the report unchanged.
+   */
+  skillOutcomes?: TrajectorySkillOutcomeSummary | null;
 }
 
 export function isSkillCardStatus(value: string): value is SkillCardStatus {
@@ -68,8 +92,12 @@ function newer(a: SkillCard, b: SkillCard): boolean {
   return a.revision !== b.revision ? a.revision > b.revision : a.ts > b.ts;
 }
 
-function entry(card: SkillCard): SkillListEntry {
+function entry(
+  card: SkillCard,
+  outcomeFor?: (skillId: string, revision: number) => TrajectorySkillOutcomeRow | undefined,
+): SkillListEntry {
   const evidence = card.verification?.evidenceCount;
+  const outcomes = outcomeFor?.(card.skillId, card.revision);
   return {
     skillId: text(card.skillId),
     revision: card.revision,
@@ -84,6 +112,7 @@ function entry(card: SkillCard): SkillListEntry {
     evidenceCount: typeof evidence === 'number' && Number.isSafeInteger(evidence) ? evidence : 'unknown',
     proposalId: card.proposalId ? text(card.proposalId) : 'unknown',
     attestationPresent: typeof card.attestation === 'string' && card.attestation !== '',
+    ...(outcomes ? { outcomes } : {}),
   };
 }
 
@@ -104,7 +133,13 @@ export function listSkills(opts: SkillListOptions = {}): SkillListReport {
   const matched = [...latest.values()]
     .filter((card) => !opts.status || card.status === opts.status)
     .sort((a, b) => (a.ts === b.ts ? a.skillId.localeCompare(b.skillId) : a.ts < b.ts ? 1 : -1));
-  const skills = matched.slice(0, limit).map(entry);
+  const outcomeRows = opts.skillOutcomes
+    ? new Map(opts.skillOutcomes.perSkill.map((row) => [JSON.stringify([row.skillId, row.skillRevision]), row]))
+    : undefined;
+  const outcomeFor = outcomeRows
+    ? (skillId: string, revision: number) => outcomeRows.get(JSON.stringify([skillId, revision]))
+    : undefined;
+  const skills = matched.slice(0, limit).map((card) => entry(card, outcomeFor));
   return {
     schemaVersion: 1,
     matched: matched.length,
@@ -112,18 +147,36 @@ export function listSkills(opts: SkillListOptions = {}): SkillListReport {
     total: latest.size,
     corpus: corpus?.sourceState ?? 'degraded',
     invalidRows: corpus ? corpus.invalidRows : 'unknown',
+    ...(opts.skillOutcomes !== undefined
+      ? { outcomeState: opts.skillOutcomes ? 'observed' as const : 'withheld' as const }
+      : {}),
     skills,
   };
 }
 
+function tallyText(counts: Partial<Record<string, number>> | undefined): string {
+  if (!counts) return '';
+  return Object.keys(counts).sort()
+    .filter((key) => typeof counts[key] === 'number')
+    .map((key) => `${key} ${counts[key]}`)
+    .join(', ');
+}
+
 export function formatSkillList(report: SkillListReport): string {
   if (report.skills.length === 0) {
-    return `No skills yet (corpus ${report.corpus}). Skills are written after a verified PR merges.`;
+    const withheld = report.outcomeState === 'withheld' ? ' Skill outcomes withheld (sample gate or degraded ledger).' : '';
+    return `No skills yet (corpus ${report.corpus}). Skills are written after a verified PR merges.${withheld}`;
   }
   const lines = [`${report.returned} of ${report.matched} skills (corpus ${report.corpus})`];
   for (const s of report.skills) {
     lines.push(`${s.status.padEnd(10)} ${s.skillId}  r${s.revision}  ${s.name}`);
     if (s.summary) lines.push(`           ${s.summary}`);
+    if (s.outcomes) {
+      const terminal = tallyText(s.outcomes.outcomes);
+      const realized = tallyText(s.outcomes.realized);
+      lines.push(`           outcomes: ${s.outcomes.selections} ${s.outcomes.selections === 1 ? 'trajectory' : 'trajectories'}${terminal ? ` (${terminal})` : ''}${realized ? `; realized ${realized}` : ''}`);
+    }
   }
+  if (report.outcomeState === 'withheld') lines.push('Skill outcomes withheld (sample gate or degraded ledger).');
   return lines.join('\n');
 }

@@ -38,14 +38,24 @@ it('drops items without id or title and with unknown enum values', () => {
 });
 
 it('summarises sources, marking non-healthy and showing missing as a dash', () => {
-  const view = readUnifiedInboxView(raw({ sources: { 'needs-you': report('healthy', 3), imessage: report('healthy', 1), drafts: report('missing', 0), bus: report('degraded', 2) } }));
-  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · iMessage 1 · Drafts — · Bus degraded 2 · Gmail — · LinkedIn —');
+  const view = readUnifiedInboxView(raw({ sources: { 'needs-you': report('healthy', 3), imessage: report('healthy', 1), 'teammate-tasks': report('healthy', 2), drafts: report('missing', 0), bus: report('degraded', 2), requests: report('healthy', 1) } }));
+  expect(view && !view.unavailable && sourceSummary(view.sources)).toBe('Needs you 3 · Needs-you delivery — · iMessage 1 · Teammate tasks 2 · Owner thread — · Owner delivery — · Drafts — · Bus degraded 2 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Gmail — · LinkedIn — · Requests 1 · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack —');
   const healthy = readUnifiedInboxView(raw());
-  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · iMessage 0 · Drafts 1 · Bus 0 · Gmail — · LinkedIn —');
+  expect(healthy && !healthy.unavailable && sourceSummary(healthy.sources)).toBe('Needs you 1 · Needs-you delivery — · iMessage 0 · Teammate tasks — · Owner thread — · Owner delivery — · Drafts 1 · Bus 0 · Mailbox — · Board — · Conversations — · Wakes — · Seats — · Peer dispatch — · Gmail — · LinkedIn — · Requests — · Email inbox — · Email outbox — · Team approvals — · Proposals — · Slack —');
+});
+
+it('reads comms-request items and labels them', () => {
+  const view = readUnifiedInboxView(raw({
+    sources: { requests: report('healthy', 1) },
+    items: [{ id: 'requests:req-1', source: 'requests', kind: 'comms-request', severity: 'warn', blocking: true, title: 'Merge X?', since: '2026-11-09T11:00:00Z', expiresAt: null, act: ['phm comms status'] }],
+  }));
+  expect(view && !view.unavailable && view.items[0]).toMatchObject({ source: 'requests', kind: 'comms-request', blocking: true });
+  expect(view && !view.unavailable && itemLine(view.items[0]!, NOW)).toMatchObject({ label: 'Comms request', title: 'Merge X?', age: '1h ago' });
 });
 
 it('itemLine labels, ages and flags soon-expiring items', () => {
-  expect(itemLine(entry({ source: 'imessage', since: '2026-11-09T11:00:00Z' }), NOW)).toEqual({ label: 'Teammate text', title: 't', age: '1h ago' });
+  expect(itemLine(entry({ source: 'imessage', kind: 'teammate-text', since: '2026-11-09T11:00:00Z' }), NOW)).toEqual({ label: 'Teammate text', title: 't', age: '1h ago' });
+  expect(itemLine(entry({ source: 'owner-thread', kind: 'owner-message' }), NOW).label).toBe('Owner message');
   expect(itemLine(entry({ source: 'needs-you' }), NOW)).toMatchObject({ label: 'Needs you', age: null });
   expect(itemLine(entry({ source: 'drafts' }), NOW).label).toBe('Draft');
   expect(itemLine(entry({ since: '2026-11-09T11:55:00Z', expiresAt: '2026-11-09T12:20:00Z' }), NOW)).toMatchObject({ label: 'Bus work', age: '5m ago · expires in 20m' });
