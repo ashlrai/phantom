@@ -6,10 +6,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { RESOLVER, updateGraph } from '../scripts/ci-dep-graph.mjs';
 import {
-  classifyPaths, plan, changedPaths, selectRelated, selectFallback, TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS,
+  classifyPaths, plan, changedPaths, selectRelated, selectFallback, selectSmoke, loadSmokeSet,
+  TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS, SMOKE_SCHEMA,
 } from '../scripts/ci-fast-select.mjs';
-import { failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
+import { commandsFor, failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -30,6 +32,34 @@ function repo(t, files) {
   const commit = (message, map = {}) => { write(map); sh(dir, 'add', '-A'); sh(dir, 'commit', '-q', '-m', message); return sh(dir, 'rev-parse', 'HEAD'); };
   return { dir, commit, write };
 }
+
+function freshGraph(dir) {
+  const head = sh(dir, 'rev-parse', 'HEAD');
+  const listed = sh(dir, 'ls-files', '-z').split('\0').filter((file) => /^(?:src|test|scripts)\/.+\.[cm]?[jt]sx?$/.test(file));
+  const entries = listed.map((path) => ({
+    path,
+    hash: sh(dir, 'rev-parse', `HEAD:${path}`),
+    text: readFileSync(join(dir, path), 'utf8'),
+  }));
+  const { graph } = updateGraph(null, entries);
+  graph.commit = head;
+  graph.resolver = RESOLVER;
+  return graph;
+}
+
+function planned(dir, paths, graph = freshGraph(dir)) {
+  return plan({ cwd: dir, paths, graph, base: sh(dir, 'rev-parse', 'HEAD') });
+}
+
+const SMOKE_FILES = {
+  '.github/fast-gate-smoke.json': `${JSON.stringify({
+    schema: 'phantom-fast-gate-smoke.v1',
+    version: 1,
+    tests: ['test/authority-codeowners-310b.test.ts', 'test/authority-tier1-closure-310b.test.ts'],
+  })}\n`,
+  'test/authority-codeowners-310b.test.ts': 'export {};\n',
+  'test/authority-tier1-closure-310b.test.ts': 'export {};\n',
+};
 
 test('docs-only diffs still classify as docs but select the suites that read them', (t) => {
   assert.equal(classifyPaths(['docs/guide.md', 'README.md']).mode, 'docs');
@@ -99,11 +129,14 @@ test('related selection finds changed, name-matched and importing tests', (t) =>
     'test/unrelated.test.ts': "import 'node:fs';\n",
   });
   commit('seed');
-  const r = plan({ cwd: dir, paths: ['src/core/beta.ts', 'test/unrelated.test.ts'] });
+  const r = planned(dir, ['src/core/beta.ts', 'test/unrelated.test.ts']);
   assert.equal(r.mode, 'related');
   assert.deepEqual(r.tests, ['test/unrelated.test.ts', 'test/uses-beta.test.ts']);
-  const named = plan({ cwd: dir, paths: ['src/core/alpha.ts'] });
+  const named = planned(dir, ['src/core/alpha.ts']);
   assert.deepEqual(named.tests, ['test/alpha.test.ts']);
+  const missing = plan({ cwd: dir, paths: ['src/core/alpha.ts'] });
+  assert.equal(missing.mode, 'fallback');
+  assert.match(missing.reason, /dependency graph missing/);
 });
 
 test('dist-bound tests are deferred, not run without a build', (t) => {
@@ -113,7 +146,7 @@ test('dist-bound tests are deferred, not run without a build', (t) => {
     'test/gamma-dist.test.ts': "import './helpers/require-built-dist.js';\nimport '../src/core/gamma.js';\n",
   });
   commit('seed');
-  const r = plan({ cwd: dir, paths: ['src/core/gamma.ts'] });
+  const r = planned(dir, ['src/core/gamma.ts']);
   assert.deepEqual(r.tests, ['test/gamma.test.ts']);
   assert.deepEqual(r.deferred, ['test/gamma-dist.test.ts']);
   assert.ok(!selectFallback({ cwd: dir }).tests.includes('test/gamma-dist.test.ts'));
@@ -137,12 +170,22 @@ test('the native gateway declares its build requirement and stays in the full la
   assert.match(workflow, /run: npm run build[\s\S]*run: npm run test:ci -- \$\{\{ matrix\.test_args \}\}/);
 });
 
-test('a code change that maps to no test never skips: it falls back', (t) => {
-  const { dir, commit } = repo(t, { 'src/core/lonely.ts': 'export {};\n', 'test/one.test.ts': 'export {};\n' });
+test('a code change with no graph falls back, and a fresh graph with no importers runs the smoke set', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/lonely.ts': 'export {};\n',
+    'test/one.test.ts': 'export {};\n',
+    ...SMOKE_FILES,
+  });
   commit('seed');
-  const r = plan({ cwd: dir, paths: ['src/core/lonely.ts'] });
-  assert.equal(r.mode, 'fallback');
-  assert.deepEqual(r.tests, ['test/one.test.ts']);
+  const missing = plan({ cwd: dir, paths: ['src/core/lonely.ts'] });
+  assert.equal(missing.mode, 'fallback');
+  assert.ok(missing.tests.includes('test/one.test.ts'));
+  for (const name of TIER1_TESTS) assert.ok(missing.tests.includes(name), `fallback keeps ${name}`);
+  const smoked = planned(dir, ['src/core/lonely.ts']);
+  assert.equal(smoked.mode, 'smoke');
+  assert.match(smoked.reason, /smoke v1/);
+  assert.deepEqual(smoked.tests, [...TIER1_TESTS]);
+  assert.ok(!smoked.tests.includes('test/one.test.ts'));
 });
 
 test('Tier-1 paths always add the named authority tests, even past the cap', (t) => {
@@ -151,7 +194,7 @@ test('Tier-1 paths always add the named authority tests, even past the cap', (t)
   for (let i = 0; i < MAX_RELATED_TESTS + 10; i += 1) files[`test/a-${String(i).padStart(3, '0')}.test.ts`] = "import '../src/core/authority/protected-paths.js';\n";
   const { dir, commit } = repo(t, files);
   commit('seed');
-  const r = plan({ cwd: dir, paths: ['src/core/authority/protected-paths.ts'] });
+  const r = planned(dir, ['src/core/authority/protected-paths.ts']);
   assert.equal(r.mode, 'related');
   for (const name of TIER1_TESTS) assert.ok(r.tests.includes(name), name);
   assert.equal(r.tests.length, MAX_RELATED_TESTS);
@@ -171,11 +214,11 @@ test('a diff touching a recorded Tier-1 closure member selects the closure invar
     'test/authority-tier1-closure-310b.test.ts': 'export {};\n',
   });
   commit('seed');
-  const member = plan({ cwd: dir, paths: ['src/core/fleet/lane-console.ts'] });
+  const member = planned(dir, ['src/core/fleet/lane-console.ts']);
   assert.ok(member.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'closure member diff runs the invariant');
   const snap = plan({ cwd: dir, paths: [snapshot] });
   assert.ok(snap.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'snapshot regen runs the invariant');
-  const other = plan({ cwd: dir, paths: ['src/core/fleet/unrelated.ts'] });
+  const other = planned(dir, ['src/core/fleet/unrelated.ts']);
   assert.ok(!other.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'non-member diff does not');
   const newRoot = plan({ cwd: dir, paths: ['src/core/memory/brand-new.ts'] });
   assert.ok(newRoot.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'a new root-eligible file runs the invariant');
@@ -201,12 +244,13 @@ test('CLI registry edits select the anti-drift suite that reads the dispatch swi
     'src/cli/outbox.ts': 'export const o = 1;\n',
     'test/cli-registry-drift.test.ts': 'export {};\n',
     'test/unrelated.test.ts': 'export {};\n',
+    ...SMOKE_FILES,
   });
   commit('seed');
   // index.ts has no import edge into the suite — it parses the switch as
   // text — so only the named rule can select it.
   for (const path of ['src/cli/index.ts', 'src/cli/completions.ts', 'src/cli/help.ts']) {
-    const r = plan({ cwd: dir, paths: [path] });
+    const r = planned(dir, [path]);
     assert.equal(r.mode, 'related');
     assert.ok(r.tests.includes('test/cli-registry-drift.test.ts'), `${path} selects the drift suite`);
   }
@@ -324,4 +368,173 @@ test('merge group attribution maps a failing test to the PR whose commit touched
   assert.equal(prNumber('no number'), null);
   assert.equal(related('test/x.test.ts', "import '../src/core/y.js'", ['src/core/y.ts']), true);
   assert.equal(related('test/x.test.ts', "import '../src/core/y.js'", ['src/core/z.ts']), false);
+});
+
+test('a fresh graph follows transitive importers and keeps nearer tests under the cap', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/leaf.ts': 'export const leaf = 1;\n',
+    'src/core/mid.ts': "import { leaf } from './leaf.js';\n",
+    'test/mid.test.ts': "import '../src/core/mid.js';\n",
+  });
+  commit('seed');
+  const reached = planned(dir, ['src/core/leaf.ts']);
+  assert.equal(reached.mode, 'related');
+  assert.deepEqual(reached.tests, ['test/mid.test.ts']);
+});
+
+test('near importers fill the cap before a transitive test', (t) => {
+  const files = {
+    'src/core/leaf.ts': 'export const leaf = 1;\n',
+    'src/core/mid.ts': "import { leaf } from './leaf.js';\n",
+    'test/mid.test.ts': "import '../src/core/mid.js';\n",
+  };
+  for (let i = 0; i < 30; i += 1) files[`test/leaf-${i}.test.ts`] = "import '../src/core/leaf.js';\n";
+  const { dir, commit } = repo(t, files);
+  commit('seed');
+  const capped = selectRelated({ cwd: dir, paths: ['src/core/leaf.ts'], graph: freshGraph(dir) });
+  assert.ok(capped.tests.includes('test/leaf-0.test.ts'));
+  assert.ok(!capped.tests.includes('test/mid.test.ts'));
+  assert.equal(capped.tests.length, MAX_RELATED_TESTS);
+  assert.ok(capped.capped > 0);
+});
+
+test('colocated and transitively reached web tests are selected for the web runner', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/util.ts': 'export const u = 1;\n',
+    'src/web-ui/Widget.tsx': "import { u } from '../core/util.js';\nexport const Widget = u;\n",
+    'src/web-ui/Widget.test.tsx': "import { Widget } from './Widget.js';\n",
+    'src/web-ui/Plain.tsx': 'export const plain = 1;\n',
+    'src/web-ui/Plain.test.tsx': 'export {};\n',
+    'test/util.test.ts': "import '../src/core/util.js';\n",
+  });
+  commit('seed');
+  const reached = planned(dir, ['src/core/util.ts']);
+  assert.equal(reached.mode, 'related');
+  assert.deepEqual(reached.web, ['src/web-ui/Widget.test.tsx']);
+  assert.ok(reached.tests.includes('test/util.test.ts'));
+  const colocated = planned(dir, ['src/web-ui/Plain.tsx']);
+  assert.equal(colocated.mode, 'related');
+  assert.deepEqual(colocated.web, ['src/web-ui/Plain.test.tsx']);
+  const changed = plan({ cwd: dir, paths: ['src/web-ui/Widget.test.tsx'] });
+  assert.equal(changed.mode, 'related');
+  assert.deepEqual(changed.web, ['src/web-ui/Widget.test.tsx']);
+});
+
+test('a v2 cache file without resolver 2 is rebuilt and then takes the narrow path', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/beta.ts': 'export const b = 1;\n',
+    'test/beta.test.ts': "import '../src/core/beta.js';\n",
+  });
+  const head = commit('seed');
+  const published = freshGraph(dir);
+  delete published.resolver;
+  published.files['test/beta.test.ts'] = { ...published.files['test/beta.test.ts'], imports: [] };
+  const raw = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: published, base: head });
+  assert.equal(raw.mode, 'fallback');
+  assert.match(raw.reason, /unparsable/);
+  const out = join(dir, 'dep-graph.json');
+  writeFileSync(out, JSON.stringify(published));
+  const script = join(dirname(fileURLToPath(import.meta.url)), '../scripts/ci-dep-graph.mjs');
+  execFileSync(process.execPath, [script, 'update', '--out', out], { cwd: dir, encoding: 'utf8' });
+  const restored = JSON.parse(readFileSync(out, 'utf8'));
+  assert.equal(restored.schema, 'phantom-dep-graph.v1');
+  assert.equal(restored.commit, head);
+  assert.equal(restored.resolver, RESOLVER);
+  assert.deepEqual(restored.files['test/beta.test.ts'].imports, ['src/core/beta.ts']);
+  const selected = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: restored, base: head });
+  assert.equal(selected.mode, 'related');
+  assert.deepEqual(selected.tests, ['test/beta.test.ts']);
+});
+
+test('stale, unparsable, and dynamic graphs fall back toward the broader set', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/beta.ts': 'export const b = 1;\n',
+    'src/core/dyn.ts': 'export const load = (name) => import(`./${name}.js`);\n',
+    'test/beta.test.ts': "import '../src/core/beta.js';\n",
+    'README.md': '# base\n',
+  });
+  const base = commit('base');
+  const graph = freshGraph(dir);
+  commit('docs', { 'README.md': '# next\n' });
+  const ancestor = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph, base });
+  assert.equal(ancestor.mode, 'related');
+  assert.deepEqual(ancestor.tests, ['test/beta.test.ts']);
+  const stale = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: { ...graph, commit: 'b'.repeat(40) }, base });
+  assert.equal(stale.mode, 'fallback');
+  assert.match(stale.reason, /not an ancestor of the base/);
+  const shifted = freshGraph(dir);
+  shifted.files['src/core/beta.ts'] = { ...shifted.files['src/core/beta.ts'], hash: '0'.repeat(40) };
+  const mismatch = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: shifted, base });
+  assert.equal(mismatch.mode, 'fallback');
+  assert.match(mismatch.reason, /hash does not match HEAD/);
+  const broken = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: { schema: 'nope', files: {} }, base });
+  assert.equal(broken.mode, 'fallback');
+  assert.match(broken.reason, /unparsable/);
+  const dynamic = planned(dir, ['src/core/dyn.ts']);
+  assert.equal(dynamic.mode, 'fallback');
+  assert.match(dynamic.reason, /dynamic import in src\/core\/dyn.ts/);
+  assert.ok(dynamic.tests.includes('test/beta.test.ts'));
+});
+
+test('a smoke file cannot drop Tier-1 suites, and secret-shape paths still select them', (t) => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+  const checked = loadSmokeSet(root);
+  assert.equal(checked.ok, true);
+  assert.equal(checked.version, 1);
+  assert.equal(JSON.parse(readFileSync(join(root, '.github/fast-gate-smoke.json'), 'utf8')).schema, SMOKE_SCHEMA);
+  for (const name of TIER1_TESTS) assert.ok(checked.tests.includes(name), name);
+  for (const name of ['test/cli-reference-drift.test.ts', 'test/fleet-lane-console.test.ts']) {
+    assert.ok(!checked.tests.includes(name), name);
+  }
+  const selected = selectSmoke({ cwd: root });
+  for (const name of TIER1_TESTS) assert.ok(selected.tests.includes(name), name);
+  const { dir, commit } = repo(t, {
+    'src/core/lonely.ts': 'export {};\n',
+    'src/core/seen.ts': 'export const s = 1;\n',
+    'test/seen.test.ts': "import '../src/core/seen.js';\n",
+    'test/one.test.ts': 'export {};\n',
+    '.github/tests/secret-shape/scrub.pl': '1\n',
+    '.github/fast-gate-smoke.json': `${JSON.stringify({ schema: SMOKE_SCHEMA, version: 1, tests: ['test/one.test.ts'] })}\n`,
+    ...Object.fromEntries(TIER1_TESTS.map((name) => [name, 'export {};\n'])),
+  });
+  commit('seed');
+  const smoked = planned(dir, ['src/core/lonely.ts']);
+  assert.equal(smoked.mode, 'smoke');
+  for (const name of TIER1_TESTS) assert.ok(smoked.tests.includes(name), name);
+  assert.ok(smoked.tests.includes('test/one.test.ts'));
+  const mixed = planned(dir, ['src/core/seen.ts', 'src/core/lonely.ts']);
+  assert.equal(mixed.mode, 'related');
+  assert.ok(mixed.tests.includes('test/seen.test.ts'));
+  for (const name of TIER1_TESTS) assert.ok(mixed.tests.includes(name), name);
+  const shape = plan({ cwd: dir, paths: ['.github/tests/secret-shape/scrub.pl'] });
+  assert.equal(shape.mode, 'related');
+  for (const name of TIER1_TESTS) assert.ok(shape.tests.includes(name), `secret-shape keeps ${name}`);
+});
+
+test('web failures are named and web tests run under the web vitest config', () => {
+  assert.deepEqual(failedTestFiles(' FAIL  console src/web-ui/Widget.test.tsx > renders\n'), ['src/web-ui/Widget.test.tsx']);
+  const jobs = commandsFor({
+    mode: 'related',
+    tests: ['test/a.test.ts'],
+    web: ['src/web-ui/Widget.test.tsx'],
+    node: ['.github/tests/a.test.mjs'],
+    shards: [],
+  });
+  assert.deepEqual(jobs.map((job) => job.args), [
+    ['scripts/test-ci.mjs', 'test/a.test.ts'],
+    ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx'],
+    ['--test', '.github/tests/a.test.mjs'],
+  ]);
+  const smoke = commandsFor({ mode: 'smoke', tests: [...TIER1_TESTS], web: [], node: [], shards: [] });
+  assert.deepEqual(smoke.map((job) => job.args), [['scripts/test-ci.mjs', ...TIER1_TESTS]]);
+  const fallback = commandsFor({
+    mode: 'fallback',
+    tests: ['test/a.test.ts', 'test/b.test.ts'],
+    web: ['src/web-ui/Widget.test.tsx'],
+    node: [],
+    shards: [['test/a.test.ts'], [], ['test/b.test.ts']],
+  }, 4);
+  assert.equal(fallback.length, 3);
+  assert.ok(fallback[0].args.includes('--maxWorkers=2'));
+  assert.deepEqual(fallback[2].args, ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx']);
 });
