@@ -75,8 +75,8 @@ export const AGENT_COMMANDS: AgentCommandDoc[] = [
     jsonShape: '{ok:true,id,replayed} or {ok:false,error:{code,message}}',
   },
   {
-    usage: 'phm bus inbox --to <label> [--limit <1..1000>] --json',
-    description: 'Read pending, unexpired local mailbox messages in priority/acceptance order; does not acknowledge. hasMore reports truncation. Unreadable/incomplete storage refuses; missing storage is empty. Exit 0 read, 1 operational refusal, 2 usage.',
+    usage: 'phm bus inbox --to <label> [--limit <1..1000>] [--from <label>] [--exclude-from <label>] [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--thread <t>] --json',
+    description: 'Read pending, unexpired local mailbox messages in priority/acceptance order; does not acknowledge. hasMore reports truncation of the filtered set. The shared bus read filters compose with AND: --from/--exclude-from match one sender label (resolved through the agent identity registry, exact-label fallback), --priority one band, --job/--in-reply-to/--thread body citations, --channel the group:<name>:* address prefix, --since/--before the [since, before) acceptance-time window, --contains a case-insensitive substring of the scrubbed one-line summary. Unreadable/incomplete storage refuses; missing storage is empty. Exit 0 read, 1 operational refusal, 2 usage.',
     safety: 'read',
     jsonShape: '{ok:true,messages:BusEnvelope[],hasMore} or {ok:false,error:{code,message}}',
   },
