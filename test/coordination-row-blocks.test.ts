@@ -39,6 +39,23 @@ describe('coordinationRowBlocks', () => {
     expect(coordinationRowBlocks(team, 'path:fake/repo:src2/**')).toBe(false);
   });
 
+  it('keeps prefix coverage when a team path holds glob wildcard characters', () => {
+    // `*`/`?` are legal filename characters, but the team claim is still a
+    // prefix claim: a bus glob matching the bare path or anything beneath it
+    // overlaps even though the two bare globs' languages never intersect.
+    const star = row({ origin: 'team', key: 'team:fake/repo::src/*/foo', repo: 'fake/repo', path: 'src/*/foo' });
+    expect(coordinationRowBlocks(star, 'path:fake/repo:src/*/foo/bar')).toBe(true);
+    expect(coordinationRowBlocks(star, 'path:fake/repo:src/*/foo/**')).toBe(true);
+    expect(coordinationRowBlocks(star, 'path:fake/repo:src/*/foo')).toBe(true);
+    // Read as a glob the team path also covers each match's subtree.
+    expect(coordinationRowBlocks(star, 'path:fake/repo:src/x/foo/bar')).toBe(true);
+    expect(coordinationRowBlocks(star, 'path:fake/repo:docs/**')).toBe(false);
+    expect(coordinationRowBlocks(star, 'path:fake/repo:src/*/bar/**')).toBe(false);
+    const query = row({ origin: 'team', key: 'team:fake/repo::src/file?.ts', repo: 'fake/repo', path: 'src/file?.ts' });
+    expect(coordinationRowBlocks(query, 'path:fake/repo:src/file?.ts/notes.md')).toBe(true);
+    expect(coordinationRowBlocks(query, 'path:fake/repo:docs/**')).toBe(false);
+  });
+
   it('keeps prefix coverage when a team path holds literal bracket or brace characters', () => {
     // `[`/`{` are literal under globMatches — `src/[id]` is a concrete
     // directory name (Next.js-style route segments), not a glob, so the

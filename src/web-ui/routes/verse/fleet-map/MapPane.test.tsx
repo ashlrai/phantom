@@ -4,8 +4,9 @@ import { buildFleetLiveMap, messageLineWidth, type FleetLiveMap } from '../../..
 import type { NodeRow } from '../../../../core/fleet/nodes-view.js';
 import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
-import { projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
+import { agentToAgent, projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
 import { buildMapEdges } from '../../../../core/fleet/map-edges.js';
+import { matchAgentMessages } from '../../../../core/fleet/agent-messages.js';
 import { buildAgentsMessages } from '../../../../core/fleet/agents-messages.js';
 import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
@@ -223,7 +224,8 @@ it('a message line opens the Messages pane on that pair, read from the typed mes
 function pairsOf(said: Said[]) {
   const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
     envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
-  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', rows: rows as never }, { since: NOW - 3_600_000 }, NOW))));
+  const matched = matchAgentMessages(rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= NOW), { since: NOW - 3_600_000 }, {}, false);
+  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', matched }, { since: NOW - 3_600_000 }, NOW))));
 }
 
 describe('message cards, the Messages switch and reduced motion', () => {

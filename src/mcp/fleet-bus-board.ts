@@ -11,8 +11,8 @@
  * fleet-wide, for this job" in one call. This tool is the board digest's
  * own read: every unacknowledged delivery across every thread and every
  * task whose observed hold is not `held`, under the same `job`,
- * `contains` and `since` filters the `work mine` board section and the
- * board digest share.
+ * `contains` and `since`/`before` filters the `work mine` board section and
+ * the board digest share.
  *
  * `job` keeps only threads carrying a task whose fleet `itemId` cites it
  * — the same citation rule `work mine --job` applies, with `peers` then
@@ -20,8 +20,10 @@
  * whose scrubbed display text carries the needle as a case-insensitive
  * substring — the same `--contains` rule every bus read shares;
  * `since` (15m, 2h, 1d, epoch ms or ISO) keeps only deliveries whose
- * `createdAt` reaches the cutoff — board tasks carry no timestamp, so
- * under `since` the task list is provably empty rather than padded with
+ * `createdAt` reaches the cutoff and `before` keeps only deliveries
+ * recorded strictly before its own cutoff, the pair reading one
+ * `[since, before)` window — board tasks carry no timestamp, so under a
+ * time bound the task list is provably empty rather than padded with
  * undated rows, and thread rollups list only while a surviving delivery
  * remains. The result reports `source` missing (verified-empty — no
  * `state.json` was ever written), available or unavailable — an
@@ -52,7 +54,7 @@ import {
 /** The printable-label rule `job` shares — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const BOARD_KEYS = new Set(['job', 'contains', 'since']);
+const BOARD_KEYS = new Set(['job', 'contains', 'since', 'before']);
 
 export interface FleetBusBoardArgs {
   /** Keep only threads carrying a task whose fleet itemId cites this job id — the same citation rule the work-mine board section applies. */
@@ -61,6 +63,8 @@ export interface FleetBusBoardArgs {
   contains?: string;
   /** Keep only deliveries whose createdAt reaches this epoch-ms cutoff — the shared `since` grammar resolved once; tasks never match under it. */
   since?: number;
+  /** Keep only deliveries recorded strictly before this epoch-ms cutoff — the exclusive `before` bound composing with `since` into one [since, before) window; tasks never match under it. */
+  before?: number;
 }
 
 /**
@@ -68,9 +72,10 @@ export interface FleetBusBoardArgs {
  * tools/list schema, so the server re-validates on every call. `job`
  * takes the printable routing-label bound every bus read applies,
  * `contains` the bounded free-text needle `busReadContains` normalizes,
- * `since` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved to a
- * safe non-negative epoch-ms integer. Unknown keys, wrong types, caller
- * roots and malformed values are all refused before the store is touched.
+ * `since`/`before` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
+ * to a safe non-negative epoch-ms integer. Unknown keys, wrong types,
+ * caller roots and malformed values are all refused before the store is
+ * touched.
  */
 export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusBoardArgs | null {
   if (Object.keys(args).some(key => !BOARD_KEYS.has(key))) return null;
@@ -83,12 +88,14 @@ export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusB
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
   if (contains !== undefined) parsed.contains = contains;
-  const since = args.since;
-  if (since !== undefined) {
-    if (typeof since !== 'string') return null;
-    const resolved = parseSince(since);
+  for (const bound of [['since', args.since], ['before', args.before]] as const) {
+    const [key, raw] = bound;
+    if (raw === undefined) continue;
+    if (typeof raw !== 'string') return null;
+    const resolved = parseSince(raw);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
-    parsed.since = resolved;
+    if (key === 'since') parsed.since = resolved;
+    else parsed.before = resolved;
   }
   return parsed;
 }
@@ -124,6 +131,7 @@ export async function readFleetBusBoard(
     ...(args.job === undefined ? {} : { jobId: args.job }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.since === undefined ? {} : { sinceMs: args.since }),
+    ...(args.before === undefined ? {} : { beforeMs: args.before }),
   });
   return {
     schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,

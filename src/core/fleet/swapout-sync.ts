@@ -111,9 +111,11 @@ function statField(value: unknown, max: number | null): number | null | typeof I
  * schema, a parseable sampled_at, and each stat field either null or a
  * finite number inside the producer's range (free_pct 0..100, the GB and
  * per-minute figures unbounded above). Anything else is corrupt evidence,
- * counted and never partially trusted.
+ * counted and never partially trusted. Exported so the improvement
+ * backlog's memory fold validates rows by the same rule the writer and
+ * the vitals read-back apply.
  */
-function parseSwapoutRow(value: unknown): SwapoutSample | null {
+export function parseSwapoutRow(value: unknown): SwapoutSample | null {
   const sampledAt = sampledAtOf(value);
   if (sampledAt === null || !Number.isFinite(Date.parse(sampledAt))) return null;
   const row = value as Record<string, unknown>;

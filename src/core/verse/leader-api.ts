@@ -21,7 +21,7 @@
  *   GET    /api/verse/leader/thread?limit=&before=      → {messages} oldest first
  *                                                        (limit 1–200, default 50;
  *                                                        before = message id or ISO)
- *   GET    /api/verse/leader/thread/merged[?since=<hours>] → inbox + outbox + plan-log replies as one thread
+ *   GET    /api/verse/leader/thread/merged[?since=<hours>&before=<hours>] → inbox + outbox + plan-log replies as one thread
  *                                                        (leader-thread-merged-api.ts; read-only)
  *   GET    /api/verse/leader/health                     → fleet.leader-health.v1: passes failed in a row,
  *                                                        hours since a good one, the cause (leader-health-api.ts)
