@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -343,7 +343,21 @@ message never lists), the thread sections keep threads whose latest
 message is addressed to the room, and wakes and inbox pass the name to
 their own reads' channel filters; board, channels and seats carry no
 per-item room and stay unfiltered, and every count stays the filtered
-total. work next claims the next claimable
+total. --from on work mine keeps only pending items provably sent under
+that agent ref's labels — the same sender-inclusion rule inbox --from
+and every other bus read applies, decided on each section's own sender
+evidence: feed jobs and announced jobs keep announcements whose owner —
+the announcer label the feed records as the job's sender — matches, next,
+handoffs, mailbox and inbox keep envelopes whose from does, claims keep
+only message claims whose resolved leased envelope came from it (a claim
+naming no resolved message never lists), wakes passes the ref to its own
+read's from filter, and the thread sections pass it to the shared
+conversations read's from query, which keeps a thread when any member
+message came from the ref. --exclude-from drops the same sender evidence
+instead — "everything pending except what that agent sent" — where a
+claim naming no resolved message cannot be proven excluded and stays
+listed; board, channels and seats carry no bus-envelope sender and stay
+unfiltered under both, and every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -915,13 +929,17 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (channel !== undefined && !agentChannelNameSchema.safeParse(channel).success) {
         throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
       }
+      const from = one('--from');
+      const excludeFrom = one('--exclude-from');
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
           ...(since === undefined ? {} : { since }),
           ...(before === undefined ? {} : { before }),
           ...(priority === undefined ? {} : { priority }),
-          ...(channel === undefined ? {} : { channel }) });
+          ...(channel === undefined ? {} : { channel }),
+          ...(from === undefined ? {} : { from }),
+          ...(excludeFrom === undefined ? {} : { excludeFrom }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
