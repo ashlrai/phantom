@@ -328,6 +328,21 @@ Acceptance: as simple and intuitive as possible, fewer steps, plain words,
 one obvious path, and every human surface backed by a typed API or CLI
 that agents can use (code-first, agent-native).
 
+### Fleet status snapshot
+
+`phm fleet status-api --json` exposes the typed `FleetStatusApi` contract from
+`src/core/fleet/status-api.ts`. Its `snapshot` shares the Leader collector:
+per-lane running and queued counts, fleet totals, 24-hour merge counts and
+guardian health. Queue observations expire after 60 seconds; guardian tables
+expire after 30 minutes. Unknown counts are `null`, measured zero stays `0`, and
+`collectionErrors` reports fixed source/reason codes. `collectedAt`,
+`queueObservedAt` and `mains.observedAt` distinguish collection time from source
+time. Stale lane running, queued, available and merge values are `null` in the
+outer projection too. The snapshot caps displayed lane rows at 16 and reports
+`laneActivityTruncated`; fleet activity totals use all lanes before that cap.
+This read-only command uses `ASHLR_RUNS_DIR` when configured.
+Journal prose and guardian repo labels are omitted from this measurements view.
+
 ### Machine load
 
 `phm fleet machine --json` and `GET /api/fleet/machine` expose the same
