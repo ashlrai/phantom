@@ -7,18 +7,20 @@
  * and callers that arrive while a build is running share it, so the map costs
  * at most one fleet read per 5 s however many panes or agents poll it.
  *
- * GET /api/verse/fleet/control/map-edges[?since=10m] is `phm map edges --json`
+ * GET /api/verse/fleet/control/map-edges[?since=10m&before=1h] is `phm map edges --json`
  * (fleet.map-edges.v1): who messaged whom, for the map's message lines. The
  * default window is throttled the same way; 503 carries the typed "unknown" body.
  *
- * GET /api/verse/fleet/control/agent-messages[?since=1h&limit=50] is
+ * GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude] is
  * `phm agents messages --json` (agents.messages.v1): the recent messages with
  * map node ids and per-line counts and last 5 summaries, for the map's cards.
+ * Every `phm messages` filter is a param of the same name (camelCase where the
+ * flag is dashed), validated by the same parser.
  *
  * GET /api/verse/fleet/control/map-replay[?since=6h&step=5m] is `phm map replay --json`
  * (fleet.map-replay.v1): the fleet one frame per step, for the Map pane's time slider.
  *
- * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude&since=1h&contains=text] is
+ * GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text] is
  * `phm agents conversations --json` (agents.conversations.v1): threads by reply
  * chain with their state, for the map's thread lines and the Conversations panel.
  */
@@ -30,6 +32,8 @@ import { readAgentsMessages } from '../fleet/agents-messages.js';
 import { parseSince } from '../fleet/agent-messages.js';
 import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { CONVERSATION_STATES, type ConversationState } from '../fleet/agent-conversation-model.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
+import { agentChannelNameSchema } from '../agents/bus-identity.js';
 import { readMapReplay } from '../fleet/map-replay-build.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { readLiveJobs } from '../fleet/live-jobs.js';
@@ -74,7 +78,7 @@ export function throttledLiveMap<T = FleetLiveMap>(read: () => Promise<T>, clock
 }
 
 export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = throttledLiveMap(() => readFleetLiveMap()),
-  edges: (since: string) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
+  edges: (since: string, options?: { before?: string }) => MapEdges | null = readMapEdges, messages: typeof readAgentsMessages = readAgentsMessages,
   conversations: typeof readAgentConversations = readAgentConversations, replay: typeof readMapReplay = readMapReplay): ApiModule {
   const defaultEdges = throttledLiveMap(async () => edges(MAP_EDGES_DEFAULT_SINCE));
   return async (ctx, req, res, path, method) => {
@@ -96,43 +100,60 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
     }
     if (path === AGENT_CONVERSATIONS_PATH) {
       const waiting = params.get('waiting'), blocked = params.get('blocked'), agent = params.get('agent'), job = params.get('job'), waitingOn = params.get('waitingOn');
-      const state = params.get('state'), limit = params.get('limit'), since = params.get('since'), contains = params.get('contains');
+      const state = params.get('state'), limit = params.get('limit'), since = params.get('since'), before = params.get('before'), contains = params.get('contains');
+      const inReplyTo = params.get('inReplyTo'), channel = params.get('channel'), priority = params.get('priority');
+      const from = params.get('from'), excludeFrom = params.get('excludeFrom');
       const sinceMs = since === null ? undefined : parseSince(since);
-      if ([...params.keys()].some(key => key !== 'agent' && key !== 'waiting' && key !== 'blocked' && key !== 'job' && key !== 'waitingOn' && key !== 'state' && key !== 'limit' && key !== 'since' && key !== 'contains')
-        || params.getAll('agent').length > 1 || params.getAll('waiting').length > 1 || params.getAll('blocked').length > 1
-        || params.getAll('job').length > 1 || params.getAll('waitingOn').length > 1
-        || params.getAll('state').length > 1 || params.getAll('limit').length > 1 || params.getAll('since').length > 1
-        || params.getAll('contains').length > 1
+      const beforeMs = before === null ? undefined : parseSince(before);
+      const KEYS = ['agent', 'waiting', 'blocked', 'job', 'waitingOn', 'state', 'limit', 'since', 'before', 'contains',
+        'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom'];
+      if ([...params.keys()].some(key => !KEYS.includes(key))
+        || KEYS.some(key => params.getAll(key).length > 1)
         || (waiting !== null && waiting !== '1' && waiting !== '0') || (blocked !== null && blocked !== '1' && blocked !== '0')
         || (state !== null && !(CONVERSATION_STATES as readonly string[]).includes(state))
         || (limit !== null && (!/^[1-9][0-9]*$/.test(limit) || Number(limit) > 1024))
         || (contains !== null && (contains.trim() === '' || contains.length > 512))
-        || sinceMs === null
-        || agent === '' || job === '' || waitingOn === '' || since === '') {
-        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters) and limit (1-1024) only, once each.' }); return true;
+        || (priority !== null && !(BUS_PRIORITIES as readonly string[]).includes(priority))
+        || (channel !== null && !agentChannelNameSchema.safeParse(channel).success)
+        || [agent, job, waitingOn, inReplyTo, from, excludeFrom].some(v => v !== null && !/^[\x21-\x7e]{1,128}$/.test(v))
+        || sinceMs === null || beforeMs === null
+        || [agent, job, waitingOn, since, before].some(v => v === '')) {
+        sendJson(res, 400, { error: 'Use agent (a name), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), before (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters), inReplyTo (an envelope id), channel (a channel name), priority (P0..P3), from (a name), excludeFrom (a name) and limit (1-1024) only, once each.' }); return true;
       }
       try {
         const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', blockedOnly: blocked === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined,
-          state: state === null ? undefined : state as ConversationState, since: sinceMs ?? undefined, contains: contains ?? undefined, limit: limit === null ? undefined : Number(limit) });
+          state: state === null ? undefined : state as ConversationState, since: sinceMs ?? undefined, before: beforeMs ?? undefined, contains: contains ?? undefined,
+          inReplyTo: inReplyTo ?? undefined, channel: channel ?? undefined, priority: priority === null ? undefined : priority as BusPriority,
+          from: from ?? undefined, excludeFrom: excludeFrom ?? undefined, limit: limit === null ? undefined : Number(limit) });
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
       return true;
     }
     if (path === AGENT_MESSAGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since' && key !== 'limit') || params.getAll('since').length > 1 || params.getAll('limit').length > 1) {
-        sendJson(res, 400, { error: 'Use since and limit only, once each.' }); return true;
+      // The same filter vocabulary `phm agents messages` and `phm messages`
+      // share; dashed flags arrive camelCase, each param once.
+      const keys = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id'];
+      if ([...params.keys()].some(key => !keys.includes(key)) || keys.some(key => params.getAll(key).length > 1)) {
+        sendJson(res, 400, { error: 'Use since, before, limit, agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo and id only, once each.' }); return true;
       }
       try {
-        const read = messages({ since: params.get('since') ?? undefined, limit: params.get('limit') ?? undefined });
+        const pick = (key: string) => params.get(key) ?? undefined;
+        const read = messages({ since: pick('since'), before: pick('before'), limit: pick('limit'), agent: pick('agent'), with: pick('with'),
+          kind: pick('kind'), priority: pick('priority'), job: pick('job'), thread: pick('thread'), channel: pick('channel'),
+          contains: pick('contains'), from: pick('from'), excludeFrom: pick('excludeFrom'), inReplyTo: pick('inReplyTo'), id: pick('id') });
         if (!read.ok) sendJson(res, 400, { error: read.error });
         else sendJson(res, read.result.source === 'unavailable' ? 503 : 200, read.result);
       } catch { sendJson(res, 503, { error: 'Agent messages unavailable.' }); }
       return true;
     }
     if (path === MAP_EDGES_PATH) {
-      if ([...params.keys()].some(key => key !== 'since') || params.getAll('since').length > 1) { sendJson(res, 400, { error: 'Use since only, once.' }); return true; }
+      if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
+        sendJson(res, 400, { error: 'Use since and before only, once each.' }); return true;
+      }
+      const rawBefore = params.get('before');
+      if (rawBefore !== null && parseSince(rawBefore) === null) { sendJson(res, 400, { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
       try {
-        const since = params.get('since'), result = since === null ? await defaultEdges() : edges(since);
+        const since = params.get('since'), result = since === null && rawBefore === null ? await defaultEdges() : edges(since ?? MAP_EDGES_DEFAULT_SINCE, { before: rawBefore ?? undefined });
         if (!result) sendJson(res, 400, { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' });
         else sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Map edges unavailable.' }); }

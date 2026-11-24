@@ -3,7 +3,7 @@ import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from 
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
   type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
-import { agentAddressMatcher, agentIdentityKeys, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
 import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
@@ -90,24 +90,32 @@ export function busWorkFeedJobHold(
 
 /**
  * The hold evidence behind one claims join, shared by the feed annotation
- * and the `work mine` digest: the coverage state plus the shown holds grouped
- * by job id. `unknown` means the coordination table could not be read;
- * `truncated` means shown holds are real but later ones are unseen.
+ * and the `work mine` digest: the coverage state, the shown held keys grouped
+ * by job id (`heldByJob`) and the shown hold rows themselves grouped the same
+ * way (`holdsByJob`) so a per-job read can name who holds each blocked key.
+ * `unknown` means the coordination table could not be read; `truncated` means
+ * shown holds are real but later ones are unseen — both maps are then
+ * lower bounds, never the full hold set.
  */
 export function busWorkFeedHoldIndex(claims: BusWorkFeedClaims | undefined): {
   coverage: BusWorkFeedHoldCoverage;
   heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+  holdsByJob: ReadonlyMap<string, readonly BusWorkFeedHold[]>;
 } {
   const coverage: BusWorkFeedHoldCoverage =
     claims === undefined || claims.source === 'unavailable' ? 'unknown'
     : claims.truncated ? 'truncated' : 'complete';
   const heldByJob = new Map<string, Set<string>>();
+  const holdsByJob = new Map<string, BusWorkFeedHold[]>();
   for (const hold of claims?.holds ?? []) {
     const set = heldByJob.get(hold.jobId) ?? new Set<string>();
     set.add(hold.claimKey);
     heldByJob.set(hold.jobId, set);
+    const rows = holdsByJob.get(hold.jobId) ?? [];
+    rows.push(hold);
+    holdsByJob.set(hold.jobId, rows);
   }
-  return { coverage, heldByJob };
+  return { coverage, heldByJob, holdsByJob };
 }
 
 export type BusWorkFeedReadResult =
@@ -271,15 +279,11 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
  * never widens the filter.
  */
 function feedLabelMatcher(ref: string, options: { root?: string }): (label: string) => boolean {
-  return agentAddressMatcher(agentIdentityKeys({ root: options.root }), ref);
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(ref, read.status === 'ok' ? read.registry : undefined);
 }
 
-/** Announcement-address matcher for a job's `to` label. */
-export function busWorkFeedToMatcher(to: string, options: { root?: string } = {}): (label: string) => boolean {
-  return feedLabelMatcher(to, options);
-}
-
-/** Announcer matcher for a job's `owner` label — the same identity contract `to` uses. */
+/** Announcer matcher for a job's `owner` label — the same identity contract the addressed surfaces share. */
 export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string } = {}): (label: string) => boolean {
   return feedLabelMatcher(owner, options);
 }
@@ -287,8 +291,8 @@ export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string 
 /**
  * The feed `--to` filter's addressed-to-agent matcher under the pending-work
  * rule every other addressed surface shares — `bus next`, the `work mine`
- * digest's next/handoffs/wakes/inbox sections and `agents bus inbox`: the
- * literal label, every label of the identity it resolves to, and
+ * digest's jobs/next/handoffs/wakes/inbox sections and `agents bus inbox`:
+ * the literal label, every label of the identity it resolves to, and
  * `group:<channel>:<topic>` addresses of registry channels that identity
  * belongs to, minus channel posts the identity sent itself (`owner` is the
  * announcement's sender label). A `to` ref that resolves to no identity, or
@@ -334,6 +338,16 @@ export interface BusWorkFeedViewFilters {
    * same inclusive `>=` rule every `--since` bus read applies.
    */
   since?: number;
+  /**
+   * Keep only jobs whose last activity is strictly before this epoch-ms
+   * cutoff — the same `job.updatedAt` field `since` bounds inclusively
+   * below, so `since`/`before` read one closed [since, before) window and
+   * adjacent windows never double-count a boundary job. It is also the
+   * paging bound: the view sorts newest-first under a `--limit` cap, so
+   * `--before` at the oldest shown job's `updatedAt` reaches the jobs an
+   * unbounded newest page can never show once more than the cap match.
+   */
+  before?: number;
   /** Announcement-address predicate from `busWorkFeedPendingToMatcher`; called with the job's `to` address and `owner` (announcement sender) label. */
   toMatch?: (to: string, owner: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
@@ -350,17 +364,29 @@ export interface BusWorkFeedViewFilters {
    * their own filters, never search text.
    */
   contains?: string;
+  /**
+   * Keep only jobs whose announcement `to` carries `group:<channel>:` — the
+   * room's whole traffic under every topic, the same address prefix
+   * `phm messages --channel`, `agents bus inbox --channel` and `channel read`
+   * match. The value is the strict channel-name grammar; matching is a raw
+   * prefix on the routing label, so it needs no registry and never widens on
+   * unknown state.
+   */
+  channel?: string;
 }
 
 /**
- * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/
- * `--to`/`--owner`/`--contains` filters and newest-first ordering shared by
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
+ * `--to`/`--owner`/`--contains`/`--channel` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
  * receipt time, or the announcement's while no status has moved the job —
  * reaches the cutoff, so "which jobs moved lately" is one filtered read
- * instead of paging terminal jobs that have sat unchanged.
+ * instead of paging terminal jobs that have sat unchanged; `before` is the
+ * exclusive upper bound on the same field, so the pair reads one
+ * [since, before) window and older pages stay reachable past the
+ * newest-first `--limit` cap.
  * With claims, holds regroup under the jobs still shown so a filtered view
  * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
  * tri-state `claimable` is provably true — unknown coverage never counts as
@@ -388,8 +414,10 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
+      && (filters.before === undefined || job.updatedAt < filters.before)
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
+      && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };

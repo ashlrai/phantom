@@ -92,14 +92,16 @@ describe('fleet_bus_channel argument parsing', () => {
       channel: 'ops', topic: 'alerts', after: 3, limit: 10, matched: true,
       from: 'agent:sender', excludeFrom: 'agent:bot',
       thread: 't-1', priority: 'P1', job: 'RQ-9',
-      since: '1800000000000', contains: '  Parser   Fix ',
+      since: '1800000000000', before: '1700000000000', contains: '  Parser   Fix ',
+      inReplyTo: 'm-0', id: 'm-9',
     });
     expect(parsed).toMatchObject({
       channel: 'ops', after: 3, limit: 10, matched: true,
       filters: {
         topic: 'alerts', from: 'agent:sender', excludeFrom: 'agent:bot',
         thread: 't-1', priority: 'P1', job: 'RQ-9',
-        since: 1800000000000, contains: 'parser fix',
+        since: 1800000000000, before: 1700000000000, contains: 'parser fix',
+        inReplyTo: 'm-0', id: 'm-9',
       },
     });
   });
@@ -112,8 +114,12 @@ describe('fleet_bus_channel argument parsing', () => {
       { channel: 'ops', topic: 'x'.repeat(33) },
       { channel: 'ops', from: 5 }, { channel: 'ops', excludeFrom: null }, { channel: 'ops', job: 'has space' },
       { channel: 'ops', thread: 'has space' }, { channel: 'ops', thread: '' }, { channel: 'ops', thread: 5 },
+      { channel: 'ops', inReplyTo: 'has space' }, { channel: 'ops', inReplyTo: '' }, { channel: 'ops', inReplyTo: 5 },
+      { channel: 'ops', id: 'has space' }, { channel: 'ops', id: '' }, { channel: 'ops', id: 5 }, { channel: 'ops', id: 'x'.repeat(129) },
       { channel: 'ops', priority: 'P9' }, { channel: 'ops', priority: 1 }, { channel: 'ops', priority: 'p0' },
       { channel: 'ops', since: 'never' }, { channel: 'ops', since: 5 }, { channel: 'ops', since: '' },
+      { channel: 'ops', before: 'never' }, { channel: 'ops', before: 5 }, { channel: 'ops', before: '' },
+      { channel: 'ops', before: '1960-01-01T00:00:00.000Z' },
       { channel: 'ops', contains: '' }, { channel: 'ops', contains: '   ' },
       { channel: 'ops', contains: 'x'.repeat(513) }, { channel: 'ops', contains: 42 },
     ]) expect(parseFleetBusChannelArgs(bad)).toBeNull();
@@ -125,7 +131,7 @@ describe('fleet_bus_channel reader', () => {
     const seen: Array<[string, unknown]> = [];
     const read: typeof readAgentChannel = (name, page) => {
       seen.push([name, page]);
-      return okPage({ matched: 3 });
+      return okPage({ matched: 1 });
     };
     const result = await readFleetBusChannel(
       parseFleetBusChannelArgs({ channel: 'ops', after: 4, limit: 10, matched: true, topic: 'alerts' })!,
@@ -133,10 +139,35 @@ describe('fleet_bus_channel reader', () => {
     expect(seen).toEqual([['ops', { after: 4, limit: 10, matched: true, topic: 'alerts' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
-      channel: 'ops', status: 'ok', nextCursor: 9, matched: 3,
+      channel: 'ops', status: 'ok', nextCursor: 9, matched: 1,
     });
     expect(result.messages).toHaveLength(1);
     expect(result.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('reports the newest shown cursor as nextCursor when matched hides rows', async () => {
+    // A matched page scans the whole store, so the core nextCursor is the
+    // store's end — resuming there would skip the unshown matches. The
+    // adapter reports the same honest resume point the CLI does.
+    const read: typeof readAgentChannel = () => okPage({
+      matched: 3,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+      nextCursor: 9,
+    });
+    const result = await readFleetBusChannel(
+      parseFleetBusChannelArgs({ channel: 'ops', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 3, nextCursor: 7 });
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it('keeps the store-end cursor when every match fits the page', async () => {
+    const read: typeof readAgentChannel = () => okPage({
+      matched: 2,
+      messages: [message({ cursor: 4 }), message({ cursor: 7 })],
+    });
+    const result = await readFleetBusChannel(
+      parseFleetBusChannelArgs({ channel: 'ops', matched: true })!, { read });
+    expect(result).toMatchObject({ status: 'ok', matched: 2, nextCursor: 9 });
   });
 
   it('omits matched when the page did not count the whole store', async () => {
@@ -154,14 +185,14 @@ describe('fleet_bus_channel reader', () => {
       return okPage({ messages: [] });
     };
     await readFleetBusChannel(parseFleetBusChannelArgs({
-      channel: 'ops', topic: 'alerts', since: '1800000000000', contains: 'Parser Fix',
+      channel: 'ops', topic: 'alerts', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     })!, { read });
     expect(seenPage).toMatchObject({
-      topic: 'alerts', since: 1800000000000, contains: 'parser fix',
+      topic: 'alerts', since: 1800000000000, before: 1700000000000, contains: 'parser fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
     });
   });
 
@@ -196,6 +227,11 @@ describe('fleet_bus_channel MCP tool', () => {
     expect(tool?.inputSchema.properties?.['priority'])
       .toMatchObject({ type: 'string', enum: expect.arrayContaining(['P0', 'P3']) });
     expect(tool?.inputSchema.properties?.['matched']).toMatchObject({ type: 'boolean' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['inReplyTo'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 
   it.each([
@@ -204,7 +240,7 @@ describe('fleet_bus_channel MCP tool', () => {
     [{ channel: 'ops', limit: 0 }], [{ channel: 'ops', limit: 101 }], [{ channel: 'ops', limit: '5' }],
     [{ channel: 'ops', after: -1 }], [{ channel: 'ops', matched: 'yes' }],
     [{ channel: 'ops', priority: 'P9' }], [{ channel: 'ops', topic: 'Bad Topic!' }],
-    [{ channel: 'ops', since: 'never' }], [{ channel: 'ops', contains: '' }], [{ channel: 'ops', extra: 1 }],
+    [{ channel: 'ops', since: 'never' }], [{ channel: 'ops', before: 'never' }], [{ channel: 'ops', contains: '' }], [{ channel: 'ops', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busChannel = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busChannel });
