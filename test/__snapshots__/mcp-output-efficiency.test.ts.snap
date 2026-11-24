@@ -2367,6 +2367,9 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
         "limit": {
           "type": "number",
         },
+        "replyTo": {
+          "type": "string",
+        },
         "since": {
           "type": "string",
         },

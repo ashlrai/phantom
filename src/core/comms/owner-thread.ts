@@ -578,7 +578,12 @@ function awaitingReplyIds(state: ThreadState): string[] {
 /** Longest `--contains` needle the thread read accepts; the message text it matches is already bounded far shorter. */
 export const OWNER_THREAD_CONTAINS_MAX = 512;
 
-/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time window and/or a text needle. */
+/** The idempotency-key grammar every stored message key — and every `replyTo` citation of one — satisfies. */
+export function isOwnerThreadKey(value: string): boolean {
+  return KEY.test(value);
+}
+
+/** Optional read slice for `readOwnerThread`: one channel, one direction, a recorded-time window, a text needle and/or one reply exchange. */
 export interface OwnerThreadReadFilter {
   /** Keep only messages recorded on this channel. */
   channel?: OwnerChannel;
@@ -603,6 +608,16 @@ export interface OwnerThreadReadFilter {
    * the one place they can be found.
    */
   contains?: string;
+  /**
+   * Keep only the exchange rooted at one message key: the message carrying
+   * that `idempotencyKey` plus every recorded reply whose `replyTo` cites it —
+   * the same key `send-owner --reply-to` takes, so "what did we already say
+   * about this inbound" is one filtered read across every channel the reply
+   * fanned out to. An outbound key matches only the message carrying it (no
+   * `replyTo` ever cites an outbound key), and a key nothing carries is an
+   * honest empty slice.
+   */
+  replyTo?: string;
 }
 
 /**
@@ -612,7 +627,9 @@ export interface OwnerThreadReadFilter {
  * recorded-time floor and `beforeAt` recorded-time ceiling (an unparseable
  * `at` never satisfies either bound) and the
  * `contains` needle as a case-insensitive substring over the stored text
- * with whitespace collapsed on both sides. Exported so the archived pages
+ * with whitespace collapsed on both sides, and `replyTo` the one-key
+ * exchange — the message carrying that `idempotencyKey` plus every reply
+ * citing it. Exported so the archived pages
  * `phm fleet owner-history` and `fleet_owner_history` apply the identical
  * rule `phm comms thread` does — the two reads can never disagree about
  * what a filter keeps.
@@ -623,6 +640,7 @@ export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (messa
   return message => {
     if (filter?.channel !== undefined && message.channel !== filter.channel) return false;
     if (filter?.direction !== undefined && message.direction !== filter.direction) return false;
+    if (filter?.replyTo !== undefined && message.idempotencyKey !== filter.replyTo && message.replyTo !== filter.replyTo) return false;
     if (filter?.since !== undefined) {
       const at = Date.parse(message.at);
       if (!Number.isFinite(at) || at < filter.since) return false;
@@ -647,7 +665,10 @@ export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (messa
  * only messages whose stored text carries the needle as a case-insensitive
  * substring with whitespace collapsed on both sides — intake already refuses
  * secret-shaped text, so the match runs over the same scrubbed content the
- * row prints. An unreadable thread still reports `unavailable` with
+ * row prints. `replyTo` keeps only the exchange rooted at one message key —
+ * the message carrying that `idempotencyKey` plus every reply citing it —
+ * across every channel the reply fanned out to. An unreadable thread still
+ * reports `unavailable` with
  * `awaitingReply: null` — unknown stays unknown, never an empty filtered
  * list passed off as fact.
  */
