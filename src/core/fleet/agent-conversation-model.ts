@@ -133,6 +133,20 @@ export interface ConversationQuery {
    * substring — so "which thread is the answer to envelope X in" is one
    * filtered read. Whole threads, never partial message lists. */
   inReplyTo?: string;
+  /** Keep only the thread envelope `id` belongs to — at most one thread,
+   * since every member message sits in exactly one — decided on each
+   * member message's own wire id strictly equal to the value, the same
+   * exact-envelope match every other bus read's `--id` applies
+   * (`phm messages --id`, `agents bus inbox`/`channel read --id`,
+   * `agents bus wakes --id`, `comms bus read|watch --id`, `fleet
+   * bus-follow --id`, `fleet_bus_inbox`'s `id`), never a substring or a
+   * thread-key or body citation — so "which thread is envelope X in" is
+   * one filtered read returning the whole thread, where `phm messages
+   * --id` reports only the one row. A declared thread bucket (`job:<id>`,
+   * a thread label) is no member id and never matches; an id nothing on
+   * the bus carries is an honest empty list. Whole threads, never
+   * partial message lists. */
+  id?: string;
   /** Keep only threads where at least one member message is addressed to
    * `group:<channel>:*` — the room's whole traffic under every topic, the
    * same raw `to`-prefix rule `phm messages --channel`, `agents bus inbox
@@ -264,7 +278,13 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * the threads where at least one member message's body cites that envelope
  * id through its own `inReplyTo` field — the same own-property exact match
  * every bus read's `--in-reply-to` applies, never the `replyTo` alias or a
- * substring. `channel` keeps only the threads where at least one member
+ * substring. `id` keeps only the thread one member message's own wire id
+ * strictly equals — at most one thread, since every member sits in exactly
+ * one — the same exact-envelope match every bus read's `--id` applies,
+ * never a substring or a thread-key or body citation, so "which thread is
+ * envelope X in" is one filtered read returning the whole thread where
+ * `phm messages --id` reports only the row. `channel` keeps only the
+ * threads where at least one member
  * message is addressed to `group:<channel>:*` — the same raw `to`-prefix
  * rule every bus read's `--channel` matches. `priority` keeps only the
  * threads where at least one member message carries that exact P0..P3 band
@@ -330,6 +350,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.before === undefined || Date.parse(c.lastAt) < query.before)
     && mentions(c)
     && (query.inReplyTo === undefined || c.messages.some(m => m.inReplyTo === query.inReplyTo))
+    && (query.id === undefined || c.messages.some(m => m.id === query.id))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))
