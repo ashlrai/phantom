@@ -2837,6 +2837,76 @@ describe('readUnifiedInbox since filter', () => {
   });
 });
 
+describe('readUnifiedInbox before filter', () => {
+  it('keeps only items whose recorded since is strictly before the cutoff; undated items never match', async () => {
+    postWork('flt-before-oldest', { at: now - 4 * 3_600_000 });
+    postWork('flt-before-edge', { at: now - 2 * 3_600_000 });
+    postWork('flt-before-new', { at: now - 30 * 60_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    // A now-2h cutoff keeps only the 4h-old envelope: the item exactly on the
+    // cutoff, the fresher one and the undated needs-you line all stay out —
+    // before is exclusive where since is inclusive, and unknown never counts
+    // as old.
+    const older = await read({ filter: { before: now - 2 * 3_600_000 } });
+    expect(older.filter).toEqual({ before: now - 2 * 3_600_000 });
+    expect(older.items.map(i => i.id)).toEqual(['bus:flt-before-oldest']);
+    // Per-source reports stay the unfiltered store truth.
+    expect(older.sources.bus.pending).toBe(3);
+    expect(older.sources['needs-you'].pending).toBe(1);
+
+    // since and before compose into one [since, before) window: the 2h-old
+    // envelope sits inside, the 4h-old one before the lower bound and the
+    // 30m-old one at or after the upper bound.
+    const window = await read({ filter: { since: now - 3 * 3_600_000, before: now - 90 * 60_000 } });
+    expect(window.filter).toEqual({ since: now - 3 * 3_600_000, before: now - 90 * 60_000 });
+    expect(window.items.map(i => i.id)).toEqual(['bus:flt-before-edge']);
+
+    // A window that admits nothing — inverted or empty — is an honest empty
+    // match, not an error and not the unfiltered list.
+    const inverted = await read({ filter: { since: now - 3_600_000, before: now - 7_200_000 } });
+    expect(inverted.total).toBe(0);
+    expect(inverted.items).toEqual([]);
+    const empty = await read({ filter: { since: now - 2 * 3_600_000, before: now - 2 * 3_600_000 } });
+    expect(empty.total).toBe(0);
+    expect(empty.items).toEqual([]);
+
+    // A cutoff after every dated item still excludes the undated needs-you
+    // line — unknown never counts as old.
+    const everything = await read({ filter: { before: now + 3_600_000 } });
+    expect(everything.items.map(i => i.id).sort())
+      .toEqual(['bus:flt-before-edge', 'bus:flt-before-new', 'bus:flt-before-oldest']);
+    expect(everything.items.some(i => i.source === 'needs-you')).toBe(false);
+    expect(everything.total).toBe(3);
+  });
+
+  it('ANDs the upper bound with the other view dimensions', async () => {
+    postWork('flt-b2-old', { at: now - 3 * 3_600_000 });
+    postWork('flt-b2-new');
+    postJob('RQ-B2', { at: now - 5 * 3_600_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const busOnly = await read({ filter: { before: now - 2 * 3_600_000, source: 'bus' } });
+    expect(busOnly.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+
+    // before ANDs with source: the undated needs-you line can never satisfy it.
+    const undated = await read({ filter: { before: now - 2 * 3_600_000, source: 'needs-you' } });
+    expect(undated.total).toBe(0);
+    expect(undated.items).toEqual([]);
+
+    // before ANDs with kind the same way since does.
+    const kind = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-work' } });
+    expect(kind.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+    const handoff = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-handoff' } });
+    expect(handoff.total).toBe(0);
+    expect(handoff.items).toEqual([]);
+  });
+});
+
 describe('readUnifiedInbox contains filter', () => {
   it('keeps only items whose scrubbed title or detail carries the needle', async () => {
     postWork('flt-c1');                        // bus title 'fake work flt-c1'
@@ -2942,7 +3012,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -3041,6 +3111,50 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--since', '15m', '--source', 'needs-you', '--json'])).toBe(0);
     report = json();
     expect(report.filter).toEqual({ since: now - 15 * 60_000, source: 'needs-you' });
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
+  it('filters the unified JSON view by --before', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-before-old', { at: now - 3_600_000 });
+    postWork('cli-before-new');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --before keeps only items whose appearance time is strictly before the
+    // cutoff: the hour-old envelope, never the fresh one or the undated
+    // needs-you line — unknown never counts as old.
+    expect(await command(['--before', '15m', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(report.sources['needs-you'].pending).toBe(1);
+    expect(report.sources.bus.pending).toBe(2);
+
+    // The bound is exclusive and takes every parseSince spelling: the old
+    // envelope sits exactly on this cutoff and stays out.
+    expect(await command(['--before', String(now - 3_600_000), '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+    expect(await command(['--before', '2026-11-07T11:30:00Z', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+
+    // --since and --before compose into one [since, before) window.
+    expect(await command(['--since', '2h', '--before', '15m', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ since: now - 2 * 3_600_000, before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(await command(['--since', '15m', '--before', '2h', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --before ANDs with the other view filters.
+    expect(await command(['--before', '15m', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000, source: 'needs-you' });
     expect(report.total).toBe(0);
     expect(report.items).toEqual([]);
   });
@@ -3148,6 +3262,10 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--since', String(now + 60_000)])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching since=' +
       `${new Date(now + 60_000).toISOString()}.`);
+    // --before labels the resolved cutoff the same way; nothing here predates it.
+    expect(await command(['--before', '15m'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching before=' +
+      `${new Date(now - 15 * 60_000).toISOString()}.`);
   });
 
   it('refuses malformed unified filter invocations', async () => {
@@ -3163,6 +3281,9 @@ describe('phm comms inbox cli', () => {
       ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', '-5m'],
       ['--since', '15m', '--since', '15m'], ['--json', '--since'],
       ['--since', '15m', '--job'],
+      ['--before'], ['--before', '--json'], ['--before', 'bogus'], ['--before', '-5m'],
+      ['--before', '15m', '--before', '15m'], ['--json', '--before'],
+      ['--before', '15m', '--job'], ['--before', '15m', '--since'],
       ['--kind'], ['--kind', 'bogus'], ['--kind', 'bus'], ['--kind', 'bus-work', '--kind', 'bus-handoff'],
       ['--kind', '--json'], ['--json', '--kind'], ['--kind', 'read'],
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],

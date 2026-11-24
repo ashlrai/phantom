@@ -10,6 +10,7 @@
  * empty view.
  */
 import { parseSince } from '../fleet/agent-messages.js';
+import { agentChannelNameSchema } from './bus-identity.js';
 import {
   busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey,
   BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, type BusWorkFeedViewFilters,
@@ -30,7 +31,9 @@ export interface BusWorkFeedQueryInput {
   to?: string;
   owner?: string;
   since?: string;
+  before?: string;
   contains?: string;
+  channel?: string;
   open?: string;
   claimable?: string;
   /** Newest-first page bound applied after the filters; absent means the whole filtered view. */
@@ -52,11 +55,15 @@ const invalid = (error: string): BusWorkFeedQuery => ({ ok: false, error });
  * same strictness the endpoint's `claims` parameter always had — and `open`
  * or `claimable` imply the claims join exactly like the CLI flags. `repo`
  * normalizes through `busWorkFeedRepoKey` (the lowercase `owner/name` claim-key
- * rule), `since` parses through the shared `parseSince` grammar (15m, 2h, 1d,
- * epoch ms or an ISO time), and `contains` takes a non-empty needle of at most
- * `BUS_WORK_FEED_CONTAINS_MAX` characters. `limit` is the page bound
- * `sliceBusWorkFeedView` applies after the filters — an integer in
- * 1..BUS_WORK_FEED_LIMIT_MAX, absent meaning the whole filtered view.
+ * rule), `since` and `before` parse through the shared `parseSince` grammar
+ * (15m, 2h, 1d, epoch ms or an ISO time) — `since` inclusive, `before`
+ * exclusive on the job's `updatedAt`, so the pair reads one [since, before)
+ * window — and `contains` takes a non-empty needle of at most
+ * `BUS_WORK_FEED_CONTAINS_MAX` characters, and `channel` takes the strict
+ * bus channel-name grammar — a raw `group:<channel>:` prefix match on the
+ * announcement address, never a registry-dependent guess. `limit` is the
+ * page bound `sliceBusWorkFeedView` applies after the filters — an integer
+ * in 1..BUS_WORK_FEED_LIMIT_MAX, absent meaning the whole filtered view.
  */
 export function parseBusWorkFeedQuery(
   input: BusWorkFeedQueryInput,
@@ -105,11 +112,26 @@ export function parseBusWorkFeedQuery(
     if (since === null) return invalid('since takes 15m, 2h, 1d, epoch ms or an ISO time.');
     filters.since = since;
   }
+  if (input.before !== undefined) {
+    const before = parseSince(input.before, options.now ?? Date.now());
+    if (before === null) return invalid('before takes 15m, 2h, 1d, epoch ms or an ISO time.');
+    filters.before = before;
+  }
   if (input.contains !== undefined) {
     if (input.contains.trim() === '' || input.contains.length > BUS_WORK_FEED_CONTAINS_MAX) {
       return invalid(`contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
     }
     filters.contains = input.contains;
+  }
+  if (input.channel !== undefined) {
+    // The same strict channel-name grammar `agents bus channel create`,
+    // `agents bus inbox --channel`, `channel read` and `phm messages
+    // --channel` enforce — a value that cannot name a room is a usage error,
+    // never a guessed match.
+    if (!agentChannelNameSchema.safeParse(input.channel).success) {
+      return invalid('channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
+    }
+    filters.channel = input.channel;
   }
   if (open === true) filters.open = true;
   if (claimable === true) filters.claimable = true;
