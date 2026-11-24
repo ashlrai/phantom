@@ -11,7 +11,7 @@ import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocol
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 export const MAX_FLEET_BUS_INBOX_READ = BUS_INBOX_MAX_READ;
@@ -211,9 +211,7 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (from === undefined || from(envelope.from)) &&
     (excludeFrom === undefined || !excludeFrom(envelope.from)) &&
     (filters?.id === undefined || envelope.id === filters.id) &&
-    (filters?.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
-      !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') &&
-      envelope.body.inReplyTo === filters.inReplyTo) &&
+    (filters?.inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) &&
     (filters?.priority === undefined || envelope.priority === filters.priority) &&
     (filters?.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
     (filters?.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&

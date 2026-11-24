@@ -3405,7 +3405,7 @@ with a `reason`); they never throw for bad input or storage faults.
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
-check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?}, options?)`
+check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -3433,7 +3433,11 @@ bus read's `--before` applies — composing with `since` into one
 scrubbed one-line summary — the same text the frame renders per row —
 carries the needle as a case-insensitive substring, matching the rendered
 summary rather than the raw body so a secret-shaped value stays
-unfindable; `matched: true` scans the whole retained store
+unfindable; `inReplyTo` keeps only mail whose object body cites that
+envelope id through its own `inReplyTo` field — the shared
+`busBodyInReplyToMatch` own-property exact match, never the `replyTo`
+alias or a substring — so "which of my pending mail answers envelope X"
+is one filtered read; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -3541,7 +3545,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -3562,7 +3566,12 @@ composing with `since` into one `[since, before)` window on `receivedAt`;
 `contains` keeps only posts whose scrubbed one-line summary —
 the same text the inbox frame renders per row — carries the needle as a
 case-insensitive substring, the same rendered-summary rule
-`readAgentInbox`'s `contains` applies; `matched: true` scans the whole retained store and returns `matched`, the
+`readAgentInbox`'s `contains` applies; `inReplyTo` keeps only posts whose
+object body cites that envelope id through its own `inReplyTo` field —
+the shared `busBodyInReplyToMatch` own-property exact match
+`readAgentInbox`'s `inReplyTo` applies, never the `replyTo` alias or a
+substring — so "which room posts answer envelope X" is one filtered read;
+`matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
 `held`/`holder` — the same hold evidence `readAgentInbox` and
@@ -3636,7 +3645,17 @@ are the shared `--contains` validation and match every bus read applies:
 and `followBusStream` (`fleet bus-follow --contains`) all run the same
 case-insensitive whitespace-collapsed substring over the scrubbed
 one-line summary, never the raw body, so a secret-shaped value stays
-unfindable and protocol-v1 payloads stay opaque; `busPageResumeCursor(page)`
+unfindable and protocol-v1 payloads stay opaque; `busBodyInReplyToMatch(body, inReplyTo)`
+is the shared reply-citation match every bus read's `inReplyTo` filter
+applies — an object body's own `inReplyTo` field strictly equal to the
+cited envelope id, exact and case-sensitive, never the `replyTo` alias,
+a substring or a non-object/array body — shared by `readAgentInbox`,
+`readAgentChannel`, `readAgentMessages` (`phm messages`), `comms bus
+read`/`watch --in-reply-to`, `followBusStream` (`fleet bus-follow
+--in-reply-to`), `fleet_bus_inbox`'s `inReplyTo` and the
+`fleet_agent_inbox`/`fleet_bus_channel`/`fleet_agent_messages` MCP
+filters, so "who answered envelope X" can never disagree about what
+counts as the answer; `busPageResumeCursor(page)`
 is the one honest resume cursor every paged bus read's consumer reports —
 a plain page's `nextCursor` already resumes strictly before the first
 unshown row, but a `matched` page scans the whole retained store so its

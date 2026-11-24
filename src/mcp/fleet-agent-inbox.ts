@@ -33,14 +33,14 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_AGENT_INBOX_LIMIT_MAX = BUS_INBOX_MAX_READ;
 export const FLEET_AGENT_INBOX_LIMIT_DEFAULT = 50;
 
-/** The printable-label rule `agent`, `thread`, `from`, `excludeFrom` and `job` share. */
+/** The printable-label rule `agent`, `thread`, `from`, `excludeFrom`, `job` and `inReplyTo` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const INBOX_KEYS = new Set([
   'agent', 'after', 'limit', 'matched',
-  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains',
+  'thread', 'from', 'excludeFrom', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo',
 ]);
-const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job'] as const;
+const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'job', 'inReplyTo'] as const;
 
 /** The `readAgentInbox` page fields the MCP arguments fill — `after`, `limit` and `matched` ride beside them. */
 export interface FleetAgentInboxFilters {
@@ -54,6 +54,7 @@ export interface FleetAgentInboxFilters {
   before?: number;
   channel?: string;
   contains?: string;
+  inReplyTo?: string;
 }
 
 export interface FleetAgentInboxArgs {

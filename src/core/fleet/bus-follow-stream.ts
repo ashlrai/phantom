@@ -5,7 +5,7 @@ import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-
 import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
@@ -103,9 +103,11 @@ export interface BusFollowRequest {
    * filtered rows exactly like every other filter. */
   id?: string;
   /** Optional reply-correlation filter: only envelopes whose object body
-   * carries `inReplyTo` equal to this id emit — the same own-property,
-   * case-sensitive match `comms bus read|watch --in-reply-to` and
-   * `fleet_bus_inbox`'s `inReplyTo` apply. An application convention, not
+   * carries `inReplyTo` equal to this id emit — the shared
+   * `busBodyInReplyToMatch` own-property, case-sensitive match `comms bus
+   * read|watch --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`, `phm
+   * messages --in-reply-to`, `agents bus inbox --in-reply-to` and
+   * `channel read --in-reply-to` apply. An application convention, not
    * an envelope field or authenticated identity; checkpoints still advance
    * past filtered rows exactly like every other filter. */
   inReplyTo?: string;
@@ -241,11 +243,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
         if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
         if (request.id !== undefined && row.envelope.id !== request.id) continue;
-        if (request.inReplyTo !== undefined) {
-          const body = row.envelope.body;
-          if (body === null || typeof body !== 'object' || Array.isArray(body) ||
-            !Object.hasOwn(body, 'inReplyTo') || body.inReplyTo !== request.inReplyTo) continue;
-        }
+        if (request.inReplyTo !== undefined && !busBodyInReplyToMatch(row.envelope.body, request.inReplyTo)) continue;
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
         if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;

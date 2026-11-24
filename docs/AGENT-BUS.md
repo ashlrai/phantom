@@ -38,8 +38,11 @@ row's `from` only so rows merely addressed to that agent stay out —
 one sender did not write, `--in-reply-to <id>` for only the envelopes whose
 object body cites that envelope id through its own `inReplyTo` field — the
 same own-property exact match `comms bus read|watch --in-reply-to`,
-`fleet bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo`
-apply, never the `replyTo` alias or a substring, so "who answered envelope
+`fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`,
+`agents bus inbox`/`channel read --in-reply-to` and the
+`fleet_agent_inbox`/`fleet_bus_channel`/`fleet_agent_messages` MCP
+`inReplyTo` filters apply, never the `replyTo` alias or a substring, so
+"who answered envelope
 X" is one filtered read of the whole fleet timeline, replies addressed to
 anyone — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
@@ -320,7 +323,7 @@ a channel. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
-[--matched]
+[--in-reply-to <id>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
@@ -355,7 +358,13 @@ that name one job — a `work.post`, `work.status`, `work.result` or `wake`
 body declaring that `jobId`, a `worker-handoff` assigning that fleet job
 id through `taskId`, or a `note`/`context` body carrying the `job:<id>`
 v2 thread label, the same `inbox --job` match — so a channel transcript
-answers one job's posts without paging the whole room. `--matched` reports `matched`, the
+answers one job's posts without paging the whole room. `--in-reply-to`
+keeps only posts whose object body cites that envelope id through its own
+`inReplyTo` field — the same own-property exact match `phm messages
+--in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet bus-follow
+--in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and `inbox --in-reply-to`
+apply, never the `replyTo` alias or a substring — so "which room posts
+answer envelope X" is one filtered read. `--matched` reports `matched`, the
 true pending total — every post the same filters accept across the whole
 retained store — while `messages` still caps at `--limit`; because that
 read scans to the store's end, `nextCursor` then resumes at the newest
@@ -372,7 +381,8 @@ unreadable registry or store is reported — never an empty page passed off
 as history. `fleet_bus_channel` (the isolated fleet MCP tool) serves the
 same read with the same dimensions as arguments — `channel` required,
 every channel-read filter as its MCP counterpart (`topic`, `from`,
-`excludeFrom`, `thread`, `priority`, `job`, `since`, `contains`) and
+`excludeFrom`, `thread`, `priority`, `job`, `since`, `before`, `contains`,
+`inReplyTo`) and
 `matched` as a JSON boolean — under the identical `readAgentChannel`
 validation, so an MCP-connected agent reads a room's transcript, its
 presence-free posts, sender handles and live hold/job annotations without
@@ -426,7 +436,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
-[--contains <text>]`
+[--contains <text>] [--in-reply-to <id>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -484,7 +494,13 @@ on both sides, so "did anyone send me mail about X" is one filtered read
 instead of a page through the backlog; matching runs over the rendered
 summary, never the raw body, so a secret-shaped value stays unfindable
 even though it sits in the stored envelope — the same guarantee `phm
-messages --contains` gives the timeline projection.
+messages --contains` gives the timeline projection. `--in-reply-to`
+keeps only mail whose object body cites that envelope id through its own
+`inReplyTo` field — the same own-property exact match `phm messages
+--in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet bus-follow
+--in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and `channel read
+--in-reply-to` apply, never the `replyTo` alias or a substring — so
+"which of my pending mail answers envelope X" is one filtered read.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at
@@ -1475,7 +1491,8 @@ the field that ties a question and its answer together — on `dm`, `post`,
 only; every other body kind never matches. `--reply-to <id>` on `dm`, `post`
 and `channel post` records the v2 `inReplyTo` citation — the envelope id the
 message answers — the same field `postBusReply`, `comms bus post --reply-to`
-and the fleet reply verbs stamp; `agents conversations` threads on it and the
+and the fleet reply verbs stamp; `agents conversations` threads on it,
+`inbox --in-reply-to` and `channel read --in-reply-to` filter on it, and the
 `work mine` handoff/awaiting sections credit a routed recipient -> sender
 citation as the answer — resolved through the identity registry, so any
 label of the two identities (or a member of the addressed channel) counts —

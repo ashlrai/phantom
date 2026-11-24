@@ -1099,6 +1099,24 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
 }
 
 /**
+ * The reply-citation match every bus read's `inReplyTo` filter applies: an
+ * object body whose own `inReplyTo` field is strictly equal to the cited
+ * envelope id — exact and case-sensitive, never the `replyTo` alias or a
+ * substring, and never a non-object or array body. This is the one rule
+ * `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`,
+ * `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`,
+ * `agents bus inbox --in-reply-to` and `agents bus channel read
+ * --in-reply-to` share, so "who answered envelope X" can never disagree
+ * about what counts as the answer; the citation is an application
+ * convention on the body, not an envelope field or authenticated identity.
+ */
+export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
+  const record = body as Record<string, unknown>;
+  return Object.hasOwn(record, 'inReplyTo') && record['inReplyTo'] === inReplyTo;
+}
+
+/**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
  * traffic still addressed to its bare handle, stable id or legacy aliases,
  * and posts in its channels (minus its own and minus `group.presence`
@@ -1145,6 +1163,14 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  * is one filtered read instead of a page through the backlog; matching
  * runs over the rendered summary, never the raw body, so a secret-shaped
  * value stays unfindable even though it sits in the stored envelope.
+ * `inReplyTo` keeps only mail whose object body cites that envelope id
+ * through its own `inReplyTo` field — the same own-property exact match
+ * `phm messages --in-reply-to`, `comms bus read|watch --in-reply-to`,
+ * `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo` and
+ * `channel read --in-reply-to` apply, never the `replyTo` alias or a
+ * substring — so "which of my pending mail answers envelope X" is one
+ * filtered read of the addressed inbox, composing with every other
+ * filter.
  * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
@@ -1164,11 +1190,12 @@ export function busBodyJobMatch(body: unknown, job: string): boolean {
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    before?: number; channel?: string; contains?: string } = {},
+    before?: number; channel?: string; contains?: string; inReplyTo?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
   const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
+  const inReplyTo = page.inReplyTo;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1190,6 +1217,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (jobFilter !== undefined && (typeof jobFilter !== 'string' || !THREAD.test(jobFilter))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  if (inReplyTo !== undefined && (typeof inReplyTo !== 'string' || !THREAD.test(inReplyTo))) {
+    return { status: 'invalid', reason: 'Invalid in-reply-to id.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -1245,6 +1275,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (kindFilter === undefined || kind === kindFilter) &&
         (thread === undefined || busBodyThread(envelope.body) === thread) &&
         (jobFilter === undefined || busBodyJobMatch(envelope.body, jobFilter)) &&
+        (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
         (fromMatch === undefined || fromMatch(envelope.from)) &&
         (excludeFromMatch === undefined || !excludeFromMatch(envelope.from)) &&
         (priority === undefined || envelope.priority === priority) &&
@@ -1912,6 +1943,16 @@ export interface ChannelReadOptions {
    * though it sits in the stored envelope.
    */
   contains?: string;
+  /**
+   * Reply-citation filter: only posts whose object body cites this envelope
+   * id through its own `inReplyTo` field — the same own-property exact
+   * match `agents bus inbox --in-reply-to`, `phm messages --in-reply-to`,
+   * `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`
+   * and `fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias
+   * or a substring — so "which room posts answer envelope X" is one
+   * filtered read of the transcript.
+   */
+  inReplyTo?: string;
   after?: number;
   limit?: number;
 }
@@ -1950,7 +1991,12 @@ export type ChannelReadPage =
  * carries the needle as a case-insensitive substring, the same
  * `busReadContainsMatch` rule `inbox --contains` applies, so "has anyone
  * posted about X in this room" is one filtered read; matching runs over
- * the rendered summary, never the raw body. `nextCursor`
+ * the rendered summary, never the raw body. `inReplyTo` keeps only posts
+ * whose object body cites that envelope id through its own `inReplyTo`
+ * field — the same own-property exact match `inbox --in-reply-to`,
+ * `phm messages --in-reply-to` and the raw bus reads apply, never the
+ * `replyTo` alias or a substring — so "which room posts answer envelope
+ * X" is one filtered read of the transcript. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -1965,7 +2011,7 @@ export type ChannelReadPage =
  */
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
-  const countMatched = page.matched === true, since = page.since, before = page.before;
+  const countMatched = page.matched === true, since = page.since, before = page.before, inReplyTo = page.inReplyTo;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -1980,6 +2026,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (job !== undefined && (typeof job !== 'string' || !THREAD.test(job))) {
     return { status: 'invalid', reason: 'Invalid job id.' };
+  }
+  if (inReplyTo !== undefined && (typeof inReplyTo !== 'string' || !THREAD.test(inReplyTo))) {
+    return { status: 'invalid', reason: 'Invalid in-reply-to id.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -2033,6 +2082,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (thread === undefined || busBodyThread(body) === thread) &&
         (priority === undefined || envelope.priority === priority) &&
         (job === undefined || busBodyJobMatch(body, job)) &&
+        (inReplyTo === undefined || busBodyInReplyToMatch(body, inReplyTo)) &&
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));

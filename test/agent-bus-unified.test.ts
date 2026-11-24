@@ -1133,6 +1133,66 @@ describe('since-filtered reads', () => {
   });
 });
 
+describe('reply-citation-filtered reads', () => {
+  it('keeps only rows whose object body cites the envelope id on inbox and channel reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // The cited parent and three replies to it, plus mail that must never match.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'take this', id: 'rt-ask' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer one', replyTo: 'rt-ask', id: 'rt-ans1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer two', replyTo: 'rt-ask', id: 'rt-ans2' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'answer elsewhere', replyTo: 'rt-other', id: 'rt-ans3' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'no citation', id: 'rt-plain' }, options);
+    // A replyTo alias, a substring citation and a non-object body never match.
+    expect(appendBusInbox({ id: 'rt-alias', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { replyTo: 'rt-ask', text: 'alias shape' } }, { root: options.root, now: options.now }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'rt-sub', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'x', inReplyTo: 'rt-ask-extra' } }, { root: options.root, now: options.now }).status).toBe('posted');
+    expect(appendBusInbox({ id: 'rt-prim', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: 'rt-ask' }, { root: options.root, now: options.now }).status).toBe('posted');
+    // Channel posts citing the same parent join the room read, not nova's dm kinds.
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room answer', replyTo: 'rt-ask', id: 'rt-ch1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room noise', id: 'rt-ch2' }, options);
+
+    // Inbox: the two citing DMs plus the channel post nova receives as channel mail.
+    const inbox = readAgentInbox('nova', { inReplyTo: 'rt-ask' }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => m.envelope.id).sort()).toEqual(['rt-ans1', 'rt-ans2', 'rt-ch1']);
+    // It composes with the other filters and --matched counts only accepted rows.
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-ask', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'rt-ans1' } }, { envelope: { id: 'rt-ans2' } }] });
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-ask', from: 'ghost' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const counted = readAgentInbox('nova', { inReplyTo: 'rt-ask', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // A cited id nothing answers is an honest empty page, and the unfiltered
+    // page still sees every row the filter skipped.
+    expect(readAgentInbox('nova', { inReplyTo: 'rt-none' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(10);
+
+    // Channel read: only the room post carrying the citation.
+    const room = readAgentChannel('release', { inReplyTo: 'rt-ask' }, options);
+    if (room.status !== 'ok') throw new Error(`unexpected ${room.status}`);
+    expect(room.messages.map(m => m.envelope.id)).toEqual(['rt-ch1']);
+    const roomCounted = readAgentChannel('release', { inReplyTo: 'rt-ask', matched: true }, options);
+    if (roomCounted.status !== 'ok') throw new Error(`unexpected ${roomCounted.status}`);
+    expect(roomCounted.matched).toBe(1);
+    expect(readAgentChannel('release', { inReplyTo: 'rt-ask', topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Malformed citations are refused on both reads, never silently widened.
+    for (const bad of ['', 'has space', 'x'.repeat(129), 42 as never]) {
+      expect(readAgentInbox('nova', { inReplyTo: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { inReplyTo: bad }, options)).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { inReplyTo: 'x'.repeat(128) }, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

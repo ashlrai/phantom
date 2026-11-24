@@ -36,14 +36,14 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_BUS_CHANNEL_LIMIT_MAX = BUS_INBOX_MAX_READ;
 export const FLEET_BUS_CHANNEL_LIMIT_DEFAULT = 50;
 
-/** The printable-label rule `from`, `excludeFrom`, `thread` and `job` share. */
+/** The printable-label rule `from`, `excludeFrom`, `thread`, `job` and `inReplyTo` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CHANNEL_KEYS = new Set([
   'channel', 'topic', 'after', 'limit', 'matched',
-  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains',
+  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains', 'inReplyTo',
 ]);
-const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job'] as const;
+const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job', 'inReplyTo'] as const;
 
 /** The `readAgentChannel` page fields the MCP arguments fill — `after`, `limit` and `matched` ride beside them. */
 export interface FleetBusChannelFilters {
@@ -56,6 +56,7 @@ export interface FleetBusChannelFilters {
   since?: number;
   before?: number;
   contains?: string;
+  inReplyTo?: string;
 }
 
 export interface FleetBusChannelArgs {
