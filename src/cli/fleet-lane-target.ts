@@ -32,15 +32,16 @@ export function formatLaneTargets(snapshot: LaneTargetsV1, nowMs = Date.now()): 
     : `held${row.heldReason ? `: ${row.heldReason}` : ''}${row.heldUntil ? ` until ${row.heldUntil}` : ''}` +
       `${row.pausedFrom !== null ? ` · target was ${row.pausedFrom}` : ''}`;
   const L = Math.max(4, ...snapshot.lanes.map(l => l.lane.length));
-  const B = Math.max(13, ...snapshot.lanes.map(l => `${l.floor}..${l.ceiling}`.length));
+  const B = Math.max(13, ...snapshot.lanes.map(l => `${l.floor}..${l.ceiling ?? 'none'}`.length));
   const H = Math.max(4, ...snapshot.lanes.map(l => heldCell(l).length));
   lines.push(`  ${pad('lane', L)} ${pad('target', 6)} ${pad('floor..ceiling', B)} ${pad('held', H)} last change`);
   lines.push(`  ${'─'.repeat(L + B + H + 24)}`);
   if (snapshot.lanes.length === 0) lines.push('  (no lanes — queue/slots.json is missing or empty)');
   for (const row of snapshot.lanes) {
     const change = [ago(row.lastChange, nowMs), row.changedBy].filter(v => v).join(' · ') || '—';
-    lines.push(`  ${pad(row.lane, L)} ${pad(String(row.target), 6)} ${pad(`${row.floor}..${row.ceiling}`, B)} ${pad(heldCell(row), H)} ${change}`);
+    lines.push(`  ${pad(row.lane, L)} ${pad(String(row.target), 6)} ${pad(`${row.floor}..${row.ceiling ?? 'none'}`, B)} ${pad(heldCell(row), H)} ${change}`);
   }
+  for (const skip of snapshot.skipped ?? []) lines.push('', `  skipped lane ${skip.lane}: ${skip.reason}`);
   if (snapshot.sourceState !== 'healthy') lines.push('', `  source degraded: slots.json reads as "${snapshot.sourceState}" — targets shown may be incomplete.`);
   return lines.join('\n');
 }
@@ -109,7 +110,7 @@ export async function cmdFleetLaneTarget(args: string[]): Promise<number> {
       return 0;
     }
     const updated = next.lanes.find(l => l.lane === lane);
-    console.log(`${lane}: ${row?.target ?? '?'} -> ${updated?.target ?? targetArg} (ceiling ${updated?.ceiling ?? '?'})` +
+    console.log(`${lane}: ${row?.target ?? '?'} -> ${updated?.target ?? targetArg} (ceiling ${updated ? updated.ceiling ?? 'none' : '?'})` +
       `${updated?.held ? `\nheld: ${updated.heldReason ?? 'no reason recorded'}${updated.heldUntil ? ` until ${updated.heldUntil}` : ''}; the target applies when the hold lifts` : ''}`);
     return 0;
   } catch (error) {

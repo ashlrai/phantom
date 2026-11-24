@@ -34,6 +34,7 @@ import {
   listRequests,
   markSent,
   outstanding,
+  readCommsRequests,
   type CommsRequest,
 } from '../src/core/comms/requests.js';
 import { commsRequestTtlMs, runCommsCycle } from '../src/core/comms/dispatch.js';
@@ -163,6 +164,29 @@ describe('expireStaleRequests', () => {
     expect(Buffer.byteLength(after)).toBeLessThanOrEqual(8 * 1024 * 1024);
     expect(after).toContain('"status":"sent"');
     expect(statusOf('live-q')).toBe('sent');
+  });
+});
+
+describe('readCommsRequests', () => {
+  it('reports missing when no store file exists', () => {
+    expect(readCommsRequests()).toEqual({ status: 'missing', requests: [] });
+  });
+
+  it('parses the store as available', () => {
+    seed([
+      { id: 'q1', status: 'sent', sentAt: iso(NOW - HOUR) },
+      { id: 'r1', status: 'pending', type: 'report', options: [] },
+    ]);
+    const read = readCommsRequests();
+    expect(read.status).toBe('available');
+    expect(read.requests.map((r) => r.id)).toEqual(['q1', 'r1']);
+  });
+
+  it('reports unavailable when the store path is not a readable file', () => {
+    const dir = join(tmpHome, '.ashlr', 'comms');
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(join(dir, 'requests.jsonl'));
+    expect(readCommsRequests()).toEqual({ status: 'unavailable', requests: [] });
   });
 });
 

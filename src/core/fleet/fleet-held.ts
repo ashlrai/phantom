@@ -3,6 +3,9 @@
  * Pure: no I/O. `readFleetRunsDirState` supplies the inputs and carries the
  * result as `notRunning`, so the CLI, the fleet API and the desktop share one list.
  */
+import { laneLaunchTarget } from './lane-launch-target.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerLane } from './empty-cause.js';
+
 export type NotRunningKind = 'held_launch' | 'idle_lane' | 'launched_no_finish' | 'finished_no_publish';
 export interface NotRunningRow {
   job_or_lane: string; kind: NotRunningKind; reason: string;
@@ -13,7 +16,9 @@ export interface NotRunningRow {
 }
 /** One `<job>.launch` file: its first line, its modified time and whether `<job>.publish` exists. */
 export interface LaunchRecord { job: string; firstLine: string; at: string; lane?: string | null; published?: boolean }
-export interface NotRunningLane { lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null }
+export interface NotRunningLane { lane: string; running: number; target: number; queued: number; held: boolean; heldReason?: string | null;
+  /** The controller's load-shed ceiling; absent keeps the configured target as the launch target. */
+  effectiveTarget?: number | null }
 export interface NotRunningInput {
   lanes: readonly NotRunningLane[]; launches: readonly LaunchRecord[];
   /** Tail of metrics/jobs.jsonl; null when unreadable, which leaves finish and publish states unknown (not listed). */
@@ -64,17 +69,19 @@ export function fleetNotRunning(input: NotRunningInput): NotRunningRow[] {
     let row: Record<string, unknown>;
     try { const v: unknown = JSON.parse(line); if (!v || typeof v !== 'object' || Array.isArray(v)) continue; row = v as Record<string, unknown>; }
     catch { continue; }
-    const at = time(row.ts);
-    if (typeof row.job !== 'string' || !row.job || !Number.isFinite(at) || at > now) continue;
+    const at = ledgerAtMs(row);
+    const job = ledgerJobId(row);
+    if (job === null || at === null || at > now) continue;
     tailStart = Math.min(tailStart, at);
-    const lane = typeof row.lane === 'string' && row.lane ? row.lane : null;
+    const lane = ledgerLane(row);
     if (lane) laneLast.set(lane, Math.max(laneLast.get(lane) ?? -Infinity, at));
-    const f = jobs.get(row.job) ?? { open: NaN, launch: -Infinity, finish: -Infinity, empty: false, publish: -Infinity, lane: null };
-    jobs.set(row.job, f);
+    const f = jobs.get(job) ?? { open: NaN, launch: -Infinity, finish: -Infinity, empty: false, publish: -Infinity, lane: null };
+    jobs.set(job, f);
     if (lane) f.lane = lane;
-    if (row.event === 'launch' || row.event === 'claim') { f.launch = Math.max(f.launch, at); if (!Number.isFinite(f.open)) f.open = at; }
-    else if (row.event === 'finish' && at >= f.finish) { f.finish = at; f.empty = row.empty === true; f.open = NaN; }
-    else if (row.event === 'publish') f.publish = Math.max(f.publish, at);
+    const event = ledgerEventName(row);
+    if (event === 'launch' || event === 'claim') { f.launch = Math.max(f.launch, at); if (!Number.isFinite(f.open)) f.open = at; }
+    else if (event === 'finish' && at >= f.finish) { f.finish = at; f.empty = row.empty === true; f.open = NaN; }
+    else if (event === 'publish') f.publish = Math.max(f.publish, at);
   }
   const rows: NotRunningRow[] = [], recorded = new Map<string, LaunchRecord>();
   for (const record of input.launches) {
@@ -103,7 +110,8 @@ export function fleetNotRunning(input: NotRunningInput): NotRunningRow[] {
       reason: 'Finished with no publish record', unblock: 'Republish this job or requeue it' });
   }
   for (const lane of input.lanes) {
-    if (!(lane.target > 0) || lane.running !== 0 || lane.queued !== 0) continue;
+    // A lane the controller shed to zero launch slots is curtailed, not idle.
+    if (!(laneLaunchTarget(lane.target, lane.effectiveTarget) > 0) || lane.running !== 0 || lane.queued !== 0) continue;
     const last = laneLast.get(lane.lane);
     const known = lane.held ? unblockFor(lane.heldReason ?? '', lane.lane) : 'Queue work for this lane';
     rows.push({ job_or_lane: lane.lane, kind: 'idle_lane', since: last === undefined ? null : iso(last),

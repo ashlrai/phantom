@@ -44,6 +44,7 @@ const USAGE = `usage: phm channels [--json]
        phm channels add telegram <chat-id> [--json]
        phm channels add email <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--json]
        phm channels add <mobile|cli|desktop|page> [--json]
+       phm channels reply-state <request-id> [--json]
        phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
        phm channels slack probe [--json]
@@ -210,6 +211,7 @@ export async function cmdChannels(args: string[]): Promise<number> {
   }
   if (sub === 'status') return cmdStatus(args.slice(1));
   if (sub === 'add') return cmdAdd(args.slice(1));
+  if (sub === 'reply-state') return (await import('./channels-reply-state.js')).cmdChannelsReplyState(args.slice(1));
   if (sub === 'slack' || sub === 'map' || sub === 'probe' || sub === 'run') {
     const { cmdChannelsSlack } = await import('./channels-slack.js');
     return cmdChannelsSlack(sub === 'slack' ? args.slice(1) : args);

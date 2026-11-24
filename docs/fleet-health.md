@@ -17,8 +17,12 @@ Read results in plain words:
 - **red**: a reported failure or blocked engine needs fixing.
 
 These are reading guidelines, not shared JSON values. Each verb keeps its own
-fields and thresholds. Doctor currently returns engine readiness rows (`ready`,
-`installed`, `authed`), not an `ok`/`warn`/`red` report. Read the result,
+fields and thresholds. Doctor returns engine readiness rows (`ready`, `installed`,
+`authed`) followed by a `name: "guardian"` row with `level`, `reason` and one
+`nextStep`. Guardian is red when status is over 30 minutes old, its service is
+unloaded, its last exit failed, or the bounded log tail has errors from the last
+24 hours. Missing or uncertain evidence is warn. Follow `nextStep`, then rerun
+doctor. It never starts services or repairs files. Read the result,
 not just the exit code: several report commands exit 0 even with problems.
 
 | Check | Example command | What to read |
@@ -26,11 +30,12 @@ not just the exit code: several report commands exit 0 even with problems.
 | Engines | `ashlr fleet doctor --json` | `ready: true` is ok; unknown authentication is warn; a missing or blocked engine is red. Does not start workers. |
 | Fleet overview | `ashlr fleet status --json` | Daemon, queue and engine evidence; inspect missing or degraded sources before trusting totals. |
 | Lanes | `ashlr fleet lanes --json` | Lane capacity, queue depth and live jobs; unknown readings need attention. |
-| Idle lanes | `ashlr fleet idle-lanes --json` | Ok: a readable report with no listed lanes. Warn: queued work is held. Red: queued work is not held and `running < target`; exits 1. A red lane with no ledger event for at least 30 minutes is marked `stuck` when a usable event exists. Missing lane age is unknown, not proof that a lane is healthy. Missing or invalid evidence exits 2, not ok. |
+| Idle lanes | `ashlr fleet idle-lanes --json` | Ok: a readable report with no listed lanes. Warn: queued work is held. Red: queued work is not held and `running < target` (the launch target: configured target tightened by the controller's `effective_target` shed); exits 1. A red lane with no ledger event for at least 30 minutes is marked `stuck` when a usable event exists. Missing lane age is unknown, not proof that a lane is healthy. Missing or invalid evidence exits 2, not ok. |
 | API pools | `ashlr fleet api-pools --json` | No color status or health thresholds. Ok: pacing figures and `slot_target` are known. Warn: any figure is unknown (`null`); missing cost or ceiling can leave the target unknown. Red: observations cannot be read; exits 1. Reports open Claude API pools only; a readable empty list is not proof of healthy pools. |
 | Host load | `ashlr fleet load --json` | Ok: all measurements are known and there are no warnings. Warn: load exceeds `load_max`, worktrees exceed 40, measurements are unknown or admission warnings exist. Red: load exceeds twice `load_max`, the daemon tick is over 1800 seconds old or admission data is unavailable; exits 1. Red takes priority over warn. |
-| Admission | `ashlr fleet admission --json` | Ok: no lane is admission closed or blocked by the global cap with 5 or more queued. Red: a lane has queued work, is under its target, is not held, and admission is closed by the load gate or a pause — or global running is at the cap — with 5 or more queued; exits 1. Missing or invalid evidence exits 2. For other waits, use `ashlr fleet lane-idle`. |
-| Lane share | `ashlr fleet lane-share --json` | Ok: each lane prints running of target and queued against the admission cap. Mark `starved`: 10 or more queued and none running. Mark `full`: running equals target. Red: a starved lane while the admission reason starts with `at_cap`; exits 1. Missing or invalid evidence exits 2. |
+| Job starts | `ashlr fleet admission --json` | Same reading as the Fleet overview card: host block, settling, open, or unknown when missing/stale. Includes settle seconds, load, running counts, countdown and starts-per-hour pacing cap. Exits 0 open, 1 waiting, 2 unknown. |
+| Admission lanes | `ashlr fleet admission --details --json` | Ok: no lane is admission closed or blocked by the global cap with 5 or more queued. Red: a lane has queued work, is under its launch target (configured target tightened by the controller's `effective_target` shed), is not held, and admission is closed by the load gate or a pause — or global running is at the cap — with 5 or more queued; exits 1. Missing or invalid evidence exits 2. For other waits, use `ashlr fleet lane-idle`. |
+| Lane share | `ashlr fleet lane-share --json` | Ok: each lane prints running of launch target and queued against the admission cap. Mark `starved`: 10 or more queued and none running. Mark `full`: running equals launch target (configured target tightened by the controller's `effective_target` shed). Red: a starved lane while the admission reason starts with `at_cap`; exits 1. Missing or invalid evidence exits 2. |
 | Leader | `ashlr fleet leader-health --json` | Failures in a row, hours since success, last bet and cause. Unknown means no evidence; exits 1 at two consecutive failures. |
 | Queue and supervisors | `ashlr fleet heartbeat --json` | `stale: false` is fresh. Older than 30 minutes, missing or unreadable is stale; exits 1 if any source is stale. |
 | Default branches | `ashlr fleet main-health --json` | Repo `state`, failing check and fix jobs. Red means failing checks; also inspect `stale`, `source` and `guardianOff`. Add `--strict` for exit 1 on red, stale or unavailable evidence. |

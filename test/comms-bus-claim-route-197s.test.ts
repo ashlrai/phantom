@@ -40,7 +40,8 @@ it('claims legacy work and a protocol task through cmdCommsBus, fences the lease
   expect(await cmdCommsBus(['claim', 'acquire', '--id', 'legacy-1', '--owner', 'worker-b', '--lease-ms', '60000'], options)).toBe(1);
   expect(last().status).toBe('conflict');
   expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-b', '--lease-ms', '60000'], options)).toBe(0);
-  expect(last()).toEqual({ status: 'empty' });
+  // legacy-1 is the one claimable receipt on worker-a and worker-a's lease holds it.
+  expect(last()).toEqual({ status: 'empty', candidates: 1, held: 1 });
 
   // Only the fencing token completes the claim.
   expect(await cmdCommsBus(['claim', 'complete', '--id', 'legacy-1', '--token', 'f'.repeat(64)], options)).toBe(1);
@@ -53,7 +54,51 @@ it('claims legacy work and a protocol task through cmdCommsBus, fences the lease
   expect(last().status).toBe('completed');
   expect(last().token).toBeUndefined();
   expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-c', '--lease-ms', '60000'], options)).toBe(0);
-  expect(last()).toEqual({ status: 'empty' });
+  // legacy-1 is completed but still a live candidate; nothing answers conflict.
+  expect(last()).toEqual({ status: 'empty', candidates: 1, held: 0 });
+});
+
+it('filters next by contains, since and priority', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, priority: string, text: string): string => postTask(root, {
+    id, from: 'fake-sender', to: 'worker-a', priority, ttl: 600_000,
+    body: { kind: 'work', text },
+  });
+  expect(await cmdCommsBus(['post', '--file', task('flt-old', 'P0', 'deploy alpha')], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('flt-chore', 'P3', 'unrelated chore')], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('flt-alpha', 'P1', 'ship ALPHA build')], options)).toBe(0);
+
+  // --priority keeps only the exact band.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--priority', 'P1'], options)).toBe(0);
+  expect(last().receipt.envelope.id).toBe('flt-alpha');
+
+  // --contains matches the scrubbed one-line summary case-insensitively; with
+  // --priority P0 only the older alpha receipt qualifies.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--contains', 'alpha', '--priority', 'P0'], options)).toBe(0);
+  expect(last().receipt.envelope.id).toBe('flt-old');
+
+  // --since past every receipt's arrival empties the filtered scan honestly —
+  // unfiltered, the two live leases would read as held candidates instead.
+  const future = String(Date.now() + 3_600_000);
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--since', future], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+
+  // --before is the exclusive receivedAt ceiling: a cutoff before every
+  // receipt's arrival empties the same filtered scan.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--before', '1'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+
+  // Malformed filters are invalid, never a widened claim.
+  for (const args of [
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--priority', 'P9'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--since', 'bogus'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--before', 'bogus'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--contains', '   '],
+  ]) {
+    expect(await cmdCommsBus(args, options), args.join(' ')).toBe(2);
+    expect(last(), args.join(' ')).toEqual({ status: 'invalid' });
+  }
 });
 
 it('claims a protocol task envelope addressed to a topic', async () => {

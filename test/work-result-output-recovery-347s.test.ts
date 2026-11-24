@@ -17,7 +17,6 @@ let root: string, now: number;
 const ID_A = 'RQ-PHX-FAKE-347-A';
 const ID_B = 'RQ-PHX-FAKE-347-B';
 const REPLY_A = 'fake-reply-347-A';
-const REPLY_B = 'fake-reply-347-B';
 
 /** Create a fake Slack request inbox entry */
 const post = (id: string, channelRef: string) => {
@@ -29,11 +28,11 @@ const post = (id: string, channelRef: string) => {
 };
 
 /** Execute the command with specific arguments */
-const invoke = async (replyId: string, extra: string[], requestId = ID_A) => {
+const invoke = async (replyId: string, extra: string[], requestId = ID_A, outputSink?: (text: string) => void) => {
   const output: string[] = [];
   const code = await cmdFleetWorkResult(
     ['--request-id', requestId, '--reply-id', replyId, '--root', root, ...extra],
-    { now: () => now }, { output: text => output.push(text) });
+    { now: () => now }, { output: text => { output.push(text); outputSink?.(text); } });
   return { code, text: output.join(''),
     result: output.length ? JSON.parse(output[0]!) as { outcome: string } : null };
 };
@@ -68,8 +67,9 @@ describe('cmdFleetWorkResult output recovery', { timeout: 60_000 }, () => {
     post(ID_B, 'T0FAKEDT/C0FAKEDT/1700000000.000347b');
     
     // Post a valid test result for request A with an output sink that throws
-    const throwOutput = (text: string) => { throw new Error('Output failure'); };
-    const firstRun = await invoke(REPLY_A, ['--tests', 'fake tests green'], ID_A);
+    const throwOutput = vi.fn(() => { throw new Error('Output failure'); });
+    const firstRun = await invoke(REPLY_A, ['--tests', 'fake tests green'], ID_A, throwOutput);
+    expect(throwOutput).toHaveBeenCalledExactlyOnceWith(expect.any(String));
     
     // Should return 1 (failure) because output function throws but still posts the message
     expect(firstRun.code).toBe(1);

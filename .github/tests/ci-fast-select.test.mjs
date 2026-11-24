@@ -160,6 +160,27 @@ test('Tier-1 paths always add the named authority tests, even past the cap', (t)
   for (const name of TIER1_TESTS) assert.ok(codeowners.tests.includes(name), `CODEOWNERS adds ${name}`);
 });
 
+test('a diff touching a recorded Tier-1 closure member selects the closure invariant', (t) => {
+  const snapshot = 'test/fixtures/authority/tier1-closure.json';
+  const { dir, commit } = repo(t, {
+    'src/core/fleet/lane-console.ts': 'export const lc = 1;\n',
+    'src/core/fleet/unrelated.ts': 'export const u = 1;\n',
+    'test/lane-console.test.ts': "import '../src/core/fleet/lane-console.js';\n",
+    'test/unrelated.test.ts': "import '../src/core/fleet/unrelated.js';\n",
+    [snapshot]: JSON.stringify({ closure: ['src/core/fleet/lane-console.ts'] }),
+    'test/authority-tier1-closure-310b.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  const member = plan({ cwd: dir, paths: ['src/core/fleet/lane-console.ts'] });
+  assert.ok(member.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'closure member diff runs the invariant');
+  const snap = plan({ cwd: dir, paths: [snapshot] });
+  assert.ok(snap.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'snapshot regen runs the invariant');
+  const other = plan({ cwd: dir, paths: ['src/core/fleet/unrelated.ts'] });
+  assert.ok(!other.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'non-member diff does not');
+  const newRoot = plan({ cwd: dir, paths: ['src/core/memory/brand-new.ts'] });
+  assert.ok(newRoot.tests.includes('test/authority-tier1-closure-310b.test.ts'), 'a new root-eligible file runs the invariant');
+});
+
 test('workflow and script edits select their node and m30 tests', (t) => {
   const { dir, commit } = repo(t, {
     'test/m30.ci.test.ts': 'export {};\n',
@@ -170,6 +191,27 @@ test('workflow and script edits select their node and m30 tests', (t) => {
   const r = plan({ cwd: dir, paths: ['.github/workflows/ci.yml', '.github/scripts/ci-x.mjs'] });
   assert.deepEqual(r.tests, ['test/m30.ci.test.ts']);
   assert.deepEqual(r.node, ['.github/tests/ci-x.test.mjs']);
+});
+
+test('CLI registry edits select the anti-drift suite that reads the dispatch switch as text', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/cli/index.ts': 'export {};\n',
+    'src/cli/completions.ts': 'export const c = 1;\n',
+    'src/cli/help.ts': 'export const h = 1;\n',
+    'src/cli/outbox.ts': 'export const o = 1;\n',
+    'test/cli-registry-drift.test.ts': 'export {};\n',
+    'test/unrelated.test.ts': 'export {};\n',
+  });
+  commit('seed');
+  // index.ts has no import edge into the suite — it parses the switch as
+  // text — so only the named rule can select it.
+  for (const path of ['src/cli/index.ts', 'src/cli/completions.ts', 'src/cli/help.ts']) {
+    const r = plan({ cwd: dir, paths: [path] });
+    assert.equal(r.mode, 'related');
+    assert.ok(r.tests.includes('test/cli-registry-drift.test.ts'), `${path} selects the drift suite`);
+  }
+  const impl = selectRelated({ cwd: dir, paths: ['src/cli/outbox.ts'] });
+  assert.ok(!impl.tests.includes('test/cli-registry-drift.test.ts'), 'a command implementation alone does not');
 });
 
 test('changedPaths uses the merge-base diff and rejects a mismatched checkout', (t) => {

@@ -1,0 +1,28 @@
+/* One bar for how a usage window ends. Use is not health, so the fill is the accent; amber is kept for the two
+   endings worth acting on: usage left unused at the reset (outlined) and a window that runs dry early (filled). */
+.track { position: relative; display: flex; flex: none; width: 100%; overflow: hidden; background: var(--meter-track); }
+.track[data-size='bar'] { height: 0.375rem; border-radius: var(--radius-full); }
+/* The rule on a tile's bottom edge: square, and the unused share is simply the track showing through. */
+.track[data-size='edge'] { height: 3px; background: var(--border-subtle); }
+/* No reading: hatched, never an empty bar. */
+.track[data-unread] { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+
+.track i { display: block; flex: none; box-sizing: border-box; height: 100%; transition: width var(--duration-slow) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.track i[data-part='used'], .track i[data-part='more'], .swatch[data-part='used'], .swatch[data-part='more'] { background: var(--accent-500); }
+.track i[data-part='more'], .swatch[data-part='more'] { opacity: 0.4; }
+.track i[data-part='unused'], .swatch[data-part='unused'] { border: 1px solid var(--status-warning-solid); }
+.track i[data-part='unused'] { border-radius: 0 var(--radius-full) var(--radius-full) 0; }
+.track[data-ending='dry'] i[data-part='used'], .track[data-ending='dry'] i[data-part='more'] { background: var(--status-warning-solid); }
+/* The provider flagged the limit: the window is spent until its reset. */
+.track[data-ending='spent'] i[data-part='used'] { background: var(--status-danger-solid); }
+/* A share held back at the window's end: hatched from a tick, over whatever is drawn under it. */
+.track i[data-part='kept'], .swatch[data-part='kept'] { border-inline-start: 1.5px solid var(--text-secondary); background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--text-secondary) 55%, transparent) 0 2px, transparent 2px 4px); }
+.track i[data-part='kept'] { position: absolute; inset-block: 0; transition: none; }
+/* How far the window's time has run: a bar that stops short of this mark is behind an even spend. */
+.track i[data-part='elapsed'] { position: absolute; inset-block: 0; width: 2px; margin-inline-start: -1px; background: var(--text-primary); transition: none; }
+
+.swatch { display: inline-block; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-sm); }
+.swatch[data-part='elapsed'] { width: 2px; border-radius: 0; background: var(--text-primary); }
+.swatch[data-part='kept'] { border-radius: 0; }
+
+@media (prefers-reduced-motion: reduce) { .track i { transition: none; } }

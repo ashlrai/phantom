@@ -44,7 +44,7 @@ it('persists a delivery that succeeds after its tick waiter aborts, without repl
     const claim = must(claimFleetWork({ repo: 'fake/alpha', task: 'task A', agent: 'fake-owner' }, options())).claim;
     const binding = { claimId: claim.id, repo: claim.repo, threadKey: thread, pr: 7, head: 'abcdef1234567' };
     expect(appendClaimThreadBinding(paths.bindings, binding, now).ok).toBe(true);
-    const key = JSON.stringify(['ASSIGNED', claim.id, binding.head]);
+    const key = JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]);
     const before = [readFileSync(ledger), readFileSync(paths.bindings)];
     const tick = makeTick();
     const waiter = tick.maybeRun(controller.signal);

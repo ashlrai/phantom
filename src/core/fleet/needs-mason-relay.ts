@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { appendInboxEntry } from './mason-inbox.js';
-import { ensureDeliveryDir, readDelivery, serializeDelivery, writeDelivery, type DeliveryState } from './needs-mason-reply-delivery.js';
-import { listNeedsMason, resolveNeedsMason, type NeedsMasonOptions, type NeedsMasonResolveResult } from './needs-mason-resolve.js';
+import { ensureDeliveryDir, listNeedsMasonDeliveries, readDelivery, serializeDelivery, writeDelivery, type DeliveryState } from './needs-mason-reply-delivery.js';
+import { listNeedsMason, readNeedsMasonLedger, resolveNeedsMason, type NeedsMasonOptions, type NeedsMasonResolveResult } from './needs-mason-resolve.js';
 
 /**
  * `deliveryReceipt: 'unrecorded'` means the append succeeded but the receipt could not be
@@ -35,6 +35,39 @@ export async function resolveNeedsMasonWithInbox(
   const id = typeof fields.itemId === 'string' && ITEM_ID.test(fields.itemId) ? fields.itemId : null;
   if (!id) return relay(input, options, runsDir);
   return serializeDelivery(`${runsDir}\0${id}`, () => relay(input, options, runsDir, id));
+}
+
+export type NeedsMasonReplyDeliveryReport =
+  | {
+      status: 'ok';
+      /** Answers recorded but not confirmed appended to the planner inbox. */
+      pending: Array<{ itemId: string; source: string; text: string | null }>;
+      /** Receipt files that failed validation; item ids from filenames only — contents are untrusted. */
+      unsafe: string[];
+      /** Receipts confirmed appended. */
+      delivered: number;
+    }
+  | { status: 'unavailable' };
+
+/**
+ * Read-only view of the reply-delivery receipts `resolveNeedsMasonWithInbox`
+ * writes: pending answers are invisible everywhere else (the item is already
+ * resolved, so no open-item list shows it) until someone resolves the same id
+ * again. `text` joins the resolved ledger line when NEEDS-MASON.md is
+ * readable; null when the item or the ledger is unknown — never guessed.
+ */
+export function readNeedsMasonReplyDeliveries(options: NeedsMasonOptions = {}): NeedsMasonReplyDeliveryReport {
+  const runsDir = options.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const listing = listNeedsMasonDeliveries(runsDir);
+  if (listing.status !== 'ok') return { status: 'unavailable' };
+  const ledger = readNeedsMasonLedger({ ...options, runsDir });
+  const texts = new Map(ledger.items.map(item => [item.id, item.text]));
+  return {
+    status: 'ok',
+    pending: listing.pending.map(entry => ({ ...entry, text: texts.get(entry.itemId) ?? null })),
+    unsafe: listing.unsafe,
+    delivered: listing.delivered,
+  };
 }
 
 async function relay(

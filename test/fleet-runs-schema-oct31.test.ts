@@ -65,6 +65,11 @@ describe('fleet runs JSON Schema', () => {
     const value = await snapshot(healthy);
     expect(Object.values(value.sources as object)).toEqual(Array(5).fill('healthy'));
     expect(validates(value, schema)).toBe(true);
+    const notRunning = [{ job_or_lane: 'fake-lane', kind: 'idle_lane', reason: 'fake reason', since: null, unblock: 'fake action' }];
+    expect(validates({ ...value, notRunning }, schema)).toBe(true);
+    expect(validates({ ...value, notRunning: [{ ...notRunning[0], extra: true }] }, schema)).toBe(false);
+    expect(validates({ ...value, notRunning: [{ job_or_lane: 'fake-lane' }] }, schema)).toBe(false);
+    expect(validates({ ...value, notRunning: [{ ...notRunning[0], since: 123 }] }, schema)).toBe(false);
     expect(validates({ ...value, extra: true }, schema)).toBe(false);
     expect(validates({ ...value, claimed: [{ job: 'fake-queued' }] }, schema)).toBe(false);
     const lane = { ...(value.lanes as Record<string, unknown>[])[0] };

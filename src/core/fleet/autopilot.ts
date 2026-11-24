@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { explainFleetAdmission, type FleetAdmissionReport } from '../../cli/fleet-admission.js';
 import { readFleetQueue, type FleetQueueV1, type Source } from './runs-parked-queue.js';
+import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
 
@@ -57,6 +58,8 @@ export interface FleetAutopilotState {
   admission: FleetAdmissionReport | null;
   queue: FleetQueueV1 | null;
   slots: LaneTargetsV1 | null;
+  /** Local workers memory allows right now (phm local capacity); null/absent when unknown, which leaves the lane target alone. */
+  localWorkers?: number | null;
   /** Null when no --repo was passed. */
   rebase: AutopilotRebaseRepo[] | null;
 }
@@ -66,6 +69,8 @@ export interface AutopilotReadDeps {
   statusText?: (path: string) => Promise<string>;
   queue?: (opts: { runsDir: string; depDetail: boolean }) => Promise<FleetQueueV1>;
   slots?: (opts: { runsDir: string }) => Promise<LaneTargetsV1>;
+  /** Local workers that fit in free memory; when given, it is the codex-local lane's ceiling. */
+  localWorkers?: () => Promise<number | null>;
   rebase?: typeof readRebaseStatus;
   now?: () => Date;
 }
@@ -118,6 +123,7 @@ export async function readFleetAutopilotState(
     generatedAt: now().toISOString(),
     sources: { status: status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
     admission: status.report, queue: queue.view, slots: slots.view, rebase: rebase.repos,
+    ...(opts.localWorkers ? { localWorkers: await opts.localWorkers().catch(() => null) } : {}),
   };
 }
 
@@ -211,7 +217,8 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const admit = state.admission?.lanes.find((row) => row.lane === lane) ?? null;
     const queuedRow = queueOk ? readyByLane.get(raw) ?? null : null;
     const running = admit?.running ?? null;
-    const target = admit?.target ?? state.slots?.lanes.find((row) => row.lane === lane)?.target ?? null;
+    const rawTarget = admit?.target ?? state.slots?.lanes.find((row) => row.lane === lane)?.target ?? null;
+    const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
     const held = admit?.held ?? holds.get(raw) ?? holds.get(lane) ?? false;
     const free = held || running === null || target === null ? null : Math.max(0, target - running);
     return {
@@ -298,10 +305,13 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     });
   }
 
-  // missing-restock: free slots with no launchable supply at all.
+  // missing-restock: free slots with no launchable supply at all. Lane-open
+  // READY rows are open supply the market may place on any lane, so a
+  // positive unhinted count keeps a free lane from reading as missing restock.
+  const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
     const waiting = lane.ready ?? lane.queued;
-    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0) continue;
+    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0 || openSupply > 0) continue;
     gaps.push({
       kind: 'missing-restock', lane: lane.lane,
       severity: 50 + Math.min(lane.freeSlots * 2, 20),

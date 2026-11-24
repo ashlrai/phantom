@@ -119,6 +119,14 @@
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["id", "from", "to", "priority", "ttl", "body"], "properties": { "id": { "$ref": "#/components/schemas/BusToken" }, "from": { "$ref": "#/components/schemas/BusToken" }, "to": { "$ref": "#/components/schemas/BusToken" }, "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] }, "ttl": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "body": {}, "channel": { "type": "string", "enum": ["bus", "slack", "imessage", "email", "telegram", "handoff"] }, "channel_ref": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" }, "sender": { "type": "object", "additionalProperties": false, "required": ["agent_id", "vendor", "human", "team"], "properties": { "agent_id": { "$ref": "#/components/schemas/BusToken" }, "vendor": { "$ref": "#/components/schemas/BusToken" }, "human": { "type": "boolean" }, "team": { "type": "boolean" } } }, "external": { "type": "boolean" }, "origin_bridge": { "$ref": "#/components/schemas/BusToken" } }, "dependentRequired": { "channel": ["channel_ref", "sender", "external"], "channel_ref": ["channel", "sender", "external"], "sender": ["channel", "channel_ref", "external"], "external": ["channel", "channel_ref", "sender"], "origin_bridge": ["channel", "channel_ref", "sender", "external"] }, "description": "Routing labels do not authenticate identities. A sender outside the team requires external=true. The complete JSON envelope is limited to 65536 bytes and depth 32." } } } },
         "responses": { "201": { "description": "Envelope posted" }, "200": { "description": "Duplicate envelope" }, "default": { "description": "Request rejected or service unavailable" } } }
     },
+    "/api/verse/agent-bus/needs-mason/asks/batch": {
+      "get": { "operationId": "listAskBatch", "summary": "Everything only Mason can answer, oldest first, same question merged, with each allowed answer (asks.batch.v1; same as phm asks list --json).", "responses": { "200": { "description": "Ask batch; ledger is unavailable when the list could not be read" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
+    "/api/verse/agent-bus/needs-mason/asks/answer": {
+      "post": { "operationId": "answerAsk", "summary": "Record one answer to an ask, once (same as phm asks answer).", "x-phantom-step-up": true, "security": [{ "mutationToken": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["id", "answer"], "properties": { "id": { "type": "string", "minLength": 1 }, "answer": { "type": "string", "minLength": 1 } } } } } },
+        "responses": { "200": { "description": "Answered, or already answered the same way" }, "default": { "description": "Request rejected or service unavailable" } } }
+    },
     "/api/verse/activity": {
       "get": {
         "operationId": "getVerseActivity", "tags": ["activity"],
@@ -567,7 +575,11 @@
         "summary": "Recent operator inbox entries (FleetInboxReadV1, or null when the inbox is missing).",
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
-          { "name": "source", "in": "query", "schema": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "description": "Optional source label filter (case-insensitive); requires `limit`." }
+          { "name": "source", "in": "query", "schema": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,40}$" }, "description": "Optional source label filter (case-insensitive); requires `limit`." },
+          { "name": "contains", "in": "query", "schema": { "type": "string", "minLength": 1, "maxLength": 512 }, "description": "Optional case-insensitive substring filter on the scrubbed entry text; requires `limit`." },
+          { "name": "priority", "in": "query", "schema": { "type": "string", "pattern": "^P[0-3]$" }, "description": "Optional exact priority-label filter; requires `limit`." },
+          { "name": "after", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Optional exclusive lower bound (RFC3339 with zone) on the entry timestamp; entries whose timestamp reads as neither Eastern wall time nor RFC3339 are excluded while a bound is set; requires `limit`." },
+          { "name": "before", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Optional exclusive upper bound (RFC3339 with zone); must be later than `after` when both are set; requires `limit`." }
         ],
         "responses": { "200": { "$ref": "#/components/responses/FleetInboxRead" }, "default": { "$ref": "#/components/responses/Error" } }
       },

@@ -11,6 +11,19 @@ either name.
 
 ## 1. Working on this repository
 
+**Step 0 for every queued job.** Before reading anything else, run
+`phm bets check --from-prompt <prompt-file> --gate --json`. It is offline, calls no model and
+is read-only. Exit 0 means new: go ahead. Exit 2 means partial: build only the `suggestedDelta`.
+Exit 3 means exists: stop and finish with a short note naming the matches. Exit 1 means the
+check itself failed (unreadable file or no task found): say so and continue normally.
+The JSON carries `schema: "bets.check.v1"`, the verdict and `exitCode`.
+
+**Out of work?** Run `phm bets propose --lane <lane> --count <n> --json` to get your own next jobs.
+It reads this checkout's backlog (TODO and FIXME comments, open roadmap items, skipped tests, commands
+no docs page names), drops anything `bets check` says already exists, and ranks the rest: user-facing
+first, smallest size next. Each row has an `id`, `repo`, `size`, `goal` and an `Acceptance:` line
+(`schema: "bets.propose.v1"`). It is read-only and never writes a queue file.
+
 `ashlr router rank --tier frontier --routes routes.json --slots codex-cmp=2 --json`
 returns `{schema: "fleet.lane-rank.v1", tier, lanes}` ordered by nearest budget reset.
 `routes.json` maps pool names to existing `routeBackend` decisions, e.g.
@@ -23,13 +36,13 @@ The command consumes route evidence because invoking the legacy router can publi
 | Need | Command |
 | --- | --- |
 | Node version | `>=22.15.0` (`package.json` `engines`) |
-| Install dependencies in a trusted local worktree | `npm run install:worktree` (pnpm 10.28.2; shared same-volume store; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
-| Install dependencies in CI or for release packaging | `npm ci` |
+| Install dependencies in a single clone, in CI or for release packaging | `npm ci` |
+| Install dependencies in several trusted local worktrees sharing one store | `npm run install:worktree` (pnpm 10.28.2; same volume; see [setup](../CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)) |
 | Build `dist/` (CLI, assets, web console, build identity) | `npm run build` |
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -45,34 +58,48 @@ The command consumes route evidence because invoking the legacy router can publi
 | Release-readiness subset | `npm run check:release` |
 
 `npm run gate` writes to `.ashlr-gate/` and `dist/`. It selects tests through
-the import graph, so a test that reads a changed file as text is not selected;
-name it explicitly or use `gate:full`. Neither replaces hosted CI or the
+the import graph plus a grep for test files that read a changed path as text,
+so docs, configs and data files get their readers too; `gate:full` remains the
+backstop for readers neither finds. Neither replaces hosted CI or the
 [release guide](RELEASING.md).
 
-**Hosted CI.** A pull request or merge-queue commit runs only the fast gate:
-the secret-shape scan, lane classification, and quick typecheck with
-CODEOWNERS and Tier-1 import-closure drift checks, including docs-only changes,
-all on Ubuntu. `Merge Gate` is the one
-required check and fails unless exactly that selection ran and every full lane
-was skipped. No pull request or merge-queue commit may occupy a macOS or
-Windows runner: the `ci` Ubuntu/Windows matrix, the Mac exhaustive lanes
+**Hosted CI.** A pull request or merge-queue commit, docs-only changes
+included, runs only fast Ubuntu jobs. `Merge Gate` is the one required check.
+It passes only when `Secret-shape scan`, `Secret scan (diff)`,
+`Classify PR site lane`, `Check generated files` and `Fast gate (typecheck + affected tests)` succeed
+and every full lane was skipped. `Quick typecheck` and
+`Check authority drift (hermetic)` (CODEOWNERS and Tier-1 import-closure
+drift) also run but are advisory. Auto-tag and the release gate require
+`Check authority drift (hermetic)` green on the exact commit; fix drift in
+the same pull request. A direct push to master takes the same gate
+without the fast gate. No pull request, merge-queue commit or direct `master`
+push may occupy a macOS or Windows runner: the `ci` Ubuntu/Windows matrix, the
+Mac exhaustive lanes
 (`Mac exhaustive (N/4)`, `Mac exhaustive (isolated)`), the shared-macOS and
-native-broker lanes, and the Windows service authority run only in the daily
-scheduled run on master, on manual dispatch (optionally sliced by `mac_shard`),
-or on the reusable release call — where the caller's push event still defers
-the macOS and Windows-service legs to the daily run while the `ci` matrix,
-including its Windows portability legs, stays the release's native gate
-(`.github/workflows/ci.yml`).
+native-broker lanes, and the Windows service authority run only in the
+scheduled run on master (every six hours), on manual dispatch (optionally
+sliced by `mac_shard`), or on the reusable release call — where the caller's
+push event still defers the macOS and Windows-service legs to the scheduled
+run while the `ci` matrix, including its Windows portability legs, stays the
+release's native gate (`.github/workflows/ci.yml`). The tests the fast gate
+selects are listed in
+[Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs).
 
 **Fast test timing.** `npm run test:fast` runs the unit project with the existing isolated-home watchdog. It records Vitest file elapsed times in milliseconds and flags files over 20 seconds with a suggested split. The budget is advisory; test failures still fail the command. Pass Vitest filters after `--` for a focused run. Each run replaces the local report, so focused runs only contain selected files.
 
-**Tests.** Backend suites live in `test/` and are named after the milestone or
-release that introduced them: `test/m<N>.<topic>.test.ts`, invariant suites
-`test/h<N>.*.test.ts`, and `test/<topic>-<release>.test.ts`. Web tests sit next
+**Tests.** Backend suites live in `test/`. Most are named by topic,
+`test/<topic>.test.ts`, often with a request or release suffix
+(`test/authority-codeowners-310b.test.ts`). Older suites carry the milestone
+that introduced them (`test/m<N>.<topic>.test.ts`), and safety-invariant suites
+are `test/h<N>.*.test.ts`. Web tests sit next
 to their components as `src/web-ui/**/*.test.{ts,tsx}`. Tests that do real I/O
 must be listed in `test/config/realio-lane-membership.mjs` (`npm run lint`
 checks this). Every test runs with an isolated `HOME` (`test/setup/home.ts`),
 and writes under the real `~/.ashlr` fail the test.
+
+**Router outcomes.** `phm router outcomes --json` includes recorded merge and
+revert state alongside CI first-pass results, review findings, cost and wall
+time. See the [CLI reference](CLI-REFERENCE.md) for the command's filters.
 
 **Layout.** `src/cli/` holds thin argv dispatchers, one file per command group;
 `src/core/` holds the logic; `src/web-ui/` the React console; `desktop/` the
@@ -181,21 +208,47 @@ are written. `task` stays untrusted prompt data on each emitted job.
 
 ### Outcome learning
 
-`phm fleet outcomes --events <log> --json` reads a dispatch event log and
-prints, for each resource, model, job type, and repo, the merge rate, time to
-merge, usage, and breakage rate. It also lists improvement jobs for recurring
-failures. `phm fleet outcomes route` adds the next assignment and a
+`phm fleet outcomes --events <log> --json` reads a dispatch event log plus the
+jobs ledger (`metrics/jobs.jsonl`, bounded tail; `--ledger <file>` overrides)
+and prints, for each resource, model, job type, and repo, the merge rate, time
+to merge, usage, and breakage rate. It also lists improvement jobs for
+recurring failures. `phm fleet outcomes route` adds the next assignment and a
 plain-language reason. The same types are exported from
 `src/core/routing/outcome-learning.ts` for the desktop app. There is no
-routing setting to tune: the log is the memory. Critical jobs are never held
+routing setting to tune: the logs are the memory. Critical jobs are never held
 for an exhausted resource, and allowance that resets soon is still spent when
-that resource can finish the job.
+that resource can finish the job. In the jobs ledger, `launch` rows open an
+attempt and the reconciler's `MERGED`/`CLOSED` rows close it; a
+`launch_failed`/`launch_terminal` row closes the still-open attempt as an
+unmerged one, so a dead launch the dispatcher requeues and retries counts as
+its own failed attempt rather than disappearing into the relaunch. A `finish`
+row recording `empty: true` — the diff check found nothing publishable —
+closes the attempt the same way and charges the row's recorded `tokens_total`,
+so empty runs count as failed attempts with their real spend instead of
+waiting out the censor horizon; `empty` absent, `false` or `null` stays open
+for the reconciler. Batch
+sessions count per member: a `batch_claim` row is the member's dispatch
+record and the session's `launch` row (under its `RQ-BATCH-*` id) opens one
+attempt per member; a requeue-word `task_outcome` or a session-id
+`launch_failed`/`launch_terminal` closes the member attempts it recorded.
+Positive revert evidence (`reverted:true`, a parseable `reverted_at` stamp,
+or a `revert`/`reverted` event or state name — the vocabulary slot-yield and
+the reward feed share) discounts a merge that did not hold: the attempt
+counts as a failure and the cell reports it under `reverted`, never under
+`merges` or `goodMerges`, while a merge recorded after the newest revert
+stays a fresh held merge. A second source covers reverts only git history
+proves: both callers resolve the standing `owner/repo#n` keys recorded in
+`$ASHLR_HOME/improve/revert-outcomes.jsonl` (`phm fleet reverts --record`),
+and a `MERGED` verdict whose own unambiguous PR claim names one resolves
+`reverted` the same way — so a merge the jobs ledger never marked as
+reverted still counts against the cell instead of inflating its merge rate.
 
 ### Selector
 
 `phm select --json` ranks candidates in `~/.ashlr-runs/selector/candidates.jsonl`
-by value x leverage / (time + usage), using the outcome log for what a candidate
-leaves out. It prints the top five as `READY` lines, appends them with their
+by value x leverage / (time + usage), using outcome learning over the dispatch
+log and `metrics/jobs.jsonl` for what a candidate leaves out (`--events` and
+`--ledger` override the sources). It prints the top five as `READY` lines, appends them with their
 predicted value to `~/.ashlr-runs/selector/picks.jsonl`, and never funds an id
 twice. `--dry-run` writes nothing. `phm select schedule --write` installs the
 hourly launchd agent on the Mac. See
@@ -328,7 +381,7 @@ never contacts providers.
 ### Local message bus mailbox
 
 `phm bus send|inbox|ack` manages durable local mailboxes. It does not dispatch
-remote work, execute agents or grant authority. `phm bus thread|task` remains
+remote work, execute agents or grant authority. `phm bus thread|task|board` remains
 the separate shared task board (`phm fleet bus ...`). Addresses are routing
 labels accessible to processes running as the same OS user, not authenticated
 principals.
@@ -347,6 +400,18 @@ unexpired envelopes in priority and acceptance order, with remaining TTL and
 `hasMore` for a truncated result. Reading never acknowledges. Ack checks the
 recipient and is idempotent; unknown IDs refuse.
 
+`phm bus inbox` takes the same read filters every other bus read shares, all
+ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
+(each resolved through the agent identity registry, so a registered identity's
+handle, `agent:` address, id and aliases all match, with exact-label matching
+when the ref resolves to nothing or the registry is unreadable), `--priority`
+keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
+`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
+bound the store acceptance time as one `[since, before)` window, `--contains`
+keeps envelopes whose scrubbed one-line summary carries the needle, and
+`--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
+that conversation label. `hasMore` reports truncation of the filtered set.
+
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
 unsafe or concurrently changing stores refuse rather than reporting an empty
@@ -357,6 +422,9 @@ traffic needs a new private `ASHLR_HOME`. No history is automatically deleted.
 Credential-shaped payloads refuse; use Phantom Secrets `phm_<name>` references.
 `--json` emits one object on stdout, including errors. Exit codes are 0 success,
 1 operational refusal and 2 bad usage. `phm bus send --help` performs no work.
+Pending (unacked, unexpired) mail also lists in `phm comms inbox` under the
+`mailbox` source — a read-only projection across every recipient label; the
+mailbox stays the store of record and `phm bus ack` still clears each row.
 
 ### Owner Assist
 
@@ -435,7 +503,7 @@ Runtime state uses several roots. The paths below are relative to
 | `logs/` | supervised local-runtime stdout and stderr |
 | `daemon.launchd.out.log`, `daemon.launchd.err.log` (macOS), `daemon.systemd.log` (Linux) | daemon service output |
 | `fleet/mirrors/` | the fleet's own mirror clones (`phm mirror`) |
-| `bus/` | shared task board state (`phm bus thread|task`, `phm fleet bus`) |
+| `bus/` | shared task board state (`phm bus thread|task|board`, `phm fleet bus`) |
 | `bus-mailbox/` | durable local message mailboxes (`phm bus send|inbox|ack`) |
 | `fleet/bus-inbox/` | cursor-based Agent Bus (`phm comms bus`, HTTP and fleet MCP) |
 
@@ -854,7 +922,7 @@ use [LOCAL-FLEET.md](LOCAL-FLEET.md), `phm models` and `phm local-runtime status
 | `phm resources profile prepare` refuses the executable | The error names the failed check. Install symlinks are refused by design: pass the real path the error prints. The file must be a regular, executable file that is not group- or world-writable, and the profile's parent must be an existing owned mode-0700 directory |
 | `daemon status` reports a state issue | `phm daemon recover-state --dry-run --expected-sha256 <sha256>`, then `--execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256>` to quarantine; resolve the quarantine with `phm daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256>` (see `phm daemon <sub> --help`) |
 | Daemon claims running but is not | `phm daemon doctor`, then `phm daemon doctor --clear-stale` |
-| Is the fleet on track (merges per day, PR open-to-merge time, launches that merge, default branches green, releases, pools)? | `phm goals` (plain words, behind first) or `phm goals --json` (`fleet.goal-scorecard.v3`: per goal `id`, `title`, `why`, `metric`, `unit`, `target`, `current` (null is unknown, never 0), `trend` (up, down, flat or unknown), `updated_at`, `source`, plus 24 h and 7 d points and status text such as `unknown: <reason>`); the desktop and phone Goals views show the same cards |
+| Is the fleet on track (merges per day, PR open-to-merge time, launches that merge, default branches green, releases, pools)? | `phm goals` (plain words, behind first) or `phm goals --json` (`fleet.goal-scorecard.v3`: top-level `endState` (one sentence) and per goal `id`, `title`, `why`, `metric`, `unit`, `target`, `current` (null is unknown, never 0), `trend` (up, down, flat or unknown), `updated_at`, `source`, plus `next` (the linked next step, null when none), 24 h and 7 d points and status text such as `unknown: <reason>`); the desktop and phone Goals views show the same cards |
 | Goals stuck in progress with no proposal | `phm goals recover-stale --dry-run` |
 | Leftover sandbox worktrees | `phm sandbox list`, `phm sandbox gc` |
 | Agent worktrees using too much disk | `phm disk` (read-only: each folder's size and lifecycle state, and the bytes safe to reclaim; `phm disk --json` for agents) |
@@ -951,7 +1019,7 @@ readers, no provider calls, no secrets.
 
 Inputs are the existing readers' artifacts. From the router queue directory
 (`~/.ashlr-runs/queue` by default, `--queue-dir` overrides for fixtures):
-`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour),
+`ready.tsv` (queue depth; LAND rows with timestamps count toward merges/hour; lane-open rows carrying no lane hint count as `unhinted` in `sources.queue`, never guessed onto a lane),
 `queue.v1.json` (authoritative live jobs plus the job→pool map), `jobs.jsonl`
 (merge outcomes and transitions in the trailing hour), and `usage-readings.log`.
 The merge rate counts a GitHub PR once across repeated observations and jobs;
@@ -986,7 +1054,8 @@ total; reported logical bytes are not a promise of physical disk space freed.
 `phm home` answers one question: is the fleet healthy and moving? It prints a
 headline (healthy, stalled when no PR merged in 60 minutes, red main, or unknown),
 merged PRs, median time to merge, main per repo, running jobs per lane, the
-resource most at risk of going unused, the last 5 work-log items and unread
+resource most at risk of going unused (with its used percent and burn per
+hour, the reading behind the projection), the last 5 work-log items and unread
 Leader replies (these need `--leader-seen <time>`), and `needsYou`: the open asks
 with the one-word answers each takes. `phm home --json` prints schema `home.v1`
 (the `schema` field is the version): each field is `{state:"ok",value}` or
@@ -996,6 +1065,14 @@ line of fleet health from this summary (merges in the last hour, lanes running,
 main green or red), approvals as one-tap buttons (`phm approvals`), a message
 box that posts to the fleet inbox, and what shipped in the last 24 hours
 (`phm shipped --since 1d`).
+
+`phm today` is the phone's Today screen in a terminal: one sentence (PRs merged
+in the last hour, jobs running, the empty pool and when it is back, questions
+waiting), jobs running per lane, the empty pools with their return time, and
+the open asks with the answers each takes (reply with `phm asks answer`, or
+tap on the phone, which uses the same verified route). `phm today --json`
+prints schema `today.v1` and is exactly what the screen shows; a source that
+cannot be read is `null` with a reason in `unknown`, never zero.
 
 `phm mobile check` renders every registered desktop view 390 px wide in the web
 UI's test renderer and reports, per view, content wider than the screen, tap
@@ -1013,6 +1090,37 @@ nothing. Agents raise one with `phm asks add <kind> "<request>"` and never put
 the secret itself in the request. Any other kind is refused: the fleet decides
 this itself. From Telegram, Mason replies `yes 3f2a` (or `no`, `done`) in his
 own private chat. `--json` prints schemas `asks.v1` and `asks.answer.v1`.
+
+Nobody has to remember to raise the two common asks. `phm asks sync
+[--dry-run] [--json]` (`asks.sync.v1`) reads the resource ledger and raises one
+ask per pool that is blocked on a one-time sign-in (a `password` ask, answered
+`done` or `later`) or whose credit ends unused with its lane set to zero (a
+`payment` ask, `yes` or `no`). Each expires at the pool's reset or expiry. It
+keeps one open ask per pool, so a re-run adds nothing, and it closes the ask when
+the pool clears. A ledger it cannot read is reported as unknown and nothing is
+raised or closed. It never signs in and never spends. The self-tick runs it once
+per tick (the `asksSync` field of the planner-tick report).
+
+The fleet self-tick is a dry run unless told otherwise: pass `--apply`, or set
+`PHM_SELF_TICK_APPLY=1` for a run with no terminal (a host timer); a person at a
+terminal still needs `--apply`. Every run, dry or applied, writes
+`queue/self-tick-last.json` (`fleet.self-tick-record.v1`: start and finish times,
+mode, the autofill, gaps and reap hooks, failed steps with their errors) and
+appends one line to `queue/self-tick.jsonl` (newest 500 kept). A hook that did not
+run reads "skipped" with its reason, never 0. Its `--status` flag reads it.
+
+Two kinds carry more than a word. A `usage` ask (`phm asks add usage "<question>"
+--subject grok-ultra --unblocks "<what it frees>"`) takes a percent: `phm asks
+answer <id> 40` stores a usage reading with `source: mason` and its own time in
+the append-only `asks-ledger.jsonl` beside NEEDS-MASON.md, and a reply like
+"forty" is refused with a plain hint and records nothing. `phm asks usage
+[<pool>] --json` (`asks.usage.v1`) hands the newest reading and its age to the
+usage reader and spend guard, which keep their own freshness limit. An
+`approval` ask takes yes or no and stores an approval record only: no spending
+and no billing call. Every answer appends one `asks.ledger.v1` line (kind,
+subject, reply, channel, source, time) after its `needs_mason.resolved` event.
+The open asks show first on the phone home and in the desktop Leader chat, one
+tap per allowed reply.
 
 `phm approvals` puts every decision only Mason can make first: those asks plus
 an agent's own questions with their own options. An agent raises one with
@@ -1037,13 +1145,16 @@ published, PRs merged, empty jobs and the median time from publish to merge. It
 prints JSON (schema `throughput.v1`) with `as_of`, a plain `headline` such as
 "38 merged in the last 6 hours, median 2m 50s", `totals`, one entry in `buckets`
 per hour and `groups` by lane. `--hours N` sets the window (1 to 168, default 24),
-`--by repo` or `--by tier` changes the grouping and `--text` prints plain lines.
+`--by repo`, `--by tier` or `--by model` changes the grouping and `--text` prints plain lines.
+A job belongs to the model its launch row names; work whose job record names no
+model is the `unknown` group, never spread over the others.
 It reads `~/.ashlr-runs/metrics/jobs.jsonl` and the main-guardian status, and
 changes nothing. Each PR counts once. A value that was not measured is `null`
 (or "unknown"), never zero; lines that are not JSON are skipped and counted in
 `malformed_lines`. Exit 1 means the metrics file could not be read. The desktop
 Throughput pane shows the same report (`GET /api/verse/fleet/runs/throughput`)
 for 6 hours, 24 hours or 7 days, with launched, published and merged drawn as one flow.
+The Models pane reads it with `by=model` for the work line on each model's card.
 
 `phm fleet launches --json` answers the question that comes before throughput: how
 many jobs the fleet starts per hour and which lanes those starts go to. It prints
@@ -1135,3 +1246,28 @@ projects that average forward from the observation time and is compared with
 reset. Zero burn has no exhaustion date; missing observation duration gives
 unknown burn. Expired reset windows and invalid or duplicate evidence degrade
 the metrics slice. Projections are observations and grant no spending authority.
+
+## Gap jobs: drop format and proof
+
+`phm jobs gaps --propose` writes one file per gap into the drop queue the host ingest sweeps. The writer (`src/core/fleet/drop-job-writer.ts`) and the ingest patterns are tested against each other in `test/drop-job-ingest-contract.test.ts` and `test/gap-landing.test.ts`.
+
+| Part | Expected |
+| --- | --- |
+| Drop dir | `<runs dir>/leader/drop/claude/` (the only dir swept for RQ-PHX jobs) |
+| File name | `RQ-PHX-<id>.md`, id is 3 to 40 of A-Z and 0-9 (gap ids are `GAP` plus 10 hex digits, upper case) |
+| Line 1 | `#job repo=<repo> lane=<lane> tier=<tier>`, repo one of the known repos, gap jobs use `lane=claude` (`codex-personal` when the gap names a gh command) and `tier=work` |
+| Size and body | At most 8000 bytes; a body naming `.github/`, `/.codex`, `auth.json` or `CODEOWNERS` is refused |
+| After ingest | File moves to `queue/prompts/`; a row lands in `leader/drop/ingested.tsv`; a launch leaves `<runs dir>/RQ-PHX-<id>.prompt` |
+| Proposer record | `<runs dir>/metrics/gap-proposed.jsonl`, one line per queued gap; a gap proposed in the last 24 h is not proposed again |
+
+`phm doctor supply` prints `Self-supply today: 3 proposed, 2 ingested, 1 launched` (last 24 h; JSON field `selfSupplyToday`). Proposed comes from the record, ingested from gap rows in `ingested.tsv`, launched from the `.prompt` files of those rows. A file that is missing or unreadable reads `unknown` for that count.
+
+## Daily checks
+- `phm metrics loop` (where the loop waits)
+- `phm map replay --since 6h` (what happened while you were away)
+- `phm asks sync` (the few things only Mason can answer)
+- `phm pools --text` (one line per pool: used, hours to reset, and whether it will leave usage unused)
+
+Reading `phm pools`: a `wasteRisk` of `high` means that pool will leave included usage unused, so queue more work for it. `unknown` means there is no current reading. It is never zero and never spare capacity.
+
+After a pool resets, its row shows as refilled but waiting for its first reading: `wasteRisk` is `unknown` with the reason `no reading for the new window`. This is expected. Nobody needs to read it by hand; the next automatic reading fills it in, so do not add a manual `phm budget add` reading.

@@ -198,7 +198,7 @@ describe('phm pool runway', () => {
     const out = capture();
     expect(await cmdPool(['runway', '--json'], { readRunway: async () => snapshot() })).toBe(0);
     const parsed = JSON.parse(out.join('\n')) as Record<string, unknown>;
-    expect(Object.keys(parsed).sort()).toEqual(['asOf', 'headline', 'pools', 'schema', 'v']);
+    expect(Object.keys(parsed).sort()).toEqual(['asOf', 'headline', 'pools', 'schema', 'shares', 'v']);
     expect(parsed).toMatchObject({ schema: 'pool.runway.v1', v: 1, asOf: expect.any(String), headline: expect.any(String) });
     const pools = parsed.pools as Record<string, unknown>[];
     expect(pools.length).toBe(4);

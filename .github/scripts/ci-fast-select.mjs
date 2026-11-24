@@ -46,12 +46,35 @@ export const TIER1_TESTS = Object.freeze([
   'test/authority-tier1-closure-310b.test.ts',
 ]);
 const PACKAGE_FILES_TEST = 'test/package-files-allowlist.test.ts';
+// The recorded Tier-1 authority import closure. Any member — or the snapshot
+// itself — can grow the closure the guard test protects without touching a
+// Tier-1 path, and no test file imports it, so selection names it directly.
+export const TIER1_CLOSURE_SNAPSHOT = 'test/fixtures/authority/tier1-closure.json';
+export const TIER1_CLOSURE_TEST = 'test/authority-tier1-closure-310b.test.ts';
+// Prefixes where a brand-new file becomes a closure root (the `/**` and `*`
+// entries of TIER1_SOURCE_PATTERNS in src/core/authority/protected-paths.ts;
+// src/core/authority/ itself is already a TIER1_PATH). Every existing file
+// under them is already a recorded member, so these only fire on new files —
+// exactly the diffs that can grow the closure without touching a member.
+// New exact-file roots require editing protected-paths.ts, itself Tier-1.
+const CLOSURE_ROOT_PATH = [
+  /^src\/core\/(?:memory|desktop|website|sandbox|policy|routing|improve|autopilot)\//,
+  /^src\/core\/local-eval\/memory-/,
+  /^src\/core\/daemon\/outcome-/,
+  /^src\/core\/goals\/outcome-/,
+  /^src\/core\/verse\/outcomes-/,
+  /^src\/core\/resources\/pool-commissioning/,
+];
 const TIER1_PATH = [
   /^\.github\/CODEOWNERS$/,
   /^src\/core\/authority\//,
   /^test\/authority-[^/]*310b[^/]*\.test\.ts$/,
   /^\.github\/tests\/secret-shape\//,
 ];
+// The three files test/cli-registry-drift.test.ts diffs against each other:
+// the dispatch switch it parses as text, plus the two registries it imports.
+const CLI_REGISTRY_TEST = 'test/cli-registry-drift.test.ts';
+const CLI_REGISTRY_PATH = /^src\/cli\/(?:index|completions|help)\.ts$/;
 
 // Slow lanes stay out of the derived and fallback sets: real-io suites spawn git,
 // npm and daemons (a 34-file related run measured over two minutes locally) and
@@ -115,12 +138,30 @@ export function domainTests(paths, existing) {
   const node = new Set();
   if (paths.some((p) => TIER1_PATH.some((re) => re.test(p)))) for (const t of TIER1_TESTS) tests.add(t);
   if (paths.includes('.github/workflows/ci.yml') && existing.has('test/m30.ci.test.ts')) tests.add('test/m30.ci.test.ts');
+  // The CLI registry anti-drift suite parses src/cli/index.ts's dispatch
+  // switch as text — deliberately no import edge — so a diff that only
+  // touches the switch gives related selection nothing to follow. Name it
+  // for the whole registry surface it guards; an unregistered dispatch once
+  // reached master and held every release-gate run red for hours.
+  if (paths.some((p) => CLI_REGISTRY_PATH.test(p)) && existing.has(CLI_REGISTRY_TEST)) tests.add(CLI_REGISTRY_TEST);
   for (const p of paths) {
     const m = /^\.github\/(?:scripts\/([^/]+)\.mjs|tests\/([^/]+)\.test\.mjs)$/.exec(p);
     const stem = m?.[1] ?? m?.[2];
     if (stem && existing.has(`.github/tests/${stem}.test.mjs`)) node.add(`.github/tests/${stem}.test.mjs`);
   }
   return { tests: [...tests], node: [...node] };
+}
+
+// Members of the recorded Tier-1 closure, read from the committed snapshot.
+// An unreadable snapshot yields an empty set: the diff's own paths still
+// decide, and the full lane keeps the invariant regardless.
+export function tier1ClosureMembers(cwd) {
+  try {
+    const parsed = JSON.parse(git(cwd, ['show', `HEAD:${TIER1_CLOSURE_SNAPSHOT}`]));
+    return new Set(Array.isArray(parsed?.closure) ? parsed.closure.filter((p) => typeof p === 'string') : []);
+  } catch {
+    return new Set();
+  }
 }
 
 // Direct importers of a module, found without building a graph: any test file
@@ -160,6 +201,14 @@ export function selectRelated({ cwd, paths, cap = MAX_RELATED_TESTS, graph = nul
   for (const p of alive) if (TEST_FILE.test(p)) add(p); // changed tests first
   const domain = domainTests(paths, existing);
   for (const t of domain.tests) add(t); // named Tier-1 tests are never capped away
+  // A diff touching a recorded closure member — the snapshot itself, or a
+  // prefix where a new file becomes a root — can grow the authority import
+  // closure without touching a Tier-1 path, and no test file imports it, so
+  // the invariant runs by name on exactly those diffs.
+  const closure = tier1ClosureMembers(cwd);
+  if (paths.some((p) => p === TIER1_CLOSURE_SNAPSHOT || closure.has(p) || CLOSURE_ROOT_PATH.some((re) => re.test(p)))) {
+    add(TIER1_CLOSURE_TEST);
+  }
   const pinned = ranked.length;
   const sources = alive.filter((p) => SOURCE_FILE.test(p) && !TEST_FILE.test(p));
   for (const p of sources) {

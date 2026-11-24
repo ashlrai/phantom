@@ -12,7 +12,14 @@ top few as `READY` lines. Source: `src/core/routing/selector.ts`; CLI:
 - `value` and `leverage` come from the candidate. `leverage` defaults to 1.
 - `minutes` and `usage` come from the candidate (`estMinutes`, `estUsage`), else
   from the outcome-learning cells for the same repo and job type
-  (`learnOutcomes`, the router from #2775), else 30 minutes and 0.3 usage.
+  (`learnFleetOutcomes` over the dispatch log and the jobs ledger —
+  `<runs-dir>/queue/dispatch-events.log` and `<runs-dir>/metrics/jobs.jsonl`,
+  `--events`/`--ledger` override — the same fold `phm fleet outcomes` reads),
+  else 30 minutes and 0.3 usage.
+  The usage prior pools only measured allowance-unit readings
+  (`usageAllowance`/`usageAllowanceKnown`): jobs-ledger `tokens_total` is a
+  different unit and never enters the `estUsage`-calibrated denominator, so a
+  ledger-only fleet falls back to the default usage rather than a token count.
   Each pick reports which one it used as `basis`.
 - `predictedValue = value x leverage x merge rate`, where merge rate is the
   smoothed good-merge rate of the same cells (prior 0.5, weight 2). It is what

@@ -1,0 +1,23 @@
+##[group]Run bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json
+bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json
+shell: /usr/bin/bash -e {0}
+env:
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+##[endgroup]
+{"auditReportVersion":2,"vulnerabilities":{"lodash":{"name":"lodash","severity":"high","isDirect":false,"via":[{"source":1109727,"name":"lodash","dependency":"lodash","title":"lodash vulnerable to Code Injection via the template function","url":"https://github.com/advisories/GHSA-35jh-r3h4-6jhm","severity":"high","cwe":["CWE-94"],"cvss":{"score":7.5,"vectorString":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"},"range":"<4.17.21"}],"effects":[],"range":"<4.17.21","nodes":["node_modules/lodash"],"fixAvailable":{"name":"lodash","version":"4.17.21","isSemVerMajor":false}},"minimist":{"name":"minimist","severity":"moderate","isDirect":true,"via":[{"source":1111385,"name":"minimist","dependency":"minimist","title":"Prototype Pollution in minimist","url":"https://github.com/advisories/GHSA-xvch-5gv4-984h","severity":"moderate","cwe":["CWE-1321"],"cvss":{"score":5.3,"vectorString":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N"},"range":"<1.2.6"}],"effects":[],"range":"<1.2.6","nodes":["node_modules/minimist"],"fixAvailable":true}},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":1,"high":1,"critical":0,"total":2},"dependencies":{"prod":412,"dev":388,"optional":12,"peer":0,"peerOptional":0,"total":812}}}
+##[group]Run bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev
+bash scripts/npm-audit-with-osv-fallback.sh "root production graph" package-lock.json --omit=dev
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+{"auditReportVersion":2,"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0},"dependencies":{"prod":412,"dev":0,"optional":12,"peer":0,"peerOptional":0,"total":424}}}
+##[group]Run bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json
+bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+{"auditReportVersion":2,"vulnerabilities":{"tar":{"name":"tar","severity":"high","isDirect":false,"via":[{"source":1112659,"name":"tar","dependency":"tar","title":"node-tar Vulnerable to Arbitrary File Creation/Overwrite via Hardlink Path Traversal","url":"https://github.com/advisories/GHSA-34x7-hfp2-rc4v","severity":"high","cwe":["CWE-22"],"cvss":{"score":8.2,"vectorString":"CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"},"range":"<=7.5.3"}],"effects":[],"range":"<=7.5.3","nodes":["src/raycast/node_modules/tar"],"fixAvailable":{"name":"tar","version":"7.5.4","isSemVerMajor":false}}},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":1,"critical":0,"total":1},"dependencies":{"prod":96,"dev":41,"optional":0,"peer":0,"peerOptional":0,"total":137}}}
+##[group]Run bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev
+bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast production graph" package-lock.json --omit=dev
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+{"auditReportVersion":2,"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0},"dependencies":{"prod":96,"dev":0,"optional":0,"peer":0,"peerOptional":0,"total":96}}}
+##[error]Process completed with exit code 1.

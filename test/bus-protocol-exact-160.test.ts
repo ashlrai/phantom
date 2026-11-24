@@ -53,7 +53,8 @@ it('claims a version-1 task exactly once through the real append and fencing pat
   expect(protocolOf(first.receipt.envelope.body)).toEqual({
     version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'x'.repeat(256),
   });
-  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty' });
+  // fake-task-1 is the one claimable receipt on the topic and fake-a's lease holds it.
+  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty', candidates: 1, held: 1 });
   expect(mutateBusWorkClaim({ action: 'complete', id: 'fake-task-1', token: 'b'.repeat(64), root }))
     .toMatchObject({ status: 'mismatched-token' });
   expect(mutateBusWorkClaim({ action: 'complete', id: 'fake-task-1', token: first.token, root }))
@@ -87,7 +88,9 @@ it('keeps result, review, status and question posted but never claimable', () =>
   if (taken.status === 'acquired' && 'receipt' in taken) {
     expect(taken.receipt.envelope.id).toBe('fake-legacy-work');
   }
-  expect(claim('fleet.report')).toEqual({ status: 'empty' });
+  // fake-legacy-work stays claimed; the result/review/status/question bodies
+  // are posted but never claim candidates.
+  expect(claim('fleet.report')).toEqual({ status: 'empty', candidates: 1, held: 1 });
   const listed = page();
   if (listed.status === 'ok') {
     expect(listed.messages.map(row => row.envelope.id).sort()).toEqual(
@@ -97,7 +100,8 @@ it('keeps result, review, status and question posted but never claimable', () =>
 it('lets a topic-less protocol task ride any exact recipient label', () => {
   expect(post(envelope('fake-direct', 'agent-a',
     { protocol: { version: 1, kind: 'task' }, text: 'fake direct' })).status).toBe('posted');
-  expect(claim('agent-b')).toEqual({ status: 'empty' });
+  // fake-direct is addressed to agent-a only, so agent-b finds no candidates.
+  expect(claim('agent-b')).toEqual({ status: 'empty', candidates: 0, held: 0 });
   const taken = claim('agent-a');
   expect(taken.status).toBe('acquired');
   if (taken.status === 'acquired' && 'receipt' in taken) {
@@ -108,7 +112,7 @@ it('matches claim audience on the exact recipient, never a wildcard or prefix', 
   expect(post(envelope('fake-exact-1', 'fleet.deploy',
     { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } })).status).toBe('posted');
   for (const audience of ['fleet.*', 'fleet', 'fleet.deploy.canary', 'repo.deploy']) {
-    expect(claim(audience), audience).toEqual({ status: 'empty' });
+    expect(claim(audience), audience).toEqual({ status: 'empty', candidates: 0, held: 0 });
   }
   expect(claim('fleet.deploy', 'fake-a').status).toBe('acquired');
 });
@@ -137,7 +141,8 @@ it('orders two tasks on one topic by claim, one message ID per claimant', () => 
     expect(a.receipt.envelope.id).toBe('fake-second');
     expect(b.receipt.envelope.id).toBe('fake-first');
   }
-  expect(claim('fleet.queue', 'fake-c')).toEqual({ status: 'empty' });
+  // Both tasks on the topic are held — fake-second by fake-a, fake-first by fake-b.
+  expect(claim('fleet.queue', 'fake-c')).toEqual({ status: 'empty', candidates: 2, held: 2 });
 });
 it('treats isClaimableWork as a pure predicate over bodies', () => {
   expect(isClaimableWork({ protocol: { version: 1, kind: 'task' } })).toBe(true);

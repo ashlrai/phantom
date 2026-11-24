@@ -26,7 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { LaneHoldError, type LaneHoldOptions } from './runs-lane-hold.js';
-import { LANE_ID_RE, readLaneTargets, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
+import { LANE_ID_RE, laneRowProblem, readLaneTargets, slotsFileUnsafe, type LaneTargetsOptions, type LaneTargetsV1 } from './runs-lane-targets.js';
 
 export interface PlaceLaneHoldOptions extends LaneTargetsOptions { minutes: number; reason: string }
 const MAX = 64 * 1024;
@@ -34,7 +34,6 @@ const MAX_MINUTES = 24 * 60;
 /** Printable ASCII only — the reason lands inside held_by attribution and two log lines. */
 const REASON_RE = /^[\x20-\x7E]{0,120}$/;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const integer = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const owned = (stat: Stats): boolean => typeof process.getuid !== 'function' || stat.uid === process.getuid();
 async function directory(path: string): Promise<void> {
   const stat = await lstat(path);
@@ -71,10 +70,7 @@ async function source(opts: LaneHoldOptions) {
   // Accept both the dispatcher's direct lane map and a wrapped lanes map.
   const lanes = Object.hasOwn(raw, 'lanes') ? raw.lanes : raw;
   if (!object(lanes)) throw new LaneHoldError('unavailable');
-  for (const [lane, row] of Object.entries(lanes)) {
-    if (!LANE_ID_RE.test(lane) || !object(row) || !integer(row.target) || !integer(row.floor) || !integer(row.ceiling) || row.floor > row.ceiling || typeof row.held !== 'boolean') throw new LaneHoldError('unavailable');
-  }
-  return { root, queue, path, raw, lanes: lanes as Record<string, Record<string, unknown>> };
+  return { root, queue, path, raw, lanes: lanes as Record<string, unknown> };
 }
 export async function placeLaneHold(lane: string, opts: PlaceLaneHoldOptions): Promise<LaneTargetsV1> {
   // Argument contract failures are caller bugs — TypeError before any file
@@ -85,8 +81,11 @@ export async function placeLaneHold(lane: string, opts: PlaceLaneHoldOptions): P
   let temp: string | undefined;
   try {
     const { root, queue, path, raw, lanes } = await source(opts);
+    if (slotsFileUnsafe(lanes)) throw new LaneHoldError('unavailable');
     if (typeof lane !== 'string' || !LANE_ID_RE.test(lane) || !Object.hasOwn(lanes, lane)) throw new LaneHoldError('unknown-lane');
-    const row = lanes[lane];
+    // Only the lane being changed must be well formed; other lanes' rows are left untouched.
+    if (laneRowProblem(lane, lanes[lane])) throw new LaneHoldError('unavailable');
+    const row = lanes[lane] as Record<string, unknown>;
     // A hold a person placed is never overwritten — the same rule the
     // dispatcher applies (any held_by other than 'autobackoff'), relaxed
     // only for holds this writer placed ('phantom …') so they refresh.

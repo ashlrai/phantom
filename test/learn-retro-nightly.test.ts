@@ -138,13 +138,29 @@ describe('nightly local retro', () => {
     expect(output).not.toContain('"body"');
   });
 
-  it.each(['jobs.jsonl', 'review-blocks.jsonl'])('does not mark a missing %s input complete and retries after repair', async (name) => {
+  it('does not mark a missing jobs.jsonl input complete and retries after repair', async () => {
     await seed();
-    await rm(inputPath(name));
+    await rm(inputPath('jobs.jsonl'));
     expect((await runNightlyRetro(ENABLED, NOW)).status).toBe('unavailable');
     expect(await readNightlyState()).toBeNull();
     await seed();
     expect((await runNightlyRetro(ENABLED, NOW)).status).toBe('completed');
+  });
+
+  it('recreates a missing review-blocks.jsonl as an empty feed so the night still completes', async () => {
+    await seed();
+    await rm(inputPath('review-blocks.jsonl'));
+    // The feed is the producer: with no recorded review evidence it writes an
+    // empty file, which is contract-valid — jobs alone still complete the night.
+    expect((await runNightlyRetro(ENABLED, NOW)).status).toBe('completed');
+    expect(await readFile(inputPath('review-blocks.jsonl'), 'utf8')).toBe('');
+    const state = await readNightlyState();
+    expect(state!.jobs).toHaveLength(4);
+    expect(state!.reviews).toHaveLength(0);
+    // Repairing the fixture restores its rows on the next due night.
+    await seed();
+    expect((await runNightlyRetro(ENABLED, NOW + DAY)).status).toBe('completed');
+    expect((await readNightlyState())!.reviews).toHaveLength(2);
   });
 
   it.each(['malformed', 'torn', 'unknown-version', 'unknown-status', 'future', 'conflicting', 'oversized'])(

@@ -1,31 +1,70 @@
-.pane { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: var(--space-4); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
-.header, .line, .worker { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); min-width: 0; }
-.headline { flex: 1 1 10rem; margin: 0; color: var(--text-secondary); }
-.refresh { min-height: var(--control-h-sm); padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+/* The Lanes board: headline, one line of when, the fleet's slots as one strip, then a card per lane. One column that wraps the same at 390 px. */
+.pane { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; min-width: 0; padding: var(--space-3); color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); overflow-wrap: anywhere; }
+.header, .line, .worker, .slots, .controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.header { align-items: baseline; justify-content: space-between; }
+.headline { flex: 1 1 10rem; margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); line-height: 1.3; }
+.meta { margin: calc(var(--space-2) * -1) 0 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.refresh { min-height: var(--control-h-sm); padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: var(--text-xs-size); cursor: pointer; }
 .refresh:hover { background: var(--bg-hover); }
 .refresh:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
-.section { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
-.title { margin: 0 0 var(--space-3); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
-.list { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-.lane, .merge, .worker, .headline { overflow-wrap: anywhere; }
-.count { margin-left: auto; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.badge { padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-unknown-bg); color: var(--status-unknown-fg); }
+/* Every lane's slots end to end: a segment as wide as the lane's slots, filled by what is running. */
+.strip { display: flex; gap: 2px; height: 8px; }
+.segment { position: relative; flex: 1 1 0; min-width: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+.segmentFill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.segment[data-state='held'] .segmentFill { background: var(--status-unknown-solid); }
+.segment[data-state='down'] .segmentFill { background: var(--status-danger-solid); }
+.segment[data-state='over'] .segmentFill { background: var(--status-warning-solid); }
+.section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.title { margin: 0; color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.lane { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); font-size: var(--text-sm-size); }
+.lane[data-focused] { border-color: var(--border-focus); box-shadow: var(--shadow-focus-ring); }
+.name { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-primary); }
+.badge { padding: 0 var(--space-2); border-radius: var(--radius-full); background: var(--status-unknown-bg); color: var(--status-unknown-fg); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
 .badge[data-tone='danger'] { background: var(--status-danger-bg); color: var(--status-danger-fg); }
-.track { height: var(--space-1); margin-top: var(--space-1); overflow: hidden; border-radius: var(--radius-sm); background: var(--meter-track); }
-.fill { height: 100%; background: var(--data-seq-4); }
-.fill[data-tone='held'] { background: var(--status-unknown-solid); }
+.badge[data-tone='warning'] { background: var(--status-warning-bg); color: var(--status-warning-fg); }
+/* The state mark sits before the words that say the same thing. Only a full lane is green; an open or unasked one is a hollow ring. */
+.state { margin-inline-start: auto; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.state::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-1); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+.lane[data-state='full'] .state::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.lane[data-state='over'] .state::before { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
+.lane[data-state='over'] .state { color: var(--status-warning-fg); }
+.lane[data-state='open'] .state::before { border-color: var(--accent-500); }
+/* One square per slot: filled when a worker holds it, outlined when it is open. */
+.pips { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 3px; min-width: 0; }
+.pip { box-sizing: border-box; width: 10px; height: 10px; border: 1px solid var(--border-strong); border-radius: 2px; transition: background-color var(--duration-slow) var(--ease-standard), border-color var(--duration-slow) var(--ease-standard); }
+.pip[data-pip='running'] { border-color: var(--accent-500); background: var(--accent-500); }
+.pip[data-pip='over'] { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
+.lane[data-state='held'] .pip[data-pip='running'] { border-color: var(--status-unknown-solid); background: var(--status-unknown-solid); }
+.lane[data-state='down'] .pip[data-pip='open'] { border-color: var(--status-danger-solid); }
+.track { flex: 1 1 8rem; height: 8px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
+.fill { height: 100%; background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.lane[data-state='held'] .fill { background: var(--status-unknown-solid); }
+.count { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Labelled readings: as many columns as fit, each a small label over its value. */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
+.fact { display: flex; flex-direction: column; min-width: 0; }
+.fact dt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.fact dd { margin: 0; color: var(--text-primary); font-weight: var(--font-weight-medium); font-variant-numeric: tabular-nums; }
+.fact dd[data-unknown] { color: var(--text-secondary); font-style: italic; font-weight: var(--font-weight-regular); }
+.controls { padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); font-size: var(--text-xs-size); }
+.controlLabel { color: var(--text-secondary); font-size: var(--text-2xs-size); }
 .jobButton, .moreButton { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .jobButton { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
 .jobButton:hover, .jobButton:focus-visible, .moreButton:hover, .moreButton:focus-visible { text-decoration: underline; }
-.moreButton { margin-top: var(--space-3); color: var(--text-tertiary); }
+.moreButton { color: var(--text-tertiary); }
+.worker { align-items: baseline; padding: var(--space-1) 0; color: var(--text-secondary); }
+.worker .jobButton { color: var(--text-primary); }
+.workerLane { display: inline-flex; align-items: center; gap: var(--space-1); }
 .worker span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
 .merge a { color: var(--text-link); }
-.muted { margin: 0; color: var(--text-tertiary); }
-.burn { color: var(--text-secondary); font-size: var(--text-xs-size); }
-p.burn { margin: 0 0 var(--space-3); }
+.muted { margin: 0; color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.muted[data-stale] { color: var(--status-warning-fg); }
+.burn { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
 .stepper { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .stepper button { min-width: var(--control-h-sm); min-height: var(--control-h-sm); padding: 0 var(--space-1); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer; }
 .stepper button:hover:not(:disabled) { background: var(--bg-hover); }
 .stepper button:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
 .stepper button:disabled { color: var(--text-tertiary); cursor: not-allowed; }
 .pauseError { color: var(--status-danger-fg); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .segmentFill, .pip, .fill { transition: none; } }

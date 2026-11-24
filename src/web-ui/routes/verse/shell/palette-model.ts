@@ -291,7 +291,7 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       key: `pane:${pane.id}`, kind: 'pane', group: 'panes',
       title: `Open pane: ${pane.title}`, subtitle: null, shortcut: null,
       monogram: null, engine: null,
-      keywords: [pane.title, ...pane.id.split('-'), ...(pane.description ? [pane.description] : []), ...(pane.id === 'goals' ? ['metrics', 'vision'] : []), ...(pane.keywords ?? [])],
+      keywords: [pane.title, ...pane.id.split('-'), ...(pane.description ? [pane.description] : []), ...(pane.id === 'goals' ? ['metrics', 'vision', 'milestone'] : []), ...(pane.keywords ?? [])],
       argument: null, tone: 'neutral', payload: { kind: 'pane', paneId: pane.id },
     });
   }

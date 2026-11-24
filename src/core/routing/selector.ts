@@ -107,16 +107,19 @@ export function parseCandidates(input: string): { candidates: SelectorCandidate[
 
 /** Attempt-weighted view over the cells that match this repo and job type. */
 function learnedPrior(cells: readonly OutcomeCellView[], repo: string, jobType: string) {
-  let attempts = 0, good = 0, usage = 0, timed = 0, minutes = 0;
+  let attempts = 0, good = 0, usageAllowance = 0, allowanceKnown = 0, timed = 0, minutes = 0;
   for (const c of cells) {
     if (c.repo !== repo || c.jobType !== jobType) continue;
-    attempts += c.attempts; good += c.goodMerges; usage += c.usage;
+    attempts += c.attempts; good += c.goodMerges;
+    usageAllowance += c.usageAllowance; allowanceKnown += c.usageAllowanceKnown;
     if (c.meanMinutesToMerge !== null && c.merges > 0) { timed += c.merges; minutes += c.meanMinutesToMerge * c.merges; }
   }
   return {
     // Smoothed so one lucky merge does not read as certainty.
     mergeRate: (good + PRIOR_MERGE_RATE * PRIOR_WEIGHT) / (attempts + PRIOR_WEIGHT),
-    usage: attempts > 0 ? usage / attempts : null,
+    // Only measured allowance-unit readings: jobs-ledger tokens_total is a
+    // different unit and must not land in the estUsage-calibrated denominator.
+    usage: allowanceKnown > 0 ? usageAllowance / allowanceKnown : null,
     minutes: timed > 0 ? minutes / timed : null,
   };
 }

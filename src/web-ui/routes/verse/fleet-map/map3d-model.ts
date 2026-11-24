@@ -1,49 +1,50 @@
 /**
  * The Map pane's 3D layout: the same fleet.live-map.v1 nodes and edges as the 2D rows (`phm map --json`),
- * stacked as rings, one per org level (leader on top, then lanes, running jobs, computers, pools). Pure: no
- * React, no DOM, no randomness. Projection is a plain orbit camera, so no 3D library is needed.
+ * grouped by the one org tree the 2D "By org" layout reads (core/fleet/org-layout-3d.ts): depth is the
+ * vertical axis, each lane or "Other" group is a cluster, children sit round their parent. Computers
+ * and pools are not in the org, so they sit on a ring under it. Pure: no React, no DOM, no randomness.
+ * Projection is a plain orbit camera, so no 3D library is needed.
  */
 import type { FleetLiveMap, LiveMapNode } from '../../../../core/fleet/live-map.js';
+import { fleetOrgGroups } from '../../../../core/fleet/org-groups.js';
+import { layoutOrgGroups3D, ORG_LAYER, ORG_MIN_RING, type OrgGroupLabel3D } from '../../../../core/fleet/org-layout-3d.js';
 
-/** World units between two org layers, and the arc each node gets on its ring. */
-const LAYER = 130, ARC = 120, MIN_RADIUS = 90;
+/** World units each node gets on the ring under the org (computers and pools). */
+const ARC = 120;
 /** The camera looks down on the rings by this much, so layers read as layers. */
 export const TILT_DEG = 22;
 /** Slow auto-rotate: one turn a minute. */
 export const DEGREES_PER_SECOND = 6;
 
 export interface Node3D extends LiveMapNode { x: number; y: number; z: number }
-export interface MapLayout3D { nodes: Node3D[]; at: Map<string, Node3D>; radius: number; height: number }
+export interface MapLayout3D { nodes: Node3D[]; at: Map<string, Node3D>; labels: OrgGroupLabel3D[]; radius: number; height: number }
 
 /**
- * One ring per org level, top to bottom, centred on the origin. A ring of one (the leader) sits on the axis.
- * Each node is ordered on its ring by the angle of the node it reports to, so a lane's jobs sit under it.
+ * Every node of the map is placed, grouped by who it reports to. A group id in `collapsed` shows only
+ * itself, and its label counts what is hidden.
  */
-export function layoutLiveMap3D(map: FleetLiveMap): MapLayout3D {
-  const parent = new Map<string, string>();
-  for (const edge of map.edges) {
-    if (edge.kind === 'reports-to') parent.set(edge.from, edge.to);
-    if (edge.kind === 'uses-resource') parent.set(edge.to, edge.from);
+export function layoutLiveMap3D(map: FleetLiveMap, collapsed: ReadonlySet<string> = new Set()): MapLayout3D {
+  const org = layoutOrgGroups3D(fleetOrgGroups(map), collapsed);
+  const source = new Map(map.nodes.map(node => [node.id, node]));
+  const hidden = new Set(org.hidden);
+  const placed: { node: LiveMapNode; depth: number; x: number; z: number }[] = [];
+  const seen = new Set<string>();
+  for (const row of org.positions) {
+    const node = source.get(row.id);
+    if (node && !seen.has(row.id)) { seen.add(row.id); placed.push({ node, depth: row.depth, x: row.x, z: row.z }); }
   }
-  const byLevel = new Map<number, LiveMapNode[]>();
-  for (const node of map.nodes) { const row = byLevel.get(node.level); if (row) row.push(node); else byLevel.set(node.level, [node]); }
-  const levels = [...byLevel.keys()].sort((a, b) => a - b);
-  const height = Math.max(0, levels.length - 1) * LAYER;
-  const at = new Map<string, Node3D>(), nodes: Node3D[] = [], angle = new Map<string, number>();
-  let radius = 0;
-  levels.forEach((level, index) => {
-    const row = byLevel.get(level)!;
-    const rank = (node: LiveMapNode) => { const up = parent.get(node.id); return up !== undefined && angle.has(up) ? angle.get(up)! : Number.MAX_VALUE; };
-    const ordered = row.map((node, order) => ({ node, order, rank: rank(node) })).sort((a, b) => a.rank - b.rank || a.order - b.order);
-    const r = ordered.length <= 1 ? 0 : Math.max(MIN_RADIUS, ordered.length * ARC / (2 * Math.PI));
-    radius = Math.max(radius, r);
-    ordered.forEach(({ node }, i) => {
-      const a = ordered.length <= 1 ? 0 : 2 * Math.PI * i / ordered.length;
-      const placed = { ...node, x: Math.round(r * Math.sin(a)) || 0, y: index * LAYER - height / 2, z: Math.round(-r * Math.cos(a)) || 0 };
-      angle.set(node.id, a); at.set(node.id, placed); nodes.push(placed);
-    });
+  const orgDepth = Math.max(1, ...org.positions.map(row => row.depth));
+  const rest = map.nodes.filter(node => !seen.has(node.id) && !hidden.has(node.id) && seen.add(node.id));
+  const r = rest.length <= 1 ? 0 : Math.max(ORG_MIN_RING, rest.length * ARC / (2 * Math.PI));
+  rest.forEach((node, i) => {
+    const a = 2 * Math.PI * i / rest.length;
+    placed.push({ node, depth: orgDepth + 1, x: Math.round(r * Math.sin(a)) || 0, z: Math.round(-r * Math.cos(a)) || 0 });
   });
-  return { nodes, at, radius, height };
+  const deepest = Math.max(0, ...placed.map(row => row.depth)), height = deepest * ORG_LAYER;
+  const nodes = placed.map(({ node, depth, x, z }): Node3D => ({ ...node, x, y: depth * ORG_LAYER - height / 2, z }));
+  const labels = org.labels.map(label => ({ ...label, y: label.depth * ORG_LAYER - height / 2 }));
+  return { nodes, at: new Map(nodes.map(node => [node.id, node])), labels,
+    radius: Math.max(0, r, ...nodes.map(node => Math.hypot(node.x, node.z))), height };
 }
 
 export interface Projected { x: number; y: number; scale: number; depth: number }
@@ -59,7 +60,7 @@ export function projectLayout3D(layout: MapLayout3D, yawDeg: number, width: numb
   const distance = extent * 3;
   const fit = Math.min(1.4, Math.min(width, height) * 0.42 / extent);
   const out = new Map<string, Projected>();
-  for (const node of layout.nodes) {
+  for (const node of [...layout.nodes, ...layout.labels.map(label => ({ ...label, id: `label:${label.id}` }))]) {
     const x1 = node.x * cy - node.z * sy, z1 = node.x * sy + node.z * cy;
     // Looking down: near points drop on screen, and higher layers (smaller y) sit nearer the camera.
     const y2 = node.y * ct + z1 * st, z2 = z1 * ct - node.y * st;
