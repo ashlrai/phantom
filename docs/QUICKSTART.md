@@ -68,6 +68,26 @@ phm --version   # report the installed version
 phm verse
 ```
 
+On Windows, one PowerShell command installs per user (no Administrator prompt), checks the package the same way the POSIX installer does, runs `phm doctor`, and registers the logon task:
+
+```powershell
+irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1 | iex
+```
+
+On Linux or macOS, the matching command is:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | bash
+```
+
+Register the per-user daemon after install:
+
+| OS | Service | Command |
+| --- | --- | --- |
+| macOS | launchd | `phm authority resident start` |
+| Linux | systemd --user | `phm daemon install` |
+| Windows | schtasks logon task | `phm daemon install` |
+
 Phantom opens at `http://127.0.0.1:7777/verse/` and binds to loopback. The CLI
 prints a read token for the browser and asks for a separate mutation token
 before your first chat or other change. Keep both tokens private. Confirm
@@ -232,7 +252,7 @@ does not widen fleet authority.
 
 The optional phone gateway is a separate, Access-protected and Mac-approved
 surface; [set it up](REMOTE-PHONE.md) rather than exposing the main loopback
-console. Resident autonomy is macOS-only and starts dormant. Inspect the
+console. The per-user daemon starts dormant. Register it with `phm daemon install` on Linux (systemd --user) or Windows (schtasks), or with `phm authority resident start` on macOS (launchd) after a signed grant. Inspect the
 **installed** release with `ashlr authority status` and
 `ashlr authority setup --dry-run --json`, then use the
 [autonomy setup guide](https://github.com/ashlrai/phantom/blob/master/docs/AUTONOMY-SETUP.md) if you want to sign a standing grant.

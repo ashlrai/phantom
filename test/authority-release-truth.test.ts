@@ -133,7 +133,9 @@ describe('emergency authority release truth', () => {
     // its token lifecycle now live only in the Hub reference, and the
     // quickstart must steer new users away from that path.
     expect(quickstart).toContain('[Phantom reference](https://github.com/ashlrai/phantom/blob/master/docs/HUB-REFERENCE.md)');
-    expect(quickstart).toMatch(/Resident autonomy is macOS-only and starts dormant/);
+    expect(quickstart).toMatch(/The per-user daemon starts dormant/);
+    expect(quickstart).toMatch(/systemd --user/);
+    expect(quickstart).toMatch(/schtasks/);
     expect(quickstart).toMatch(/older `\/` and `\/next\/` dashboard guidance should not\s+be used as a \S+ onboarding path/);
     for (const doc of [hubReference]) {
       expect(doc).toMatch(/compiled\s+(?:daemon and conductor\s+)?trust roots\s+are empty/i);

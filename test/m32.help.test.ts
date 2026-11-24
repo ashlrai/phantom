@@ -122,7 +122,8 @@ describe('HELP_ENTRIES — the command table', () => {
   it('truthfully documents the temporary resident-service restriction', () => {
     const byCommand = new Map(HELP_ENTRIES.map((entry) => [entry.cmd, entry.desc]));
 
-    expect(byCommand.get('daemon install')).toContain('Temporarily unavailable');
+    expect(byCommand.get('daemon install')).toContain('systemd --user');
+    expect(byCommand.get('daemon install')).toContain('schtasks');
     expect(byCommand.get('daemon service-status')).toContain('remains available');
     expect(byCommand.get('daemon uninstall')).toContain('remains available');
     expect(byCommand.get('worker setup')).toContain('fail-closed');
@@ -174,7 +175,8 @@ describe('cmdHelp routing', () => {
     expect(text).toContain('fleet evidence doctor <source>');
     expect(text).toContain('Bounded read-only diagnosis');
     expect(text).toContain('daemon install');
-    expect(text).toContain('install/reinstall/repair/restart authority is withheld');
+    expect(text).toContain('systemd --user');
+    expect(text).toContain('schtasks');
   });
 
   it('help --all → every command', async () => {

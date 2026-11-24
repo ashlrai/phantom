@@ -39,7 +39,7 @@ Agents run the factory; the human owner acts as a passive board member. Agents p
 | **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
 | **Release train** | Inspect release status, qualification and publication evidence. Releases use the repository's sanctioned workflow. [Release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md). |
 
-**Work with me** is interactive agent work. **Work for me** is the fleet. Resident autonomy ships **dormant**, requires a signed grant and is macOS-only. Saving an outcome does not activate it. [Set up autonomy](docs/AUTONOMY-SETUP.md).
+**Work with me** is interactive agent work. **Work for me** is the fleet. Resident autonomy ships **dormant** until you register the per-user daemon. macOS uses launchd through a signed grant. Linux uses systemd --user. Windows uses a per-user schtasks logon task. Saving an outcome does not activate it. [Set up autonomy](docs/AUTONOMY-SETUP.md).
 
 ## Quickstart
 
@@ -51,6 +51,20 @@ npm install -g @ashlr/phantom
 phm --version
 phm verse --no-open --json
 ```
+
+Windows, per user, no Administrator prompt:
+
+```powershell
+irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1 | iex
+```
+
+Linux and macOS can use the same checks with `scripts/install-release.sh`. From a source checkout, `./install.sh` still builds and links `phm`. Then register the daemon:
+
+| OS | Daemon | Command |
+| --- | --- | --- |
+| macOS | launchd | `phm authority resident start` after a signed grant |
+| Linux | systemd --user | `phm daemon install` |
+| Windows | schtasks logon task, limited and interactive | `phm daemon install` |
 
 Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the printed read token. The console asks for the mutation token when needed. Keep both tokens private.
 
@@ -114,7 +128,7 @@ A completed run, a merged PR and a published release are separate evidence. Phan
 
 The macOS desktop app wraps the same console and bundles the CLI. Download from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). See the [desktop installation guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install) for signed Apple silicon archives, matching manifests and platform limitations. The screenshots here show the browser console, not an installed native window.
 
-The CLI and browser console also run on Linux and Windows; resident autonomy remains macOS-only.
+The CLI, browser console, and per-user daemon run on macOS, Linux, and Windows.
 
 ## CLI reference
 

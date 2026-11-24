@@ -145,4 +145,7 @@ echo "  phm go              # fuzzy-jump to any project"
 echo "  phm status          # repo health overview"
 echo "  phm help            # full command reference"
 echo "  ashlr remains a compatible alias; phantom belongs to Phantom Secrets."
+if [[ "$(uname -s)" == "Linux" ]]; then
+  echo "  phm daemon install  # register the per-user systemd --user daemon"
+fi
 echo ""
