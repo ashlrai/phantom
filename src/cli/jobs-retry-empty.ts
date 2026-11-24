@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readEmptyJobs, type EmptyJobResult } from '../core/fleet/empty-jobs.js';
+import { guardianReceipt, planGuardianEmptyRecovery } from '../core/fleet/guardian-empty-recovery.js';
 
 const usage = 'Usage: phm jobs retry-empty --dry-run|--apply [--json] [--file <router-queue.md>]';
 const receipt = (id: string): string => createHash('sha256').update(id).digest('hex');
@@ -15,7 +16,7 @@ export function planEmptyRetries(queue: string, jobs: EmptyJobResult[], receipts
   const retried = new Set(lines.flatMap(line => /^\s*-\s+\S+\s+.*\bretry-empty-source=([\w.-]+)\s*$/.exec(line)?.[1] ?? []));
   for (const job of jobs) {
     // A class a model picked is advisory; only a rule's class may queue a retry.
-    if (job.source === 'decide' || !['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id)) || retried.has(job.id)) continue;
+    if (/^(?:RQ-FIX-MAIN-|FIXUP-MAIN-)/.test(job.id) || job.source === 'decide' || !['too-broad', 'tests-timeout'].includes(job.class) || receipts.has(receipt(job.id)) || retried.has(job.id)) continue;
     if (job.outcome && ['already-implemented', 'duplicate', 'empty'].includes(job.outcome)) continue;
     const id = job.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const entries = lines.filter(line => new RegExp(`^\\s*-\\s+(?:\\S+\\s+)*${id}\\s*\\(`).test(line));
@@ -47,6 +48,8 @@ with open(lockpath, 'a') as lock:
  if not stat.S_ISREG(info.st_mode): raise ValueError('queue is not regular')
  with open(path, encoding='utf-8', newline='') as f: current = f.read()
  if current != data['before']: raise ValueError('queue changed')
+ with open(data['jobsPath'], encoding='utf-8') as f:
+  if f.read() != data['ledger']: raise ValueError('job evidence changed')
  os.makedirs(receipts, mode=0o700, exist_ok=True)
  if any(os.path.exists(os.path.join(receipts, x)) for x in data['receipts']): raise ValueError('already retried')
  for name in data['receipts']:
@@ -83,16 +86,23 @@ export async function cmdJobsRetryEmpty(args: string[]): Promise<number> {
     const before = await readFile(file, 'utf8');
     const receiptDir = join(dirname(file), 'empty-retry-receipts');
     const receipts = new Set(await readdir(receiptDir).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error; }));
-    const lines = planEmptyRetries(before, report.jobs, receipts);
+    const jobsPath = join(root, 'metrics/jobs.jsonl');
+    const ledger = await readFile(jobsPath, 'utf8');
+    const recovery = planGuardianEmptyRecovery(before, ledger, receipts);
+    const lines = [...planEmptyRetries(before, report.jobs, receipts), ...recovery.lines];
     if (mode === 'apply' && lines.length) {
-      const ids = lines.map(line => receipt(/\bretry-empty-source=([\w.-]+)$/.exec(line)![1]!));
+      const ids = lines.map(line => {
+        const guardian = /guardian-retry-root=([\w.-]+) guardian-retry-tier=(\w+)$/.exec(line);
+        return guardian ? guardianReceipt(guardian[1]!, guardian[2]!) : receipt(/\bretry-empty-source=([\w.-]+)$/.exec(line)![1]!);
+      });
       const after = before + (before && !before.endsWith('\n') ? '\n' : '') + lines.join('\n') + '\n';
-      const result = spawnSync('python3', ['-c', writer, file, join(dirname(file), 'ready.lock'), receiptDir], { input: JSON.stringify({ before, after, receipts: ids }), encoding: 'utf8', timeout: 10000 });
+      const result = spawnSync('python3', ['-c', writer, file, join(dirname(file), 'ready.lock'), receiptDir], { input: JSON.stringify({ before, after, receipts: ids, jobsPath, ledger }), encoding: 'utf8', timeout: 10000 });
       if (result.status !== 0) throw new Error('Could not update queue; it may have changed or a retry was already recorded');
     }
-    if (json) console.log(JSON.stringify({ schema: 'jobs.retry-empty.v1', applied: mode === 'apply', lines }));
+    if (json) console.log(JSON.stringify({ schema: 'jobs.retry-empty.v1', applied: mode === 'apply', lines, escalations: recovery.escalations }));
     else if (lines.length) console.log(lines.join('\n'));
     else console.log('No eligible empty jobs to retry.');
+    if (!json) for (const row of recovery.escalations) console.log(`${row.job}: retry exhausted at ${row.tier}; inspect ${row.root}'s failure and repair or revert the branch.`);
     return 0;
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Retry failed');
