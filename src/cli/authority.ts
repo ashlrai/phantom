@@ -407,6 +407,8 @@ Compatible alias: ashlr authority <command>
   claude-signin [--force]                Renew Claude auth: one masked prompt for the \`claude setup-token\` output, stored in custody
   setup [--dry-run [--json]] [--yes]
                                          Guided Phase 0: custody, trust root, App, token, canary, rulesets, first grant, daemon
+  setup --full-permissions [--json|--dry-run]
+                                         Review macOS grants, authority, custody and agent connections
   resident start                         Install / restart the resident daemon under the active grant (you confirm here)
   resident stop                          Boot the resident daemon out and remove its plist (Stop is separate)
   resident status [--json]               Resident admission, service state and plist drift
@@ -466,6 +468,9 @@ export async function runAuthorityCli(args: string[], injected?: Partial<Authori
       case 'claude-signin':
         return await cmdClaudeSignin(parsed, deps);
       case 'setup':
+        if (parsed.flags.has('--full-permissions')) {
+          return await (await import('./permissions-onboarding.js')).runFullPermissionsSetup(args.slice(1), deps);
+        }
         return await cmdSetup(parsed, deps);
       case 'resident':
         return await cmdResident(rest[0], parsed, deps);

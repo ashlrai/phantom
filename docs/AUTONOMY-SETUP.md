@@ -18,6 +18,51 @@ regenerated from config. Every tick re-verifies the grant, Stop and the switch.
 Autonomy ships **dormant**: nothing runs until your custody key is compiled in,
 you sign a grant, and you start the resident service yourself.
 
+## Guided permissions setup
+
+In Phantom desktop, open **Settings > Full permissions setup > Review
+permissions**. The guide covers macOS permissions, the existing custody and
+GitHub App checklist, your selected authority level, and agent connections.
+Each action is optional. Returning to the guide reads current evidence again.
+
+```sh
+phm authority setup --full-permissions             # guided, explicit choices
+phm authority setup --full-permissions --json      # read-only status for agents
+phm authority setup --full-permissions --dry-run   # read-only text checklist
+```
+
+The JSON report identifies its permission scope as `cli-probe`. A CLI launcher
+and Phantom desktop have separate macOS permission identities. A successful
+CLI probe never establishes desktop access. Unknown evidence remains `unknown`;
+opening Settings does not establish a grant. `--yes` is refused in this guide.
+
+Accessibility uses `AXIsProcessTrusted`; Screen Recording uses
+`CGPreflightScreenCaptureAccess`. The CLI also preflights the fixed Messages and
+System Events targets with `AEDeterminePermissionToAutomateTarget`, without
+requesting consent. Status never prompts. A denied, unavailable or stopped
+target cannot become a successful observation through a Settings visit.
+After you explicitly choose a missing permission, the guide rechecks it before
+requesting consent with `AXIsProcessTrustedWithOptions`,
+`CGRequestScreenCaptureAccess`, or the AppleEvents probe with
+`askUserIfNeeded=true`. Already granted permissions are not requested again.
+
+The current desktop build lacks the AppleEvents capability needed to request
+Automation access. Its Automation rows say that access could not be checked
+and direct you to Settings; this guide does not alter signing or entitlements.
+Full Disk Access and Developer Tools require manual review because this guide
+has no supported public API to establish those grants. It never probes TCC,
+Keychain or application databases. Settings links have a manual fallback:
+**System Settings > Privacy & Security > the named permission**.
+
+Custody and GitHub prerequisites retain their existing commands and explicit
+approval boundaries. Selecting an authority level uses the existing grant and
+switch flow. Raising beyond the signed grant requires Touch ID; choosing
+Autonomous within an existing grant can resume resident work. Signing, the
+ledger, grant checks, Stop and revoke are unchanged. Agent sign-in stays in
+**Apps & Accounts** and never follows automatically from an OS grant.
+
+## Existing authority setup
+
 ```sh
 ashlr authority setup --dry-run   # print every step and what it would do
 ashlr authority setup --dry-run --json  # machine-readable checklist and runtime block

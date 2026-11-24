@@ -1160,6 +1160,7 @@
 /test/peer-channel-revocation-inflight-407s.test.ts @masonwyatt23
 /test/perf-budget-workflow.test.ts @masonwyatt23
 /test/perf-budget.test.ts @masonwyatt23
+/test/permissions-onboarding.test.ts @masonwyatt23
 /test/phantom-custody.test.ts @masonwyatt23
 /test/phantom-merge-window-api-nov01.test.ts @masonwyatt23
 /test/phantom-merge-window-recut-nov01.test.ts @masonwyatt23

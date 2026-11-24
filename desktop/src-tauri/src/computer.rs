@@ -124,6 +124,12 @@ pub const SETTINGS_URL_SCREEN: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 pub const SETTINGS_URL_ACCESSIBILITY: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+pub const SETTINGS_URL_AUTOMATION: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation";
+pub const SETTINGS_URL_FULL_DISK_ACCESS: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
+pub const SETTINGS_URL_DEVELOPER_TOOLS: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_DevTools";
 
 // ── app policy lists (MIRRORED from computer-types.ts) ───────────────────────
 //
@@ -287,11 +293,65 @@ pub enum PermissionKind {
     PostEvents,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PermissionPreflight {
+    screen: bool,
+    accessibility: bool,
+    post_events: bool,
+}
+
+impl PermissionPreflight {
+    /// Recheck immediately before an explicit request. A prior grant must
+    /// never trigger another system prompt, even if the page has stale state.
+    fn request_missing(self, kind: PermissionKind, request: impl FnOnce()) {
+        let granted = match kind {
+            PermissionKind::Screen => self.screen,
+            PermissionKind::Accessibility => self.accessibility,
+            PermissionKind::PostEvents => self.post_events,
+        };
+        if !granted {
+            request();
+        }
+    }
+
+    fn to_json(self, macos: String) -> Value {
+        // This build has no AppleEvents usage declaration or automation
+        // entitlement. Do not change signing or infer consent from another
+        // process. FDA and Developer Tools have no supported probe here;
+        // checking a private app database would not be an acceptable proxy.
+        let automation = serde_json::json!({
+            "status": "unknown",
+            "reason": "automation-unavailable-in-build",
+            "detail": "This desktop build cannot verify Automation. Review the Phantom entry in System Settings.",
+        });
+        let manual = serde_json::json!({
+            "status": "unknown",
+            "reason": "manual-verification-required",
+            "detail": "Review the Phantom entry in System Settings. Opening the pane does not verify a grant.",
+        });
+        serde_json::json!({
+            "supported": true,
+            "scope": "phantom-desktop",
+            "macos": macos,
+            "screen": self.screen,
+            "accessibility": self.accessibility,
+            "postEvents": self.post_events,
+            "automationMessages": automation.clone(),
+            "automationSystemEvents": automation,
+            "fullDiskAccess": manual.clone(),
+            "developerTools": manual,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SettingsKind {
     Screen,
     Accessibility,
+    Automation,
+    FullDiskAccess,
+    DeveloperTools,
 }
 
 impl SettingsKind {
@@ -300,6 +360,9 @@ impl SettingsKind {
         match self {
             SettingsKind::Screen => SETTINGS_URL_SCREEN,
             SettingsKind::Accessibility => SETTINGS_URL_ACCESSIBILITY,
+            SettingsKind::Automation => SETTINGS_URL_AUTOMATION,
+            SettingsKind::FullDiskAccess => SETTINGS_URL_FULL_DISK_ACCESS,
+            SettingsKind::DeveloperTools => SETTINGS_URL_DEVELOPER_TOOLS,
         }
     }
 }
@@ -2555,16 +2618,10 @@ mod mac {
 
     // ── permissions ──────────────────────────────────────────────────────────
 
-    struct Perms {
-        screen: bool,
-        accessibility: bool,
-        post_events: bool,
-    }
-
-    fn perms() -> Perms {
+    fn perms() -> PermissionPreflight {
         // SAFETY: plain preflight queries; none prompts.
         unsafe {
-            Perms {
+            PermissionPreflight {
                 screen: CGPreflightScreenCaptureAccess(),
                 accessibility: AXIsProcessTrusted() != 0,
                 post_events: CGPreflightPostEventAccess(),
@@ -2582,21 +2639,14 @@ mod mac {
     }
 
     fn perms_json() -> Value {
-        let p = perms();
-        json!({
-            "supported": true,
-            "macos": macos_version(),
-            "screen": p.screen,
-            "accessibility": p.accessibility,
-            "postEvents": p.post_events,
-        })
+        perms().to_json(macos_version())
     }
 
     fn request_permission(kind: PermissionKind) -> Value {
         // SAFETY: each call may show a system prompt and returns a bool; the
         // options dictionary is a live NSDictionary (toll-free CFDictionary)
         // and kAXTrustedCheckOptionPrompt a CFString constant.
-        unsafe {
+        perms().request_missing(kind, || unsafe {
             match kind {
                 PermissionKind::Screen => {
                     let _ = CGRequestScreenCaptureAccess();
@@ -2613,7 +2663,7 @@ mod mac {
                     let _ = AXIsProcessTrustedWithOptions(Retained::as_ptr(&options).cast());
                 }
             }
-        }
+        });
         perms_json()
     }
 
@@ -4339,6 +4389,9 @@ mod tests {
             r#"{"op":"request-permission","req":"r1","kind":"post-events"}"#.to_string(),
             r#"{"op":"open-settings","kind":"screen"}"#.to_string(),
             r#"{"op":"open-settings","kind":"accessibility"}"#.to_string(),
+            r#"{"op":"open-settings","kind":"automation"}"#.to_string(),
+            r#"{"op":"open-settings","kind":"full-disk-access"}"#.to_string(),
+            r#"{"op":"open-settings","kind":"developer-tools"}"#.to_string(),
             r#"{"op":"list-apps","req":"cc_abc-DEF_123"}"#.to_string(),
             format!(r#"{{"op":"screenshot","req":"r1","grants":{G}}}"#),
             format!(
@@ -4406,6 +4459,9 @@ mod tests {
             r#"{"op":"open-settings","kind":"camera"}"#.to_string(),
             r#"{"op":"open-settings","kind":"screen","url":"file:///"}"#.to_string(),
             r#"{"op":"request-permission","req":"r1","kind":"microphone"}"#.to_string(),
+            r#"{"op":"request-permission","req":"r1","kind":"full-disk-access"}"#.to_string(),
+            r#"{"op":"request-permission","req":"r1","kind":"automation"}"#.to_string(),
+            r#"{"op":"open-settings","kind":"developer-tools","url":"file:///"}"#.to_string(),
             r#"{"op":"screenshot","req":"r1","grants":[{"bundleId":"a.b","tier":"root"}]}"#
                 .to_string(),
             r#"{"op":"screenshot","req":"r1","grants":[{"bundleId":"a.b","tier":"read","x":1}]}"#
@@ -4555,6 +4611,39 @@ mod tests {
             SettingsKind::Accessibility.url(),
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         );
+        assert_eq!(SettingsKind::Automation.url(), SETTINGS_URL_AUTOMATION);
+        assert_eq!(SettingsKind::FullDiskAccess.url(), SETTINGS_URL_FULL_DISK_ACCESS);
+        assert_eq!(SettingsKind::DeveloperTools.url(), SETTINGS_URL_DEVELOPER_TOOLS);
+    }
+
+    #[test]
+    fn permission_requests_only_prompt_for_the_selected_gap() {
+        for kind in [PermissionKind::Screen, PermissionKind::Accessibility, PermissionKind::PostEvents] {
+            let mut prompts = 0;
+            let granted = PermissionPreflight { screen: true, accessibility: true, post_events: true };
+            granted.request_missing(kind, || prompts += 1);
+            assert_eq!(prompts, 0, "an existing grant must not prompt again");
+            let gap = PermissionPreflight {
+                screen: kind != PermissionKind::Screen,
+                accessibility: kind != PermissionKind::Accessibility,
+                post_events: kind != PermissionKind::PostEvents,
+            };
+            gap.request_missing(kind, || prompts += 1);
+            assert_eq!(prompts, 1, "only the explicit missing grant is requested");
+        }
+    }
+
+    #[test]
+    fn permission_report_keeps_unobservable_grants_unknown_and_process_scoped() {
+        let report = PermissionPreflight { screen: true, accessibility: false, post_events: false }
+            .to_json("test".into());
+        assert_eq!(report["scope"], "phantom-desktop");
+        assert_eq!(report["screen"], true);
+        assert_eq!(report["accessibility"], false);
+        for key in ["automationMessages", "automationSystemEvents", "fullDiskAccess", "developerTools"] {
+            assert_eq!(report[key]["status"], "unknown");
+            assert!(report[key]["reason"].as_str().is_some_and(|reason| !reason.is_empty()));
+        }
     }
 
     // ── policy ───────────────────────────────────────────────────────────────

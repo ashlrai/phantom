@@ -62,6 +62,7 @@ export function authoritySetupPlatformRefusal(
   if (platform === 'darwin') return null;
   if (args[0] !== 'setup') return null;
   if (args.some((arg) => arg === '--dry-run' || arg === '--help' || arg === '-h')) return null;
+  if (args.includes('--full-permissions') && args.includes('--json')) return null;
   return [
     `phm authority setup needs macOS: standing grants are signed with Touch ID and held by a macOS custody helper. This machine is ${platform}.`,
     'Nothing was changed. On this machine you can still:',

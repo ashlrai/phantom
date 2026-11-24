@@ -28,6 +28,11 @@ describe('setupRefusalLead', () => {
 });
 
 describe('authoritySetupPlatformRefusal', () => {
+  it('allows read-only full permission JSON off macOS without allowing interactive setup', () => {
+    expect(authoritySetupPlatformRefusal(['setup', '--full-permissions', '--json'], 'linux')).toBeNull();
+    expect(authoritySetupPlatformRefusal(['setup', '--full-permissions'], 'linux')).not.toBeNull();
+    expect(authoritySetupPlatformRefusal(['setup', '--json'], 'linux')).not.toBeNull();
+  });
   it('refuses a live setup off macOS with plain next steps', () => {
     for (const platform of ['linux', 'win32'] as const) {
       const lines = authoritySetupPlatformRefusal(['setup'], platform);

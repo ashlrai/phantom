@@ -460,6 +460,7 @@ export type ComputerProbeTarget =
   | { kind: 'focus' };
 
 export type ComputerPermissionKind = 'screen' | 'accessibility' | 'post-events';
+export type ComputerSettingsKind = keyof typeof COMPUTER_SETTINGS_URLS;
 
 /**
  * One `shell-computer` message (page → native). Every op that expects an
@@ -470,7 +471,7 @@ export type ComputerPermissionKind = 'screen' | 'accessibility' | 'post-events';
 export type NativeComputerOp =
   | { op: 'permissions'; req: string }
   | { op: 'request-permission'; req: string; kind: ComputerPermissionKind }
-  | { op: 'open-settings'; kind: 'screen' | 'accessibility' }
+  | { op: 'open-settings'; kind: ComputerSettingsKind }
   | { op: 'list-apps'; req: string }
   /** `scale` (0.25–1, default 1) shrinks the ≈1280×800 target box further, to save tokens. */
   | { op: 'screenshot'; req: string; grants: ComputerGrantWire[]; app?: string; display?: number; scale?: number }
@@ -581,4 +582,7 @@ export const COMPUTER_COMMAND_ID_RE = /^cc_[A-Za-z0-9_-]{12}$/;
 export const COMPUTER_SETTINGS_URLS = {
   screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
   accessibility: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+  automation: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Automation',
+  'full-disk-access': 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+  'developer-tools': 'x-apple.systempreferences:com.apple.preference.security?Privacy_DevTools',
 } as const;
