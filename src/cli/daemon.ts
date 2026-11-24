@@ -1210,8 +1210,19 @@ async function cmdDaemonDoctor(jsonMode: boolean, clearStale: boolean): Promise<
   }
   const verdict = mod.probeDaemonLiveness();
   const cleared = clearStale ? mod.clearStaleDaemonRecord() : null;
+  // Native supervisor evidence complements the lock/process proof. A queued
+  // task or loaded unit does not establish that the daemon itself is alive.
+  let service: ServiceStatusResult | null = null;
+  try {
+    const [manager, serviceOptions, loadConfig] = await Promise.all([
+      importServiceManager(), importServiceConfig(), importConfig(true, true),
+    ]);
+    // Match the installed budget/interval/parallel arguments, just as the
+    // service-status command does. Unreadable config cannot prove a match.
+    if (manager && serviceOptions && loadConfig) service = manager.serviceStatus(serviceOptions(loadConfig()));
+  } catch { /* Preserve liveness evidence independently of unknown service configuration. */ }
   if (jsonMode) {
-    console.log(JSON.stringify({ liveness: verdict, cleared }, null, 2));
+    console.log(JSON.stringify({ liveness: verdict, service, cleared }, null, 2));
   } else {
     console.log('');
     console.log(col.bold('  ashlr daemon doctor'));
@@ -1221,6 +1232,9 @@ async function cmdDaemonDoctor(jsonMode: boolean, clearStale: boolean): Promise<
       : verdict.alive === false ? col.dim('no') : col.yellow('unknown');
     console.log('  ' + col.bold('running:   ') + running);
     console.log('  ' + col.bold('evidence:  ') + col.dim(verdict.reason));
+    console.log('  ' + col.bold('service:   ') + col.dim(service
+      ? `${service.platformSpec}: ${service.registrationState}, ${service.runtimeState ?? 'unknown'}`
+      : 'manager or configuration unavailable'));
     const rec = verdict.recorded;
     console.log('  ' + col.bold('record:    ') + col.dim(rec.running === null
       ? 'daemon.json unreadable'

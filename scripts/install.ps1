@@ -2,8 +2,8 @@
 #
 #   irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1 | iex
 #
-# Detects the CPU architecture, downloads a matching GitHub release asset when
-# one is published, and otherwise installs the npm package. The npm tarball is
+# Installs the complete npm package by default. PHANTOM_PREFER_NATIVE=1 opts
+# into a matching CLI-only native asset when published (otherwise uses npm). The npm tarball is
 # checked the same way the POSIX release installer does: registry sha512
 # integrity, then `gh attestation verify` when the GitHub CLI is installed.
 # No Administrator prompt and no SYSTEM service. phm and ashlr are added to
@@ -15,6 +15,9 @@ $Tarball = $env:PHANTOM_TARBALL
 $Integrity = $env:PHANTOM_INTEGRITY
 $Version = $env:PHANTOM_VERSION
 $Prefix = $env:PHANTOM_PREFIX
+$Verifier = $env:PHANTOM_VERIFY_RELEASE
+$PreferNative = $env:PHANTOM_PREFER_NATIVE
+$PathMode = if ($env:PHANTOM_PATH_MODE) { $env:PHANTOM_PATH_MODE } else { 'user' }
 
 $RegistryPackage = '@ashlr/phantom'
 $RegistryHost = 'https://registry.npmjs.org'
@@ -23,6 +26,25 @@ $IntegrityPattern = '^sha512-[A-Za-z0-9+/]{86}==$'
 
 function Fail([string]$Message) {
   throw $Message
+}
+
+if ($PreferNative -and $PreferNative -notin @('0', '1')) { Fail 'PHANTOM_PREFER_NATIVE must be 0 or 1' }
+if ($PathMode -notin @('user', 'session')) { Fail 'PHANTOM_PATH_MODE must be user or session' }
+if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+$') {
+  Fail 'PHANTOM_VERSION must be a stable version (x.y.z).'
+}
+# Optional signer-owner adapter: an executable path, never evaluated as code.
+function Test-Release([string]$Artifact, [string]$Kind, [string]$ArtifactVersion) {
+  if ($Verifier) {
+    # IsPathRooted also accepts C:relative and \relative; require a full drive
+    # or UNC path. This works on Windows PowerShell 5.1 as well as PowerShell 7.
+    if ($Verifier -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+\\)' -or -not (Test-Path -LiteralPath $Verifier -PathType Leaf)) {
+      Fail 'Release verifier must be an absolute executable path'
+    }
+    $global:LASTEXITCODE = 0
+    & $Verifier $Artifact $Kind $ArtifactVersion
+    if (-not $? -or $LASTEXITCODE -ne 0) { Fail 'Release verifier refused the artifact' }
+  }
 }
 
 if ($env:USERNAME -eq 'SYSTEM' -or ($env:USERPROFILE -match '\\system32\\config\\systemprofile$')) {
@@ -67,11 +89,11 @@ function Test-Sha512([string]$Path, [string]$Expected) {
     $sha.Dispose()
   }
   $got = 'sha512-' + [Convert]::ToBase64String($hash)
-  if ($got -ne $Expected) { Fail 'Release integrity verification failed' }
+  if ($got -cne $Expected) { Fail 'Release integrity verification failed' }
 }
 
 function Test-Sha256File([string]$Path, [string]$ExpectedHex) {
-  $got = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+  $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
   if ($got -ne $ExpectedHex.ToLowerInvariant()) { Fail 'Release asset checksum verification failed' }
 }
 
@@ -79,27 +101,38 @@ try {
   if ($Tarball) {
     if (-not $Integrity) { Fail 'A local tarball requires PHANTOM_INTEGRITY (sha512-...).' }
     if (-not (Test-Path -LiteralPath $Tarball)) { Fail "Tarball not found: $Tarball" }
-    Test-Sha512 $Tarball $Integrity
     Copy-Item -LiteralPath $Tarball -Destination $downloaded
+    Test-Sha512 $downloaded $Integrity
+    Test-Release $downloaded npm $Version
     Write-Host 'Verified local tarball sha512'
   } else {
     $headers = @{ 'User-Agent' = 'phantom-install'; 'Accept' = 'application/vnd.github+json' }
     $assetName = "ashlr-windows-$archName.exe"
     $asset = $null
-    try {
-      $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$GitHubRepo/releases/latest"
-      $asset = @($release.assets) | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-    } catch {
-      $asset = $null
+    $release = $null
+    if ($PreferNative -eq '1') {
+      try {
+        $releasePath = if ($Version) { "tags/v$Version" } else { 'latest' }
+        $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$GitHubRepo/releases/$releasePath"
+        $asset = @($release.assets) | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+      } catch {
+        $asset = $null
+      }
     }
-    if ($asset -and $asset.digest -match '^sha256:([a-fA-F0-9]{64})$') {
+    $validRelease = $release -and $release.tag_name -match '^v\d+\.\d+\.\d+$' -and -not $release.draft -and -not $release.prerelease
+    if ($Version -and $release.tag_name -ne "v$Version") { $validRelease = $false }
+    $expectedAssetUrl = "https://github.com/$GitHubRepo/releases/download/$($release.tag_name)/$assetName"
+    if ($validRelease -and $asset -and $asset.browser_download_url -ceq $expectedAssetUrl -and $asset.digest -match '^sha256:([a-fA-F0-9]{64})$') {
+      $assetDigest = $Matches[1]
       $exe = Join-Path $work $assetName
       Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $exe -UseBasicParsing
-      Test-Sha256File $exe $Matches[1]
+      Test-Sha256File $exe $assetDigest
+      $assetVersion = ([string]$release.tag_name).Substring(1)
+      Test-Release $exe native $assetVersion
       $installedExe = $true
       Copy-Item -LiteralPath $exe -Destination (Join-Path $Prefix 'ashlr.exe')
-      Set-Content -Path (Join-Path $Prefix 'phm.cmd') -Encoding ascii -Value "@echo off`r`n`"%~dp0ashlr.exe`" %*`r`n"
-      Write-Host "Installed $assetName"
+      Set-Content -LiteralPath (Join-Path $Prefix 'phm.cmd') -Encoding ascii -Value "@echo off`r`n`"%~dp0ashlr.exe`" %*`r`n"
+      Write-Host "Installed CLI-only $assetName (console assets require the npm package)"
     } else {
       $metaUrl = if ($Version) {
         "$RegistryHost/$RegistryPackage/$Version"
@@ -110,30 +143,32 @@ try {
       if ($meta.name -ne $RegistryPackage) { Fail 'Registry metadata unavailable' }
       if ($meta.version -notmatch '^\d+\.\d+\.\d+$') { Fail 'Registry metadata unavailable' }
       $packageVersion = $meta.version
+      if ($Version -and $packageVersion -ne $Version) { Fail 'Registry version mismatch' }
       $integrity = [string]$meta.dist.integrity
       $url = [string]$meta.dist.tarball
       if ($integrity -notmatch $IntegrityPattern) { Fail 'Release integrity metadata unavailable' }
-      if ($url -ne "$RegistryHost/@ashlr/phantom/-/phantom-$packageVersion.tgz") {
+      if ($url -cne "$RegistryHost/@ashlr/phantom/-/phantom-$packageVersion.tgz") {
         Fail 'Release integrity metadata unavailable'
       }
       Invoke-WebRequest -Uri $url -OutFile $downloaded -UseBasicParsing
       Test-Sha512 $downloaded $integrity
       $gh = Get-Command gh -ErrorAction SilentlyContinue
       if ($gh) {
-        & gh attestation verify $downloaded --repo ashlr/phantom --hostname github.com
+        & gh attestation verify $downloaded --repo ashlrai/phantom --hostname github.com
         if ($LASTEXITCODE -ne 0) { Fail 'GitHub attestation verification failed' }
         Write-Host 'GitHub attestation verified'
       } else {
         Write-Host 'sha512 verified; GitHub CLI not installed, attestation left unknown'
       }
+      Test-Release $downloaded npm $packageVersion
       Write-Host "Verified npm package $packageVersion"
     }
   }
 
   if (-not $installedExe) {
-    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if (-not $npm) { Fail 'npm is required to install the package.' }
-    & npm install --global --prefix $Prefix --no-audit --no-fund $downloaded
+    & $npm.Source install --global --prefix $Prefix --no-audit --no-fund $downloaded
     if ($LASTEXITCODE -ne 0) { Fail 'npm install failed' }
   }
 } finally {
@@ -149,16 +184,20 @@ $phm = Join-Path $binDir 'phm.cmd'
 if (-not (Test-Path -LiteralPath $phm)) { $phm = Join-Path $binDir 'phm.exe' }
 if (-not (Test-Path -LiteralPath $phm)) { Fail 'phm was not installed' }
 
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$parts = @()
-if ($userPath) { $parts = $userPath.Split(';') | Where-Object { $_ -and ($_ -ne $binDir) } }
-[Environment]::SetEnvironmentVariable('Path', ((@($binDir) + $parts) -join ';'), 'User')
+if ($PathMode -eq 'user') {
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @()
+  if ($userPath) { $parts = $userPath.Split(';') | Where-Object { $_ -and ($_ -ne $binDir) } }
+  [Environment]::SetEnvironmentVariable('Path', ((@($binDir) + $parts) -join ';'), 'User')
+}
 $env:Path = "$binDir;$env:Path"
-if ($env:GITHUB_PATH) { Add-Content -Path $env:GITHUB_PATH -Value $binDir }
-Write-Host "PATH updated for the current user: $binDir"
+if ($PathMode -eq 'user' -and $env:GITHUB_PATH) { Add-Content -LiteralPath $env:GITHUB_PATH -Value $binDir }
+Write-Host "PATH updated ($PathMode): $binDir"
 
+& $phm --version
+if ($LASTEXITCODE -ne 0) { Fail 'Installed phm did not start' }
 & $phm doctor
-if ($LASTEXITCODE -ne 0) { Fail "phm doctor failed ($LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 0) { Write-Host 'Installed; doctor found setup items. Review them with phm doctor.' }
 & $phm daemon install
 if ($LASTEXITCODE -ne 0) { Fail "phm daemon install failed ($LASTEXITCODE)" }
 Write-Host 'Installed. Per-user logon task: AshlrDaemon (limited, interactive).'

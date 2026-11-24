@@ -53,10 +53,15 @@ irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1
 On Linux or macOS, the same checks are in `scripts/install-release.sh`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | sh
 ```
 
-That script detects the architecture, downloads a published per-OS release asset when one exists, and otherwise installs the npm package after verifying its sha512 integrity (and a GitHub attestation when `gh` is installed). It puts `phm` on your user PATH, runs `phm doctor`, and on Linux runs `phm daemon install`.
+The scripts detect the architecture and install the complete npm package after
+verifying the staged payload's SHA-512 integrity (and a GitHub attestation when
+`gh` is installed). Native CLI assets are an explicit opt-in until their console
+and worker bundles are qualified. An optional provider failure in `phm doctor`
+is reported separately from installation. See [platform installation](CROSS-PLATFORM.md)
+for version selection, the verifier hook and service registration behavior.
 
 The per-user daemon:
 

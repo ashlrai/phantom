@@ -1,0 +1,174 @@
+--- a/.github/workflows/install-smoke.yml
++++ b/.github/workflows/install-smoke.yml
+@@ -1,27 +1,22 @@
+-# Path-gated install smoke. Not a required check and not part of Merge Gate.
+-# Runs only when installer, daemon, or this workflow changes.
+-
++# Separate workflow PR only. Optional evidence, never a required check.
+ name: Install smoke
+ 
+ on:
+   pull_request:
+     paths:
+-      - install.sh
+       - scripts/install.ps1
+       - scripts/install-release.sh
+-      - src/core/daemon/**
+-      - src/cli/daemon.ts
+-      - src/cli/help.ts
+-      - .github/workflows/install-smoke.yml
+-  push:
+-    branches: [master]
+-    paths:
+-      - install.sh
+-      - scripts/install.ps1
+-      - scripts/install-release.sh
+-      - src/core/daemon/**
+-      - src/cli/daemon.ts
+-      - src/cli/help.ts
++      - src/core/daemon/service.ts
++      - src/core/daemon/service-config.ts
++      - src/core/daemon/windows-*.ts
++      - src/core/resources/os-sensors*.ts
++      - src/doctor/executable.ts
++      - test/install-user-scripts.test.ts
++      - test/install-release-posix.test.ts
++      - test/install-release-windows.test.ts
++      - test/os-sensors.test.ts
++      - test/doctor-executable.test.ts
++      - test/m93.daemon-service*.test.ts
+       - .github/workflows/install-smoke.yml
+ 
+ permissions:
+@@ -32,110 +27,39 @@
+   cancel-in-progress: true
+ 
+ jobs:
+-  install-smoke-linux:
+-    name: install smoke (linux)
+-    runs-on: ubuntu-latest
+-    timeout-minutes: 40
++  install-smoke-windows:
++    name: install smoke (windows)
++    runs-on: windows-latest
++    timeout-minutes: 15
+     steps:
+       - name: Checkout
+         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+         with:
+           persist-credentials: false
+-
+       - name: Set up Node.js
+         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+         with:
+-          node-version: "22"
+-
+-      - name: Start the user systemd manager
++          node-version: '22'
++      - name: Install locked test dependencies
++        shell: pwsh
+         run: |
+-          set -euo pipefail
+-          sudo loginctl enable-linger "$USER"
+-          runtime="/run/user/$(id -u)"
+-          sudo mkdir -p "$runtime"
+-          sudo chown "$(id -u):$(id -g)" "$runtime"
+-          sudo chmod 700 "$runtime"
+-          sudo systemctl start "user@$(id -u).service"
+-          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+-          systemctl --user is-system-running --wait || true
+-          systemctl --user status --no-pager
+-
+-      - name: Install dependencies and build
+-        run: |
+-          set -euo pipefail
+-          npm ci
+-          npm run build
+-
+-      - name: Run the source installer
+-        run: bash install.sh
+-
+-      - name: Doctor, daemon start, status, and stop
+-        run: |
+-          set -euo pipefail
+-          export PATH="$HOME/.local/bin:$PATH"
+-          phm doctor
+-          phm daemon start --once --dry-run
+-          phm daemon status
+-          phm daemon install
+-          phm daemon service-status --json
+-          phm daemon stop
+-          phm daemon uninstall
+-
+-  install-smoke-windows:
+-    name: install smoke (windows)
+-    runs-on: windows-latest
+-    timeout-minutes: 40
+-    steps:
+-      - name: Checkout
+-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+-        with:
+-          persist-credentials: false
+-
+-      - name: Set up Node.js
+-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+-        with:
+-          node-version: "22"
+-
+-      - name: Install dependencies and build
+-        run: |
+-          npm ci
+-          npm run build
+-
+-      - name: Run the PowerShell installer
++          npm ci --ignore-scripts --no-audit --no-fund
++          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
++      - name: Installer, service and sensor evidence
+         shell: pwsh
+         run: |
+           $ErrorActionPreference = 'Stop'
+-          $raw = npm pack --json --ignore-scripts 2>$null | Out-String
+-          if ($LASTEXITCODE -ne 0) { throw 'npm pack failed' }
+-          $start = $raw.IndexOf('[')
+-          if ($start -lt 0) { $start = $raw.IndexOf('{') }
+-          if ($start -lt 0) { throw "npm pack did not return JSON: $raw" }
+-          $pack = $raw.Substring($start) | ConvertFrom-Json
+-          $file = if ($pack.filename) { $pack.filename } else { $pack[0].filename }
+-          $full = (Resolve-Path $file).Path
+-          $sha = [System.Security.Cryptography.SHA512]::Create()
++          $taskHome = Join-Path $env:RUNNER_TEMP ('xplat-' + [guid]::NewGuid())
++          New-Item -ItemType Directory -Path $taskHome | Out-Null
++          $env:HOME = $taskHome
++          $env:USERPROFILE = $taskHome
+           try {
+-            $integrity = 'sha512-' + [Convert]::ToBase64String($sha.ComputeHash([IO.File]::ReadAllBytes($full)))
++            npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/install-release-windows.test.ts
++            if ($LASTEXITCODE -ne 0) { throw 'Windows installer execution tests failed or were not collected' }
++            npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/install-user-scripts.test.ts test/m93.daemon-service.test.ts test/m93.daemon-service-windows-integration.test.ts test/doctor-executable.test.ts test/os-sensors.test.ts
++            if ($LASTEXITCODE -ne 0) { throw 'Windows platform tests failed' }
++            node --import tsx --input-type=module -e "import assert from 'node:assert/strict'; import { readOsSensors } from './src/core/resources/os-sensors.ts'; const s = await readOsSensors(); assert.equal(s.platform, 'win32'); assert.equal(s.loadPerCore.value, null); assert.ok(s.memoryPressure.value !== null, 'CIM pressure unavailable'); assert.ok(s.swapUsedBytes.value !== null, 'CIM pagefile unavailable'); console.log(JSON.stringify(s));"
++            if ($LASTEXITCODE -ne 0) { throw 'Windows native sensor evidence failed' }
+           } finally {
+-            $sha.Dispose()
++            Remove-Item -LiteralPath $taskHome -Recurse -Force -ErrorAction SilentlyContinue
+           }
+-          $env:PHANTOM_TARBALL = $full
+-          $env:PHANTOM_INTEGRITY = $integrity
+-          & ./scripts/install.ps1
+-
+-      - name: Doctor, daemon start, status, and stop
+-        shell: pwsh
+-        run: |
+-          $ErrorActionPreference = 'Stop'
+-          phm doctor
+-          if ($LASTEXITCODE -ne 0) { throw "phm doctor failed ($LASTEXITCODE)" }
+-          phm daemon service-status
+-          if ($LASTEXITCODE -ne 0) { throw "phm daemon service-status failed ($LASTEXITCODE)" }
+-          phm daemon start --once --dry-run
+-          if ($LASTEXITCODE -ne 0) { throw "phm daemon start failed ($LASTEXITCODE)" }
+-          phm daemon status
+-          if ($LASTEXITCODE -ne 0) { throw "phm daemon status failed ($LASTEXITCODE)" }
+-          phm daemon stop
+-          if ($LASTEXITCODE -ne 0) { throw "phm daemon stop failed ($LASTEXITCODE)" }
+-          phm daemon uninstall
+-          if ($LASTEXITCODE -ne 0) { throw "phm daemon uninstall failed ($LASTEXITCODE)" }

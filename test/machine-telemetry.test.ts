@@ -204,6 +204,7 @@ describe('machine sampling with fixture hosts', () => {
       { file: '/usr/sbin/sysctl', args: ['-n', 'kern.memorystatus_vm_pressure_level'] },
       { file: '/usr/sbin/sysctl', args: ['vm.swapusage'] },
       { file: '/usr/bin/powermetrics', args: ['--samplers', 'gpu_power,ane_power', '-n', '1', '-i', '1'] },
+      { file: '/usr/bin/pmset', args: ['-g', 'therm'] },
     ]);
     expect(JSON.stringify(fixture.calls)).not.toMatch(/sudo|command=|args=|shell/);
   });
@@ -281,12 +282,43 @@ describe('machine sampling with fixture hosts', () => {
   });
 
   it('does not invoke OS commands on unsupported platforms', async () => {
-    const fixture = fixtureHost('win32');
+    const fixture = fixtureHost('freebsd');
     const result = await sampleMachine({ host: fixture.host });
     expect(fixture.calls).toEqual([]);
     expect(result.cpu).toEqual({ perCore: [], loadAverage: [] });
     expect(result.ram.freeBytes).toBeNull();
     expect(result.advisoryHeadroom).toBe(0);
+    expect(result.osSensors?.memoryPressure.reason).toBe('unsupported');
+  });
+
+  it('exposes Windows CIM observations without inventing Unix load or process attribution', async () => {
+    const fixture = fixtureHost('win32');
+    fixture.host.command = async (file, args) => {
+      fixture.calls.push({ file, args });
+      return JSON.stringify({ commitBytes: 512, commitLimitBytes: 1024, pagefileMiB: [12], temperaturesKelvin: [] });
+    };
+    const result = await sampleMachine({ host: fixture.host });
+    expect(fixture.calls).toHaveLength(1);
+    expect(fixture.calls[0]!.file).toMatch(/powershell\.exe$/i);
+    expect(fixture.calls[0]!.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+    expect(result.osSensors?.memoryPressure.value).toEqual({ kind: 'commit', usedPercent: 50 });
+    expect(result.osSensors?.swapUsedBytes.value).toBe(12 * MiB);
+    expect(result.osSensors?.loadPerCore).toMatchObject({ value: null, reason: 'unsupported' });
+    expect(result.osSensors?.compressedBytes.value).toBeNull();
+    expect(result.cpu.loadAverage).toEqual([]);
+    expect(result.rootsState).toBe('unknown');
+    expect(result.headroom).toBeNull();
+  });
+
+  it('publishes Linux PSI while preserving the existing pressure and admission fields', async () => {
+    const fixture = fixtureHost('linux');
+    fixture.files.set('/proc/pressure/memory', 'some avg10=4.00 avg60=2.00 avg300=1.00 total=400\nfull avg10=1.00 avg60=0.50 avg300=0.25 total=100\n');
+    const result = await sampleMachine({ host: fixture.host });
+    expect(result.osSensors?.memoryPressure.value).toEqual({ kind: 'psi', someAvg10Percent: 4, fullAvg10Percent: 1 });
+    expect(result.osSensors?.loadPerCore.value).toBe(0.75);
+    expect(result.osSensors?.swapUsedBytes.value).toBe(result.swap.usedBytes);
+    expect(result.memoryPressure.level).toBeNull();
+    expect(result.headroom).toBeNull();
   });
 });
 

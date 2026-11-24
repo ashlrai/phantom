@@ -82,6 +82,14 @@ accelerators remain null. Metric commands run concurrently with 100 ms bounds;
 root verification has its separate bound. Actual total latency must be measured
 under the dispatch host's workload before adoption.
 
+The additive `osSensors` snapshot uses the [platform sensor contract](CROSS-PLATFORM.md#os-sensor-contract)
+for compressed physical memory, thermal observations and native pressure
+signals. It shares existing macOS probes and has its own two-second deadline
+for additional providers. Linux reports PSI; Windows reports CIM commit pressure
+and pagefile usage, while Unix load average remains unsupported. Existing
+pressure, attribution and admission fields retain their meanings. Older stored
+samples may omit `osSensors`; consumers must preserve that unknown state.
+
 ## Advisory math and persistence
 
 `advisoryHeadroom` preserves the historical calculation

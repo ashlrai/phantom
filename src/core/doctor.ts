@@ -376,6 +376,12 @@ async function checkGit(): Promise<DoctorCheck> {
 
 /** ~/.local/bin on PATH */
 function checkLocalBin(phm: string | null): DoctorCheck {
+  if (process.platform === 'win32') {
+    return phm
+      ? check('local-bin', 'CLI on PATH', 'pass', `phm is on PATH at ${phm}`)
+      : check('local-bin', 'CLI on PATH', 'warn', 'phm is not on PATH',
+        'Run: npm install -g @ashlr/phantom, then reopen PowerShell.');
+  }
   const localBin = join(homedir(), '.local/bin');
   const pathDirs = (process.env['PATH'] ?? '').split(delimiter);
   if (pathDirs.includes(localBin)) {
@@ -396,11 +402,8 @@ function checkLocalBin(phm: string | null): DoctorCheck {
 
 /** Workbench binary present: canonical phm or compatible ashlr. */
 async function checkAshlrInstalled(phm: string | null): Promise<DoctorCheck> {
-  // `which` is Unix-only; Windows uses `where`.
-  const finder = process.platform === 'win32' ? 'where' : 'which';
   // `phantom` belongs to Secrets and cannot satisfy this workbench check.
-  const out = phm ?? (process.platform === 'win32'
-    ? await runCmd(finder, ['ashlr']) : findDoctorExecutable('ashlr'));
+  const out = phm ?? findDoctorExecutable('ashlr');
   if (out) {
     return check('ashlr', 'Phantom CLI installed (phm / ashlr)', 'pass', out);
   }
@@ -409,7 +412,9 @@ async function checkAshlrInstalled(phm: string | null): Promise<DoctorCheck> {
     'Phantom CLI installed (phm / ashlr)',
     'fail',
     'phm and compatible ashlr not found on PATH',
-    'Run: npm install -g @ashlr/phantom  (or ensure ~/.local/bin is on PATH)',
+    process.platform === 'win32'
+      ? 'Run: npm install -g @ashlr/phantom, then reopen PowerShell.'
+      : 'Run: npm install -g @ashlr/phantom  (or ensure ~/.local/bin is on PATH)',
   );
 }
 
@@ -1498,9 +1503,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
     .then((m) => m.getProviderRegistry(cfg))
     .catch(() => null);
   const git = checkGit();
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  const phmPath = process.platform === 'win32'
-    ? runCmd(finder, ['phm']) : Promise.resolve(findDoctorExecutable('phm'));
+  const phmPath = Promise.resolve(findDoctorExecutable('phm'));
   const installed = phmPath.then(checkAshlrInstalled);
 
   // --- Pre-fetch M3 + M5 + M7 + M19 + M33 + pool-CLI registry results (all async-safe, never throw) ---

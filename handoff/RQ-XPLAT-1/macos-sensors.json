@@ -1,0 +1,36 @@
+{
+  "evidence": "read-only-native-macos-sample",
+  "snapshot": {
+    "schema": "os.sensors.v1",
+    "platform": "darwin",
+    "sampledAtMs": 1795512259223,
+    "memoryPressure": {
+      "value": {
+        "kind": "kernel-level",
+        "level": "normal"
+      },
+      "source": "sysctl:kern.memorystatus_vm_pressure_level",
+      "reason": null
+    },
+    "swapUsedBytes": {
+      "value": 3603368509,
+      "source": "sysctl:vm.swapusage",
+      "reason": null
+    },
+    "compressedBytes": {
+      "value": 2404827136,
+      "source": "vm_stat:Pages occupied by compressor",
+      "reason": null
+    },
+    "loadPerCore": {
+      "value": 1.7958984375,
+      "source": "os.loadavg/logical-cpus",
+      "reason": null
+    },
+    "thermal": {
+      "value": null,
+      "source": "pmset:CPU_Speed_Limit",
+      "reason": "invalid"
+    }
+  }
+}

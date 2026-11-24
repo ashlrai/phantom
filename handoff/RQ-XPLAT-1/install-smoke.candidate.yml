@@ -1,0 +1,65 @@
+# Separate workflow PR only. Optional evidence, never a required check.
+name: Install smoke
+
+on:
+  pull_request:
+    paths:
+      - scripts/install.ps1
+      - scripts/install-release.sh
+      - src/core/daemon/service.ts
+      - src/core/daemon/service-config.ts
+      - src/core/daemon/windows-*.ts
+      - src/core/resources/os-sensors*.ts
+      - src/doctor/executable.ts
+      - test/install-user-scripts.test.ts
+      - test/install-release-posix.test.ts
+      - test/install-release-windows.test.ts
+      - test/os-sensors.test.ts
+      - test/doctor-executable.test.ts
+      - test/m93.daemon-service*.test.ts
+      - .github/workflows/install-smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-smoke-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-smoke-windows:
+    name: install smoke (windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Install locked test dependencies
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+      - name: Installer, service and sensor evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $taskHome = Join-Path $env:RUNNER_TEMP ('xplat-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $taskHome | Out-Null
+          $env:HOME = $taskHome
+          $env:USERPROFILE = $taskHome
+          try {
+            npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/install-release-windows.test.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Windows installer execution tests failed or were not collected' }
+            npm run test:ci -- --maxWorkers=1 --fileParallelism=false test/install-user-scripts.test.ts test/m93.daemon-service.test.ts test/m93.daemon-service-windows-integration.test.ts test/doctor-executable.test.ts test/os-sensors.test.ts
+            if ($LASTEXITCODE -ne 0) { throw 'Windows platform tests failed' }
+            node --import tsx --input-type=module -e "import assert from 'node:assert/strict'; import { readOsSensors } from './src/core/resources/os-sensors.ts'; const s = await readOsSensors(); assert.equal(s.platform, 'win32'); assert.equal(s.loadPerCore.value, null); assert.ok(s.memoryPressure.value !== null, 'CIM pressure unavailable'); assert.ok(s.swapUsedBytes.value !== null, 'CIM pagefile unavailable'); console.log(JSON.stringify(s));"
+            if ($LASTEXITCODE -ne 0) { throw 'Windows native sensor evidence failed' }
+          } finally {
+            Remove-Item -LiteralPath $taskHome -Recurse -Force -ErrorAction SilentlyContinue
+          }
