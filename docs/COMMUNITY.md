@@ -13,7 +13,7 @@ Ashlr Stack, Ashlr Plugin).
 |---------|-----------|--------|
 | GitHub issues | Bugs, feature requests, structured feedback (templates in `.github/ISSUE_TEMPLATE/`) | Live |
 | GitHub Discussions | Ideas, questions, show-and-tell, roadmap votes | Live on phantom, phantom-secrets, lexicon; being enabled on the rest |
-| Discord | Real-time help and ideas. A bot will file a `feedback` issue (linking back to the message) when a maintainer or the poster reacts with a ticket emoji | Planned. Invite link: `DISCORD_INVITE_URL` (placeholder until the server opens) |
+| Discord ([The Dev Shack](https://discord.gg/jBQrSU6XeD)) | Real-time help and ideas. A bot will file a `feedback` issue (linking back to the message) when a maintainer or the poster reacts with a ticket emoji | Server live; feedback bot planned |
 | Anonymous telemetry | Install and weekly-active counts per tool, version and OS ([TELEMETRY.md](TELEMETRY.md)) | Shipping |
 
 Every template applies `needs-triage` plus a type label, so nothing is lost
@@ -95,4 +95,5 @@ subset appears on ashlr.ai/open-source.
 - [ ] Discussions enabled on every core repo
 - [ ] Fleet triage lane (dedupe, classify, readiness) running daily
 - [ ] Generated ranked roadmap on ashlr.ai/open-source
-- [ ] Discord server, invite link and feedback bot
+- [x] Discord server and invite ([The Dev Shack](https://discord.gg/jBQrSU6XeD))
+- [ ] Discord feedback bot (reaction to issue)
