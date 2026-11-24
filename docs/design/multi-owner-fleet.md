@@ -87,7 +87,7 @@ Machines:
 
 ## Identity and grant model (pending Security review)
 
-Security has reviewed the first draft. Its required changes for M3 and its answers on key storage, revocation windows and cross-owner tools are adopted below. This section stays **pending Security review** until Security clears the M3 PR; a relay of approval does not count.
+Security has reviewed this design twice. Its signer conditions (S-1 to S-9), its required changes M3-1 to M3-13 and its answer on key storage are adopted below. Its recommendations on revocation windows and cross-owner tools are recorded as recommendations, with the owner decisions still open. This section stays **pending Security review** until Security clears the M3 PR; a relay of approval does not count.
 
 ### Principals
 
@@ -99,25 +99,28 @@ Security has reviewed the first draft. Its required changes for M3 and its answe
 
 ### Keys and the signer interface
 
-No private key ever exists in Phantom Secrets, in an environment variable or in any process an agent can start. Phantom Secrets keeps only public keys and records, by name.
+No private key ever exists in Phantom Secrets, in an environment variable, in a file or in any process an agent can start. Phantom Secrets keeps only public keys and signed records, by name. All signing goes through one pluggable signer interface; no backend requires a particular operating system.
 
-All signing goes through the custody helper as a signing oracle. Its new `sign-fleet-grant` command has its own strict input contract, its own domain tag and its own user-presence prompt rendered from the validated payload it is about to sign. Grant issue, revoke and device enrollment are reachable only through that helper, started by the human. They are never reachable through the web API, the MCP server or a bus envelope.
-
-The helper sits behind one pluggable signer interface, so no owner needs any particular operating system:
-
-| Backend | Platforms | Key | User presence | Algorithm |
+| Backend | Platforms | Key | Presence and verification per signature | Helper |
 | --- | --- | --- | --- | --- |
-| Secure Enclave | macOS | Non-exportable P-256 | Touch ID or device password per signature | ES256 |
-| TPM 2.0 | Windows (Windows Hello) and Linux (`tpm2`) | Non-exportable P-256 created in the TPM | Windows Hello per signature; on Linux a TPM authorization policy that requires a fresh user gesture | ES256 |
-| WebAuthn or FIDO2 | Any OS with a hardware security key or a platform passkey | Non-exportable credential on the authenticator | User presence flag required on every assertion; user verification required where the authenticator supports it | ES256 |
+| Secure Enclave | macOS | Non-exportable P-256 generated in the enclave | Touch ID or the device passcode | The existing custody helper, with a new `sign-fleet-grant` verb |
+| TPM 2.0 with Windows Hello | Windows | Non-exportable P-256 from the Platform Crypto Provider, with TPM key attestation | Windows Hello PIN or biometric on every use | Runs as the user, never as a SYSTEM service; reached only over a named pipe with a protected DACL for the owner's user SID, remote clients rejected, first-instance creation, and server and client process identity checks. Never TCP |
+| TPM 2.0 | Linux | Non-exportable P-256 under the owner hierarchy (`fixedTPM`, `fixedParent`, `sensitiveDataOrigin`) | A PolicyAuthValue PIN per signature under TPM dictionary-attack lockout. This proves the PIN, not physical presence, so the device record says `uv: "pin-only"` | A system unit running as a dedicated `phantom-signer` user in group `tss`, hardened (`NoNewPrivileges`, `ProtectHome`, `ProtectSystem=strict`, `PrivateTmp`, `MemoryDenyWriteExecute`) |
+| FIDO2 or WebAuthn | Any OS, hardware security keys and platform passkeys | Non-exportable credential on the authenticator | Both the UP and UV flags on every assertion | On Linux a user unit; on other systems the platform API. Linux helpers listen only on a Unix socket checked with `SO_PEERCRED` for the owner's uid, never an abstract socket or TCP, and require Yama `ptrace_scope` of 1 or higher |
 
-Rules for every backend:
+Rules every backend meets:
 
-- **Algorithm.** ES256 (ECDSA P-256 with SHA-256, IEEE P1363 signature encoding) is mandatory and is the only algorithm verifiers accept in M3, because every backend supports it. Adding another algorithm needs a new Security review.
-- **Non-exportable keys.** A backend that cannot prove the key is hardware-bound and non-exportable is refused at enrollment.
-- **User presence per signature.** No cached unlock, session token or batch signing.
-- **Same signed bytes.** Every backend signs the same domain-tagged canonical bytes. The WebAuthn backend uses SHA-256 of those bytes as the challenge, and verifiers check the assertion's challenge, relying party id, client data type and the user presence flag before checking the signature.
-- **One shared contract.** A TypeScript and native test vector suite, including adversarial vectors, pins the bytes for every backend.
+- **S-1 Hardware key.** Generated inside hardware and never exportable. Software keys are never allowed, including an encrypted file, an OS keychain or credential store, a desktop secret service or Phantom Secrets.
+- **S-2 Presence and verification on every signature.** An agent can request a signature but can never complete one. The prompt is shown by the OS or the helper, never through an agent's terminal. No cached unlock, session or batch signing.
+- **S-3 Attestation where available.** Secure Enclave key generation, TPM key attestation on Windows, TPM2_Certify against the endorsement key chain on Linux, and a packed or TPM attestation statement for FIDO2 with the AAGUID checked against a declared allowlist. The signer always requests attestation. When none is available, for example a platform passkey that returns `none`, the device is accepted only after the owner compares its key fingerprint out of band, its record says `attested: false`, and peers may refuse such devices by policy.
+- **S-4 One byte encoding.** The message to sign is `SHA-256("phantom.fleet.sig.v1\x00" || canonical bytes)` everywhere. Secure Enclave and TPM backends sign that digest. The FIDO2 backend uses it as the WebAuthn challenge, and the verifier rebuilds it and checks the client data type, challenge and origin, the relying party id hash, the UP and UV flags, and that the signature counter never goes backwards. Every backend's output is normalized to one record: `{ alg, kid, backend, sig, webauthn? }`.
+- **S-5 Algorithms.** Version 1 is ES256 only: P-256 ECDSA with an IEEE P1363 `r||s` signature, low-S normalized, on every backend; verifiers refuse high-S encodings. The owner record declares its accepted set, and a verifier accepts only an `alg` that is in both that set and its own compiled-in set. `alg` sits inside the signed bytes, so there is no negotiation or downgrade, and `none` is never accepted. Ed25519 is not in version 1, because the Secure Enclave and most TPMs cannot hold it.
+- **S-6 Signer bound to the owner.** The owner root record lists each device `kid`, signed by an owner root key, with the key's `backend`, `alg`, `attested` and `uv` level, the SHA-256 of its public key, `nbf` and `exp` (at most one year). A signature verifies only if its `kid` is a currently valid device under the issuer's root.
+- **S-7 Replay fields.** Every signed grant and envelope includes `aud`, `nbf`, `exp`, a 128-bit `nonce`, `kid` and `ctx`; envelopes also carry a per-device `seq`.
+- **S-8 No hardware means receive-only.** A node without a qualifying hardware backend can join only as receive-only. It cannot issue grants or enroll devices, and it never falls back to a software key, an environment variable, a vault entry or a passphrase. A test proves there is no software fallback.
+- **S-9 What you see is what you sign.** The helper builds the prompt from the validated payload: purpose, grantee, verbs, expiry and a 12-hex digest of the message. Windows passes that text as the Hello or key UI policy description; FIDO2 and Linux helpers show it in a helper-owned window before the touch. Off macOS a same-user process could draw a look-alike window, so the protection there is the per-signature hardware gesture plus the owner's audit view, which shows every issued grant again after the fact.
+
+Grant issue, revoke and device enrollment are reachable only through the signer helper with a hardware gesture, started by the human. They are never reachable through the web API, the MCP server or a bus envelope. Fleet nodes set `PHANTOM_REQUIRE_KEYCHAIN=1`, and no fleet trust material is ever stored in Phantom Secrets or a desktop secret service.
 
 ### Tenancy
 
@@ -128,7 +131,7 @@ Rules for every backend:
 
 ### Grants
 
-A grant is a JSON document signed by one of the issuing owner's devices. Every field below is inside the signed bytes:
+A grant is a JSON document signed by one of the issuing owner's devices through the signer interface. Every field except `signature` is inside the signed bytes:
 
 ```json
 {
@@ -149,41 +152,41 @@ A grant is a JSON document signed by one of the issuing owner's devices. Every f
   "limits": { "maxMessagesPerHour": 120, "spend": "none", "egress": "none" },
   "issuedAt": 1795478400,
   "nbf": 1795478400,
-  "expiresAt": 1798070400,
+  "exp": 1798070400,
   "alg": "ES256",
-  "sig": "<base64url P1363 signature>"
+  "signature": { "alg": "ES256", "kid": "kid_cccccccccccccccccccccccccccccccc", "backend": "tpm", "sig": "<base64url P1363 r||s, low-S>" }
 }
 ```
 
 Rules:
 
 - Deny by default. No grant means no cross-owner read, post, roster view or bundle pull.
-- The verifier rejects a grant whose `aud` is not itself, whose `kid` is not a currently valid device of `issuer`, whose time is outside `nbf` and `expiresAt`, or whose `id` or `nonce` it has already seen with a different body.
+- The verifier rejects a grant whose `aud` is not itself, whose `kid` is not a currently valid device of `issuer`, whose `alg` is not valid under the issuer root, whose time is outside `nbf` and `exp`, or whose `id` or `nonce` it has already seen with a different body.
 - A grant is trust in the grantee **owner**. The agent list is advisory and is enforced only by the grantee's node.
 - A cross-owner channel needs a grant from **every** owner whose agents take part. One owner cannot pull another owner's agents into a channel.
 - Every grant expires; the default is 30 days, and there are no permanent grants.
 - M3 verbs are a closed list: `bus.read`, `bus.post` (store and display only), `roster.view` (reduced view) and `bundle.pull` (signature required; import stays a dry run and drafts-only). Unknown verbs fail closed.
-- Cross-owner `tool.use` does not ship in M3. After the M4 transport review it may be allowed only for tools that use no credentials or only credentials the calling owner binds, are read-only, validate a declared argument schema strictly, scrub outputs for secret-shaped values, have per-grant call and byte caps, and are audit-logged on both nodes. Whether a tool may ever run with the tool owner's own credentials is an open owner decision; Security recommends never.
+- Cross-owner `tool.use` does not ship in M3 (M3-7). Security recommends that, after the M4 transport review, it be allowed only for tools that use no credentials or only credentials the calling owner binds, are read-only, validate a declared argument schema strictly, scrub outputs for secret-shaped values, have per-grant call and byte caps, and are audit-logged on both nodes. Whether and when it is ever allowed is an open owner decision.
 - Grants never authorize spend, outside messages, merges, releases or changes to pinned files. Those keep their existing approvals.
 - **Strict canonical parsing.** Verification uses a strict parser that rejects duplicate keys, lone surrogates, non-integer times and unknown fields. It re-canonicalizes (RFC 8785) and compares bytes before checking the signature. Ids and handles are ASCII only.
 
 ### Signed envelopes
 
-Every cross-owner envelope is signed by the sending device. The signed bytes include the domain tag `phantom.fleet.envelope.v1`, the grant id, the sender device `kid`, the recipient owner, the channel, a per-device monotonic sequence number and a timestamp. The receiver allows a skew of 5 minutes, keeps a high-water mark per sending device, and rejects duplicates, out-of-order sequence numbers and out-of-window envelopes.
+Every cross-owner envelope is signed by the sending device through the signer interface, with `ctx` `phantom.fleet.envelope.v1`. The signed bytes include `aud`, `nbf`, `exp`, a 128-bit `nonce`, `alg`, the grant id, the sender device `kid`, the recipient owner, the channel, a per-device monotonic `seq` and a timestamp. The receiver allows a skew of 5 minutes, keeps a high-water mark per sending device, and rejects duplicates, out-of-order sequence numbers and out-of-window envelopes.
 
 ### Revocation
 
-- Each owner publishes a signed revocation list with `seq`, `issuedAt`, `nextUpdate`, the issuer's current device `kid` set and the issuer's audit chain head.
-- **Own-issued grants: 0 seconds.** The issuing node checks its own grants at every use against its local revocation state, with no network involved.
-- **Foreign lists: 15 minutes.** `nextUpdate` is at most 15 minutes after `issuedAt`. A list past `nextUpdate` is stale, and stale means revoked.
+- Each owner publishes a signed revocation list with `seq`, `issuedAt`, `nextUpdate`, the issuer's current device `kid` set with each key's `backend` and `alg`, and the issuer's audit chain head.
+- **Revocation windows (Security recommendation, owner decision open).** Own-issued grants: 0 seconds. The issuing node checks its own grants at every use against its local revocation state, with no network involved.
+- Foreign lists: 15 minutes. `nextUpdate` is at most 15 minutes after `issuedAt`. A list past `nextUpdate` is stale, and stale means revoked.
 - **Offline fails closed.** Stored foreign envelopes stay readable locally as data, but no new cross-owner action is taken until a fresh list arrives. A node that has never fetched a list from an issuer treats all of that issuer's grants as revoked. A list with a lower `seq` than one already seen is a rollback: it is refused and raises an audit alert.
 - Owners can revoke one grant, every grant to one owner, or everything for one device or agent. Revoking a device `kid` makes every grant and envelope signed by it fail on the next check.
-- **Kill switch invariant.** No cross-owner verb or envelope kind can write the kill switch, the communications pause, local policy, grants, the roster configuration or pinned files. KILL on any node stops all of that node's cross-owner traffic at once. Each owner's node enforces its own stop and hard limits.
+- **Kill switch invariant.** No cross-owner verb or envelope kind can write the kill switch, the communications pause, local policy, grants, the roster configuration or pinned files. KILL on any node, on every OS, stops all of that node's cross-owner traffic at once. Each owner's node enforces its own stop and hard limits.
 
 ### Rotation and recovery
 
-- **Recovery root.** At setup the owner mints a second owner root on a separate authenticator, and peers pin its public key at join together with the primary.
-- **Rotation.** A new root is announced by a statement signed by both the old and new roots (`supersedes`, effective time), each with user presence. Device records are re-signed under the new root. Grants are short-lived and are re-issued, not re-signed; grants signed by a superseded `kid` stop verifying at the cutover. Peers accept a rotation only through the pinned old root or the pinned recovery root.
+- **Recovery root.** Security recommends a second owner root on separate hardware, such as a FIDO2 security key, pinned by peers at join together with the primary. Who holds it, and in what form, is an open owner decision.
+- **Rotation.** A new root is announced by a statement signed by both the old and new roots (`supersedes`, effective time), each with user presence. Device records are re-signed under the new root. Moving between backends, for example from macOS to Windows, is an ordinary rotation. Grants are short-lived and are re-issued, not re-signed; grants signed by a superseded `kid` stop verifying at the cutover. Peers accept a rotation only through the pinned old root or the pinned recovery root.
 - **Lost device.** From any remaining device or the recovery root, the owner publishes a revocation of that device `kid` with a higher `seq`. The owner revokes the lost device's provider sessions with each provider directly; agents never do.
 - **Key compromise.** The recovery root signs a statement that the compromised root is replaced, and revokes every `kid` under it. Peers drop all grants from the old root and re-pin out of band.
 - **All keys lost.** The owner starts over with a new `own_` id and each peer re-pins out of band. A peer can always drop an owner unilaterally.
@@ -230,24 +233,42 @@ Import rules:
 
 - Each node keeps an append-only, hash-chained audit log of grant issue, grant use, revocation, export, import and every denied cross-owner action.
 - Entries hold ids, verbs, digests, decisions and times only, never message bodies or secret values.
-- The custody helper signs the chain head at every grant issue and revoke and at least daily, and each signed revocation list carries the issuer's chain head, so a peer can detect a rewritten log.
+- The signer signs the chain head at every grant issue and revoke and at least daily, and each signed revocation list carries the issuer's chain head, so a peer can detect a rewritten log.
 - Cross-owner envelopes carry the grant id they rely on, so both owners can match an action to its grant from their own logs.
 
-### Before M3 turns on
+### Required changes before M3 turns on
 
-1. The changes in this section are implemented with tests, and Security has reviewed the M3 PR.
-2. `sign-fleet-grant` ships in the custody helper with the signer interface above, batched into one authority release so routine releases do not re-trip existing standing grants.
-3. Each participating owner has, on their own device, set up the signer with user presence, minted a recovery root and compared key fingerprints out of band. Agents cannot do these steps.
-4. Adversarial tests are green: replay across device, channel and audience; duplicate-key and surrogate canonicalization; qualified-name spoofing through aliases; foreign task envelopes never dispatched or enqueued; foreign kill or configuration envelopes refused; stale and rollback revocation lists refused; and the reduced roster projection leaking none of the forbidden fields.
+1. **M3-1.** No private key in Phantom Secrets or in any process an agent can start. Every signature goes through the signer interface (S-1 to S-9), with one `sign-fleet-grant` verb per backend under the same strict contract and domain tag. Owner root keys may sit on any backend that meets S-1 to S-3.
+2. **M3-2.** Grants carry `aud`, `nbf`, `exp`, `nonce`, `kid`, `alg` and `ctx: "phantom.fleet.grant.v1"` inside the signed bytes, and are rejected as described under Grants.
+3. **M3-3.** Envelopes are device-signed with `ctx`, grant id, `kid`, recipient owner, channel, a per-device monotonic `seq` and a time within 5 minutes, with a high-water mark per device.
+4. **M3-4.** Foreign envelopes are never claimed, dispatched, enqueued or turned into jobs, through any configuration.
+5. **M3-5.** Owner handles are local petnames bound at join to the `own_` id and root key fingerprint, compared out of band. A key change for a known owner is a hard stop.
+6. **M3-6.** Grant issue, revoke and device enrollment go only through the signer helper with a hardware gesture, never through the web API, MCP or the bus. The existing approval endpoint is fixed separately so that an approval proves a human action, not only possession of the web token.
+7. **M3-7.** Cross-owner `tool.use` does not ship in M3.
+8. **M3-8.** Strict verify-side parsing: duplicate keys, lone surrogates, non-integer times and unknown fields are rejected; bytes are re-canonicalized and compared; ids are ASCII only. The same vectors pass in TypeScript, Swift and every backend helper's language.
+9. **M3-9.** Revocation lists carry `seq`, `issuedAt`, `nextUpdate` and the current `kid` set with each key's backend and `alg`.
+10. **M3-10.** The signer signs the audit chain head at each issue and revoke and at least daily, and revocation lists carry that head.
+11. **M3-11.** A test proves that no cross-owner verb or envelope writes the kill switch, the pause, policy, grants, roster configuration or pinned files, and that KILL stops all of a node's cross-owner traffic on every OS.
+12. **M3-12.** A grant is trust in the grantee owner; agent lists are advisory.
+13. **M3-13.** A cross-OS signer test proves that the same vector produces byte-identical signed messages on macOS, Windows and Linux, that a missing backend refuses, and that software-key and `alg` downgrade attempts fail verification. It is path-gated: it runs only when signer or authority paths change, and it is never part of the default matrix or a required check. Linux evidence may come from a container run.
+
+Before M3 turns on, each participating owner has also, on their own device, enrolled a hardware signer with attestation or an out-of-band fingerprint check, and compared pairwise key fingerprints out of band. Agents cannot do these steps. The signer ships first with the backends the first participants need, batched into one authority release so routine releases do not re-trip existing standing grants.
+
+### Security findings recorded for M3
+
+- **F19.** The only existing signing oracle is macOS-only: it uses a fixed install path and a host binding to the platform UUID (`src/core/authority/custody-client.ts` lines 49 and 472). There is no Windows or Linux signer yet, so an owner without a Mac has no compliant way to sign today.
+- **F20.** Phantom Secrets falls back to an encrypted-file vault when the OS keychain is unavailable unless `PHANTOM_REQUIRE_KEYCHAIN` is set. That is acceptable for secret values but must never be reachable for fleet trust material (S-8).
+- **F21.** The existing phone WebAuthn ceremony requires user verification but requests no attestation. The fleet signer must request attestation where available and must not copy that setting (S-3).
 
 ### Open owner decisions
 
-Owner signing must work without a Mac: Secure Enclave, TPM (Windows Hello and Linux) and WebAuthn or FIDO2 backends are all in scope, as above. These remain open, with no assumed answer:
+Owner signing must work without a Mac; that is decided, and the signer interface above covers it. These remain open, with no assumed answer:
 
 1. Who holds each owner's recovery root, and in what form.
-2. Whether cross-owner `tool.use` may ever run with the tool owner's own credentials.
+2. Whether cross-owner `tool.use` is ever allowed, and whether it may ever run with the tool owner's own credentials (Security recommends never).
 3. Which peers are pinned at join, and the out-of-band channel used to compare key fingerprints.
-4. Whether to fix, together with the authority release, the existing approval endpoint so that an approval proves a human action rather than possession of the web token.
+4. The revocation windows (Security recommends 0 seconds for own-issued grants and 15 minutes for foreign lists).
+5. Whether the approval endpoint fix is batched into the same authority release.
 
 ### Still open for Security
 
