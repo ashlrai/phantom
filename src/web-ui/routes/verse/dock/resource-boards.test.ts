@@ -25,6 +25,7 @@ describe('resourceBoards', () => {
   it('knows a resource board from any other pane', () => {
     expect(isResourceBoard('fleet-capacity')).toBe(true);
     expect(isResourceBoard('fleet-router')).toBe(true);
+    expect(isResourceBoard('fleet-throughput')).toBe(true);
     expect(isResourceBoard('fleet-sessions')).toBe(false);
   });
 });
