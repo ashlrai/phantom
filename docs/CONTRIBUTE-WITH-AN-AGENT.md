@@ -271,8 +271,13 @@ and the fast gate never skips tests silently:
   set, never a smaller one.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
-picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
-gate, so run it yourself whenever you touch markdown.
+picked up indirectly, are left to the scheduled `master` run. The selector
+recognizes a dist-bound test by its `require-built-dist` helper import. Tests
+that run the compiled CLI or read `dist/` must call `requireBuiltDist()` from
+`test/helpers/require-built-dist.js`, because the fast gate never builds.
+Without that marker, a test can fail the fast gate when a pull request changes
+a file it names, even in a comment. `npm run check:docs` is not part of the pull
+request gate, so run it yourself whenever you touch markdown.
 
 To see the plan for your branch, commit and run:
 
