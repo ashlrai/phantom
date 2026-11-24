@@ -23,7 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as http from 'node:http';
@@ -38,6 +38,7 @@ import {
 } from '../src/core/fleet/runs-sessions.js';
 import { makeCfg } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
+import { reconcileSessions } from '../src/core/fleet/session-reconciliation.js';
 
 const ANCHOR = Date.parse('2026-11-05T12:00:00Z');
 const S = 1000;
@@ -105,6 +106,43 @@ async function runsDir(files: Record<string, string | Buffer>): Promise<string> 
 
 const byJob = (snap: FleetSessionsV1, job: string): FleetSessionV1 | undefined =>
   [...snap.sessions, ...snap.recent].find(s => s.job === job);
+
+describe('local session reconciliation', () => {
+  it('distinguishes live, finished, unknown and conflicting runs despite old heartbeats, without writes or signals', async () => {
+    const root = await runsDir({ 'queue/status.json': JSON.stringify({ last_tick: metricTs(ANCHOR - 7200 * S) }) });
+    const jobs = ['LIVE', 'DONE', 'UNKNOWN', 'RETRY', 'CONFLICT', 'EXIT'];
+    for (const job of jobs) {
+      await touch(await write(root, `queue/run/${job}.line`, line(job)), ANCHOR - 3600 * S);
+      await touch(await write(root, `${job}.log`, 'quiet fixture'), ANCHOR - 1800 * S);
+    }
+    await write(root, 'queue/run/EXIT.rc', '0');
+    const ledger = ['DONE', 'CONFLICT', 'RETRY'].map(job => JSON.stringify({ job, event: 'finish',
+      ts: metricTs(ANCHOR - (job === 'RETRY' ? 7200 : 600) * S), exit_code: 0 })).join('\n');
+    const path = await write(root, 'metrics/jobs.jsonl', ledger);
+    const before = await stat(path);
+    const kill = vi.spyOn(process, 'kill');
+    const report = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root,
+      runPs: async () => psWorker(101, 'LIVE') + psWorker(102, 'CONFLICT') }));
+    expect(report.schema).toBe('fleet.session-reconciliation.v1');
+    expect(report.readOnly).toBe(true);
+    expect(report.dispatcher?.tickAgeSeconds).toBe(7200);
+    expect(report.counts).toEqual({ live: 1, finished: 2, unknown: 3 });
+    expect(Object.fromEntries(report.runs.map(r => [r.job, r.state]))).toEqual({
+      LIVE: 'live', DONE: 'finished', UNKNOWN: 'unknown', RETRY: 'unknown', CONFLICT: 'unknown', EXIT: 'finished',
+    });
+    expect(report.runs.find(r => r.job === 'LIVE')?.lastOutputAt).toBe(new Date(ANCHOR - 1800 * S).toISOString());
+    expect(kill).not.toHaveBeenCalled();
+    expect(await readFile(path, 'utf8')).toBe(ledger);
+    expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
+    const unavailable = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root, runPs: psDown }));
+    expect(unavailable.sources.live).toBe('degraded');
+    expect(unavailable.runs.find(r => r.job === 'LIVE')).toMatchObject({ state: 'unknown', live: 'unknown' });
+    expect(unavailable.runs.find(r => r.job === 'DONE')?.state).toBe('finished');
+    await write(root, 'metrics/jobs.jsonl', '{broken');
+    const broken = reconcileSessions(await getFleetSessions({ ...opts, runsDir: root, runPs: noPs, maxSessions: 1 }));
+    expect(broken).toMatchObject({ sources: { metrics: 'degraded' }, malformed: 1, truncated: true });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Pure parsers
@@ -176,6 +214,29 @@ describe('parseSessionMetrics', () => {
     expect(f.prUrl).toBe('https://github.com/ashlrai/phantom/pull/77');
     expect(malformed).toBe(1); // only the unparseable line
   });
+  it('reads lifecycle rows through the jobs-ledger field dialect', () => {
+    const text = [
+      JSON.stringify({ jobId: 'J2', type: 'enqueue', timestamp: metricTs(ANCHOR - 900 * S) }),
+      JSON.stringify({ id: 'J2', kind: 'claim', at: metricTs(ANCHOR - 800 * S) }),
+      JSON.stringify({ job_id: 'J2', event: 'launch', time: metricTs(ANCHOR - 790 * S), model: 'gpt-5.3-codex' }),
+      JSON.stringify({ job: 'J2', type: 'finish', recordedAt: metricTs(ANCHOR - 100 * S), tokens_total: 7, wall_s: 12.5, diff_lines: 3, exit_code: 0, empty: true }),
+      JSON.stringify({ jobId: 'J2', kind: 'published', updatedAt: metricTs(ANCHOR - 90 * S), pr_url: 'https://github.com/ashlrai/phantom/pull/88' }),
+    ].join('\n');
+    const { facts, malformed } = parseSessionMetrics(text);
+    const f = facts.get('J2')!;
+    expect(f.enqueueTsMs).toBe(Date.parse(metricTs(ANCHOR - 900 * S)));
+    expect(f.claimTsMs).toBe(Date.parse(metricTs(ANCHOR - 800 * S)));
+    expect(f.launchTsMs).toBe(Date.parse(metricTs(ANCHOR - 790 * S)));
+    expect(f.launchModel).toBe('gpt-5.3-codex');
+    expect(f.tokensTotal).toBe(7);
+    expect(f.wallSeconds).toBe(12);
+    expect(f.diffLines).toBe(3);
+    expect(f.exitCode).toBe(0);
+    expect(f.empty).toBe(true);
+    expect(f.publishTsMs).toBe(Date.parse(metricTs(ANCHOR - 90 * S)));
+    expect(f.prUrl).toBe('https://github.com/ashlrai/phantom/pull/88');
+    expect(malformed).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -183,6 +244,26 @@ describe('parseSessionMetrics', () => {
 // ---------------------------------------------------------------------------
 
 describe('getFleetSessions', () => {
+  it('counts a published cloud job as finished even with a fresh base, no log and no exit code', async () => {
+    const dir = await runsDir({
+      'queue/run/JOB-CLOUD.line': line('JOB-CLOUD', 'phantom', 'devin', 'work'),
+      'queue/run/JOB-CLOUD.dispatched': epoch(ANCHOR - 60 * S),
+      'JOB-CLOUD.base': 'base\n',
+      'JOB-CLOUD.publish': 'RESULT PR https://github.com/ashlrai/phantom/pull/77\n',
+      'queue/run/JOB-FLY.line': line('JOB-FLY', 'phantom', 'devin', 'work'),
+      'queue/run/JOB-FLY.dispatched': epoch(ANCHOR - 60 * S),
+      'JOB-FLY.base': 'base\n',
+    });
+    for (const j of ['JOB-CLOUD', 'JOB-FLY']) {
+      await touch(join(dir, `queue/run/${j}.line`), ANCHOR - 65 * S);
+      await touch(join(dir, `${j}.base`), ANCHOR - 30 * S);
+    }
+    await touch(join(dir, 'JOB-CLOUD.publish'), ANCHOR - 20 * S);
+    const snap = await getFleetSessions({ ...opts, runsDir: dir, runPs: noPs });
+    expect(byJob(snap, 'JOB-CLOUD')).toMatchObject({ status: 'finished', outcome: 'pr', prUrl: 'https://github.com/ashlrai/phantom/pull/77' });
+    expect(byJob(snap, 'JOB-FLY')?.status).toBe('launching'); // in flight: still active
+  });
+
   it('classifies queued, parked, launching, running, exited, stale and finished sessions', async () => {
     const baseMtime = ANCHOR - 500 * S;
     const dir = await runsDir({

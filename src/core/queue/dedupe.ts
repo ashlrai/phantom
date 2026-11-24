@@ -61,12 +61,16 @@ with open(lockpath, 'a') as lock:
  finally:
   if os.path.exists(tmp): os.unlink(tmp)
 `;
+/** Swap the queue text under the dispatcher's lock. Throws when the file changed since `before` was read. */
+export function replaceQueueText(path: string, before: string, after: string): void {
+  const result = spawnSync('python3', ['-c', writer, path, `${dirname(path)}/ready.lock`], { input: JSON.stringify({ before, after }), encoding: 'utf8', timeout: 10000 });
+  if (result.status !== 0) throw new Error('Could not update queue; it may be locked or have changed');
+}
 export async function dedupeQueueFile(path: string, apply = false): Promise<DedupeReport> {
   const before = await readFile(path, 'utf8');
   const { report, output } = dedupeQueue(before);
   if (apply && report.count) {
-    const result = spawnSync('python3', ['-c', writer, path, `${dirname(path)}/ready.lock`], { input: JSON.stringify({ before, after: output }), encoding: 'utf8', timeout: 10000 });
-    if (result.status !== 0) throw new Error('Could not update queue; it may be locked or have changed');
+    replaceQueueText(path, before, output);
     report.applied = true;
   }
   return report;

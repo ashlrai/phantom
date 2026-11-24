@@ -1,17 +1,19 @@
 import type { LabeledLine } from './owner-thread-lines.js';
 import type { BusReply } from './thread-bus-replies.js';
+import { runFindFields, type AppRun } from './thread-app-actions.js';
 
 export type ThreadFindItem =
   | { type: 'day'; key: string; label: string }
   | { type: 'line'; key: string; line: LabeledLine }
-  | { type: 'bus'; key: string; row: BusReply };
+  | { type: 'bus'; key: string; row: BusReply }
+  | { type: 'app'; key: string; run: AppRun };
 
 export function threadMatches(items: readonly ThreadFindItem[], query: string): string[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return items.flatMap(item => {
     if (item.type === 'day') return [];
-    const fields = item.type === 'line' ? [item.line.text] : [item.row.excerpt, item.row.from];
+    const fields = item.type === 'line' ? [item.line.text] : item.type === 'app' ? runFindFields(item.run) : [item.row.excerpt, item.row.from];
     return fields.some(field => field.toLowerCase().includes(needle)) ? [item.key] : [];
   });
 }

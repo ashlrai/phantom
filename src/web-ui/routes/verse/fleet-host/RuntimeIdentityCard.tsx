@@ -1,16 +1,32 @@
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { formatRelative } from '../autonomy/format.js';
 import { formatAge, type RuntimeIdentityView } from './runtime-identity-model.js';
 import { executionLine, type ExecutionLine } from './runtime-execution-line.js';
 import { runtimeIdentityQuery } from './runtime-identity-query.js';
 import { coordinationLine, runtimeSnapshotQuery, type CoordinationLine } from './runtime-snapshot-query.js';
+import { NodeReachList } from '../runtime/NodeReachList.js';
 import styles from './fleet-host.module.css';
 
-export function RuntimeIdentityBody({ view, coordination, execution }: { view: RuntimeIdentityView | null; coordination?: CoordinationLine; execution?: ExecutionLine }) {
+// 3 poll intervals (30 s each): older than this the reading no longer counts as live.
+const STALE_READING_MS = 90_000;
+const CLOCK_SKEW_MS = 60_000;
+
+export function RuntimeIdentityBody({ view, coordination, execution, nowMs = Date.now() }: { view: RuntimeIdentityView | null; coordination?: CoordinationLine; execution?: ExecutionLine; nowMs?: number }) {
   if (!view) return <p className={styles.muted}>Runtime identity not available on this build</p>;
   const { fleetState: fs } = view;
+  const readMs = Date.parse(view.generatedAt);
+  const readValid = !Number.isNaN(readMs);
+  const skewed = readValid && readMs - nowMs > CLOCK_SKEW_MS;
+  const stale = readValid && nowMs - readMs > STALE_READING_MS;
+  const evidence = view.asOf !== 'unknown' && view.asOf !== view.generatedAt && !Number.isNaN(Date.parse(view.asOf));
   return <>
     <dl className={styles.identity}>
+      <dt>Read</dt>
+      <dd>{readValid ? <time dateTime={view.generatedAt}>{formatRelative(view.generatedAt, nowMs)}</time> : 'unknown'}
+        {evidence ? <> · evidence <time dateTime={view.asOf}>{formatRelative(view.asOf, nowMs)}</time></> : null}{' '}
+        {skewed ? <span className={styles.badge} data-tone="warn" title="clock skew">stale reading</span>
+          : stale ? <span className={styles.badge} data-tone="warn">stale reading</span> : null}</dd>
       <dt>Host</dt><dd>{view.host} ({view.platform})</dd>
       <dt>Build</dt>
       <dd>{view.installedVersion} installed / {view.sourceVersion} source{' '}
@@ -46,8 +62,10 @@ export function RuntimeIdentityCard({ visible }: { visible: boolean }) {
   usePollWhileVisible(refetch, 30_000, { enabled: visible, refreshOnShow: false });
   usePollWhileVisible(snapshotRefetch, 30_000, { enabled: visible, refreshOnShow: false });
   return <section className={styles.section} aria-label="Runtime">
-    <RuntimeIdentityBody view={read.status === 'error' ? null : read.data ?? null}
+    <RuntimeIdentityBody view={read.data ?? null}
       coordination={coordinationLine(snapshot.data, snapshot.error)}
       execution={executionLine(snapshot.data, snapshot.error)} />
+    <NodeReachList visible={enabled} />
+    {read.status === 'error' && read.data ? <p className={styles.muted}>Last refresh failed</p> : null}
   </section>;
 }

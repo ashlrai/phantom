@@ -5,18 +5,19 @@
  * `mergeStateStatus` DIRTY), the paths the PR changes are compared with the
  * tip of its base branch (master for every fleet PR) and the PR is classified:
  *
- *   landed        — every changed path already matches the base tip: the work
+ *   landed        — every changed path's work is present on the base tip: it
  *                   shipped some other way and the PR adds nothing
- *   partly-landed — some changed paths match the base tip, some still differ:
+ *   partly-landed — some changed paths have landed, some still need work:
  *                   only the remaining paths need a recut
- *   needs-recut   — no changed path matches the base tip: the conflict is real
- *                   and the whole change still has to land
+ *   needs-recut   — no changed path is proven landed; preserve the recut
  *   unknown       — a read failed (bad row, fetch, moved head, merge-base,
  *                   diff): the PR is never guessed at
  *
- * Changed paths come from `git diff merge-base head` and the still-differing
- * set from `git diff base head`; a changed path absent from the tip diff is
- * identical on both sides, which means it already landed. Git objects and
+ * Changed paths come from `git diff --no-renames merge-base head`. Matching
+ * tip content proves landing; a clean scratch merge also recognizes work
+ * followed by newer base edits. Conflicts or failed previews retain the tip
+ * comparison. JSON reason `already-present-on-base` explains suppression.
+ * Git objects and
  * scratch refs live in a temporary bare repository — the host repository and
  * GitHub state are never written.
  */
@@ -59,6 +60,11 @@ export interface FleetDirtyLandedDeps {
   now?: () => Date;
   /** Stdout seam for the --json report; defaults to console.log. */
   output?: (text: string) => void;
+  /**
+   * Failure seam. `unavailable` = the open-PR list could not be read at all (no gh, not signed in,
+   * offline): nothing is wrong with any report. `malformed` = gh answered with something unreadable.
+   */
+  onFailure?: (kind: 'unavailable' | 'malformed', message: string) => void;
 }
 
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
@@ -121,13 +127,20 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
   }
 
   const gh = deps.gh ?? defaultGh;
-  const read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]);
-  if (!read.ok) { console.error('fleet dirty-landed: gh pr list failed'); return 1; }
+  const fail = (kind: 'unavailable' | 'malformed', message: string): number => {
+    console.error(`fleet dirty-landed: ${message}`);
+    deps.onFailure?.(kind, message);
+    return 1;
+  };
+  let read: { ok: boolean; stdout: string };
+  try { read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]); }
+  catch { return fail('unavailable', 'gh pr list could not run'); }
+  if (!read.ok) return fail('unavailable', 'gh pr list failed');
   let rows: unknown;
-  try { rows = JSON.parse(read.stdout); } catch { console.error('fleet dirty-landed: invalid gh response'); return 1; }
-  if (!Array.isArray(rows)) { console.error('fleet dirty-landed: invalid gh response'); return 1; }
+  try { rows = JSON.parse(read.stdout); } catch { return fail('malformed', 'invalid gh response'); }
+  if (!Array.isArray(rows)) return fail('malformed', 'invalid gh response');
   const parsed = rows.map(parseRow);
-  if (parsed.some(row => row === null)) { console.error('fleet dirty-landed: unreadable PR row'); return 1; }
+  if (parsed.some(row => row === null)) return fail('malformed', 'unreadable PR row');
   const dirty = (parsed as DirtyRow[]).filter(isConflicting);
 
   const prs: DirtyLandedPr[] = [];

@@ -137,6 +137,20 @@ export function buildFleetResourcesView(
   };
 }
 
+/** Read slots.json and resources.json under `<runsDir>/queue`; never throws (read failures land in the view's source states). */
+export async function readFleetResourcesView(
+  read: (path: string) => Promise<string> = path => readFile(path, 'utf8'),
+  runsDir: string = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+  now: Date = new Date(),
+): Promise<FleetResourcesView> {
+  const queue = join(runsDir, 'queue');
+  const [slots, resources] = await Promise.all([
+    readLaneRows(read, join(queue, 'slots.json')),
+    readLaneRows(read, join(queue, 'resources.json')),
+  ]);
+  return buildFleetResourcesView(slots, resources, now.toISOString());
+}
+
 function formatFleetResources(view: FleetResourcesView): string {
   const lines = view.lanes.map(lane =>
     `${lane.lane}: ${lane.status}; target=${lane.target ?? 'unknown'}; ` +
@@ -179,15 +193,7 @@ export async function cmdFleetResources(args: string[], deps: FleetResourcesDeps
     console.error(`error: fleet resources: --runs-dir requires an absolute path\n${USAGE}`);
     return 2;
   }
-  const queue = join(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'queue');
-  const read = deps.read ?? (path => readFile(path, 'utf8'));
-  const [slots, resources] = await Promise.all([
-    readLaneRows(read, join(queue, 'slots.json')),
-    readLaneRows(read, join(queue, 'resources.json')),
-  ]);
-  const view = sanitizePublicJson(
-    buildFleetResourcesView(slots, resources, (deps.now ?? (() => new Date()))().toISOString()),
-  ) as FleetResourcesView;
+  const view = sanitizePublicJson(await readFleetResourcesView(deps.read, runsDir, (deps.now ?? (() => new Date()))())) as FleetResourcesView;
   console.log(json ? JSON.stringify(view) : formatFleetResources(view));
   return view.unseenLanes.length > 0 ? 1 : 0;
 }

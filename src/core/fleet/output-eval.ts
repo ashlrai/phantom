@@ -21,11 +21,13 @@ export function foldOutputEval(text: string): { records: EvalRecord[]; excluded:
   for (const line of text.split('\n')) {
     let row: Record<string, unknown>;
     try { const parsed: unknown = JSON.parse(line); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue; row = parsed as Record<string, unknown>; } catch { continue; }
-    const id = row.job ?? row.job_id ?? row.jobId;
+    const id = [row.job, row.job_id, row.jobId, row.id].find((v): v is string => typeof v === 'string');
     if (!token(id)) continue;
-    const event = typeof row.event === 'string' ? row.event.toLowerCase() : '';
+    const eventRaw = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
+    const event = (eventRaw ?? '').toLowerCase();
     const isLaunch = event === 'launch';
-    const phase = typeof (row.state ?? row.outcome ?? row.status) === 'string' ? String(row.state ?? row.outcome ?? row.status).toLowerCase() : '';
+    const phaseRaw = [row.state, row.outcome, row.status, row.phase, row.result, row.conclusion].find((v): v is string => typeof v === 'string');
+    const phase = (phaseRaw ?? '').toLowerCase();
     const terminalRow = OUTCOME_EVENTS.has(event) || row.source === RECONCILER_SOURCE;
     const outcome: EvalOutcome | null = terminalRow && phase === 'merged' ? 'merged'
       : event === 'finish' && row.empty === true ? 'empty'
@@ -34,7 +36,8 @@ export function foldOutputEval(text: string): { records: EvalRecord[]; excluded:
     const job = jobs.get(id) ?? { launches: new Set<string>(), launchCount: 0, outcomes: new Set<EvalOutcome>() };
     if (isLaunch) {
       job.launchCount++;
-      job.launches.add(token(row.lane) && token(row.model) ? JSON.stringify([row.lane, row.model]) : 'invalid');
+      const lane = [row.lane, row.pool, row.arm].find(token);
+      job.launches.add(token(lane) && token(row.model) ? JSON.stringify([lane, row.model]) : 'invalid');
     }
     if (outcome) job.outcomes.add(outcome);
     jobs.set(id, job);

@@ -50,7 +50,9 @@ const MAX_NEEDS_ITEMS = 10;
 const MAX_TIER_KEYS = 16;
 const TIER_RE = /^[a-z][a-z0-9-]{0,15}$/;
 /** RQ-REBASE-<REPO>-<pr number>-<head sha7> from queuegen (queuegen.rebaseId), anywhere in a queue row. */
-const REBASE_JOB_RE = /RQ-REBASE-([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-[0-9a-f]{7,40}/i;
+const REBASE_JOB_RE = /\bRQ-REBASE-(?!BATCH-)([A-Z0-9][A-Z0-9-]*)-(\d{1,7})-(?:[0-9a-f]{7,40}|u[0-9a-f]{6})(?![\w-])/i;
+/** Batch members share a repo and end with a six-character hash. */
+const REBASE_BATCH_RE = /\bRQ-REBASE-BATCH-([A-Za-z][A-Za-z0-9-]*?)-((?:\d{1,7}-)*\d{1,7})-[0-9a-f]{6}(?![\w-])/i;
 
 export interface LeaderBoardLane {
   lane: string;
@@ -77,7 +79,7 @@ export interface LeaderBoardV1 {
   /** Unique merged jobs/PRs in the trailing hour across lanes; null without a healthy merge ledger. */
   mergesLastHour: number | null;
   conflictingPrs: {
-    /** Distinct PRs with an RQ-REBASE row queued; null when ready.tsv was unreadable. */
+    /** Distinct PRs covered by queued rebase singles or batches; null when ready.tsv was unreadable. */
     count: number | null;
     /** count minus the previous recorded sample; null without one. */
     delta: number | null;
@@ -166,6 +168,12 @@ export function conflictingPrIds(readyTsvText: string): Set<string> {
   const prs = new Set<string>();
   for (const raw of readyTsvText.split('\n')) {
     if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
+    const batch = REBASE_BATCH_RE.exec(raw);
+    if (batch) {
+      const repo = batch[1]!.toUpperCase();
+      for (const pr of batch[2]!.split('-')) prs.add(`${repo}-${pr}`);
+      continue;
+    }
     const match = REBASE_JOB_RE.exec(raw);
     if (match) prs.add(`${match[1]!.toUpperCase()}-${match[2]!}`);
   }

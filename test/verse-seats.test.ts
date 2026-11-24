@@ -259,7 +259,7 @@ describe('verse seats — native accounts', () => {
     // newest model the catalog offers, not whichever one was newest when this
     // test was written. Pinning a specific id here is how the Codex list went
     // stale at gpt-5.5 while the catalog had moved on to the GPT-6 family.
-    expect(codex.models[0]?.id).toBe('gpt-6.1-sol');
+    expect(codex.models[0]?.id).toBe('gpt-6.2-sol');
     expect(codex.models.map((m) => m.id)).not.toContain('gpt-5.5-mini');
     // Hidden catalog slugs are never offered, even from the built-in list.
     expect(codex.models.map((m) => m.id)).not.toContain('gpt-reserve');
@@ -878,12 +878,12 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
       args:['--port',String(port)],requestedSlots:4,requestedContext:262_144,startedAt:new Date(0).toISOString(),owner:'adopted'})).toBe(true);
     const fetchOllama=ollamaFetch({'qwen3.8:27b-ctx64k':{parameters:'num_ctx 65536',native:262_144}});
     const fetchImpl=(async (input: string | URL | Request,init?: RequestInit)=>{
-      if(String(input)==='http://llama.test:8080/props')return new Response(JSON.stringify({total_slots:4}));
-      if(String(input)==='http://llama.test:8080/slots')return new Response(JSON.stringify([0,1,2,3].map(id=>({id,is_processing:false}))));
+      if(String(input)==='http://127.0.0.1:8080/props')return new Response(JSON.stringify({total_slots:4}));
+      if(String(input)==='http://127.0.0.1:8080/slots')return new Response(JSON.stringify([0,1,2,3].map(id=>({id,is_processing:false}))));
       return fetchOllama(input,init);
     }) as typeof fetch;
-    const discovery=await discoverSeats(makeConfig(),{accountsRoot:tmpRoot,claudeUsage:zeroUsage,ollamaBaseUrl:'http://ollama.test',
-      localDispatch:'llama-server',llamaServerOrigin:'http://llama.test:8080',fetchImpl});
+    const discovery=await discoverSeats(makeConfig(),{accountsRoot:tmpRoot,claudeUsage:zeroUsage,ollamaBaseUrl:'http://127.0.0.1:11434',
+      localDispatch:'llama-server',llamaServerOrigin:'http://127.0.0.1:8080',fetchImpl});
     const seat=discovery.seats.find(s=>s.id==='local:qwen3.8:27b-ctx64k')!;
     expect(seat.contextWindow).toBe(65_536);
     expect(seat.models[0]!.windowSource).toBe('provider-catalog');
@@ -893,12 +893,12 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
   it('retains observed64k context when all live slots agree, independently of the tag estimate',async()=>{
     const fetchOllama=ollamaFetch({'qwen3.8:27b-ctx64k':{parameters:'num_ctx 262144',native:262_144}});
     const fetchImpl=(async (input: string | URL | Request,init?: RequestInit)=>{
-      if(String(input)==='http://llama.test:8080/props')return new Response(JSON.stringify({total_slots:4,default_generation_settings:{n_ctx:65_536}}));
-      if(String(input)==='http://llama.test:8080/slots')return new Response(JSON.stringify([0,1,2,3].map(id=>({id,n_ctx:65_536}))));
+      if(String(input)==='http://127.0.0.1:8080/props')return new Response(JSON.stringify({total_slots:4,default_generation_settings:{n_ctx:65_536}}));
+      if(String(input)==='http://127.0.0.1:8080/slots')return new Response(JSON.stringify([0,1,2,3].map(id=>({id,n_ctx:65_536}))));
       return fetchOllama(input,init);
     }) as typeof fetch;
-    const discovery=await discoverSeats(makeConfig(),{accountsRoot:tmpRoot,claudeUsage:zeroUsage,ollamaBaseUrl:'http://ollama.test',
-      localDispatch:'llama-server',llamaServerOrigin:'http://llama.test:8080',fetchImpl});
+    const discovery=await discoverSeats(makeConfig(),{accountsRoot:tmpRoot,claudeUsage:zeroUsage,ollamaBaseUrl:'http://127.0.0.1:11434',
+      localDispatch:'llama-server',llamaServerOrigin:'http://127.0.0.1:8080',fetchImpl});
     const seat=discovery.seats.find(s=>s.id==='local:qwen3.8:27b-ctx64k')!;
     expect(seat.contextWindow).toBe(65_536);
     expect(seat.models[0]!.windowSource).toBe('runtime');
@@ -909,7 +909,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: { contextLength: 131_072, source: 'server-log-vram' },
       fetchImpl: ollamaFetch({
         'qwen3.8:27b-ctx64k': { parameters: 'num_ctx                        65536', native: 262_144 },
@@ -950,7 +950,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: { contextLength: null, source: null },
       fetchImpl: ollamaFetch({
         'qwen-loaded:7b': { native: 262_144 },
@@ -970,7 +970,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: { contextLength: 32_768, source: 'server-log-vram' },
       fetchImpl: ollamaFetch({
         // Unpinned: gets the 32k server default — CLAUDE_CODE_MAX_CONTEXT_TOKENS
@@ -1006,7 +1006,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: { contextLength: 32_768, source: 'server-log-vram' },
       fetchImpl: ollamaFetch({
         'other-coder:7b': { parameters: 'num_ctx 65536', native: 131_072 },
@@ -1023,7 +1023,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: null,
       fetchImpl: ollamaFetch({ 'qwen3.8:27b-ctx64k': { parameters: 'num_ctx 65536', native: 262_144 } }, [], calls),
     });
@@ -1034,7 +1034,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       ollamaServerDefault: null,
       fetchImpl: ollamaFetch({ 'qwen3.8:27b-q8_0': { native: 262_144 } }),
     });
@@ -1056,7 +1056,7 @@ describe('verse seats — local context windows (V3.9 precedence)', () => {
     const discovery = await discoverSeats(makeConfig(), {
       accountsRoot: tmpRoot,
       claudeUsage: zeroUsage,
-      ollamaBaseUrl: 'http://ollama.test',
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
       fetchImpl: ollamaFetch({ 'qwen3.8:27b-q8_0': { native: 262_144 } }),
     });
     expect(discovery.seats[0]!.contextWindow).toBe(4_096);

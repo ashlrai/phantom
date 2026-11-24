@@ -96,7 +96,7 @@ const eventClock = (d: Date): string =>
 const scrubMessage = (error: unknown): string =>
   scrubSecrets(error instanceof Error ? error.message : String(error)).replace(TOKEN_RUN, '[REDACTED]');
 /** A single-token executor name for the LEADER row: whitespace cannot corrupt it. */
-const executorToken = (provider: string): string => provider.replace(/[^A-Za-z0-9_.:-]+/g, '-') || 'unknown';
+export const executorToken = (provider: string): string => provider.replace(/[^A-Za-z0-9_.:-]+/g, '-') || 'unknown';
 
 const signalExitCode = (signal: NodeJS.Signals | null): number =>
   signal !== null && typeof osConstants.signals[signal] === 'number' ? 128 + osConstants.signals[signal] : 1;

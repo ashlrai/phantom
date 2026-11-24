@@ -1,6 +1,7 @@
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { poolShareSnapshot, type PoolShareInput, type PoolShareSnapshot } from './runway.js';
 
 export const PACE_POOLS = ['zai', 'gemini', 'claude', 'codex-personal'] as const;
 export interface PaceRow { pool: string; projectedPercent: number | null; hoursLeft: number | null; recommendedSlots: number | null;
@@ -17,7 +18,9 @@ function paceLaneNames(budget: Record<string, unknown>): string[] {
   return [...core, ...extra].slice(0, MAX_POOLS);
 }
 
-export interface PaceSnapshot { v: 1; asOf: string | null; pools: PaceRow[] }
+export interface PaceSnapshot { v: 1; asOf: string | null; pools: PaceRow[];
+  /** Per-pool runway verdict and suggested share of new work (`phm fleet pools --json`), from the same readings. */
+  shares: PoolShareSnapshot }
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -38,6 +41,35 @@ export function paceTarget(lane: PaceTargetInput): number | null {
   return Math.min(hardCap, running + Math.floor(Math.max(0, loadMax - load1)), Math.max(0, Math.round(needed)));
 }
 
+/** Readings for planPoolShares; anything not fresh, known and current stays null (unknown). */
+function shareInput(pool: string, lane: unknown, now: number, fresh: boolean): PoolShareInput {
+  const empty = { pool, usedPercent: null, burnPerHour: null, hoursToReset: null, unit: (pool === 'claude-api' || object(lane) && object(lane.gift) ? 'usd' : 'percent') as 'usd' | 'percent' };
+  if (!fresh) return { ...empty, reason: 'status missing or stale' };
+  if (object(lane) && object(lane.gift)) {
+    const gift = lane.gift;
+    const at = typeof gift.as_of === 'string' ? Date.parse(gift.as_of) : NaN;
+    const reset = typeof gift.expires_at === 'string' ? Date.parse(gift.expires_at) : NaN;
+    const remaining = number(gift.usd_remaining) && gift.usd_remaining >= 0 ? gift.usd_remaining : null;
+    const grant = number(gift.usd_granted) && gift.usd_granted > 0 && remaining !== null && gift.usd_granted >= remaining ? gift.usd_granted : null;
+    const base = { ...empty, unit: 'usd' as const };
+    if (!Number.isFinite(at) || at > now + 60_000) return { ...base, reason: 'no reading' };
+    if (now - at > 86_400_000) return { ...base, reason: 'reading stale' };
+    if (remaining === null || grant === null) return { ...base, remainingUsd: remaining, reason: 'gift allowance missing' };
+    return { ...base, remainingUsd: remaining, usedPercent: (grant - remaining) / grant * 100,
+      burnPerHour: number(gift.usd_burn_per_hour) ? gift.usd_burn_per_hour / grant * 100 : null,
+      hoursToReset: Number.isFinite(reset) ? (reset - now) / 3_600_000 : null,
+      resetAt: Number.isFinite(reset) ? new Date(reset).toISOString() : null };
+  }
+  const pace = object(lane) && object(lane.use_it_all) ? lane.use_it_all : {};
+  if (pace.known !== true || pace.stale !== false) return { ...empty, unit: pool === 'claude-api' ? 'usd' : 'percent', reason: pace.stale === true ? 'reading stale' : 'no reading' };
+  const resetMs = typeof pace.reset_at === 'string' ? Date.parse(pace.reset_at) : number(pace.reset_at) && Math.abs(pace.reset_at) <= 8.64e12 ? pace.reset_at * 1000 : NaN;
+  const hours = Number.isFinite(resetMs) ? (resetMs - now) / 3_600_000 : number(pace.hours_to_reset) && Math.abs(now + pace.hours_to_reset * 3_600_000) <= 8.64e15 ? pace.hours_to_reset : null;
+  // Overage readings above 1000% are malformed, as in spend.ts and runway-read.ts.
+  return { pool, resetAt: Number.isFinite(resetMs) ? new Date(resetMs).toISOString() : hours !== null ? new Date(now + hours * 3_600_000).toISOString() : null, usedPercent: number(pace.used_pct) && pace.used_pct <= 1000 ? pace.used_pct : null,
+    burnPerHour: number(pace.burn_pct_per_hour) ? pace.burn_pct_per_hour : null,
+    hoursToReset: hours };
+}
+
 /** A controller tick may republish a stale reading; both freshness checks are required. */
 export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   const status = object(raw) ? raw : {};
@@ -46,7 +78,11 @@ export function projectUsagePace(raw: unknown, now = Date.now()): PaceSnapshot {
   const budget = object(status.budget) ? status.budget : {};
   const lanes = object(status.lanes) ? status.lanes : {};
   const admission = object(status.admission) ? status.admission : {};
-  return { v: 1, asOf: Number.isFinite(tick) ? new Date(tick).toISOString() : null, pools: (fresh ? paceLaneNames(budget) : [...PACE_POOLS]).map(pool => {
+  const asOf = Number.isFinite(tick) ? new Date(tick).toISOString() : null;
+  const names = fresh ? paceLaneNames(budget) : [...PACE_POOLS];
+  const shareNames = [...new Set([...PACE_POOLS, 'codex-cmp', 'claude-api', ...Object.keys(budget).filter(name => POOL_NAME.test(name)).sort()])].slice(0, MAX_POOLS);
+  const shares = poolShareSnapshot(shareNames.map(pool => shareInput(pool, budget[pool], now, fresh)), asOf);
+  return { v: 1, asOf, shares, pools: names.map(pool => {
     const lane = object(budget[pool]) ? budget[pool] : {};
     const pace = object(lane.use_it_all) ? lane.use_it_all : {};
     const valid = fresh && pace.known === true && pace.stale === false && number(pace.projected_used_pct)

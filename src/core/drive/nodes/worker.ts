@@ -1,3 +1,4 @@
+import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -12,19 +13,48 @@ import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
 import { probeLocalAuth } from './auth-probe.js';
+import { NODE_PROVIDERS, isNodeProvider, resolveProviderBinary, type NodeProvider, type ProviderBinaries, type ProviderBinaryDeps } from './provider-binary.js';
+import { probeRunnerPacks } from './runner-packs.js';
 import type { JobView } from './index.js';
 import { sampleHostStats } from './capacity.js';
 
+/** Exit-code-only sign-in check of each provider's one resolved absolute binary. No PATH lookup or auth-file reads. */
+export function probeProviderBinaries(run: typeof spawnSync = spawnSync, binaryDeps: ProviderBinaryDeps = {}): ProviderBinaries {
+  const statusArgs: Record<NodeProvider, string[]> = { codex: ['login', 'status'], claude: ['auth', 'status', '--json'] };
+  const found: ProviderBinaries = {};
+  for (const provider of NODE_PROVIDERS) {
+    const binary = resolveProviderBinary(provider, binaryDeps);
+    if (!binary) continue;
+    const result = run(binary, statusArgs[provider], { timeout: 5000, stdio: 'ignore', shell: false,
+      env: { PATH: process.env['PATH'], HOME: homedir() } });
+    if (!result.error && result.status === 0) found[provider] = binary;
+  }
+  return found;
+}
+
 /** Native sign-in checks plus the local oMLX lane plan. No auth-file reads, API tokens or output retention. */
-export function probeNodeLanes(run: typeof spawnSync = spawnSync, localDeps: LocalLaneProbeDeps = {}): string[] {
-  const providers = ([['codex', ['login', 'status']], ['claude', ['auth', 'status', '--json']]] as const)
-    .filter(([command, args]) => {
-      const result = run(command, [...args], { timeout: 5000, stdio: 'ignore',
-        env: { PATH: process.env['PATH'], HOME: homedir() } });
-      return !result.error && result.status === 0;
-    }).map(([command]) => command);
+export function probeNodeLanes(run: typeof spawnSync = spawnSync, localDeps: LocalLaneProbeDeps = {}, binaryDeps: ProviderBinaryDeps = {}): string[] {
   // Local model caps are planned, not probed: enabled config + RAM class + live headroom.
-  return [...providers, ...probeLocalModelCaps(localDeps)];
+  return [...Object.keys(probeProviderBinaries(run, binaryDeps)), ...probeLocalModelCaps(localDeps)];
+}
+
+/** Two consecutive error results for one pack decline that pack for the rest of the session. */
+export const PACK_FAILURE_LIMIT = 2;
+export type RunnerErrorReason = 'pack-error' | 'codex-error' | 'runner-exit-nonzero';
+
+/** Classifies a closed runner reply. Fenced runs stay `stopped`; error replies are never completions. */
+export function classifyRunnerReply(code: number | null, fenced: boolean, stdout: string):
+  { kind: 'ok'; resultRef: string } | { kind: 'error'; reason: RunnerErrorReason } | { kind: 'stopped' } {
+  if (fenced) return { kind: 'stopped' };
+  let reply: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) reply = parsed as Record<string, unknown>;
+  } catch { /* unstructured output is not a result */ }
+  if (reply && reply['packError'] !== undefined && reply['packError'] !== null && reply['packError'] !== false) return { kind: 'error', reason: 'pack-error' };
+  if (reply && reply['codex'] === 'error') return { kind: 'error', reason: 'codex-error' };
+  if (code !== 0) return { kind: 'error', reason: 'runner-exit-nonzero' };
+  return reply && validId(reply['resultRef']) ? { kind: 'ok', resultRef: reply['resultRef'] as string } : { kind: 'stopped' };
 }
 
 /** Missing sentinels mean open; unreadable/unsafe control paths hold admission. */
@@ -48,9 +78,14 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   const capacity = capacityNow();
   if (capacity.held) return { held: capacity.held, capacity };
   const auth = light ? probeLocalAuth() : undefined;
-  const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : probeNodeLanes();
+  const binaries: ProviderBinaries = light ? {} : probeProviderBinaries();
+  const lanes = light ? ['light', 'comms', ...(auth === 'ok' ? ['gh'] : [])] : [...Object.keys(binaries), ...probeLocalModelCaps()];
+  // Consecutive error results per pack in this session; a success resets the pack.
+  const packFailures = new Map<string, number>();
   if (!lanes.length) return { held: 'no-local-provider-login' };
-  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
+  const runnerPacks = light ? [] : probeRunnerPacks(runner);
+  const capabilities = [...lanes, ...runnerPacks];
+  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...capabilities, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];
@@ -99,8 +134,9 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       try { released = callPool(config, 'release', decline ? [...lease, '--decline'] : lease).result['released'] === true; } catch { /* expiry fences it */ }
       return { held, ...extra, released };
     };
+    if (job?.task !== undefined && (job.pack !== 'codex-file' || !validNodeTask(job.task))) return refuse('invalid-task', true);
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
+        job.requires.some(c => !capabilities.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
     // A stopping node cannot run anything right now, but another session or a restart can: retryable.
     if (nodeStopped()) return refuse('unsupported-job', false);
     const packCapacity = jobCapacity();
@@ -108,7 +144,12 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
     // Check immediately before spawn as well as throughout execution.
     const renewed = callPool(config, 'renew', lease);
     if (!renewed.result['expiresAt'] || renewed.demoted || jobCapacity().held) return refuse('lease-lost', false);
-    const resultRef = await new Promise<string | null>(resolve => {
+    const packKey = typeof job.pack === 'string' && job.pack ? job.pack : `job:${job.id}`;
+    if ((packFailures.get(packKey) ?? 0) >= PACK_FAILURE_LIMIT) return refuse('pack-declined', true, { reason: 'pack-declined' });
+    // Lane receipt: the exact absolute binary the probe signed in with, never a command.
+    const providerBinaries = Object.fromEntries(job.requires.filter(isNodeProvider)
+      .flatMap(provider => binaries[provider] ? [[provider, binaries[provider]]] : []));
+    const reply = await new Promise<ReturnType<typeof classifyRunnerReply>>(resolve => {
       const child = spawn(runner, ['run'], { shell: false, detached: true,
         env: { PATH: process.env['PATH'], HOME: homedir() }, stdio: ['pipe', 'pipe', 'ignore'] });
       active++;
@@ -147,17 +188,23 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       child.on('close', code => {
         clearInterval(timer); clearTimeout(deadline);
         process.off('SIGINT', stop); process.off('SIGTERM', stop);
-        try {
-          const result = JSON.parse(Buffer.concat(output).toString('utf8')) as { resultRef?: unknown };
-          resolve(code === 0 && !fenced && validId(result.resultRef) ? result.resultRef : null);
-        } catch { resolve(null); }
+        resolve(classifyRunnerReply(code, fenced, Buffer.concat(output).toString('utf8')));
       });
-      try { child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim })); }
+      try { child.stdin.end(JSON.stringify({ protocol: 'phm-node-worker/v1', job: pulled.result['job'], claim,
+        ...(Object.keys(providerBinaries).length ? { providerBinaries } : {}) })); }
       catch { stop(); } // Retain the host slot until close even if writing stdin fails synchronously.
     });
     active--;
-    if (!resultRef) return { completed: false, held: 'runner-stopped' };
-    const completed = callPool(config, 'complete', [...lease, '--result', resultRef]);
+    if (reply.kind === 'stopped') return { completed: false, held: 'runner-stopped' };
+    if (reply.kind === 'error') {
+      // An error result returns the job to pending; the second consecutive failure hands it to another node.
+      const failures = (packFailures.get(packKey) ?? 0) + 1;
+      packFailures.set(packKey, failures);
+      const decline = failures >= PACK_FAILURE_LIMIT;
+      return { jobId: claim.jobId, completed: false, ...refuse('runner-error', decline, { reason: reply.reason, pack: packKey, failures }), declined: decline };
+    }
+    packFailures.delete(packKey);
+    const completed = callPool(config, 'complete', [...lease, '--result', reply.resultRef]);
     return { jobId: claim.jobId, completed: completed.result['completed'] === true };
   };
   try {
@@ -169,7 +216,13 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       return reply.result;
     }, true);
     // Keep one fenced node session until every slot settles; never leave while a sibling runs.
-    const settled = await Promise.allSettled(Array.from({ length: capacity.slots }, () => attempt()));
+    // A retryable runner error gets one more pull in this session, so a repeat failure can decline.
+    const slot = async (): Promise<Record<string, unknown>> => {
+      const first = await attempt();
+      if (first['held'] !== 'runner-error' || first['declined'] === true || first['released'] !== true) return first;
+      return { ...await attempt(), previous: first };
+    };
+    const settled = await Promise.allSettled(Array.from({ length: capacity.slots }, () => slot()));
     const attempts = settled.map(result => result.status === 'fulfilled' ? result.value : { held: 'attempt-unavailable' });
     return attempts.length === 1 ? attempts[0]! : { slots: capacity.slots, attempts };
   } finally {

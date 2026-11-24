@@ -85,10 +85,10 @@ it('never signals the parent process', async () => {
   expect(json().results[0]).toMatchObject({ result: 'refused', code: 'protected-pid' });
 });
 
-it('reports unreadable evidence as unavailable', async () => {
+it('reports unreadable evidence with the reason on stdout', async () => {
   const { deps } = mk(async () => { throw new Error('ps failed'); });
   expect(await cmdFleetStrayStop([], deps)).toBe(1);
-  expect(process.stderr.write).toHaveBeenCalledWith('error: fleet stray-stop unavailable\n');
+  expect(out.at(-1)).toBe('Stray stop failed: could not read the process and job evidence: ps failed');
 });
 
 it('honours --runs-dir for the ledger', async () => {

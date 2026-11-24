@@ -69,7 +69,9 @@ it('gives a protocol task to exactly one claimant while result, status and quest
   expect(first.status).toBe('acquired');
   if (first.status !== 'acquired' || !('token' in first)) throw new Error('expected a claim');
   expect(first.receipt.envelope.id).toBe('fake-task');
-  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty' });
+  // fake-task is the only claimable receipt on the topic and fake-a's lease
+  // holds it, so the well is not dry — the one candidate answers 'conflict'.
+  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty', candidates: 1, held: 1 });
   const page = listBusInboxAfter(0, 100, { root });
   expect(page.status).toBe('ok');
   if (page.status === 'ok') expect(page.messages.map(row => row.envelope.id).sort())
@@ -87,13 +89,15 @@ it('keeps the legacy kind=work convention claimable next to protocol tasks', () 
   if (claimed.status === 'acquired' && 'receipt' in claimed) {
     expect(claimed.receipt.envelope.id).toBe('fake-legacy-work');
   }
-  expect(claim('agent-a')).toEqual({ status: 'empty' });
+  // fake-legacy-work stays claimed; fake-note is not claimable work.
+  expect(claim('agent-a')).toEqual({ status: 'empty', candidates: 1, held: 1 });
 });
 it('requires the protocol topic to equal the destination so topics cannot retarget', () => {
   expect(post(envelope('fake-mismatch', 'agent-a',
     { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } })).status).toBe('invalid');
   expect(post(envelope('fake-plain', 'agent-b', { kind: 'work' })).status).toBe('posted');
-  expect(claim('agent-a')).toEqual({ status: 'empty' });
+  // Nothing is addressed to agent-a, so the scan finds no candidates.
+  expect(claim('agent-a')).toEqual({ status: 'empty', candidates: 0, held: 0 });
   const taken = claim('agent-b');
   expect(taken.status).toBe('acquired');
 });
@@ -117,7 +121,7 @@ it('keeps topic helpers segment-safe: prefixes never cross namespace boundaries'
 });
 it('claims only on the exact topic address: a namespace prefix is not a claim audience', () => {
   expect(post(task('fake-exact', 'fleet.deploy')).status).toBe('posted');
-  expect(claim('fleet.*')).toEqual({ status: 'empty' });
+  expect(claim('fleet.*')).toEqual({ status: 'empty', candidates: 0, held: 0 });
   expect(claim('fleet.deploy', 'fake-a').status).toBe('acquired');
-  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty' });
+  expect(claim('fleet.deploy', 'fake-b')).toEqual({ status: 'empty', candidates: 1, held: 1 });
 });

@@ -10,11 +10,12 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { makeFixture, type H1Fixture } from './helpers/h1-fixture.js';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { probeServer } from '../src/core/mcp-gateway.js';
@@ -29,9 +30,7 @@ const cliEntry = join(repoRoot, 'dist', 'cli', 'index.js');
 let fx: H1Fixture;
 
 beforeAll(() => {
-  if (!existsSync(cliEntry)) {
-    throw new Error(`${cliEntry} is missing; run \`npm run build\` before this suite`);
-  }
+  requireBuiltDist(['dist/cli/index.js']);
 });
 
 beforeEach(() => {

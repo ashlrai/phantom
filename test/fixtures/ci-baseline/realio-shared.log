@@ -1,0 +1,18 @@
+> @ashlr/phantom@3.30.60 lint:realio-lane
+> node scripts/check-realio-lane-membership.mjs
+
+
+[check-realio-lane-membership] The following test files use a real-io marker
+but are not in REAL_IO_TEST_FILES (test/config/realio-lane-membership.mjs):
+
+  test/example.test.ts
+    spawns a real child process (execFileSync/execSync/spawnSync/spawn/execFile)
+  test/other.test.ts
+    binds a real local network server
+
+Either add them to REAL_IO_TEST_FILES with a comment explaining why, or — if this
+is a false positive (e.g. the spawn call is exercised through a mock this script
+didn't recognize) — leave a short comment near the match explaining why it's safe
+in the fast lane, so the next reader (or the next run of this guard) isn't confused.
+
+##[error]Process completed with exit code 1.

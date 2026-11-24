@@ -8,7 +8,7 @@ as the package runtime floor. `phm` and the compatible `ashlr` command share one
 launcher, `bin/ashlr`, which imports the compiled `dist/cli/index.js`. The backend
 primarily uses Node builtins; its declared runtime dependencies (MCP transport via
 `@modelcontextprotocol/sdk`, Markdown via `marked`, archives via `tar`, plus
-`yaml`, `smol-toml`, `jose`, `web-push`, `@simplewebauthn/*` and
+`yaml`, `smol-toml`, `zod`, `jose`, `web-push`, `@simplewebauthn/*` and
 `reflect-metadata`) are all bundled. The manifest and lockfile are the canonical
 inventory, not this overview.
 
@@ -18,7 +18,7 @@ inventory, not this overview.
 |------|----------|
 | `bin/ashlr` | Launcher shim for both `phm` and `ashlr` |
 | `src/cli/` | Command handlers; `src/cli/index.ts` is the argv dispatcher and the canonical command list (`phm help`) |
-| `src/core/` | Subsystems (below); `src/core/types.ts` holds shared types and `src/core/config.ts` the `~/.ashlr` path constants |
+| `src/core/` | Subsystems (below); `src/core/types.ts` re-exports the shared types declared by domain in `src/core/types/`, and `src/core/config.ts` the `~/.ashlr` path constants |
 | `src/api/` | SDK entrypoints exported as `@ashlr/phantom`, `/core`, `/types` and `/plugin`; `/universe` maps to `src/core/universe/index.ts` |
 | `src/web-ui/` | React console built by Vite (`vite.config.web.ts`) into `dist/core/web/public/next/` |
 | `src/tui/` | Terminal dashboard (`phm tui`, alias `dash`) over `src/core/dashboard.ts` |

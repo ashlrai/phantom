@@ -209,6 +209,12 @@ below, not built here.
 
 ### Effects: `ashlr authority resident start | stop | status`
 
+The [managed desktop CLI upgrade](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#upgrade-an-existing-managed-install)
+uses resident stop before switching the managed pointer, for upgrade and
+journaled rollback alike. `phm desktop install --upgrade --apply` never starts
+the resident or grants authority. Any surface-bound Touch ID re-grant and
+`phm authority resident start` remain explicit owner actions after the switch.
+
 **`start`** is the only path that installs or restarts the service. It refuses
 unless all of the following hold, in this order:
 

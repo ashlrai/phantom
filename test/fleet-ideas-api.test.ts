@@ -79,6 +79,7 @@ describe('POST ideas/queue', () => {
     const first = await post({ id: 'idle-lanes:claude' });
     expect(first).toMatchObject({ status: 200, body: { ideaId: 'idle-lanes:claude', jobId, queued: true, existing: false } });
     expect((await post({ id: 'idle-lanes:claude' })).body).toMatchObject({ queued: false, existing: true });
+    expect((await call(VERSE_FLEET_IDEAS_PATH)).body.ideas[0]).toMatchObject({ status: 'queued', lane: 'claude', why: expect.any(String) });
     expect(readdirSync(join(runs, 'leader', 'drop', 'claude')).filter(name => !name.startsWith('.'))).toEqual([`RQ-PHX-${jobId}.md`]);
   });
 

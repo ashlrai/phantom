@@ -48,7 +48,7 @@ describe('fleet map', () => {
     expect(map.nodes.filter(node => node.kind === 'lane').map(node => node.label)).toEqual([...ORG_LANES]);
     expect(map.nodes.filter(node => node.kind === 'channel')).toHaveLength(5);
     expect(map.nodes.find(node => node.kind === 'guardian')?.status).toBe('unknown');
-    expect(map.edges.filter(edge => edge.kind === 'message')).toEqual([{ id: 'message:leader:lane:claude', kind: 'message', from: 'leader', to: 'lane:claude', provider: 'unknown', count: 2 }]);
+    expect(map.edges.filter(edge => edge.kind === 'message')).toEqual([{ id: 'message:leader:lane:claude', kind: 'message', from: 'leader', to: 'lane:claude', provider: 'unknown', count: 2, lastAt: new Date(now).toISOString() }]);
     expect(map.unmappedMessages).toBe(1); expect(JSON.stringify(map)).not.toContain('private fixture body');
     const nodeProvider = new Map(map.nodes.map(node => [node.id, node.provider]));
     expect(map.edges.every(edge => edge.provider === nodeProvider.get(edge.from))).toBe(true);

@@ -20,13 +20,14 @@
  * cannot get slots), stale-parked-deps (met gates never unparked), then
  * missing-restock (free slots with no ready supply). The planner emits the
  * full ranked gap list plus exactly one action for the top gap — even when
- * the honest answer is no-op (capacity-bound, dispatch-stall).
+ * the honest answer is no-op (capacity-bound, admission-closed, dispatch-stall).
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { explainFleetAdmission, type FleetAdmissionReport } from '../../cli/fleet-admission.js';
 import { readFleetQueue, type FleetQueueV1, type Source } from './runs-parked-queue.js';
+import { clampLocalTarget, LOCAL_LANE } from './local-capacity.js';
 import { readLaneTargets, type LaneTargetsV1 } from './runs-lane-targets.js';
 import { readRebaseStatus } from './rebase-status.js';
 
@@ -57,6 +58,8 @@ export interface FleetAutopilotState {
   admission: FleetAdmissionReport | null;
   queue: FleetQueueV1 | null;
   slots: LaneTargetsV1 | null;
+  /** Local workers memory allows right now (phm local capacity); null/absent when unknown, which leaves the lane target alone. */
+  localWorkers?: number | null;
   /** Null when no --repo was passed. */
   rebase: AutopilotRebaseRepo[] | null;
 }
@@ -66,6 +69,8 @@ export interface AutopilotReadDeps {
   statusText?: (path: string) => Promise<string>;
   queue?: (opts: { runsDir: string; depDetail: boolean }) => Promise<FleetQueueV1>;
   slots?: (opts: { runsDir: string }) => Promise<LaneTargetsV1>;
+  /** Local workers that fit in free memory; when given, it is the codex-local lane's ceiling. */
+  localWorkers?: () => Promise<number | null>;
   rebase?: typeof readRebaseStatus;
   now?: () => Date;
 }
@@ -118,6 +123,7 @@ export async function readFleetAutopilotState(
     generatedAt: now().toISOString(),
     sources: { status: status.source, queue: queue.source, slots: slots.source, rebase: rebase.source },
     admission: status.report, queue: queue.view, slots: slots.view, rebase: rebase.repos,
+    ...(opts.localWorkers ? { localWorkers: await opts.localWorkers().catch(() => null) } : {}),
   };
 }
 
@@ -130,7 +136,7 @@ export type AutopilotGapKind = 'uncovered-conflicts' | 'starved-lane' | 'stale-p
 const GAP_KIND_ORDER: Record<AutopilotGapKind, number> = {
   'uncovered-conflicts': 0, 'starved-lane': 1, 'stale-parked-deps': 2, 'missing-restock': 3,
 };
-export type AutopilotNoopReason = 'fleet-healthy' | 'capacity-bound' | 'dispatch-stall' | 'state-unreadable';
+export type AutopilotNoopReason = 'fleet-healthy' | 'capacity-bound' | 'dispatch-stall' | 'admission-closed' | 'state-unreadable';
 export type AutopilotEnqueueType = 'rebase' | 'restock' | 'unpark';
 
 export interface AutopilotGap {
@@ -174,7 +180,7 @@ export interface AutopilotReport {
   status: 'ok' | 'degraded' | 'unreadable';
   generatedAt: string;
   sources: AutopilotSources;
-  global: { cap: number | null; running: number | null; atCap: boolean | null; admitReason: string | null };
+  global: { cap: number | null; running: number | null; atCap: boolean | null; admitReason: string | null; closed: boolean | null; nonCapClosed: boolean | null };
   lanes: AutopilotLane[];
   /** Every measured gap, highest severity first. */
   gaps: AutopilotGap[];
@@ -211,7 +217,8 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
     const admit = state.admission?.lanes.find((row) => row.lane === lane) ?? null;
     const queuedRow = queueOk ? readyByLane.get(raw) ?? null : null;
     const running = admit?.running ?? null;
-    const target = admit?.target ?? state.slots?.lanes.find((row) => row.lane === lane)?.target ?? null;
+    const rawTarget = admit?.target ?? state.slots?.lanes.find((row) => row.lane === lane)?.target ?? null;
+    const target = lane === LOCAL_LANE ? clampLocalTarget(rawTarget, { workers: state.localWorkers ?? null }) : rawTarget;
     const held = admit?.held ?? holds.get(raw) ?? holds.get(lane) ?? false;
     const free = held || running === null || target === null ? null : Math.max(0, target - running);
     return {
@@ -228,7 +235,10 @@ export function autopilotLanes(state: FleetAutopilotState): AutopilotLane[] {
   });
 }
 
-function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boolean): AutopilotAction {
+function starvedAction(lane: AutopilotLane, lanes: AutopilotLane[], atCap: boolean, nonCapClosed: boolean, admitReason: string | null): AutopilotAction {
+  if (nonCapClosed) {
+    return { kind: 'no-op', reason: 'admission-closed', detail: `'${lane.lane}' has launchable work and free slots, but fleet admission is closed${admitReason ? ` (${admitReason})` : ''}; nothing launches until it reopens.` };
+  }
   if (atCap) {
     // Free the cap for the starved lane: hold the running lane whose READY
     // depth can most afford a pause (over-deep queues outlive one pause).
@@ -254,6 +264,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
   const lanes = autopilotLanes(state);
   const admission = state.admission;
   const atCap = admission?.global.at_cap ?? null;
+  const nonCapClosed = admission?.global.non_cap_closed ?? null;
 
   // uncovered-conflicts: conflicting bridge PRs with no current rebase job.
   for (const repo of state.rebase ?? []) {
@@ -276,7 +287,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
       kind: 'starved-lane', lane: lane.lane,
       severity: 80 + Math.min(waiting, 15) + (lane.running === 0 ? 5 : 0),
       detail: `'${lane.lane}' runs ${lane.running} of target ${lane.target} with ${waiting} launchable job${waiting === 1 ? '' : 's'} waiting${atCap ? ' while the fleet sits at the cap' : ' under the cap'}.`,
-      evidence: { running: lane.running, target: lane.target, waiting, ready: lane.ready, queued: lane.queued, atCap },
+      evidence: { running: lane.running, target: lane.target, waiting, ready: lane.ready, queued: lane.queued, atCap, nonCapClosed },
     });
   }
 
@@ -294,10 +305,13 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
     });
   }
 
-  // missing-restock: free slots with no launchable supply at all.
+  // missing-restock: free slots with no launchable supply at all. Lane-open
+  // READY rows are open supply the market may place on any lane, so a
+  // positive unhinted count keeps a free lane from reading as missing restock.
+  const openSupply = state.queue?.unhinted ?? 0;
   for (const lane of lanes) {
     const waiting = lane.ready ?? lane.queued;
-    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0) continue;
+    if (lane.held || lane.freeSlots === null || lane.freeSlots <= 0 || waiting === null || waiting > 0 || openSupply > 0) continue;
     gaps.push({
       kind: 'missing-restock', lane: lane.lane,
       severity: 50 + Math.min(lane.freeSlots * 2, 20),
@@ -326,7 +340,7 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
         break;
       }
       case 'starved-lane':
-        action = starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, atCap === true);
+        action = starvedAction(lanes.find((row) => row.lane === topGap.lane)!, lanes, atCap === true, nonCapClosed === true, admission?.global.admit_reason ?? null);
         break;
       case 'stale-parked-deps':
         action = {
@@ -359,6 +373,8 @@ export function planFleetAutopilot(state: FleetAutopilotState): AutopilotReport 
       running: admission?.global.running ?? null,
       atCap: admission?.global.at_cap ?? null,
       admitReason: admission?.global.admit_reason ?? null,
+      closed: admission?.global.closed ?? null,
+      nonCapClosed: admission?.global.non_cap_closed ?? null,
     },
     lanes,
     gaps,

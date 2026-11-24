@@ -39,7 +39,7 @@ const scratchDirs: string[] = [];
 const options = () => ({ command: ['/fixture/native', '--isolated'], cwd: root, timeoutMs: 5000 });
 const status = (patch: Partial<auth.ClaudeAccountStatusResult> = {}): auth.ClaudeAccountStatusResult => ({
   schemaVersion: 1, scope: 'claude-native-auth-status', status: 'observed', reason: 'status-login-observed',
-  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: 'a'.repeat(64),
+  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: 'a'.repeat(64), accountScope: 'claude:0123456789abcdef',
   startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), ...patch,
 });
 beforeEach(() => { root = realpathSync(mkdtempSync(join(tmpdir(), 'ashlr-claude-usage-test-'))); });
@@ -177,7 +177,7 @@ describe('bounded version-gated report collection', () => {
       const { authentication, subprocess } = mocks(); authentication.mockResolvedValue(status(patch as Partial<auth.ClaudeAccountStatusResult>));
       expect((await probeClaudeAccountUsage(options())).windows).toEqual([]); expect(subprocess).not.toHaveBeenCalled();
     });
-  it.each([{ accountHint: 'b'.repeat(64) }, { loggedIn: false }, { subscriptionType: 'pro' }, { authMethod: 'api-key' }])(
+  it.each([{ accountHint: 'b'.repeat(64) }, { accountScope: null }, { accountScope: 'claude:fedcba9876543210' }, { loggedIn: false }, { subscriptionType: 'pro' }, { authMethod: 'api-key' }])(
     'clears all evidence on changed post-read identity %#', async (patch) => {
       const { authentication } = mocks(); authentication.mockResolvedValueOnce(status()).mockResolvedValueOnce(status(patch as Partial<auth.ClaudeAccountStatusResult>));
       expect(await probeClaudeAccountUsage(options())).toMatchObject({ status: 'failed', reason: 'usage-account-changed', windows: [], loggedIn: null, accountHint: null });

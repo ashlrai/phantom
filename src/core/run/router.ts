@@ -35,6 +35,7 @@
 
 import type { AshlrConfig, EscalationReason, RouteDecision, WorkItem } from '../types.js';
 import { getProviderRegistry } from '../providers.js';
+import { isLocalModel, localModelFit } from '../resources/local-memory-fit.js';
 import { estCostUsd } from './budget.js';
 import {
   KNOWN_MODELS,
@@ -269,6 +270,8 @@ export interface RoutingContext {
    * autonomous/fail-closed. So an unset flag there cannot launch an engine.
    */
   autonomous?: boolean;
+  /** Model names with observed usage caps supplied by the caller. */
+  cappedModels?: readonly string[];
 }
 
 // Thresholds (mirror fleet/router.ts so they stay in sync)
@@ -451,12 +454,8 @@ function learnedEntryForEngine(
 ): ModelEntry | null {
   if (!scores || scores.size === 0) return null;
   const candidates = KNOWN_MODELS.filter((entry) =>
-    !entry.historical && entry.engine === engine &&
-    // Work promotion needs a complete TERRA-AB-1 comparison, which legacy
-    // producer scores cannot attest. Preserve work/frontier until that proof
-    // can pass the existing operational learning authority gate.
-    (engine !== 'codex' || (modelTier !== 'work' && modelTier !== 'frontier') ||
-      entry.apiModelId === codexModelForTier(modelTier)) &&
+    !entry.historical && !entry.explicitOnly && entry.engine === engine &&
+    (engine !== 'codex' || entry.apiModelId === codexModelForTier(modelTier)) &&
     (!capability || entry.capabilities.includes(capability)) &&
     entry.minEffort <= effortCap && !excludes.has(entry.id));
   return selectCostAwareModel(candidates, scores, { minShipRate });
@@ -694,7 +693,7 @@ function routeTaskBandit(
   try {
     const registry = loadArmRegistry();
     const banditCtx = banditContextFor(item);
-    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg));
+    const candidates = banditCandidateArms(item, cfg, ctx, claude5ExcludeIds(cfg, ctx.cappedModels));
     const selection = selectArm(
       registry,
       banditCtx,
@@ -748,10 +747,19 @@ export function routeTask(
   ctx: RoutingContext,
 ): TaskRouteDecision {
   const narrowed = permittedRoutingContext(ctx, cfg);
-  const decision = enforceLocalOnlyTaskDecision(
+  let decision = enforceLocalOnlyTaskDecision(
     routeTaskBandit(item, cfg, narrowed.ctx) ?? routeTaskUnenforced(item, cfg, narrowed.ctx),
     cfg,
   );
+  if (isLocalModel(decision.engine)) {
+    const fit = localModelFit(cfg.foundry?.models?.[decision.engine] ?? decision.model, 65536);
+    if (fit.verdict !== 'fits') {
+      const availableEngines = (narrowed.ctx.availableEngines ?? BANDIT_CANDIDATE_ENGINES).filter(e => !isLocalModel(e));
+      decision = enforceLocalOnlyTaskDecision(routeTaskUnenforced(item, cfg, { ...narrowed.ctx, availableEngines }), cfg);
+      if (isLocalModel(decision.engine)) decision = { engine: 'builtin', model: null, catalogEntry: null, reason: 'No fitting route.' };
+      decision.reason = `${fit.reason}; ${decision.engine === 'builtin' ? 'no eligible cloud resource' : 'routing to cloud'}. ${decision.reason}`;
+    }
+  }
   if (narrowed.removed.length === 0 || decision.reason.includes('local-only')) return decision;
   // The narrowing is why the stronger engines were not considered. Say so.
   return {
@@ -796,7 +804,7 @@ function routeTaskUnenforced(
     // picked entry to the string dispatched to the engine CLI: Claude 5 entries
     // carry the full API id ('claude-sonnet-5' — the bare 'sonnet-5' tag is not
     // a documented CLI alias); legacy entries keep their tags unchanged.
-    const c5Excludes = claude5ExcludeIds(cfg);
+    const c5Excludes = claude5ExcludeIds(cfg, ctx.cappedModels);
 
     // ── M240: Learned-bias score map ──────────────────────────────────────
     // Build once per routeTask call. Only an explicit true enables learned
@@ -960,7 +968,10 @@ function routeTaskUnenforced(
           excludeIds: c5Excludes,
         });
         if (!entry) return { engine, model: null, catalogEntry: null, reason };
-        return { engine, model: decisionModelFor(entry), catalogEntry: entry, reason };
+        const capReason = engine === 'claude' && ctx.cappedModels?.includes('fable')
+          && !claude5ExcludeIds(cfg).has('claude:fable-5')
+          ? ' (Fable skipped: observed model cap)' : '';
+        return { engine, model: decisionModelFor(entry), catalogEntry: entry, reason: reason + capReason };
       };
 
       // Primary frontier engine

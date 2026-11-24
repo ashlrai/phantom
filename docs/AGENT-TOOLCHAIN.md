@@ -1,8 +1,16 @@
 # Agent toolchain: Phantom's own dev tools for agents working on Phantom
 
-Phantom is built alongside Phantom Secrets, Locus, Lexicon, Stack, Cortex and
-ashlr-md. An agent changing this repository (or a sibling) should use them the
-way a user would. This page says what is wired, how, and where each tool stops.
+Phantom is built alongside Phantom Secrets, the Ashlr.AI Plugin (ashlr-plugin),
+Locus, Lexicon, Stack, Cortex and ashlr-md (see the
+[ecosystem map](ECOSYSTEM-MAP.md)). An agent changing this repository (or a
+sibling) should use them the way a user would. This page says what is wired,
+how, and where each tool stops.
+
+**Outside contributors:** every server below is optional. None is needed to
+install, build or run the tests, and Merge Gate does not check which tools you
+used. You can decline the approval prompt for any of them, or skip the file
+with `--strict-mcp-config` and your own config. The path from clone to
+auto-merge is in [Contribute with an agent](CONTRIBUTE-WITH-AN-AGENT.md).
 
 ## What is wired
 
@@ -147,3 +155,70 @@ probes and returns nonzero for unhealthy required servers. This job's host
 reported an unwired Claude gateway and unreadable Codex/Cursor/Gemini client
 configs. Those observations do not prove that the separate lane configs lack
 servers. Required lane tools remain unknown until checked in that lane.
+
+## Check lane tool parity
+
+`phm inventory` is the one list of everything this install can use: messaging
+channels, connectors, plugins, skills and tools. Each item has a state in plain
+words (ready, needs setup, off, error, unknown), and an item that needs setup
+names one next step with a command to copy. It ends with the tool gap between
+lanes: how many tools and connectors each lane can use and how many it lacks.
+A source that cannot be read is shown as unknown, and no credential is ever
+printed. The desktop Inventory pane shows the same data from
+`GET /api/verse/fleet/runs/inventory` (`?kind=` for one kind).
+
+```bash
+phm inventory                    # every kind, then the lane gap
+phm inventory --kind connector   # one kind: channel, connector, plugin, skill or tool
+phm inventory --json             # schema phantom.inventory.v1
+```
+
+`phm tools` answers "which lane has what" in one view: every MCP server, CLI,
+skill and plugin a source names, plus GitHub, web search, browser and computer
+use, by lane. Each cell is yes, no or unknown with the source it was read from.
+It adds a parity score per lane (the share of tools that are yes) and the top 3
+gaps, each with one plain fix. Declared gaps come first, then the tools most
+lanes leave undeclared. It is read-only and never installs, enables or changes a
+tool or credential. The desktop Tools pane shows the same matrix from
+`GET /api/verse/fleet/runs/tools`, with gaps highlighted; on a phone it shows one
+lane at a time as a list.
+
+```sh
+phm tools                      # scores and top gaps
+phm tools --lane codex-local   # one lane's list, each tool with its source
+phm tools --json               # the full matrix, schema tools.matrix.v1
+```
+
+`phm tools parity` turns that around: one row per lane (the eleven org lanes,
+then any other lane a source names) and one column per tool family: MCP
+servers, CLI on PATH, skills, plugins, web search, browser, computer use and
+gh. Each cell is present, missing or unknown with the source it was read from.
+A named family is present when the lane lists every tool of that kind any lane
+lists, and missing when its list lacks one; the cell then says which. Every
+missing cell carries one `fix` naming the line to add. It reads declarations
+only, never a live probe: the router's declared lane capabilities, MCP, CLI and
+plugin connectors in the connector profile that name a lane, and the host's own
+`<runs>/queue/lane-tools.json`. A tool no source declares is unknown, never
+missing. The Tools pane shows the same data as a "Tool parity" card from
+`GET /api/verse/fleet/runs/tools/parity` (`?lane=` for one lane).
+
+```sh
+phm tools parity                       # the matrix, then one fix per missing cell
+phm tools parity --lane codex-local    # one lane
+phm tools parity --json                # schema tools.parity.v2, version 2
+phm tools requires --needs github-read,browser
+```
+
+`requires` lists the lanes that declare every need (`can`), lanes that declare
+none of them missing (`unproven`), and lanes declared to lack one (`cannot`).
+Send a job only to `can` or `unproven`. It prints JSON by default (`--text` for
+a plain list) and exits 0 when some lane is not declared to lack a need, 1 when
+every lane is, and 2 on bad usage. Needs are `github-read`,
+`github-write`, `web-search`, `browser`, `computer-use`, `shell`,
+`package-install`, `mcp:<server>`, `cli:<name>`, `skill:<name>` and
+`plugin:<name>`. Declare a lane's tools in `lane-tools.json`, which wins over
+the router's built-in declarations:
+
+```json
+{ "v": 1, "lanes": { "claude": { "github-read": false, "browser": true, "computer-use": false, "mcp": ["context7", "fetch"], "skill": ["review"] } } }
+```

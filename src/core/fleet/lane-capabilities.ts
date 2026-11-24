@@ -21,10 +21,16 @@ export type RouteSkipCode = `route_skip: lane lacks ${LaneCapability}`;
 
 /**
  * Declared facts only. claude: its worker sandbox cannot read the gh config
- * ("operation not permitted", four EMPTY runs on 2026-11-16), so gh is false
- * until a run proves otherwise. Every other value is unknown.
+ * ("operation not permitted", four EMPTY runs on 2026-11-16, 19 more on
+ * 2026-11-20), so gh is false until a run proves otherwise. codex-personal,
+ * codex-cmp and devin run gh today. Every other value is unknown.
  */
-export const DECLARED_LANE_CAPABILITIES: LaneCapabilityOverrides = Object.freeze({ claude: Object.freeze({ gh: false }) });
+export const DECLARED_LANE_CAPABILITIES: LaneCapabilityOverrides = Object.freeze({
+  claude: Object.freeze({ gh: false }),
+  'codex-personal': Object.freeze({ gh: true }),
+  'codex-cmp': Object.freeze({ gh: true }),
+  devin: Object.freeze({ gh: true }),
+});
 
 export function laneCapabilities(lane: string, overrides: LaneCapabilityOverrides = {}): LaneCapabilitySet {
   return { gh: null, network: null, browser: null, local_fs_outside_worktree: null, ...DECLARED_LANE_CAPABILITIES[lane], ...overrides[lane] };
@@ -70,6 +76,13 @@ export const routeSkipCode = (capability: LaneCapability): RouteSkipCode => `rou
 export function laneLacks(lane: string, needs: readonly CapabilityNeed[], pack = false, overrides?: LaneCapabilityOverrides): LaneCapability | null {
   const caps = laneCapabilities(lane, overrides);
   return needs.find(need => caps[need.capability] === false && !(pack && need.capability === 'gh' && need.access === 'read'))?.capability ?? null;
+}
+
+/** Can this lane take a job with these needs? `missing` lists every capability it is declared to lack. */
+export function laneCanRun(lane: string, needs: readonly CapabilityNeed[], pack = false, overrides?: LaneCapabilityOverrides): { ok: boolean; missing: LaneCapability[] } {
+  const caps = laneCapabilities(lane, overrides);
+  const missing = [...new Set(needs.filter(need => caps[need.capability] === false && !(pack && need.capability === 'gh' && need.access === 'read')).map(need => need.capability))];
+  return { ok: missing.length === 0, missing };
 }
 
 export interface RouteFitInput {

@@ -582,3 +582,9 @@
 .action::before { content: '•'; margin-right: var(--space-1); color: var(--accent-500); }
 .action[data-outcome='failed']::before,
 .action[data-outcome='declined']::before { color: var(--status-warning-solid); }
+
+/* Phone width: every control is a 44 px thumb target (held by `phm mobile check`). The zoom box grows with its buttons. */
+@media (max-width: 479.98px) {
+  .pane button, .pane input { min-width: 2.75rem; min-height: 2.75rem; }
+  .zoom { height: auto; }
+}

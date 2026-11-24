@@ -58,6 +58,7 @@ import type { VerseEngine, VerseSeat } from '../../data/api-types.js';
 import { percentText } from './autonomy/format.js';
 import { formatNativeCreditUnits, nativeCreditBalanceTitle } from './resources/codex-credit-value.js';
 import { visibleWindows, windowNote } from './usage/provider-windows.js';
+import { projectPeriod, type WindowPeriod } from './usage/window-period.js';
 import {
   SEAT_CAPACITY_WORD,
   seatCapacity,
@@ -106,6 +107,12 @@ export interface SeatWindowView {
    * chat surfaces derives one today.
    */
   resetsAt: string | null;
+  /**
+   * When the window began, where the seat's reset provenance says (usage/window-period.ts): the provider's own
+   * period start, or seven days before a reset the server qualified as weekly. Absent = not known, so nothing
+   * is drawn against time.
+   */
+  period?: WindowPeriod | null;
 }
 
 export interface SeatSubscriptionView {
@@ -208,6 +215,7 @@ export function seatCapacityWindowLabel(engine: VerseEngine, id: string): string
 
 function toWindowView(engine: VerseEngine, w: SeatCapacityWindow, now: number): SeatWindowView {
   const reset = w.resetDescription ?? (w.resetsAt === null ? null : formatResetInstant(w.resetsAt, now));
+  const period = projectPeriod(w.resetProvenance, w.resetsAt);
   return {
     id: w.id,
     label: seatCapacityWindowLabel(engine, w.id),
@@ -216,6 +224,7 @@ function toWindowView(engine: VerseEngine, w: SeatCapacityWindow, now: number): 
     limitReached: w.limitReached,
     resetText: reset,
     resetsAt: w.resetsAt,
+    ...(period ? { period } : {}),
   };
 }
 

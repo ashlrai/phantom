@@ -36,6 +36,7 @@ jobs:
           sparse-checkout: |
             .github/scripts/ci-unrelated-recover.mjs
             .github/tests/ci-unrelated-recover.test.mjs
+            .github/workflows/unrelated-pr-recover.yml
           sparse-checkout-cone-mode: false
       - name: Restore recovery budget
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4

@@ -6,6 +6,7 @@ import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { openDockPane, openFleetWorkspace } from '../dock/dock-store.js';
 import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../fleet-bus/agent-bus-queries.js';
 import { parseInboxAt } from '../fleet/interject-ack-model.js';
+import { RunningJobsList } from '../fleet/RunningJobsList.js';
 import { relativeText } from '../ops/ops-runs-model.js';
 import { opsRunsQuery } from '../ops/ops-runs-queries.js';
 import { usePanes, type PaneProps } from '../panes/pane-registry.js';
@@ -13,12 +14,14 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import { pairedDevicesQuery } from '../sections/paired-devices-query.js';
 import { pendingPhonesQuery } from '../sections/pending-phones-query.js';
 import { setVerseSection } from '../verse-ui-store.js';
-import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge } from './fleet-hub-model.js';
+import { curatedWorkspace, hubEmptyState, hubTiles, snapshotAge, stuckFor } from './fleet-hub-model.js';
 import { lastOrderLine } from './hub-last-order.js';
 import { busTile } from './hub-bus-tile.js';
 import { phoneTile } from './hub-phone-tile.js';
 import { hubBacklogQuery } from './hub-backlog-queries.js';
 import { backlogTile } from './hub-backlog-tile.js';
+import { fleetAdmissionQuery } from './fleet-admission-query.js';
+import { FamilyYieldCard } from './FamilyYieldCard.js';
 import styles from './fleet-hub.module.css';
 
 export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -27,6 +30,9 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
   const sectionVisible = useSectionVisible();
   const documentVisible = useDocumentVisible();
   const read = useQuery(opsRunsQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 0 });
+  const admission = useQuery(fleetAdmissionQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 0 });
+  const refreshAdmission = useRefetch(fleetAdmissionQuery);
+  usePollWhileVisible(refreshAdmission, 5_000, { enabled: visible, refreshOnShow: false });
   const refetch = useRefetch(opsRunsQuery);
   usePollWhileVisible(refetch, 5_000, { enabled: visible, refreshOnShow: false });
   const backlogRead = useQuery(hubBacklogQuery, { enabled: visible && sectionVisible && documentVisible, freshMs: 60_000 });
@@ -70,12 +76,26 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
     <span className={styles.count}>{backlog.text}</span>
     <span className={styles.count}>{backlog.detail}{backlog.stale ? ' · stale' : ''}</span>
   </button>;
+  const notRunning = read.data?.notRunning ?? [];
   const lastOrder = lastOrderLine(read.data ?? null, now);
   const orderAt = lastOrder ? parseInboxAt(lastOrder.at, now) : null;
   const runsDir = read.data && 'runsDir' in read.data && typeof read.data.runsDir === 'string' && read.data.runsDir.trim()
     ? read.data.runsDir : '~/.ashlr-runs';
 
   return <section className={styles.pane} aria-label="Fleet">
+    {notRunning.length > 0 ? <section className={styles.notRunning} aria-label="Not actually running">
+      <strong>Not actually running · {notRunning.length}</strong>
+      <ul>{notRunning.map((row) => <li key={`${row.kind}:${row.job_or_lane}`}>
+        <span><strong>{row.job_or_lane}</strong> · {row.reason}{stuckFor(row.since, now)}</span>
+        <span className={styles.count}>Next: {row.unblock}</span>
+      </li>)}</ul>
+    </section> : null}
+    <section className={styles.lastOrder} aria-label="Job starts">
+      <strong>Job starts</strong>
+      <span>{admission.status === 'error' ? 'starts unknown: could not refresh admission' : admission.data?.summary ?? 'starts unknown: waiting for admission reading'}</span>
+    </section>
+    <FamilyYieldCard visible={visible} />
+    <RunningJobsList enabled={visible && sectionVisible && documentVisible} />
     <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>
     <button type="button" className={styles.secondary} disabled={presentIds.length === 0} onClick={() => openFleetWorkspace(presentIds)}>Open all fleet panes</button>

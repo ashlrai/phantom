@@ -73,7 +73,7 @@ function claudeWeekly(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
       const weekly = usableClaudeWeekly(await (o.readClaudeQuota ?? readClaudeQuotaReading)(o.runsDir), nowMs);
       if (!weekly) return null;
       return { used: weekly.weekly.usedPct, limit: 100, unit: 'percent', reset_at: weekly.weekly.resetAt,
-        source: 'claude-usage', observed_at: weekly.observedAt };
+        source: 'claude-usage', observed_at: weekly.observedAt, ...(weekly.accountId ? { account_id: weekly.accountId } : {}) };
     } },
     capacitySource('claude-weekly', o.codexSeatMap, o.readCapacity),
     { tier: 'own-call', read: (nowMs) => {
