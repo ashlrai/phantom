@@ -161,6 +161,7 @@ const DAEMON_SUBCOMMANDS = new Set<DaemonSubcommand>([
 
 const NO_FLAGS = new Set<string>();
 const JSON_FLAG = new Set(['--json']);
+const STATUS_FLAGS = new Set(['--json', '--fast']);
 const DOCTOR_FLAGS = new Set(['--json', '--clear-stale']);
 const INSTALL_FLAGS = new Set(['--no-autostart']);
 const RESOLVE_STATE_VALUE_FLAGS = new Set([
@@ -181,7 +182,7 @@ const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   stop: 'Usage: ashlr daemon stop',
   pause: 'Usage: ashlr daemon pause',
   resume: 'Usage: ashlr daemon resume',
-  status: 'Usage: ashlr daemon status [--json]',
+  status: 'Usage: ashlr daemon status [--fast] [--json]',
   health: 'Usage: ashlr daemon health [--json]',
   doctor:
     'Usage: ashlr daemon doctor [--clear-stale] [--json]\n' +
@@ -210,7 +211,7 @@ Subcommands:
   pause           Halt autonomous dispatch only (your own write tools keep working)
   resume          Lift the pause
   stop            Request an orderly daemon shutdown (WIDE: sets the global kill switch)
-  status          Show daemon state [--json]
+  status          Show daemon state [--fast] [--json]
   health          Show liveness, log freshness, frontier clients and restart recommendation [--json]
   doctor          Prove the daemon is really running; --clear-stale fixes a stale record
   activation-preflight  Verify operator-custodied signed release and rollback evidence (read-only)
@@ -1769,7 +1770,9 @@ export async function cmdDaemon(args: string[]): Promise<number> {
   } else {
     const allowed = sub === 'install'
       ? INSTALL_FLAGS
-      : sub === 'status' || sub === 'health' || sub === 'service-status'
+      : sub === 'status'
+        ? STATUS_FLAGS
+        : sub === 'health' || sub === 'service-status'
         ? JSON_FLAG
         : sub === 'doctor'
           ? DOCTOR_FLAGS
@@ -1788,6 +1791,10 @@ export async function cmdDaemon(args: string[]): Promise<number> {
     case 'resume':
       return cmdDaemonPause(false);
     case 'status':
+      if (rest.includes('--fast')) {
+        const { cmdDaemonStatusFast } = await import('./daemon-status-fast.js');
+        return cmdDaemonStatusFast(rest.includes('--json'));
+      }
       return cmdDaemonStatus(rest.includes('--json'));
     case 'health':
       return cmdDaemonHealth(rest.includes('--json'));
