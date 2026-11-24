@@ -29,6 +29,14 @@ export interface BusWorkItemEvidenceResult {
 
 const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
+/** Both aliases, when present, must name the same exact request. */
+function replyTargets(body: Record<string, unknown>, id: string): boolean {
+  const camel = Object.hasOwn(body, 'inReplyTo');
+  const snake = Object.hasOwn(body, 'in_reply_to');
+  return (camel || snake) && (!camel || body['inReplyTo'] === id) &&
+    (!snake || body['in_reply_to'] === id) && id !== '';
+}
+
 /** A reply names its request through the `inReplyTo` key that
  * bus-reply-post.ts stamps (`in_reply_to` is accepted for peer-protocol
  * bodies). Only a `verified` object carrying pr+head, tests or an artifact is
@@ -36,7 +44,7 @@ const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() 
 function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['verified'] {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
-  if (body['inReplyTo'] !== id && body['in_reply_to'] !== id) return undefined;
+  if (!replyTargets(body, id)) return undefined;
   const verified = body['verified'];
   if (verified === null || verified === undefined || typeof verified !== 'object' || Array.isArray(verified)) return undefined;
   const pr = typeof verified['pr'] === 'number' && Number.isInteger(verified['pr']) && verified['pr'] > 0 ? verified['pr'] : undefined;
@@ -53,7 +61,7 @@ function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEviden
 function replyBlockedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['blocker'] {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
-  if (body['inReplyTo'] !== id && body['in_reply_to'] !== id) return undefined;
+  if (!replyTargets(body, id)) return undefined;
   const blocked = body['blocked'];
   if (blocked === null || blocked === undefined || typeof blocked !== 'object' || Array.isArray(blocked)) return undefined;
   const dep = blocked['dependency'];
