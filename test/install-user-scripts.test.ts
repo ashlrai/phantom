@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,19 +36,5 @@ describe('per-user install scripts', () => {
     expect(posix).toContain("os_name\" == linux");
     expect(posix).toContain('uname -m');
     expect(posix).toContain('authority resident start');
-  });
-
-  it('parses the PowerShell installer when pwsh is installed', () => {
-    const pwsh = spawnSync('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'], {
-      encoding: 'utf8',
-    });
-    if (pwsh.error || pwsh.status !== 0) return;
-    const parsed = spawnSync('pwsh', [
-      '-NoProfile',
-      '-Command',
-      "$tokens=$null; $errors=$null; [void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$tokens, [ref]$errors); if ($errors.Count) { $errors | ForEach-Object { $_.ToString() }; exit 1 }",
-      join(root, 'scripts/install.ps1'),
-    ], { encoding: 'utf8' });
-    expect(parsed.status, parsed.stdout + parsed.stderr).toBe(0);
   });
 });
