@@ -24,10 +24,23 @@ export function pickFailureLines(text, limit = SUMMARY_LINES) {
   return ordered;
 }
 
+// Workflow commands are one physical line. Percent, CR and LF are encoded in
+// every field. Property values also encode ':' and ',' so they cannot split
+// the property list or end it early.
+function escapeCommandData(value) {
+  return String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+}
+
+function escapeProperty(value) {
+  return escapeCommandData(value).replaceAll(':', '%3A').replaceAll(',', '%2C');
+}
+
 export function annotationFor(line) {
   const match = TSC_LINE.exec(line);
-  if (match) return `::error file=${match[1]},line=${match[2]},col=${match[3]}::${match[4]}`;
-  return `::error::${line}`;
+  if (match) {
+    return `::error file=${escapeProperty(match[1])},line=${escapeProperty(match[2])},col=${escapeProperty(match[3])}::${escapeCommandData(match[4])}`;
+  }
+  return `::error::${escapeCommandData(line)}`;
 }
 
 export function summarizeFailure({ title, text, limit = SUMMARY_LINES }) {

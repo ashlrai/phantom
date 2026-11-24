@@ -21,6 +21,18 @@ test('the secret-shape trailer is the annotation when it is the only line', () =
   assert.equal(annotationFor('2 allowed=0'), '::error::2 allowed=0');
 });
 
+test('a hostile message cannot inject or garble a workflow command', () => {
+  const message = 'leak %0A::error file=owned,line=1::injected\r\n::warning::second';
+  assert.equal(
+    annotationFor(message),
+    '::error::leak %250A::error file=owned,line=1::injected%0D%0A::warning::second',
+  );
+  assert.equal(
+    annotationFor('src/a,b:c%.rs(3,4): error TS2322: bad % :: still one line'),
+    '::error file=src/a%2Cb%3Ac%25.rs,line=3,col=4::error TS2322: bad %25 :: still one line',
+  );
+});
+
 test('a long gitleaks log keeps the finding ahead of the trailer and stops at five lines', () => {
   const body = Array.from({ length: 40 }, (_, i) => `Finding ${i}: token in src/a.ts`).join('\n');
   const lines = pickFailureLines(`${body}\nleaks found: 1\n`);
