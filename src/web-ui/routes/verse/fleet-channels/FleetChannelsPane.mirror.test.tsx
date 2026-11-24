@@ -38,8 +38,11 @@ it('polls both bus routes only while visible', async () => {
   await act(async () => {});
   const before = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  // fleet-runs, owner thread, channel health, claim notices, Slack trace, orchestration, bus status and bus page each poll once per tick.
-  expect(fetcher.mock.calls.length - before).toBe(8);
+  // The channel cards also read teammate tasks and the work board.
+  const polled = fetcher.mock.calls.slice(before).map(([url]) => url);
+  expect(polled).toHaveLength(10);
+  expect(polled.filter(url => url === '/api/verse/agent-bus/status')).toHaveLength(1);
+  expect(polled.filter(url => url === '/api/verse/agent-bus?after=3&limit=100')).toHaveLength(1);
   view.rerender(<FleetChannelsPane {...props} visible={false} />);
   const hidden = fetcher.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });

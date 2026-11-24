@@ -1,3 +1,4 @@
+import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -82,7 +83,9 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   // Consecutive error results per pack in this session; a success resets the pack.
   const packFailures = new Map<string, number>();
   if (!lanes.length) return { held: 'no-local-provider-login' };
-  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...lanes, versionCap(localPhmVersion()), ...(light ? [] : probeRunnerPacks(runner))].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
+  const runnerPacks = light ? [] : probeRunnerPacks(runner);
+  const capabilities = [...lanes, ...runnerPacks];
+  const joined = callPool(config, 'join', ['--node', config.node, '--caps', [...capabilities, versionCap(localPhmVersion())].filter(Boolean).join(','), '--slots', String(capacity.slots)]);
   const session = joined.result['session'];
   if (!Number.isSafeInteger(session)) return { held: 'node-already-live' };
   const identity = ['--node', config.node, '--session', String(session)];
@@ -131,8 +134,9 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
       try { released = callPool(config, 'release', decline ? [...lease, '--decline'] : lease).result['released'] === true; } catch { /* expiry fences it */ }
       return { held, ...extra, released };
     };
+    if (job?.task !== undefined && (job.pack !== 'codex-file' || !validNodeTask(job.task))) return refuse('invalid-task', true);
     if (!validId(job?.id) || !Array.isArray(job.requires) || !job.requires.some(c => lanes.includes(c)) ||
-        job.requires.some(c => !lanes.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
+        job.requires.some(c => !capabilities.includes(c)) || job.secrets.length || (light && !lightRecipe(job))) return refuse('unsupported-job', true);
     // A stopping node cannot run anything right now, but another session or a restart can: retryable.
     if (nodeStopped()) return refuse('unsupported-job', false);
     const packCapacity = jobCapacity();

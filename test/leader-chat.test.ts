@@ -104,16 +104,16 @@ describe('phm leader thread / say', () => {
     return { out, err };
   }
 
-  it('thread prints JSON by default and plain lines with --text', async () => {
+  it('thread --legacy prints JSON by default and plain lines with --text', async () => {
     vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
     write(INBOX.network + INBOX.malformed, OUTBOX, []);
     const io = capture();
-    expect(await runLeaderCli(['thread', '--limit', '5'])).toBe(0);
+    expect(await runLeaderCli(['thread', '--legacy', '--limit', '5'])).toBe(0);
     const json = JSON.parse(io.out.join('\n')) as { messages: { state: string }[]; skipped: { malformedInbox: number } };
     expect(json.messages.map(m => m.state)).toEqual(['answered', 'reply']);
     expect(json.skipped.malformedInbox).toBe(1);
     io.out.length = 0;
-    expect(await runLeaderCli(['thread', '--text'])).toBe(0);
+    expect(await runLeaderCli(['thread', '--legacy', '--text'])).toBe(0);
     const text = io.out.join('\n');
     expect(text).toMatch(/You \(bus\) · answered/);
     expect(text).toMatch(/Leader re aaaaaaaaaaaaaaaa/);
@@ -121,10 +121,10 @@ describe('phm leader thread / say', () => {
     vi.unstubAllEnvs();
   });
 
-  it('thread --text on an empty inbox says how to start', async () => {
+  it('thread --legacy --text on an empty inbox says how to start', async () => {
     vi.stubEnv('ASHLR_RUNS_DIR', runsDir);
     const io = capture();
-    expect(await runLeaderCli(['thread', '--text'])).toBe(0);
+    expect(await runLeaderCli(['thread', '--legacy', '--text'])).toBe(0);
     expect(io.out.join('\n')).toContain('No messages yet. Say something: phm leader say');
     vi.unstubAllEnvs();
   });

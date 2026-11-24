@@ -66,6 +66,8 @@ export interface RunwaySnapshot {
   headline: string;
   /** starve first (longest idle), then spend (most unused), pace, unknown. */
   pools: PoolRunway[];
+  /** Same typed spend-down rows as phm fleet pools; optional for older servers. */
+  shares?: PoolShareSnapshot;
 }
 
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -149,4 +151,136 @@ export function isRunwaySnapshot(value: unknown): value is RunwaySnapshot {
   return v.schema === POOL_RUNWAY_SCHEMA && v.v === 1 && typeof v.headline === 'string' && Array.isArray(v.pools)
     && v.pools.every(row => row !== null && typeof row === 'object' && typeof row.pool === 'string'
       && RUNWAY_STATES.includes(row.state) && typeof row.advice === 'string');
+}
+
+/**
+ * Pool share: which pool should take the next job. Same ledger readings as
+ * runway() (used percent, burn percent per hour, hours to reset), with the
+ * fleet's plain thresholds:
+ *
+ *   starving  runs dry before 80% of the time to reset has passed: top-priority work only.
+ *   wasting   projected use at reset is under 90%: send new work here first.
+ *   on_pace   neither.
+ *   unknown   any reading is missing, or the reset time has already passed. Never guessed.
+ */
+export const POOL_SHARE_SCHEMA = 'fleet.pools.v1' as const;
+export type PoolShareState = 'starving' | 'wasting' | 'on_pace' | 'unknown';
+export const POOL_SHARE_STATES: readonly PoolShareState[] = ['wasting', 'on_pace', 'starving', 'unknown'];
+export const POOL_STARVING_RUNWAY_SHARE = 0.8;
+export const POOL_WASTING_PROJECTED_PERCENT = 90;
+
+export interface PoolShareInput {
+  pool: string;
+  resetAt?: string | null;
+  unit?: 'percent' | 'usd';
+  remainingUsd?: number | null;
+  reason?: string | null;
+  usedPercent: number | null;
+  burnPerHour: number | null;
+  hoursToReset: number | null;
+}
+
+export interface PoolShare {
+  pool: string;
+  reset_at: string | null;
+  /** Percent of the allowance per hour, including gifts with a known grant. */
+  burn_pct_per_hour: number | null;
+  unit: 'percent' | 'usd';
+  remaining_usd: number | null;
+  /** Plain words, shared by the CLI and desktop/phone. */
+  verdict: string;
+  /** Hours until empty at the measured burn; null when unknown or when nothing burns it (never empties). */
+  runway_hours: number | null;
+  /** As read; zero or negative means the reset already passed (state unknown). */
+  hours_to_reset: number | null;
+  /** 0-100+, as read; null when missing. */
+  used_percent: number | null;
+  /** used + burn x hours to reset, capped at 100; null when unknown. */
+  projected_percent_at_reset: number | null;
+  state: PoolShareState;
+  /** Share (0-1) of new non-urgent work this pool should take; 0 when starving; null when unknown. */
+  suggested_share: number | null;
+  /** 1 = send the next job here. Wasting first, then on pace, then starving; unknown last. */
+  rank: number;
+  /** What is missing when unknown; null otherwise. */
+  reason: string | null;
+  /** One plain line, e.g. "Claude: 99% left, resets in 50 h, send work here". */
+  line: string;
+}
+
+export interface PoolShareSnapshot {
+  schema: typeof POOL_SHARE_SCHEMA;
+  asOf: string | null;
+  /** The pool that should take the next ordinary job; null when no pool is known to have room. */
+  next_pool: string | null;
+  pools: PoolShare[];
+}
+
+/** "codex-personal" -> "Codex personal". */
+export function poolLabel(pool: string): string {
+  if (pool === 'claude-api') return 'Claude API';
+  const words = pool.replace(/[-_]+/g, ' ').trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : pool;
+}
+
+const SHARE_ORDER: Record<PoolShareState, number> = { wasting: 0, on_pace: 1, starving: 2, unknown: 3 };
+const wholeHours = (n: number): string => `${Math.max(0, Math.round(n))} h`;
+
+/**
+ * Pure: one verdict per pool and a suggested share of new work. Wasting pools
+ * split new work by the room they would leave unused; on-pace pools take what
+ * is left of that room (an equal split when no pool has room); starving pools
+ * take only top-priority work (share 0). Rows come back ranked.
+ */
+export function planPoolShares(inputs: readonly PoolShareInput[]): PoolShare[] {
+  const rows = inputs.map(input => {
+    const used = num(input.usedPercent) && input.usedPercent >= 0 ? input.usedPercent : null;
+    const burn = num(input.burnPerHour) && input.burnPerHour >= 0 ? input.burnPerHour : null;
+    const hours = num(input.hoursToReset) ? input.hoursToReset : null;
+    const reason = input.reason ?? (used === null ? 'no usage reading' : burn === null ? 'no burn rate yet'
+      : hours === null ? 'reset time unknown' : hours <= 0 ? 'reset already passed; waiting for a new reading' : null);
+    const base = { pool: input.pool, reset_at: input.resetAt ?? null, burn_pct_per_hour: burn,
+      unit: input.unit ?? 'percent', remaining_usd: input.remainingUsd ?? null, runway_hours: null as number | null, hours_to_reset: hours === null ? null : round1(hours),
+      used_percent: used === null ? null : round1(used), projected_percent_at_reset: null as number | null };
+    if (reason !== null) return { ...base, state: 'unknown' as PoolShareState, reason, room: 0 };
+    const left = Math.max(0, 100 - used!);
+    const runwayHours = burn! > 0 ? left / burn! : left === 0 ? 0 : null;
+    const projected = Math.min(100, used! + burn! * hours!);
+    const state: PoolShareState = runwayHours !== null && runwayHours < hours! * POOL_STARVING_RUNWAY_SHARE ? 'starving'
+      : projected < POOL_WASTING_PROJECTED_PERCENT ? 'wasting' : 'on_pace';
+    return { ...base, runway_hours: runwayHours === null ? null : round1(runwayHours), projected_percent_at_reset: round1(projected),
+      state, reason: null, room: state === 'starving' ? 0 : 100 - projected };
+  });
+  const open = rows.filter(row => row.state === 'wasting' || row.state === 'on_pace');
+  const room = open.reduce((sum, row) => sum + row.room, 0);
+  const ranked = [...rows].sort((a, b) => SHARE_ORDER[a.state] - SHARE_ORDER[b.state]
+    || b.room - a.room || (b.runway_hours ?? 0) - (a.runway_hours ?? 0) || a.pool.localeCompare(b.pool));
+  return ranked.map(({ room: own, ...row }, index) => {
+    const share = row.state === 'unknown' ? null : row.state === 'starving' ? 0
+      : room > 0 ? round2(own / room) : round2(1 / open.length);
+    const name = poolLabel(row.pool);
+    const left = row.used_percent === null ? '' : `${Math.max(0, Math.round(100 - row.used_percent))}% left, `;
+    const resets = row.hours_to_reset === null || row.hours_to_reset <= 0 ? '' : `resets in ${wholeHours(row.hours_to_reset)}, `;
+    const line = row.state === 'unknown' ? `${name}: unknown (${row.reason})`
+      : row.state === 'wasting' ? `${name}: ${left}${resets}send work here`
+        : row.state === 'on_pace' ? `${name}: ${left}${resets}on pace, normal work`
+          : `${name}: ${left}runs dry in ${wholeHours(row.runway_hours ?? 0)}, ${resets}top-priority work only`;
+    const early = Math.max(0, (row.hours_to_reset ?? 0) - (row.runway_hours ?? 0));
+    const verdict = row.state === 'unknown' ? `unknown: ${row.reason === 'no usage reading' ? 'no reading' : row.reason}`
+      : row.state === 'starving' ? `will run dry ${early >= 24 ? `${Math.round(early / 24)} days` : `${Math.round(early)} hours`} early`
+        : row.state === 'wasting' ? `will waste ${Math.round(100 - row.projected_percent_at_reset!)}%` : 'on pace';
+    return { ...row, verdict, suggested_share: share, rank: index + 1, line };
+  });
+}
+
+export function poolShareSnapshot(inputs: readonly PoolShareInput[], asOf: string | null): PoolShareSnapshot {
+  const pools = planPoolShares(inputs);
+  return { schema: POOL_SHARE_SCHEMA, asOf, next_pool: pools.find(row => (row.suggested_share ?? 0) > 0)?.pool ?? null, pools };
+}
+
+/** One sentence for the CLI and compact desktop/phone rows. */
+export function poolSpendLine(row: PoolShare): string {
+  const pct = (n: number | null) => n === null ? 'unknown' : `${Number(n.toFixed(2))}%`;
+  const reset = row.reset_at === null ? 'unknown' : `${row.hours_to_reset} h (${row.reset_at})`;
+  return `${poolLabel(row.pool)}${row.unit === 'usd' ? ' gift' : ''}: ${row.verdict} · ${pct(row.used_percent)} used · ${pct(row.burn_pct_per_hour)}/h · ${pct(row.projected_percent_at_reset)} at reset · ${row.unit === 'usd' ? 'expires' : 'resets'} in ${reset}`;
 }

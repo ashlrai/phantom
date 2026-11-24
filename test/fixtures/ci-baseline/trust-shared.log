@@ -1,0 +1,28 @@
+##[group]Run perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
+perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+3 allowed=1
+##[error]Process completed with exit code 1.
+##[group]Run "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
+"$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+5:34PM INF 1 commits scanned.
+5:34PM INF scanned ~91234 bytes (91.23 KB) in 1.2s
+5:34PM WRN leaks found: 2
+##[error]Process completed with exit code 1.
+##[group]Run node --test .github/tests/release-version-provenance.test.mjs
+node --test .github/tests/release-version-provenance.test.mjs
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+TAP version 13
+# Subtest: release version provenance
+ok 1 - release version provenance
+1..1
+##[group]Run node .github/scripts/release-version-provenance.mjs
+node .github/scripts/release-version-provenance.mjs
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+::error::package.json version 3.30.49 -> 3.30.50; .release-please-manifest.json "." 3.30.49 -> 3.30.50. Only the release-please PR may change the release version; the release train refuses any other tag (release_message_mismatch) and leaves it an orphan draft. Drop the version bump and keep release notes under the changelog Unreleased section. See docs/RELEASING.md.
+##[error]Process completed with exit code 1.

@@ -5,8 +5,9 @@ import { PassThrough } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cmdJob } from '../src/cli/job.js';
-import { requestJobControl, type JobControlOptions } from '../src/core/fleet/job-control.js';
-import { JOB_CONTROL_FILE, VERSE_FLEET_RUNS_CONTROL_PATH as PATH } from '../src/core/fleet/job-control-types.js';
+import { cmdJobs } from '../src/cli/jobs-empty.js';
+import { readJobControlLedger, requestJobControl, type JobControlOptions } from '../src/core/fleet/job-control.js';
+import { JOB_CONTROL_FILE, jobControlRecordLabel, VERSE_FLEET_RUNS_CONTROL_PATH as PATH } from '../src/core/fleet/job-control-types.js';
 import { createFleetRunsApi } from '../src/core/verse/fleet-runs-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
@@ -45,6 +46,22 @@ const ledger = async (): Promise<Array<Record<string, unknown>>> => {
   const text = await readFile(join(dir, JOB_CONTROL_FILE), 'utf8').catch(() => '');
   return text.split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
 };
+
+it('reads the control file back as one row per request, folded with the dispatcher\'s answer', async () => {
+  expect(await readJobControlLedger({ runsDir: dir })).toEqual([]);
+  const pause = await requestJobControl({ action: 'pause', job: LIVE }, opts);
+  const move = await requestJobControl({ action: 'move', job: LIVE, lane: 'claude' }, { ...opts, by: 'desktop' });
+  await appendFile(join(dir, JOB_CONTROL_FILE), `${JSON.stringify({ schema: 'fleet.job.control.v1', requestId: move.requestId, status: 'refused', reason: 'Lane claude filled up.', at: 'later' })}\nnot json\n`);
+  const rows = await readJobControlLedger({ runsDir: dir });
+  expect(rows).toEqual([
+    // `by` names a surface in lower case; anything else on the row is not passed on.
+    { requestId: pause.requestId, action: 'pause', job: LIVE, lane: null, status: 'requested', reason: null, at: pause.at, by: 'test' },
+    { requestId: move.requestId, action: 'move', job: LIVE, lane: 'claude', status: 'refused', reason: 'Lane claude filled up.', at: move.at, by: 'desktop' },
+  ]);
+  expect(rows.map(jobControlRecordLabel)).toEqual(['Pause requested', 'Move to claude refused']);
+  expect(jobControlRecordLabel({ action: 'move', lane: 'claude', status: 'applied' })).toBe('Moved to claude');
+  await expect(readJobControlLedger({ runsDir: 'relative/runs' })).rejects.toThrow(TypeError);
+});
 
 it('records pause and resume as requests for the dispatcher, in stable JSON', async () => {
   const pause = await requestJobControl({ action: 'pause', job: LIVE }, opts);
@@ -162,6 +179,28 @@ it('phm job: prints the receipt and exits 0, 1 or 2', async () => {
   expect(await cmdJob(['pause', '--help'])).toBe(0);
   expect(err).toHaveBeenCalled();
   expect(await ledger()).toHaveLength(1);
+});
+
+it('phm jobs: every action works under the plural verb with the same receipt', async () => {
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const json = () => JSON.parse(String(out.mock.calls.at(-1)?.[0])) as Record<string, unknown>;
+  expect(await cmdJobs(['move', QUEUED, '--lane', 'claude', '--dry-run', '--json', '--runs-dir', dir])).toBe(0);
+  expect(json()).toMatchObject({ schema: 'fleet.job.control.v1', action: 'move', job: QUEUED, lane: 'claude', status: 'applied', dryRun: true });
+  expect(await cmdJobs(['pause', QUEUED, '--dry-run', '--json', '--runs-dir', dir])).toBe(1);
+  expect(json()).toMatchObject({ action: 'pause', job: QUEUED, status: 'refused' });
+  expect(await cmdJobs(['resume', QUEUED, '--json', '--runs-dir', dir])).toBe(1);
+  expect(json()).toMatchObject({ action: 'resume', status: 'refused', reason: 'Job is not paused.' });
+  expect(await cmdJobs(['stop', QUEUED, '--runs-dir', dir])).toBe(0);
+  expect(out.mock.calls.at(-1)?.[0]).toBe(`Stop requested for ${QUEUED}.`);
+  expect(await cmdJobs(['pause', 'RQ-PHX-NOBODY99', '--json', '--runs-dir', dir])).toBe(1);
+  expect(json()).toMatchObject({ schema: 'fleet.job.control.v1', job: 'RQ-PHX-NOBODY99', status: 'unknown' });
+  expect(await cmdJobs(['pause', 'RQ-PHX-NOBODY99', '--runs-dir', dir])).toBe(1);
+  expect(out.mock.calls.at(-1)?.[0]).toBe('No job RQ-PHX-NOBODY99 found.');
+  expect(await cmdJobs(['move', QUEUED])).toBe(2);
+  expect(String(err.mock.calls.at(-1)?.[0])).toContain('phm jobs pause|resume|stop|move');
+  expect(await cmdJobs(['--help'])).toBe(0);
+  expect(String(out.mock.calls.at(-1)?.[0])).toContain('phm jobs pause|resume|stop|move');
 });
 
 async function post(api: ReturnType<typeof createFleetRunsApi>, body: unknown, method = 'POST', token = 'fixture-token') {

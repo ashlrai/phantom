@@ -5,6 +5,11 @@ import type { ApiModule } from '../src/core/verse/api-modules.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { createFleetRuntimeIdentityApi, VERSE_FLEET_RUNTIME_IDENTITY_PATH } from '../src/core/verse/fleet-runtime-identity-api.js';
 
+vi.mock('../src/core/fleet/node-reach-view.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/core/fleet/node-reach-view.js')>(),
+  readNodeReachSources: () => ({}),
+}));
+
 const home = '/fake/private-home';
 const observed = new Date('2026-11-13T18:00:00.000Z');
 const generated = new Date('2026-11-13T18:00:05.000Z');
@@ -61,7 +66,7 @@ describe('runtime identity API source clock', () => {
     const clock = vi.fn((): Date => { throw new Error('private thrown text'); });
     const api = createFleetRuntimeIdentityApi({ identityDeps: readers({ now: clock }), now: () => generated });
     const result = await request(api);
-    expect(result.body).toEqual({ v: 1, generatedAt: generated.toISOString(), identity: {
+    expect(result.body).toEqual({ v: 1, generatedAt: generated.toISOString(), nodes: [], identity: {
       host: 'unknown', platform: 'unknown', asOf: generated.toISOString(), installedVersion: 'unknown', sourceVersion: 'unknown', versionDrift: false,
       fleetState: { path: 'unknown', mtime: 'unknown', ageSeconds: 'unknown', stale: 'unknown' }, tailnetName: 'unknown',
       reasons: ['runtime identity: reader failed; all fields unknown'],

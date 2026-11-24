@@ -58,7 +58,7 @@ const LANES = {
   generatedAt: new Date().toISOString(),
   mergeWindowMinutes: 60,
   sources: {
-    queue: { state: 'healthy', file: 'ready.tsv', rows: 3, dropped: 0 },
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 3, dropped: 0, unhinted: 0 },
     queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 4 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 2, dropped: 0 },
     usage: { state: 'missing', files: [], pools: 0, dropped: 0 },

@@ -1,13 +1,20 @@
 /**
  * `phm host top`: one read-only snapshot of what is using this Mac, in plain buckets, with one suggestion.
- * It only reads (ps, vm_stat, sysctl, lsappinfo). It never kills, pauses or quits anything, and it never
- * suggests quitting Phantom or the app in front. Anything it cannot read is null and named in `gaps`.
+ * It only reads (ps, vm_stat, sysctl, lsappinfo, statfs and the fleet sampler's disk history). It never kills,
+ * pauses or quits anything, and it never suggests quitting Phantom or the app in front. Anything it cannot
+ * read is null and named in `gaps`.
  */
 import { execFile } from 'node:child_process';
-import { totalmem } from 'node:os';
+import { statfs } from 'node:fs/promises';
+import { homedir, totalmem } from 'node:os';
+import { join } from 'node:path';
 import { defaultMacAppsProbe } from '../apps-known.js';
 import { parsePressureLevel, parseSwapUsage, parseVmStat } from '../run/host-headroom.js';
-import { HOST_TOP_BUCKETS, HOST_TOP_SCHEMA, hostTopMemory, type HostTopBucket, type HostTopBucketId, type HostTopReport } from './host-top-view.js';
+import { readSource } from './runs-parked-queue.js';
+import {
+  HOST_DISK_FLOOR_GB, HOST_TOP_BUCKETS, HOST_TOP_SCHEMA, diskTrend, hostTopMemory,
+  type HostDiskSample, type HostTopBucket, type HostTopBucketId, type HostTopReport,
+} from './host-top-view.js';
 import {
   HOST_LOAD_MODEL_COMMAND, HOST_LOAD_SYSTEM_PATH, baseName, parseHostPs, plainName, readHostLoad, readHostLoadJobRoots, readHostPs,
   type HostLoad, type HostLoadItem, type HostLoadJobRoot, type HostPsRow,
@@ -26,6 +33,10 @@ export interface HostTopInput {
   frontApp?: string | null;
   /** This process: it and its children count as Phantom. */
   selfPid?: number;
+  /** Free-disk readings (the sampler's history plus a live one); empty means none were readable. */
+  diskSamples?: readonly HostDiskSample[];
+  /** The floor in GB the free-disk trend measures to; default HOST_DISK_FLOOR_GB. */
+  floorGb?: number;
   now?: number;
 }
 
@@ -115,6 +126,7 @@ export function buildHostTop(input: HostTopInput): HostTopReport {
   const pressure = level === null ? null : level === 1 ? 'normal' : level === 2 ? 'warning' : 'critical';
   const swap = input.swapText == null ? null : parseSwapUsage(input.swapText);
   const free = input.vmStatText == null || !totalBytes ? null : parseVmStat(input.vmStatText, totalBytes);
+  const disk = diskTrend(input.diskSamples ?? [], input.floorGb ?? HOST_DISK_FLOOR_GB, input.now ?? Date.now());
   const { load1, load5 } = input.load;
   const gaps: string[] = [];
   if (rows.size === 0) gaps.push('The process list is unavailable, so what is using this Mac is unknown.');
@@ -125,14 +137,48 @@ export function buildHostTop(input: HostTopInput): HostTopReport {
   if (pressure === null) gaps.push('Memory pressure is unknown.');
   if (swap === null) gaps.push('Swap used is unknown.');
   if (free === null) gaps.push('Free memory is unknown.');
+  if (disk.freeGb === null) gaps.push('Free disk is unknown.');
   return {
     schema: HOST_TOP_SCHEMA, version: 1, generatedAt: new Date(input.now ?? Date.now()).toISOString(),
     state: rows.size === 0 ? 'unknown' : gaps.length ? 'partial' : 'known',
-    host: { load1, load5, cores, pressure, swapUsedGb: swap === null ? null : round1(swap), memoryFreePercent: free === null ? null : Math.round(free) },
+    host: { load1, load5, cores, pressure, swapUsedGb: swap === null ? null : round1(swap), memoryFreePercent: free === null ? null : Math.round(free), disk },
     totals, buckets, frontApp, biggest: biggest?.id ?? null, suggestion,
     gaps: rows.size === 0 ? gaps : [...gaps, 'Memory is resident memory added up per process, so shared memory is counted more than once.',
       'Tools started through node or python count under their parent app, or under Other.'],
   };
+}
+
+/** Rows of the fleet sampler's history (`queue/disk-growth-history.json`, written as {at, free_gb}); anything else is skipped. */
+export function parseDiskHistory(text: string | null): HostDiskSample[] {
+  let rows: unknown;
+  try { rows = JSON.parse(text ?? ''); } catch { return []; }
+  if (!Array.isArray(rows)) return [];
+  const samples: HostDiskSample[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const { at, free_gb: freeGb } = row as Record<string, unknown>;
+    if (typeof at === 'number' && Number.isFinite(at) && typeof freeGb === 'number' && Number.isFinite(freeGb)) samples.push({ at, freeGb });
+  }
+  return samples;
+}
+
+export async function readLiveDiskSample(): Promise<HostDiskSample | null> {
+  try {
+    const { bavail, bsize } = await statfs(homedir());
+    if (!Number.isFinite(bavail) || !Number.isFinite(bsize) || bavail < 0 || bsize <= 0) return null;
+    return { at: Math.floor(Date.now() / 1000), freeGb: (bavail * bsize) / 1e9 };
+  } catch { return null; }
+}
+
+/** The sampler's history plus one live reading of the same volume; empty when neither is readable. */
+export async function readDiskSamples(runsDir: string, live: () => Promise<HostDiskSample | null> = readLiveDiskSample): Promise<HostDiskSample[]> {
+  let text: string | null = null;
+  try {
+    const source = await readSource(join(runsDir, 'queue', 'disk-growth-history.json'), 5 * 1024 * 1024, false);
+    if (source.state === 'healthy') text = source.text;
+  } catch { /* No readable history. */ }
+  const reading = await live().catch(() => null);
+  return reading ? [...parseDiskHistory(text), reading] : parseDiskHistory(text);
 }
 
 export interface HostTopDeps {
@@ -144,10 +190,16 @@ export interface HostTopDeps {
   run?: (file: string, args: string[]) => Promise<string | null>;
   /** Bundle path of the app in front, or null. */
   frontApp?: () => Promise<string | null>;
+  /** Free-disk readings for the trend; the default reads the sampler's history plus one live reading. */
+  diskSamples?: () => Promise<HostDiskSample[]>;
+  /** Runs dir holding queue/disk-growth-history.json. Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs. */
+  runsDir?: string;
+  /** The floor in GB the free-disk trend measures to; default HOST_DISK_FLOOR_GB. */
+  floorGb?: number;
   totalBytes?: number; selfPid?: number; now?: () => number;
 }
 
-const runRead = (file: string, args: string[]): Promise<string | null> => new Promise(resolve => {
+export const runRead = (file: string, args: string[]): Promise<string | null> => new Promise(resolve => {
   if (process.platform !== 'darwin') { resolve(null); return; }
   try {
     execFile(file, args, { timeout: 5000, maxBuffer: 1024 * 1024, env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LC_ALL: 'C' } }, (error, stdout) => resolve(error ? null : stdout));
@@ -158,13 +210,20 @@ const runRead = (file: string, args: string[]): Promise<string | null> => new Pr
 export async function readHostTopReport(deps: HostTopDeps = {}): Promise<HostTopReport> {
   const run = deps.run ?? runRead;
   const quiet = <T,>(read: () => Promise<T | null>): Promise<T | null> => { try { return read().catch(() => null); } catch { return Promise.resolve(null); } };
-  const [psText, vmStatText, swapText, pressureText, frontApp] = await Promise.all([
+  const [psText, vmStatText, swapText, pressureText, frontApp, diskSamples] = await Promise.all([
     quiet(deps.ps ?? readHostPs), quiet(() => run('/usr/bin/vm_stat', [])), quiet(() => run('/usr/sbin/sysctl', ['vm.swapusage'])),
     quiet(() => run('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'])),
     quiet(deps.frontApp ?? (() => defaultMacAppsProbe()?.frontmost() ?? Promise.resolve(null))),
+    quiet(() => (deps.diskSamples ?? (() => readDiskSamples(deps.runsDir ?? defaultRunsDir())))()),
   ]);
   let jobRoots: HostLoadJobRoot[] | null = null;
   try { jobRoots = (deps.jobRoots ?? readHostLoadJobRoots)(); } catch { /* Unknown job roots. */ }
   return buildHostTop({ psText, jobRoots, load: (deps.load ?? readHostLoad)(), vmStatText, swapText, pressureText, frontApp,
+    diskSamples: diskSamples ?? [], floorGb: deps.floorGb,
     totalBytes: deps.totalBytes ?? totalmem(), selfPid: deps.selfPid ?? process.pid, now: (deps.now ?? Date.now)() });
+}
+
+/** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention fleet-runs-api uses. */
+export function defaultRunsDir(): string {
+  return process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
 }

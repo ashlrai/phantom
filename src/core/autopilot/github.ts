@@ -17,7 +17,7 @@ const LOG_TAIL_CHARS = 8_000;
 export const defaultGh: Gh = (args) => new Promise((resolve, reject) => {
   execFile('gh', args, { timeout: GH_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' } }, (err, stdout, stderr) => {
     if (err) {
-      const line = String(stderr || err.message).split('\n').find((l) => l.trim()) ?? 'gh failed';
+      const line = err.killed ? `timed out after ${GH_TIMEOUT_MS / 1000}s` : String(stderr || err.message).split('\n').find((l) => l.trim()) ?? 'gh failed';
       reject(new Error(scrubSecrets(`gh ${args.slice(0, 2).join(' ')}: ${line}`).slice(0, 300)));
     } else resolve(stdout);
   });

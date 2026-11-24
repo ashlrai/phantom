@@ -16,6 +16,8 @@ export interface LaneAllowanceInputs {
 export interface LaneAllowanceRow {
   lane: string; label: string; used: number | null; limit: number | null; left: number | null;
   unit: ResourceLiveUnit | null; usedPct: number | null; resetAt: string | null; resetsInHours: number | null;
+  /** When the measured window began, as its reading reports it; null when the reading names no start or is not usable. */
+  windowStart: string | null;
   measuredAt: string | null; ageSeconds: number | null; freshness: 'live' | 'stale' | 'unknown' | 'invalid-future';
   posture: 'burn' | 'balanced' | 'preserve' | 'unknown'; postureReason: string | null;
   costClass: 'included' | 'metered' | 'api-credit' | 'unknown'; projectedUnusedPct: number | null;
@@ -89,6 +91,7 @@ export function projectLaneAllowance(inputs: LaneAllowanceInputs, nowMs: number)
       left: used !== null && limit !== null ? Math.max(0, limit - used) : null,
       usedPct: used !== null && limit !== null && limit > 0 ? used / limit * 100 : null,
       resetAt, resetsInHours: Number.isFinite(reset) ? Math.max(0, (reset - nowMs) / 3_600_000) : null,
+      windowStart: measured && windowStart !== undefined && Number.isFinite(reset) && Date.parse(windowStart) < reset ? windowStart : null,
       measuredAt, ageSeconds, freshness: future ? 'invalid-future' : !measured ? 'unknown' : stale ? 'stale' : 'live', posture,
       postureReason: posture === 'unknown' ? 'posture-unmeasured' : p?.postureReason ?? 'posture-unmeasured',
       costClass: measured && !stale && unit === 'usd' ? 'api-credit'

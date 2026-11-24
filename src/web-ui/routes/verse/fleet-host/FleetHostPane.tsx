@@ -11,6 +11,7 @@ import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
 import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
+import { DotEvidenceCard } from './DotEvidenceCard.js';
 import { TailnetPeersCard } from './TailnetPeersCard.js';
 import { PoolReachCard } from './PoolReachCard.js';
 import { ClaimExecutionCard } from './ClaimExecutionCard.js';
@@ -20,10 +21,12 @@ import { SurfaceOwnerCard } from './SurfaceOwnerCard.js';
 import { AppsCard } from './AppsCard.js';
 import { DiskForecastCard } from './DiskForecastCard.js';
 import { AllowedAppsCard } from './AllowedAppsCard.js';
+import { AppActionsCard } from './AppActionsCard.js';
 import { MacAppsCard } from './MacAppsCard.js';
 import { BrowserCard } from './BrowserCard.js';
 import { HostLoadCard } from './HostLoadCard.js';
 import { MemoryGuardCard } from './MemoryGuardCard.js';
+import { DiskPlanCard } from './DiskPlanCard.js';
 import { DiskRunwayCard } from './DiskRunwayCard.js';
 import { hostView } from './fleet-host-model.js';
 import { plannerRows, plannerTell } from './planners-model.js';
@@ -72,6 +75,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
     </header>
     <MacAppsCard visible={visible} />
     <AllowedAppsCard visible={visible} />
+    <AppActionsCard visible={visible} />
     <BrowserCard visible={visible} />
     {data === null ? <p className={styles.muted}>The fleet runs API has not landed in this build yet.</p>
       : !data ? <p className={styles.muted} role="status">{read.status === 'error' ? 'Fleet runs are unavailable.' : 'Reading fleet runs…'}</p>
@@ -118,9 +122,11 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <MemoryGuardCard visible={visible} />
         <DiskForecastCard visible={visible} />
         <DiskRunwayCard visible={visible} />
+        <DiskPlanCard visible={visible} />
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <RuntimeIdentityCard visible={visible} />
+        <DotEvidenceCard visible={visible} />
         <TailnetPeersCard visible={visible} />
         <PoolReachCard visible={visible} />
         <BridgeCheckCard visible={visible} />

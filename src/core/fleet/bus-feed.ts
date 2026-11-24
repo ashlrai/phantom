@@ -58,7 +58,7 @@ export function parseDispatchEvents(text: string): BusFeedEvent[] {
     const atIso = `${timestamp}${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
     const token = match[2];
     const kinds: Record<string, BusFeedEventKind> = { INBOX: 'inbox', INCIDENT: 'incident',
-      LANE_HOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published', PARKED: 'blocked' };
+      LANE_HOLD: 'lane-hold', LANE_UNHOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published', PARKED: 'blocked' };
     const kind = token.startsWith('ORCH-') ? 'orch' : (Object.hasOwn(kinds, token) ? kinds[token] : 'other');
     // Some historical offsets contain seconds and cannot be represented by an ISO minute offset.
     events.push({ at: scrubSecrets(match[1]), ...(Date.parse(atIso) === parsed.getTime() ? { atIso } : {}),

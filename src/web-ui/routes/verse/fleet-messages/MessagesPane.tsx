@@ -61,6 +61,9 @@ export function MessagesPane({ visible, host }: PaneProps) {
         </select>
       </label>}
     </div>
+    <p className={styles.notice}>Messages as of {read.updatedAt === null ? 'unknown' : <time dateTime={new Date(read.updatedAt).toISOString()}>{new Date(read.updatedAt).toISOString()}</time>}.</p>
+    {read.error && <p className={styles.notice} role="status">Refresh failed; showing the last messages, which may be stale.</p>}
+    {pair && data.matched > all.length && <p className={styles.notice}>{data.matched - all.length} older messages not read.</p>}
     {data.skipped > 0 && <p className={styles.notice} role="status">Skipped {data.skipped} damaged bus record{data.skipped === 1 ? '' : 's'}.</p>}
     {conversations.length === 0
       ? <p className={styles.quiet}>{pair ? `No messages between ${pair[0]} and ${pair[1]}.` : agent ? `No messages to or from ${agent}.` : 'No agent messages yet. When agents ask, reply or hand off work, it shows here.'}</p>

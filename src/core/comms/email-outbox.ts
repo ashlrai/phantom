@@ -11,6 +11,10 @@
  *     anything unsendable is `stuck` with a reason: symlinks, non-regular
  *     files, replies over EMAIL_OUTBOX_MAX_BYTES, and claims left in
  *     `dir/sending/` by a crashed pass.
+ *   probeOutboxDir(dir)    — the availability check readers run first:
+ *     readEmailOutbox degrades an absent or unreadable dir to an empty
+ *     listing, so `missing`/`not-directory`/`unreadable` are classified here
+ *     before a listing is trusted.
  *   sendEmailOutbox(opts)  — one pass over queued replies, in name order. A
  *     reply sends only when its To parses to exactly one address on
  *     `allowedRecipients`; anything else is `refused` and stays in the
@@ -41,7 +45,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDraft } from '../cos/drafts.js';
 import { checkSend } from '../agents/send-policy.js';
@@ -192,6 +196,39 @@ function parseReplyEml(raw: string): ParsedReply {
     subject: cleanHeader(headers.get('subject')),
     body,
   };
+}
+
+/** Availability of the outbox directory itself, before any listing is trusted. */
+export type EmailOutboxDirState = 'ok' | 'missing' | 'not-directory' | 'unreadable';
+
+/**
+ * Establish that the outbox is a readable directory before trusting a
+ * listing: readEmailOutbox silently degrades I/O failures to `[]`, so an
+ * absent or unreadable drop folder must be classified here first. Errors are
+ * mapped to fixed codes only — raw exception text never leaves.
+ */
+export function probeOutboxDir(dir: string): EmailOutboxDirState {
+  let stat;
+  try {
+    stat = statSync(dir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? 'missing' : code === 'ENOTDIR' ? 'not-directory' : 'unreadable';
+  }
+  if (!stat.isDirectory()) return 'not-directory';
+  try {
+    readdirSync(dir);
+    for (const sub of [SENDING_DIR, SENT_DIR, DRAFTED_DIR]) {
+      try {
+        readdirSync(join(dir, sub));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
+  } catch {
+    return 'unreadable';
+  }
+  return 'ok';
 }
 
 /** `*.reply.eml` names in one directory, name order; unreadable dir → empty. */

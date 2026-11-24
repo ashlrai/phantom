@@ -97,6 +97,37 @@ describe('growth.series.v1', () => {
     expect(series(report, 'pullsOpened').status).toBe('no-data-source');
   });
 
+  it('reads the metrics-outcomes reconciler dialect in the jobs ledger', () => {
+    const text = [
+      // The reconciler copies the PUBLISHED row and swaps only the outcome.
+      JSON.stringify({ jobId: 'recon-a', prUrl: 'https://github.com/ashlrai/phantom/pull/42', outcome: 'MERGED', ts: '2026-11-09T11:30:00.000Z', mergedAt: '2026-11-09T11:30:00.000Z', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify({ event: 'publish', jobId: 'recon-b', prUrl: 'https://github.com/ashlrai/phantom/pull/43', outcome: 'MERGED', ts: '2026-11-09T11:50:00.000Z', source: 'metrics-outcomes-reconciler' }),
+      JSON.stringify({ jobId: 'recon-c', prUrl: 'https://github.com/ashlrai/phantom/pull/44', outcome: 'CLOSED', ts: '2026-11-09T11:55:00.000Z', source: 'metrics-outcomes-reconciler' }),
+      // Eventless and snake_case dialects count; mergedAt outranks ts.
+      JSON.stringify({ job: 'bare-a', outcome: 'MERGED', ts: '2026-11-09T11:40:00.000Z' }),
+      JSON.stringify({ job_id: 'bare-b', status: 'MERGED', timestamp: '2026-11-09T11:58:00.000Z', url: 'https://example.com/not-a-pr' }),
+      // A merged event counts only without a terminal state; CLOSED wins over it.
+      JSON.stringify({ event: 'merged', job: 'evt-a', ts: '2026-11-09T11:52:00.000Z' }),
+      JSON.stringify({ event: 'merged', job: 'evt-b', outcome: 'CLOSED', ts: '2026-11-09T11:53:00.000Z' }),
+      // The same job across id spellings counts once, at the latest merge instant.
+      JSON.stringify({ job: 'dupe', event: 'outcome', state: 'MERGED', ts: '2026-11-09T10:00:00.000Z' }),
+      JSON.stringify({ jobId: 'dupe', outcome: 'MERGED', ts: '2026-11-09T11:00:00.000Z', mergedAt: '2026-11-09T11:45:00.000Z' }),
+    ].join('\n');
+    const report = projectGrowthSeries(facts({ jobsText: text }), '1H');
+    const merges = series(report, 'mergesPerHour');
+    expect(merges.status).toBe('ready');
+    const at = (t: string) => merges.points.find((point) => point.t === t)?.y;
+    expect(at('2026-11-09T11:30:00.000Z')).toBe(12);
+    expect(at('2026-11-09T11:40:00.000Z')).toBe(12);
+    expect(at('2026-11-09T11:45:00.000Z')).toBe(12);
+    expect(at('2026-11-09T11:50:00.000Z')).toBe(24);
+    expect(at('2026-11-09T11:55:00.000Z')).toBe(12);
+    const mergedPulls = series(report, 'pullsMerged');
+    expect(mergedPulls.status).toBe('ready');
+    const prTotal = mergedPulls.points.reduce((sum, point) => sum + (point.y ?? 0), 0);
+    expect(prTotal).toBe(2);
+  });
+
   it('buckets a complete pull export and ignores a truncated one', () => {
     const complete = projectGrowthSeries(facts({ pulls: [pull()], pullsComplete: true }), '1H');
     expect(series(complete, 'pullsOpened').points.find((point) => point.t === '2026-11-09T11:05:00.000Z')?.y).toBe(1);

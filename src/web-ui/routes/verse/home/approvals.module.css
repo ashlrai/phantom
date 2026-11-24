@@ -2,7 +2,7 @@
 .card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); min-width: 0; }
 .card h3 { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
 .card [data-unknown] { margin: 0; color: var(--text-secondary); font-style: italic; font-size: var(--text-sm-size); }
-.count { min-width: 1.5rem; padding: 0 var(--space-1); border-radius: 999px; background: var(--warning-500, var(--border-default)); color: var(--text-primary); text-align: center; }
+.count { min-width: 1.5rem; padding: 0 var(--space-1); border-radius: 999px; background: var(--status-warning-bg); color: var(--status-warning-fg); text-align: center; }
 .list { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 .ask { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .request, .meta { margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm-size); color: var(--text-primary); }

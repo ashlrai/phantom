@@ -7,8 +7,8 @@ import { checkDoneWhen } from '../src/core/cloud/backlog-done.js';
 import { BUILTIN_IMPROVEMENT_BACKLOG } from '../src/core/cloud/improvement-backlog.js';
 import { writeCloudTask } from '../src/core/cloud/store.js';
 import type { CloudBacklogItem, CloudTaskV1 } from '../src/core/cloud/types.js';
-import { appendLedger, kindOf, outcomesLedgerPath, readLedger, scoreOutcomes, type MetricSpec } from '../src/core/improve/outcomes.js';
-import { backlogProposalId, backlogRegistrations } from '../src/core/improve/backlog-sync.js';
+import { appendLedger, kindOf, outcomesLedgerPath, readLedger, scoreOutcomes, type LedgerEvent, type MetricSpec } from '../src/core/improve/outcomes.js';
+import { backlogProposalId, backlogRegistrations, syncCloudBacklogOutcomes } from '../src/core/improve/backlog-sync.js';
 import { cmdImprove } from '../src/cli/improve.js';
 
 const metric: MetricSpec = { name: 'gate-ms', direction: 'decrease', runner: { kind: 'npm', script: 'bench:gate' } };
@@ -95,6 +95,71 @@ describe('backlog to ledger sync', () => {
     expect(String(log.mock.calls.at(-1)![0])).toMatch(/registered 1/);
     expect(await cmdImprove(['sync-backlog'])).toBe(0);
     expect(String(log.mock.calls.at(-1)![0])).toMatch(/No new/);
+  });
+});
+
+describe('syncCloudBacklogOutcomes', () => {
+  const pr = (number: number, state: 'open' | 'merged' | 'closed' = 'open') =>
+    ({ number, url: `https://github.com/ashlrai/phantom/pull/${number}`, state, draft: true, title: 't' });
+  const stored = (id: string, backlogItemId: string | null, prState: 'open' | 'merged' | 'closed' | null, number = 20) => {
+    const now = new Date().toISOString();
+    writeCloudTask({ v: 1, id, repo: 'ashlrai/phantom', baseBranch: 'master', branch: `ashlr-cloud/${id}`, title: id, prompt: 'p',
+      origin: 'self-improve', requestedBy: 'self-improve', seat: 's', sessionId: null, sessionUrl: null,
+      state: prState === 'merged' ? 'merged' : prState === 'closed' ? 'closed' : 'pr-open', stateReason: null, failure: null,
+      createdAt: now, launchedAt: now, updatedAt: now, pr: prState ? pr(number, prState) : null, report: null,
+      estimatedCostUsd: 1, backlogItemId, needsYouId: null } as unknown as CloudTaskV1);
+  };
+
+  it('registers stored metric PRs into the real ledger once, then reports nothing new', () => {
+    appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric }), user('m2', 'Docs')]);
+    stored('ct_20261015T0100_aaaaaa', 'm1', 'open', 12);
+    stored('ct_20261015T0101_bbbbbb', 'm2', 'open', 13); // item has no metric: never registered
+    const first = syncCloudBacklogOutcomes();
+    expect(first).toMatchObject({ intact: true, registered: 1, appended: 2 });
+    expect(first.reason).toBeUndefined();
+    expect(readLedger().records.filter((r) => r.type === 'registered').map((r) => r.proposalId)).toEqual([backlogProposalId('ct_20261015T0100_aaaaaa')]);
+    const second = syncCloudBacklogOutcomes();
+    expect(second).toMatchObject({ intact: true, registered: 0, appended: 0 });
+    expect(second.reason).toBeUndefined();
+  });
+
+  it('reports a broken ledger and writes nothing', () => {
+    appendUserBacklogItems([user('m1', 'Perf Gate', 1, { metric })]);
+    stored('ct_20261015T0100_aaaaaa', 'm1', 'open', 12);
+    credit('1111111111', 'Perf Gate', 80);
+    fs.appendFileSync(outcomesLedgerPath(), 'not json\n');
+    const res = syncCloudBacklogOutcomes();
+    expect(res.intact).toBe(false);
+    expect(res.reasons.length).toBeGreaterThan(0);
+    expect(res).toMatchObject({ registered: 0, appended: 0 });
+  });
+
+  it('reports source and append failures instead of throwing', () => {
+    const items = [user('m1', 'Perf Gate', 1, { metric })];
+    const tasks = [{ id: 'ct_x', repo: 'ashlrai/phantom', title: 'x', backlogItemId: 'm1', pr: pr(9) }] as unknown as CloudTaskV1[];
+    expect(syncCloudBacklogOutcomes({ tasks: () => { throw new Error('store down'); } }))
+      .toMatchObject({ reason: 'source-unavailable', registered: 0, appended: 0 });
+    expect(syncCloudBacklogOutcomes({
+      tasks: () => { throw new Error('store down'); },
+      ledger: () => ({ records: [], intact: true, reasons: [] }),
+    })).toMatchObject({ reason: 'source-unavailable' });
+    const failing = syncCloudBacklogOutcomes({
+      tasks: () => tasks,
+      items: () => items,
+      ledger: () => ({ records: [], intact: true, reasons: [] }),
+      append: () => { throw new Error('disk full'); },
+    });
+    expect(failing).toMatchObject({ reason: 'append-failed', registered: 0, appended: 0 });
+    const partial: LedgerEvent[] = [];
+    let calls = 0;
+    const half = syncCloudBacklogOutcomes({
+      tasks: () => tasks,
+      items: () => items,
+      ledger: () => ({ records: [], intact: true, reasons: [] }),
+      append: (e) => { calls += 1; if (calls > 1) throw new Error('disk full'); partial.push(e); },
+    });
+    expect(half).toMatchObject({ reason: 'append-failed', registered: 1, appended: 1 });
+    expect(partial.map((e) => e.type)).toEqual(['registered']);
   });
 });
 

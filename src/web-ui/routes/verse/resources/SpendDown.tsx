@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SpendRow, SpendSnapshot, SpendStatus } from '../../../../core/usage/spend.js';
+import type { UsageHistoryV1 } from '../../../../core/fleet/usage-history.js';
 import { apiGet } from '../../../data/client.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import styles from '../SidebarResources.module.css';
 import bar from './SpendDown.module.css';
+import { UsageHistoryChart } from './UsageHistoryChart.js';
+import { SpendDownChart, paceQuery, spendDownQuery } from './SpendDownChart.js';
+import { useQuery, useRefetch } from '../../../data/hooks.js';
 
 const pct = (n: number | null): string => n === null ? 'unknown' : `${Math.round(n)}%`;
 const width = (n: number | null): string => `${Math.min(100, Math.max(0, n ?? 0))}%`;
@@ -39,6 +43,8 @@ function UsageDetails({ row }: { row: SpendRow }) {
 export function SpendDown() {
   const [data, setData] = useState<SpendSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
+  // undefined while reading, null when the read failed (charts say unknown, never empty).
+  const [history, setHistory] = useState<UsageHistoryV1 | null | undefined>(undefined);
   const pending = useRef<AbortController | null>(null);
   const refresh = useCallback(() => {
     pending.current?.abort();
@@ -50,16 +56,29 @@ export function SpendDown() {
     void apiGet<SpendSnapshot>('/api/usage/spend', request.signal).then(value => {
       if (!request.signal.aborted) setData(value);
     }).catch(() => { if (!request.signal.aborted) setFailed(true); });
+    // Same data as `phm fleet usage-history --json`.
+    void apiGet<UsageHistoryV1>('/api/verse/leader/resources/usage-history', request.signal).then(value => {
+      if (!request.signal.aborted) setHistory(value);
+    }).catch(() => { if (!request.signal.aborted) setHistory(null); });
   }, []);
   useEffect(() => { refresh(); return () => pending.current?.abort(); }, [refresh]);
   usePollWhileVisible(refresh, 60_000);
+  // The chart reads pools.spenddown.v1 only; when that read fails the rows below still say everything.
+  const chart = useQuery(spendDownQuery);
+  const refetchChart = useRefetch(spendDownQuery);
+  const pace = useQuery(paceQuery);
+  const refetchPace = useRefetch(paceQuery);
+  usePollWhileVisible(() => { refetchChart(); refetchPace(); }, 60_000);
   return <section aria-label="Spend down"><h2 className={styles.heading}>Spend down</h2>
+    {chart.data ? <SpendDownChart data={chart.data} pace={pace.data} /> : null}
     {!data ? <p className={styles.dotRow}>{failed ? 'unknown (status unavailable)' : 'Reading usage…'}</p>
       : data.pools.length === 0 ? <p className={styles.dotRow}>No usage readings yet.</p> : <><p className={bar.headline} role="status">{data.headline}</p><ul className={bar.list}>
       {data.pools.map(row => <li className={styles.dotRow} key={row.pool} aria-label={row.pool}>
         <span className={bar.head}><span className={styles.dotLabel}>{row.unit === 'usd' ? `${row.pool} gift` : row.pool}</span>
           <span className={bar.verdict} data-verdict={row.verdict}>{status[row.status]}</span></span>
         <SpendBar row={row} />
+        <UsageHistoryChart status={history === undefined ? 'loading' : history === null ? 'failed' : 'ready'}
+          series={history?.pools.find(p => p.pool === row.pool)} />
         <UsageDetails row={row} />
         {row.reason !== null ? <span className={styles.note}>{row.reason}</span> : null}
       </li>)}

@@ -83,6 +83,18 @@ describe('readRecutGateFacts', () => {
     expect(shouldEmitRecut((await readRecutGateFacts('core', { metrics: file, git: fakeGit('abc\n'), now }))!).emit).toBe(true);
     expect((await readRecutGateFacts('core', { metrics: file, git: fakeGit(null), now }))?.masterTouched).toBeNull();
   });
+  it('reads launch and finish facts through the jobs-ledger field dialect', async () => {
+    const file = metricsFile([
+      row({ job_id: 'RQ-PHX-RECUTCOREC561', type: 'launch', repo: 'phantom', at: at(5) }),
+      row({ id: 'RQ-PHX-RECUTCOREC561', kind: 'finish', empty: true, recordedAt: at(4) }),
+      row({ jobId: 'RQ-PHX-RECUTCOREC562', event: 'launch', timestamp: at(3) }),
+      row({ job: 'RQ-PHX-RECUTCOREC562', type: 'finish', time: at(2), empty: true }),
+      row({ job_id: 'RQ-PHX-RECUTCOREC563', kind: 'finish', updatedAt: at(1), empty: true }),
+    ]);
+    const facts = await readRecutGateFacts('RQ-PHX-RECUTCOREC564', { metrics: file, git: fakeGit(''), now });
+    expect(facts?.lastJobs.map(job => job.job)).toEqual(['RQ-PHX-RECUTCOREC563', 'RQ-PHX-RECUTCOREC562', 'RQ-PHX-RECUTCOREC561']);
+    expect(shouldEmitRecut(facts!)).toMatchObject({ emit: false, code: 'empty-streak' });
+  });
   it('treats a missing ledger as yield unknown', async () => {
     const facts = await readRecutGateFacts('core', { metrics: join(scratch(), 'none.jsonl'), git: fakeGit(''), now });
     expect(facts?.stopList).toBeNull();

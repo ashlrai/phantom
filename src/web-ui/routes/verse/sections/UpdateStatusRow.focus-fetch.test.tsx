@@ -5,16 +5,16 @@ import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
 import { evictAll } from '../../../data/cache.js';
 import { UpdateStatusRow } from './UpdateStatusRow.js';
+import { installUpdateFetch } from './update-row.test-support.js';
 
 const facts = { v: 1, sourceState: 'healthy', installedVersion: '1.0.0', headSha: 'abcdef123456', headAt: null, originSha: null, branch: 'master', behind: 2, ahead: 0, dirty: false, lastFetchAt: null, processStartedAt: null, uptimeSeconds: 120, canFastForward: true };
 const success = () => new Response(JSON.stringify({ ok: true, action: 'fetch', fetchedAt: '2026-01-01T00:00:00Z' }));
 beforeEach(() => { sessionStorage.clear(); evictAll(); clearMutationToken(); });
 afterEach(() => { cleanup(); clearMutationToken(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function setup(post: () => Promise<Response> = async () => success()) {
-  const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST' ? post() : Promise.resolve(new Response(JSON.stringify(facts))));
-  vi.stubGlobal('fetch', fetcher);
+  const { statusRequests } = installUpdateFetch(init => init?.method === 'POST' ? post() : Promise.resolve(Response.json(facts)));
   render(<ToastProvider><UpdateStatusRow /></ToastProvider>);
-  return fetcher;
+  return statusRequests;
 }
 const selfUpdateCalls = (fetcher: ReturnType<typeof setup>) => fetcher.mock.calls.filter(([url]) => String(url).includes('/ops/self-update'));
 it('fetches once on return to a visible document, then refreshes status', async () => {
@@ -41,12 +41,11 @@ it('fetches once on return to a visible document, then refreshes status', async 
 });
 it('does not post when the status route is missing', async () => {
   setMutationToken('test-only');
-  const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('', { status: 404 }));
-  vi.stubGlobal('fetch', fetcher);
+  const { statusRequests } = installUpdateFetch(async () => new Response('', { status: 404 }));
   render(<ToastProvider><UpdateStatusRow /></ToastProvider>);
   await screen.findByText(/not in this build yet/);
   fireEvent.focus(window);
-  expect(selfUpdateCalls(fetcher)).toHaveLength(1);
+  expect(statusRequests).toHaveBeenCalledTimes(1);
 });
 it('does not post when locked', async () => {
   const fetcher = setup();

@@ -89,12 +89,18 @@ it('gives each task to exactly one claimant and releases it only through its tok
   expect(first.out[0]).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'fake-job' } } });
   const token = first.out[0]!.token as string;
   expect(token).toMatch(/^[a-f0-9]{64}$/);
-  expect(await f.run(['next', '--to', 'fleet.deploy', '--owner', 'fake-b', '--lease-ms', '60000'])).toEqual({ code: 0, out: [{ status: 'empty' }] });
+  // fake-job is the one claimable receipt on the topic and fake-a's lease
+  // holds it, so the scan reports one held candidate rather than a dry well.
+  expect(await f.run(['next', '--to', 'fleet.deploy', '--owner', 'fake-b', '--lease-ms', '60000']))
+    .toEqual({ code: 0, out: [{ status: 'empty', candidates: 1, held: 1 }] });
   expect(await f.run(['claim', 'acquire', '--id', 'fake-job', '--owner', 'fake-b', '--lease-ms', '60000'])).toMatchObject({ code: 1, out: [{ status: 'conflict' }] });
   expect(await f.run(['claim', 'renew', '--id', 'fake-job', '--token', 'a'.repeat(64)])).toMatchObject({ code: 1, out: [{ status: 'mismatched-token' }] });
   expect(await f.run(['claim', 'renew', '--id', 'fake-job', '--token', token])).toMatchObject({ code: 0, out: [{ status: 'renewed' }] });
   expect(await f.run(['claim', 'complete', '--id', 'fake-job', '--token', token])).toMatchObject({ code: 0, out: [{ status: 'completed' }] });
-  expect(await f.run(['next', '--to', 'fleet.deploy', '--owner', 'fake-b', '--lease-ms', '60000'])).toEqual({ code: 0, out: [{ status: 'empty' }] });
+  // The completed receipt is still a live candidate but answers 'completed',
+  // not 'conflict', so nothing is reported held.
+  expect(await f.run(['next', '--to', 'fleet.deploy', '--owner', 'fake-b', '--lease-ms', '60000']))
+    .toEqual({ code: 0, out: [{ status: 'empty', candidates: 1, held: 0 }] });
 });
 
 it('releases an unfinished claim so a successor can take the same task', async () => {
@@ -113,8 +119,9 @@ it('keeps the legacy work convention claimable and leaves other bodies alone', a
   await f.post({ id: 'fake-note', from: 'fake-a', to: 'agent-a', priority: 'P0', ttl: 60000, body: { kind: 'note' } });
   const claimed = await f.run(['next', '--to', 'agent-a', '--owner', 'fake-a', '--lease-ms', '60000']);
   expect(claimed.out[0]).toMatchObject({ status: 'acquired', receipt: { envelope: { id: 'fake-legacy' } } });
+  // fake-legacy stays claimed; fake-note is not claimable work.
   expect(await f.run(['next', '--to', 'agent-a', '--owner', 'fake-a', '--lease-ms', '60000']))
-    .toEqual({ code: 0, out: [{ status: 'empty' }] });
+    .toEqual({ code: 0, out: [{ status: 'empty', candidates: 1, held: 1 }] });
 });
 
 it('rejects malformed next and claim arguments with exit 2 before touching any claim state', async () => {

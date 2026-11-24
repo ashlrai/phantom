@@ -1,0 +1,32 @@
+/* Home's Running jobs and Main cards: a line of totals, then lane tiles or repository marks.
+   `.body` outranks Home's own `.card p` and `.card ul` rules, whichever sheet loads last. Tiles wrap to the width they are given. */
+.body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.body .note { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.body .note[data-tone='red'] { color: var(--status-danger-fg); font-weight: var(--font-weight-semibold); }
+/* Running jobs: a tile per lane. The mark and name, the count large, then one square per target slot. */
+.body .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: var(--space-2); }
+.tile { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
+.laneName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.figure { display: flex; align-items: baseline; gap: var(--space-1); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.figure strong { color: var(--text-primary); font-size: var(--text-xl-size); font-weight: var(--font-weight-semibold); line-height: 1.1; letter-spacing: var(--tracking-display); }
+/* A lane with nothing running steps back; its empty squares still show what it was asked for. */
+.tile[data-idle] .figure strong { color: var(--text-secondary); }
+/* Running is activity, not health, so a filled slot is the accent and never green. An open slot is an outline, not a fill. */
+.pips { display: flex; flex-wrap: wrap; gap: calc(var(--space-1) / 2); }
+.pip { box-sizing: border-box; width: 0.5rem; height: 0.5rem; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); transition: background-color var(--duration-slow) var(--ease-standard), border-color var(--duration-slow) var(--ease-standard); }
+.pip[data-filled] { border-color: var(--accent-500); background: var(--accent-500); }
+/* More slots than squares can show: one bar of the same share. */
+.track { display: block; height: 0.25rem; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; border-radius: var(--radius-full); background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+.over { color: var(--status-warning-fg); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+/* Main: a mark per repository beside the words that say the same thing. Unknown is a hollow ring on a dashed outline,
+   so a missing reading can never pass for a green one. */
+.body .repos { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.repos li { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; padding: calc(var(--space-1) / 2) var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-full); color: var(--text-primary); font-size: var(--text-xs-size); }
+.repos li::before { content: ''; flex: none; box-sizing: border-box; width: 0.5rem; height: 0.5rem; border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); }
+.repos li[data-state='green']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.repos li[data-state='red'] { border-color: var(--status-danger-solid); color: var(--status-danger-fg); font-weight: var(--font-weight-semibold); }
+.repos li[data-state='red']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.repos li[data-state='unknown'] { border-style: dashed; color: var(--text-secondary); }
+@media (prefers-reduced-motion: reduce) { .pip, .fill { transition: none; } }

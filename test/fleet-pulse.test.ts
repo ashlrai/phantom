@@ -152,6 +152,22 @@ describe('readPulse and phm fleet pulse', () => {
     expect((await call('POST')).status).toBe(405);
   });
 
+  it('the Pulse strip API serves fleet.pulse.lanes.v1 from the ledger; GET only', async () => {
+    await put('metrics/jobs.jsonl', `${LEDGER}\n`);
+    const api = createFleetRunsApi({ runsDir: runs, now: () => NOW }), path = '/api/verse/fleet/runs/pulse/lanes';
+    const call = async (method: string) => {
+      const req = Object.assign(Readable.from([]), { url: path, method, headers: {} }) as unknown as IncomingMessage;
+      let status = 0, body: unknown = null;
+      const res = { headersSent: false, writeHead(code: number) { status = code; }, end(text: string) { body = JSON.parse(text); } } as unknown as ServerResponse;
+      expect(await api({ cfg: {}, token: 'fake', allowDispatch: false } as VerseApiContext, req, res, path, method)).toBe(true);
+      return { status, body };
+    };
+    const ok = await call('GET');
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ schema: 'fleet.pulse.lanes.v1', window_h: 24, totals: { merged: 3 } });
+    expect((await call('POST')).status).toBe(405);
+  });
+
   it('prints text, JSON and usage', async () => {
     const out: string[] = [];
     vi.spyOn(console, 'log').mockImplementation(text => { out.push(String(text)); });
@@ -169,7 +185,7 @@ describe('readPulse and phm fleet pulse', () => {
     expect(await cmdFleetPulse(['--json'], read)).toBe(0);
     expect(JSON.parse(out[1]!)).toMatchObject({ schema: 'fleet.pulse.v1', v: 1 });
     expect(await cmdFleetPulse(['--help'], read)).toBe(0);
-    expect(out[2]).toMatch(/^Usage: phm fleet pulse \[--json\]/);
+    expect(out[2]).toMatch(/^Usage: phm fleet pulse \[--lanes \| --alerts \[--no-notify\]\] \[--json\]/);
     expect(await cmdFleetPulse(['--nope'], read)).toBe(2);
   });
 });

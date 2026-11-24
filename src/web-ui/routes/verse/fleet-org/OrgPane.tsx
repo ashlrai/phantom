@@ -5,9 +5,12 @@ import type { QueryDef } from '../../../data/queries.js';
 import { VERSE_AGENT_ROSTER_PATH } from '../../../../core/verse/agent-roster-path.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { leaderQuery } from '../command/surface-data.js';
 import { leaderOfficeQuery } from '../leader-thread/leader-office-data.js';
 import { OrgAvatar } from './OrgAvatar.js';
 import { orgExecutives, type OrgMember, type OrgStatus } from './org-roster.js';
+import { MachinesRow } from './MachinesRow.js';
+import { TeamRow } from './TeamRow.js';
 import { OrgTree } from './OrgTree.js';
 import { talkingNow, who } from '../fleet-messages/messages-model.js';
 import { talkingNowQuery } from '../fleet-messages/messages-query.js';
@@ -59,14 +62,27 @@ function TalkingNow({ visible }: { visible: boolean }) {
   </section>;
 }
 
+/** "Leader" chip: the model the leader runs on and its plan usage; warns above 95% (same read as `phm leader seat --json`). */
+function LeaderChip({ visible }: { visible: boolean }) {
+  const chip = useQuery(leaderQuery, { enabled: visible, freshMs: 0 }).data?.value?.seat?.chip;
+  const used = chip?.used_pct ?? null;
+  const text = !chip ? 'Leader: unknown' : `Leader: ${chip.model ?? 'unknown'}${chip.lane ? ` on ${chip.lane}` : ''} · ${used === null ? 'usage unknown' : `${used}% used`}`;
+  return <p className={styles.notice} role="status" aria-label="Leader" data-warn={chip?.warn ? 'true' : undefined}>
+    {text}{chip?.warn ? ` — plan nearly full${chip.reset_at ? `, resets ${chip.reset_at}` : ''}. The leader moves to the next plan.` : ''}
+  </p>;
+}
+
 /** The org on one screen: the `phm org` tree (leader, lanes, jobs), then the leader office's executives. */
 export function OrgPane({ visible }: PaneProps) {
   const office = useQuery(leaderOfficeQuery, { enabled: visible, freshMs: 0 });
-  const refetch = [useRefetch(leaderOfficeQuery), useRefetch(talkingNowQuery)];
+  const refetch = [useRefetch(leaderOfficeQuery), useRefetch(talkingNowQuery), useRefetch(leaderQuery)];
   usePollWhileVisible(() => refetch.forEach(r => r()), POLL_MS, { enabled: visible });
   const executives = useMemo(() => orgExecutives(office.data?.value ?? null), [office.data]);
   return <div className={styles.root}>
     <h2 className={styles.headline}>Organization</h2>
+    <MachinesRow visible={visible} />
+    <TeamRow visible={visible} />
+    <LeaderChip visible={visible} />
     <OrgTree visible={visible} />
     {executives ? <Tier title="Executives" members={executives} empty="No executives reported." />
       : <p className={styles.notice} role="status">{office.data === undefined && office.status !== 'error' ? 'Reading the org chart…' : 'Executives not reported right now.'}</p>}
