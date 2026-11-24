@@ -46,7 +46,7 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--jobs]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -1022,9 +1022,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       if (sub === 'list') {
         const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'),
-          excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(), jobs: p.bools.has('--jobs') });
+          excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(),
+          since: sinceArg(), before: beforeArg(), jobs: p.bools.has('--jobs') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters; --since and --before must resolve to non-negative epoch-ms cutoffs');
           return 2;
         }
         if (result.status !== 'ok') {

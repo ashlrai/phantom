@@ -2807,12 +2807,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`excludeOwner?`, `contains?`, `origin?`, `jobs?`) is the
+`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
 not free), plus `asOf`. A malformed `key`, `owner`, `excludeOwner`,
-`contains` or `origin` answers
+`contains`, `origin`, `since` or `before` answers
 `invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
@@ -2827,7 +2827,15 @@ reports the same resolution — so "what do the other seats hold" is one
 read. A set `contains` keeps claims whose `key`, `sourceId` or
 `repo`/`branch`/`path` target fields carry the needle as a case-insensitive
 substring — the same `busReadContains`/`busReadContainsMatch` rule every
-bus read's `--contains` applies. A set `origin` narrows to one claim class —
+bus read's `--contains` applies. A set `since`/`before` keeps claims whose
+recorded `started` — the lease's ISO acquisition time, stable across
+renewals — lands inside the `[since, before)` window: `since` is the
+inclusive `>=` bound and `before` the exclusive `<` bound every bus read's
+time filters share, on the same field `work mine`'s claims section already
+bounds; a claim whose `started` is null or unparseable — team, message and
+board claims and pre-stamp resource rows keep no start time — is unknown
+and never matches, the same "unknown stays out" rule every other section's
+missing timestamp follows. A set `origin` narrows to one claim class —
 `resource`, `message`, `team` or `board`, the `CoordinationOrigin` values
 `COORDINATION_ORIGINS` lists (queue path observations are never live and
 never list). With `jobs:true` each claim
@@ -2838,7 +2846,7 @@ the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--jobs]`
+`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level

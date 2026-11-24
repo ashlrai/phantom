@@ -1110,6 +1110,38 @@ describe('phm agents bus (unified)', () => {
     }
   });
 
+  it('filters claim list by --since/--before on the lease started stamp', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      // Two live claims taken two minutes apart; both leases stay live.
+      expect((await run(['claim', 'acquire', '--key', 'repo:a/old', '--lease-ms', '600000',
+        '--owner', 'atlas', '--id', 'cl-old'])).json).toMatchObject({ status: 'acquired' });
+      clock += 120_000;
+      expect((await run(['claim', 'acquire', '--key', 'repo:a/new', '--lease-ms', '600000',
+        '--owner', 'atlas', '--id', 'cl-new'])).json).toMatchObject({ status: 'acquired' });
+      const keys = (list: { json: { claims: { key: string }[] } }) => list.json.claims.map(row => row.key);
+      expect(keys(await run(['claim', 'list']))).toEqual(['repo:a/old', 'repo:a/new']);
+      // A cutoff between the two acquisition times keeps only the newer claim.
+      expect(keys(await run(['claim', 'list', '--since', String(clock - 60_000)]))).toEqual(['repo:a/new']);
+      expect(keys(await run(['claim', 'list', '--since', '1m']))).toEqual(['repo:a/new']);
+      // --before is the exclusive upper bound on the same started stamp.
+      expect(keys(await run(['claim', 'list', '--before', String(clock - 60_000)]))).toEqual(['repo:a/old']);
+      expect(keys(await run(['claim', 'list', '--since', String(clock - 180_000), '--before', String(clock - 60_000)])))
+        .toEqual(['repo:a/old']);
+      // The window composes with the other claim filters.
+      expect((await run(['claim', 'list', '--since', '1m', '--origin', 'resource'])).json.claims)
+        .toHaveLength(1);
+      expect((await run(['claim', 'list', '--since', '1m', '--owner', 'nobody'])).json.claims).toEqual([]);
+      // Unparseable cutoffs are usage errors, never a silent widen.
+      expect(await run(['claim', 'list', '--since', 'bogus'])).toMatchObject({ code: 2 });
+      expect(await run(['claim', 'list', '--before', 'bogus'])).toMatchObject({ code: 2 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('filters the work feed by --channel on the announcement room address', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--from', 'atlas', '--job', 'RQ-ROOM', '--title', 'room job',

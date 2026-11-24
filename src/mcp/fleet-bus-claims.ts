@@ -10,7 +10,8 @@
  * live `resource`/`message`/`team`/`board` leases the one coordination
  * store keeps, narrowed by the same `key` overlap preview, `owner`
  * identity-label match and `excludeOwner` sender-exclusion, `contains`
- * row-text search, `origin` class filter and `jobs` feed join the
+ * row-text search, `origin` class filter, `since`/`before` start-time
+ * window and `jobs` feed join the
  * CLI flags apply, with `source` keeping a missing table verified-empty
  * and an unreadable one `unavailable` — never an invented empty list.
  *
@@ -35,11 +36,12 @@ import {
 } from '../core/agents/bus-claims.js';
 import { parseClaimKey } from '../core/agents/bus-v2-schema.js';
 import { BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
+import { parseSince } from '../core/fleet/agent-messages.js';
 
 /** The claim store's own owner-label bound — printable ASCII, 1–256 chars. */
 const CLAIM_OWNER = /^[\x21-\x7e]{1,256}$/;
 
-const CLAIMS_KEYS = new Set(['key', 'owner', 'excludeOwner', 'contains', 'origin', 'jobs']);
+const CLAIMS_KEYS = new Set(['key', 'owner', 'excludeOwner', 'contains', 'origin', 'since', 'before', 'jobs']);
 
 export interface FleetBusClaimsArgs {
   /** Keep only live claims that would block an acquire of this v2 claim key — the same overlap rule `claim list --key` applies. */
@@ -52,6 +54,10 @@ export interface FleetBusClaimsArgs {
   contains?: string;
   /** Keep only live claims of this origin class — resource, message, team or board. */
   origin?: CoordinationOrigin;
+  /** Keep only live claims whose recorded `started` is at or after this cutoff — 15m, 2h, 1d, epoch ms or an ISO time, the same grammar `claim list --since` takes; claims keeping no start stamp never match. */
+  since?: number;
+  /** Keep only live claims whose recorded `started` is strictly before this cutoff on the same grammar — the exclusive upper bound composing with `since` into one [since, before) window, the same rule `claim list --before` applies. */
+  before?: number;
   /** Also join each claim with the announced feed jobs its keys block and report the feed read state. */
   jobs?: boolean;
 }
@@ -63,7 +69,10 @@ export interface FleetBusClaimsArgs {
  * `claim list --key` enforce, `owner` and `excludeOwner` the claim
  * store's printable-label bound, `contains` the shared bus `--contains`
  * bound (non-empty, at most `BUS_READ_CONTAINS_MAX`), `origin` the
- * COORDINATION_ORIGINS enum and `jobs` a JSON boolean.
+ * COORDINATION_ORIGINS enum, `since`/`before` the shared bus time grammar
+ * resolved through `parseSince` — `since` inclusive and `before` exclusive
+ * on the claim's recorded `started`, one [since, before) window — and
+ * `jobs` a JSON boolean.
  * Unknown keys, wrong types, caller roots and malformed values are all
  * refused before the store is touched.
  */
@@ -95,6 +104,20 @@ export function parseFleetBusClaimsArgs(args: Record<string, unknown>): FleetBus
     if (typeof origin !== 'string' || !(COORDINATION_ORIGINS as readonly string[]).includes(origin)) return null;
     parsed.origin = origin as CoordinationOrigin;
   }
+  const since = args.since;
+  if (since !== undefined) {
+    if (typeof since !== 'string') return null;
+    const resolved = parseSince(since);
+    if (resolved === null) return null;
+    parsed.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null) return null;
+    parsed.before = resolved;
+  }
   const jobs = args.jobs;
   if (jobs !== undefined) {
     if (typeof jobs !== 'boolean') return null;
@@ -120,7 +143,8 @@ export type FleetBusClaimsResult = FleetBusClaimsMeta & BusClaimsListResult;
 /**
  * One claims listing through the shared `listBusClaims` read — the
  * identical read `phm agents bus claim list` runs, so live-row filtering,
- * owner identity matching, origin classes, the `jobs` feed join and the
+ * owner identity matching, origin classes, the `started` time window,
+ * the `jobs` feed join and the
  * `missing`/`available`/`unavailable` source honesty can never diverge
  * between the CLI and this tool. Non-ok results pass through untouched:
  * `invalid` and `unavailable` keep their own status and `asOf`, never an
@@ -138,6 +162,8 @@ export async function readFleetBusClaims(
     ...(args.excludeOwner === undefined ? {} : { excludeOwner: args.excludeOwner }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.origin === undefined ? {} : { origin: args.origin }),
+    ...(args.since === undefined ? {} : { since: args.since }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.jobs === undefined ? {} : { jobs: args.jobs }),
   });
   return {
