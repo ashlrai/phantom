@@ -34,6 +34,21 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const enable = { schemaVersion: 1, enabled: true };
 const headroom = (freePercent = 60, swapGb = 0, pressureLevel: 1 | 2 | 4 = 1) => () => ({ freePercent, swapGb, pressureLevel });
 const deps = (over = {}) => ({ configPath, totalBytes: () => 16 * GiB, platform: 'darwin', ...over });
+const providerBinaryProbe = (available: readonly ('codex' | 'claude')[] = []) => {
+  const home = join(dir, 'provider-home');
+  const binaries = {
+    codex: join(home, '.local', 'bin', 'codex'),
+    claude: join(home, '.local', 'bin', 'claude'),
+  };
+  return {
+    binaries,
+    deps: {
+      home,
+      execPath: join(dir, 'node', 'node'),
+      executable: (path: string) => available.some(provider => binaries[provider] === path),
+    },
+  };
+};
 
 describe('local-lanes.json parsing', () => {
   it('absent file is a clean null, malformed files report a config error', () => {
@@ -86,11 +101,12 @@ describe('probeNodeLanes merges provider sign-ins with local model caps', () => 
       ? { status: null, error: Object.assign(new Error('missing'), { code: 'ENOENT' }) }
       : { status: 1 }) as unknown as typeof spawnSync;
     const local = deps({ totalBytes: () => 8 * GiB, headroom: headroom() });
+    const providers = providerBinaryProbe();
     expect(localLanePlan(local).plan).toMatchObject({
       slots: 1, caps: ['omlx'], backoff: null,
       model: { id: 'qwen3-4b-instruct-2507-4bit', servedContext: 16384, tiers: [] },
     });
-    expect(probeNodeLanes(run, local)).toEqual(['omlx']);
+    expect(probeNodeLanes(run, local, providers.deps)).toEqual(['omlx']);
   });
 
   it.each([2, 4, null] as const)('muse withdraws its cap at pressure %s and recovers on a fresh probe', (pressureLevel) => {
@@ -99,29 +115,53 @@ describe('probeNodeLanes merges provider sign-ins with local model caps', () => 
     const sample = vi.fn().mockReturnValue(pressureLevel === null ? null
       : { freePercent: 60, swapGb: 0, pressureLevel });
     const local = deps({ totalBytes: () => 8 * GiB, headroom: sample });
-    expect(probeNodeLanes(run, local)).toEqual([]);
+    const providers = providerBinaryProbe();
+    expect(probeNodeLanes(run, local, providers.deps)).toEqual([]);
     expect(localLanePlan(local).plan.backoff).toBe(pressureLevel === null ? 'telemetry-unavailable' : 'memory-pressure');
     sample.mockReturnValue({ freePercent: 26, swapGb: 5.8, pressureLevel: 1 });
-    expect(probeNodeLanes(run, local)).toEqual(['omlx']);
+    expect(probeNodeLanes(run, local, providers.deps)).toEqual(['omlx']);
   });
 
   it('a failed memory reader holds muse closed even with valid config', () => {
     writeFileSync(configPath, JSON.stringify({ ...enable, model: 'qwen3-4b-instruct-2507-4bit', maxSlots: 1 }));
     const run = vi.fn(() => ({ status: 1 })) as unknown as typeof spawnSync;
+    const providers = providerBinaryProbe();
     expect(probeNodeLanes(run, deps({ totalBytes: () => 8 * GiB,
-      headroom: () => { throw new Error('sysctl unavailable'); } }))).toEqual([]);
+      headroom: () => { throw new Error('sysctl unavailable'); } }), providers.deps)).toEqual([]);
   });
 
   it('appends omlx caps after provider lanes', () => {
     writeFileSync(configPath, JSON.stringify(enable));
-    const run = vi.fn((command: string) => ({ status: command === 'codex' ? 0 : 1 })) as unknown as typeof spawnSync;
-    const lanes = probeNodeLanes(run, deps({ headroom: headroom() }));
+    const providers = providerBinaryProbe(['codex']);
+    const run = vi.fn((binary: string) => ({ status: binary === providers.binaries.codex ? 0 : 1 })) as unknown as typeof spawnSync;
+    const lanes = probeNodeLanes(run, deps({ headroom: headroom() }), providers.deps);
     expect(lanes).toEqual(['codex', 'omlx', 'omlx-work']);
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(providers.binaries.codex, ['login', 'status'], expect.objectContaining({ shell: false }));
+  });
+
+  it('advertises only absolute provider binaries with successful status checks', () => {
+    const providers = providerBinaryProbe(['codex', 'claude']);
+    const run = vi.fn((binary: string) => ({ status: binary === providers.binaries.codex ? 0 : 1 })) as unknown as typeof spawnSync;
+    const local = deps({ configPath: join(dir, 'missing', 'local-lanes.json') });
+    expect(probeNodeLanes(run, local, providers.deps)).toEqual(['codex']);
+    expect(run).toHaveBeenNthCalledWith(1, providers.binaries.codex, ['login', 'status'], expect.objectContaining({ shell: false }));
+    expect(run).toHaveBeenNthCalledWith(2, providers.binaries.claude, ['auth', 'status', '--json'], expect.objectContaining({ shell: false }));
+  });
+
+  it('does not run a provider whose absolute binary is unavailable', () => {
+    const providers = providerBinaryProbe(['codex']);
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const local = deps({ configPath: join(dir, 'missing', 'local-lanes.json') });
+    expect(probeNodeLanes(run, local, providers.deps)).toEqual(['codex']);
+    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith(providers.binaries.codex, ['login', 'status'], expect.objectContaining({ shell: false }));
   });
 
   it('a failed local probe never costs the provider lanes', () => {
+    const providers = providerBinaryProbe(['codex', 'claude']);
     const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
-    expect(probeNodeLanes(run, { configPath: join(dir, 'missing', 'x.json') })).toEqual(['codex', 'claude']);
+    expect(probeNodeLanes(run, deps({ configPath: join(dir, 'missing', 'x.json') }), providers.deps)).toEqual(['codex', 'claude']);
   });
 });
 

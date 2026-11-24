@@ -1,0 +1,29 @@
+> phantom@0.0.0 check:docs
+> node scripts/check-documentation.mjs
+
+{
+  "ok": false,
+  "mode": "source",
+  "entrypoints": [
+    "README.md",
+    "docs/README.md",
+    "docs/QUICKSTART.md",
+    "docs/ARCHITECTURE.md"
+  ],
+  "localLinks": 42,
+  "sourceLinks": 3,
+  "externalLinks": 7,
+  "externalRequests": 0,
+  "errors": [
+    {
+      "file": "docs/QUICKSTART.md",
+      "href": "docs/DELETED-GUIDE.md#install",
+      "reason": "ENOENT: no such file or directory, stat '/home/runner/work/phantom/phantom/docs/DELETED-GUIDE.md'"
+    },
+    {
+      "file": "docs/ARCHITECTURE.md",
+      "href": "docs/RETIRED.md",
+      "reason": "heading or explicit anchor #fleet does not exist"
+    }
+  ]
+}

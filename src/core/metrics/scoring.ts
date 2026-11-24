@@ -47,8 +47,8 @@ export function rollup(events: TelemetryEvent[]): Rollup {
   const prs: Rollup['prs'] = []; const days = new Map<string, Rollup['byDay'][number]>();
   const day = (ts: string) => { const d = ts.slice(0, 10); let x = days.get(d); if (!x) { x = { day: d, prs: 0, value: 0, tokens: 0, costUsd: 0 }; days.set(d, x); } return x; };
   for (const e of events) {
-    // A rating or revert observes another session's PR; it is not a task attempt.
-    if (e.kind === 'pr.rated' || e.kind === 'pr.reverted') continue;
+    // A rating or revert observes another session's PR, and a decision is one typed answer; neither is a task attempt.
+    if (e.kind === 'pr.rated' || e.kind === 'pr.reverted' || e.kind === 'decision') continue;
     const x = s(e);
     if (e.kind === 'usage') { const t = e.inputTokens + e.outputTokens; x.tokens += t; x.cost += e.costUsd ?? 0; x.usageWallMs += e.wallMs ?? 0; x.wallMs = Math.max(x.usageWallMs, x.endedWallMs); day(e.ts).tokens += t; day(e.ts).costUsd += e.costUsd ?? 0; }
     if (e.kind === 'session.ended') { x.endedWallMs = Math.max(x.endedWallMs, e.wallMs); x.wallMs = Math.max(x.usageWallMs, x.endedWallMs); x.success = e.outcome === 'success'; }

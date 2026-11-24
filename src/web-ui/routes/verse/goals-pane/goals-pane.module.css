@@ -15,3 +15,18 @@
 .steer input { flex: 1; min-width: 12ch; }
 
 .metric[data-state='met'] .metricValue { color: var(--success-500, var(--text-primary)); }
+.fleet { display: flex; flex-direction: column; gap: var(--space-2); }
+.badge[data-status='on-track'] { color: var(--success-500, var(--text-primary)); }
+.badge[data-status='behind'] { color: var(--warning-500, var(--text-primary)); }
+.badge[data-status='unknown'] { font-style: italic; }
+
+@media (width < 720px) {
+  .steer { flex-direction: column; align-items: stretch; }
+  .root header { flex-direction: column; }
+}
+/* Two trend lines side by side; they stack below ~20rem so 390 px stays one column. */
+.trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-2); min-width: 0; }
+.trend { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.trendMark { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+.trendMark[data-trend='unknown'] { color: var(--text-secondary); }
+.why { margin: 0; color: var(--text-primary); font-size: var(--text-xs-size); overflow-wrap: anywhere; }

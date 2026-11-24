@@ -1,0 +1,30 @@
+/* Figure tiles: as many per row as fit, down to two at 390 px. */
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; --card-pad: var(--space-3); }
+.figures > li { display: grid; min-width: 0; }
+/* Unknown is said in quieter italics, never drawn as a number. */
+.unknown { color: var(--text-secondary); font-style: italic; font-weight: var(--font-weight-regular); }
+.figures .unknown { font-size: var(--text-lg-size); }
+
+/* Lane cards. */
+.lanes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.lane { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-canvas); font-size: var(--text-sm-size); }
+.laneHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-2); }
+.laneName { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-medium); }
+.laneCount { color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.laneCount .unknown { font-size: var(--text-sm-size); }
+.unit { color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-regular); }
+.track, .rate { position: relative; display: block; height: 4px; border-radius: var(--radius-full); background: var(--border-subtle); overflow: hidden; }
+.track[data-unknown] { background: var(--chart-unknown-hatch); }
+.fill, .rateFill { position: absolute; inset-block: 0; inset-inline-start: 0; border-radius: var(--radius-full); background: var(--accent-500); transition: width var(--duration-slow) var(--ease-standard); }
+/* The share of jobs that changed nothing is not the accent: it is the part of the lane's work that produced no PR. */
+.rateFill { background: var(--text-tertiary); }
+.rate { margin-top: var(--space-1); }
+/* Under a lane's bars: its busiest bar, or the bar the cursor holds. One line either way, so the card does not jump. */
+.reading { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.reading[data-reading] { color: var(--text-primary); }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2) var(--space-3); margin: 0; }
+.facts > div { display: flex; flex-direction: column; min-width: 0; }
+.facts .wide { grid-column: 1 / -1; }
+.facts dt { color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.facts dd { margin: 0; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .fill, .rateFill { transition: none; } }

@@ -15,7 +15,7 @@ export type ClaimNoticeTickOutcome =
   /** `deduped` is the pass result's `skipped` (notices already fenced by the sent ledger). */
   | { ran: true; sent: number; deduped: number; failed: number }
   | { ran: true; sent: number; deduped: number; failed: number;
-      status: 'board-unavailable' | 'ledger-unavailable'; reason: string }
+      status: 'board-unavailable' | 'ledger-unavailable' | 'bindings-unavailable' | 'prev-unavailable'; reason: string }
   | { ran: true; sent: number; deduped: number; failed: number; status: 'dry-run' }
   | { ran: false; reason: 'interval' | 'in-flight' | 'kill-switch' | 'pass-error' | 'aborted' };
 
@@ -68,6 +68,12 @@ export function createClaimNoticeTick(opts: {
         }
         if (result.status === 'ledger-unavailable') {
           return { ...counts, status: result.status, reason: 'sent-ledger-unreadable' };
+        }
+        if (result.status === 'bindings-unavailable') {
+          return { ...counts, status: result.status, reason: 'claim-bindings-unreadable' };
+        }
+        if (result.status === 'prev-unavailable') {
+          return { ...counts, status: result.status, reason: 'prev-snapshot-unreadable' };
         }
         if (result.status === 'dry-run') return { ...counts, status: result.status };
         return counts;

@@ -41,3 +41,10 @@
   stroke-width: 1;
   stroke-dasharray: 2 2;
 }
+
+/* A goal's target: a quiet dashed rule the line reads against. */
+.target {
+  stroke: var(--chart-axis, var(--chart-grid));
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}

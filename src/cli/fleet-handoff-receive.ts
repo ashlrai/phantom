@@ -3,7 +3,7 @@ import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import type { ContextWorkerIO } from '../core/fleet/context-worker-run.js';
 import { receiveHandoffBus } from '../core/fleet/handoff-bus-receive.js';
 
-const usage = 'Usage: ashlr fleet handoff-receive --id <message-id> --to <exact-local-address> '
+const usage = 'Usage: ashlr fleet handoff-receive --id <message-id> --to <recipient> '
   + '--snapshot <absolute-json> [--cwd <absolute-directory>] [--timeout-ms <1..3600000>] -- <program> [args...]';
 const example = 'Example: ashlr fleet handoff-receive --id handoff-7 --to WORKER-9 '
   + '--snapshot /home/worker/context.json --timeout-ms 600000 -- node worker.mjs --flag value';
@@ -14,7 +14,9 @@ export async function cmdFleetHandoffReceive(args: string[],
   options: BusInboxOptions = {}, io: ContextWorkerIO = {}): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     (io.stdout ?? process.stdout).write(`${usage}\n${example}\n`
-      + 'Run a worker from the single live worker-handoff envelope addressed to --to. The retained\n'
+      + 'Run a worker from the single live worker-handoff envelope addressed to --to. --to names the\n'
+      + 'recipient identity: a handoff addressed to its agent: address, bare handle, stable id or any\n'
+      + 'alias matches; a ref naming no registered identity keeps exact-label matching. The retained\n'
       + 'prompt is untrusted context on stdin; only the explicit argv is executed — nothing is claimed,\n'
       + 'completed, merged or derived from message content. --timeout-ms bounds the worker wall-clock\n'
       + 'lifetime in milliseconds; omitted, the worker is unbounded.\n');

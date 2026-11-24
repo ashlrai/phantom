@@ -19,3 +19,19 @@ it.each([['GET', '', 200], ['POST', '', 405], ['GET', '?x=1', 400], ['GET', '?',
   expect(status).toBe(expected);
   if (expected === 200) expect(JSON.parse(body)).toMatchObject({ v: 1, rows: [], sourceState: 'healthy' });
 });
+
+vi.mock('../src/core/fleet/usage-history.js', () => ({
+  readUsageHistory: async (opts: { pool?: string }) => ({ schema: 'fleet.usage-history.v1', v: 1, generated_at: new Date(0).toISOString(),
+    source_state: 'missing', pools: opts.pool ? [{ pool: opts.pool }] : [] }),
+}));
+it.each([['GET', '', 200, []], ['GET', '?pool=claude', 200, [{ pool: 'claude' }]], ['POST', '', 405, null],
+  ['GET', '?pool=../x', 400, null], ['GET', '?x=1', 400, null], ['GET', '?pool=a&pool=b', 400, null]] as const)(
+  'usage history %s %s returns %i', async (method, query, expected, pools) => {
+    let status = 0;
+    let body = '';
+    const response = { writeHead(code: number) { status = code; }, setHeader() {}, end(chunk: string) { body = chunk; } } as unknown as ServerResponse;
+    const path = '/api/verse/leader/resources/usage-history';
+    expect(await handleLeaderApi({} as VerseApiContext, { url: path + query } as IncomingMessage, response, path, method)).toBe(true);
+    expect(status).toBe(expected);
+    if (pools) expect(JSON.parse(body)).toMatchObject({ schema: 'fleet.usage-history.v1', pools });
+  });

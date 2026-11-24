@@ -71,7 +71,7 @@ export interface ReportLedger {
  * offsets and `Z`; naive strings read as UTC. Unparseable → NaN.
  */
 function rowTs(row: Record<string, unknown>): number {
-  const raw = row['ts'] ?? row['timestamp'] ?? row['at'];
+  const raw = row['ts'] ?? row['timestamp'] ?? row['at'] ?? row['time'] ?? row['mergedAt'] ?? row['closedAt'] ?? row['recordedAt'] ?? row['updatedAt'];
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   if (typeof raw !== 'string') return Number.NaN;
   const trimmed = raw.trim();
@@ -125,10 +125,10 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
     const ts = rowTs(row);
     if (!Number.isFinite(ts) || ts < since || ts > nowMs + 86_400_000) continue;
     sawAny = true;
-    const event = typeof row['event'] === 'string' ? row['event'] : typeof row['type'] === 'string' ? row['type'] : null;
+    const event = typeof row['event'] === 'string' ? row['event'] : typeof row['type'] === 'string' ? row['type'] : typeof row['kind'] === 'string' ? row['kind'] : null;
     const job = rowJob(row) ?? 'unknown';
-    const lane = pick(row, ['lane', 'actualLane', 'pool']);
-    const at = pick(row, ['ts', 'timestamp', 'at']);
+    const lane = pick(row, ['lane', 'actualLane', 'pool', 'arm']);
+    const at = pick(row, ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt']);
     const laneCounts = () => {
       const entry = lanes.get(lane ?? 'unknown') ?? { launches: 0, finishes: 0, merges: 0 };
       lanes.set(lane ?? 'unknown', entry);
@@ -148,7 +148,7 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
       const url = rowUrl(row);
       if (url && !published.has(url)) published.set(url, { job, lane, url, at, ttmSeconds: null });
     } else if (event === 'outcome' || event === 'pr-merge') {
-      const state = pick(row, ['state', 'outcome', 'status'])?.toUpperCase();
+      const state = pick(row, ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'])?.toUpperCase();
       if (state !== 'MERGED') continue;
       growth.merges += 1;
       laneCounts().merges += 1;
@@ -173,14 +173,25 @@ export function summarizeJobsLedger(text: string, truncated: boolean, nowMs: num
   return growth;
 }
 
-/** Last JOBS_TAIL_BYTES of the ledger, first partial line dropped. */
-export async function readJobsTail(path: string): Promise<{ text: string | null; truncated: boolean }> {
+export interface JobsTailRead {
+  /** Newest retained ledger bytes as text; null when absent, unsafe or unreadable. */
+  text: string | null;
+  /** True when the file exceeded maxBytes and only its tail was kept. */
+  truncated: boolean;
+  /** True when the ledger file does not exist; an existing but unreadable file is not missing. */
+  missing: boolean;
+}
+
+/** Last maxBytes of the ledger, first partial line dropped; never throws. */
+export async function readJobsTail(path: string, maxBytes = JOBS_TAIL_BYTES): Promise<JobsTailRead> {
+  const absent: JobsTailRead = { text: null, truncated: false, missing: true };
+  const failed: JobsTailRead = { text: null, truncated: false, missing: false };
   try {
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const info = await file.stat();
-      if (!info.isFile()) return { text: null, truncated: false };
-      const start = Math.max(0, info.size - JOBS_TAIL_BYTES);
+      if (!info.isFile()) return failed;
+      const start = Math.max(0, info.size - maxBytes);
       const bytes = Buffer.alloc(info.size - start);
       let offset = 0;
       while (offset < bytes.length) {
@@ -189,9 +200,12 @@ export async function readJobsTail(path: string): Promise<{ text: string | null;
         offset += bytesRead;
       }
       const text = bytes.subarray(0, offset).toString('utf8');
-      return { text: start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text, truncated: start > 0 };
+      return { text: start ? text.slice(text.indexOf('\n') < 0 ? text.length : text.indexOf('\n') + 1) : text, truncated: start > 0, missing: false };
     } finally { await file.close(); }
-  } catch { return { text: null, truncated: false }; }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? absent : failed;
+  }
 }
 
 export interface BuildReportLedgerOptions {

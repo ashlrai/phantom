@@ -41,6 +41,15 @@ it('accepts reconciler aliases and rejects bad rows without exposing their conte
   })]) tally.add(line);
   expect(tally.report()).toMatchObject({ mergesLastHour: 1, malformedLines: 3 });
 });
+it('reads launch and merge rows across the jobs-ledger field dialect', () => {
+  const series = build([
+    { type: 'launch', job_id: 'J1', timestamp: new Date(now - hour / 2).toISOString() },
+    { kind: 'outcome', result: 'MERGED', id: 'J1', html_url: 'https://github.com/ashlrai/phantom/pull/9', mergedAt: new Date(now - hour / 4).toISOString() },
+    { event: 'publish', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', jobId: 'J2', pr_url: 'https://github.com/ashlrai/phantom/pull/10', ts: new Date(now - hour / 4).toISOString() },
+  ]);
+  expect(series).toMatchObject({ mergesLastHour: 2, mergesLast24h: 2 });
+  expect(series.hours[23]).toMatchObject({ launches: 1, byRepo: { 'ashlrai/phantom': 2 } });
+});
 it('withholds secret-shaped repo labels while preserving merge counts', () => {
   const repo = 'ghp_' + 'x'.repeat(36);
   const series = build([{ ...merge(0.1), url: undefined, repo }]);
@@ -79,5 +88,7 @@ it('joins the dispatcher rollup to lane capacity and preserves missing readings'
     const measured = await readMetricsPanel(root, now);
     expect(measured.series).toMatchObject({ known: true, mergesLastHour: 1, mergesLast24h: 1 });
     expect(measured.hourlyMerges?.at(-1)).toBe(1);
+    // The same read also carries the `phm metrics` report; this status has no dispatcher schema or fresh tick, so its lanes stay unknown.
+    expect(measured.glance).toMatchObject({ schema: 'metrics.glance.v1', version: 1, sources: { jobs: 'ok', status: 'stale' }, merged_per_hour: { last_1h: 1 }, lanes: null, pools_at_risk: null });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

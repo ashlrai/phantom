@@ -18,7 +18,7 @@ const SNAPSHOT = {
   generatedAt: new Date().toISOString(),
   mergeWindowMinutes: 60,
   sources: {
-    queue: { state: 'healthy', file: 'ready.tsv', rows: 6, dropped: 0 },
+    queue: { state: 'healthy', file: 'ready.tsv', rows: 6, dropped: 0, unhinted: 0 },
     queueState: { state: 'healthy', file: 'queue.v1.json', jobs: 8 },
     ledger: { state: 'healthy', file: 'jobs.jsonl', events: 6, dropped: 0 },
     usage: { state: 'healthy', files: ['usage-readings.log'], pools: 2, dropped: 0 },
@@ -27,6 +27,7 @@ const SNAPSHOT = {
   lanes: [
     {
       lane: 'devin',
+      caps: { gh: true, browser: true, network: true, signedIn: true },
       queueDepth: 2,
       liveJobs: 1,
       mergesPerHour: 1,
@@ -38,6 +39,7 @@ const SNAPSHOT = {
     },
     {
       lane: 'grok-ultra',
+      caps: { gh: false, browser: true, network: true, signedIn: true },
       queueDepth: 1,
       liveJobs: 0,
       mergesPerHour: 0,
@@ -95,6 +97,25 @@ describe('LanesPanel', () => {
     // Source-health line keeps "empty" distinguishable from "unreadable".
     expect(screen.getByText(/ready\.tsv healthy \(6 rows\)/)).toBeInTheDocument();
     expect(screen.getByText(/budgets healthy/)).toBeInTheDocument();
+  });
+
+  it('shows capability badges on each map lane: all-true, no gh, unknown', async () => {
+    vi.stubGlobal('fetch', respond(SNAPSHOT));
+    render(<LanesPanel />);
+    const caps = async (lane: string) => (await screen.findByRole('list', { name: `${lane} capabilities` })).textContent;
+    expect(await caps('devin')).toBe('ghbrowsernetworksigned in');
+    expect(await caps('grok-ultra')).toBe('no ghbrowsernetworksigned in');
+    expect(await caps('local-omlx')).toBe('gh: unknownbrowser: unknownnetwork: unknownsigned in: unknown');
+    expect(screen.getAllByText('no gh')[0]).toHaveAttribute('title', 'no gh: jobs that run gh go elsewhere.');
+  });
+
+  it('shows why a held lane is held and the one next step on its card', async () => {
+    const held = { reason: 'usage reading is 3 days old', since: '2026-11-19T11:00:00.000Z', launches_held_1h: 3, meter_age_h: 72, next_step: 'Refresh the Grok usage reading' };
+    vi.stubGlobal('fetch', respond({ ...SNAPSHOT, lanes: SNAPSHOT.lanes.map((l) => (l.lane === 'grok-ultra' ? { ...l, held } : l)) }));
+    render(<LanesPanel />);
+    const card = await screen.findByRole('button', { name: /grok-ultra/ });
+    expect(card).toHaveTextContent('Held: usage reading is 3 days old · 3 launches in the last hour. Refresh the Grok usage reading.');
+    expect(screen.getByRole('button', { name: /devin/ })).not.toHaveTextContent('Held:');
   });
 
   it('opens and closes lane evidence without treating unknown metrics as zero', async () => {

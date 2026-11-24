@@ -159,6 +159,7 @@ export interface AshlrConfig {
    * Entirely opt-in: a no-op when unset - notify() never posts without one.
    */
   notify?: NotifyTarget;
+  ciRerun?: { enabled?: boolean; intervalMinutes?: number; repos?: string[]; maxPerHour?: number };
   /**
    * M45: multi-backend engine fleet (v4 Foundry). ENTIRELY OPT-IN - when absent,
    * behavior is unchanged (builtin only; external engines run raw as today).
@@ -1124,6 +1125,8 @@ export interface AshlrConfig {
    * consensus stores and cannot provide execution authority.
    */
   fleet?: {
+    /** Settings ▸ Live build limits: how far behind master the running build may be before the `build-stale` alert. Unset = 50 commits / 24 hours. */
+    buildStale?: { commits?: number; hours?: number };
     sharedQueue?: {
       /**
        * 'off'        - single-machine mode (default, no shared file).
@@ -1197,6 +1200,12 @@ export interface AshlrConfig {
      * would send.
      */
     leaderRepliesSend?: boolean;
+    /**
+     * Path of the leader's plan log, which `phm leader replies` and the Home
+     * "From your leader" cards read. Unset by default: PHANTOM_PLAN_LOG, then
+     * leader/PLAN-LOG.md under the runs dir, is used.
+     */
+    leaderPlanLogPath?: string;
     /** iMessage service name. Default 'iMessage'. */
     service?: 'iMessage';
     /**
@@ -1294,6 +1303,8 @@ export interface AshlrConfig {
    */
   devin?: {
     enabled?: boolean;
+    /** Devin Review requests per local day; default 5, 0 disables reviews. */
+    review?: { maxPerDay?: number };
     /** Weekly ACU allowance of the Devin plan (Max meters weekly, not daily). Absent falls back to the local budget total. */
     weeklyAcuAllowance?: number;
     /** Any past or future weekly reset instant (ISO). Absent leaves the window, and so the measured use, unknown. */

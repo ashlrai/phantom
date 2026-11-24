@@ -93,8 +93,8 @@ describe('Terra experiment promotion', () => {
 
 describe('Codex allowance priors', () => {
   it.each([
-    ['fast', CODEX_TERRA_MODEL_ID], ['mid', CODEX_TERRA_MODEL_ID],
-    ['computer', CODEX_TERRA_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
+    ['fast', DEFAULT_CODEX_MODEL_ID], ['mid', DEFAULT_CODEX_MODEL_ID],
+    ['computer', DEFAULT_CODEX_MODEL_ID], ['work', DEFAULT_CODEX_MODEL_ID],
     ['frontier', CODEX_ASTRA_MODEL_ID],
   ] satisfies [ModelRoutingTier, string][])('defaults %s to %s', (tier, model) => {
     expect(codexModelForTier(tier)).toBe(model);

@@ -1,0 +1,24 @@
+/* One column, never wider than the screen: every flex child may shrink and long names wrap. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-3); overflow-x: hidden; }
+.root * { box-sizing: border-box; min-width: 0; overflow-wrap: anywhere; }
+.asks { position: sticky; top: 0; z-index: 1; padding: var(--space-3); border: 1px solid var(--border-default, currentColor); border-radius: var(--radius-md, 8px); background: var(--surface-raised, Canvas); }
+.asks h2 { margin: 0 0 var(--space-1); font-size: var(--text-sm-size); }
+.asks ul { margin: 0; padding-left: var(--space-4); }
+.headline { margin: 0; font-size: var(--text-lg-size, 1.125rem); font-weight: var(--font-weight-semibold); }
+.rows, .jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.row { border: 1px solid var(--border-default, currentColor); border-radius: var(--radius-md, 8px); }
+.laneButton, .job { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-height: 44px; padding: var(--space-3); text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.laneTop { display: flex; align-items: center; gap: var(--space-2); }
+.name { flex: 1 1 auto; font-weight: var(--font-weight-semibold); }
+.chevron { flex: 0 0 auto; }
+.meta, .unknown, .empty { font-size: var(--text-sm-size); color: var(--text-secondary); margin: 0; }
+.jobs { padding: 0 var(--space-3) var(--space-3); }
+.job { border: 1px solid var(--border-default, currentColor); border-radius: var(--radius-md, 8px); }
+.empty { padding: 0 var(--space-3) var(--space-3); }
+.usage { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm-size); }
+.track { flex: 1 1 auto; height: 6px; border-radius: 3px; background: var(--surface-sunken, rgba(128, 128, 128, 0.25)); overflow: hidden; }
+.fill { display: block; height: 100%; background: var(--accent, currentColor); }
+.fill[data-high] { background: var(--status-warn, currentColor); }
+.showMap { align-self: flex-start; min-height: 44px; background: none; border: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.messagesTitle { margin: 0 0 var(--space-1); font-size: var(--text-sm-size); }
+.messages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }

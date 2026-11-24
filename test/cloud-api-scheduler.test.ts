@@ -27,6 +27,10 @@ vi.mock('../src/core/cloud/tracker.js', () => ({ refreshCloudTasks: core.refresh
 vi.mock('../src/core/cloud/budget.js', () => ({ cloudBudgetView: vi.fn() }));
 const discover = vi.hoisted(() => ({ autoDiscover: vi.fn(async () => ({ ran: true, added: 0, errors: [] as string[] })) }));
 vi.mock('../src/core/improve/discover.js', () => discover);
+const outcomes = vi.hoisted(() => ({
+  syncCloudBacklogOutcomes: vi.fn(() => ({ intact: true, reasons: [] as string[], registered: 0, appended: 0 })),
+}));
+vi.mock('../src/core/improve/backlog-sync.js', () => ({ syncCloudBacklogOutcomes: outcomes.syncCloudBacklogOutcomes }));
 const stop = vi.hoisted(() => ({ kill: false, paused: false }));
 vi.mock('../src/core/sandbox/policy.js', () => ({ killSwitchOn: () => stop.kill }));
 vi.mock('../src/core/comms/pause.js', () => ({ isPaused: () => stop.paused }));
@@ -50,6 +54,8 @@ beforeEach(() => {
   process.env['HOME'] = home;
   core.refreshCloudTasks.mockReset();
   core.runSelfImprove.mockReset();
+  outcomes.syncCloudBacklogOutcomes.mockReset();
+  outcomes.syncCloudBacklogOutcomes.mockReturnValue({ intact: true, reasons: [], registered: 0, appended: 0 });
   vi.useFakeTimers();
 });
 
@@ -123,6 +129,36 @@ describe('cadence', () => {
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
     await vi.advanceTimersByTimeAsync(CLOUD_REFRESH_EVERY_MS);
     expect(core.refreshCloudTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncs backlog PRs into the outcome ledger before the launch pick', async () => {
+    core.runSelfImprove.mockResolvedValue({ launched: [], skipped: [] });
+    outcomes.syncCloudBacklogOutcomes.mockReturnValue({ intact: true, reasons: [], registered: 2, appended: 4 });
+    const log = vi.fn();
+    startCloudScheduler({}, { log });
+    await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(outcomes.syncCloudBacklogOutcomes).toHaveBeenCalledTimes(1);
+    expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
+    expect(outcomes.syncCloudBacklogOutcomes.mock.invocationCallOrder[0])
+      .toBeLessThan(core.runSelfImprove.mock.invocationCallOrder[0]);
+    expect(log).toHaveBeenCalledWith('cloud improve: registered 2 backlog PR(s) into the outcome ledger');
+  });
+
+  it('a failing outcome sync never blocks the launch, and Stop holds it too', async () => {
+    core.runSelfImprove.mockResolvedValue({ launched: [], skipped: [] });
+    outcomes.syncCloudBacklogOutcomes.mockImplementation(() => { throw new Error('boom'); });
+    startCloudScheduler({}, { log: () => undefined });
+    await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
+    stopCloudScheduler();
+    outcomes.syncCloudBacklogOutcomes.mockClear();
+    core.runSelfImprove.mockClear();
+    Object.assign(stop, { kill: true, paused: false });
+    startCloudScheduler({}, { log: () => undefined });
+    await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
+    expect(outcomes.syncCloudBacklogOutcomes).not.toHaveBeenCalled();
+    expect(core.runSelfImprove).not.toHaveBeenCalled();
+    Object.assign(stop, { kill: false, paused: false });
   });
 
   it('Stop and Pause hold the unattended job before any GitHub read or launch', async () => {

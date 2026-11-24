@@ -1,14 +1,17 @@
 import { constants } from 'node:fs';
+import { planFallbackChain, readFallbackUsed } from '../router/fallback.js';
 import { open, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { decidePairing, type PairingLane } from '../routing/pairing.js';
+import { readTypedDecisions } from '../router/typed-decisions.js';
 import { validResetCalendarPool } from '../routing/reset-pressure.js';
 import { loadRouteSources } from '../routing/decision-candidates.js';
+import { withRunwayYield } from './route-yield.js';
 import { decideRoute } from '../routing/decision.js';
 import { modelModeTierSchema, routeRequestSchema, routeModelSchema } from '../routing/decision-schema.js';
 
-async function postureEvidence(root: string) {
+export async function postureEvidence(root: string) {
   const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
   const projection = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
   try {
@@ -31,7 +34,8 @@ async function postureEvidence(root: string) {
     const input = row?.event === 'posture' ? row.lanes : row?.ranking_inputs;
     if (!object(input) || !Object.keys(input).length) return null;
     const lanes: Record<string, { posture: string; postureReason: string; projectedUnusedPct: number | null; hoursToReset: number | null;
-      costClass?: string; costClassReason?: string; zeroCost?: boolean; allowance?: Record<string, number | null> }> = {};
+      observedAt?: string; lane?: string; accountId?: string; model?: string; windowStart?: string; resetAt?: string;
+      costClass?: string; costClassReason?: string; zeroCost?: boolean; freePreview?: boolean; previewExpiresAt?: string; allowance?: Record<string, number | null> }> = {};
     for (const [lane, value] of Object.entries(input)) {
       if (!object(value) || !['burn', 'balanced', 'preserve'].includes(String(value.posture)) ||
           typeof value.posture_reason !== 'string' || !value.posture_reason) return null;
@@ -40,9 +44,17 @@ async function postureEvidence(root: string) {
       if (!projection(unused) || !projection(hours)) return null;
       lanes[lane] = { posture: String(value.posture), postureReason: value.posture_reason,
         projectedUnusedPct: unused as number | null, hoursToReset: hours as number | null };
+      const timestamp = typeof row?.ts === 'number' ? row.ts * 1000 : typeof row?.ts === 'string' ? Date.parse(row.ts) : NaN;
+      if (Number.isFinite(timestamp) && Math.abs(timestamp) <= 8.64e15) lanes[lane].observedAt = new Date(timestamp).toISOString();
+      for (const [wire, key] of [['lane', 'lane'], ['account_id', 'accountId'], ['model', 'model'],
+        ['window_start', 'windowStart'], ['reset_at', 'resetAt']] as const) {
+        if (typeof value[wire] === 'string' && value[wire].trim()) lanes[lane][key] = value[wire];
+      }
       if (typeof value.cost_class === 'string' && ['local', 'included', 'metered'].includes(value.cost_class)) lanes[lane].costClass = value.cost_class;
       if (typeof value.cost_class_reason === 'string') lanes[lane].costClassReason = value.cost_class_reason;
       if (typeof value.zero_cost === 'boolean') lanes[lane].zeroCost = value.zero_cost;
+      if (typeof value.free_preview === 'boolean') lanes[lane].freePreview = value.free_preview;
+      if (typeof value.preview_expires_at === 'string' && Number.isFinite(Date.parse(value.preview_expires_at))) lanes[lane].previewExpiresAt = value.preview_expires_at;
       if (object(value.allowance)) {
         const allowance = value.allowance;
         lanes[lane].allowance = Object.fromEntries(['used', 'limit', 'in_flight', 'reserve', 'session_cap', 'headroom']
@@ -64,9 +76,13 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
   let pairing: ReturnType<typeof decidePairing> | null = null;
   let decision: Awaited<ReturnType<typeof decideRoute>> | null = null;
   const posture = await postureEvidence(root);
-  const sources = await loadRouteSources(root);
+  const typed_decisions = await readTypedDecisions({ runsDir: root });
+  const sources = await withRunwayYield(root, await loadRouteSources(root), now * 1000);
   const request = routeRequestSchema.safeParse(sources.request);
   if (request.success) decision = await decideRoute(request.data, sources, { backends: [], nowMs: now * 1000 });
+  const fallback_chain = request.success && decision && 'lane' in decision && decision.lane
+    ? planFallbackChain(request.data, sources, decision.lane, now * 1000) : null;
+  const fallback_used = request.success && request.data.job ? await readFallbackUsed(root, request.data.job) : null;
   try {
     const input = JSON.parse(await readFile(join(root, 'queue', 'pairing-lanes.json'), 'utf8'));
     if (!Array.isArray(input?.lanes) || !input.lanes.every((row: PairingLane) => row &&
@@ -93,8 +109,8 @@ export async function explainRoutes(root = process.env.ASHLR_RUNS_DIR ?? join(ho
       return { job, pool: receipt.pool, decidedAt: receipt.decided_at, wasteReason: typeof receipt.waste_reason === 'string' ? receipt.waste_reason : null,
         'route-moves-per-hour': receipt.moves.filter(t => t > now - 3600 && t <= now).length };
     });
-    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture };
+    return { available: true, 'route-moves-per-hour': lines.reduce((sum, line) => sum + line['route-moves-per-hour'], 0), lines, laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
   } catch {
-    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture };
+    return { available: false, 'route-moves-per-hour': null, lines: [], laneQuality, pairing, decision, posture, typed_decisions, fallback_chain, fallback_used };
   }
 }

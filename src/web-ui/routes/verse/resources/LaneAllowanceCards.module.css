@@ -1,0 +1,38 @@
+.section { min-width: 0; container-type: inline-size; }
+.head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-1) var(--space-2); margin: 0 0 var(--space-2); }
+.head h3 { font-size: var(--text-sm-size); margin: 0; }
+.count, .note, .key { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.note, .key { margin: 0 0 var(--space-2); }
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.key > span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding: 0; margin: 0; list-style: none; }
+:global([data-console-layout='regular']) .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+:global([data-console-layout='wide']) .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@container (max-width: 32rem) {
+  :global([data-console-layout='regular']) .grid, :global([data-console-layout='wide']) .grid { grid-template-columns: minmax(0, 1fr); }
+}
+.card { min-width: 0; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+/* The mark sits on the name's line, not its baseline box, so a lane with a monogram and one with a logo line up. */
+.name { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; align-self: center; }
+.chips { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1); margin-left: auto; }
+.chip { border-radius: var(--radius-full); padding: var(--space-1) var(--space-2); font-weight: 500; background: var(--status-info-bg); color: var(--status-info-fg); }
+.chip[data-posture='burn'] { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.chip[data-posture='preserve'] { color: var(--status-success-fg); background: var(--status-success-bg); }
+.chip[data-posture='unknown'] { color: var(--status-unknown-fg); background: var(--status-unknown-bg); }
+.tag { padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-full); }
+.tag, .details, .reason { color: var(--text-secondary); }
+.card p { margin: var(--space-2) 0; font-variant-numeric: tabular-nums; }
+.card .figure { color: var(--text-primary); font-weight: 500; }
+.card .figure[data-unknown] { color: var(--text-secondary); font-weight: 400; }
+/* A stale reading keeps its last share, drawn faint: it is a record, not the present. */
+.card[data-freshness='stale'] [role='meter'] { opacity: 0.45; }
+.meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); margin-top: var(--space-2); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.meta > :last-child { text-align: right; }
+.reset { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); }
+.card .line { margin: var(--space-1) 0 0; color: var(--text-secondary); }
+.card .line[data-ending='unused'], .card .line[data-ending='dry'] { color: var(--status-warning-fg); }
+.details { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.card[data-freshness='stale'] .reason { color: var(--status-warning-fg); }
+.reason { display: block; margin-top: var(--space-1); }
+.hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

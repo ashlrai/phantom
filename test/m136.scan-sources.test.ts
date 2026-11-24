@@ -76,8 +76,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 // ============================================================================
 
 vi.mock('../src/core/integrations/github.js', () => ({
-  listIssues: vi.fn(() => []),
-  githubStatus: vi.fn(async () => ({ available: false, reason: 'no-token' })),
+  listIssuesAsync: vi.fn(async () => []),
+  githubCiStatusAsync: vi.fn(async () => ({ isRepo: false, repo: null, ci: 'none' })),
 }));
 
 vi.mock('../src/core/sandbox/policy.js', () => ({

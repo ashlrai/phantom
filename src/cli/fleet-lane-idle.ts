@@ -1,18 +1,23 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
+import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: ashlr fleet lane-idle [--json]
-Explain why lanes are below target from queue/status.json. Read-only.`;
+Explain why lanes are below their launch target (the configured target tightened by the controller's effective_target shed) from queue/status.json. Read-only.
+A lane is blocked by the global cap when it has queued work, is under its launch target, and global running is at the cap while admission is otherwise open.`;
 
 export type LaneIdleReader = (path: string) => Promise<string>;
+export type LaneIdleReason = 'held' | 'nothing queued' | 'admission closed' | 'blocked by the global cap' | 'queued work not launching';
 export interface IdleLane {
   lane: string;
   running: number;
+  /** The launch target: configured target tightened by the controller's effective_target shed. */
   target: number;
   queued: number;
-  reason: 'held' | 'nothing queued' | 'admission closed' | 'queued work not launching';
+  reason: LaneIdleReason;
   gate_reason: string | null;
   line: string;
 }
@@ -24,6 +29,10 @@ function record(value: unknown): Record<string, unknown> {
 function count(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid count');
   return value;
+}
+/** A count that stays unknown (null) instead of failing the whole report. */
+function maybeCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 function plain(value: string): string {
   return Array.from(value, char => {
@@ -37,15 +46,27 @@ export function explainIdleLanes(value: unknown): IdleLane[] {
   const status = record(value);
   const lanes = record(status.lanes);
   const admission = status.admission === undefined ? {} : record(status.admission);
-  const gate = typeof admission.gate_reason === 'string' ? plain(admission.gate_reason) : null;
-  const closed = admission.admit === false || admission.decision === 'stop' || Boolean(gate) || Boolean(status.paused);
+  const gate = typeof admission.gate_reason === 'string' ? plain(admission.gate_reason) || null : null;
+  // The same fleet verdict fleet admission derives; a missing or malformed cap
+  // block leaves the cap unknown rather than inventing a block.
+  const cap = maybeCount(admission.cap);
+  const fleetRunning = maybeCount(admission.running);
+  const atCap = cap !== null && fleetRunning !== null && fleetRunning >= cap;
+  const { nonCapClosed } = fleetAdmissionVerdict({
+    atCap, admit: admission.admit, decision: admission.decision, gateReason: gate, paused: status.paused,
+  });
   return Object.entries(lanes).flatMap(([name, value]) => {
     const lane = record(value);
-    const running = count(lane.running), target = count(lane.target), queued = count(lane.queued);
+    const running = count(lane.running), queued = count(lane.queued);
+    // Availability counts against the launch target, not the configured one:
+    // a lane the controller shed has no phantom room below it.
+    const target = laneLaunchTarget(count(lane.target), maybeCount(lane.effective_target));
     if (typeof lane.held !== 'boolean') throw new Error('Invalid hold');
     if (running >= target) return [];
     const reason = lane.held ? 'held' : queued === 0 ? 'nothing queued'
-      : closed ? 'admission closed' : 'queued work not launching';
+      : nonCapClosed ? 'admission closed'
+      : atCap ? 'blocked by the global cap'
+      : 'queued work not launching';
     const gate_reason = reason === 'admission closed' ? gate : null;
     const label = plain(name);
     return [{ lane: label, running, target, queued, reason, gate_reason,

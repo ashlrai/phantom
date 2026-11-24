@@ -1,0 +1,39 @@
+TAP version 13
+# Subtest: reports delivery
+not ok 1 - reports delivery
+  ---
+  duration_ms: 1.335916
+  type: 'test'
+  location: '/home/runner/work/repo/repo/.github/tests/example.test.mjs:12:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'unknown' !== 'delivered'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'delivered'
+  actual: 'unknown'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/repo/repo/.github/tests/example.test.mjs:14:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+  ...
+# Subtest: adds
+ok 2 - adds
+  ---
+  duration_ms: 0.567959
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 1
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 75.19425

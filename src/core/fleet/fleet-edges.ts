@@ -1,8 +1,23 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
+import { isGroupPresenceBody } from './bus-group.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
+
+/** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
+ * router files delivery-failure notices under this address; they are reports
+ * with their own transport read, never mail between agents. Kept a literal:
+ * the shared constant lives in bus-transport-file, whose import would pull
+ * the transport router into this read projection's closure. */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/** One agent wrote to another: not a note to self, a broadcast to `leaders`, a
+ * person, an outside channel, a dead-letter notice or a presence observation
+ * (system traffic with its own read, never a message slot). */
+export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
+  !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.to === BUS_DEAD_LETTER_ADDRESS ||
+    envelope.sender?.human || envelope.external || isGroupPresenceBody(envelope.body));
 
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
 export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number): FleetEdge[] {
@@ -19,7 +34,7 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), win
   }
   const providerFor = (address: string) => { const names = providers.get(address); return names?.size === 1 ? [...names][0]! : null; };
   for (const { envelope, receivedAt } of rows) {
-    if (envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external) continue;
+    if (!agentToAgent(envelope)) continue;
     const provider = providerFor(envelope.from);
     const key = JSON.stringify([envelope.from, envelope.to, provider]);
     const edge = edges.get(key);

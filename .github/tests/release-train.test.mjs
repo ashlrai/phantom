@@ -378,11 +378,17 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.ok(autoTag.on.push.branches.includes('master'));
   assert.ok(autoTag.on.push.paths.includes('package.json'));
   assert.equal(autoTag.on.workflow_run.workflows[0], 'CI');
+  assert.deepEqual(autoTag.on.workflow_dispatch.inputs.sha, {
+    description: 'Exact release-gated master commit to evaluate', required: false, type: 'string', default: '',
+  });
   assert.deepEqual(autoTag.permissions, {});
-  assert.equal(autoTag.concurrency.group, 'auto-tag-${{ github.event_name == \'workflow_run\' && github.event.workflow_run.head_sha || github.sha }}');
+  assert.equal(autoTag.concurrency.group,
+    'auto-tag-${{ github.event_name == \'workflow_run\' && github.event.workflow_run.head_sha || (github.event_name == \'workflow_dispatch\' && inputs.sha != \'\' && inputs.sha) || github.sha }}');
   assert.equal(autoTag.concurrency['cancel-in-progress'], false);
   const tagJob = autoTag.jobs.tag;
   assert.deepEqual(tagJob.permissions, {contents: 'read', checks: 'read', actions: 'write'});
+  assert.equal(tagJob.env.SHA,
+    '${{ github.event_name == \'workflow_run\' && github.event.workflow_run.head_sha || (github.event_name == \'workflow_dispatch\' && inputs.sha != \'\' && inputs.sha) || github.sha }}');
   const names = tagJob.steps.map(s => s.name ?? '');
   assert.ok(names.some(n => n.startsWith('Detect version')));
   assert.ok(names.some(n => n.startsWith('Require every required check')));;
@@ -397,6 +403,9 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   assert.equal(String(dispatchStep.env?.GH_TOKEN).includes('steps.app.outputs.token'), false);
   const mint = tagJob.steps.find(s => String(s.uses ?? '').includes('create-github-app-token'));
   assert.ok(mint, 'auto-tag must mint a contents-only App token for the tag step');
+  const validateSha = tagJob.steps.find(s => s.id === 'validate-dispatch-sha');
+  assert.ok(validateSha, 'auto-tag must validate an explicit dispatch SHA');
+  assert.ok(tagJob.steps.indexOf(validateSha) < tagJob.steps.indexOf(mint), 'validate SHA before minting write authority');
   assert.equal(mint.with['permission-actions'], undefined);
   assert.equal(mint.with['permission-contents'], 'write');
   const detect = tagJob.steps.find(s => /Detect version/.test(s.name ?? ''));
@@ -414,6 +423,11 @@ test('workflows carry the merged-PR -> tag -> release wiring with no widened per
   const gateRun = mergeGate.steps.map(s => s.run ?? '').join('\n');
   assert.ok(gateRun.includes("'push'"), 'Merge Gate must treat push as fast lane');
   assert.equal(mergeGate.steps.every(s => !s.env || !String(s.env.GITHUB_TOKEN).includes('secrets.')), true);
+  const autoTagDispatch = ci.jobs['release-gate-autotag'];
+  assert.equal(autoTagDispatch.if, "github.event_name == 'workflow_dispatch' && inputs.release_gate == true && github.ref == 'refs/heads/master' && needs['release-build'].result == 'success' && needs['release-suites'].result == 'success'");
+  assert.deepEqual(autoTagDispatch.needs, ['release-build', 'release-suites']);
+  assert.deepEqual(autoTagDispatch.permissions, { actions: 'write' });
+  assert.equal(mergeGate.needs.includes('release-gate-autotag'), false);
 
   // The merge leg stays the sanctioned guarded route, not a workflow shortcut:
   // release-please.yml must not gain an unguarded `gh pr merge` (the ops merge

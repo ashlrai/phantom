@@ -19,7 +19,7 @@
  * text is untrusted (model output, PR titles) and is rendered as plain text.
  */
 import { groupMergeBursts } from './feed-merge-burst.js';
-import type { FeedReport } from '../../../../core/feed.js';
+import { FEED_SCHEMA, FEED_SOURCES, FEED_VERSION, type FeedReport } from '../../../../core/feed-schema.js';
 import { buildCommsDigestFeedItems, type CommsDigestInput } from '../../../../core/fleet/feed-comms-digest.js';
 import type { AppNotification } from '../../../components/notifications/types.js';
 import type { NeedsYouItem } from '../../../../core/verse/workbench-types.js';
@@ -69,7 +69,8 @@ export function feedPaneLabel(paneId: string | undefined): string | undefined {
 }
 
 export interface FeedSources {
-  shared?: FeedReport;
+  /** GET /api/feed as received; validated by `sharedFeedAdapter`. */
+  shared?: unknown;
   leader?: readonly LeaderThreadMessage[] | null;
   /** The raw /api/verse/fleet/runs snapshot (outbox, merges and events). */
   runs?: unknown;
@@ -248,14 +249,15 @@ export function inboxOverAdapter(payload: unknown, now: number = Date.now()): Fe
 
 export function isSharedFeedReport(value: unknown): value is FeedReport {
   const row = record(value), sources = record(row.sources);
-  return row.schema === 'phantom.feed.v1' && Array.isArray(row.items)
-    && ['merges', 'releases', 'incidents', 'leaderReplies'].every(key => sources[key] === 'available' || sources[key] === 'unknown');
+  return row.schema === FEED_SCHEMA && row.version === FEED_VERSION && Array.isArray(row.items)
+    && FEED_SOURCES.every(key => sources[key] === 'available' || sources[key] === 'unknown');
 }
 
-const SHARED_KINDS: Record<string, FeedKind> = { merge: 'merge', release: 'update', blocked: 'alert', 'leader-reply': 'leader' };
-const sharedLink = (href: unknown): href is string => typeof href === 'string' &&
-  (/^\/verse\/\?pane=(?:fleet-merges|fleet-events|fleet-bus|leader-thread)$/.test(href)
-    || /^https:\/\/github\.com\/[a-z\d_.-]+\/[a-z\d_.-]+\/(?:pull\/[1-9]\d*|releases\/tag\/[a-z\d_.%+-]+)\/?$/i.test(href));
+const SHARED_KINDS: Record<string, FeedKind> = { merged: 'merge', released: 'update', failed: 'alert', lane: 'alert', incident: 'alert', leader: 'leader' };
+/** Exported for the Feed cards, which follow the same allowlist. */
+export const sharedLink = (href: unknown): href is string => typeof href === 'string' &&
+  (/^\/verse\/\?pane=(?:fleet-merges|fleet-events|fleet-bus|fleet-lanes|leader-thread|worker-log)$/.test(href)
+    || /^https:\/\/github\.com\/[a-z\d_.-]+\/[a-z\d_.-]+\/(?:pull\/[1-9]\d*|releases\/tag\/[a-z\d_.%+-]+|commits)\/?$/i.test(href));
 
 /** Validate network data before it reaches a link or the legacy adapters. */
 export function sharedFeedAdapter(value: unknown): FeedItem[] {

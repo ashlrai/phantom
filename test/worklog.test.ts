@@ -26,6 +26,16 @@ describe('work log', () => {
     expect(report.entries[4]).toMatchObject({ job: 'PR', repo: 'phantom', lane: 'work', model: 'model-a', openToMergeSeconds: 60 });
     expect(report.entries[0]).toMatchObject({ job: 'FAILED', lane: 'fast', mergedAt: null });
   });
+  it('reads jobs-ledger dialect spellings for ids, events, phases, links and stamps', () => {
+    const iso = '2026-11-09T10:00:00Z';
+    const report = worklog([
+      JSON.stringify({ type: 'launch', job_id: 'DJ', pool: 'work', time: iso }),
+      JSON.stringify({ kind: 'outcome', id: 'DJ', result: 'MERGED', html_url: 'https://github.com/ashlrai/phantom/pull/42', updatedAt: iso }),
+    ].join('\n'), now - 7200000, now);
+    const merged = report.entries.find(e => e.kind === 'merged');
+    expect(merged).toMatchObject({ job: 'DJ', url: 'https://github.com/ashlrai/phantom/pull/42', mergedAt: iso });
+    expect(report.malformedLines).toBe(0);
+  });
   it('filters each lane, repo and time boundary, including combined filters', async () => {
     const entries = worklog(await fixture(), now - 3600000, now).entries;
     expect(filterWorklog(entries, 'locus').map(e => e.kind)).toEqual(['empty', 'launch']);
@@ -63,8 +73,10 @@ describe('work log', () => {
     const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdWorklog([], async () => worklog('', 0, now))).toBe(0);
-    expect(output).toHaveBeenCalledWith('No work events match these filters.');
+    expect(output).toHaveBeenCalledWith('No work recorded in the last 6 hours.');
+    expect(await cmdWorklog(['--lane', 'none'], async () => worklog('', 0, now))).toBe(0);
+    expect(output).toHaveBeenLastCalledWith('No work events match these filters.');
     expect(await cmdWorklog(['--json'], async () => { throw new Error('private path'); })).toBe(1);
-    expect(error).toHaveBeenCalledWith('Unable to read jobs ledger.');
+    expect(error).toHaveBeenCalledWith('Unable to read the work log.');
   });
 });
