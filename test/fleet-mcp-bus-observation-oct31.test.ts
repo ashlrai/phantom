@@ -23,6 +23,7 @@ import {
   createFleetServer, MAX_FLEET_OUTPUT_BYTES, type FleetReaders,
 } from '../src/mcp/fleet-server.js';
 import { readFleetBusHops } from '../src/mcp/fleet.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { FLEET_MCP_TOOL_NAMES } from './support/fleet-mcp-tools.js';
 
 let root: string;
@@ -254,5 +255,73 @@ describe('fleet_bus_hops MCP tool', () => {
     const { parsed } = await callBus(client);
     expect(parsed['sourceState']).toBe('missing');
     expect(parsed['hops']).toBeNull();
+  });
+
+  it('filters hops by sender, recipient, excluded sender and exact id with honest matched counts', async () => {
+    writeRawLog([
+      row('hop-a', { from: 'codex-cmp', to: 'RQ-EVENTD' }),
+      row('hop-b', { from: 'claude', to: 'RQ-EVENTD' }),
+      row('hop-c', { from: 'codex-cmp', to: 'mason' }),
+      row('hop-d', { from: 'grok', to: 'mason' }),
+    ].join('\n') + '\n');
+    const client = await connect();
+    const bySender = await callBus(client, { from: 'codex-cmp' });
+    expect((bySender.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-a', 'hop-c']);
+    expect(bySender.parsed).toMatchObject({ matched: 2, returnedHops: 2, truncated: false });
+    const byRecipient = await callBus(client, { to: 'mason' });
+    expect((byRecipient.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-c', 'hop-d']);
+    expect(byRecipient.parsed).toMatchObject({ matched: 2 });
+    // A sender both included and excluded matches nothing.
+    const excluded = await callBus(client, { from: 'codex-cmp', excludeFrom: 'codex-cmp' });
+    expect(excluded.parsed).toMatchObject({ matched: 0, returnedHops: 0, hops: [] });
+    const byId = await callBus(client, { id: 'hop-b' });
+    expect((byId.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-b']);
+    expect(byId.parsed).toMatchObject({ matched: 1, returnedHops: 1 });
+    // `id` is an exact match, never a substring.
+    const partial = await callBus(client, { id: 'hop-' });
+    expect(partial.parsed).toMatchObject({ matched: 0, returnedHops: 0, hops: [] });
+  });
+
+  it('resolves from/to/excludeFrom through the identity registry like fleet_bus_inbox', async () => {
+    expect(registerAgentIdentity({ handle: 'codex-cmp', aliases: ['cmp'] }).status).toBe('created');
+    writeRawLog([
+      row('hop-a', { from: 'codex-cmp', to: 'RQ-EVENTD' }),
+      row('hop-b', { from: 'agent:codex-cmp', to: 'RQ-EVENTD' }),
+      row('hop-c', { from: 'claude', to: 'RQ-EVENTD' }),
+    ].join('\n') + '\n');
+    const client = await connect();
+    // The alias `cmp` resolves to the same identity as handle `codex-cmp`, so it
+    // matches hops sent under every registered label of that identity.
+    const byAlias = await callBus(client, { from: 'cmp' });
+    expect((byAlias.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-a', 'hop-b']);
+    expect(byAlias.parsed).toMatchObject({ matched: 2 });
+    // `claude` is registered to no identity, so it keeps exact-label matching
+    // and never inherits another identity's label set.
+    const unregistered = await callBus(client, { from: 'claude' });
+    expect((unregistered.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-c']);
+    expect(unregistered.parsed).toMatchObject({ matched: 1 });
+    // `excludeFrom` drops every label of the resolved identity.
+    const excluded = await callBus(client, { excludeFrom: 'cmp' });
+    expect((excluded.parsed['hops'] as Array<Record<string, unknown>>).map(hop => hop['id']))
+      .toEqual(['hop-c']);
+    expect(excluded.parsed).toMatchObject({ matched: 1 });
+  });
+
+  it('rejects malformed hop filter values before reading the log', async () => {
+    const bus = vi.fn();
+    const client = await connect({ status: async () => ({}), loop: async () => ({}), bus });
+    for (const args of [
+      { from: '' }, { from: 'has space' }, { to: 5 }, { excludeFrom: null },
+      { id: '' }, { id: 'x'.repeat(129) }, { since: '15m' }, { contains: 'x' },
+    ]) {
+      await expect(client.callTool({ name: 'fleet_bus_hops', arguments: args }))
+        .rejects.toMatchObject({ code: -32602 });
+    }
+    expect(bus).not.toHaveBeenCalled();
   });
 });

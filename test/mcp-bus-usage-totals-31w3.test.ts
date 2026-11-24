@@ -35,7 +35,7 @@ describe('fleet bus returned-tail usage subtotals', () => {
       { id: 'repeat', from: 'a', to: 'x', inputTokens: 0, outputTokens: 7 },
       { id: 'last', from: 'b', to: 'y', outputTokens: 0, extra: 'private-extra' },
     ]);
-    const result = await readFleetBusHops(3);
+    const result = await readFleetBusHops({ limit: 3 });
     expect(result).toMatchObject({ sourceState: 'ok', returnedHops: 3, skippedRows: 1, truncated: true, limit: 3 });
     expect(result.hops).toEqual([
       { id: 'repeat', from: 'b', to: 'x', inputTokens: 5, outputTokens: null },
@@ -76,7 +76,7 @@ describe('fleet bus returned-tail usage subtotals', () => {
       { id: 'same', from: 'a', to: 'x', inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 0 },
       { id: 'same', from: 'a', to: 'x', inputTokens: 1, outputTokens: null },
     ]);
-    const result = await readFleetBusHops(2);
+    const result = await readFleetBusHops({ limit: 2 });
     const summary = result.usageSummary;
     expect(summary).toMatchObject({
       hopCount: 2, input: tokens(null, 2, 0, true), output: tokens(0, 1, 1),

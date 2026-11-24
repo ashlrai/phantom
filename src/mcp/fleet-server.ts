@@ -20,7 +20,8 @@ import { readClaimNoticeView } from '../core/fleet/claim-notice-view.js';
 import { readChannelHealth } from '../core/fleet/channel-health.js';
 import { defaultRuntimeIdentityDeps, readRuntimeIdentity, sanitizeIdentityText } from '../core/fleet/runtime-identity.js';
 import { scrubPrivateText } from '../core/util/scrub.js';
-import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, readFleetBusHops } from './fleet.js';
+import { MAX_FLEET_TICKS, MAX_FLEET_BUS_HOPS, readFleetLoop, readFleetStatus, readFleetBusHops,
+  parseFleetBusHopsArgs, type FleetBusHopsArgs } from './fleet.js';
 import {
   MAX_FLEET_BUS_INBOX_READ, parseFleetBusInboxArgs, readFleetBusInbox, type FleetBusInboxArgs,
 } from './fleet-inbox.js';
@@ -340,7 +341,7 @@ export interface FleetReaders {
   status: () => Promise<unknown>;
   empties?: (hours: number) => Promise<unknown>;
   loop: (limit: number) => Promise<unknown>;
-  bus?: (limit: number) => Promise<unknown>;
+  bus?: (input: FleetBusHopsArgs) => Promise<unknown>;
   hostRuns?: () => Promise<unknown>;
   busInbox?: (input: FleetBusInboxArgs) => Promise<unknown>;
   agentInbox?: (input: FleetAgentInboxArgs) => Promise<unknown>;
@@ -485,9 +486,16 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_bus_hops',
-      description: 'Observe the newest validated cross-agent bus hop metadata (message id, from/to, nullable token usage) in the local hop log, oldest first. A hop is only a recorded send attempt: no bodies, no delivery or lifecycle claims.',
+      description: 'Observe the newest validated cross-agent bus hop metadata (message id, from/to, nullable token usage) in the local hop log, oldest first. A hop is only a recorded send attempt: no bodies, no delivery or lifecycle claims. `from`/`to`/`excludeFrom` narrow sender and recipient routing labels through the same identity-label matching fleet_bus_inbox applies — a ref naming one registered identity matches every label it answers to, an unresolvable ref or unreadable registry keeps exact-label matching, and excludeFrom drops one sender identity so it composes with `from` — while `id` keeps only the hop whose message id is strictly equal. The hop log carries no timestamps, so there is no time filter; position in append order is the only ordering the store proves. `matched` reports the filter-matching count inside the bounded tail observation and `truncated` stays honest about rows beyond it — a lower bound, never a fleet-wide total the bounded read cannot prove.',
       inputSchema: {
-        type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_BUS_HOPS, default: 20 } },
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: MAX_FLEET_BUS_HOPS, default: 20 },
+          from: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender routing label; matches any label of the same registered agent identity.' },
+          to: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Recipient routing label; matches any label of the same registered agent identity.' },
+          excludeFrom: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Sender routing label to drop; matches any label of the same registered agent identity.' },
+          id: { type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$', description: 'Keep only the hop whose message id is strictly equal to this value — never a substring.' },
+        },
         additionalProperties: false,
       },
       annotations,
@@ -1536,10 +1544,11 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     const retry = name === 'fleet_staging_inventory_retry' ? await retryStagingInventory(args, readers.stagingScanner) : null;
     const stagingRoots = name === 'fleet_staging_inventory_batch' ? parseStagingBatchArgs(args) : null;
     const fleetStagingInventory = name === 'fleet_staging_inventory' ? parseFleetStagingInventoryArgs(args) : null;
-    const limited = name === 'fleet_loop' || name === 'fleet_bus_hops';
-    const maxLimit = name === 'fleet_bus_hops' ? MAX_FLEET_BUS_HOPS : MAX_FLEET_TICKS;
+    const limited = name === 'fleet_loop';
+    const maxLimit = MAX_FLEET_TICKS;
     const limit = args['limit'] ?? 20;
     const emptyHours = args['hours'] === undefined ? 24 : args['hours'];
+    const busHopsArgs = name === 'fleet_bus_hops' ? parseFleetBusHopsArgs(args) : null;
     const inbox = name === 'fleet_bus_inbox' ? parseFleetBusInboxArgs(args) : null;
     const agentInboxArgs = name === 'fleet_agent_inbox' ? parseFleetAgentInboxArgs(args) : null;
     const agentWorkArgs = name === 'fleet_agent_work' ? parseFleetAgentWorkArgs(args) : null;
@@ -1682,6 +1691,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         name === 'fleet_bot_seats' ? botSeatsArgs === null :
         name === 'fleet_work_feed' ? workFeedArgs === null :
         name === 'fleet_reset_history' ? history === null :
+        name === 'fleet_bus_hops' ? busHopsArgs === null :
         Object.keys(args).some(key => !limited || key !== 'limit') ||
         (limited && (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > maxLimit)) ||
         args['limit'] === null) {
@@ -1694,7 +1704,7 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
         : name === 'fleet_status' ? await readers.status()
         : name === 'fleet_empties' ? await (readers.empties ?? readFleetEmpties)(emptyHours as number)
         : name === 'fleet_loop' ? await readers.loop(limit as number)
-        : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(limit as number)
+        : name === 'fleet_bus_hops' ? await (readers.bus ?? readFleetBusHops)(busHopsArgs as FleetBusHopsArgs)
         : name === 'fleet_host_runs' ? await (readers.hostRuns ?? readFleetRunsDirState)()
         : name === 'fleet_coordination_claims' ? readFleetCoordinationClaims()
         : name === 'fleet_coordination_returns' ? readFleetCoordinationReturns()

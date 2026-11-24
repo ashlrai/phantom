@@ -45,9 +45,11 @@ in order (these are MCP request parameters, not shell commands):
 
 Each successful call returns an MCP content array containing a text item whose
 text is a JSON object. Parse that text; check `isError` first. `fleet_status`
-takes no arguments. `fleet_loop` and `fleet_bus_hops` accept only an integer
-`limit` from 1 through 50, default 20. They return the newest selected records
-in oldest-first order. Invalid arguments are MCP invalid-params errors.
+takes no arguments. `fleet_loop` accepts only an integer `limit` from 1 through
+50, default 20. `fleet_bus_hops` accepts the same `limit` plus optional
+`from`/`to`/`excludeFrom` sender and recipient routing labels and an exact `id`
+message filter. They return the newest selected records in oldest-first order.
+Invalid arguments are MCP invalid-params errors.
 
 - `fleet_status` summarizes daemon, pause and kill controls, budget, backend
   quota, cached backlog and proposal counts.
@@ -56,7 +58,12 @@ in oldest-first order. Invalid arguments are MCP invalid-params errors.
 - `fleet_bus_hops` reports validated local hop metadata: message ID, from/to
   labels and nullable token counts. Its summary covers only the returned tail.
   A hop records a send attempt; it does not prove delivery or completion and
-  contains no message body.
+  contains no message body. The address filters resolve through the same
+  identity registry `fleet_bus_inbox` uses — a ref naming one registered
+  identity matches every label it answers to, an unresolvable ref keeps
+  exact-label matching — and the hop log carries no timestamps, so there is
+  no time filter. `matched` counts the filter hits inside the bounded tail
+  observation and `truncated` stays honest about rows beyond it.
 
 The standalone server exposes read-only observation tools only — `tools/list`
 returns the full current inventory — without gateway server discovery,
