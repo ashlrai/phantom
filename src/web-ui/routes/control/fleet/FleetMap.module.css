@@ -32,3 +32,14 @@
 .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--text-secondary); opacity: 0.5; }
 .badge[data-online='true'] .dot { background: var(--status-ok, #2e9d5b); opacity: 1; }
 .badge[data-online='false'] .dot { background: var(--status-bad, #c0392b); opacity: 1; }
+.edgeMap { width: 100%; max-width: 360px; height: auto; }
+.edge { cursor: pointer; animation: edgeFade 30s linear forwards; }
+.edgeLine { stroke: var(--text-link); stroke-width: 2; stroke-dasharray: 6 4; animation: edgeFlow 1s linear infinite; }
+.edgeHit { stroke: transparent; stroke-width: 12; }
+.edge:focus-visible .edgeLine { stroke-width: 4; }
+.edgeNode { fill: var(--text-primary); }
+.edgeNode[data-known="false"] { fill: none; stroke: var(--text-secondary); stroke-dasharray: 2 2; }
+.edgeLabel { fill: var(--text-secondary); font-size: 8px; }
+@keyframes edgeFade { from { opacity: 1; } to { opacity: 0; } }
+@keyframes edgeFlow { to { stroke-dashoffset: -10; } }
+@media (prefers-reduced-motion: reduce) { .edgeLine { animation: none; } }

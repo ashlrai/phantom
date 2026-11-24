@@ -11,6 +11,7 @@ import { usageResetsQuery } from '../shell/usage-resets-query.js';
 import { DropQueueCard } from './DropQueueCard.js';
 import { StandbyCard } from './StandbyCard.js';
 import { RuntimeIdentityCard } from './RuntimeIdentityCard.js';
+import { DotEvidenceCard } from './DotEvidenceCard.js';
 import { TailnetPeersCard } from './TailnetPeersCard.js';
 import { PoolReachCard } from './PoolReachCard.js';
 import { ClaimExecutionCard } from './ClaimExecutionCard.js';
@@ -125,6 +126,7 @@ export function FleetHostPane({ visible }: Pick<PaneProps, 'visible'>) {
         <AppsCard visible={visible} />
         <StandbyCard visible={visible} />
         <RuntimeIdentityCard visible={visible} />
+        <DotEvidenceCard visible={visible} />
         <TailnetPeersCard visible={visible} />
         <PoolReachCard visible={visible} />
         <BridgeCheckCard visible={visible} />

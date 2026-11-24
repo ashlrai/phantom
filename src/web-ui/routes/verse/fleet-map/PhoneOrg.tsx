@@ -5,7 +5,9 @@
  * and agents read one source. A number the server did not send reads "unknown", never zero.
  */
 import { useState } from 'react';
-import type { FleetOrgGroups, OrgGroupNode } from '../../../../core/fleet/org-groups.js';
+import { PLANNER_GROUPS, type FleetOrgGroups, type OrgGroupNode } from '../../../../core/fleet/org-groups.js';
+import type { MapEdge } from '../../../../core/fleet/map-edges.js';
+import { relativeAt } from '../fleet/bus-feed-model.js';
 import { LaneHealthBadge } from '../../../components/fleet/LaneHealthBadge.js';
 import styles from './phone-org.module.css';
 
@@ -16,6 +18,9 @@ export interface PhoneOrgProps {
   asks?: readonly OrgAsk[];
   /** Open the log of the job with this id. */
   onOpenJob: (jobId: string) => void;
+  /** `phm map edges`: who messaged whom in the last 15 minutes. Null or absent reads "unknown". */
+  messages?: readonly MapEdge[] | null;
+  now?: number;
   /** The drawn map (computers, pools, messages) stays one tap away. */
   onShowMap?: () => void;
 }
@@ -61,13 +66,14 @@ function Row({ node, jobs, onOpenJob }: { node: OrgGroupNode; jobs: OrgGroupNode
   </li>;
 }
 
-export function PhoneOrg({ groups, asks = [], onOpenJob, onShowMap }: PhoneOrgProps) {
+export function PhoneOrg({ groups, asks = [], onOpenJob, onShowMap, messages, now = Date.now() }: PhoneOrgProps) {
   const byId = new Map(groups.nodes.map(node => [node.id, node]));
   const leaves = (node: OrgGroupNode): OrgGroupNode[] => node.children.flatMap(id => {
     const child = byId.get(id)!;
     return child.role === 'job' ? [child] : leaves(child);
   });
-  const rows = (byId.get(groups.root)?.children ?? []).map(id => byId.get(id)!);
+  // The phone lists lanes and their jobs; the guardian and loops branches are on the full map and `phm org`.
+  const rows = (byId.get(groups.root)?.children ?? []).filter(id => !PLANNER_GROUPS.has(id)).map(id => byId.get(id)!);
   return <section className={styles.root} aria-label="Fleet org">
     {asks.length > 0 && <section className={styles.asks} aria-label="Needs you">
       <h2>{asks.length === 1 ? 'Needs you' : `Needs you (${asks.length})`}</h2>
@@ -76,6 +82,14 @@ export function PhoneOrg({ groups, asks = [], onOpenJob, onShowMap }: PhoneOrgPr
     <p className={styles.headline} data-testid="org-headline">{groups.headline.text}</p>
     {rows.length === 0 ? <p className={styles.empty}>{plural(0, 'lanes reported.')}</p>
       : <ul className={styles.rows}>{rows.map(node => <Row key={node.id} node={node} jobs={leaves(node)} onOpenJob={onOpenJob} />)}</ul>}
+    {messages !== undefined && <section aria-label="Recent messages">
+      <h2 className={styles.messagesTitle}>Messages, last 15 minutes</h2>
+      {messages === null ? <p className={styles.unknown}>Messages unknown.</p>
+        : messages.length === 0 ? <p className={styles.empty}>No messages.</p>
+        : <ul className={styles.messages}>{messages.map(edge => <li key={edge.id}>
+          <strong>{edge.from.name} → {edge.to.name}</strong>{edge.count > 1 ? ` (${edge.count})` : ''}
+          <span className={styles.meta}> {relativeAt(edge.lastAt, now)}: “{edge.lastSummary}”</span></li>)}</ul>}
+    </section>}
     {onShowMap && <button type="button" className={styles.showMap} onClick={onShowMap}>Show the full map</button>}
   </section>;
 }

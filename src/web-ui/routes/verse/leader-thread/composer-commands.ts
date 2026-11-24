@@ -6,7 +6,10 @@
  */
 import { normalizePaneId } from '../shell/dock-catalog.js';
 
-export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open';
+import { validJob } from '../fleet/workers-card-model.js';
+import { findQuery } from '../session-wall/wall-find.js';
+
+export type ComposerCommandName = 'pause' | 'resume' | 'release' | 'hold' | 'stop' | 'drop' | 'status' | 'help' | 'open' | 'who' | 'thread' | 'summary' | 'log' | 'find' | 'lanes' | 'lane' | 'apps' | 'app';
 
 export interface ComposerCommandSpec {
   name: ComposerCommandName;
@@ -25,8 +28,30 @@ export const COMPOSER_COMMANDS: readonly ComposerCommandSpec[] = [
   { name: 'drop', usage: '/drop <text>', summary: 'Open the drop-job sheet with this text', arg: 'text' },
   { name: 'status', usage: '/status', summary: 'Print the live status line', arg: null },
   { name: 'open', usage: '/open <pane>', summary: 'Open a pane (lanes, queue, releases, feed…)', arg: 'pane' },
+  // Sessions, read from the lists the Sessions and Conversations panes read (composer-session-commands.ts).
+  { name: 'who', usage: '/who', summary: 'List the agents working right now', arg: null },
+  { name: 'thread', usage: '/thread <session>', summary: 'Open a session as a conversation (type @ to pick one)', arg: 'session' },
+  { name: 'summary', usage: '/summary <session>', summary: 'Print what a session is doing, here', arg: 'session' },
+  { name: 'log', usage: '/log <job-id>', summary: 'Open a job’s live log', arg: 'job-id' },
+  // Every session's whole conversation, the read behind the Conversations find box (composer-find-command.ts).
+  { name: 'find', usage: '/find <words>', summary: 'Find words in every session’s whole conversation', arg: 'word or two' },
+  // Lanes, read from what the Lanes board reads (composer-lane-commands.ts).
+  { name: 'lanes', usage: '/lanes', summary: 'Say how every lane stands: running, held, down, waiting', arg: null },
+  { name: 'lane', usage: '/lane <lane>', summary: 'Say how one lane stands and name the jobs on it', arg: 'lane' },
+  // Mac apps, through the Mac host pane's own reads and its one write (composer-app-commands.ts).
+  { name: 'apps', usage: '/apps', summary: 'Say which Mac apps are open and what Phantom last did to them', arg: null },
+  { name: 'app', usage: '/app <name>', summary: 'Open a Mac app, or bring it to the front', arg: 'name' },
   { name: 'help', usage: '/help', summary: 'List these commands', arg: null },
 ];
+
+/** Session ids are job ids, `leader`, or helper ids: one short token (the Conversations pane's own rule). */
+const SESSION_ARG_RE = /^[\w.:@-]{1,160}$/;
+
+/** The session a `/thread`, `/summary` or `/log` argument names; the `@` the picker writes is dropped. Null when it is not one id. */
+export function sessionArg(arg: string): string | null {
+  const id = arg.trim().replace(/^@/, '');
+  return SESSION_ARG_RE.test(id) ? id : null;
+}
 
 export type ParsedDraft = { kind: 'command'; name: ComposerCommandName; arg: string } | { kind: 'message' };
 
@@ -70,6 +95,12 @@ export function commandArgError(command: { name: ComposerCommandName; arg: strin
     return LANE_ARG_RE.test(command.arg.split(/\s+/)[0]!) ? HOLD_MINUTES_ERROR : LANE_ARG_ERROR;
   }
   if (spec.name === 'stop' && /\s/.test(command.arg)) return `/stop takes one job id: ${spec.usage}`;
+  if ((spec.name === 'thread' || spec.name === 'summary') && sessionArg(command.arg) === null) return `/${spec.name} takes one session id: ${spec.usage}`;
+  if (spec.name === 'find' && findQuery(command.arg) === null) return `/find looks for words of two letters or more: ${spec.usage}`;
+  // A start of the name is enough for /lane, so one letter passes here.
+  if (spec.name === 'lane' && !/^[a-z][a-z0-9-]{0,39}$/i.test(command.arg)) return `/lane takes one lane name: ${spec.usage}`;
+  if (spec.name === 'app' && command.arg.length > 80) return `/app takes one app name: ${spec.usage}`;
+  if (spec.name === 'log' && !validJob(sessionArg(command.arg))) return `/log takes one job id: ${spec.usage}`;
   return null;
 }
 

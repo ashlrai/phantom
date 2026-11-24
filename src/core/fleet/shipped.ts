@@ -21,7 +21,7 @@ export async function readFleetShipped(deps: { now?: number; gh?: GhRunner; read
     readFleetShippedMerges(since, now, SHIPPED_REPOS, deps.gh),
     (deps.read ?? readLedgerLines)(join(process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs'), 'metrics/jobs.jsonl'), line => {
       try {
-        const row = JSON.parse(line), job = row.job ?? row.jobId ?? row.job_id, lane = row.lane ?? row.pool;
+        const row = JSON.parse(line), job = row.job ?? row.jobId ?? row.job_id ?? row.id, lane = row.lane ?? row.pool ?? row.arm;
         const repo = typeof row.repo === 'string' && row.repo.startsWith('ashlrai/') ? row.repo : `ashlrai/${row.repo}`;
         if (typeof job !== 'string' || typeof lane !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(lane)) return;
         const key = `${repo}#${job}`, values = lanes.get(key) ?? new Set<string>();

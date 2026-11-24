@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdQueue } from '../src/cli/queue.js';
 import { cmdRoute } from '../src/cli/route.js';
 import { GH_CONTEXT_PACK_FILE, GH_CONTEXT_PACK_MARKER, buildGhContextPack, ghContextPromptNote, writeGhContextPack } from '../src/core/fleet/gh-context-pack.js';
-import { fitRoute, inferRequiredCapabilities, laneCapabilities } from '../src/core/fleet/lane-capabilities.js';
+import { fitRoute, inferRequiredCapabilities, laneCanRun, laneCapabilities } from '../src/core/fleet/lane-capabilities.js';
 import { routeToEligibleLane } from '../src/core/fleet/lane-route-eligibility.js';
 import type { LaneTargetRow, LaneTargetsV1 } from '../src/core/fleet/runs-lane-targets.js';
 import { formatQueueBatches, readQueueBatches } from '../src/core/queue/batches.js';
@@ -27,9 +27,10 @@ const temp = async () => { const dir = await mkdtemp(join(tmpdir(), 'lane-caps-'
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
 describe('lane capabilities', () => {
-  it('declares only what is proven: claude has no gh, everything else is unknown', () => {
+  it('declares only what is proven: claude has no gh, three lanes have it, the rest is unknown', () => {
     expect(laneCapabilities('claude')).toEqual({ gh: false, network: null, browser: null, local_fs_outside_worktree: null });
-    expect(laneCapabilities('codex-personal').gh).toBeNull();
+    for (const lane of ['codex-personal', 'codex-cmp', 'devin']) expect(laneCapabilities(lane)).toEqual({ gh: true, network: null, browser: null, local_fs_outside_worktree: null });
+    expect(laneCapabilities('gemini').gh).toBeNull();
     expect(laneCapabilities('claude', { claude: { gh: true } }).gh).toBe(true);
   });
 
@@ -64,9 +65,9 @@ describe('lane capabilities', () => {
   });
 
   it('shows an undeclared capability as unknown instead of refusing or approving it', () => {
-    const fit = fitRoute({ lane: 'codex-personal', prompt: 'Run gh run view 7 --log-failed and take a screenshot of the page.' });
+    const fit = fitRoute({ lane: 'gemini', prompt: 'Run gh run view 7 --log-failed and take a screenshot of the page.' });
     expect(fit).toMatchObject({ decision: 'route', unknown: ['gh', 'browser'] });
-    expect(fit.line).toBe('Lane codex-personal takes this job; whether it can use gh, browser is unknown.');
+    expect(fit.line).toBe('Lane gemini takes this job; whether it can use gh, browser is unknown.');
   });
 });
 
@@ -145,5 +146,14 @@ describe('agent surfaces', () => {
     // No queue files: unknown stays unknown, never an empty "all clear".
     expect(JSON.parse(String(log.mock.calls[0]![0])).routeSkips).toEqual({ evidence: 'unknown', checked: null, packed: null, skips: [] });
     vi.unstubAllEnvs();
+  });
+
+  it('laneCanRun refuses claude for gh pr list, accepts codex-personal, ignores prose, and never guesses unknown', () => {
+    const needs = inferRequiredCapabilities('Run `gh pr list` and report the open pull requests.');
+    expect(needs.map(n => n.capability)).toEqual(['gh']);
+    expect(laneCanRun('claude', needs)).toEqual({ ok: false, missing: ['gh'] });
+    expect(laneCanRun('codex-personal', needs)).toEqual({ ok: true, missing: [] });
+    expect(laneCanRun('gemini', needs)).toEqual({ ok: true, missing: [] });
+    expect(inferRequiredCapabilities('The gh tool is mentioned in prose here, nothing is run.')).toEqual([]);
   });
 });

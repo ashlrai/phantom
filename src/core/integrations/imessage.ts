@@ -365,6 +365,36 @@ export async function pollInboundSince(afterRowId: number, cfg: AshlrConfig): Pr
   return { ok: true, messages };
 }
 
+export interface PairReply { rowid: number; text: string; handle: string; fromMe: boolean }
+
+/**
+ * Pairing only (owner-pair.ts): texts after `afterRowId` in the chats with the given own
+ * handles, received OR sent-by-me (Mason's phone shares the Mac's Apple ID, so his YES can
+ * appear as sent-by-me in the self-chat). Read-only, no tapbacks, oldest first, one batch.
+ * Null when Messages is unreadable. Never throws.
+ */
+export async function pollPairReplies(afterRowId: number, handles: string[]): Promise<PairReply[] | null> {
+  const allow = handles.filter((h) => IMESSAGE_HANDLE_RE.test(h)).map((h) => h.toLowerCase());
+  if (process.platform !== 'darwin' || allow.length === 0 || !Number.isSafeInteger(afterRowId) || afterRowId < 0 || probeChatDb() !== 'ok') return null;
+  const list = allow.map((h) => `'${h.replace(/'/g, "''")}'`).join(',');
+  const out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()),
+    `SELECT m.ROWID AS rowid, m.is_from_me AS fromMe, h.id AS handle, m.text AS text FROM message m JOIN handle h ON m.handle_id = h.ROWID ` +
+    `WHERE m.associated_message_type = 0 AND m.ROWID > ${afterRowId} AND m.text IS NOT NULL AND lower(h.id) IN (${list}) ` +
+    `ORDER BY m.ROWID ASC LIMIT ${INTAKE_BATCH_LIMIT};`]);
+  if (!out.ok) return null;
+  let rows: unknown;
+  try { rows = out.stdout.trim() ? JSON.parse(out.stdout) : []; } catch { return null; }
+  if (!Array.isArray(rows)) return null;
+  const replies: PairReply[] = [];
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const { rowid, fromMe, handle, text } = row ?? {};
+    if (typeof rowid !== 'number' || !Number.isSafeInteger(rowid) || rowid <= afterRowId) continue;
+    if (typeof handle !== 'string' || !allow.includes(handle.toLowerCase()) || typeof text !== 'string') continue;
+    replies.push({ rowid, text, handle, fromMe: fromMe === 1 });
+  }
+  return replies;
+}
+
 // ---------------------------------------------------------------------------
 // Cursor + last-send state (0600 files under <runs>/imessage)
 // ---------------------------------------------------------------------------
@@ -447,6 +477,32 @@ export function probeChatDb(dbPath: string = chatDbPath()): ChatDbState {
     const code = (err as NodeJS.ErrnoException).code;
     return code === 'EPERM' || code === 'EACCES' ? 'blocked_full_disk_access' : 'missing';
   }
+}
+
+/** A plain iMessage address: letters, digits and `@ . _ + -` only (no quotes, spaces or control characters). */
+export const IMESSAGE_HANDLE_RE = /^[A-Za-z0-9@._+-]{3,128}$/;
+
+/**
+ * The iMessage addresses this Mac is signed in with, read read-only from
+ * chat.db (`last_addressed_handle` and `account_login`). Empty when Messages is
+ * unreadable. Never throws.
+ */
+export async function detectOwnIMessageHandles(): Promise<string[]> {
+  if (process.platform !== 'darwin' || probeChatDb() !== 'ok') return [];
+  const sql =
+    `SELECT DISTINCT last_addressed_handle AS h FROM chat WHERE service_name = 'iMessage' AND last_addressed_handle IS NOT NULL ` +
+    `UNION SELECT DISTINCT substr(account_login, 3) AS h FROM chat WHERE service_name = 'iMessage' AND (account_login LIKE 'E:%' OR account_login LIKE 'P:%');`;
+  const out = await sqlite(['-readonly', '-json', readOnlyUri(chatDbPath()), sql]);
+  if (!out.ok) return [];
+  let rows: unknown;
+  try { rows = out.stdout.trim() ? JSON.parse(out.stdout) : []; } catch { return []; }
+  if (!Array.isArray(rows)) return [];
+  const seen = new Map<string, string>();
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const h = typeof row?.h === 'string' ? row.h.trim() : '';
+    if (IMESSAGE_HANDLE_RE.test(h) && !seen.has(h.toLowerCase())) seen.set(h.toLowerCase(), h);
+  }
+  return [...seen.values()];
 }
 
 export interface DoctorCheck {

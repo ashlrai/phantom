@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendFileSync, truncateSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -231,6 +232,24 @@ describe('cmdFleetLaneMerges', () => {
     expect(report).toMatchObject({ source: 'healthy', limits: 'healthy' });
     expect(report.lanes).toEqual([
       { lane: 'codex-personal', launches: 1, prs: 1, prUrls: ['ashlrai/phantom#11'], merges: 1, limit: 4 },
+    ]);
+  });
+
+  it('reads the newest ledger tail when jobs.jsonl exceeds the read bound', async () => {
+    const path = join(root, 'metrics', 'jobs.jsonl');
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    writeFileSync(path, '');
+    truncateSync(path, 32 * 1024 * 1024 + 1);
+    appendFileSync(path, `\n${[
+      row({ event: 'launch', job: 'RQ-A', lane: 'devin', ts: at('10:00') }),
+      row({ event: 'outcome', job: 'RQ-A', outcome: 'merged', ts: at('11:00') }),
+    ].join('\n')}\n`);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetLaneMerges(['--root', root, '--json'], { now: () => NOW })).toBe(0);
+    const report = JSON.parse(String(output.mock.calls[0]![0]));
+    expect(report).toMatchObject({ source: 'healthy', malformed: 0 });
+    expect(report.lanes).toEqual([
+      { lane: 'devin', launches: 1, prs: 0, prUrls: [], merges: 1, limit: null },
     ]);
   });
 

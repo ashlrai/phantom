@@ -31,6 +31,22 @@ it('accepts ts offsets with and without a colon, and lets the newest row win', (
   expect(readBets('- READY RQ-AQ8', rows).bets[0]).toMatchObject({ status: 'merged', ttm_s: 5 });
 });
 
+it('marks bets skipped under the live skipped_empty+code spelling, newest row wins', () => {
+  const jobs = [
+    JSON.stringify({ event: 'skipped_empty', job: 'RQ-AQ8', code: 10, ts: '2026-11-03T10:00:00Z' }),
+    JSON.stringify({ event: 'skipped_empty', job: 'RQ-BQ8', reason: 'task_empty_repeat_24h', ts: '2026-11-03T10:00:00Z' }),
+    JSON.stringify({ event: 'skipped_empty', job: 'RQ-CQ8', code: 14, applied: false, ts: '2026-11-03T09:00:00Z' }),
+    JSON.stringify({ event: 'skipped_empty', job: 'RQ-CQ8', code: 14, ts: '2026-11-03T10:00:00Z' }),
+    JSON.stringify({ event: 'precheck_skip', job: 'RQ-DQ8', code: 11, ts: '2026-11-03T08:00:00Z' }),
+    JSON.stringify({ event: 'skipped_empty', job: 'RQ-DQ8', code: 12, ts: '2026-11-03T11:00:00Z' }),
+  ].join('\n');
+  const report = readBets(['RQ-AQ8', 'RQ-BQ8', 'RQ-CQ8', 'RQ-DQ8'].map(id => `- READY ${id}`).join('\n'), jobs);
+  expect(report.bets.map(({ id, status, precheck_code }) => [id, status, precheck_code])).toEqual([
+    ['RQ-AQ8', 'skipped', 10], ['RQ-BQ8', 'not seen', undefined],
+    ['RQ-CQ8', 'skipped', 14], ['RQ-DQ8', 'skipped', 12],
+  ]);
+});
+
 it('reads only the last 3000 lines and treats missing files as not seen', async () => {
   const old = JSON.stringify({ event: 'launch', job: 'RQ-OLDQ8', lane: 'x' });
   const filler = JSON.stringify({ event: 'launch', job: 'RQ-OTHERQ8' });

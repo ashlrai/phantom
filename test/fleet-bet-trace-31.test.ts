@@ -31,6 +31,19 @@ it('reconciles every job state with exact ids and terminal metrics ahead of stal
   ]);
   expect(pass.totals).toMatchObject({ queued: 1, launched: 1, finished: 1, precheck_skip: 1, lost: 2 });
 });
+it('marks the live skipped_empty+code spelling as precheck_skip and ignores other skipped_empty rows', async () => {
+  const readers = fixture('FIXUP phantom CODE decline it\nFIXUP phantom GATE decline it\nFIXUP phantom DRY decline it', {
+    jobMetrics: async () => [
+      { job: 'RQ-FIXUP-CODEQ8', event: 'skipped_empty', code: 10 },
+      { job: 'RQ-FIXUP-GATEQ8', event: 'skipped_empty', reason: 'task_empty_repeat_24h' },
+      { job: 'RQ-FIXUP-DRYQ8', event: 'skipped_empty', code: 10, applied: false },
+    ].map(row => JSON.stringify(row)).join('\n'),
+  });
+  const pass = (await readBetTrace(readers, now)).passes[0]!;
+  expect(pass.commands.map(command => [command.id, command.state])).toEqual([
+    ['RQ-FIXUP-CODEQ8', 'precheck_skip'], ['RQ-FIXUP-GATEQ8', 'unknown'], ['RQ-FIXUP-DRYQ8', 'unknown'],
+  ]);
+});
 it('exposes all six lost BETs in the Oct 31 19:07 pass and its ineffective SLOTS', async () => {
   const readers = fixture(Array.from({ length: 6 }, (_, i) => `BET phantom codex work LOST${i} task`).join('\n') + '\nSLOTS codex 6', {
     slots: async () => ({ lanes: { codex: { target: 2 } } }),

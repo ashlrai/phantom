@@ -66,3 +66,23 @@ export function busBoardHop(delivery: BusBoardDelivery): BusBoardHop {
     recipient: delivery.recipient, createdAt: delivery.createdAt,
   };
 }
+
+/**
+ * The post text inside a delivery's stored canonical envelope JSON — the
+ * `body.text` `createBusBoardDelivery` wrapped — or the raw stored text when
+ * it does not parse as that shape. Shared by every pending projection that
+ * summarizes board mail (`work mine`'s board section, the unified comms
+ * inbox); the result is still untrusted peer data, scrubbed and clipped by
+ * the caller before display.
+ */
+export function busBoardDeliveryText(delivery: BusBoardDelivery): string {
+  try {
+    const parsed = JSON.parse(delivery.content.text) as { body?: unknown } | null;
+    const body = parsed?.body;
+    if (body !== null && typeof body === 'object') {
+      const text = (body as Record<string, unknown>)['text'];
+      if (typeof text === 'string') return text;
+    }
+  } catch { /* stored content is not the canonical envelope JSON */ }
+  return delivery.content.text;
+}

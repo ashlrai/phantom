@@ -69,3 +69,16 @@ reason}` to `needs-you-auto.jsonl` in the runs folder; `phm needs-you log`
 lists those records. `phm needs-you batch` puts every hard_limit item in one
 message with a one-word reply each (`1 yes, 2 no`) for a single phone tap.
 Existing checks still run on every answer.
+
+An answer that carries a reply is relayed to the planner inbox
+(`leader/MASON-INBOX.md`); the durable receipt under
+`needs-mason-delivery/` stays `pending` until that append is confirmed, and a
+failed append retries only when the same item id is resolved again.
+`phm fleet needs [--json]` lists those unconfirmed answers under
+`replyDeliveries.pending` (with the resolved ledger text when it is readable)
+plus unreadable receipts under `replyDeliveries.unsafe`, so a dropped relay is
+visible instead of silent; `phm fleet needs-resolve <nm-id>` re-sends the
+recorded reply. `phm comms inbox` lists the same receipts as
+`needs-you-delivery` items — a pending answer as a warn deep-linking the
+retry, an unreadable receipt with its delivery state unknown — so the two
+surfaces can never disagree.

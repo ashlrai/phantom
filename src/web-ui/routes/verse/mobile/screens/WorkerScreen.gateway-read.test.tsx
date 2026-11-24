@@ -39,6 +39,6 @@ describe('WorkerScreen through the paired remote gateway', () => {
     expect(screen.queryByRole('region', { name: 'Worker (from the fleet snapshot)' })).toBeNull();
     expect(screen.queryByText('snapshot-lane')).toBeNull();
     expect(vi.mocked(apiGet).mock.calls.map((call) => call[0]))
-      .toEqual(['/api/fleet/job?id=RQ-PHX-EXAMPLE31', '/api/fleet/job/window?id=RQ-PHX-EXAMPLE31&lines=1']);
+      .toEqual(['/api/fleet/job?id=RQ-PHX-EXAMPLE31', '/api/fleet/job/window?id=RQ-PHX-EXAMPLE31&lines=1', '/api/verse/fleet/runs/notes?id=RQ-PHX-EXAMPLE31']);
   });
 });

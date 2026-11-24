@@ -21,8 +21,11 @@ afterEach(() => dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, for
 function attempt(overrides: Partial<FlakeJournalRow> = {}): FlakeJournalRow {
   return { at: '2026-01-08T11:00:00Z', repo: 'org/repo', head: HEADS[0]!, outcome: 'attempt', test: 'test/a.test.ts > suite > flaky case', ...overrides };
 }
+function verdict(overrides: Partial<FlakeJournalRow> = {}): FlakeJournalRow {
+  return { at: '2026-01-08T11:30:00Z', repo: 'org/repo', head: HEADS[0]!, outcome: 'verdict', test: 'test/a.test.ts > suite > flaky case', verdict: 'pass', ...overrides };
+}
 function flake(overrides: Partial<RecurringFlake> = {}): RecurringFlake {
-  return { repo: 'org/repo', test: 'test/a.test.ts > suite > flaky case', heads: HEADS.slice(0, 3), attempts: 3, ...overrides };
+  return { repo: 'org/repo', test: 'test/a.test.ts > suite > flaky case', heads: HEADS.slice(0, 3), attempts: 3, verdicts: { pass: 0, fail: 0, inconclusive: 0 }, ...overrides };
 }
 
 describe('recurringFlakes', () => {
@@ -83,6 +86,27 @@ describe('recurringFlakes', () => {
     expect(() => recurringFlakes(rows, { minHeads: 0 })).toThrow(RangeError);
   });
 
+  it('tallies rerun verdict rows per repo and test inside the window', () => {
+    const rows = [
+      ...[HEADS[0]!, HEADS[1]!, HEADS[2]!].map((head, i) => attempt({ head, at: `2026-01-0${5 + i}T00:00:00Z` })),
+      verdict({ verdict: 'pass' }),
+      verdict({ verdict: 'pass', at: '2026-01-07T11:30:00Z' }),
+      verdict({ verdict: 'fail', head: HEADS[1]! }),
+      verdict({ verdict: 'inconclusive', repo: 'org/other' }),
+      verdict({ verdict: 'inconclusive', test: 'test/other.test.ts > x' }),
+      verdict({ verdict: 'bogus' }),
+      verdict({ verdict: 'pass', at: new Date(NOW - RECURRING_FLAKE_WINDOW_MS - 1).toISOString() }),
+    ];
+    const result = recurringFlakes(rows, { nowMs: NOW });
+    expect(result).toHaveLength(1);
+    expect(result[0]!.verdicts).toEqual({ pass: 2, fail: 1, inconclusive: 0 });
+  });
+
+  it('reports zero verdict tallies when no verdict rows exist', () => {
+    const rows = [HEADS[0]!, HEADS[1]!, HEADS[2]!].map(head => attempt({ head }));
+    expect(recurringFlakes(rows, { nowMs: NOW })[0]!.verdicts).toEqual({ pass: 0, fail: 0, inconclusive: 0 });
+  });
+
   it('sorts strongest recurrence first and separates repos and tests', () => {
     const rows = [
       ...[HEADS[0]!, HEADS[1]!, HEADS[2]!].map((head, i) => attempt({ repo: 'org/other', test: 'test/b.test.ts > b', head, at: `2026-01-0${5 + i}T00:00:00Z` })),
@@ -135,6 +159,17 @@ describe('enqueueFlakeFixes', () => {
     writeFileSync(queue, `- CLAIMED ${base} (P1, repo=repo, tier=work, needs=git|gh|node): in flight\n`);
     expect(enqueueFlakeFixes([flake()], queue)).toEqual([]);
     expect(readFileSync(queue, 'utf8')).not.toContain('-G2');
+  });
+
+  it('includes recorded rerun verdicts in the stabilization brief', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-flakes-')); dirs.push(dir);
+    const queue = join(dir, 'queue.md');
+    enqueueFlakeFixes([flake({ verdicts: { pass: 2, fail: 1, inconclusive: 0 } })], queue);
+    const text = readFileSync(queue, 'utf8');
+    expect(text).toContain('Recorded rerun verdicts for this test: 2 passed, 1 failed, 0 inconclusive.');
+    enqueueFlakeFixes([flake({ test: 'test/b.test.ts > b' })], queue);
+    const lines = readFileSync(queue, 'utf8').split('\n').filter(l => l.includes('test/b.test.ts'));
+    expect(lines[0]).not.toContain('Recorded rerun verdicts');
   });
 
   it('keeps the brief on one line and caps new rows per call', () => {

@@ -55,7 +55,7 @@ function checkFile(fd: number, file: string, p: Pin): number {
   stillPinned(p);
   return Number(stat.size);
 }
-function tail(fd: number, size: number): BusWakeRow[] {
+function tail(fd: number, size: number): { rows: BusWakeRow[]; cut: boolean } {
   const length = Math.min(size, BUS_HOPLOG_READ_BYTES);
   const buffer = Buffer.alloc(length), offset = size - length;
   let read = 0;
@@ -77,7 +77,9 @@ function tail(fd: number, size: number): BusWakeRow[] {
       }
     } catch { /* Malformed rows are not wake evidence. */ }
   }
-  return rows;
+  // `cut` marks bytes older than the read window: complete rows may sit
+  // beyond it, so any count over `rows` is a lower bound, never a total.
+  return { rows, cut: offset > 0 };
 }
 /**
  * The queue is a bounded hint buffer, not an archive: readers only observe the
@@ -119,20 +121,35 @@ function compactWakeTail(fd: number, file: string, pinned: Pin, retainBytes: num
     return kept.length;
   } finally { closeSync(other); }
 }
-export function readBusWakes(opts: { root?: string; sinceAt?: number; limit?: number } = {}): {
+export function readBusWakes(opts: { root?: string; sinceAt?: number;
+  /** Keep only rows recorded strictly before this epoch-ms cutoff — the exclusive upper bound `sinceAt` lacks, so the pair reads one `(sinceAt, beforeAt)` window on the hint's queue time. */
+  beforeAt?: number; limit?: number;
+  /** Keep only rows the predicate accepts; `matched` still counts every accepted row. */
+  match?: (row: BusWakeRow) => boolean } = {}): {
   state: 'missing' | 'unreadable' | 'ok'; wakes: BusWakeRow[];
+  /** Rows passing `sinceAt`/`beforeAt`/`match` observed in the bounded tail, before `limit`; null unless the queue was read ('ok' or verified-'missing'). */
+  matched: number | null;
+  /** Older bytes or matched rows sit beyond what `wakes` returned; null when the queue state is unknown. */
+  truncated: boolean | null;
 } {
   let fd: number | undefined;
   try {
     const file = busWakeQueuePath(opts.root);
     const pinned = pin(dirname(dirname(file)), dirname(file));
     fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const rows = tail(fd, checkFile(fd, file, pinned));
+    const { rows, cut } = tail(fd, checkFile(fd, file, pinned));
     checkFile(fd, file, pinned); // Recheck after reading; later renames remain possible before return.
     const limit = Number.isSafeInteger(opts.limit) && opts.limit! > 0 ? Math.min(opts.limit!, 500) : 500;
-    return { state: 'ok', wakes: rows.filter(row => opts.sinceAt === undefined || row.at > opts.sinceAt).slice(-limit) };
+    const matched = rows.filter(row => (opts.sinceAt === undefined || row.at > opts.sinceAt) &&
+      (opts.beforeAt === undefined || row.at < opts.beforeAt) &&
+      (opts.match === undefined || opts.match(row)));
+    const kept = matched.slice(-limit);
+    return { state: 'ok', wakes: kept, matched: matched.length, truncated: cut || kept.length < matched.length };
   } catch (error) {
-    return { state: fd === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable', wakes: [] };
+    const missing = fd === undefined && (error as NodeJS.ErrnoException).code === 'ENOENT';
+    return missing
+      ? { state: 'missing', wakes: [], matched: 0, truncated: false }
+      : { state: 'unreadable', wakes: [], matched: null, truncated: null };
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 export function enqueueBusWake(request: BusWakeRequest, opts: WakeOptions = {}): 'queued' | 'duplicate' {
@@ -156,7 +173,7 @@ export function enqueueBusWake(request: BusWakeRequest, opts: WakeOptions = {}):
       // A row that can never fit an empty queue is refused before dedupe or
       // compaction touches the file, as the old capacity check did.
       if (bytes.length > maxBytes) throw new Error('Wake queue full');
-      if (tail(fd, size).some(row => row.id === ids.id)) {
+      if (tail(fd, size).rows.some(row => row.id === ids.id)) {
         checkFile(fd, file, pinned); // Recheck before fsync/acknowledgement; this is not atomic through return.
         fsyncSync(fd);
         fsyncDirectory(directory);

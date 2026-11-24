@@ -1,0 +1,23 @@
+[test-ci] heartbeat: elapsed 60000ms; child silent 2000ms; hard cap remaining 1740000ms. Waiting for Vitest output.
+[test-ci] idle-timeout after 300000ms without output. Vitest had not emitted its final summary; this indicates a stalled or silent run, not proven leaked handles. Last output: "RUN  v4.1.0 /home/runner/work/phantom/phantom"
+[test-ci] hard-runtime-cap reached after 1800000ms (last output 45000ms ago); the suite exceeded its runtime budget. This is not evidence of a leaked handle.
+[test-ci] received SIGTERM; terminating the Vitest process tree.
+[test-ci] failed to start Vitest: spawn node ENOENT
+[test-ci] Vitest exited via signal SIGKILL
+[test-ci] Node >=22.15.0 is required. Please upgrade Node before running tests.
+[test-ci-capacity] {"selectedMaxWorkers":1,"policySerializesAllProjects":true}
+[job-memory] {"schema":"phantom-job-memory/v1","jobClass":"test"}
+##[error]Process completed with exit code 1.
+[test-ci:sharded] started 1/4 (pid 100)
+[test-ci:sharded] 1/4 exited 1
+[test-ci:sharded] cannot plan balanced shards: vitest list failed: spawn error
+[test-ci:sharded] 2/4 failed to start: spawn node ENOENT
+[test-ci:sharded] isolated campaign false failed to start: spawn node ENOENT
+[test-ci:sharded] 3/4 exited via SIGTERM
+[test-ci:sharded] FAIL (1, 0, 0, 0)
+[test-ci:sharded] PASS (1, 2, 3, 4)
+[test-ci:sharded] Usage: test-ci-sharded.mjs [--general-shard=N/4 | --isolated-only | --workers=W] (N=1..4, W=1..8)
+[test-ci:sharded] Report directory must be empty, canonical, owned, and private (0700) on POSIX.
+  test/example.test.ts | owner status reports delivery | AssertionError: expected 1 to be 2
+  general-1-of-4.json | (report) | Could not read failure details
+##[error]Process completed with exit code 1.

@@ -1,5 +1,6 @@
 /** The `phm releases` report: which repo is due a release, and the one to release next. */
 import type { ReleasesReport } from '../../../../core/release/status.js';
+import { ReleaseRepoRows } from './ReleaseRepoRows.js';
 import styles from './fleet-metrics.module.css';
 
 const shown = (value: number | string | null): string => value === null ? 'unknown' : String(value);
@@ -7,9 +8,9 @@ const shown = (value: number | string | null): string => value === null ? 'unkno
 /** `report` is undefined while loading, on a read error, or when the server predates the report. */
 export function ReleasesCard({ report }: { report: ReleasesReport | undefined }) {
   const known = report?.schema === 'phantom.releases.v1' && Array.isArray(report.repos) ? report : undefined;
-  return <section className={styles.root} aria-label="Releases">
+  return <section className={styles.card} aria-label="Releases">
     <h3 className={styles.heading}>Releases</h3>
-    {!known ? <p className={styles.note}>Releases: unknown</p>
+    {known?.releaseRepos ? <ReleaseRepoRows rows={known.releaseRepos} checkedAt={known.checkedAt} /> : !known ? <p className={styles.note}>Releases: unknown</p>
       : !known.repos.length ? <p className={styles.note}>No repos to check.</p> : <>
         <p className={styles.note}>{known.next ? `Release next: ${known.next.suggestion}.` : 'No release is due.'} Due means over {known.dueWhen.days} days or over {known.dueWhen.mergedPrs} merged PRs since the latest tag.</p>
         <div className={styles.scroll}>
@@ -20,6 +21,11 @@ export function ReleasesCard({ report }: { report: ReleasesReport | undefined })
               <td>{row.verdict === 'no release yet' ? 'none' : shown(row.latestTag)}</td><td>{row.latestTag === null ? '' : shown(row.ageDays)}</td>
               <td>{shown(row.mergedPrsSince)}</td><td>{row.verdict}</td></tr>)}</tbody></table>
         </div>
+        {known.repos.filter(row => row.recentPrs?.length).map(row => <div key={row.repo} className={styles.note}>
+          <strong>{row.repo.replace(/^ashlrai\//, '')}</strong> merged since {row.latestTag}:
+          <ul>{row.recentPrs!.map(pr => <li key={pr.number}>#{pr.number} {pr.title}</li>)}</ul>
+          {row.mergedPrsSince !== null && row.mergedPrsSince > row.recentPrs!.length ? `and ${row.mergedPrsSince - row.recentPrs!.length} more` : null}
+        </div>)}
       </>}
   </section>;
 }

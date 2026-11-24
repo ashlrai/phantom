@@ -22,6 +22,8 @@ import { readOrderTrace, type OrderTraceJob, type OrderTraceV1 } from '../fleet/
 import { scrubSecrets } from '../util/scrub.js';
 
 const TEXT_MAX = 500;
+/** Channel token the thread's `channel` filter accepts: the same lowercase label grammar every inbox `[src:]`/`[also:]` tag and owner channel satisfies, so a channel that can appear in the data can always be asked for. */
+export const MASON_THREAD_CHANNEL = /^[a-z0-9._-]{1,32}$/;
 /** Least to most settled; the thread shows the furthest one any source proves. */
 const RANK: readonly WorkItemState[] = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'];
 
@@ -32,6 +34,25 @@ export interface MasonThreadOptions {
   owner: OwnerThreadOptions;
   /** Epoch ms; items older than this are left out. */
   sinceMs: number;
+  /** Epoch ms; items at or after this are left out — the exclusive recorded-time ceiling pairing with `sinceMs`'s inclusive floor into the same `[since, before)` window every other comms and bus read applies, so a past slice of the thread is one bounded read instead of a page through everything newer. Items are filtered before the cross-channel merge, so a sighting outside the window never joins an item. */
+  beforeMs?: number;
+  /**
+   * Keep only items with a sighting on this channel — the item's own `channel`
+   * or any `also_on` entry, so a request seen on two channels stays whole
+   * under either name and a reply matches every channel it was sent to. The
+   * value is a `MASON_THREAD_CHANNEL` token; an exact match decides on the
+   * merged item's channel set, never on raw source rows.
+   */
+  channel?: string;
+  /** Keep only items in this direction — `inbound` for what Mason sent, `outbound` for the leader's replies. */
+  direction?: 'inbound' | 'outbound';
+  /**
+   * Case-insensitive substring over the item's rendered `text` — the same
+   * scrubbed, clipped line the read prints — with whitespace collapsed on
+   * both sides, the same `--contains` rule `phm comms thread` and every bus
+   * read applies. Bounded by `OWNER_THREAD_CONTAINS_MAX`.
+   */
+  contains?: string;
   now: number;
   /** Seam for tests; default reads the real order trace. */
   trace?: (runsDir: string, now: number) => Promise<OrderTraceV1>;
@@ -65,7 +86,7 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
   if ('unavailable' in owner) gaps.push('Owner thread could not be read: messages from every channel may be missing.');
   for (const m of owner.messages) {
     const at = Date.parse(m.at);
-    if (!Number.isFinite(at) || at < opts.sinceMs) continue;
+    if (!Number.isFinite(at) || at < opts.sinceMs || (opts.beforeMs !== undefined && at >= opts.beforeMs)) continue;
     const inbound = m.direction === 'inbound';
     drafts.push({
       at, dir: inbound ? 'in' : 'out', store: 'owner', channel: m.channel, text: m.text,
@@ -75,7 +96,7 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
   }
 
   // Inbox entries: precise times and every channel from one read, jobs from the trace.
-  const entries = readRecentChannelEntries(opts.runsDir, opts.now, Math.max(1, opts.now - opts.sinceMs));
+  const entries = readRecentChannelEntries(opts.runsDir, opts.now, Math.max(1, opts.now - opts.sinceMs), opts.beforeMs);
   const inbox = await readInboxEntries({ runsDir: opts.runsDir, limit: Number.MAX_SAFE_INTEGER });
   if (inbox.sourceState === 'degraded') gaps.push('The shared inbox could not be read: some messages may be missing.');
   let trace: OrderTraceV1 | null = null;
@@ -124,7 +145,18 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
     const channels = [...d.channels].filter(c => c !== d.channel);
     return { at: new Date(d.at).toISOString(), dir: d.dir, channel: d.channel, text: clip(d.text), state, job_ids: [...d.jobs.keys()].sort(), also_on: channels };
   });
-  return { schema: MASON_THREAD_SCHEMA, as_of: nowIso, since: new Date(opts.sinceMs).toISOString(), items, gaps };
+  // The slice filters run on merged items, not drafts: a request seen on two
+  // channels is one item under either channel name, and --contains matches the
+  // same clipped text the row prints, never the raw source bodies.
+  const needle = opts.contains === undefined ? undefined
+    : opts.contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  const dir = opts.direction === undefined ? undefined : opts.direction === 'inbound' ? 'in' as const : 'out' as const;
+  const slice = items.filter(item =>
+    (opts.channel === undefined || item.channel === opts.channel || item.also_on.includes(opts.channel)) &&
+    (dir === undefined || item.dir === dir) &&
+    (needle === undefined || needle === '' || item.text.toLowerCase().replace(/\s+/g, ' ').includes(needle)));
+  return { schema: MASON_THREAD_SCHEMA, as_of: nowIso, since: new Date(opts.sinceMs).toISOString(),
+    ...(opts.beforeMs === undefined ? {} : { before: new Date(opts.beforeMs).toISOString() }), items: slice, gaps };
 }
 
 export { MASON_THREAD_EMPTY, MASON_THREAD_SCHEMA, masonStateWord, masonThreadText, type MasonThread, type MasonThreadItem, type MasonThreadState } from './mason-thread-model.js';

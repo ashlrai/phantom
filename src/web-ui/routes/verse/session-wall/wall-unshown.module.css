@@ -1,0 +1,12 @@
+/* Under the wall's headline: sessions the list holds that this read does not. Quiet when only ended ones are off screen, marked when a working one may be. */
+.unshown { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); min-width: 0; margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); font-variant-numeric: tabular-nums; animation: wall-unshown-in var(--duration-base) var(--ease-decelerate); }
+.dot { flex: none; align-self: center; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--border-default); }
+.text { min-width: 0; overflow-wrap: anywhere; }
+.unshown[data-tone='warn'] { padding: var(--space-1) var(--space-2); border: 1px solid var(--status-warning-solid); border-radius: var(--radius-sm); background: var(--status-warning-bg, transparent); color: var(--text-primary); }
+.unshown[data-tone='warn'] .dot { background: var(--status-warning-solid); }
+.only { flex: none; padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-full); background: none; color: var(--text-primary); font: inherit; cursor: pointer; transition: background var(--duration-fast) var(--ease-standard); }
+.only:hover { background: var(--bg-hover); }
+.only:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+@keyframes wall-unshown-in { from { opacity: 0; transform: translateY(-2px); } }
+@media (prefers-reduced-motion: reduce) { .unshown { animation: none; } }

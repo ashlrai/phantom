@@ -38,10 +38,11 @@ export async function reissueJob(id: string, opts: ReissueOptions): Promise<Reis
       if (bytesRead > DROP_JOB_MAX_FILE_BYTES) return refused('Prompt too large');
       prompt = bytes.subarray(0, bytesRead).toString('utf8');
     } finally { await handle.close(); }
-    const header = /^#job repo=phantom lane=(\S+) tier=(\S+)\r?\n/.exec(prompt);
+    const header = /^#job repo=(\S+) lane=(\S+) tier=(\S+)\r?\n/.exec(prompt);
     if (prompt.startsWith('#job') && !header) return refused('Invalid job header');
-    let lane = header?.[1] ?? opts.lane ?? '';
-    const tier = header?.[2] ?? 'mid';
+    let lane = header?.[2] ?? opts.lane ?? '';
+    const repo = header?.[1] ?? 'phantom';
+    const tier = header?.[3] ?? 'mid';
     let body = header ? prompt.slice(header[0].length).replace(/^\n/, '') : prompt;
     body = body.replace(/\n$/, ''); // The writer supplies the final newline.
     if (lane === 'claude') {
@@ -74,7 +75,7 @@ export async function reissueJob(id: string, opts: ReissueOptions): Promise<Reis
         });
       try {
         let written;
-        try { written = await writeDropJob(root, { id: newId, lane, tier, body }, opts.now); }
+        try { written = await writeDropJob(root, { id: newId, repo, lane, tier, body }, opts.now); }
         catch (error) { if (error instanceof DropJobExistsError) { used.add(newId); continue; } throw error; }
         try { await auditHandle.writeFile(`${JSON.stringify({ at: written.at, from: id, to: newId, lane, tier, file: written.file })}\n`); }
         catch { return { outcome: 'written', id, newId, file: written.file, reason: 'Job queued; audit append failed' }; }

@@ -35,6 +35,7 @@
  *   genome                     Genome status/health: entry count, projects, staleness.
  *   update [--check] [--json]  Safe self-update: git pull --ff-only + rebuild; --check reports only.
  *   runtime <install|status|rollback|run>  Pinned local candidate installation and foreground Universe commands.
+ *   local capacity [--json]    How many local-model workers fit in free memory (plain words; --json local.capacity.v1).
  *   local-runtime <start|stop|status|restart|install>  Supervised llama-server: the parallel local fleet.
  *   authority <status|switch|stop|grant|revoke|ledger|setup|…>  Standing authority (Touch ID grants, Stop, ledger).
  *   leader <show|run|tick|veto|oversight-plist>  The Leader (Visionary): latest memo, run now, apply due
@@ -2194,6 +2195,10 @@ async function main(): Promise<void> {
           process.exitCode = await (await import('./work-visibility.js')).cmdAgentContext(rest);
           break;
         }
+        if (rest[0] === 'pack') {
+          process.exitCode = (await import('./context-pack.js')).cmdContextPack(rest.slice(1));
+          break;
+        }
         const { cmdCompanyContext } = await import('./company-context.js');
         cmdCompanyContext(rest);
         break;
@@ -2297,9 +2302,21 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'today': {
+        const { cmdToday } = await import('./today.js');
+        process.exitCode = await cmdToday(rest);
+        break;
+      }
+
       case 'throughput': {
         const { cmdThroughput } = await import('./throughput.js');
         process.exitCode = await cmdThroughput(rest);
+        break;
+      }
+
+      case 'merges': {
+        const { cmdMerges } = await import('./merges.js');
+        process.exitCode = await cmdMerges(rest);
         break;
       }
 
@@ -2599,6 +2616,11 @@ async function main(): Promise<void> {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
         break;
       }
+      case 'self-update': {
+        const { cmdSelfUpdate } = await import('./self-update.js');
+        process.exitCode = await cmdSelfUpdate(rest);
+        break;
+      }
       case 'self-swap': {
         const { cmdSelfSwap } = await import('./self-swap.js');
         process.exitCode = await cmdSelfSwap(rest);
@@ -2878,6 +2900,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'work': {
+        const { cmdWork } = await import('./work.js');
+        process.exitCode = await cmdWork(rest);
+        break;
+      }
+
       case 'worklog': {
         const { cmdWorklog } = await import('./worklog.js');
         process.exitCode = await cmdWorklog(rest);
@@ -3107,6 +3135,11 @@ async function main(): Promise<void> {
       case 'release': {
         const cmdRelease = await loadReleaseCmd();
         process.exitCode = await cmdRelease(rest);
+        break;
+      }
+
+      case 'local': {
+        process.exitCode = await (await import('./local-capacity.js')).cmdLocal(rest);
         break;
       }
 
@@ -3352,6 +3385,27 @@ async function main(): Promise<void> {
         // V3.10: the Leader (Visionary) — show / run / tick / veto (src/cli/leader.ts).
         const cmdLeader = await loadLeaderCmd();
         process.exitCode = await cmdLeader(rest);
+        break;
+      }
+
+      case 'owner': {
+        if (rest[0] === 'reply') {
+          const { cmdOwnerReply } = await import('./owner-reply.js');
+          process.exitCode = await cmdOwnerReply(rest.slice(1));
+          break;
+        }
+        // Pair Mason's iMessage handle with one YES reply (src/cli/owner-pair.ts).
+        const { cmdOwnerPair } = await import('./owner-pair.js');
+        process.exitCode = await cmdOwnerPair(rest);
+        break;
+      }
+
+      case 'owner-live': {
+        // Why each phone channel is on or off, and the one step that changes it (src/cli/fleet-owner-live.ts).
+        const { cmdOwnerLiveStatus, cmdOwnerLiveSwitch } = await import('./fleet-owner-live.js');
+        process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1))
+          : rest[0] === 'enable' || rest[0] === 'disable' ? await cmdOwnerLiveSwitch(rest)
+          : (console.error('usage: phm owner-live status|enable imessage|disable imessage [--json]'), 2);
         break;
       }
 

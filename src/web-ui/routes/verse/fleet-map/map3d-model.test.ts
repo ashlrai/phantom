@@ -42,11 +42,11 @@ describe('layoutLiveMap3D', () => {
     expect(layout.radius).toBeGreaterThan(0);
   });
 
-  it('groups by org: a job with no lane sits in "unassigned", and computers sit on a ring below the jobs', () => {
+  it('groups by org: a job with no lane sits in "Other", and computers sit on a ring below the jobs', () => {
     const base = org(1, 1), computer = node('computer', 'node-a');
     const layout = layoutLiveMap3D({ ...base, nodes: [...base.nodes, node('job', 'orphan'), computer] });
     expect(layout.nodes).toHaveLength(5);
-    expect(layout.labels.map(l => l.text)).toEqual(['lane0: 1 running', 'unassigned: 1 running']);
+    expect(layout.labels.map(l => l.text)).toEqual(['lane0: 1 running', 'Other: 1 running']);
     expect(layout.at.get('computer:node-a')!.y).toBeGreaterThan(layout.at.get('job:orphan')!.y);
   });
 

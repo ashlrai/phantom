@@ -41,6 +41,22 @@ describe('fleet wt-reap', () => {
     ], ['A', 'B']));
     expect(r.worktrees.map(w => [w.state, w.reapable])).toEqual([['none', false], ['none', false]]);
   });
+  it('reads the ledger dialect: aliases, eventless and reconciler rows', async () => {
+    const r = await readFleetWtReap(deps([
+      // Eventless reconciler outcome + aliased finish timestamp.
+      { jobId: 'A', type: 'finish', timestamp: new Date(now - 5 * 3_600_000).toISOString() },
+      { jobId: 'A', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED', mergedAt: new Date(now - 4 * 3_600_000).toISOString(), source: 'metrics-outcomes-reconciler' },
+      // kind/status aliases on a named outcome event.
+      { job_id: 'B', kind: 'outcome', status: 'OPEN' },
+      // A publish claim carrying a phase but no reconciler source is not lifecycle.
+      { id: 'C', event: 'publish', state: 'MERGED' },
+      finish('D', 3, true),
+    ], ['A', 'B', 'C', 'D']));
+    expect(r.worktrees.map(w => [w.id, w.state, w.reapable])).toEqual([
+      ['A', 'merged', true], ['B', 'open', false], ['C', 'none', false], ['D', 'empty', true],
+    ]);
+    expect(r.worktrees[0]!.ageHours).toBe(5);
+  });
   it('reports unread sources and rejects invalid CLI options', async () => {
     const logs: string[] = [];
     const d = { readers: { listDirs: async () => { throw Error('private'); }, readJobs: async () => { throw Error('private'); } }, output: { log: (s: string) => logs.push(s), error: (s: string) => logs.push(s) } };

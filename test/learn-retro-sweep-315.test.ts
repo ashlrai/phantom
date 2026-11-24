@@ -280,4 +280,57 @@ describe('ledger joins', () => {
     ], () => null);
     expect(ends.map((e) => `${e.proposalId}:${e.endKind}`).sort()).toEqual(['p-o:closed', 'p-o:owner-laned']);
   });
+
+  it('a red merge whose revert failed joins its landing and post-merge verdict into a revert-failed end', () => {
+    const ends = fleetEndsFromLedger([
+      landing('L9', 'merge', 'p-stuck'),
+      row('post-merge:result', { v: 1, landingId: 'L9', repo: 'ashlrai/widget', mergeSha: 'm', ci: 'red', suite: 'not-run', verdict: 'red', detail: 'CI `test` failed on m', checkedAt: iso(NOW - DAY) }),
+      row('revert:failed', { landingId: 'L9', repo: 'ashlrai/widget', reason: 'revert of PR #7 (m) failed [conflict]: the revert conflicts with later work' }),
+    ], (id) => id === 'p-stuck' ? { id, title: 'Fix the flaky test', summary: '', status: 'applied', createdAt: iso(NOW - 3 * DAY) } : null);
+    expect(ends.map((e) => e.endKind).sort()).toEqual(['merged', 'revert-failed']);
+    const stuck = ends.find((e) => e.endKind === 'revert-failed')!;
+    expect(stuck).toMatchObject({ proposalId: 'p-stuck', repo: 'ashlrai/widget', title: 'Fix the flaky test' });
+    expect(stuck.postMerge).toMatchObject({ ci: 'red', detail: 'CI `test` failed on m' });
+    expect(stuck.revertFailure!.reason).toContain('conflicts with later work');
+  });
+
+  it('a landing whose revert landed keeps only the reverted end, never a revert-failed one', () => {
+    const ends = fleetEndsFromLedger([
+      landing('L8', 'merge', 'p-both'),
+      landing('L8r', 'revert', null, 'L8'),
+      row('revert:failed', { landingId: 'L8', repo: 'ashlrai/widget', reason: 'revert of PR #7 (m) failed [pending]: still not landed' }),
+    ], () => null);
+    expect(ends.filter((e) => e.proposalId === 'p-both').map((e) => e.endKind).sort()).toEqual(['merged', 'reverted']);
+  });
+
+  it('a revert:failed row whose merge landing is outside the window still becomes an end', () => {
+    const ends = fleetEndsFromLedger([
+      row('revert:failed', { landingId: 'L-old', repo: 'ashlrai/widget', reason: 'not reverted: authorship unproven' }),
+    ], () => null);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ proposalId: 'L-old', repo: 'ashlrai/widget', endKind: 'revert-failed' });
+    expect(ends[0]!.postMerge).toBeNull();
+    expect(ends[0]!.revertFailure!.reason).toContain('authorship unproven');
+  });
+
+  it('writes a revert-failed retro and queues its candidate through the sweep', async () => {
+    const r = await sweepRetros(deps({
+      readLedger: async () => ({ entries: [
+        landing('L7', 'merge', 'p-stuck'),
+        row('post-merge:result', { v: 1, landingId: 'L7', repo: 'ashlrai/widget', mergeSha: 'm', ci: 'red', suite: 'not-run', verdict: 'red', detail: 'CI `test` failed on m', checkedAt: iso(NOW - DAY) }),
+        row('revert:failed', { landingId: 'L7', repo: 'ashlrai/widget', reason: 'revert of PR #7 (m) failed [checks-red]: the revert PR went red' }),
+      ], head: null, chain: 'ok', brokenAtSeq: null, reason: null }) as never,
+      cloudTasks: () => [],
+      leaderActions: () => [],
+    }));
+    const retros = await listRetros();
+    const stuck = retros.find((x) => x.sourceKey === 'fleet:p-stuck:revert-failed');
+    expect(stuck).toMatchObject({ endKind: 'revert-failed' });
+    expect(stuck!.rootCause!.code).toBe('revert-failed:ci-red');
+    expect(stuck!.happened).toContain('revert failed');
+    expect(stuck!.happened).toContain('grok-cli');
+    expect(r.created).toBe(2);
+    expect(r.candidates).toBeGreaterThan(0);
+    expect((await readKnowledge()).every((n) => n.status === 'pending')).toBe(true);
+  });
 });

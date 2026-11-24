@@ -110,3 +110,23 @@ describe('PhoneOrg at 390 px', () => {
     expect([...container.querySelectorAll<HTMLElement>('[style]')].every(el => /^width: \d+%;?$/.test(el.getAttribute('style')!))).toBe(true);
   });
 });
+
+describe('PhoneOrg recent messages', () => {
+  const agent = (name: string, role: 'leader' | 'lane') => ({ name, role, lane: null, node: name });
+  const edge = { id: 'leader->claude', from: agent('leader', 'leader'), to: agent('claude', 'lane'), count: 2,
+    lastAt: '2026-11-18T00:00:00Z', lastSummary: 'start the docs job' };
+  const now = Date.parse('2026-11-18T00:02:00Z');
+
+  it('lists each recent message with its one-line summary', () => {
+    render(<PhoneOrg groups={fleetOrgGroups(busy())} messages={[edge]} now={now} onOpenJob={() => {}} />);
+    const list = within(screen.getByRole('region', { name: 'Recent messages' }));
+    expect(list.getByText('leader → claude')).toBeTruthy();
+    expect(list.getByText(/start the docs job/)).toBeTruthy();
+  });
+  it('says unknown when the bus could not be read, and nothing while loading', () => {
+    const { rerender } = render(<PhoneOrg groups={fleetOrgGroups(busy())} messages={null} onOpenJob={() => {}} />);
+    expect(screen.getByText('Messages unknown.')).toBeTruthy();
+    rerender(<PhoneOrg groups={fleetOrgGroups(busy())} onOpenJob={() => {}} />);
+    expect(screen.queryByRole('region', { name: 'Recent messages' })).toBeNull();
+  });
+});

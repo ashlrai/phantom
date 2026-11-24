@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fleetOrgGroups, UNASSIGNED_GROUP } from '../src/core/fleet/org-groups.js';
+import { fleetOrgGroups, GUARDIAN_GROUP, LOOPS_GROUP, UNASSIGNED_GROUP } from '../src/core/fleet/org-groups.js';
 import type { FleetLiveMap, LiveMapEdge, LiveMapNode } from '../src/core/fleet/live-map.js';
 import { cmdFleetOrg, formatOrgGroupsText } from '../src/cli/fleet-org.js';
 import { createFleetOrgGroupsApi } from '../src/core/verse/fleet-org-groups-api.js';
@@ -29,14 +29,34 @@ describe('fleetOrgGroups', () => {
     expect(tree.duplicates).toEqual([]);
   });
 
-  it('puts a node with no known parent under "unassigned" instead of dropping it', () => {
+  it('puts a node with no known parent under "Other" instead of dropping it', () => {
     const tree = fleetOrgGroups(map(
       [node('leader', 'leader'), node('lane', 'lane:a'), node('job', 'job:orphan'), node('job', 'job:lost'), node('job', 'job:loop1'), node('job', 'job:loop2')],
       [reports('lane:a', 'leader'), reports('job:lost', 'lane:missing'), reports('job:loop1', 'job:loop2'), reports('job:loop2', 'job:loop1')]));
-    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'unassigned', parent: 'leader',
+    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'Other', parent: 'leader',
       children: ['job:orphan', 'job:lost', 'job:loop1', 'job:loop2'] });
     expect(get(tree, 'job:orphan').parent).toBe(UNASSIGNED_GROUP);
     expect(get(tree, UNASSIGNED_GROUP).counts.running).toBe(4);
+  });
+
+  it('places a leader, 2 lanes, 3 workers and 1 orphan, with the guardian and loops as their own branches', () => {
+    const tree = fleetOrgGroups({ ...map(
+      [node('leader', 'leader'), node('lane', 'lane:a'), node('lane', 'lane:b', 'idle'), node('job', 'job:1'), node('job', 'job:2'), node('job', 'job:3', 'queued'), node('job', 'job:orphan')],
+      [reports('lane:a', 'leader'), reports('lane:b', 'leader'), reports('job:1', 'lane:a'), reports('job:2', 'lane:a'), reports('job:3', 'lane:b')]),
+    planners: [{ id: 'executor', label: 'Executor', state: 'running', doing: 'Active' }, { id: 'guardian', label: 'Main guardian', state: 'idle', doing: 'Quiet' },
+      { id: 'comms', label: 'Comms', state: 'unknown', doing: 'Unknown' }] });
+    expect(tree.nodes.map(row => [row.id, row.parent])).toEqual([
+      ['leader', null], ['lane:a', 'leader'], ['job:1', 'lane:a'], ['job:2', 'lane:a'], ['lane:b', 'leader'], ['job:3', 'lane:b'],
+      [GUARDIAN_GROUP, 'leader'], ['planner:guardian', GUARDIAN_GROUP], [LOOPS_GROUP, 'leader'], ['planner:executor', LOOPS_GROUP], ['planner:comms', LOOPS_GROUP],
+      [UNASSIGNED_GROUP, 'leader'], ['job:orphan', UNASSIGNED_GROUP]]);
+    expect(get(tree, GUARDIAN_GROUP)).toMatchObject({ role: 'group', label: 'Guardian', counts: { idle: 1, running: 0 } });
+    expect(get(tree, LOOPS_GROUP).counts).toEqual({ running: 1, queued: 0, idle: 0, unknown: 1 });
+    expect(get(tree, 'planner:guardian')).toMatchObject({ role: 'planner', status: 'idle' });
+    // The leader and the headline count jobs only.
+    expect(get(tree, 'leader').counts).toEqual({ running: 3, queued: 1, idle: 0, unknown: 0 });
+    expect(tree.headline.running).toBe(3);
+    // Without planners from the server there are no extra branches.
+    expect(fleetOrgGroups(map([node('leader', 'leader')])).nodes.map(row => row.id)).toEqual(['leader']);
   });
 
   it('keeps a parent with no children as its own leaf, and omits the group when nothing is unassigned', () => {
