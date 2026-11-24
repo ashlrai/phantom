@@ -9,15 +9,18 @@
  * the per-channel delivery receipts joined onto outbound rows and the
  * `awaitingReply` mark on inbound rows no recorded reply cites.
  *
- * `channel`, `direction`, `since`, `beforeAt` and `contains` narrow the
- * same view the CLI flags and the native tool take — one channel's lines,
- * one direction's lines, a recorded-time window (`since` the inclusive
- * floor, `beforeAt` the exclusive ceiling — the `[since, before)` bound
- * every other comms read applies) or a case-insensitive text
- * needle (the only text search the thread offers: iMessage bodies are
- * redacted on the bus mirror, so this private read is the one place they
- * can be found). `limit` caps the newest messages kept (1–200, default
- * 50). An unreadable thread keeps `unavailable: true` and
+ * `channel`, `direction`, `since`, `beforeAt`, `contains` and `replyTo`
+ * narrow the same view the CLI flags and the native tool take — one
+ * channel's lines, one direction's lines, a recorded-time window (`since`
+ * the inclusive floor, `beforeAt` the exclusive ceiling — the
+ * `[since, before)` bound every other comms read applies), a
+ * case-insensitive text needle (the only text search the thread offers:
+ * iMessage bodies are redacted on the bus mirror, so this private read is
+ * the one place they can be found) or the one-key exchange `replyTo`
+ * names — the message carrying that idempotency key plus every reply
+ * citing it, the same key `send-owner --reply-to` takes. `limit` caps the
+ * newest messages kept (1–200, default 50). An unreadable thread keeps
+ * `unavailable: true` and
  * `awaitingReply: null` — unknown stays unknown, never an empty list
  * passed off as fact.
  *
@@ -35,7 +38,7 @@
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings } from '../core/comms/owner-channel.js';
 import { isOwnerChannel } from '../core/comms/leader-mailbox.js';
 import {
-  OWNER_THREAD_CONTAINS_MAX, readOwnerThread,
+  OWNER_THREAD_CONTAINS_MAX, isOwnerThreadKey, readOwnerThread,
   type OwnerThreadOptions, type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -44,7 +47,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_COMMS_THREAD_LIMIT_DEFAULT = 50;
 export const FLEET_COMMS_THREAD_LIMIT_MAX = 200;
 
-const THREAD_KEYS = new Set(['limit', 'channel', 'direction', 'since', 'beforeAt', 'contains']);
+const THREAD_KEYS = new Set(['limit', 'channel', 'direction', 'since', 'beforeAt', 'contains', 'replyTo']);
 
 export interface FleetCommsThreadArgs {
   /** Newest messages kept after filtering; the read itself caps at 200. */
@@ -82,6 +85,10 @@ export function parseFleetCommsThreadArgs(args: Record<string, unknown>): FleetC
   if (args.contains !== undefined) {
     if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > OWNER_THREAD_CONTAINS_MAX) return null;
     filter.contains = args.contains;
+  }
+  if (args.replyTo !== undefined) {
+    if (typeof args.replyTo !== 'string' || !isOwnerThreadKey(args.replyTo)) return null;
+    filter.replyTo = args.replyTo;
   }
   return { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }

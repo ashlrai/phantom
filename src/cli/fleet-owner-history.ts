@@ -2,7 +2,7 @@ import { rejectUnknownOptions } from './args.js';
 import { ownerThreadOptions, parseOwnerThreadFilterArgs } from './comms-owner-thread.js';
 import { readOwnerThreadHistory } from '../core/comms/owner-thread-archive.js';
 
-const usage = 'Usage: ashlr fleet owner-history [--before <seq>] [--limit <n>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
+const usage = 'Usage: ashlr fleet owner-history [--before <seq>] [--limit <n>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--json]';
 export interface FleetOwnerHistoryDeps {
   options?: { runsDir: string };
   output?: (text: string) => void;
@@ -11,7 +11,7 @@ export interface FleetOwnerHistoryDeps {
 export async function cmdFleetOwnerHistory(args: string[], deps: FleetOwnerHistoryDeps = {}): Promise<number> {
   const output = deps.output ?? console.log; const error = deps.error ?? console.error;
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { output(usage); return 0; }
-  const valueFlags = ['--before', '--limit', '--channel', '--direction', '--since', '--before-at', '--contains'];
+  const valueFlags = ['--before', '--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'];
   const known = ['--json', ...valueFlags];
   const bad = rejectUnknownOptions(args, { flags: ['--json'], values: valueFlags });
   const validArgs = args.every((arg, i) => known.includes(arg) || (i > 0 && valueFlags.includes(args[i - 1]!)));

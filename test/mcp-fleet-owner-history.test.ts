@@ -5,7 +5,7 @@
  * live thread window; once rotation moves the oldest messages into
  * owner-thread-archive files beside the live record, this is the only
  * MCP read that pages them back — seq paging with `before`, bounded
- * pages with `limit`, the shared channel/direction/since/beforeAt/contains view
+ * pages with `limit`, the shared channel/direction/since/beforeAt/contains/replyTo view
  * slice `fleet_comms_thread` exposes, archive/skipped counts kept
  * honest and message text scrubbed on read, all through the shared
  * projection so the CLI and MCP surfaces can never diverge.
@@ -96,6 +96,7 @@ describe('fleet_owner_history argument parsing', () => {
     expect(parseFleetOwnerHistoryArgs({ beforeAt: '2026-01-02T00:00:00Z' })).toEqual({ limit: 50, filter: { beforeAt: Date.parse('2026-01-02T00:00:00Z') } });
     expect(parseFleetOwnerHistoryArgs({ beforeAt: '2h' })).toEqual({ limit: 50, filter: { beforeAt: expect.any(Number) } });
     expect(parseFleetOwnerHistoryArgs({ contains: 'deploy fix' })).toEqual({ limit: 50, filter: { contains: 'deploy fix' } });
+    expect(parseFleetOwnerHistoryArgs({ replyTo: 'message-2' })).toEqual({ limit: 50, filter: { replyTo: 'message-2' } });
     expect(parseFleetOwnerHistoryArgs({ before: 9, channel: 'slack', contains: 'x' })).toEqual({ limit: 50, before: 9, filter: { channel: 'slack', contains: 'x' } });
     for (const bad of [
       { channel: 'sms' }, { channel: 5 }, { channel: null },
@@ -103,6 +104,7 @@ describe('fleet_owner_history argument parsing', () => {
       { since: 'bogus' }, { since: 5 }, { since: '-1' }, { since: null },
       { beforeAt: 'bogus' }, { beforeAt: 5 }, { beforeAt: '-1' }, { beforeAt: null },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 5 },
+      { replyTo: 'has space' }, { replyTo: 'short' }, { replyTo: 'x'.repeat(81) }, { replyTo: 5 }, { replyTo: null },
     ]) expect(parseFleetOwnerHistoryArgs(bad)).toBeNull();
   });
 
@@ -150,10 +152,10 @@ describe('fleet_owner_history reader', () => {
       return { schema: 'comms.owner-thread-history.v1' as const, messages: [], archives: 0, skipped: 0 };
     };
     await readFleetOwnerHistory(
-      { limit: 10, before: 30, filter: { channel: 'telegram', contains: 'deploy' } },
+      { limit: 10, before: 30, filter: { channel: 'telegram', contains: 'deploy', replyTo: 'message-2' } },
       { runsDir: '/server-owned', history },
     );
-    expect(seen[0]![1]).toEqual({ before: 30, limit: 10, channel: 'telegram', contains: 'deploy' });
+    expect(seen[0]![1]).toEqual({ before: 30, limit: 10, channel: 'telegram', contains: 'deploy', replyTo: 'message-2' });
   });
 
   it('reports a throwing read as unavailable — never an invented empty history', async () => {
@@ -196,7 +198,7 @@ describe('fleet_owner_history reader', () => {
     const dir = runsDir([{
       first: 1, last: 3,
       messages: [
-        { ...message(1), channel: 'telegram', direction: 'outbound', text: 'ship it' },
+        { ...message(1), channel: 'telegram', direction: 'outbound', text: 'ship it', replyTo: 'message-2' },
         message(2),
         { ...message(3), channel: 'email', at: '2026-01-03T00:00:00.000Z', text: 'please review the fix' },
       ],
@@ -210,6 +212,11 @@ describe('fleet_owner_history reader', () => {
     expect(await seqs({ beforeAt: Date.parse('2026-01-03T00:00:00.000Z') })).toEqual([1, 2]);
     expect(await seqs({ contains: 'review' })).toEqual([3]);
     expect(await seqs({ channel: 'slack' })).toEqual([]);
+    // replyTo keeps the exchange: the citing outbound plus the inbound whose key it names.
+    expect(await seqs({ replyTo: 'message-2' })).toEqual([1, 2]);
+    expect(await seqs({ replyTo: 'message-1' })).toEqual([1]);
+    expect(await seqs({ replyTo: 'message-3' })).toEqual([3]);
+    expect(await seqs({ replyTo: 'no-such-key-9' })).toEqual([]);
   });
 
   it('reports a verified-empty history for a missing leader dir — real zeros, not unknown', async () => {
@@ -245,6 +252,7 @@ describe('fleet_owner_history MCP tool', () => {
         since: { type: 'string' },
         beforeAt: { type: 'string' },
         contains: { type: 'string', minLength: 1, maxLength: 512 },
+        replyTo: { type: 'string' },
       },
     });
   });
@@ -255,6 +263,7 @@ describe('fleet_owner_history MCP tool', () => {
     [{ limit: 0 }], [{ limit: 501 }], [{ limit: '10' }],
     [{ channel: 'sms' }], [{ channel: 5 }], [{ direction: 'sideways' }],
     [{ since: 'bogus' }], [{ since: 5 }], [{ beforeAt: 'bogus' }], [{ beforeAt: 5 }], [{ contains: '' }], [{ contains: 'x'.repeat(513) }],
+    [{ replyTo: 'has space' }], [{ replyTo: 'short' }], [{ replyTo: 5 }],
     [{ extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const ownerHistory = vi.fn();
@@ -281,10 +290,10 @@ describe('fleet_owner_history MCP tool', () => {
   it('passes the view slice through to the reader as a filter', async () => {
     const ownerHistory = vi.fn(async () => ({ ok: true }));
     const client = await connect({ status: async () => ({}), loop: async () => ({}), ownerHistory });
-    await call(client, { channel: 'telegram', direction: 'inbound', since: '2026-01-01T00:00:00Z', beforeAt: '2026-02-01T00:00:00Z', contains: 'deploy' });
+    await call(client, { channel: 'telegram', direction: 'inbound', since: '2026-01-01T00:00:00Z', beforeAt: '2026-02-01T00:00:00Z', contains: 'deploy', replyTo: 'message-2' });
     expect(ownerHistory).toHaveBeenCalledWith({
       limit: 50,
-      filter: { channel: 'telegram', direction: 'inbound', since: Date.parse('2026-01-01T00:00:00Z'), beforeAt: Date.parse('2026-02-01T00:00:00Z'), contains: 'deploy' },
+      filter: { channel: 'telegram', direction: 'inbound', since: Date.parse('2026-01-01T00:00:00Z'), beforeAt: Date.parse('2026-02-01T00:00:00Z'), contains: 'deploy', replyTo: 'message-2' },
     });
   });
 

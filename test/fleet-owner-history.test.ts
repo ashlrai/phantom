@@ -24,9 +24,9 @@ it('slices archived pages with the shared thread view flags', async () => {
   const runsDir = mkdtempSync(join(tmpdir(), 'fleet-history-filter-')); roots.push(runsDir);
   const dir = join(runsDir, 'leader'); mkdirSync(dir, { mode: 0o700 });
   const messages = [
-    { seq: 1, id: 'm1', idempotencyKey: 'k1', channel: 'desktop', senderId: 'owner', direction: 'inbound', at: '2026-01-01T00:00:00.000Z', text: 'deploy the fix' },
-    { seq: 2, id: 'm2', idempotencyKey: 'k2', channel: 'telegram', senderId: 'owner', direction: 'outbound', at: '2026-01-02T00:00:00.000Z', text: 'shipped it' },
-    { seq: 3, id: 'm3', idempotencyKey: 'k3', channel: 'email', senderId: 'owner', direction: 'inbound', at: '2026-01-03T00:00:00.000Z', text: 'please review the fix' },
+    { seq: 1, id: 'm1', idempotencyKey: 'key-one-0001', channel: 'desktop', senderId: 'owner', direction: 'inbound', at: '2026-01-01T00:00:00.000Z', text: 'deploy the fix' },
+    { seq: 2, id: 'm2', idempotencyKey: 'key-two-0002', channel: 'telegram', senderId: 'owner', direction: 'outbound', at: '2026-01-02T00:00:00.000Z', text: 'shipped it', replyTo: 'key-one-0001' },
+    { seq: 3, id: 'm3', idempotencyKey: 'key-three-0003', channel: 'email', senderId: 'owner', direction: 'inbound', at: '2026-01-03T00:00:00.000Z', text: 'please review the fix' },
   ];
   writeFileSync(join(dir, 'owner-thread-archive-1-3.json'), JSON.stringify({ v: 1, threadId: 'owner', messages }), { mode: 0o600 });
   const lines: string[] = []; const errors: string[] = [];
@@ -45,10 +45,16 @@ it('slices archived pages with the shared thread view flags', async () => {
   expect(await seqs(['--contains', 'the fix'])).toEqual([1, 3]);
   expect(await seqs(['--channel', 'email', '--before', '4'])).toEqual([3]);
   expect(await seqs(['--channel', 'slack'])).toEqual([]);
+  // --reply-to keeps the exchange: the citing outbound plus the inbound whose key it names.
+  expect(await seqs(['--reply-to', 'key-one-0001'])).toEqual([1, 2]);
+  expect(await seqs(['--reply-to', 'key-three-0003'])).toEqual([3]);
+  expect(await seqs(['--reply-to', 'key-two-0002'])).toEqual([2]);
+  expect(await seqs(['--reply-to', 'no-such-key-9'])).toEqual([]);
   const beforeErrors = errors.length;
-  for (const args of [['--channel', 'sms'], ['--direction', 'sideways'], ['--since', 'bogus'], ['--before-at', 'bogus'], ['--contains', ''], ['--channel', 'desktop', '--channel', 'telegram'], ['--contains', '--json']]) {
+  for (const args of [['--channel', 'sms'], ['--direction', 'sideways'], ['--since', 'bogus'], ['--before-at', 'bogus'], ['--contains', ''], ['--channel', 'desktop', '--channel', 'telegram'], ['--contains', '--json'],
+    ['--reply-to', 'bad key'], ['--reply-to', 'k1'], ['--reply-to'], ['--reply-to', '--json']]) {
     expect(await cmdFleetOwnerHistory(args, deps)).toBe(2);
   }
-  expect(errors.length - beforeErrors).toBe(13);
+  expect(errors.length - beforeErrors).toBe(20);
   expect(errors[beforeErrors]).toContain('--channel takes one of');
 });

@@ -39,7 +39,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/verse/fleet/runs` | none | [FleetRunsV1](../src/core/verse/fleet-runs-types.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs'` |
 | GET | `/api/verse/fleet/usage/producers` | since | [UsageProducersReport](../src/core/fleet/usage-producers.ts) (`fleet.usage-producers.v1`) | [source](../src/core/verse/fleet-usage-producers-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/usage/producers?since=6h'` |
 | GET | `/api/verse/fleet/runs/glance` | none | [OperatorGlance](../src/core/fleet/operator-glance.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/glance'` |
-| GET | `/api/verse/fleet/runs/inbox` | limit, source | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
+| GET | `/api/verse/fleet/runs/inbox` | limit, source, contains, priority, after, before | [FleetInboxReadV1 or null](../src/core/verse/fleet-inbox-read.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | POST | `/api/verse/fleet/runs/inbox` | none | [inline {ok, at} (201)](../src/core/verse/fleet-runs-api.ts) | [source](../src/core/verse/fleet-runs-api.ts) | `curl -sS -H 'X-Ashlr-Token: <mutation-token>' -X POST -H 'Content-Type: application/json' -d '{"text":"Please review the queue","source":"operator"}' 'http://127.0.0.1:7777/api/verse/fleet/runs/inbox'` |
 | GET | `/api/fleet/job` | id (required) | [FleetJobDetailV1](../src/core/fleet/runs-job-detail.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job?id=example-job'` |
 | GET | `/api/fleet/job/activity` | id (required) | [FleetJobActivityV1](../src/core/fleet/runs-job-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/job/activity?id=example-job'` |
@@ -518,11 +518,14 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
-cutoff, so `--since` and `--before` read one closed `[since, before)` window. `from` and `to` are routing labels and `summary` is one plain
+cutoff, so `--since` and `--before` read one closed `[since, before)` window.
+Every other flag is the `phm messages` filter vocabulary `phm agents messages`
+forwards — the matching rules `phm messages --help` describes — so one
+filtered question reads the same on this digest. `from` and `to` are routing labels and `summary` is one plain
 line of at most 100 characters (the scrubbed summary, never the message
 body). An empty bus prints "No messages yet."; `messages` is null when the bus
 could not be read. The Fleet map pulses the same lines, and clicking a line
@@ -572,7 +575,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -621,7 +624,33 @@ same text search `phm messages --contains`, `agents bus inbox --contains`
 and `agents bus channel read --contains` apply, matched over the rendered
 summaries, never the raw body, so a secret-shaped value stays unfindable —
 so "which thread is about X" is one filtered read, whole threads like every
-other filter here. `--limit <1..1024>`
+other filter here. `--in-reply-to <id>` keeps only the threads where at
+least one member message's body cites that envelope id through its own
+`inReplyTo` field — the same own-property exact match `phm messages
+--in-reply-to`, `agents bus inbox`/`channel read --in-reply-to`, `comms bus
+read|watch --in-reply-to`, `fleet bus-follow --in-reply-to` and
+`fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias or a
+substring — so "which thread is the answer to envelope X in" is one
+filtered read. `--channel <name>` keeps only the threads where at least one
+member message is addressed to `group:<name>:*` — the room's whole traffic
+under every topic, the same raw `to`-prefix rule `phm messages --channel`,
+`agents bus inbox --channel` and `channel read --channel` match — so "which
+threads touch channel X" is one filtered read, the value taking the strict
+channel-name grammar. `--priority <P0|P1|P2|P3>` keeps only the threads
+where at least one member message carries that exact band — the same match
+every other bus read's `--priority` applies — so "which threads have urgent
+traffic" is one filtered read, a member message with no recorded band never
+matching. `--from <name>` keeps only the threads where at least one member
+message was sent under that agent's labels — a handle, `agent:<handle>`,
+stable id or alias matching every label of that identity, the same
+sender-inclusion rule every bus read's `--from` applies, decided on each
+member message's `from` so a thread the agent only receives in never
+passes; `--exclude-from <name>` drops every thread where any member message
+was sent under that agent's labels — the same sender-exclusion rule,
+composing with `--from` so a sender both included and excluded matches
+nothing. Every one of these is a member-level test: whole threads survive,
+never partial message lists, and the matched member stays in `messages[]`.
+`--limit <1..1024>`
 caps the threads returned, longest-waiting order kept, while `matched` still
 reports the full filtered count — the same matched-before-limit convention
 `phm agents messages` uses; absent, every matched thread returns. Messages
@@ -638,11 +667,12 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
 the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
-`state`, `job`, `waitingOn`, `since`, `before`, `contains`, `limit`), so an
+`state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
+`channel`, `priority`, `from`, `excludeFrom`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
 
@@ -652,7 +682,10 @@ what is blocked, what moved lately — without shelling out to `phm`.
   `blocked` or `done`), `stateText`, `waiting` (`on`, `since`, `ms`; only while
   waiting for a reply), `jobs[]` (every job id a member message names — body
   citations, reported job links and the `job:<id>` bucket; sorted, empty when
-  the thread names none), `links[]` (the pairs that talked) and `messages[]`.
+  the thread names none), `links[]` (the pairs that talked) and `messages[]`
+  (`id`, `at`, `from`, `to`, `kind`, `subject`, plus `priority` — the envelope
+  band — and `inReplyTo` — the body's own reply citation — when the message
+  carries them).
 - `matched`: every thread the filters kept before `--limit`/`limit` cut the
   page; `null` when the bus could not be read, the same unknown-stays-unknown
   rule `conversations` follows.
@@ -664,21 +697,31 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
 `group.presence` heartbeats are observations, not messages, and never list.
+Every other flag is the `phm messages` filter vocabulary — `--agent` with
+`--with` keeps only what those two said to each other, `--kind` one
+classified kind, `--priority` one envelope band, `--job` the traffic naming
+one job, `--thread` note/context bodies carrying that v2 thread label,
+`--channel` posts addressed to `group:<name>:*`, `--contains` summaries
+carrying that text, `--from`/`--exclude-from` one sender's mail kept or
+dropped, `--in-reply-to` envelopes citing that id — with the same matching
+rules and registered-identity resolution `phm messages --help` describes, so
+`matched` and `pairs` count exactly the rows every filter accepts.
 `--json` prints `agents.messages.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50]` serves the
-same read with a current read session.
+`GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
+same read with a current read session; dashed flags arrive camelCase
+(`excludeFrom`, `inReplyTo`), each param once.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and
   `toName`. `from` and `to` are map node ids (`leader`, `lane:<name>`,
   `job:<id>`), or `unknown` when the map does not draw that agent.
-- `pairs[]`: one per direction between two node ids over the whole window:
-  `count`, `lastAt` and `recent` (the last 5 summaries).
+- `pairs[]`: one per direction between two node ids over every message the
+  filters kept: `count`, `lastAt` and `recent` (the last 5 summaries).
 
 On the Map pane, hovering a message line or its row shows a card with that
 line's count and last 5 messages. The Messages switch above the map hides

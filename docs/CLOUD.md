@@ -668,14 +668,305 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   ledger emits nothing, malformed lines and foreign-schema rows drop
   like the writers' own contract, truncated tails read as lower
   bounds, and another repository emits nothing since the journal
+  carries no repository column —
+  and the incident-gate decision ledger's recurring failure classes
+  and stuck tightenings, the per-class rows `ashlr fleet
+  incident-gate --apply` appends to
+  `fleet/incident-gates.jsonl` under the Ashlr home (~/.ashlr/fleet)
+  after mining `metrics/jobs.jsonl` and `dispatch-events.log` under
+  the fleet runs directory for repeated failure signatures —
+  lane-error, test-failure and merge-conflict classes that cross the
+  >=3-fresh-signals bar (otherwise only visible as append-only audit:
+  appendIncidentGateLedger has no reader and the verb has no report
+  mode, so the fleet's own incident response never became work). A
+  class becomes an item while its watermark-advancing rows — applied
+  tightenings, or lane-hold refusals that record manual-hold or an
+  unknown lane — span two distinct UTC days inside the 7-day window:
+  each refire needed fresh failure signals, so the bounded holds keep
+  treating a cause that stays unfixed. A second item emits while the
+  class's tightenings that never landed — 'error' rows and
+  repo-cooldown refusals, which leave the watermark stuck so the same
+  signals re-fire every --apply run — span two distinct UTC days, the
+  signature of a broken apply path rather than a transient. lane-error
+  rows carry this install's lane scope and emit only for the fleet's
+  own repository; test-failure and merge-conflict rows carry the
+  qualified owner/repo scope and emit only when it matches the
+  discovery target exactly, case-insensitive. Only writer-appended
+  rows count — dry-run evaluations leave no trace — rows failing the
+  writer's closed contract or whose cls disagrees with its gate drop
+  like the sibling readers' own parse, a missing or unreadable ledger
+  emits nothing, truncated tails are stated as lower bounds, and
+  secret-shaped detail text is scrubbed before it reaches a prompt,
+  and the Jev decision ledger's recurring fallback-dominant kinds, the
+  DecisionRecords `decide()` appends to `jev/decisions/YYYY-MM-DD.jsonl`
+  under the Ashlr home for every wired call site — engine-error
+  classification, task-class, the judge/taste/red-team verdicts,
+  completion-claim, retro-root-cause, needs-you-priority,
+  interrupt-worthiness, lane-choice, resource-choice, trigger-triage,
+  action-class and operator-intent (otherwise only visible through
+  `phm jev status [--day]` and the Verse Jev card — day-scoped reports
+  someone had to run and read, so a kind whose Jev path kept losing
+  across a week, or a provider-side fallback reason recurring across
+  kinds, never became work). Deliberate-off fallbacks — no-key,
+  disabled, killed, kind-disabled, no-input — are filtered before the
+  write, so every recorded fallback is a decision Jev was eligible for
+  and lost; a kind becomes an item only while its in-window decisions,
+  fallback rows across distinct UTC days and fallback share reach the
+  recurring bars inside the 7-day window, day files read bounded with
+  truncation stated as lower bounds, estimated cost stays unknown
+  rather than zero when calls were unpriced, a missing day file means
+  no decisions were recorded while an unreadable one emits nothing,
+  malformed lines and off-contract rows drop like the writer's own
+  contract, and rows emit only for the fleet's own repository since
+  every call site is this install's own code and the ledger carries no
+  repository column,
+  and the scheduled worktree reap's removal-attempt journal, the
+  per-attempt rows `removeSafe` in `src/core/fleet/worktrees.ts` appends
+  to `queue/worktree-reap.jsonl` under the fleet runs directory every
+  time the self-tick's planner-tick stage runs the reap — failed git
+  removals, unsafe-path refusals and the unpushed-commits /
+  uncommitted-changes holds that strand finished jobs' worktrees
+  (otherwise only visible through `phm worktrees --reap --status`'s
+  last-run summary and the worktrees report's ReaperHealth verdict —
+  reports someone had to run and read, while the journal's recurring
+  failures never folded into work). A (kind, lane) cell becomes an item
+  while its distinct job count reaches the recurring bar of three
+  inside the 7-day window — 'removed' successes and 'state-changed'
+  recheck refusals never emit — with lane and repo attribution joining
+  `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
+  than suppressing the reap evidence, truncated tails stated as lower
+  bounds, and rows emitting only for the fleet's own repository since
+  the reap is this install's machinery,
+  and the gap proposer's own queue-write journal, the {at, id, title,
+  repo} rows `phm jobs gaps --propose` — run by the fleet self-tick's
+  autofill harvest (autofill-run.ts harvestGaps → readJobGaps) —
+  appends to metrics/gap-proposed.jsonl under the fleet runs
+  directory for every successful drop-job write, where id is the
+  deterministic content key gapJobId = 'GAP' + the first ten hex chars
+  of sha256(normalizeTitle(title)), uppercased, and the minted queue
+  job id is RQ-PHX-<id>
+  (otherwise only visible through the proposer's own 24-hour dedupe
+  and `phm doctor supply`'s proposed count — a report someone had to
+  run, so a gap whose attempts keep finishing without the work
+  holding, and which the narrow dedupe windows let through again on
+  later ticks, never became work). A gap id becomes an item only
+  while its recorded queue writes reach the recurring bars of three
+  proposals across two distinct UTC days inside the 7-day window,
+  with each cell joined to the same gap job's launches, finishes,
+  publishes and resolved outcomes in metrics/jobs.jsonl so the prompt
+  quotes what the earlier attempts actually did; a missing or
+  unreadable proposal journal emits nothing, a withheld jobs ledger
+  degrades the tallies to unknown rather than suppressing the
+  proposal evidence or zero-filling it, malformed lines and
+  off-contract rows drop like the writer's own contract, truncated
+  tails are stated as lower bounds, and rows emit only for the
+  fleet's own repository since the proposer and its dedupe are this
+  install's machinery,
+  and the merge-bottleneck recut loop's own journals, the {at, pr, id,
+  headSha, baseSha?, file} rows `recutLoopTick` in
+  `src/core/fleet/recut-loop.ts` appends to `queue/recut-loop.jsonl`
+  under the fleet runs directory for every published recut job, plus
+  the pre-publication reservations it appends to
+  `queue/recut-loop-leases.jsonl` before each publish attempt
+  (otherwise only visible through the in-tick dedupe guards — the
+  24-hour same-head window, the in-flight scan, the empty-yield streak
+  and the caps — and the last-tick outcome kept in module state for the
+  health endpoint and the Verse recut-loop model, so a PR the loop
+  keeps re-cutting and reservations that never produced their
+  published-job row never became work). A PR number becomes an item
+  only while its recorded publishes reach the recurring bars of three
+  writes across two distinct UTC days inside the 7-day window, each
+  cell joined to the minted RQ-PHX-RECUT<pr>L<k> jobs' launches,
+  finishes, publishes and resolved outcomes in metrics/jobs.jsonl;
+  expired reservations whose (pr, id, headSha) triple never appears as
+  a same-tick write become one fleet-level item only while the write
+  tail is whole — a truncated write journal could hide the matching
+  row — and only once the orphans reach the same recurring bars, a
+  withheld jobs ledger degrades the tallies to unknown rather than
+  suppressing the journal evidence or zero-filling it, truncated tails
+  are stated as lower bounds, and items emit only for the fleet's own
+  repository since the loop is hardcoded to this install's
+  repository,
+  and the judge-trace ledger's recurring adverse ship verdicts, the
+  metadata-only JudgeTrace rows `judgeProposal` in
+  `src/core/fleet/manager.ts` appends to
+  `~/.ashlr/judge-traces/YYYY-MM-DD.jsonl` for every proposal the
+  inbox merge path judges before auto-merge, with append-only outcome
+  patches materialized by `readJudgeTracesDetailed` — 'rejected' when
+  `setStatus` turns the proposal rejected, 'reverted' and
+  'followed-up' reserved for the post-merge observation writers,
+  'merged' reserved for the proof-bound release writer (otherwise
+  only visible through `phm fleet judge-traces` and
+  `phm fleet judge-health` — reports someone had to run — plus the
+  build-only counterfactual replay nothing schedules, so a judge
+  engine whose ship verdicts kept resolving to work that did not
+  hold never became work). A judge engine becomes an item only while
+  its qualified adverse ship outcomes — rejected before landing, or
+  reverted/followed-up after — reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window anchored on
+  each trace's realized-evidence time; review, noise and harmful
+  verdicts tally as validated-caution context only, a qualified
+  merged outcome counts as held work rather than adverse, the
+  bounded materializing read treats a degraded or incomplete ledger
+  as no evidence rather than folding partial rows, unqualified
+  outcome labels never guess, and rows emit only for the fleet's own
+  repository since every judgeProposal call site is this install's
+  merge path,
+  and the fleet host disk sample files' recurring freeze-line evidence,
+  the {at, free_gb} rows the self-tick appends to
+  `queue/host-disk-samples.json` under the fleet runs directory (one
+  reading per 5 minutes, 48 hours kept) and the contrib/mac
+  disk-growth.py sampler keeps in `queue/disk-growth-history.json`
+  (otherwise only visible through `phm host disk`, `phm fleet
+  vitals`' disk section, `phm host top`'s disk trend, the hourly
+  digest's disk_low blocker and the Ideas disk-trend signal — reports
+  and a transient warning someone had to see, so a host whose disk
+  kept trending into the lane-freeze line never became work). Each
+  judged hour's closing verdict is the same diskBurn/diskLowLine
+  computation `phm host disk` runs against the freeze line
+  `compact.lanes.raise_freeze_below_gb`; an axis becomes an item only
+  while its verdict recurs in at least six distinct judged hour
+  buckets spanning two UTC days inside the 7-day window — below the
+  freeze line, or falling with under 24 hours of runway — a missing,
+  degraded or invalid sample file degrades only its own coverage,
+  malformed rows drop like the writer's contract, and rows emit only
+  for the fleet's own repository since the samples describe this
+  install's host,
+  and the Devin autoland decision journal's recurring adverse
+  outcomes, the per-decision DevinAutolandDecision rows
+  `runDevinAutoland` in `src/core/devin/autoland.ts` appends to
+  `devin/autoland.jsonl` under the Ashlr home on every apply pass —
+  the resident daemon's ten-minute autoland timer and manual
+  `phm devin autoland --apply` runs (otherwise only visible through
+  the pass's own idempotency checks — already-landed, backoff,
+  gave-up, supersede retries — and `phm devin autoland --json`,
+  which prints just the current pass, so a landing path that kept
+  failing bundles, a superseded-PR close that kept erroring, or
+  sessions that kept finishing without the required attachments
+  never became work). A failure class becomes an item only while its
+  distinct units — session ids for per-session decisions, pass ids
+  for pass-scoped ones — reach the recurring bars of three across
+  two distinct UTC days inside the 7-day window, covering
+  land-failed/gave-up landings, pending-supersede/supersede-gave-up
+  closes, archive-failed cleanup, missing-attachments sessions,
+  session-failed throws, pass-failed passes and no-identity stalls;
+  gave-up rows fold into their path's cell as terminal tallies,
+  killed/paused/scanned and the success and pacing decisions never
+  emit since they are deliberate state or the pipeline working, a
+  missing journal is a clean empty source while an unreadable read
+  yields nothing rather than folding partial evidence, truncated
+  tails are stated as lower bounds, malformed lines and off-contract
+  rows drop like the writer's own contract, and rows emit only for
+  the fleet's own repository since the journal carries no repository
+  column — every pass scans this install's connected Devin org,
+  and the host-load history journal's recurring blocked-launch
+  evidence, the `host.load.history.v1` {at, load1, hostMax,
+  contributors:[{name, sharePercent}]} rows `takeLoadSnapshot` in
+  `src/core/fleet/load-history.ts` appends to
+  `queue/host-load-history.jsonl` under the fleet runs directory —
+  at most one per ten minutes and only while the dispatcher's
+  queue/admission-ctl.json reports over_host blocking, so every
+  recorded row is a blocked moment by construction (otherwise only
+  visible through `phm host load --history`'s summarizeLoadHistory
+  fold, the pulse and the hourly digest's blockedHourLine warning —
+  which prints only while the last hour tops
+  BLOCKED_LINE_OVER_MINUTES — and the contributor cross-references
+  inside the sibling memory- and controller-pressure prompts, so a
+  host whose launches kept being held for load never became work).
+  The fold is summarizeLoadHistory itself, so an hour bucket's
+  blockedMinutes and a contributor's sharePercent mean exactly what
+  the report prints; an item emits only while at least six distinct
+  hour buckets each recorded at least BLOCKED_LINE_OVER_MINUTES
+  blocked minutes across two UTC days inside the 7-day window — the
+  same worth-saying line the digest applies — and a second item
+  refines that claim only while the window's top contributor is
+  fleet-side machinery ('fleet jobs' or 'local model server', the
+  two labels contributorsOf attributes to this install) holding at
+  least half of blocked-time CPU share, since an owner-side dominant
+  app has no repo-side fix, a missing or unreadable journal emits
+  nothing, truncated tails are stated as lower bounds, malformed
+  lines drop like the writer's contract, and rows emit only for the
+  fleet's own repository since the journal describes this install's
+  host and carries no repository column,
+  and the fleet self-tick run-record journal's recurring adverse
+  evidence, the per-run `fleet.self-tick-record.v1` lines
+  appendSelfTickLine in `src/core/fleet/self-tick-last.ts` appends to
+  `queue/self-tick.jsonl` under the fleet runs directory on every
+  `ashlr fleet self-tick` pass — the launchd/systemd-scheduled
+  maintenance cadence — ran or bounced off the single-runner lock,
+  carrying the run's mode, ran/busy state, failedSteps with error
+  text, the planner-tick intake hooks' folded outcomes and any
+  empty-family auto-stop proposals (otherwise only visible through
+  `phm fleet self-tick --last`/`--status`, which read only
+  queue/self-tick-last.json — the LAST run — so a step failing every
+  tick, a pass bouncing off its lock, an intake hook throwing or
+  silently going unrecorded, and an empty producer family re-earning
+  its 12-hour auto-stop each expiry never became work). A cell — a
+  failed step, the busy state, a hook's failed or not-recorded
+  outcome, or a family auto-stop — becomes an item only while its
+  in-window records reach the recurring bars of three across two
+  distinct UTC days inside the 7-day window; skipped steps and hooks,
+  ran hooks, clean runs and single lock collisions are the writer's
+  deliberate-off or working vocabulary and never emit, rows written
+  before familyStops existed carry no such key and read as no stop
+  evidence, malformed lines and off-contract rows drop like the
+  writer's contract with entries inside a valid row dropped rather
+  than folded, a truncated tail is stated as a lower bound, and rows
+  emit only for the fleet's own repository since the journal
+  describes this install's machinery and carries no repository
+  column,
+  and the autonomous-action audit journal's recurring adverse
+  outcomes, the per-action {ts, action, repo, sandboxId, summary,
+  result} rows audit() in `src/core/sandbox/audit.ts` appends to
+  `~/.ashlr/audit/<UTC-date>.jsonl` — one append-only partition per
+  UTC day under the account home, never rotated or deleted — on
+  every audited action across the daemon loop, the inbox apply and
+  merge path, plugins, sandbox lifecycle, verify commands and verse
+  surfaces (otherwise only visible through `ashlr audit`'s human
+  tail, the verse control-api's bounded recent window and `phm
+  fleet` status's newest-eight list, so an action a gate kept
+  refusing or machinery kept failing never became work). A cell —
+  an action's 'refused' or 'error' result — becomes an item only
+  while its in-window records reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window; 'ok' rows,
+  including the deliberate-off vocabulary several call sites record
+  as ok with explanatory summaries, never emit, malformed lines and
+  off-contract rows drop like the writer's contract, partitions
+  outside the window and non-partition names are never read, a
+  truncated partition tail is stated as a lower bound, and rows emit
+  only for the fleet's own repository since the journal describes
+  this install's machinery and carries no repository column,
+  and the desktop render-crash journal's recurring fingerprints, the
+  per-crash {at, surface, message, stack?, componentStack?,
+  appVersion?, fingerprint} rows recordDesktopError in
+  `src/core/verse/desktop-error-report.ts` appends to
+  `<runs>/desktop/errors.jsonl` — with a single errors.1.jsonl
+  rotation once the live file passes 2 MiB — on every caught render
+  crash the console's error boundaries report through
+  `src/web-ui/lib/report-desktop-error.ts` to POST
+  /api/verse/desktop-errors (otherwise only visible through `ashlr
+  fleet desktop-errors`, a report someone had to run with a
+  24-hour window and a 50-group cap, so a crash recurring day after
+  day in this repo's own console never became work). A cell — one
+  fingerprint, the writer's sha256 of surface + first stack frame +
+  message — becomes an item only while its in-window records reach
+  the recurring bars of three across two distinct UTC days inside
+  the 7-day window; every record is already a post-dedupe sighting
+  (the writer drops a repeat fingerprint inside ten minutes), so
+  units count distinct sightings, malformed lines and off-contract
+  rows drop like the writer's contract, a truncated ledger tail is
+  stated as a lower bound, and rows emit only for the fleet's own
+  repository since the journal describes this install's console and
   carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
-  reward, job-control, usage-gap, runtime-journal and generator-yield
-  items carry priority 3;
+  reward, job-control, usage-gap, runtime-journal, generator-yield,
+  incident-gate, jev-decisions, worktree-reap, gap-proposal,
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
+  audit-trail, desktop-console and fleet-self-tick items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -717,7 +1008,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   retune-the-unmeasured-guard-constants framing for withheld raises —
   with the same owner-side no-change escape — and emit only for the
   fleet's own repository since the evidence describes this install's
-  host and fleet machinery. Fleet-controller items name the controller
+  host and fleet machinery. Disk-pressure items name the two sample
+  files, `phm host disk`, the digest's disk_low warning and the
+  worktree/reap surfaces, keep the
+  find-what-is-consuming-the-disk framing for below-freeze hours and
+  the find-the-sustained-burn framing for runway hours — with the same
+  owner-side no-change escape — and emit only for the fleet's own
+  repository since the samples describe this install's host.
+  Fleet-controller items name the controller
   ledger, `phm fleet admission --details` and the pinned
   contrib/mac machinery boundary, keep the find-why-the-controller-keeps-
   doing-this framing per cell — dead readings, mis-tuned or mis-firing
@@ -805,7 +1103,85 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   capability/stop-verdict vocabulary drift — with the same owner-side
   no-change escape, and emit only for the fleet's own repository
   since the journal describes this install's queue intake and carries
-  no repository column. They
+  no repository column. Incident-gate items name the decision ledger,
+  the `ashlr fleet incident-gate` verb and the mining sources, keep
+  the find-why-the-class-keeps-recurring-or-the-tightening-keeps-
+  failing framing per bucket — an unfixed lane, credential, quota,
+  test or merge cause versus a broken apply path (slots.json or
+  runs-dir writability, the repo-hold store, the KILL switch) — with
+  the same owner-side no-change escape, and emit lane-error cells only
+  for the fleet's own repository while repo-scoped cells match the
+  discovery target's owner/repo exactly. Jev items name the decision
+  ledger, `phm jev status`, and the decide registry, ledger and call
+  sites, keep the which-side-is-losing framing per kind — miscalibrated
+  thresholds or drifting question maps and interpret functions versus
+  a degraded TypeSafe provider path versus owner-side key, quota or
+  budget state — with the same owner-side no-change escape for a kind
+  that legitimately falls back by design, and emit only for the fleet's
+  own repository since the ledger is this install's decision record and
+  carries no repository column. Worktree-reap items name the reap
+  journal, `phm worktrees --reap --status` and the pinned contrib/mac
+  machinery boundary, keep the find-why-removals-keep-failing-or-
+  worktrees-keep-stranding framing per kind — a broken removal path,
+  unsafe paths the minting side should never produce, unpushed commits
+  the publish path dropped, or dirty worktrees the finish path left —
+  with the same owner-side no-change escape, and emit only for the
+  fleet's own repository since the reap is this install's machinery.
+  Gap-proposal items name the proposal
+  journal, `phm jobs gaps`, the `phm jobs yield`/`phm jobs empty`
+  folds and the gap extraction and dedupe sources, keep the
+  find-why-this-gap-keeps-coming-back-unsatisfied framing per gap id —
+  gap extraction minting work master already has versus failed or
+  aborted attempts versus launches that never happened versus a dedupe
+  leg that cannot see the landing — with the same owner-side
+  no-change escape for legitimate re-discovery of a recurring gap, and
+  emit only for the fleet's own repository since the proposer and its
+  dedupe are this install's machinery. Judge items name the
+  judge-trace ledger, `phm fleet judge-traces`,
+  `phm fleet judge-health` and the judgeProposal call site in
+  src/core/fleet/manager.ts, keep the find-which-side-is-wrong
+  framing — a miscalibrated verdict, rubric or engine-resolution
+  drift versus rejections that trace to pipeline gates orthogonal to
+  judge quality — with the same owner-side no-change escape for a
+  retired engine, a rolled-forward window or healthy judge-health
+  evidence, and emit only for the fleet's own repository since the
+  ledger records this install's merge-path verdicts and carries no
+  repository column. Devin-autoland items name the decision journal,
+  `phm devin autoland`, the landings ledger and the Devin land path in
+  src/core/devin/, keep the find-which-side-is-failing framing per
+  class — the fork-only publish path, merge-base or bundle handling
+  versus gh close/auth versus terminate/archive versus the attachment
+  contract versus Devin API or identity state — with the same
+  owner-side no-change escape for transient outages, deliberate pause
+  or key scope only Mason can change, and emit only for the fleet's
+  own repository since the journal records this install's passes and
+  carries no repository column. Host-load items name the history
+  journal, `phm host load --history`, the digest and pulse warnings
+  and the takeLoadSnapshot writer in src/core/fleet/load-history.ts,
+  keep the find-what-is-loading-the-host framing — recurring fleet
+  jobs or model-server dominance meaning this fleet's own parallelism,
+  worker footprints or model-server concurrency versus owner-side
+  apps and pinned ops machinery — with the same owner-side no-change
+  escape for a rolled-forward window or pinned caps, and emit only
+  for the fleet's own repository since the journal records this
+  install's host and carries no repository column. Audit-trail items
+  name the audit journal, `ashlr audit`, `src/core/sandbox/audit.ts`
+  and the action's call sites under src/, keep the
+  deliberate-hold-versus-misfire framing for refusals and the
+  find-which-call-path-is-failing framing for errors, with the same
+  owner-side no-change escape for a correctly configured hold, a
+  rolled-forward window or pinned ops machinery, and emit only for
+  the fleet's own repository since the journal records this
+  install's actions and carries no repository column. Desktop-console
+  items name the crash journal, `ashlr fleet desktop-errors`,
+  `src/core/verse/desktop-error-report.ts` and the reporting call
+  sites under src/web-ui, keep the find-the-throwing-surface framing —
+  the surface's error boundary catching a recurring fault versus a
+  crash a restart or deploy already fixed — with the same owner-side
+  no-change escape for a rolled-forward window or pinned ops
+  machinery, and emit only for the fleet's own repository since the
+  journal records this install's console and carries no repository
+  column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

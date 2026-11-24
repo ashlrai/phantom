@@ -69,16 +69,16 @@ describe('fleet_agent_messages argument parsing', () => {
 
   it('maps every shared messages filter onto the projection query', () => {
     const parsed = parseFleetAgentMessagesArgs({
-      since: '1800000000000', agent: 'agent:planner', with: 'agent:worker',
+      since: '1800000000000', before: '1800086400000', agent: 'agent:planner', with: 'agent:worker',
       kind: 'ASK', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: '  Parser   Fix ',
-      excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
+      from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', id: 'm-2', limit: 25,
     });
     expect(parsed).toEqual({
-      since: 1800000000000, agent: 'agent:planner', with: 'agent:worker',
+      since: 1800000000000, before: 1800086400000, agent: 'agent:planner', with: 'agent:worker',
       kind: 'ask', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: 'parser fix',
-      excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
+      from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', id: 'm-2', limit: 25,
     });
   });
 
@@ -123,12 +123,15 @@ describe('fleet_agent_messages argument parsing', () => {
       { runsDir: '/tmp' }, { home: '/tmp' }, { after: 0 }, { matched: true },
       { agent: 'has space' }, { agent: '' }, { agent: 5 }, { agent: 'x'.repeat(129) },
       { with: 'has space' }, { with: 5 }, { job: 'has space' }, { job: '' }, { job: 5 },
-      { thread: 'has space' }, { thread: null }, { excludeFrom: null }, { excludeFrom: 'has space' },
+      { thread: 'has space' }, { thread: null }, { from: null }, { from: 'has space' }, { from: 5 },
+      { excludeFrom: null }, { excludeFrom: 'has space' },
       { inReplyTo: 'has space' }, { inReplyTo: '' }, { inReplyTo: 5 }, { inReplyTo: null }, { inReplyTo: 'x'.repeat(129) },
+      { id: 'has space' }, { id: '' }, { id: 5 }, { id: 'x'.repeat(129) },
       { channel: 'Not A Channel' }, { channel: '-lead' }, { channel: 'x'.repeat(33) }, { channel: 5 },
       { kind: 'gossip' }, { kind: 'ASKS' }, { kind: 5 }, { kind: null },
       { priority: 'P4' }, { priority: 'high' }, { priority: 5 },
       { since: 'never' }, { since: 5 }, { since: '' }, { since: '9999999d' },
+      { before: 'never' }, { before: 5 }, { before: '' }, { before: '9999999d' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentMessagesArgs(bad)).toBeNull();
@@ -145,12 +148,12 @@ describe('fleet_agent_messages reader', () => {
     const result = await readFleetAgentMessages(
       parseFleetAgentMessagesArgs({
         agent: 'planner', since: '1800000000000', kind: 'ask',
-        priority: 'P1', job: 'RQ-9', contains: 'Parser Fix', limit: 10,
+        priority: 'P1', job: 'RQ-9', contains: 'Parser Fix', from: 'sender', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'planner', since: 1800000000000, kind: 'ask',
-      priority: 'P1', job: 'RQ-9', contains: 'parser fix', limit: 10,
+      priority: 'P1', job: 'RQ-9', contains: 'parser fix', from: 'sender', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
@@ -193,13 +196,21 @@ describe('fleet_agent_messages MCP tool', () => {
     expect(tool?.description).toContain('no caller root, path or cwd is accepted');
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
     expect(tool?.inputSchema.required).toBeUndefined();
+    expect(tool?.inputSchema.properties?.['since'])
+      .toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['before'])
+      .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['kind'])
       .toMatchObject({ type: 'string', enum: ['ask', 'reply', 'handoff', 'status', 'blocker'] });
     expect(tool?.inputSchema.properties?.['priority'])
       .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
     expect(tool?.inputSchema.properties?.['contains'])
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
+    expect(tool?.inputSchema.properties?.['from'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['inReplyTo'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['limit'])
       .toMatchObject({ type: 'integer', minimum: 1, maximum: 1024, default: 50 });
@@ -208,11 +219,13 @@ describe('fleet_agent_messages MCP tool', () => {
   it.each([
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }], [{ runsDir: '/tmp' }],
     [{ agent: 'has space' }], [{ agent: 5 }], [{ with: 'agent:worker' }], [{ with: 'has space' }],
-    [{ job: 'has space' }], [{ thread: null }], [{ excludeFrom: 'has space' }], [{ inReplyTo: 'has space' }], [{ inReplyTo: 5 }],
+    [{ job: 'has space' }], [{ thread: null }], [{ from: 'has space' }], [{ from: 5 }],
+    [{ excludeFrom: 'has space' }], [{ inReplyTo: 'has space' }], [{ inReplyTo: 5 }],
     [{ channel: 'Not A Channel' }], [{ channel: 5 }],
     [{ kind: 'gossip' }], [{ kind: 'ASKS' }], [{ kind: 5 }],
     [{ priority: 'P4' }], [{ priority: 'high' }], [{ priority: 5 }],
     [{ since: 'never' }], [{ since: 5 }], [{ since: '9999999d' }],
+    [{ before: 'never' }], [{ before: 5 }], [{ before: '' }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ limit: 0 }], [{ limit: 1025 }], [{ limit: 1.5 }], [{ limit: '50' }],
     [{ extra: 1 }],
@@ -234,16 +247,16 @@ describe('fleet_agent_messages MCP tool', () => {
     const agentMessages = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentMessages });
     const { parsed } = await callMessages(client, {
-      agent: 'planner', with: 'agent:worker', since: '1800000000000',
+      agent: 'planner', with: 'agent:worker', since: '1800000000000', before: '1800086400000',
       kind: 'ASK', priority: 'P2', job: 'RQ-9', thread: 't-1',
-      channel: 'fleet-ops', contains: 'Parser Fix', excludeFrom: 'agent:bot',
-      inReplyTo: 'm-9', limit: 10,
+      channel: 'fleet-ops', contains: 'Parser Fix', from: 'agent:sender',
+      excludeFrom: 'agent:bot', inReplyTo: 'm-9', id: 'm-2', limit: 10,
     });
     expect(agentMessages).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'planner', with: 'agent:worker', since: 1800000000000,
+      agent: 'planner', with: 'agent:worker', since: 1800000000000, before: 1800086400000,
       kind: 'ask', priority: 'P2', job: 'RQ-9', thread: 't-1',
-      channel: 'fleet-ops', contains: 'parser fix', excludeFrom: 'agent:bot',
-      inReplyTo: 'm-9', limit: 10,
+      channel: 'fleet-ops', contains: 'parser fix', from: 'agent:sender',
+      excludeFrom: 'agent:bot', inReplyTo: 'm-9', id: 'm-2', limit: 10,
     }));
     expect(parsed).toEqual(payload);
   });

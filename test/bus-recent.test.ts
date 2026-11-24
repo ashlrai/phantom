@@ -67,11 +67,27 @@ describe('phm bus recent', () => {
     expect(read(root, new Date(T0 + 2_000).toISOString(), new Date(T0 + 1_000).toISOString()).messages).toEqual([]);
   });
 
+  it('the shared phm messages filters narrow the digest too', () => {
+    const root = store([[T0, 'leader', 'claude', 'please look at the build'], [T0 + 1_000, 'claude', 'leader', 'on it?'], [T0 + 2_000, 'claude', 'codex', 'RQ-ONE-1 shipped']]);
+    const kind = readBusRecent({ kind: 'ask' }, { root, now: () => NOW });
+    expect(kind.ok && kind.result.messages!.map(m => m.summary)).toEqual(['on it?']);
+    const from = readBusRecent({ from: 'claude' }, { root, now: () => NOW });
+    expect(from.ok && from.result.messages).toHaveLength(2);
+    const job = readBusRecent({ job: 'RQ-ONE-1' }, { root, now: () => NOW });
+    expect(job.ok && job.result.messages!.map(m => m.summary)).toEqual(['RQ-ONE-1 shipped']);
+    const byId = readBusRecent({ id: 'm1' }, { root, now: () => NOW });
+    expect(byId.ok && byId.result.messages!.map(m => m.summary)).toEqual(['on it?']);
+    expect(readBusRecent({ with: 'codex' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
+  });
+
   it('the CLI: help exits 0, a bad flag exits 2', async () => {
     const lines: string[] = [];
     expect(await cmdBusRecent(['--help'], t => lines.push(t))).toBe(0);
     expect(lines[0]).toContain('phm bus recent');
     expect(await cmdBusRecent(['--nope'], () => {}, t => lines.push(t))).toBe(2);
     expect(await cmdBusRecent(['--since', '5m', '--since', '1h'], () => {}, () => {})).toBe(2);
+    expect(await cmdBusRecent(['--kind', 'ask', '--kind', 'reply'], () => {}, () => {})).toBe(2);
+    expect(await cmdBusRecent(['--from'], () => {}, () => {})).toBe(2);
   });
 });

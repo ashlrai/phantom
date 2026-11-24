@@ -216,7 +216,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   library: ['show', 'list', '--kind', '--since', '--q', '--json', '--text', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   tools: ['parity', 'requires', '--needs', '--text', '--help'],
-  messages: ['--since', '--agent', '--limit', '--text', '--help'],
+  messages: ['--since', '--before', '--agent', '--limit', '--text', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', 'exec', 'config', 'mesh', 'tool', '--json', '--help'],
   agentnet: ['peers', 'channels', 'identity', '--json', '--help'],
   amplify: ['status', 'tick', 'goal', '--json', '--help'],

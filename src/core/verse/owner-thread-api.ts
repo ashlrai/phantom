@@ -5,14 +5,14 @@
  * Also exports the best-effort mirror of a desktop inbox post onto the thread. */
 import { join } from 'node:path';
 import { ashlrHome } from '../cloud/store.js';
-import { MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
+import { MASON_THREAD_CHANNEL, MASON_THREAD_SCHEMA, readMasonThread } from '../comms/mason-thread.js';
 import { parseSince } from '../fleet/agent-messages.js';
 import type { LeaderBriefV1 } from '../fleet/leader-job-brief.js';
 import type { ApiModule } from './api-modules.js';
 import { sendJson } from '../web/api.js';
 import { fixedOwnerConfigDir, fixedOwnerRunsDir, loadOwnerThreadSettings, type OwnerThreadSettings } from '../comms/owner-channel.js';
 import { OWNER_CHANNELS, isOwnerChannel, type OwnerChannel } from '../comms/leader-mailbox.js';
-import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
+import { OWNER_THREAD_CONTAINS_MAX, acceptOwnerInbound, isOwnerThreadKey, readOwnerCommsStatus, readOwnerThread, type OwnerThreadMessage, type OwnerThreadOptions, type OwnerThreadResult } from '../comms/owner-thread.js';
 
 export const VERSE_OWNER_THREAD_PATH = '/api/verse/comms/owner-thread';
 /** Read-only "status now" brief for the Leader pane; same dispatch gate as the thread. */
@@ -81,6 +81,9 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       let sinceMs: number | null = null;
       let beforeMs: number | undefined;
+      let channel: string | undefined;
+      let direction: 'inbound' | 'outbound' | undefined;
+      let contains: string | undefined;
       try {
         sinceMs = parseSince(params.get('since') ?? '1d', now);
         const beforeRaw = params.get('before');
@@ -88,6 +91,24 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
           const parsed = parseSince(beforeRaw, now);
           if (parsed === null) { sendJson(res, 400, { error: 'before takes 15m, 2h, 1d, epoch ms or an ISO time.' }); return true; }
           beforeMs = parsed;
+        }
+        const channelRaw = params.get('channel');
+        if (channelRaw !== null) {
+          if (!MASON_THREAD_CHANNEL.test(channelRaw)) { sendJson(res, 400, { error: 'channel takes a lowercase channel name (letters, digits, ".", "_" or "-").' }); return true; }
+          channel = channelRaw;
+        }
+        const directionRaw = params.get('direction');
+        if (directionRaw !== null) {
+          if (directionRaw !== 'inbound' && directionRaw !== 'outbound') { sendJson(res, 400, { error: 'direction must be inbound or outbound.' }); return true; }
+          direction = directionRaw;
+        }
+        const containsRaw = params.get('contains');
+        if (containsRaw !== null) {
+          if (containsRaw.trim() === '' || containsRaw.length > OWNER_THREAD_CONTAINS_MAX) {
+            sendJson(res, 400, { error: `contains takes a non-empty search text of at most ${OWNER_THREAD_CONTAINS_MAX} characters.` });
+            return true;
+          }
+          contains = containsRaw;
         }
       } catch { /* 400 below */ }
       if (sinceMs === null) {
@@ -97,7 +118,10 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
       try {
         const options = runtime(deps);
         sendJson(res, 200, await readMasonThread({ runsDir: options.runsDir, busRoot: deps.busRoot ?? join(ashlrHome(), 'fleet'), owner: options, sinceMs, now,
-          ...(beforeMs === undefined ? {} : { beforeMs }) }));
+          ...(beforeMs === undefined ? {} : { beforeMs }),
+          ...(channel === undefined ? {} : { channel }),
+          ...(direction === undefined ? {} : { direction }),
+          ...(contains === undefined ? {} : { contains }) }));
       } catch {
         sendJson(res, 200, { schema: MASON_THREAD_SCHEMA, unavailable: true });
       }
@@ -140,6 +164,7 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     let since: number | undefined;
     let beforeAt: number | undefined;
     let contains: string | undefined;
+    let replyTo: string | undefined;
     try {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       limit = parseLimit(params.get('limit'));
@@ -185,6 +210,14 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         }
         contains = containsRaw;
       }
+      const replyToRaw = params.get('replyTo');
+      if (replyToRaw !== null) {
+        if (!isOwnerThreadKey(replyToRaw)) {
+          sendJson(res, 400, { error: 'replyTo takes an owner-thread message key.' });
+          return true;
+        }
+        replyTo = replyToRaw;
+      }
     } catch {
       limit = null;
     }
@@ -194,8 +227,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined
-        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}) }
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined || replyTo !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}), ...(replyTo !== undefined ? { replyTo } : {}) }
         : undefined;
       const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);

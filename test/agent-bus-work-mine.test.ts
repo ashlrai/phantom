@@ -14,7 +14,7 @@ import { emptyState } from '../src/core/drive/nodes/state.js';
 import type { BusWorkFeedHold, BusWorkFeedJob } from '../src/core/agents/bus-work-feed-read.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { BusBoard } from '../src/core/fleet/bus-board.js';
-import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
+import { enqueueBusWake, readBusWakes } from '../src/core/fleet/bus-wake-queue.js';
 import { createBusMailbox } from '../src/core/fleet/bus-mailbox.js';
 import { SharedStore } from '../src/core/fleet/shared-store.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -2281,12 +2281,186 @@ describe('readBusWorkMine', () => {
     expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-edge', 'mb-new']);
   });
 
+  it('filters the digest to items recorded before the cutoff across every bounded section', async () => {
+    const t0 = 1_800_000_000_000;
+    const options = setup(t0);
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'nova', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+    const mailboxSend = (id: string): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority: 'P2', ttl: 120_000, body: { text: `legacy ${id}` } }).replayed).toBe(false);
+    };
+
+    // Everything below the cutoff.
+    await announce(options, 'nova', 'RQ-OLD-1', ['queue:RQ-OLD-1'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-MINE-OLD', ['queue:RQ-MINE-OLD']);
+    postClaimable(options, 'w-old');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-OLD',
+      prompt: 'old handoff', id: 'ho-old' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'old question?',
+      thread: 't-old', id: 'ask-old' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'old outbound?',
+      thread: 't-out-old', id: 'out-old' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'old ping',
+      id: 'wk-old' }, options)).toMatchObject({ status: 'posted' });
+    claim(options, 'queue:old-claim', 'atlas', 'test:old', t0);
+    mailboxSend('mb-old');
+
+    // Exactly at the cutoff: the exclusive bound drops the row everywhere it
+    // applies — the mirror of the since test's inclusive edge.
+    const before = t0 + 15_000;
+    options.clock.now = before;
+    postClaimable(options, 'w-edge');
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'edge ping',
+      id: 'wk-edge' }, options)).toMatchObject({ status: 'posted' });
+    claim(options, 'queue:edge-claim', 'atlas', 'test:edge', before);
+    mailboxSend('mb-edge');
+
+    // Past the cutoff.
+    options.clock.now = t0 + 30_000;
+    await announce(options, 'nova', 'RQ-NEW-1', ['queue:RQ-NEW-1'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-MINE-NEW', ['queue:RQ-MINE-NEW']);
+    postClaimable(options, 'w-new');
+    expect(await sendHandoff({ from: 'nova', to: 'atlas', taskId: 'RQ-H-NEW',
+      prompt: 'new handoff', id: 'ho-new' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'nova', to: 'atlas', text: 'new question?',
+      thread: 't-new', id: 'ask-new' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'new outbound?',
+      thread: 't-out-new', id: 'out-new' }, options)).toMatchObject({ status: 'posted' });
+    expect(await sendWakeRequest({ from: 'nova', to: 'atlas', reason: 'new ping',
+      id: 'wk-new' }, options)).toMatchObject({ status: 'posted' });
+    claim(options, 'queue:new-claim', 'atlas', 'test:new', options.clock.now);
+    mailboxSend('mb-new');
+
+    const result = readBusWorkMine('atlas', { ...options, before });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.before).toBe(new Date(before).toISOString());
+    expect(result.since).toBeUndefined();
+    expect(formatBusWorkMine(result)[0]).toContain(`before=${result.before}`);
+
+    // Claims match the lease's recorded started strictly below the cutoff:
+    // the edge lease started exactly at it and the fresh one after it —
+    // both still live at the read clock but outside the window.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:old-claim']);
+
+    // Feed jobs and announced jobs match updatedAt: the two old posts only.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 2 });
+    if (result.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(result.jobs.jobs.map(entry => entry.id).sort()).toEqual(['RQ-MINE-OLD', 'RQ-OLD-1']);
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.announced.status !== 'ok') throw new Error('unreachable');
+    expect(result.announced.items.map(entry => entry.id)).toEqual(['RQ-MINE-OLD']);
+
+    // next and handoffs match the envelope receipt: only the old claimable
+    // post and the old handoff — the edge-time rows drop on the exclusive
+    // bound even though they are still pending.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-old']);
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(result.handoffs.items.map(item => item.id)).toEqual(['ho-old']);
+
+    // Threads waiting on atlas keep only those whose last activity is
+    // strictly before the cutoff: the old ask, handoff and announcement
+    // bucket; awaiting keeps atlas's own old unanswered ask.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 3 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads.items.map(item => item.id).sort())
+      .toEqual(['ho-old', 'job:RQ-OLD-1', 't-old']);
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(result.awaiting.items.map(item => item.id)).toEqual(['t-out-old']);
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+
+    // Inbox and wakes delegate both bounds to their shared reads: inbox
+    // matches receivedAt, so only the strictly-below rows survive — the
+    // edge-time and fresh mail drop on the exclusive bound.
+    const unfiltered = readBusWorkMine('atlas', options);
+    expect(unfiltered.status).toBe('ok');
+    if (unfiltered.status !== 'ok') throw new Error('unreachable');
+    expect(unfiltered.wakes).toMatchObject({ status: 'ok', matched: 5 });
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(5);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['ask-old', 'ho-old', 'post-RQ-OLD-1', 'w-old', 'wk-old']);
+    expect(unfiltered.inbox.status).toBe('ok');
+    if (unfiltered.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(unfiltered.inbox.matched).toBe(12);
+
+    // Wakes matches the hint's queue `at`, which the send path stamps
+    // with wall-clock time rather than the injected clock — derive the
+    // expected count from the stored rows scoped to this agent's hints.
+    const tail = readBusWakes({ root: options.runsRoot });
+    expect(tail.state).toBe('ok');
+    if (tail.state !== 'ok' || unfiltered.wakes.status !== 'ok') throw new Error('unreachable');
+    const scoped = new Set(unfiltered.wakes.wakes.map(row => row.to));
+    expect(result.wakes).toMatchObject({ status: 'ok',
+      matched: tail.wakes.filter(row => row.at < before && scoped.has(row.to)).length });
+
+    // The legacy mailbox matches acceptance strictly below the cutoff:
+    // the edge-time row drops on the exclusive bound.
+    expect(result.mailbox.status).toBe('ok');
+    if (result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox).toMatchObject({ matched: 1, truncated: false });
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-old']);
+  });
+
+  it('reads one [since, before) window when both bounds are set', async () => {
+    const t0 = 1_800_000_000_000;
+    const options = setup(t0);
+    register(options, 'atlas');
+    // Claimable posts stamp receivedAt on the injected clock: below the
+    // window, strictly inside it and above it.
+    options.clock.now = t0;
+    postClaimable(options, 'w-below');
+    options.clock.now = t0 + 10_000;
+    postClaimable(options, 'w-inside');
+    options.clock.now = t0 + 20_000;
+    postClaimable(options, 'w-above');
+
+    const result = readBusWorkMine('atlas', { ...options, since: t0 + 5_000, before: t0 + 15_000 });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.since).toBe(new Date(t0 + 5_000).toISOString());
+    expect(result.before).toBe(new Date(t0 + 15_000).toISOString());
+
+    // next honors both bounds: only the in-window receipt survives — the
+    // lower bound inclusive, the upper exclusive.
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-inside']);
+
+    // inbox honors the same [since, before) window on receivedAt: only
+    // the in-window mail survives — the below-window and above-window
+    // rows drop on the two exclusive bounds.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(1);
+    expect(result.inbox.messages.map(message => message.id))
+      .toEqual(['w-inside']);
+  });
+
   it('rejects a since outside the epoch-ms bound', () => {
     const options = setup();
     register(options, 'atlas');
     for (const since of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
       expect(readBusWorkMine('atlas', { ...options, since }))
         .toEqual({ status: 'invalid', reason: 'invalid-since' });
+    }
+  });
+
+  it('rejects a before outside the epoch-ms bound', () => {
+    const options = setup();
+    register(options, 'atlas');
+    for (const before of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(readBusWorkMine('atlas', { ...options, before }))
+        .toEqual({ status: 'invalid', reason: 'invalid-before' });
     }
   });
 
@@ -3081,6 +3255,37 @@ describe('board section', () => {
     expect(future.threads).toHaveLength(0);
     expect(future.peers).toEqual(['atlas']);
   });
+
+  it('keeps only deliveries strictly before the cutoff and never matches tasks', async () => {
+    const options = setup();
+    register(options, 'atlas');
+    const store = board(options);
+    const threadId = store.createThread('nova', 'Before board').id;
+    store.joinThread('atlas', threadId);
+    await store.post('nova', threadId, 'fresh ping');
+    store.createTask('nova', threadId, 'item-x', 'Undated task');
+
+    // Board deliveries stamp real wall-clock createdAt: a future cutoff keeps
+    // them, a past one drops them on the exclusive bound; tasks keep no
+    // timestamp and never match under either bound.
+    const future = section(readBusWorkMine('atlas', { ...options, before: Date.now() + 60_000 }));
+    expect(future.status).toBe('ok');
+    if (future.status !== 'ok') throw new Error('unreachable');
+    expect(future.deliveries).toMatchObject({ matched: 1, truncated: false });
+    expect(future.deliveries.items[0]).toMatchObject({ summary: 'fresh ping' });
+    expect(future.tasks).toMatchObject({ matched: 0, items: [], truncated: false });
+    expect(future.threads).toHaveLength(1);
+    expect(future.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 1 });
+    expect(future.peers).toEqual(['atlas']);
+
+    const past = section(readBusWorkMine('atlas', { ...options, before: Date.now() - 60_000 }));
+    expect(past.status).toBe('ok');
+    if (past.status !== 'ok') throw new Error('unreachable');
+    expect(past.deliveries).toMatchObject({ matched: 0, items: [], truncated: false });
+    expect(past.tasks).toMatchObject({ matched: 0, items: [], truncated: false });
+    expect(past.threads).toHaveLength(0);
+    expect(past.peers).toEqual(['atlas']);
+  });
 });
 
 describe('formatBusWorkMine', () => {
@@ -3216,6 +3421,23 @@ describe('phm agents bus work mine', () => {
     expect(bad.json).toMatchObject({ error: 'invalid-argument' });
   });
 
+  it('accepts --before, echoes the applied cutoff and rejects a bad value', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const before = Date.now();
+    const result = await run(['work', 'mine', '--before', '2h'], env);
+    expect(result.code).toBe(0);
+    const cutoff = Date.parse(result.json.before);
+    expect(Number.isFinite(cutoff)).toBe(true);
+    // The shared grammar resolves 2h against the read clock: the echoed ISO
+    // cutoff lands within the test's own wall-clock window.
+    expect(cutoff).toBeGreaterThanOrEqual(before - 2 * 3_600_000 - 5_000);
+    expect(cutoff).toBeLessThanOrEqual(Date.now() - 2 * 3_600_000 + 5_000);
+    const bad = await run(['work', 'mine', '--before', 'bogus'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ error: 'invalid-argument' });
+  });
+
   it('accepts --priority, echoes the applied band and rejects a bad value', async () => {
     const env = { PHM_AGENT_ID: 'atlas' };
     await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
@@ -3328,6 +3550,22 @@ describe('seats section', () => {
     // per-record recency exists to filter on, so the section stays whole.
     const result = await readBusWorkMineSeats('atlas', { ...withSeats(options, home),
       since: options.clock.now + 3_600_000 });
+    expect(result).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.seats[0]!.handoffs).toHaveLength(1);
+  });
+
+  it('stays unfiltered under before — handoff records stamp the plan read, not work age', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    writeSeatStore(home, [seatRecord('helper', 'atlas')], { helper: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+
+    // A cutoff in the past would drop every record if it applied: no
+    // per-record recency exists to bound on, so the section stays whole.
+    const result = await readBusWorkMineSeats('atlas', { ...withSeats(options, home),
+      before: options.clock.now - 3_600_000 });
     expect(result).toMatchObject({ status: 'ok', matched: 1 });
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.seats[0]!.handoffs).toHaveLength(1);

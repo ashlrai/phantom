@@ -9,6 +9,7 @@ import { OWNER_CHANNELS, isOwnerChannel } from '../core/comms/leader-mailbox.js'
 import { parseSince } from '../core/fleet/agent-messages.js';
 import {
   OWNER_THREAD_CONTAINS_MAX,
+  isOwnerThreadKey,
   readOwnerCommsStatus,
   readOwnerThread,
   sendOwnerHello,
@@ -17,7 +18,7 @@ import {
   type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -39,7 +40,7 @@ export function ownerThreadOptions(transports: OwnerThreadOptions['transports'] 
 }
 
 /**
- * Parse the shared `--channel`/`--direction`/`--since`/`--before-at`/`--contains` slice
+ * Parse the shared `--channel`/`--direction`/`--since`/`--before-at`/`--contains`/`--reply-to` slice
  * flags into the `OwnerThreadReadFilter` `phm comms thread` and
  * `phm fleet owner-history` both apply, so the live read and the archive
  * read can never disagree about what a flag means. Returns the filter to
@@ -91,6 +92,15 @@ export function parseOwnerThreadFilterArgs(args: string[]): { filter?: OwnerThre
     }
     filter.contains = raw;
   }
+  if (args.includes('--reply-to')) {
+    const raw = args[args.indexOf('--reply-to') + 1];
+    // The exchange key is an idempotency key, not free text: a flag-looking
+    // or out-of-grammar value is a missing key, not an exchange nothing owns.
+    if (raw === undefined || raw.startsWith('--') || !isOwnerThreadKey(raw)) {
+      return { error: '--reply-to takes an owner-thread message key.' };
+    }
+    filter.replyTo = raw;
+  }
   return { ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }
 
@@ -118,7 +128,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;

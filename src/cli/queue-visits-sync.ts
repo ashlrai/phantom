@@ -2,7 +2,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { queueJournalPath, readQueueVisits, recordQueueVisit } from '../core/queue/journal.js';
+import { compactQueueVisits, queueJournalPath, readQueueVisits, recordQueueVisit } from '../core/queue/journal.js';
+import { isQueueVisit, queueVisitKey } from '../core/queue/stats.js';
 import { planVisitSync, queueReadyVisits, queueVisitsFromJobs, VISIT_SYNC_SCHEMA } from '../core/queue/visit-sync.js';
 
 export const QUEUE_VISITS_SYNC_USAGE = `Usage: phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
@@ -53,8 +54,17 @@ export async function cmdQueueVisitsSync(args: string[]): Promise<number> {
     const existing = await readQueueVisits(journalPath);
     const plan = planVisitSync(visits, existing);
     let appended = 0;
+    let compacted = false;
+    let dropped = 0;
     if (parsed.apply) {
       for (const visit of plan.append) { await recordQueueVisit(visit, journalPath); appended++; }
+      // Same bound the daemon pass enforces: the derived visits are the keys
+      // still provable from the evidence windows, so they always survive.
+      const compaction = await compactQueueVisits(journalPath, {
+        now, keepKeys: new Set(visits.filter(isQueueVisit).map(queueVisitKey)),
+      });
+      compacted = compaction.compacted;
+      dropped = compaction.dropped;
     }
     const byStation: Record<string, number> = {};
     for (const v of visits) byStation[v.station] = (byStation[v.station] ?? 0) + 1;
@@ -63,13 +73,13 @@ export async function cmdQueueVisitsSync(args: string[]): Promise<number> {
       applied: parsed.apply,
       jobs: { path: jobsPath, state: 'ok', rows: fold.rows, ignored: fold.ignored, invalid: fold.invalid },
       queue: { path: queuePath, state: queueText === null ? 'missing' : 'ok', readyVisits: readyVisits.length },
-      journal: { path: journalPath, snapshots: existing.length },
+      journal: { path: journalPath, snapshots: existing.length, compacted, dropped },
       derived: { visits: visits.length, byStation },
       plan: { append: plan.append.length, unchanged: plan.unchanged, regression: plan.regression, appended },
     };
     if (parsed.json) { console.log(JSON.stringify(report)); return 0; }
     console.log(`queue visits-sync: ${visits.length} derived (${Object.entries(byStation).map(([s, n]) => `${s}=${n}`).join(' ') || 'none'})`);
-    console.log(`journal: ${existing.length} snapshots; plan append=${plan.append.length} unchanged=${plan.unchanged} regression=${plan.regression}${parsed.apply ? ` appended=${appended}` : ' (dry run; pass --apply to write)'}`);
+    console.log(`journal: ${existing.length} snapshots; plan append=${plan.append.length} unchanged=${plan.unchanged} regression=${plan.regression}${parsed.apply ? ` appended=${appended}${compacted ? ` compacted (dropped ${dropped})` : ''}` : ' (dry run; pass --apply to write)'}`);
     if (queueText === null) console.log(`queue file unreadable at ${queuePath}; live READY visits skipped`);
     return 0;
   } catch (error) {
