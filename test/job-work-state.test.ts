@@ -26,11 +26,11 @@ describe('readJobWorkState', () => {
     const r = await readJobWorkState(JOB, { runsDir: await host({ 'queue/router-queue.md': `- READY ${JOB} fix the docs\n` }) });
     expect(r).toMatchObject({ state: 'RECEIVED', as_of: AT.toISOString(), source: 'queue/router-queue.md', owner: null });
   });
-  it('a lane in ready.tsv is ASSIGNED to that lane', async () => {
+  it('a lane in ready.tsv is queue context, not an assignment', async () => {
     const tsv = `id\tstatus\tpool\trepo\n${JOB}\tREADY\tclaude\tphantom\n`;
     const r = await readJobWorkState(JOB, { runsDir: await host({ 'queue/router-queue.md': `- READY ${JOB} x\n`, 'queue/ready.tsv': tsv }) });
-    expect(r).toMatchObject({ state: 'ASSIGNED', owner: 'claude', source: 'queue/ready.tsv' });
-    expect(formatWorkState(r)).toBe(`${JOB}: ASSIGNED to claude (as of ${AT.toISOString()}, source queue/ready.tsv)`);
+    expect(r).toMatchObject({ state: 'RECEIVED', owner: null, source: 'queue/ready.tsv' });
+    expect(formatWorkState(r)).toBe(`${JOB}: RECEIVED - queued for lane claude; lane is a queue destination, not an assigned owner (as of ${AT.toISOString()}, source queue/ready.tsv)`);
   });
   it('launched with no exit code is RUNNING', async () => {
     const r = await readJobWorkState(JOB, { runsDir: await host({ [`queue/run/${JOB}.launches`]: 'launch 1\n' }) });

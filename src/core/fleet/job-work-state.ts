@@ -27,9 +27,9 @@ export interface JobWorkState {
   as_of: string | null;
   /** The file that decided it, relative to the runs folder. */
   source: string | null;
-  /** The lane for ASSIGNED, when one is named. */
+  /** Named owner for ASSIGNED, when supported by durable evidence. */
   owner: string | null;
-  /** Plain words: the PR url (VERIFIED) or the reason (BLOCKED). */
+  /** Plain words describing the result, block, or queue context. */
   detail: string | null;
   evidence: string[];
 }
@@ -87,11 +87,15 @@ export function workStateOf(e: WorkStateEvidence): JobWorkState {
   }
   const ready = e.readyTsv ? parseReadyTsv(e.readyTsv.text).rows.find(r => r.id === e.job) : undefined;
   if (e.readyTsv && ready?.pool) {
-    return make('ASSIGNED', e.readyTsv, 'queue/ready.tsv', { owner: ready.pool, evidence: [`queued for lane ${ready.pool}`] });
+    const detail = `queued for lane ${ready.pool}; lane is a queue destination, not an assigned owner`;
+    return make('RECEIVED', e.readyTsv, 'queue/ready.tsv', { detail, evidence: [detail] });
   }
   if (e.routerQueue) {
     const line = e.routerQueue.text.split(/\r?\n/).find(l => new RegExp(`^- CLAIMED ${e.job.replace(/[.]/g, '\\.')}(\\s|$)`).test(l));
-    if (line) return make('ASSIGNED', e.routerQueue, 'queue/router-queue.md', { evidence: ['marked CLAIMED, no lane named'] });
+    if (line) {
+      const detail = 'marked CLAIMED, but named owner and durable claim/task receipt are not evidenced';
+      return make('RECEIVED', e.routerQueue, 'queue/router-queue.md', { detail, evidence: [detail] });
+    }
     if (readyJobs(e.routerQueue.text).some(j => j.id === e.job)) {
       return make('RECEIVED', e.routerQueue, 'queue/router-queue.md', { evidence: ['READY in the queue, no lane yet'] });
     }
