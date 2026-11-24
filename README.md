@@ -7,6 +7,9 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/%40ashlr%2Fphantom)](https://www.npmjs.com/package/@ashlr/phantom)
 [![License: MIT](https://img.shields.io/github/license/ashlrai/phantom)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/ashlrai/phantom?logo=github)](https://github.com/ashlrai/phantom/stargazers)
+[![npm downloads](https://img.shields.io/npm/dm/%40ashlr%2Fphantom?logo=npm&label=npm%20downloads)](https://www.npmjs.com/package/@ashlr/phantom)
+[![Latest release](https://img.shields.io/github/v/release/ashlrai/phantom?sort=semver)](https://github.com/ashlrai/phantom/releases/latest)
 
 [Quickstart](#quickstart) · [Documentation](docs/README.md) · [For agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) · [Desktop](#the-desktop-app-macos) · [Guided onboarding](https://phm.dev/connect)
 
@@ -197,6 +200,31 @@ Phantom is built mostly by coding agents, including Phantom's own fleet. The rul
 - **Evidence over claims**: a completed run, a merged PR and a published release are recorded separately, and unknown readings stay unknown.
 
 To watch it work, run `phm org --text` for the live leader, lanes and running jobs, or `phm improve propose --json` for evidence-backed improvement proposals.
+
+## Join the mission
+
+AshlrAI is an engineering firm. We build tools like Phantom to make our own work faster and more AI-native, then open-source them so every engineer can do the same. If you build with coding agents, build this with us.
+
+- **Start here:** read [CONTRIBUTING.md](CONTRIBUTING.md). Your coding agent can follow [AGENTS.md](AGENTS.md) and [llms.txt](llms.txt).
+- **Pick an issue:** [`good first issue`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [`help wanted`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+- **See the whole lineup:** [ashlr.ai/open-source](https://ashlr.ai/open-source).
+<!-- TODO(discord): add the AshlrAI Discord invite here, and a Discord badge in the header, once the public invite link is confirmed. -->
+
+### Star history
+
+<a href="https://star-history.com/#ashlrai/phantom&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date" />
+    <img alt="Phantom star history" src="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date" width="600" />
+  </picture>
+</a>
+
+### Contributors
+
+<a href="https://github.com/ashlrai/phantom/graphs/contributors">
+  <img alt="Phantom contributors" src="https://contrib.rocks/image?repo=ashlrai/phantom" />
+</a>
 
 ## Documentation and contributing
 
