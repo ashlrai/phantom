@@ -535,6 +535,34 @@ describe('outcome learning', () => {
         .toMatchObject({ attempts: 6, merges: 5, reverted: 0 });
     });
 
+    it('surfaces recurring reverted merges as a revert improvement job', () => {
+      const ledger = [
+        // Three merges the fleet's own revert evidence proved did not hold,
+        // beside three held merges: the cell's held-merge rate stays healthy
+        // (low-merge stays quiet) but the undone work is a recurring failure
+        // of its own — the pattern the revert counts existed for.
+        ...[1, 2, 3].flatMap((n) => [
+          JSON.stringify({ event: 'launch', job: `J-V${n}`, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T00:00:00+00:00' }),
+          JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `J-V${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${n}`, outcome: 'MERGED', mergedAt: '2026-11-01T01:00:00+00:00', ts: '2026-11-01T01:01:00+00:00' }),
+          JSON.stringify({ event: 'revert', job: `J-V${n}`, lane: 'devin', ts: '2026-11-01T05:00:00+00:00' }),
+        ]),
+        ...[1, 2, 3].flatMap((n) => [
+          JSON.stringify({ event: 'launch', job: `J-H${n}`, repo: 'phantom', lane: 'devin', tier: 'work', model: 'swe-2-max', ts: '2026-11-01T02:00:00+00:00' }),
+          JSON.stringify({ event: 'publish', source: 'metrics-outcomes-reconciler', jobId: `J-H${n}`, prUrl: `https://github.com/ashlrai/phantom/pull/${10 + n}`, outcome: 'MERGED', mergedAt: '2026-11-01T03:00:00+00:00', ts: '2026-11-01T03:01:00+00:00' }),
+        ]),
+      ].join('\n');
+      const view = outcomeLearningView(learnFleetOutcomes(null, ledger));
+      const cell = view.cells.find((c) => c.resource === 'devin' && c.jobType === 'work');
+      expect(cell).toMatchObject({ attempts: 6, merges: 3, goodMerges: 3, reverted: 3 });
+      expect(view.improvementJobs).toHaveLength(1);
+      expect(view.improvementJobs[0]).toMatchObject({
+        pattern: 'revert', resource: 'devin', model: 'swe-2-max', jobType: 'work', repo: 'phantom', attempts: 6,
+      });
+      expect(view.improvementJobs[0]!.rate).toBeCloseTo(0.5);
+      expect(view.improvementJobs[0]!.title).toContain('reverted');
+      expect(view.improvementJobs[0]!.task).toContain('did not hold');
+    });
+
     it('counts merge-queue friction through each verdict\'s own PR claim', () => {
       const ledger = [
         // J-Q1 merged pull/61 — recorded conflicts plus a required-check

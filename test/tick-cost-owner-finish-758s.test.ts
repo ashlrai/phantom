@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetTickCost } from '../src/cli/fleet-tick-cost.js';
+import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
@@ -59,4 +60,11 @@ it('handles help and invalid options and identifies the executable registration 
   expect(error).toHaveBeenCalled();
   expect(resolveFleetSubcommand('tick-cost')).toEqual({ module: './fleet-tick-cost.js', exportName: 'cmdFleetTickCost' });
   expect(FLEET_SUBCOMMAND_LOADERS['tick-cost']).toBeUndefined();
+});
+
+it('fleet entry refuses tick-cost as an unregistered subcommand', async () => {
+  const error = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  expect(await cmdFleet(['tick-cost', '--json'])).toBe(2);
+  expect(error.mock.calls.map(c => String(c[0])).join('')).toContain('unknown fleet subcommand: tick-cost');
 });

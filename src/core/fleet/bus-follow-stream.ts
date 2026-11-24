@@ -4,8 +4,8 @@ import { isAbsolute } from 'node:path';
 import { BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxPage } from './bus-inbox.js';
 import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches,
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
-import { agentAddressMatcher, agentPendingAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from '../agents/bus-unified.js';
+import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
 import { busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
@@ -33,6 +33,18 @@ export interface BusFollowRequest {
    * keep exact-label matching, so unknown identity state never widens the
    * stream. Filtering is not authentication. */
   to?: string;
+  /** Optional channel filter: keeps only envelopes addressed to
+   * `group:<channel>:*` — the room's whole traffic under every topic, the
+   * same raw `to`-prefix rule `phm messages --channel`, `agents bus wakes
+   * --channel`, `channel read` and the work feed's `--channel` apply, so
+   * one room's stream is a single flag instead
+   * of one `--to group:<channel>:<topic>` per topic. The value is the strict
+   * channel-name grammar; matching is a raw prefix on the routing label, so
+   * it needs no registry and never widens on unknown state — the addressed
+   * `agents bus inbox --channel` resolves the same prefix only across
+   * channels the agent belongs to. Checkpoints
+   * still advance past filtered rows exactly like every other filter. */
+  channel?: string;
   /** Optional job filter: the same `busBodyJobMatch` citation rule
    * `agents bus inbox --job` applies — a `work.post`/`work.status`/
    * `work.result`/`wake` body declaring the `jobId`, a `worker-handoff`
@@ -41,14 +53,14 @@ export interface BusFollowRequest {
    * no job and never matches; checkpoints still advance past filtered rows
    * exactly like `--to`, so a job-scoped stream resumes on the same cursor. */
   job?: string;
-  /** Optional sender filter: the same `agentAddressMatcher` rule
+  /** Optional sender filter: the same `agentRefAddressMatcher` rule
    * `agents bus inbox --from` and `comms bus read --from` apply — a handle,
    * `agent:` address, stable id or alias resolves through the registry to
    * every label of that identity; a sender resolving to no identity and an
    * unreadable registry keep exact-label matching, so unknown identity state
    * never widens the stream. Filtering is not authentication. */
   from?: string;
-  /** Optional sender-exclusion filter: the same `agentAddressMatcher` rule
+  /** Optional sender-exclusion filter: the same `agentRefAddressMatcher` rule
    * `comms bus read|watch --exclude-from` and `fleet_bus_inbox`'s `excludeFrom`
    * apply — a handle, `agent:` address, stable id or alias resolves through
    * the registry to every label of that identity; a sender resolving to no
@@ -69,6 +81,12 @@ export interface BusFollowRequest {
    * never emit, the same inclusive `receivedAt >= since` match
    * `agents bus inbox --since` resolves its grammar to once per read. */
   since?: number;
+  /** Optional received-at ceiling in epoch ms: rows received at or after the
+   * cutoff never emit — the exclusive `receivedAt < before` match
+   * `comms bus read|watch --before` and `fleet_bus_inbox`'s `before` apply,
+   * composing with `since` into one `[since, before)` window where a row
+   * stamped exactly at either bound never matches. */
+  before?: number;
   /** Optional text filter: the same `busReadContainsMatch` rule
    * `agents bus inbox --contains`, `channel read --contains`,
    * `comms bus read|watch --contains` and `phm messages --contains`
@@ -85,9 +103,11 @@ export interface BusFollowRequest {
    * filtered rows exactly like every other filter. */
   id?: string;
   /** Optional reply-correlation filter: only envelopes whose object body
-   * carries `inReplyTo` equal to this id emit — the same own-property,
-   * case-sensitive match `comms bus read|watch --in-reply-to` and
-   * `fleet_bus_inbox`'s `inReplyTo` apply. An application convention, not
+   * carries `inReplyTo` equal to this id emit — the shared
+   * `busBodyInReplyToMatch` own-property, case-sensitive match `comms bus
+   * read|watch --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`, `phm
+   * messages --in-reply-to`, `agents bus inbox --in-reply-to` and
+   * `channel read --in-reply-to` apply. An application convention, not
    * an envelope field or authenticated identity; checkpoints still advance
    * past filtered rows exactly like every other filter. */
   inReplyTo?: string;
@@ -115,12 +135,14 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
   return Number.isSafeInteger(request.after) && request.after >= 0 &&
     Number.isSafeInteger(request.durationMs) && request.durationMs >= 1 && request.durationMs <= BUS_FOLLOW_MAX_DURATION_MS &&
     (request.to === undefined || label(request.to)) &&
+    (request.channel === undefined || agentChannelNameSchema.safeParse(request.channel).success) &&
     (request.job === undefined || label(request.job)) &&
     (request.from === undefined || label(request.from)) &&
     (request.excludeFrom === undefined || label(request.excludeFrom)) &&
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
+    (request.before === undefined || (Number.isSafeInteger(request.before) && request.before >= 0)) &&
     busReadContains(request.contains) !== null &&
     (request.id === undefined || label(request.id)) &&
     (request.inReplyTo === undefined || label(request.inReplyTo)) &&
@@ -195,12 +217,11 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
   const list = deps.list ?? listBusInboxAfter;
   const options = { root: request.root, now: deps.now };
   const registryRead = readAgentRegistry({ root: request.root });
-  const addressedTo = request.to === undefined ? () => true
-    : agentPendingAddressMatcher(request.to, registryRead.status === 'ok' ? registryRead.registry : undefined);
-  const fromMatch = request.from === undefined ? undefined
-    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.from);
-  const excludeFromMatch = request.excludeFrom === undefined ? undefined
-    : agentAddressMatcher(registryRead.status === 'ok' ? labelIdentityOf(registryRead.registry) : undefined, request.excludeFrom);
+  const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
+  const addressedTo = request.to === undefined ? () => true : agentPendingAddressMatcher(request.to, registry);
+  const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
+  const fromMatch = request.from === undefined ? undefined : agentRefAddressMatcher(request.from, registry);
+  const excludeFromMatch = request.excludeFrom === undefined ? undefined : agentRefAddressMatcher(request.excludeFrom, registry);
   // The request passed validBusFollowRequest, so the needle is normalized text or absent.
   const containsNeedle = busReadContains(request.contains) ?? undefined;
   const emit = async (record: BusFollowRecord): Promise<boolean> => {
@@ -220,12 +241,9 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
       let accepted = true;
       for (const row of page.messages) {
         if (!addressedTo(row.envelope.to, row.envelope.from)) continue;
+        if (channelPrefix !== undefined && !row.envelope.to.startsWith(channelPrefix)) continue;
         if (request.id !== undefined && row.envelope.id !== request.id) continue;
-        if (request.inReplyTo !== undefined) {
-          const body = row.envelope.body;
-          if (body === null || typeof body !== 'object' || Array.isArray(body) ||
-            !Object.hasOwn(body, 'inReplyTo') || body.inReplyTo !== request.inReplyTo) continue;
-        }
+        if (request.inReplyTo !== undefined && !busBodyInReplyToMatch(row.envelope.body, request.inReplyTo)) continue;
         if (request.job !== undefined && !busBodyJobMatch(row.envelope.body, request.job)) continue;
         if (fromMatch !== undefined && !fromMatch(row.envelope.from)) continue;
         if (excludeFromMatch !== undefined && excludeFromMatch(row.envelope.from)) continue;
@@ -234,6 +252,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
+        if (request.before !== undefined && row.receivedAt >= request.before) continue;
         if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;
         if (!(await emit({ type: 'message', cursor: row.cursor, receivedAt: row.receivedAt, envelope: row.envelope }))) {
           status = aborted() ? 'cancelled' : 'output-unavailable';

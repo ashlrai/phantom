@@ -7,19 +7,29 @@
  * work-feed --json`): ok and refused answers return 200 with the projection's
  * own status; unreadable or invalid storage returns 503. It accepts `claims=true`
  * plus the same filter parameters the feed CLIs take — `status`, `job`, `repo`,
- * `provider`, `tier`, `to`, `owner`, `since`, `contains`, `open` and `claimable`,
+ * `provider`, `tier`, `to`, `owner`, `since`, `before`, `contains`, `channel`,
+ * `open` and `claimable`,
  * each validated by the shared `parseBusWorkFeedQuery` rules and applied through
  * the same `projectBusWorkFeedView` the CLIs use (`open`/`claimable` imply the
  * claims join); `limit` pages the filtered view through the shared
  * `sliceBusWorkFeedView` (1..200, reporting `matched`/`omitted`), and any other
  * parameter or value is a 400.
- * GET /api/verse/agent-bus/messages[?since=15m&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&channel=eng&contains=parser&excludeFrom=grok&limit=50] is the same
+ * GET /api/verse/agent-bus/messages[?since=15m&before=2h&agent=claude&with=leader&kind=ask&priority=P0&job=RQ-1&thread=t-1&channel=eng&contains=parser&from=claude&excludeFrom=grok&inReplyTo=m-1&id=m-2&limit=50] is the same
  * read as `phm messages` (agent-messages.ts): newest first, scrubbed summaries.
+ * `before` keeps only messages received strictly before its cutoff on the same
+ * grammar `since` takes — the exclusive upper bound composing with `since`
+ * into one [since, before) window on the receipt time, the same rule every
+ * other bus read's `--before` applies.
  * `contains` is a case-insensitive substring over each scrubbed summary;
  * `channel` keeps only posts addressed to `group:<channel>:*` — the room's
  * whole traffic under every topic;
- * `excludeFrom` drops the messages one sender wrote, by the same
- * sender-exclusion rule the other bus reads apply.
+ * `from` keeps only the messages one sender wrote and `excludeFrom` drops
+ * them, by the same sender rules the other bus reads apply; `inReplyTo` keeps only
+ * envelopes whose object body cites that envelope id through its own
+ * `inReplyTo` field — the same own-property exact match the raw bus reads
+ * apply; `id` keeps only the envelope whose own wire id is strictly equal
+ * to the value — the same exact-envelope match those raw reads' `id`
+ * filter applies.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -60,7 +70,7 @@ const WORK_FEED = `${PATH}/work-feed`;
 /** The query keys the work-feed read accepts — the `claims` hold join, the
  * filter set `parseBusWorkFeedQuery` validates into `projectBusWorkFeedView`,
  * and the `limit` page bound `sliceBusWorkFeedView` applies after it. */
-const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'contains', 'open', 'claimable', 'limit'] as const;
+const WORK_FEED_PARAMS = ['claims', 'status', 'job', 'repo', 'provider', 'tier', 'to', 'owner', 'since', 'before', 'contains', 'channel', 'open', 'claimable', 'limit'] as const;
 const NEEDS_MASON_RESOLVE = `${NEEDS_MASON}/resolve`;
 const ASKS = `${NEEDS_MASON}/asks`;
 const ASKS_ANSWER = `${ASKS}/answer`;
@@ -129,7 +139,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'excludeFrom', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -152,11 +162,15 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
         sendJson(res, paged.status === 'ok' || paged.status === 'refused' ? 200 : 503, { v: 1, ...paged });
       } else if (path === MESSAGES) {
         const parsed = parseAgentMessagesQuery({ since: params.get('since') ?? undefined,
+          before: params.get('before') ?? undefined,
           agent: params.get('agent') ?? undefined, with: params.get('with') ?? undefined,
           kind: params.get('kind') ?? undefined, priority: params.get('priority') ?? undefined,
           job: params.get('job') ?? undefined, thread: params.get('thread') ?? undefined,
           channel: params.get('channel') ?? undefined,
-          contains: params.get('contains') ?? undefined, excludeFrom: params.get('excludeFrom') ?? undefined,
+          contains: params.get('contains') ?? undefined, from: params.get('from') ?? undefined,
+          excludeFrom: params.get('excludeFrom') ?? undefined,
+          inReplyTo: params.get('inReplyTo') ?? undefined,
+          id: params.get('id') ?? undefined,
           limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);

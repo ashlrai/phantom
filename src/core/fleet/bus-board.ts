@@ -10,6 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AshlrConfig } from '../types.js';
+import { ashlrHome } from '../cloud/store.js';
+import { loadConfigReadOnlyStrict } from '../config.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { writePrivateFileAtomically } from '../util/private-file-write.js';
 import { assurePrivateStoragePath } from '../util/private-storage.js';
@@ -159,6 +161,26 @@ export interface BusBoardOptions {
   peers?: readonly { id: string }[] | null;
 }
 
+/**
+ * Optional read slice for the thread delivery reads (`readThread`, `hops`):
+ * `sinceMs`/`beforeMs` are the same `[since, before)` window on each
+ * delivery's `createdAt` every bus read's `--since`/`--before` applies, and
+ * `contains` the same normalized `--contains` needle over the post text
+ * `busBoardDeliveryText` extracts — the filters `board pending` takes,
+ * scoped to the fields a thread read carries.
+ */
+export interface BusBoardDeliveryFilter {
+  sinceMs?: number;
+  beforeMs?: number;
+  contains?: string;
+}
+
+/** Optional read slice for `receipts`: the same `[since, before)` window on each receipt's `receivedAt`. */
+export interface BusBoardReceiptFilter {
+  sinceMs?: number;
+  beforeMs?: number;
+}
+
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_RECORDS = 10_000;
 /** Item rows one pending digest section shows; `matched` keeps the true totals. */
@@ -178,6 +200,32 @@ function boardBody(value: unknown): string {
     throw new Error('Bus content must be 1..16384 bytes');
   }
   return value;
+}
+
+/**
+ * The normalized `--contains` needle every board read shares — lowercase,
+ * whitespace collapsed, trimmed — matched over scrubbed display text so a
+ * secret-shaped value stays unfindable; a blank needle is the empty
+ * substring and narrows nothing. Undefined means no filter was given.
+ */
+function boardContainsMatcher(contains: string | undefined): ((value: string) => boolean) | undefined {
+  if (contains === undefined) return undefined;
+  const needle = contains.toLowerCase().replace(/\s+/g, ' ').trim();
+  return (value: string) => scrubSecrets(value).toLowerCase().replace(/\s+/g, ' ').includes(needle);
+}
+
+/**
+ * The shared `[since, before)` recorded-time window on one stored ISO
+ * timestamp — `sinceMs` inclusive, `beforeMs` exclusive, an unparseable
+ * timestamp satisfying neither bound; the same rule `pendingDigest`
+ * applies to delivery `createdAt` and `receipts` to `receivedAt`.
+ */
+function boardTimeWindowHit(at: string, sinceMs?: number, beforeMs?: number): boolean {
+  if (sinceMs === undefined && beforeMs === undefined) return true;
+  const parsed = Date.parse(at);
+  return Number.isFinite(parsed) &&
+    (sinceMs === undefined || parsed >= sinceMs) &&
+    (beforeMs === undefined || parsed < beforeMs);
 }
 
 /**
@@ -375,10 +423,18 @@ export class BusBoard {
     });
   }
 
-  listThreads(actor: string): BusThreadView[] {
+  /**
+   * The threads `actor` joined. `contains`, when given, is the normalized
+   * `--contains` needle `board pending` applies — a thread stays only when
+   * its stored title carries it under the same scrubbed display-text rule;
+   * threads record no timestamp, so no time bound applies here.
+   */
+  listThreads(actor: string, contains?: string): BusThreadView[] {
     actor = this.peer(actor);
+    const textHit = boardContainsMatcher(contains);
     return this.transaction(false, (state) => state.threads
-      .filter((thread) => thread.members.includes(actor))
+      .filter((thread) => thread.members.includes(actor) &&
+        (textHit === undefined || textHit(thread.title)))
       .map((thread) => ({
         id: thread.id, members: [...thread.members],
         content: { trust: 'untrusted', text: presentBusBoardText(thread.title) },
@@ -417,14 +473,27 @@ export class BusBoard {
     return { delivered: deliveries.length, envelopeIds: deliveries.map((d) => d.id), unlogged };
   }
 
-  readThread(actor: string, threadId: string, pendingOnly = false): BusBoardDelivery[] {
+  /**
+   * The thread's stored deliveries addressed to `actor`; `pendingOnly`
+   * narrows to rows no receipt acknowledges. `filter` takes the same
+   * optional reads `board pending` applies — `sinceMs`/`beforeMs` keep only
+   * deliveries whose `createdAt` falls inside the `[since, before)` window
+   * and `contains` keeps only posts whose `busBoardDeliveryText` carries
+   * the normalized needle — so a thread read narrows exactly the way the
+   * digest does. `content.text` still returns the re-wrapped untrusted
+   * display frame; filtering never acknowledges anything.
+   */
+  readThread(actor: string, threadId: string, pendingOnly = false, filter?: BusBoardDeliveryFilter): BusBoardDelivery[] {
     actor = this.peer(actor);
+    const textHit = boardContainsMatcher(filter?.contains);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
       const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
       return state.deliveries
         .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor &&
-          (!pendingOnly || !acknowledged.has(delivery.id)))
+          (!pendingOnly || !acknowledged.has(delivery.id)) &&
+          boardTimeWindowHit(delivery.createdAt, filter?.sinceMs, filter?.beforeMs) &&
+          (textHit === undefined || textHit(busBoardDeliveryText(delivery))))
         .map((delivery) => ({
           ...delivery,
           content: { trust: 'untrusted' as const, text: presentBusBoardText(delivery.content.text) },
@@ -448,18 +517,26 @@ export class BusBoard {
     });
   }
 
-  /** Only the sender sees receipt metadata for its own deliveries. */
-  receipts(actor: string, threadId: string): BoardReceipt[] {
+  /**
+   * Only the sender sees receipt metadata for its own deliveries.
+   * `filter.sinceMs`/`beforeMs` keep only receipts whose `receivedAt` falls
+   * inside the same `[since, before)` window every bus read applies.
+   */
+  receipts(actor: string, threadId: string, filter?: BusBoardReceiptFilter): BoardReceipt[] {
     actor = this.peer(actor);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
       const sent = new Set(state.deliveries.filter((row) => row.threadId === threadId && row.sender === actor).map((row) => row.id));
-      return (state.receipts ?? []).filter((row) => sent.has(row.deliveryId)).map((row) => ({ ...row }));
+      return (state.receipts ?? [])
+        .filter((row) => sent.has(row.deliveryId) &&
+          boardTimeWindowHit(row.receivedAt, filter?.sinceMs, filter?.beforeMs))
+        .map((row) => ({ ...row }));
     });
   }
 
-  hops(actor: string, threadId: string): BusBoardHop[] {
-    return this.readThread(actor, threadId).map(busBoardHop);
+  /** The metadata-only hop projection of `readThread` under the same optional filters. */
+  hops(actor: string, threadId: string, filter?: BusBoardDeliveryFilter): BusBoardHop[] {
+    return this.readThread(actor, threadId, false, filter).map(busBoardHop);
   }
 
   /**
@@ -469,12 +546,18 @@ export class BusBoard {
    * the queue shows no live claim — a claim attempt still passes through
    * `claimTask`'s own fences. Deliveries and tasks cap their item lists;
    * `matched` keeps the true totals. Reading never acknowledges anything.
+   * `jobId`, `contains`, `sinceMs` and `beforeMs` are the same optional
+   * filters `pendingFor`/`pendingAll` take, applied by the shared
+   * `pendingDigest` under identical rules, so `phm bus board pending`
+   * narrows exactly the way `work mine`'s board section and
+   * `fleet_bus_board` do; `now` is the epoch-ms instant task holds
+   * evaluate against (default `Date.now()`).
    */
-  pending(actor: string): BusBoardPending {
+  pending(actor: string, now = Date.now(), jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPending {
     actor = this.peer(actor);
     return this.transaction(false, (state) => ({
       peer: actor,
-      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), Date.now())),
+      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs, beforeMs)),
     }));
   }
 
@@ -514,14 +597,20 @@ export class BusBoard {
    * match, the same "unknown stays out" rule the unified inbox applies; a
    * thread rollup then lists only while it still holds a surviving
    * delivery, since the rollup itself keeps no time of its own.
+   * `beforeMs`, when given, is the exclusive upper bound every bus read's
+   * `--before` shares on the same `createdAt` field: deliveries keep only
+   * posts recorded strictly before it, composing with `sinceMs` into one
+   * `[since, before)` window where a delivery stamped exactly at the upper
+   * bound never matches; tasks stay unmatchable under any time bound and
+   * thread rollups keep the same surviving-delivery rule.
    */
-  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number): BusBoardPendingPeers {
+  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs);
       const known = new Set(digest.members);
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
@@ -538,16 +627,26 @@ export class BusBoard {
    * read with every thread member as the label set, so every unacknowledged
    * delivery (a delivery's recipient is always a joined member) and every
    * task on every thread lists — the pending board `phm comms inbox`
-   * projects, where `pendingFor` still requires knowing peer labels ahead of
-   * time and `pending` only one. `peers` reports every member label the
-   * board knows, sorted. Item `content.text` stays the stored untrusted
-   * text, exactly like `pendingFor`; reading never acknowledges anything and
-   * grants no authority.
+   * projects and `fleet_bus_board` serves, where `pendingFor` still
+   * requires knowing peer labels ahead of time and `pending` only one.
+   * `jobId`, `contains`, `sinceMs` and `beforeMs` are the same optional
+   * filters `pendingFor` takes, applied by the shared `pendingDigest`
+   * under identical rules: `jobId` narrows the digest to threads carrying
+   * a task whose `itemId` cites it — and `peers` then reports only that
+   * job's thread members — `contains` the normalized `--contains` needle
+   * over the same scrubbed display text, `sinceMs` the epoch-ms cutoff
+   * deliveries must reach while tasks never match, and `beforeMs` the
+   * exclusive upper bound on the same `createdAt` field composing with
+   * `sinceMs` into one `[since, before)` window. `peers` reports every
+   * member label the board knows under the applied scope, sorted. Item
+   * `content.text` stays the stored untrusted text, exactly like
+   * `pendingFor`; reading never acknowledges anything and grants no
+   * authority.
    */
-  pendingAll(now?: number): BusBoardPendingPeers {
+  pendingAll(now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPendingPeers {
     return this.transaction(false, (state) => {
       const labels = new Set(state.threads.flatMap((thread) => thread.members));
-      const digest = this.pendingDigest(state, labels, now ?? Date.now());
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs);
       return {
         peers: digest.members,
         claims: digest.claims,
@@ -577,9 +676,16 @@ export class BusBoard {
    * timestamp, so under a time filter the task list is provably empty
    * rather than padded with undated rows; a thread rollup keeps only while
    * a surviving delivery remains, the rollup itself carrying no time.
+   * `beforeMs` is the exclusive `--before` upper bound on the same
+   * `createdAt` field: a delivery matches only when its parsed time is
+   * strictly below the cutoff, so `sinceMs`/`beforeMs` read one
+   * `[since, before)` window — the lower bound stays inclusive, the upper
+   * exclusive, and an unparseable `createdAt` never satisfies either bound.
+   * Tasks stay unmatchable under either bound and the thread rollup rule is
+   * unchanged.
    */
   private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number,
-    jobId?: string, contains?: string, sinceMs?: number): BusBoardDigest {
+    jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
     const jobThreads = jobId === undefined ? undefined : new Set(
@@ -589,20 +695,18 @@ export class BusBoard {
       (jobThreads === undefined || jobThreads.has(thread.id)));
     const joinedIds = new Set(joined.map((thread) => thread.id));
 
-    // The needle normalizes once — lowercase, whitespace collapsed, trimmed —
-    // the same form every bus read's --contains applies; a blank needle is
-    // the empty substring and narrows nothing.
-    const needle = contains?.toLowerCase().replace(/\s+/g, ' ').trim();
-    const textHit = (value: string): boolean =>
-      needle === undefined ||
-      scrubSecrets(value).toLowerCase().replace(/\s+/g, ' ').includes(needle);
+    // The shared helpers carry the one --contains/--since/--before rule
+    // every board read applies: scrubbed normalized display text for the
+    // needle, the [since, before) window on createdAt for the bounds.
+    const textHit = boardContainsMatcher(contains) ?? (() => true);
 
     const deliveries = state.deliveries.filter((delivery) =>
-      labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) && !acknowledged.has(delivery.id) &&
+      labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) &&
+      !acknowledged.has(delivery.id) &&
       textHit(busBoardDeliveryText(delivery)) &&
-      (sinceMs === undefined || Date.parse(delivery.createdAt) >= sinceMs));
+      boardTimeWindowHit(delivery.createdAt, sinceMs, beforeMs));
 
-    const tasks = state.tasks.filter((task) => sinceMs === undefined && joinedIds.has(task.threadId) &&
+    const tasks = state.tasks.filter((task) => sinceMs === undefined && beforeMs === undefined && joinedIds.has(task.threadId) &&
       (jobId === undefined || task.itemId === jobId) && textHit(task.title)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
       let hold: BusBoardTaskHold = 'unknown';
@@ -632,7 +736,7 @@ export class BusBoard {
       holdCounts.set(task.threadId, counts);
     }
     const threads: BusBoardPendingThread[] = joined
-      .filter((thread) => sinceMs !== undefined
+      .filter((thread) => sinceMs !== undefined || beforeMs !== undefined
         ? deliveryCounts.has(thread.id)
         : textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
       .map((thread) => ({
@@ -719,11 +823,21 @@ export class BusBoard {
     });
   }
 
-  listTasks(actor: string, threadId: string): BusTaskView[] {
+  /**
+   * The thread's tasks. `contains`, when given, is the normalized
+   * `--contains` needle `board pending` applies — a task stays only when
+   * its stored title carries it under the same scrubbed display-text rule;
+   * tasks record no timestamp, so no time bound applies here.
+   */
+  listTasks(actor: string, threadId: string, contains?: string): BusTaskView[] {
     actor = this.peer(actor);
+    const textHit = boardContainsMatcher(contains);
     return this.transaction(false, (state) => {
       this.member(state, threadId, actor);
-      return state.tasks.filter((task) => task.threadId === threadId).map((task) => this.taskView(task));
+      return state.tasks
+        .filter((task) => task.threadId === threadId &&
+          (textHit === undefined || textHit(task.title)))
+        .map((task) => this.taskView(task));
     });
   }
 
@@ -794,5 +908,63 @@ export class BusBoard {
       delete task.claim;
       return this.taskView(task);
     });
+  }
+}
+
+/** The resolved fleet-wide board read `readBusBoardPending` returns. */
+export type BusBoardPendingRead =
+  | { source: 'available'; pending: BusBoardPendingPeers }
+  | { source: 'missing' }
+  | { source: 'unavailable' };
+
+/**
+ * Options for `readBusBoardPending`: `busRoot` overrides the fleet root the
+ * board paths derive from — the same seam `phm comms inbox`'s board source
+ * and tests use, unset resolving `<ashlrHome>/fleet` — `now` the epoch-ms
+ * thunk the digest evaluates holds against, and
+ * `jobId`/`contains`/`sinceMs`/`beforeMs` the same optional filters
+ * `BusBoard.pendingAll` takes.
+ */
+export interface BusBoardPendingReadOptions {
+  busRoot?: string;
+  now?: () => number;
+  jobId?: string;
+  contains?: string;
+  sinceMs?: number;
+  beforeMs?: number;
+}
+
+/**
+ * The one fleet-wide pending-board read every surface shares —
+ * `BusBoard.pendingAll` under the same `busBoardStoragePaths` derivation
+ * `phm bus board`, `agents bus work mine`'s board section,
+ * `agents bus status` and `phm comms inbox`'s board source apply:
+ * `<dirname(fleetRoot)>/bus` for state and `<fleetRoot>/bus-queue` for the
+ * fleet queue — `<ashlrHome>/bus` and `<ashlrHome>/fleet/bus-queue` on the
+ * default root — unless `fleet.sharedQueue` runs in attested filesystem
+ * mode. A board that was never used — no `state.json` — is 'missing'
+ * (verified empty) and the read returns before `BusBoard`'s transaction
+ * can create the directory or lock file a write would leave; an
+ * unreadable board, a malformed config, a relative path override or a
+ * disabled event bus reports 'unavailable', never an empty digest passed
+ * off as fact. Read-only: the digest takes the board's local read lock and
+ * writes nothing — it never acknowledges a delivery or claims a task.
+ */
+export function readBusBoardPending(options: BusBoardPendingReadOptions = {}): BusBoardPendingRead {
+  let cfg: AshlrConfig;
+  try { cfg = loadConfigReadOnlyStrict(); } catch { return { source: 'unavailable' }; }
+  const paths = busBoardStoragePaths(options.busRoot ?? join(ashlrHome(), 'fleet'), cfg);
+  if (paths.status !== 'ok') return { source: 'unavailable' };
+  if (!existsSync(join(paths.boardRoot, 'state.json'))) return { source: 'missing' };
+  try {
+    const shared = cfg.fleet?.sharedQueue;
+    const fleet = new SharedStore(paths.queueRoot, shared?.leaseMs);
+    return {
+      source: 'available',
+      pending: new BusBoard({ root: paths.boardRoot, fleet, cfg })
+        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs, options.beforeMs),
+    };
+  } catch {
+    return { source: 'unavailable' };
   }
 }
