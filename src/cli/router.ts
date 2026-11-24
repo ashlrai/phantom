@@ -9,6 +9,7 @@ import { readLaneScores } from '../core/eval/passk.js';
 import type { EngineTier } from '../core/types.js';
 import { cmdRouterGateway, ROUTER_GATEWAY_USAGE, ROUTER_GATEWAY_VERBS } from './router-gateway.js';
 import { cmdRouterOutcomes, ROUTER_OUTCOMES_USAGE } from './router-outcomes.js';
+import { cmdRouterTune, ROUTER_TUNE_USAGE } from './router-tune.js';
 
 const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE] [--slots pool=count ...] [--json]\n' +
   'Slots are currently free slots supplied by the dispatcher; omitted pools are unknown.\n' +
@@ -16,10 +17,11 @@ const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE
 
 export async function cmdRouter(args: string[]): Promise<number> {
   if (args[0] === 'catalog') return cmdRouterCatalog(args.slice(1));
+  if (args[0] === 'tune') return cmdRouterTune(args.slice(1));
   if (args[0] === 'outcomes') return cmdRouterOutcomes(args.slice(1));
   if ((ROUTER_GATEWAY_VERBS as readonly string[]).includes(args[0] ?? '')) return cmdRouterGateway(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || ['rank --help', 'rank -h'].includes(args.join(' '))) {
-    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}\n\n${ROUTER_CATALOG_USAGE}\n\n${ROUTER_OUTCOMES_USAGE}`); return 0;
+    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}\n\n${ROUTER_CATALOG_USAGE}\n\n${ROUTER_OUTCOMES_USAGE}\n\n${ROUTER_TUNE_USAGE}`); return 0;
   }
   let tier: EngineTier | undefined; let json = false; let routesFile: string | undefined;
   const slots: LaneSlots = {};

@@ -211,6 +211,23 @@ export interface RoutingRequest {
   autonomous: boolean;
 }
 
+/** One cell of the route table: the router's answer for one kind of work. */
+export interface BudgetRoute {
+  task: RoutingTask;
+  difficulty: RoutingDifficulty;
+  decision: SeatDecision;
+}
+
+/** `GET /api/verse/budget/routes`: every task and difficulty routed against ONE capacity reading. */
+export interface BudgetRoutesResponse {
+  schema: 'budget.routes.v1';
+  /** When the usage the answers rest on was read. */
+  sampledAt: string;
+  autonomous: boolean;
+  /** Tasks in `ROUTING_TASKS` order, each at low, medium, high. */
+  routes: BudgetRoute[];
+}
+
 /**
  * Live headroom for one seat, as shown next to its budget policy. Every
  * percent is 0–100 of that window; null = unknown (and therefore ineligible).

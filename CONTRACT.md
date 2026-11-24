@@ -32,11 +32,13 @@ Exports:
   is inert; local is loopback-only.
 - `listSeats(opts?: SeatOptions)` returns `{schema:'phantom-bot-seats.v1', seats}`.
   Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
-  claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
+  claims, claimsOwner, inFlight, recent handoffs and advisory adapter status. Only lifecycle
   transitions may persist during listing; missing node stores stay missing.
   Open work counts live coordination claims owned by `participantId` or by any
   other label of the same registered bus identity; an unreadable identity
-  registry keeps exact-label matching.
+  registry keeps exact-label matching. `claimsOwner` reports `{ref, identity,
+  registry}`: the participant label, stable identity id (null when unresolved),
+  and registry source (`missing`, `available` or `unavailable`).
 - `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
   with measured quota. The module acquires no claims.
 - `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
@@ -1261,6 +1263,21 @@ sidekick assignments, and closed `PairingReason` codes. Judgment stays frontier;
 implementation escalates only for an explicit implementation bottleneck.
 `explainRoutes(root, nowSeconds)` adds nullable `pairing` from the optional
 `queue/pairing-lanes.json` evidence. See [routing](docs/ROUTING.md#advisory-leadsidekick-pairing).
+
+# Outcome-driven router weight proposals
+
+`src/core/router/tune.ts` exports `tuneRouterWeights({runsDir?, minSample?,
+maxShift?, apply?, now?})` returning `router.tune.report.v1`. It folds
+`metrics/jobs.jsonl` through the `router.outcome.v1` reader and joins
+`work-market.v1` `route_decision` rows by job for `work_class`/`chosen_lane`
+fallback only. Outcomes group into `(work_class, lane)` cohorts; a cohort with
+fewer than `minSample` resolved outcomes, or a zero/unmeasurable pool merge
+rate, is refused with a status and `weight: null`, never guessed. Proposed
+weights are the cohort merge rate over the work-class pool merge rate clamped
+to `1 ± maxShift` (defaults 5 and 0.1). `apply` appends deduplicated
+`router.weights.v1` rows to `metrics/router-weights.jsonl` (0600); the journal
+is advisory and no router consumes it. `phm router tune` is the thin
+dispatcher. See [docs/router/tune.md](docs/router/tune.md).
 
 # Phantom — shared core contract (M1/M2 baseline)
 

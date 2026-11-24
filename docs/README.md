@@ -113,6 +113,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Choose chat or fleet work, understand routing and inspect results | [Automatic work](AUTOMATIC-OUTCOMES.md) |
 | Compare router predictions with recorded outcomes | [Router calibration](https://github.com/ashlrai/phantom/blob/master/docs/router/calibration.md) |
 | Replay policies over frozen router lines with known outcomes | [Router eval harness](https://github.com/ashlrai/phantom/blob/master/docs/router/eval.md) |
+| Propose bounded route weights from recorded job outcomes | [Outcome-driven router tuning](https://github.com/ashlrai/phantom/blob/master/docs/router/tune.md) |
 | Measure lane/model reliability across N clean-worktree trials and feed routing | [pass^k offline eval suite](https://github.com/ashlrai/phantom/blob/master/docs/EVAL-PASSK.md) |
 | Navigate source entry points, subsystems and contracts | [Code map (source guide)](https://github.com/ashlrai/phantom/blob/master/docs/CODEMAP.md) |
 | A/B test prompt variants per job class and promote only significant winners | [Prompt-variant A/B eval](https://github.com/ashlrai/phantom/blob/master/docs/router/prompt-ab.md) |

@@ -1306,6 +1306,7 @@
 /test/router-queue.test.ts @masonwyatt23
 /test/router-task-arms.test.ts @masonwyatt23
 /test/router-typed-decisions.test.ts @masonwyatt23
+/test/router-tune.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23
 /test/router-weight-proposals-recovery-634s.test.ts @masonwyatt23
 /test/routing-arms.test.ts @masonwyatt23
