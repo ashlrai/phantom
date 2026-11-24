@@ -127,6 +127,8 @@ describe('M481 CI workflow action trust chain', () => {
         'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
         'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
         'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
         'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
       ],
       'clean-tree': [
@@ -144,6 +146,7 @@ describe('M481 CI workflow action trust chain', () => {
       'fast-gate': [
         'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
         'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
         'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
         'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
         'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
