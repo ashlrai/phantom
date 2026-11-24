@@ -1158,7 +1158,43 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   twice the writer's 4 MiB compaction bound is stated as a lower
   bound when it truncates, and rows emit only for the fleet's own
   repository since the journal is this install's dispatch record and
-  carries no repository column.
+  carries no repository column,
+  and the Devin PR-review journal's recurring adverse outcomes and
+  oversize condition, the per-attempt {v, key, repo, number, headSha,
+  at, day, origin, outcome, reason?, status?} rows
+  triggerDevinPrReviewOnce in `src/core/devin/pr-review.ts` appends to
+  pr-reviews.jsonl under the devin directory of the Ashlr home on
+  every `ashlr devin review` (origin 'cli') and every merge-autopilot
+  advisory review (origin 'fleet') — outcome the writer's closed
+  vocabulary, 'requested' always paired with exactly one terminal row
+  ('triggered', 'failed' or 'quota-exhausted') since the writer
+  captures `now` once per call and refusals journal nothing (otherwise
+  only visible through the writer's own dedupe scans — journalRows
+  inside triggerDevinPrReviewOnce and the fleetDevinReview duplicate
+  check — point-in-time "have we already asked" reads that never fold
+  a recurrence, so a review path whose API calls kept failing, whose
+  provider quota kept exhausting, or whose requests kept orphaning
+  mid-flight — a 'requested' row with no terminal sibling refuses
+  'duplicate' for that PR head forever — never became work, and the
+  append-only file's growth past its own 8 MiB read bound, which
+  makes every trigger refuse 'unavailable', was invisible). A cell —
+  a per-outcome group on 'failed', 'quota-exhausted' or
+  'orphaned-request' (a 'requested' row older than an hour whose key
+  has no terminal sibling among the parsed rows) — becomes an item
+  only while its in-window rows reach the recurring bars of three
+  across two distinct UTC days AND two distinct pull requests inside
+  the 7-day window; 'requested' and 'triggered' rows are the healthy
+  path and never form cells, rows count only under the writer's
+  contract (v === 1, the repo#number@headSha key bounds, the owner/name
+  repo pattern, a safe-integer PR number, the 40-64 hex headSha, a
+  parseable `at`, the closed origin/outcome vocabularies and the
+  bounded reason/status strings), a bounded no-follow tail read at
+  the writer's own read bound is stated as a lower bound when it
+  truncates — and truncation IS the oversize condition, since the
+  file has no rotation and past the bound the writer's journalRows
+  refuses every trigger, which emits its own item for the fleet's own
+  repository while the outcome cells emit only for the repository the
+  rows name, case-insensitively.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1168,8 +1204,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh, mcp-gateway, routines, rate-limit and queue-visit
-  items carry priority 3;
+  catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit and
+  devin-review items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1471,7 +1507,20 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   planned capacity push the later days recovered from, or a producer
   that stopped feeding leaving stale residue, and emit only for the
   fleet's own repository since the journal is this install's dispatch
-  record and carries no repository column. They
+  record and carries no repository column. Devin-review items name the
+  review journal, `src/core/devin/pr-review.ts`,
+  `src/core/devin/client.ts` and `src/core/devin/weekly-capacity.ts`,
+  keep the find-why-the-review-path-keeps-failing framing per outcome
+  cell — a client timeout or retry gap versus a Devin-side incident,
+  provider quota only Mason's plan can raise versus review volume the
+  capacity gate should have refused earlier, or host instability
+  orphaning requests mid-flight versus a dedupe that treats a stale
+  unresolved request as permanently 'duplicate' — with the same
+  owner-side no-change escape for a transient incident, a rolled-
+  forward window or pinned ops machinery, and emit outcome cells only
+  for the repository the rows name while the journal-oversize item —
+  the file-level condition with no repo attribution — emits only for
+  the fleet's own repository. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

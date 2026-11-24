@@ -575,6 +575,25 @@
  *     (queueVisitBacklogItems below). Until now the journal's only
  *     readers were those point-in-time reports, so a station that kept
  *     rating red or visits that kept parking open never became work;
+ *   - the Devin PR-review journal's recurring adverse outcomes and its
+ *     oversize condition: the per-attempt {v, key, repo, number,
+ *     headSha, at, day, origin, outcome, reason?, status?} rows
+ *     triggerDevinPrReviewOnce appends to pr-reviews.jsonl under the
+ *     devin directory of the Ashlr home on every `ashlr devin review`
+ *     and every merge-autopilot advisory review — outcome the writer's
+ *     closed vocabulary, 'requested' always paired with one terminal
+ *     row ('triggered', 'failed' or 'quota-exhausted') since the
+ *     writer captures `now` once per call, refusals journaling
+ *     nothing (devinReviewBacklogItems below). Until now the journal's
+ *     only readers were the writer's own dedupe scans — journalRows
+ *     inside triggerDevinPrReviewOnce and the fleetDevinReview
+ *     duplicate check — point-in-time "have we already asked" reads,
+ *     so a review path whose API calls kept failing, whose provider
+ *     quota kept exhausting, or whose requests kept orphaning
+ *     mid-flight (a 'requested' row with no terminal sibling refuses
+ *     'duplicate' for that PR head forever) never became work, and the
+ *     append-only file's growth past its own 8 MiB read bound — which
+ *     makes every trigger refuse 'unavailable' — was invisible;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -659,6 +678,7 @@ import { autofixBacklogItems } from './autofix-backlog.js';
 import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { asksLedgerBacklogItems } from './asks-backlog.js';
 import { queueVisitBacklogItems } from './queue-visit-backlog.js';
+import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1564,6 +1584,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the items since the journal describes this
   // install's dispatch pipeline and carries no repository column.
   items.push(...await queueVisitBacklogItems({ repo }));
+
+  // Devin PR-review journal (pr-reviews.jsonl under <ashlr
+  // home>/devin): every `ashlr devin review` and every merge-autopilot
+  // advisory review lands one row per attempt outcome, and until now
+  // the journal's only readers were the writer's own dedupe scans —
+  // point-in-time "have we already asked" reads that never fold a
+  // recurrence — so a review path that kept failing, kept exhausting
+  // quota or kept orphaning requests never became work. Same bounded
+  // no-follow tail read at the writer's own read bound — truncated
+  // means the file passed it and every trigger now refuses
+  // 'unavailable', which emits its own fleet-repo item — cells key on
+  // outcome ('failed', 'quota-exhausted', 'orphaned-request') matched
+  // to rows whose recorded repo names the discovery target
+  // case-insensitively, a cell emits only at the recurring bars of
+  // rows across distinct UTC days AND distinct pull requests inside
+  // the 7-day window, truncated tails are stated as lower bounds, and
+  // journal strings are scrubbed before they reach a prompt.
+  items.push(...await devinReviewBacklogItems({ repo }));
   return { items, errors };
 }
 
