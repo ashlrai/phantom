@@ -3445,7 +3445,7 @@ carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
 check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
 body kind `postLabelMessage` already exposed, now shared by all three so a
-DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?}, options?)`
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -3481,7 +3481,16 @@ is one filtered read; `id` keeps only the row whose own wire id is
 strictly equal to the value — the same exact-envelope match `comms bus
 read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`'s `id`
 apply, never a substring or a body citation — so "is envelope X still
-pending for me" is one filtered read; `matched: true` scans the whole retained store
+pending for me" is one filtered read; `bodyKind` keeps only mail whose
+body carries that discriminator — the same one `busBodySummary` switches
+on, read verbatim by `busBodyKind`: the v2 `kind` (`note`, `context`,
+`work.post`, `work.result`, `wake`, `worker-handoff`, …), else a
+bus-transport v1 `protocol.kind`, else the `type`/`schema` a kindless
+notice keys on — matched exactly and case-sensitively like every other
+own-field filter, an unrecognized but printable value an honest empty
+match and a body with no discriminator never matching, so "only the
+`work.post` announcements" or "only `worker-handoff` assignments" is one
+filtered read; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -3613,7 +3622,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, id, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, id, bodyKind, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -3642,7 +3651,13 @@ substring — so "which room posts answer envelope X" is one filtered read;
 `id` keeps only the post whose own wire id is strictly equal to the
 value — the same exact-envelope match `readAgentInbox`'s `id` and the
 raw bus reads' `--id` apply, never a substring or a body citation — so
-"did envelope X reach the room" is one filtered read;
+"did envelope X reach the room" is one filtered read; `bodyKind` keeps
+only posts whose body carries that discriminator — the same
+`busBodyKind` read `readAgentInbox`'s `bodyKind` applies: the v2 `kind`,
+else a bus-transport v1 `protocol.kind`, else the `type`/`schema` a
+kindless notice keys on, matched exactly and case-sensitively, a body
+with no discriminator never matching — so "only the room's `work.result`
+posts" is one filtered read;
 `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
