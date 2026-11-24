@@ -6,8 +6,8 @@ const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'seats', 'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack'] as const;
-const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message', 'board-delivery', 'board-task', 'agent-thread', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval', 'inbox-proposal', 'slack-request'] as const;
+const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats', 'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack'] as const;
+const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message', 'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval', 'inbox-proposal', 'slack-request'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -74,8 +74,8 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'iMessage', 'teammate-tasks': 'Teammate tasks', 'owner-thread': 'Owner thread', 'owner-delivery': 'Owner delivery', drafts: 'Drafts', bus: 'Bus', mailbox: 'Mailbox', board: 'Board', conversations: 'Conversations', seats: 'Seats', 'peer-dispatch': 'Peer dispatch', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-inbox': 'Email inbox', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals', slack: 'Slack' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'Teammate text', 'teammate-tasks': 'Teammate task', 'owner-thread': 'Owner message', 'owner-delivery': 'Undelivered reply', drafts: 'Draft', bus: 'Bus work', mailbox: 'Mailbox mail', board: 'Board item', conversations: 'Agent thread', seats: 'Seat handoff', 'peer-dispatch': 'Peer result', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-inbox': 'Inbound email', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal', slack: 'Slack request' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'iMessage', 'teammate-tasks': 'Teammate tasks', 'owner-thread': 'Owner thread', 'owner-delivery': 'Owner delivery', drafts: 'Drafts', bus: 'Bus', mailbox: 'Mailbox', board: 'Board', conversations: 'Conversations', wakes: 'Wakes', seats: 'Seats', 'peer-dispatch': 'Peer dispatch', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-inbox': 'Email inbox', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals', slack: 'Slack' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'Teammate text', 'teammate-tasks': 'Teammate task', 'owner-thread': 'Owner message', 'owner-delivery': 'Undelivered reply', drafts: 'Draft', bus: 'Bus work', mailbox: 'Mailbox mail', board: 'Board item', conversations: 'Agent thread', wakes: 'Wake hint', seats: 'Seat handoff', 'peer-dispatch': 'Peer result', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-inbox': 'Inbound email', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal', slack: 'Slack request' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -108,6 +108,7 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
 const SOURCE_COMMANDS: Record<InboxSource, string> = {
   'needs-you': 'phm fleet needs', 'needs-you-delivery': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'teammate-tasks': 'phm fleet imessage-tasks list', 'owner-thread': 'phm comms thread', 'owner-delivery': 'phm comms thread',
   drafts: 'phm drafts list --status pending', bus: 'phm fleet bus-claim', mailbox: 'phm bus inbox', board: 'phm bus board pending', conversations: 'phm agents conversations',
+  wakes: 'phm agents bus wakes --all',
   seats: 'phm bots handoffs', 'peer-dispatch': 'phm agentnet peers dispatch --apply', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
   'email-inbox': 'phm comms email-cycle', 'email-outbox': 'phm fleet email-outbox', 'team-approvals': 'phm approvals', proposals: 'phm inbox', slack: 'phm fleet slack-trace',
 };

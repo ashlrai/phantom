@@ -2,11 +2,12 @@
  * `phm bus recent`: who messaged whom lately, as one small typed list.
  *
  * Not a second read: `phm agents messages` (agents-messages.ts) already
- * projects the durable bus inbox into scrubbed one-line summaries. This keeps
- * its rows, names the agents by their routing labels (what an agent knows),
- * and cuts each summary to 100 characters. No message body leaves this read.
+ * projects the durable bus inbox into scrubbed one-line summaries, with the
+ * same filter vocabulary `phm messages` parses. This keeps its rows, names the
+ * agents by their routing labels (what an agent knows), and cuts each summary
+ * to 100 characters. No message body leaves this read.
  */
-import { readAgentsMessages, type AgentsMessage } from './agents-messages.js';
+import { readAgentsMessages, type AgentsMessage, type AgentsMessagesFlags } from './agents-messages.js';
 import type { BusInboxOptions } from './bus-inbox.js';
 import type { AgentMessageKind } from './agent-messages.js';
 
@@ -30,9 +31,9 @@ export function buildBusRecent(asOf: string, messages: readonly AgentsMessage[] 
   return { schema: BUS_RECENT_SCHEMA, as_of: asOf, messages: messages && messages.map(m => ({ at: m.at, from: m.fromName, to: m.toName, kind: m.kind, summary: short(m.summary) })) };
 }
 
-/** `since` is 10m, 2h, 1d, epoch ms or an ISO time. Exit-code hint: ok false is a bad flag. */
-export function readBusRecent(since: string = BUS_RECENT_DEFAULT_SINCE, options: BusInboxOptions = {}): { ok: true; result: BusRecent } | { ok: false; error: string } {
-  const read = readAgentsMessages({ since, limit: '1024' }, options);
+/** `since`/`before` take 10m, 2h, 1d, epoch ms or ISO (`before` exclusive); every other filter is the `phm messages` vocabulary `phm agents messages` forwards. exit-code hint: ok false is a bad flag. */
+export function readBusRecent(input: AgentsMessagesFlags = {}, options: BusInboxOptions = {}): { ok: true; result: BusRecent } | { ok: false; error: string } {
+  const read = readAgentsMessages({ ...input, since: input.since ?? BUS_RECENT_DEFAULT_SINCE, limit: '1024' }, options);
   return read.ok ? { ok: true, result: buildBusRecent(read.result.generatedAt, read.result.messages) } : read;
 }
 

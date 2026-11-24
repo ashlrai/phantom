@@ -32,6 +32,8 @@ import { readLaneTargets, type LaneTargetsV1 } from '../fleet/runs-lane-targets.
 import type { LiveJobIds } from '../fleet/order-work-state.js';
 import { defaults as runtimeDefaults, readRuntimeSnapshot, type RuntimeSnapshot } from '../fleet/runtime-snapshot.js';
 import { formatRuntimeStatusLines } from '../fleet/runtime-status-lines.js';
+import { readSlackStatusReceipt } from '../comms/slack-status-receipt.js';
+import type { SlackStatusReply } from './slack-leader.js';
 
 /** The five-line digest from real state; the heading is swapped for the clock below. */
 const digestBrief = async (runsDir: string, now: Date): Promise<string> =>
@@ -284,9 +286,11 @@ async function composeSlackStatusReply(runsDir: string, now: Date, deps: OwnerSt
  * ask is answered with the recheck verdict, an exact "orders" ask with the
  * per-order reply, an exact "review" ask with the unowned review pick, and
  * every other gated ask with the status digest. */
-export function ownerStatusReply(deps: OwnerStatusDeps = {}): { ask: (text: string) => boolean; compose: (runsDir: string, now: Date, text?: string) => Promise<string>; readonly fallback: string; evidence?: (runsDir: string, now: Date) => Promise<string> } {
+export function ownerStatusReply(deps: OwnerStatusDeps = {}): SlackStatusReply {
   const readEvidence = deps.evidence;
   return {
+    receipt: (id, root, now, ask) => isOwnerStatusRequest(ask)
+      ? readSlackStatusReceipt(id, { root: root ?? join(ashlrHome(), 'fleet'), now }).text : '',
     ...(readEvidence ? { evidence: async (_runsDir: string, now: Date): Promise<string> => { try { return await readEvidence(now); } catch { return OWNER_EVIDENCE_FALLBACK; } } } : {}),
     ask: text => isOwnerStatusRequest(text) || isRecheckAsk(text) || isOrdersAsk(text) || isReviewAsk(text) || isOwnersAsk(text) || isBridgeAsk(text) || isPeersAsk(text),
     compose: (runsDir, now, text) => text !== undefined && isRecheckAsk(text)

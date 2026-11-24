@@ -43,6 +43,10 @@ export interface RouterWeightEvidence {
   review_findings_known: number;
   /** Summed fixed/rejected/ignored across those outcomes; null when none recorded. */
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
+  /** Group outcomes carrying a joined cross_review verdict. */
+  cross_review_known: number;
+  /** Newest recorded cross-review verdict counts across those outcomes; null when none recorded. */
+  cross_review: { approve: number; reject: number; failed: number; skipped: number } | null;
   /** Group outcomes with a recorded cost_usd. */
   cost_known: number;
   /** Mean cost_usd over cost_known; null when no outcome recorded a cost. */
@@ -544,6 +548,21 @@ export interface RouterWeightProposalSet {
    */
   unknown_node_outcomes: number;
   unknown_node_verdicts: { verdict: string; jobs: number }[];
+  /**
+   * Jobs inside the unknown cohort carrying the standing PR's newest
+   * recorded cross-model review verdict — `cross_review` joined from
+   * <ashlr>/fleet/cross-review.jsonl through the job's unambiguous
+   * canonical PR claim. Review-gate context like the merge-queue join:
+   * a `reject` is the recorded reason the PR may never merge, so it
+   * explains the missing merge verdict without ever reducing
+   * `unknown_unresolved` (a review verdict is not a merge verdict).
+   * `unknown_cross_review_verdicts` tallies the recorded verdict words
+   * (`approve`/`reject`/`failed`/`skipped`), most jobs first. Reads the
+   * cross-review side ledger, so the tallies are real only when that
+   * tail was read.
+   */
+  unknown_cross_reviews: number;
+  unknown_cross_review_verdicts: { verdict: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -581,6 +600,7 @@ export interface RouterWeightProposalSet {
 interface WeightEvidenceTally {
   ciPass: number; ciKnown: number;
   reviewFixed: number; reviewRejected: number; reviewIgnored: number; reviewKnown: number;
+  crossApprove: number; crossReject: number; crossFailed: number; crossSkipped: number; crossReviewKnown: number;
   costSum: number; costKnown: number;
   wallSum: number; wallKnown: number;
   ttmSum: number; ttmKnown: number;
@@ -624,6 +644,7 @@ interface WeightEvidenceTally {
 
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
+  crossApprove: 0, crossReject: 0, crossFailed: 0, crossSkipped: 0, crossReviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
   queueWaitSum: 0, queueWaitKnown: 0, ciWallSum: 0, ciWallKnown: 0,
   publishWaitSum: 0, publishWaitKnown: 0,
@@ -671,6 +692,8 @@ const MAX_POOL_KINDS = 8;
 const MAX_REPOS = 8;
 /** Top recorded node-runner verdict words kept per group and in the unknown cohort, most jobs first. */
 const MAX_NODE_VERDICTS = 8;
+/** Top recorded cross-review verdict words kept in the unknown cohort, most jobs first. */
+const MAX_CROSS_REVIEW_VERDICTS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -678,6 +701,9 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   review_findings_known: t.reviewKnown,
   review_findings: t.reviewKnown === 0 ? null
     : { fixed: t.reviewFixed, rejected: t.reviewRejected, ignored: t.reviewIgnored },
+  cross_review_known: t.crossReviewKnown,
+  cross_review: t.crossReviewKnown === 0 ? null
+    : { approve: t.crossApprove, reject: t.crossReject, failed: t.crossFailed, skipped: t.crossSkipped },
   cost_known: t.costKnown,
   cost_usd_mean: t.costKnown === 0 ? null : round6(t.costSum / t.costKnown),
   wall_known: t.wallKnown,
@@ -825,6 +851,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const providerWallTriggersUnknown = new Map<string, number>();
   const poolKindsUnknown = new Map<string, number>();
   const nodeVerdictsUnknown = new Map<string, number>();
+  const crossReviewVerdictsUnknown = new Map<string, number>();
   const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
@@ -837,6 +864,7 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownProviderWalls = 0;
   let unknownPoolThrottles = 0;
   let unknownNodeOutcomes = 0;
+  let unknownCrossReviews = 0;
   let unknownMergeQueue = 0;
   let unknownMergeQueueBlocked = 0;
   let unknownMergeQueueCheckFailures = 0;
@@ -1002,6 +1030,18 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         if (o.merge_queue.retries > 0) unknownMergeQueueRetries++;
         if (o.merge_queue.recuts > 0) unknownMergeQueueRecuts++;
       }
+      // The cross-review join is review-gate context like the merge-queue
+      // join: the standing PR's newest recorded cross-model verdict
+      // (approve/reject the reviewer's answers, failed/skipped the
+      // recorded non-verdicts) explains what the review gate saw while
+      // the merge verdict stayed unrecorded — a `reject` is the recorded
+      // reason the PR may never merge. It never feeds the unresolved
+      // remainder: a review verdict is not a merge verdict, so the job
+      // stays unresolved however the reviewer ruled.
+      if (o.cross_review !== null) {
+        unknownCrossReviews++;
+        crossReviewVerdictsUnknown.set(o.cross_review.outcome, (crossReviewVerdictsUnknown.get(o.cross_review.outcome) ?? 0) + 1);
+      }
       if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit' && o.provider_wall_pattern === null && o.node_outcome === null) unknownUnresolved++;
       continue;
     }
@@ -1019,6 +1059,17 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       t.reviewFixed += o.review_findings.fixed;
       t.reviewRejected += o.review_findings.rejected;
       t.reviewIgnored += o.review_findings.ignored;
+    }
+    // The cross-review join is the standing PR's newest recorded
+    // cross-model verdict — approve/reject are the reviewer's answers,
+    // failed/skipped the recorded non-verdicts. Advisory context like
+    // review_findings: it tallies the verdict mix, never the weight.
+    if (o.cross_review !== null) {
+      t.crossReviewKnown++;
+      if (o.cross_review.outcome === 'approve') t.crossApprove++;
+      else if (o.cross_review.outcome === 'reject') t.crossReject++;
+      else if (o.cross_review.outcome === 'failed') t.crossFailed++;
+      else t.crossSkipped++;
     }
     if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
@@ -1162,6 +1213,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([verdict, jobs]) => ({ verdict, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
     .slice(0, MAX_NODE_VERDICTS);
+  const topCrossReviewVerdicts = [...crossReviewVerdictsUnknown.entries()]
+    .map(([verdict, jobs]) => ({ verdict, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
+    .slice(0, MAX_CROSS_REVIEW_VERDICTS);
   const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
@@ -1196,6 +1251,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_pool_kinds: topPoolKinds,
     unknown_node_outcomes: unknownNodeOutcomes,
     unknown_node_verdicts: topNodeVerdicts,
+    unknown_cross_reviews: unknownCrossReviews,
+    unknown_cross_review_verdicts: topCrossReviewVerdicts,
     unknown_merge_queue: unknownMergeQueue,
     unknown_merge_queue_blocked: unknownMergeQueueBlocked,
     unknown_merge_queue_blocked_reasons: topMergeQueueBlockedReasons,
@@ -1271,6 +1328,16 @@ export interface RouterWeightProposalReport {
   launch_cost_state: RouterOutcomeRead['launch_cost_state'];
   /** True when the launch-cost tail was cut; joined evidence covers only the newest bytes. */
   launch_cost_truncated: boolean;
+  /**
+   * Health of the cross-review.jsonl tail under the ASHLR home root
+   * behind cross_review joins and the cross_review/unknown_cross_review_*
+   * tallies. Anything but 'read' means no review verdicts joined — the
+   * tallies then read 0/null, never an empty list claiming no reviews
+   * were recorded.
+   */
+  cross_review_state: RouterOutcomeRead['cross_review_state'];
+  /** True when the cross-review tail was cut; joined verdicts cover only the newest bytes. */
+  cross_review_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1436,6 +1503,23 @@ export interface RouterWeightProposalReport {
    */
   unknown_node_verdicts: { verdict: string; jobs: number }[] | null;
   /**
+   * Jobs inside the unknown cohort carrying the standing PR's newest
+   * recorded cross-model review verdict — see RouterWeightProposalSet.
+   * Review-gate context only; never reduces unknown_unresolved. Null
+   * when the ledger was not read or the cross-review ledger was not
+   * read (review coverage unknown); 0 is a real measurement when the
+   * tail was read.
+   */
+  unknown_cross_reviews: number | null;
+  /**
+   * Top recorded cross-review verdict words inside the unknown cohort,
+   * by jobs — `approve`/`reject`/`failed`/`skipped` (see
+   * RouterWeightProposalSet). Null when the ledger was not read or
+   * cross-review was not read; empty when read but no unknown-cohort
+   * outcome carried a verdict.
+   */
+  unknown_cross_review_verdicts: { verdict: string; jobs: number }[] | null;
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — see RouterWeightProposalSet. Queue-side diagnostic
    * context only; never reduces unknown_unresolved. Null when the
@@ -1513,6 +1597,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     revert_ledger_state: read.revert_ledger_state,
     reward_state: read.reward_state, reward_truncated: read.reward_truncated,
     launch_cost_state: read.launch_cost_state, launch_cost_truncated: read.launch_cost_truncated,
+    cross_review_state: read.cross_review_state, cross_review_truncated: read.cross_review_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
@@ -1528,6 +1613,7 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_provider_walls: null, unknown_provider_wall_triggers: null,
       unknown_pool_throttles: null, unknown_pool_kinds: null,
       unknown_node_outcomes: null, unknown_node_verdicts: null,
+      unknown_cross_reviews: null, unknown_cross_review_verdicts: null,
       unknown_merge_queue: null, unknown_merge_queue_blocked: null,
       unknown_merge_queue_blocked_reasons: null,
       unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
@@ -1579,6 +1665,13 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // read succeeded.
     unknown_node_outcomes: set.unknown_node_outcomes,
     unknown_node_verdicts: set.unknown_node_verdicts,
+    // Cross-review evidence joins through the same bounded
+    // cross-review.jsonl tail under the ASHLR home root: anything but
+    // 'read' means no review verdicts joined, so the tallies would
+    // claim "no reviews recorded" when they only know "cross-review
+    // unread" — report null, the same rule unknown_merge_queue uses.
+    unknown_cross_reviews: read.cross_review_state === 'read' ? set.unknown_cross_reviews : null,
+    unknown_cross_review_verdicts: read.cross_review_state === 'read' ? set.unknown_cross_review_verdicts : null,
     // Merge-queue evidence joins through the same bounded
     // merge-events.jsonl tail: anything but 'read' means no merge_queue
     // joined, so the tallies would claim "no merge friction recorded"

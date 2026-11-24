@@ -16,13 +16,14 @@ import { betaSample, createSeededRng, gammaSample, type BanditRng } from './band
 import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerLane, ledgerPhase } from '../fleet/empty-cause.js';
 import { isNodePoolLedgerRow, ledgerEventTs, ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
 import { hasRevertEvidence } from '../fleet/slot-yield.js';
+import type { MergeQueueEvidence } from '../router/outcomes.js';
 
 export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
 
 /** Three failures is the smallest run that is more than a pair of coincidences. */
 const RECURRING_FAILURES = 3;
 
-export type ImprovementPattern = 'breakage' | 'dirty' | 'fixup' | 'low-merge';
+export type ImprovementPattern = 'breakage' | 'revert' | 'dirty' | 'fixup' | 'low-merge';
 export type LearnedPriority = 'critical' | 'normal';
 export type LearnedAction = 'dispatch' | 'wait' | 'nowhere';
 
@@ -47,7 +48,17 @@ export interface OutcomeCellView {
   /** Merges that did not break main. This is what routing treats as success. */
   goodMerges: number;
   breakages: number;
+  /**
+   * Attempts with recorded dirty evidence: the dispatch log's exclusive
+   * `dirty` outcome state, plus jobs-ledger attempts whose own PR recorded
+   * merge-queue conflicts, recuts or a conflict block (`mergeDirty`).
+   */
   dirty: number;
+  /**
+   * Attempts with recorded fix-up evidence: the dispatch log's exclusive
+   * `fixup` outcome state, plus jobs-ledger attempts whose own PR recorded
+   * required-check failures or failed retries (`mergeFixup`).
+   */
   fixups: number;
   usage: number;
   /**
@@ -185,6 +196,18 @@ interface OutcomeEvent {
   usageUnit?: 'allowance' | 'tokens';
   minutes: number | null;
   breakage: number;
+  /**
+   * Merge-queue friction the attempt's own PR recorded, joined through the
+   * verdict row's unambiguous PR claim against the merge-events fold:
+   * `mergeDirty` marks recorded conflict/recut/blocked-on-conflict evidence
+   * and `mergeFixup` recorded required-check or retry-failure evidence.
+   * Additive like `breakage` — they never replace the attempt's state, so a
+   * merged attempt can carry both and still count its merge. Only the
+   * jobs-ledger dialect sets them; the dispatch log has no merge-queue
+   * signal.
+   */
+  mergeDirty?: boolean;
+  mergeFixup?: boolean;
 }
 
 type ParsedEvent = AssignEvent | OutcomeEvent;
@@ -221,9 +244,10 @@ const MODEL_WORDS: Readonly<Record<string, string>> = {
 };
 const PATTERN_ORDER: Readonly<Record<ImprovementPattern, number>> = {
   breakage: 0,
-  dirty: 1,
-  fixup: 2,
-  'low-merge': 3,
+  revert: 1,
+  dirty: 2,
+  fixup: 3,
+  'low-merge': 4,
 };
 
 function ident(value: unknown): value is string {
@@ -496,6 +520,11 @@ function fold(events: readonly ParsedEvent[], malformed: number, censor?: Censor
       }
     }
     if (event.breakage === 1) cell.breakages += 1;
+    // Merge-queue friction is additive evidence, not a state: a merged
+    // attempt whose PR recorded conflicts counts its merge AND its dirty
+    // friction, exactly like a breakage=1 merge counts both.
+    if (event.mergeDirty === true) cell.dirty += 1;
+    if (event.mergeFixup === true) cell.fixups += 1;
     if (!Number.isSafeInteger(cell.attempts) || !Number.isFinite(cell.usage)) {
       malformed += 1;
       continue;
@@ -718,6 +747,20 @@ function prUrlClaims(lines: readonly string[]): Map<string, string> {
  * foreign claim never discounts. Keys that are absent, empty or unmatched
  * change nothing — git-only reverts the ledger never wrote still count as
  * the merges they were.
+ *
+ * Merge-queue friction joins through the same claim rule when the caller
+ * supplies the per-PR evidence `foldMergeEvents` produces from
+ * metrics/merge-events.jsonl (`mergeQueue`, keyed `owner/repo#n`): a verdict
+ * whose own PR URL is claimed by exactly that job reads the PR's recorded
+ * rows — conflicts, recuts or a conflict `blocked` reason mark the attempt
+ * `mergeDirty`, and required-check failures or retry failures mark it
+ * `mergeFixup`. The flags are additive like `breakage`: the attempt keeps
+ * its merged/closed/reverted state while the cell's dirty/fixups counts —
+ * which the dirty and fixup improvement patterns read — finally see fleet
+ * evidence instead of only the dispatch log's exclusive dirty/fixup states.
+ * Non-required check observations, plain retries, pending checks and every
+ * PR no verdict claims unambiguously contribute nothing; absent, empty or
+ * unmatched evidence changes nothing.
  */
 function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   const job = ledgerJobId(row);
@@ -731,7 +774,11 @@ function ledgerAssign(row: Record<string, unknown>): AssignEvent | null {
   return { kind: 'assign', job, repo, resource, model, jobType, atMs };
 }
 
-function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string> | null): { events: ParsedEvent[]; malformed: number } {
+function parseJobsLedgerEvents(
+  text: string,
+  revertedPrKeys?: ReadonlySet<string> | null,
+  mergeQueue?: ReadonlyMap<string, MergeQueueEvidence> | null,
+): { events: ParsedEvent[]; malformed: number } {
   const events: ParsedEvent[] = [];
   let malformed = 0;
   const usageByJob = new Map<string, number>();
@@ -744,11 +791,13 @@ function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string
   const batchClaims = new Map<string, { bid: string; assign: AssignEvent }>();
   const batchMembers = new Map<string, Set<string>>();
   const lines = text.split(/\r?\n/);
-  // PR URL → job claims for the standing-revert join, built only when the
-  // caller supplied keys; null keeps the fold on its in-ledger evidence alone.
-  const urlToJob = revertedPrKeys === undefined || revertedPrKeys === null || revertedPrKeys.size === 0
-    ? null
-    : prUrlClaims(lines);
+  // PR URL → job claims for the standing-revert and merge-queue joins,
+  // built only when the caller supplied either evidence source; null keeps
+  // the fold on its in-ledger evidence alone.
+  const urlToJob = (revertedPrKeys !== undefined && revertedPrKeys !== null && revertedPrKeys.size > 0)
+    || (mergeQueue !== undefined && mergeQueue !== null && mergeQueue.size > 0)
+    ? prUrlClaims(lines)
+    : null;
   // Newest ledger line carrying positive revert evidence per job id. Every
   // spelling hasRevertEvidence accepts contains 'revert', so the regex
   // keeps this pass from parsing rows that cannot carry the evidence.
@@ -896,11 +945,24 @@ function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string
     // verdict's own PR, a relaunch's merge of a different PR stays held
     // exactly like the in-ledger era rule.
     let prReverted = false;
+    let mergeDirty = false;
+    let mergeFixup = false;
     if (urlToJob !== null) {
       const verdictUrl = rowPrUrl(row);
       if (verdictUrl !== null && urlToJob.get(verdictUrl) === job) {
         const key = pullRequestKey(verdictUrl);
-        prReverted = key !== null && revertedPrKeys?.has(key) === true;
+        if (key !== null) {
+          prReverted = revertedPrKeys?.has(key) === true;
+          const queue = mergeQueue?.get(key);
+          if (queue !== undefined) {
+            // Only unambiguous merge friction counts: recorded conflicts,
+            // recuts or a conflict block are dirty evidence; required-check
+            // failures and failed retries are fix-up evidence. Flakes,
+            // unrelated checks and pending states stay out.
+            mergeDirty = queue.conflicts > 0 || queue.recuts > 0 || queue.blocked_reasons.includes('conflict');
+            mergeFixup = queue.required_check_failures > 0 || queue.retry_failures > 0;
+          }
+        }
       }
     }
     const heldMerge = state === 'MERGED' && !prReverted && (maxRevertLine.get(job) ?? -1) < lineNo;
@@ -910,6 +972,7 @@ function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string
       usage: usageByJob.get(job) ?? null,
       usageUnit: 'tokens',
       minutes, breakage: 0,
+      mergeDirty, mergeFixup,
     });
   }
   // An attempt still open whose job carries revert evidence recorded after
@@ -940,19 +1003,29 @@ function parseJobsLedgerEvents(text: string, revertedPrKeys?: ReadonlySet<string
  * discount in-ledger revert evidence applies; absent, empty or unmatched
  * keys change nothing, so git-only reverts the jobs ledger never wrote
  * still count against the cell instead of reading as held merges.
+ *
+ * `mergeQueue` is the optional per-PR merge-queue evidence map
+ * (`owner/repo#n` → MergeQueueEvidence) `foldMergeEvents` produces from
+ * `metrics/merge-events.jsonl`. When supplied, each verdict's own
+ * unambiguously claimed PR contributes its recorded friction to the
+ * attempt's `mergeDirty`/`mergeFixup` flags, which the fold adds to the
+ * cell's `dirty`/`fixups` counts — the evidence the dirty and fixup
+ * improvement patterns read. Absent, empty or unmatched evidence changes
+ * nothing.
  */
 export function learnFleetOutcomes(
   dispatchLog: string | null,
   jobsLedger: string | null,
   censor?: CensorOptions,
   revertedPrKeys?: ReadonlySet<string> | null,
+  mergeQueue?: ReadonlyMap<string, MergeQueueEvidence> | null,
 ): OutcomeLearning {
   const dispatch = dispatchLog === null
     ? { events: [] as ParsedEvent[], malformed: 0 }
     : parseEvents(dispatchLog);
   const ledger = jobsLedger === null
     ? { events: [] as ParsedEvent[], malformed: 0 }
-    : parseJobsLedgerEvents(jobsLedger, revertedPrKeys);
+    : parseJobsLedgerEvents(jobsLedger, revertedPrKeys, mergeQueue);
   return fold([...dispatch.events, ...ledger.events], dispatch.malformed + ledger.malformed, censor);
 }
 
@@ -969,6 +1042,7 @@ function stableId(parts: readonly string[]): string {
 function patternRate(cell: OutcomeCellView, pattern: ImprovementPattern): number {
   switch (pattern) {
     case 'breakage': return cell.breakageRate;
+    case 'revert': return cell.attempts > 0 ? cell.reverted / cell.attempts : 0;
     case 'dirty': return cell.dirtyRate;
     case 'fixup': return cell.fixupRate;
     case 'low-merge': return 1 - cell.goodMergeRate;
@@ -988,10 +1062,15 @@ function patternCopy(cell: OutcomeCellView, pattern: ImprovementPattern): { titl
         title: `Stop main breakage from ${who} on ${where}`,
         task: `${who} broke main on ${cell.breakages} of ${cell.attempts} ${where}. Find what those jobs changed and add a regression check that fails before merge.`,
       };
+    case 'revert':
+      return {
+        title: `Stop the reverted merges from ${who} on ${where}`,
+        task: `${who} had ${cell.reverted} of ${cell.attempts} ${where} merges reverted — work that shipped and then did not hold. Find what those jobs changed and why each merge was undone, and add the check that keeps the next merge standing.`,
+      };
     case 'dirty':
       return {
         title: `Clear the dirty pull requests from ${who} on ${where}`,
-        task: `${who} left ${cell.dirty} of ${cell.attempts} ${where} DIRTY. Find the repeated conflict and make the next attempt land cleanly.`,
+        task: `${who} recorded ${cell.dirty} dirty or merge-conflicted pull requests across ${cell.attempts} ${where}. Find the repeated conflict and make the next attempt land cleanly.`,
       };
     case 'fixup':
       return {
@@ -1014,6 +1093,7 @@ function recurringPatterns(cell: OutcomeCellView): ImprovementPattern[] {
   const failures = cell.attempts - cell.goodMerges;
   const patterns: ImprovementPattern[] = [];
   if (cell.breakages >= RECURRING_FAILURES) patterns.push('breakage');
+  if (cell.reverted >= RECURRING_FAILURES) patterns.push('revert');
   if (cell.dirty >= RECURRING_FAILURES) patterns.push('dirty');
   if (cell.fixups >= RECURRING_FAILURES) patterns.push('fixup');
   if (failures >= RECURRING_FAILURES && cell.goodMerges * 2 < cell.attempts) patterns.push('low-merge');
@@ -1080,11 +1160,11 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
   return publish(sum);
 }
 
-function meanSuccess(cell: OutcomeCellView): number {
+function meanSuccess(cell: Pick<OutcomeCellView, 'attempts' | 'goodMerges'>): number {
   return (1 + cell.goodMerges) / (2 + cell.attempts);
 }
 
-function meanCheapness(cell: OutcomeCellView): number {
+function meanCheapness(cell: Pick<OutcomeCellView, 'attempts' | 'usage'>): number {
   return (1 + cell.attempts) / (1 + cell.usage);
 }
 
@@ -1309,6 +1389,37 @@ export function learnedSeatPenalty(learning: OutcomeLearning, jobType: string, r
     const previous = scores.get(cell.resource);
     if (previous === undefined || score > previous) scores.set(cell.resource, score);
   }
+  return normalizedPenalties(scores);
+}
+
+/**
+ * The same posterior means pooled across every recorded cell: a seat-router
+ * request carries no fleet job type or repo, so the honest prior is the
+ * resource's whole dispatch record — attempts, good merges and usage summed
+ * per resource over all models, job types and repos, then the same
+ * meanSuccess x meanCheapness reward and normalization learnedSeatPenalty
+ * applies. Lower is better; the best resource stays at 0 and every other
+ * resource's penalty stays inside [0, 1]. An empty or all-unmeasured log
+ * yields {} — the router's ranking is then byte-identical.
+ */
+export function learnedFleetSeatPenalty(learning: OutcomeLearning): Record<string, number> {
+  const pooled = new Map<string, { attempts: number; goodMerges: number; usage: number }>();
+  for (const cell of learning.cells) {
+    if (cell.attempts < 1) continue;
+    const acc = pooled.get(cell.resource) ?? { attempts: 0, goodMerges: 0, usage: 0 };
+    acc.attempts += cell.attempts;
+    acc.goodMerges += cell.goodMerges;
+    acc.usage += cell.usage;
+    pooled.set(cell.resource, acc);
+  }
+  const scores = new Map<string, number>();
+  for (const [resource, cell] of pooled) {
+    scores.set(resource, meanSuccess(cell) * meanCheapness(cell));
+  }
+  return normalizedPenalties(scores);
+}
+
+function normalizedPenalties(scores: ReadonlyMap<string, number>): Record<string, number> {
   let best = 0;
   for (const score of scores.values()) if (score > best) best = score;
   const penalty: Record<string, number> = {};

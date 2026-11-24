@@ -97,6 +97,25 @@ export function isNodePoolLedgerRow(row: Record<string, unknown>): boolean {
 }
 
 /**
+ * The precheck-decline receipt across the jobs-ledger event dialect. The
+ * live dispatcher writes `skipped_empty` rows carrying the numeric gate
+ * `code` for every precheck verdict it does not park (code 13 parks as
+ * `precheck_parked` instead — a defer, never a decline); `precheck_skip`
+ * is the spelling the staged candidate and pre-rename ledgers use for the
+ * same declines. A `skipped_empty` row without a numeric `code` is the
+ * empty gate's `reason` decline — a different signal the empty readers
+ * already count — so it never joins here, and an `applied:false` dry-run
+ * row records the job still launched (the same guard the skip-gate
+ * readers in empty-finishes, slot-yield and router/outcomes apply).
+ */
+export function isPrecheckSkipRow(row: Record<string, unknown>): boolean {
+  const event = ledgerEventName(row);
+  if (event !== 'precheck_skip' && event !== 'skipped_empty') return false;
+  if (event === 'skipped_empty' && (typeof row['code'] !== 'number' || !Number.isFinite(row['code']))) return false;
+  return row['applied'] !== false;
+}
+
+/**
  * The job outcome a row resolves to, or null when it carries none. `merged:true`
  * and 'merged'/'closed' event names are verdicts on any row; outcome-bearing
  * events return their phase (an empty phase stays null so a phase-less row

@@ -22,3 +22,13 @@
 .jobs { display: flex; flex-direction: column; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
 .jobsTitle, .hint { color: var(--text-secondary); font-size: var(--text-xs-size); }
 .jobs .jobList { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* One wrapping row per pool, shared at desktop and phone widths. */
+.spend { display: grid; gap: var(--space-2); min-width: 0; }
+.spend li { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-xs-size); }
+.spend .pool { width: 100%; }
+.resetBar { position: relative; margin-inline: var(--space-2); }
+.resetMark { position: absolute; inset-block: -2px; inset-inline-end: 0; width: 2px; background: var(--text-primary); }
+.spend { display: grid; gap: var(--space-2); min-width: 0; }
+.spend .pool { overflow-wrap: anywhere; }
+.spend { display: grid; gap: var(--space-2); min-width: 0; }
+.spend .pool { overflow-wrap: anywhere; }

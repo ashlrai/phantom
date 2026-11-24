@@ -18,7 +18,7 @@ export interface FleetCommsInboxDeps {
 
 /** The job-id rule every bus read surface shares: a printable label, 1-128 chars. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
-const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'contains']);
+const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
 
 export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCommsInboxArgs | null {
   if (Object.keys(args).some(key => !INBOX_KEYS.has(key))) return null;
@@ -51,6 +51,12 @@ export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCo
     const since = parseSince(args.since);
     if (since === null || !Number.isSafeInteger(since) || since < 0) return null;
     filter.since = since;
+  }
+  if (args.before !== undefined) {
+    if (typeof args.before !== 'string') return null;
+    const before = parseSince(args.before);
+    if (before === null || !Number.isSafeInteger(before) || before < 0) return null;
+    filter.before = before;
   }
   if (args.contains !== undefined) {
     if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > UNIFIED_INBOX_CONTAINS_MAX) return null;

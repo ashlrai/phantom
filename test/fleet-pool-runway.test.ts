@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdFleetPools } from '../src/cli/fleet-pools.js';
+import { projectPoolRunway } from '../src/core/usage/runway-read.js';
 import { projectUsagePace } from '../src/core/usage/pace.js';
 import { planPoolShares, poolShareSnapshot, POOL_SHARE_STATES, type PoolShareInput } from '../src/core/usage/runway.js';
 
@@ -73,6 +74,32 @@ describe('planPoolShares', () => {
 
 describe('usage pace snapshot carries the shares (resources API payload)', () => {
   const now = Date.parse('2026-11-18T16:00:00Z');
+
+  it('shares spend-down facts between CLI and desktop/phone, including gifts and all budget pools', async () => {
+    const at = (h: number) => new Date(now + h * 3_600_000).toISOString();
+    const measured = (used: number, burn: number, h: number) => ({ use_it_all: { known: true, stale: false, used_pct: used, burn_pct_per_hour: burn, reset_at: at(h) } });
+    const raw = { schema: 'dispatchd.status.v1', last_tick: at(0), budget: {
+      'codex-personal': measured(50, 1, 50), 'codex-cmp': measured(50, 1, 98), claude: measured(50, 1, 20),
+      zai: { use_it_all: { known: true, stale: true } }, custom: {},
+      'claude-api': { gift: { usd_remaining: 50, usd_granted: 100, usd_burn_per_hour: 1, as_of: at(0), expires_at: at(20) } },
+    } };
+    const shares = projectUsagePace(raw, now).shares;
+    const row = (pool: string) => shares.pools.find(r => r.pool === pool)!;
+    expect(row('codex-personal').verdict).toBe('on pace');
+    expect(row('codex-cmp').verdict).toBe('will run dry 2 days early');
+    expect(row('claude')).toMatchObject({ verdict: 'will waste 30%', used_percent: 50, burn_pct_per_hour: 1, hours_to_reset: 20, reset_at: at(20), projected_percent_at_reset: 70 });
+    expect(row('claude-api')).toMatchObject({ unit: 'usd', remaining_usd: 50, used_percent: 50, burn_pct_per_hour: 1, verdict: 'will waste 30%' });
+    expect(row('zai')).toMatchObject({ verdict: 'unknown: reading stale', used_percent: null });
+    expect(row('custom')).toMatchObject({ verdict: 'unknown: no reading', projected_percent_at_reset: null });
+    expect(row('claude-api')).toMatchObject({ unit: 'usd', used_percent: 50, burn_pct_per_hour: 1, remaining_usd: 50, projected_percent_at_reset: 70, reset_at: at(20) });
+    expect(projectPoolRunway(raw, now).shares).toEqual(shares);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await cmdFleetPools(['--json'], { read: async () => ({ shares }) });
+    expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual(shares);
+    log.mockRestore();
+    expect(projectUsagePace(raw, now + 120_001).shares.pools.every(r => r.used_percent === null && r.burn_pct_per_hour === null && r.reset_at === null)).toBe(true);
+  });
+
   it('reads fresh known readings only; stale and missing pools stay unknown', () => {
     const { shares } = projectUsagePace({ schema: 'dispatchd.status.v1', last_tick: '2026-11-18T16:00:00Z', budget: {
       claude: { use_it_all: { known: true, stale: false, used_pct: 1, burn_pct_per_hour: 0.1, reset_at: '2026-11-20T18:00:00Z' } },
@@ -108,15 +135,15 @@ describe('phm fleet pools', () => {
       expect(Object.keys(parsed).sort()).toEqual(['asOf', 'next_pool', 'pools', 'schema']);
       expect(parsed).toMatchObject({ schema: 'fleet.pools.v1', next_pool: 'claude', asOf: expect.any(String) });
       const pools = parsed.pools as Record<string, unknown>[];
-      expect(pools.map(row => row.pool)).toEqual(['claude', 'codex-personal', 'gemini', 'zai']);
+      expect(pools.map(row => row.pool)).toEqual(['claude', 'codex-personal', 'claude-api', 'codex-cmp', 'gemini', 'zai']);
       for (const row of pools) {
-        expect(Object.keys(row).sort()).toEqual(['hours_to_reset', 'line', 'pool', 'projected_percent_at_reset', 'rank', 'reason',
-          'runway_hours', 'state', 'suggested_share', 'used_percent']);
+        expect(Object.keys(row).sort()).toEqual(['burn_pct_per_hour', 'hours_to_reset', 'line', 'pool', 'projected_percent_at_reset', 'rank', 'reason',
+          'remaining_usd', 'reset_at', 'runway_hours', 'state', 'suggested_share', 'unit', 'used_percent', 'verdict']);
         for (const key of ['runway_hours', 'hours_to_reset', 'suggested_share', 'used_percent', 'projected_percent_at_reset']) {
           expect(row[key] === null || typeof row[key] === 'number').toBe(true);
         }
       }
-      expect(pools.map(row => row.state)).toEqual(['wasting', 'starving', 'unknown', 'unknown']);
+      expect(pools.map(row => row.state)).toEqual(['wasting', 'starving', 'unknown', 'unknown', 'unknown', 'unknown']);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -126,8 +153,8 @@ describe('phm fleet pools', () => {
       const out = capture();
       expect(await cmdFleetPools(['--runs-dir', root])).toBe(0);
       expect(out[0]).toBe('Next job: unknown (no pool is known to have room)');
-      expect(out.slice(1)).toEqual(['Claude: unknown (no usage reading)', 'Codex personal: unknown (no usage reading)',
-        'Gemini: unknown (no usage reading)', 'Zai: unknown (no usage reading)']);
+      expect(out.slice(1)).toHaveLength(6);
+      expect(out.slice(1).every(line => line.includes('unknown: status missing or stale') && !line.includes('0%'))).toBe(true);
       expect(await cmdFleetPools(['--runs-dir', 'relative'])).toBe(2);
       expect(await cmdFleetPools(['--bogus'])).toBe(2);
       expect(await cmdFleetPools(['--help'])).toBe(0);

@@ -37,7 +37,7 @@
  */
 import { globMatches } from '../../authority/protected-paths.js';
 import { getEntries, type PlaybookEntry } from '../../vision/playbook.js';
-import { readApprovedKnowledgeSync, recordKnowledgeHits } from './store.js';
+import { readApprovedKnowledgeSync, recordKnowledgeHits, recordKnowledgeRuns } from './store.js';
 import {
   KNOWLEDGE_INJECT_CAP_BYTES,
   type KnowledgeEvidenceRef,
@@ -389,6 +389,15 @@ export interface KnowledgeBlockOptions {
   /** Record hits (default true). Tests and previews pass false. */
   recordHits?: boolean;
   /**
+   * The dispatch trajectory this injection belongs to (`run:<attemptId>`, the
+   * key trajectory-records joins outcomes on). When set and hits are recorded,
+   * the note ids are also appended to the knowledge-runs ledger so their
+   * served runs can be attributed to trajectory outcomes. Absent = the
+   * injection keeps hit counting only (cloud tasks, which carry their own
+   * `lessons` attribution, and previews).
+   */
+  trajectoryId?: string;
+  /**
    * PRs reverted after merging, as prKey keys (improve/reverted.ts revertedPrKeys). Notes whose every cited PR is in
    * it are withheld. Called at most once, and only when some note cites a PR; absent, nothing is withheld.
    */
@@ -405,7 +414,10 @@ export function knowledgeBlockFor(target: KnowledgeTarget, opts: KnowledgeBlockO
     const notes = selectKnowledge(opts.revertedPrKeys ? withholdReverted(approved, opts.revertedPrKeys) : approved, target);
     const vetoes = opts.fromLeader ? (opts.vetoes ?? readVetoLessonsSync()) : [];
     const rendered = renderKnowledgeBlock(notes, vetoes, opts.capBytes ?? KNOWLEDGE_INJECT_CAP_BYTES);
-    if (rendered.noteIds.length > 0 && opts.recordHits !== false) void recordKnowledgeHits(rendered.noteIds);
+    if (rendered.noteIds.length > 0 && opts.recordHits !== false) {
+      void recordKnowledgeHits(rendered.noteIds);
+      if (opts.trajectoryId !== undefined) void recordKnowledgeRuns(opts.trajectoryId, rendered.noteIds);
+    }
     return rendered;
   } catch {
     return { text: '', noteIds: [], vetoes: 0, bytes: 0 };

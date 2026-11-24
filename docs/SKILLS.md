@@ -114,6 +114,16 @@ production trajectories carry skill-use coverage, and the whole section is
 withheld when the skill-use ledger is degraded. Below the gate the field is
 absent — unknown stays unknown, never a zero.
 
+Recurring adverse tallies do not stay report-only:
+`phm improve discover` reads the same projection and queues a priority-3
+backlog item for the fleet repository when one live card revision records
+at least three reverted + regressed + followed-up realized outcomes inside
+the 7-day window. Only the corpus's newest revision in a `candidate` or
+`verified` status qualifies — superseded and withdrawn cards were already
+handled — and the items keep the association-not-causation framing since
+shadow selections never steered those runs. Withdrawing or rewriting a card
+itself remains an owner-only act on the host-signed ledger.
+
 ## Exit codes
 
 `0` listed (including an empty list), `2` bad usage (unknown flag, bad

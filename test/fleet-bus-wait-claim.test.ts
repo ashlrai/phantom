@@ -65,6 +65,10 @@ it('applies the read filters to each poll of the wait', async () => {
   if (!('token' in acquired)) throw new Error('missing claim');
   expect(acquired.receipt.envelope.id).toBe('p1-alpha');
   expect(mutateBusWorkClaim({ action: 'complete', id: 'p1-alpha', token: acquired.token, root }).status).toBe('completed');
+  // --before bounds the window above on every poll: a ceiling before the
+  // posts' arrival waits honestly to timeout rather than claiming newer work.
+  expect(await waitClaimBusWork({ ...request(), before: Date.now() - 60_000, waitMs: 30 }))
+    .toEqual({ status: 'timeout' });
 });
 
 it('rejects malformed arguments before creating storage', async () => {
@@ -73,7 +77,7 @@ it('rejects malformed arguments before creating storage', async () => {
     args().slice(0, -1), args().map(x => x === '12000' ? '0' : x), args().map(x => x === '12000' ? '300001' : x),
     args().map(x => x === '12000' ? '1e2' : x), args().map(x => x === '60000' ? '3600001' : x),
     args().map(x => x === root ? 'relative' : x), args().slice(0, -2),
-    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--contains', '   ']]) {
+    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   ']]) {
     expect(await cmdFleetBusWaitClaim(bad)).toBe(2);
     expect(JSON.parse(String(output.mock.calls.at(-1)![0]))).toEqual({ status: 'invalid' });
   }

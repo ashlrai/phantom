@@ -3,11 +3,18 @@ import { planRedfixCycle, readRedfixCandidates, readRedCandidates, redCandidates
 import { cmdFleetRedCandidates } from '../src/cli/fleet-red-candidates.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdJobsRedfixCandidates } from '../src/cli/jobs-redfix-candidates.js';
+import { familyYield } from '../src/core/fleet/family-yield.js';
 
 const pr = (number = 1, log = 'error TS1: wrong'): RedfixPr => ({ number, title: `bridge: RQ-PHX-DEMO${number}`, headRefName: 'demo', updatedAt: '2026-01-01T00:00:00Z', files: [{ path: 'src/cli/demo.ts' }], statusCheckRollup: [
   { name: 'CI', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: 'today', detailsUrl: 'https://github.com/ashlrai/phantom/actions/runs/1/job/1', log },
 ] });
 describe('redfix pre-emit scan', () => {
+  it('does not emit a bucket paused by its last four empty launches', async () => {
+    const ts = new Date(Date.now() - 1000).toISOString();
+    const stats = familyYield(Array.from({ length: 4 }, (_, i) => [JSON.stringify({ event: 'launch', job: `RQ-PHX-REDFIXCLIC${i}`, ts }),
+      JSON.stringify({ event: 'finish', job: `RQ-PHX-REDFIXCLIC${i}`, empty: true, summary: 'no diff' })]).flat(), Date.now(), 24).launch_families;
+    expect(await planRedfixCycle(7, async () => ({ open: [pr()], merged: [] }), vi.fn(), async () => stats)).toEqual([]);
+  });
   it('emits zero rows and one message for zero eligible PRs', async () => {
     const log = vi.fn(); expect(await planRedfixCycle(1, async () => ({ open: [], merged: [] }), log)).toEqual([]);
     expect(log.mock.calls).toEqual([['redfix: 0 eligible red PRs, no cycle emitted']]);
