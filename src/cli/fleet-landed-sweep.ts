@@ -9,6 +9,7 @@
  * title, SHA, OPEN-at-head re-read, ledger-before-continue) stay the only
  * write path. Without --apply landed-close plans and closes nothing.
  */
+import type { GhFailure } from '../core/fleet/landed-gh-failure.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { gitOnlyLanded, type BranchEvidence } from '../core/fleet/landed-git-only.js';
 import { isAbsolute } from 'node:path';
@@ -43,6 +44,7 @@ interface SweepResult {
   /** Where inspected/landed came from when gh could not answer. */
   source?: 'git';
   branchEvidence?: BranchEvidence;
+  ghFailure?: GhFailure;
 }
 
 const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -78,7 +80,7 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
   const finish = (code: number, message?: string): number => {
     if (message !== undefined) result.error = message;
     if (json) output(JSON.stringify(result));
-    else if (result.skippedReason !== undefined) output(`landed-sweep: skipped, ${result.skippedReason}`);
+    else if (result.skippedReason !== undefined) output(`landed-sweep: skipped, ${result.skippedReason}${result.ghFailure ? `; ${result.ghFailure.reason}` : ''}`);
     else {
       output(`landed-sweep: inspected=${result.inspected} landed=${result.landed} planned=${result.planned} ` +
         `closed=${result.closed} skipped=${result.skipped} failed=${result.failed}${message ? ` error=${message}` : ''}`);
@@ -94,6 +96,7 @@ export async function cmdFleetLandedSweep(args: string[], deps: FleetLandedSweep
     ...(deps.now === undefined ? {} : { now: () => new Date(deps.now!()) }),
     output: text => { reportText = text; },
     onFailure: (kind, message) => { if (kind === 'unavailable') inputGap = message; },
+    onGhFailure: failure => { result.ghFailure = failure; },
   });
   // The report is built here from `gh pr list`. When gh cannot answer (not installed, signed out,
   // offline) there is nothing to sweep: say so and let the tick go on. Bad data still fails.
