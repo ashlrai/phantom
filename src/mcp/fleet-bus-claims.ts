@@ -9,7 +9,8 @@
  * every origin" fleet-wide. This tool is the claim table's own read: the
  * live `resource`/`message`/`team`/`board` leases the one coordination
  * store keeps, narrowed by the same `key` overlap preview, `owner`
- * identity-label match, `origin` class filter and `jobs` feed join the
+ * identity-label match and `excludeOwner` sender-exclusion, `contains`
+ * row-text search, `origin` class filter and `jobs` feed join the
  * CLI flags apply, with `source` keeping a missing table verified-empty
  * and an unreadable one `unavailable` — never an invented empty list.
  *
@@ -33,17 +34,22 @@ import {
   type BusClaimsListOptions, type BusClaimsListResult,
 } from '../core/agents/bus-claims.js';
 import { parseClaimKey } from '../core/agents/bus-v2-schema.js';
+import { BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
 
 /** The claim store's own owner-label bound — printable ASCII, 1–256 chars. */
 const CLAIM_OWNER = /^[\x21-\x7e]{1,256}$/;
 
-const CLAIMS_KEYS = new Set(['key', 'owner', 'origin', 'jobs']);
+const CLAIMS_KEYS = new Set(['key', 'owner', 'excludeOwner', 'contains', 'origin', 'jobs']);
 
 export interface FleetBusClaimsArgs {
   /** Keep only live claims that would block an acquire of this v2 claim key — the same overlap rule `claim list --key` applies. */
   key?: string;
   /** Keep only live claims owned by this routing ref — a handle, `agent:<handle>`, stable id or alias resolved through the server-side registry, exact-label fallback when unresolvable. */
   owner?: string;
+  /** Drop live claims owned by this routing ref — the same identity-label resolution `owner` applies, inverted; composes with `owner`. */
+  excludeOwner?: string;
+  /** Keep only live claims whose key, sourceId or repo/branch/path target fields carry this text — the same case-insensitive substring rule every bus read's `--contains` applies. */
+  contains?: string;
   /** Keep only live claims of this origin class — resource, message, team or board. */
   origin?: CoordinationOrigin;
   /** Also join each claim with the announced feed jobs its keys block and report the feed read state. */
@@ -54,8 +60,10 @@ export interface FleetBusClaimsArgs {
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. `key`
  * takes the same `parseClaimKey` grammar `work.claim` bodies and
- * `claim list --key` enforce, `owner` the claim store's printable-label
- * bound, `origin` the COORDINATION_ORIGINS enum and `jobs` a JSON boolean.
+ * `claim list --key` enforce, `owner` and `excludeOwner` the claim
+ * store's printable-label bound, `contains` the shared bus `--contains`
+ * bound (non-empty, at most `BUS_READ_CONTAINS_MAX`), `origin` the
+ * COORDINATION_ORIGINS enum and `jobs` a JSON boolean.
  * Unknown keys, wrong types, caller roots and malformed values are all
  * refused before the store is touched.
  */
@@ -71,6 +79,16 @@ export function parseFleetBusClaimsArgs(args: Record<string, unknown>): FleetBus
   if (owner !== undefined) {
     if (typeof owner !== 'string' || !CLAIM_OWNER.test(owner)) return null;
     parsed.owner = owner;
+  }
+  const excludeOwner = args.excludeOwner;
+  if (excludeOwner !== undefined) {
+    if (typeof excludeOwner !== 'string' || !CLAIM_OWNER.test(excludeOwner)) return null;
+    parsed.excludeOwner = excludeOwner;
+  }
+  const contains = args.contains;
+  if (contains !== undefined) {
+    if (typeof contains !== 'string' || contains.trim() === '' || contains.length > BUS_READ_CONTAINS_MAX) return null;
+    parsed.contains = contains;
   }
   const origin = args.origin;
   if (origin !== undefined) {
@@ -117,6 +135,8 @@ export async function readFleetBusClaims(
   const result = list({
     ...(args.key === undefined ? {} : { key: args.key }),
     ...(args.owner === undefined ? {} : { owner: args.owner }),
+    ...(args.excludeOwner === undefined ? {} : { excludeOwner: args.excludeOwner }),
+    ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.origin === undefined ? {} : { origin: args.origin }),
     ...(args.jobs === undefined ? {} : { jobs: args.jobs }),
   });
