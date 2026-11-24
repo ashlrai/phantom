@@ -54,10 +54,16 @@ equal to the value — the same exact-envelope match `comms bus read|watch
 inbox`/`channel read --id` and the `fleet_agent_inbox`/`fleet_bus_channel`/
 `fleet_agent_messages`/`fleet_agent_wakes` MCP `id` filters apply, never a
 substring or a body citation, so "where did envelope X go" is one filtered
-read — `--limit <n>`)
+read — `--body-kind <kind>` for only the bodies carrying that exact kind
+discriminator — the same `busBodyKind` own-field exact match `agents bus
+inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
+wakes --body-kind` and `agents conversations --body-kind` apply, decided
+on the raw body before projection so a body carrying no discriminator
+never matches and an unrecognized but printable value is an honest empty
+page — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`, `from`, `excludeFrom`, `inReplyTo`, `id` and `limit` params. Both return `agent-messages.v1`: newest
+`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line

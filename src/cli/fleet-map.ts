@@ -6,7 +6,7 @@ const usage = 'Usage: phm fleet map [--minutes N] [--json]\nShow the org and ret
 
 export async function cmdFleetMap(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\n       phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name>] [--with <name>] [--kind <kind>] [--priority <P0-P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name>] [--exclude-from <name>] [--in-reply-to <id>] [--id <id>] [--limit N]\nThe last agent-to-agent messages, one line each; every filter is the phm messages vocabulary (see phm fleet map messages --help).`);
+    console.log(`${usage}\n       phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name>] [--with <name>] [--kind <kind>] [--priority <P0-P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name>] [--exclude-from <name>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit N]\nThe last agent-to-agent messages, one line each; every filter is the phm messages vocabulary (see phm fleet map messages --help).`);
     return 0;
   }
   if (args[0] === 'messages') return (await import('./fleet-map-messages.js')).cmdFleetMapMessages(args.slice(1));
