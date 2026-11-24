@@ -3,7 +3,8 @@
  * where recent work went. The route table is the router's own answer for each task at each
  * difficulty, one unlogged preview per cell; choosing a cell draws that answer as the order seats would
  * be tried, each with its provider mark, the share of its usage window already used and its
- * reset, then the seats held back with the router's reason. Below, the recorded decision log
+ * reset, then the seats held back with the router's reason. The seats board turns the table on
+ * its side: a row per seat, where it stands for every kind of work. Below, the recorded decision log
  * is counted by chosen seat and drawn over time: a lane per seat, a column per equal slice of
  * the span read, each column readable on its own. The pane decides nothing.
  */
@@ -14,6 +15,7 @@ import type { RoutingDifficulty, RoutingTask, SeatDecision } from '../../../../c
 import { describeResetAt } from '../../../../core/verse/seat-readiness.js';
 import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { Segmented } from '../../../components/primitives/Segmented.js';
+import { WindowBar } from '../../../components/primitives/WindowBar.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { budgetQuery } from '../budget/budget-queries.js';
 import { decisionSummary, describeEligibleAgain, eligibleAgain, heldBackText } from '../fleet/why-seat-model.js';
@@ -23,6 +25,7 @@ import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { formatRelative } from '../verse-model.js';
 import { TIMELINE_COLUMNS, columnWords, decisionTimeline, stepColumn, timelineWords } from './decision-timeline-model.js';
 import styles from './fleet-router.module.css';
+import { SeatPoolBoard } from './SeatPool.js';
 import { ROUTER_DIFFICULTIES, ROUTER_KINDS, ROUTER_TASKS, routeAt, routeSeats, routerDecisionsQuery, routerRoutesQuery, seatBrand, summarizeDecisions, tableShares, type BudgetRoute, type RouteSeat } from './router-model.js';
 
 const KINDS = ROUTER_KINDS;
@@ -38,11 +41,10 @@ const ago = (iso: string, now: number): string => { const text = formatRelative(
 
 function Usage({ seat, now }: { seat: RouteSeat; now: number }) {
   if (seat.free) return <span className={styles.usage}>Local: no usage window</span>;
-  if (seat.usedPercent === null) return <span className={styles.usage}><span className={styles.track} data-unknown role="img" aria-label={`${seat.label} usage unknown`} />Usage unknown</span>;
-  const used = Math.max(0, Math.min(100, seat.usedPercent));
+  if (seat.usedPercent === null) return <span className={styles.usage}><WindowBar className={styles.meter} label={`${seat.label} usage`} valueText="Usage unknown" valueNow={null} used={null} />Usage unknown</span>;
   const text = `${usedPercentText(seat.usedPercent)} of the ${seat.window} window used`;
   return <span className={styles.usage}>
-    <span className={styles.track} role="img" aria-label={`${seat.label}: ${text}`}><span className={styles.fill} data-high={used >= 90 || undefined} style={{ width: `${used}%` }} /></span>
+    <WindowBar className={styles.meter} label={`${seat.label} ${seat.window} window used`} valueText={text} valueNow={seat.usedPercent} used={seat.usedPercent} />
     {text}{seat.resetAt ? ` · resets ${describeResetAt(seat.resetAt, now) ?? seat.resetAt}` : ' · reset unknown'}
   </span>;
 }
@@ -217,6 +219,8 @@ export function FleetRouterPane({ visible }: PaneProps) {
       <RouteTable routes={routes} view={view} task={task} difficulty={difficulty} onPick={(nextTask, nextDifficulty) => { setTask(nextTask); setDifficulty(nextDifficulty); }} />
       <div className={styles.head}><h2>Next {difficulty} {task} task</h2></div>
       {decision ? <Route decision={decision} view={view} now={now} /> : <p className={styles.meta}>Unknown: the route table does not hold this kind of work.</p>}
+      <div className={styles.head}><h2>Seats the router balances across</h2></div>
+      <SeatPoolBoard routes={routes} view={view} task={task} difficulty={difficulty} now={now} onPick={(nextTask, nextDifficulty) => { setTask(nextTask); setDifficulty(nextDifficulty); }} />
     </> : <p className={styles.meta} role="status">{table.status === 'error' ? 'Route table: unknown (the router did not answer).' : 'Asking the router…'}</p>}
     <p className={styles.note}>Routed for {audience === 'fleet' ? 'autonomous fleet work' : 'your own request'}. Seat usage was read {view && typeof view.sampledAt === 'string' ? ago(view.sampledAt, now) : 'at an unknown time'}. Nothing is launched or reserved.</p>
     <div className={styles.head}><h2>Recorded decisions</h2></div>

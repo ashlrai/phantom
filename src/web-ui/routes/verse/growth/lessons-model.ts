@@ -2,7 +2,9 @@
  * routes/verse/growth/lessons-model.ts — pure helpers for the Lessons view.
  */
 import type {
+  KnowledgeNoteV1,
   KnowledgeScope,
+  KnowledgeTrialSummary,
   LessonsCauseRow,
   RetroEndKind,
   RetroSource,
@@ -13,6 +15,7 @@ import { TASK_KINDS } from '../../../../core/learn/retro/types.js';
 export const END_KIND_LABEL: Readonly<Record<RetroEndKind, string>> = {
   merged: 'Merged',
   reverted: 'Reverted',
+  'revert-failed': 'Revert failed',
   closed: 'Closed',
   'gate-refused': 'Refused',
   'owner-laned': 'Owner lane',
@@ -25,6 +28,7 @@ export const END_KIND_LABEL: Readonly<Record<RetroEndKind, string>> = {
 export const END_KIND_TONE: Readonly<Record<RetroEndKind, 'success' | 'danger' | 'warning' | 'neutral'>> = {
   merged: 'success',
   reverted: 'danger',
+  'revert-failed': 'danger',
   closed: 'neutral',
   'gate-refused': 'warning',
   'owner-laned': 'neutral',
@@ -51,6 +55,37 @@ export function scopeLabel(scope: KnowledgeScope): string {
   if (scope.pathGlobs.length > 0) parts.push(scope.pathGlobs.join(', '));
   parts.push(scope.taskKinds.length > 0 ? scope.taskKinds.join(' / ') : 'any task');
   return parts.join(' · ');
+}
+
+type TrialEffect = NonNullable<KnowledgeNoteV1['trial']>;
+
+export const TRIAL_VERDICT_TEXT: Readonly<Record<TrialEffect['verdict'], string>> = {
+  helps: 'helps',
+  hurts: 'hurts',
+  'no-difference': 'no clear effect',
+  unknown: 'measuring',
+};
+
+/**
+ * One compact line for a holdout-trial read: arm counts always, the point
+ * effect and verdict only once both arms have enough finished runs. Arm
+ * labels stay 'served'/'holdout' — the trial's own vocabulary.
+ */
+export function trialLine(t: TrialEffect): string {
+  const arms = `served ${t.served.landed}/${t.served.tasks} landed · holdout ${t.holdout.landed}/${t.holdout.tasks} landed`;
+  if (t.delta === null || t.ci95 === null) return `lesson trial ${arms} — measuring`;
+  const pts = (n: number) => `${n >= 0 ? '+' : ''}${Math.round(n * 100)}`;
+  return `lesson trial ${arms} · ${pts(t.delta)} pts (${TRIAL_VERDICT_TEXT[t.verdict]})`;
+}
+
+/** The all-notes trial line for the Approved knowledge card; excluded runs are named when present. */
+export function trialSummary(t: KnowledgeTrialSummary): string {
+  const left = [
+    t.excluded.unfinished > 0 ? `${t.excluded.unfinished} unfinished` : null,
+    t.excluded.launchFailed > 0 ? `${t.excluded.launchFailed} launch failure${t.excluded.launchFailed === 1 ? '' : 's'}` : null,
+  ].filter((s): s is string => s !== null);
+  const suffix = left.length > 0 ? ` · ${left.join(', ')} not counted` : '';
+  return `${trialLine(t.overall)} · ${Math.round(t.holdout * 100)}% of launches held out${suffix}`;
 }
 
 /** Parse the edit form back into a scope; null when a field is not valid. */

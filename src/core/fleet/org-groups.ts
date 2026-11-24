@@ -4,7 +4,7 @@
  * Map pane's "By org" layout all read this one function.
  *
  * Pure. It takes the live map's own nodes and edges and adds nothing:
- *  - a node with no known parent goes under a group named "unassigned", never dropped or guessed;
+ *  - a node with no known parent goes under a group labelled "Other", never dropped or guessed;
  *  - a repeated id keeps its first row and is listed in `duplicates`;
  *  - computers and pools are infrastructure, not members of the org, so they are left out.
  * - the guardian and the other standing planners (executor, Core orchestrator, comms; "loops") are
@@ -120,7 +120,7 @@ export function fleetOrgGroups(map: Pick<FleetLiveMap, 'generatedAt' | 'nodes' |
     const row = make(id, 'planner', planner.label, group);
     row.status = planner.state;
   }
-  if ([...made.values()].some(node => node.parent === UNASSIGNED_GROUP)) make(UNASSIGNED_GROUP, 'group', 'unassigned', root);
+  if ([...made.values()].some(node => node.parent === UNASSIGNED_GROUP)) make(UNASSIGNED_GROUP, 'group', 'Other', root);
   for (const node of made.values()) if (node.parent !== null) made.get(node.parent)!.children.push(node.id);
 
   const ordered: OrgGroupNode[] = [];

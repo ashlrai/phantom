@@ -10,12 +10,13 @@ import { findStaleWorktrees, type FleetWorktreeStaleFs } from './fleet-worktree-
 import { summarizeFleetSlowPrs } from './fleet-slow-prs.js';
 import { parseKeptWorktrees, summarizeFleetKept } from './fleet-kept.js';
 import { parseIdleLanes } from '../core/fleet/idle-lanes.js';
+import { readGuardianDoctorCheck } from '../core/fleet/guardian-doctor.js';
 import { readFile, readdir, stat } from 'node:fs/promises';
 
-const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, lanes) as ok, warn or red, with the reason. Exits 1 when any check is red, 2 on bad usage.';
+const USAGE = 'Usage: ashlr fleet doctor [--json]\nRead-only health check: one line per check (leader, heartbeat, stuck-prs, slow-prs, waste, kept, worktrees, guardian, lanes) as ok, warn or red, with the reason. Checks run together with a 2.5 second deadline each. Exits 1 when any check is red, 2 on bad usage.';
 
 export type DoctorLevel = 'ok' | 'warn' | 'red';
-export interface DoctorCheck { name: string; level: DoctorLevel; reason: string }
+export interface DoctorCheck { name: string; level: DoctorLevel; reason: string; nextStep?: string }
 export interface FleetDoctorReport { v: 1; generatedAt: string; level: DoctorLevel; checks: DoctorCheck[] }
 
 /** Every reader is injectable so tests use fixtures and never touch ~/.ashlr-runs. */
@@ -29,6 +30,7 @@ export interface FleetDoctorOptions {
   worktreeFs?: FleetWorktreeStaleFs;
   worktreeRoot?: string;
   readLaneStatus?: () => Promise<string>;
+  readGuardian?: typeof readGuardianDoctorCheck;
   /** Queue status text for the kept check; defaults to reading queue/status.json. */
   readKeptStatus?: () => Promise<string>;
   now?: () => number;
@@ -68,9 +70,10 @@ async function heartbeatCheck(o: FleetDoctorOptions, now: number): Promise<Docto
   // A dead queue tick stops all dispatch; a stale supervisor file only degrades visibility.
   if (stale.some(s => s.source === 'queue/status.json')) {
     const q = stale.find(s => s.source === 'queue/status.json')!;
+    if (q.reason === 'timeout') return check('heartbeat', 'red', 'queue status probe timed out');
     return check('heartbeat', 'red', `queue tick ${q.ageMinutes === null ? q.reason : `${q.ageMinutes} min old`}`);
   }
-  if (stale.length) return check('heartbeat', 'warn', `stale: ${stale.map(s => s.source).join(', ')}`);
+  if (stale.length) return check('heartbeat', 'warn', `stale: ${stale.map(s => s.source + (s.reason === 'timeout' ? ' (probe timed out)' : '')).join(', ')}`);
   return check('heartbeat', 'ok', `${view.sources.length} source${view.sources.length === 1 ? '' : 's'} fresh`);
 }
 
@@ -137,18 +140,28 @@ export async function runFleetDoctor(o: FleetDoctorOptions = {}): Promise<FleetD
   const readJobs = o.readJobs ?? readTaskCheckJobs;
   const readWaste = o.readWaste ?? readJobs;
   const safe = async (name: string, run: () => Promise<DoctorCheck>): Promise<DoctorCheck> => {
-    try { return await run(); } catch (error) { return unavailable(name, error); }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(run),
+        new Promise<DoctorCheck>(resolve => {
+          timer = setTimeout(() => resolve(check(name, name === 'heartbeat' ? 'red' : 'warn', 'probe timed out after 2500 ms')), 2_500);
+        }),
+      ]);
+    } catch (error) { return unavailable(name, error); }
+    finally { clearTimeout(timer); }
   };
-  const checks = [
-    await safe('leader', () => leaderCheck(o, now)),
-    await safe('heartbeat', () => heartbeatCheck(o, now)),
-    await safe('stuck-prs', () => stuckCheck(readJobs, now)),
-    await safe('slow-prs', () => slowPrsCheck(readJobs)),
-    await safe('waste', () => wasteCheck(readWaste, now)),
-    await safe('kept', () => keptCheck(o, readJobs)),
-    await safe('worktrees', () => worktreeCheck(o, readJobs, now)),
-    await safe('lanes', () => lanesCheck(o)),
-  ];
+  const checks = await Promise.all([
+    safe('leader', () => leaderCheck(o, now)),
+    safe('heartbeat', () => heartbeatCheck(o, now)),
+    safe('stuck-prs', () => stuckCheck(readJobs, now)),
+    safe('slow-prs', () => slowPrsCheck(readJobs)),
+    safe('waste', () => wasteCheck(readWaste, now)),
+    safe('kept', () => keptCheck(o, readJobs)),
+    safe('worktrees', () => worktreeCheck(o, readJobs, now)),
+    safe('guardian', () => (o.readGuardian ?? readGuardianDoctorCheck)({ now: () => now })),
+    safe('lanes', () => lanesCheck(o)),
+  ]);
   const level: DoctorLevel = checks.some(c => c.level === 'red') ? 'red' : checks.some(c => c.level === 'warn') ? 'warn' : 'ok';
   return { v: 1, generatedAt: new Date(now).toISOString(), level, checks };
 }
@@ -158,6 +171,6 @@ export async function cmdFleetDoctor(args: string[], opts: FleetDoctorOptions = 
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(USAGE); return 2; }
   const report = await runFleetDoctor(opts);
   if (args[0] === '--json') console.log(JSON.stringify(report));
-  else for (const c of report.checks) console.log(`${c.level} ${c.name}: ${c.reason}`);
+  else for (const c of report.checks) console.log(`${c.level} ${c.name}: ${c.reason}${c.nextStep ? ` Next: ${c.nextStep}` : ''}`);
   return report.level === 'red' ? 1 : 0;
 }

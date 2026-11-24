@@ -8,8 +8,11 @@
  * null (JSON) or "unknown" (text), never zero.
  */
 import { join } from 'node:path';
-import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, ledgerEventName, ledgerRows, ledgerStateTokens, readText, type EmptyCause, type EmptyEvidence, type LedgerRow } from './empty-cause.js';
+import { classifyEmptyCause, EMPTY_CAUSE_TAIL_LINES, exists, readText, type EmptyCause, type EmptyEvidence } from './empty-cause.js';
+import { ledgerFinishes, type EmptiesFinish } from './empty-finishes.js';
 import { REASON_LINE, TIMEOUT_EXITS } from './lane-empty-causes.js';
+
+export { finishesIn, ledgerFinishes, type EmptiesFinish } from './empty-finishes.js';
 
 export const EMPTY_REASONS = ['already_on_master', 'no_eligible_target', 'no_diff', 'blocked_tool', 'tool_missing', 'precheck_skip', 'timeout', 'model_error', 'unknown'] as const;
 export type EmptyReason = (typeof EMPTY_REASONS)[number];
@@ -25,53 +28,6 @@ const LABEL: Record<EmptyReason, string> = {
   model_error: 'model limit or error',
   unknown: 'unknown',
 };
-
-/** One job's newest finish in the window. `skipped` means the dispatcher never launched it. */
-export interface EmptiesFinish {
-  id: string; lane: string; empty: boolean; skipped: boolean;
-  tokens: number | null; exitCode: number | null; poolError: boolean;
-}
-
-const SKIP_EVENTS = new Set(['precheck_skip', 'skipped_empty']);
-const whole = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
-
-/** Pure: the newest finish per job among rows already read, with its time. Shared with `phm throughput`. */
-export function finishesIn(rows: readonly LedgerRow[]): (EmptiesFinish & { at: number })[] {
-  const newest = new Map<string, EmptiesFinish & { at: number }>();
-  const launches = new Map<string, number>();
-  for (const { row, id, lane, at } of [...rows].sort((a, b) => a.at - b.at)) {
-    if (!id) continue;
-    const eventName = ledgerEventName(row);
-    if (eventName === 'launch') {
-      launches.set(id, at);
-      continue;
-    }
-    // `applied: false` is the skip gate's dry run: the job still launched, so only its finish row counts.
-    const skipped = eventName !== null && SKIP_EVENTS.has(eventName) && row.applied !== false;
-    const marked = ledgerStateTokens(row).includes('EMPTY_DONE');
-    const ended = eventName === 'finish' || (eventName === 'outcome' && typeof row.empty === 'boolean');
-    if (!skipped && !marked && !ended) continue;
-    const previous = newest.get(id);
-    const launch = launches.get(id);
-    const prior = previous && (launch === undefined || launch <= previous.at) ? previous : undefined;
-    const tokens = whole(row.tokens_total);
-    newest.set(id, {
-      id, at, skipped,
-      lane: lane === 'unknown' && prior ? prior.lane : lane,
-      empty: skipped || marked || row.empty === true,
-      tokens: tokens !== null && tokens >= 0 ? tokens : prior?.tokens ?? null,
-      exitCode: whole(row.exit_code) ?? prior?.exitCode ?? null,
-      poolError: (typeof row.pool_error === 'string' && row.pool_error !== '') || (prior?.poolError ?? false),
-    });
-  }
-  return [...newest.values()];
-}
-
-/** Pure: every job that finished in the window, newest row per job. */
-export function ledgerFinishes(ledger: string, now: number, hours: number): { finishes: EmptiesFinish[]; malformed: number } {
-  const { rows, malformed } = ledgerRows(ledger, now, hours);
-  return { finishes: finishesIn(rows).map(({ at: _at, ...finish }) => finish), malformed };
-}
 
 // The agent's own EMPTY_REASON line (the launcher asks for one) is the best evidence.
 const STATED: Record<string, EmptyReason> = {
@@ -355,9 +311,9 @@ export async function fleetEmpties(
     try {
       const row: Row = JSON.parse(line);
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw Error();
-      const kind = String(row.event ?? '').toLowerCase();
+      const kind = String([row.event, row.type, row.kind].find(v => typeof v === 'string') ?? '').toLowerCase();
       if (!['launch', 'finish', 'outcome', 'empty_done', 'publish', 'published'].includes(kind)) continue;
-      const job = label(row.job ?? row.jobId ?? row.job_id ?? row.id), stamp = row.ts ?? row.timestamp ?? row.at;
+      const job = label(row.job ?? row.jobId ?? row.job_id ?? row.id), stamp = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
       const at = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
       if (job === 'unknown' || !Number.isFinite(at)) throw Error();
       const key = JSON.stringify(Object.entries(row).sort(([a], [b]) => a.localeCompare(b)));

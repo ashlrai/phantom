@@ -296,25 +296,6 @@
   transition: width var(--duration-slow) var(--ease-standard);
 }
 
-/* The band kept for the operator, past a tick at 100 − reserve. */
-.meterReserve {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--text-tertiary) 30%, transparent) 0 2px,
-    transparent 2px 4px
-  );
-}
-.meterTick {
-  position: absolute;
-  top: -1px;
-  bottom: -1px;
-  width: 1.5px;
-  background: var(--text-secondary);
-}
-
 .meterValue {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -323,12 +304,29 @@
 }
 .meter[data-level='limit'] .meterValue { font-weight: var(--font-weight-semibold); }
 .meter[data-level='unknown'] .meterValue { color: var(--text-tertiary); }
+/* An account window is the shared WindowBar, whose fill never turns amber for being high: the figure does. */
+.meters .meter[data-level='tight'] .meterValue { color: var(--status-warning-fg); }
 
 .meterReset {
   grid-column: 2 / 4;
   margin-bottom: var(--space-1);
   color: var(--text-tertiary);
 }
+
+/* Under a bar: how far the window's time has run and what is held back, each led by the mark it names. */
+.meterPace {
+  grid-column: 2 / 4;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  margin-bottom: var(--space-1);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.meterPace[data-pace='behind'] [data-time-gone] { color: var(--text-secondary); }
+.meterPace i { margin-inline-end: var(--space-1); }
 
 /* ── Actions and notes ──────────────────────────────────────────────── */
 

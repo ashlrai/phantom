@@ -488,6 +488,14 @@ out where the ledger has no measured burn.
 show the provider's own mark (`components/primitives/BrandMark.tsx` over the brand registry `src/core/brand/registry.ts`, path data from @lobehub/icons, MIT) to
 identify the provider an account belongs to; the account's name is always shown as text beside it.
 
+Where a name sits in a line of text with no tile to lead it, pass `inline`: the mark is set before the name on
+the text's centre line, with a gap in ems, and wraps with it. The Usage section names every subject
+this way: the account cards and the open account's heading, the Every resource cells, the Dispatch limits
+rows, the Fleet resource ledger lanes, the Context efficiency seats and the Local vs cloud provider table.
+The mark is resolved from the engine, backend, lane or resource id, never from a display label, so a pooled
+resource such as "Ultra (Cursor + Grok pool)" keeps a monogram instead of one company's logo. A row that
+already leads with a provider tile (the capacity strip, the Resources drawer cards) is not marked twice.
+
 | Engine | Colour |
 |---|---|
 | Claude | `C` clay `#c96442` / `#d97757` |

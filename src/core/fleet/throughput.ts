@@ -107,7 +107,7 @@ function marksOf(rows: readonly LedgerRow[], since: number, now: number, perLaun
     if (id) {
       // The launch row decides a job's lane, repo, tier and model; other rows only fill gaps.
       const route = routes.get(id) ?? {};
-      for (const [key, value] of [['lane', label(row.lane ?? row.pool)], ['repo', repoName(row.repo)], ['tier', label(row.tier)], ['model', modelName(row.model)]] as const) {
+      for (const [key, value] of [['lane', label(row.lane ?? row.pool ?? row.arm)], ['repo', repoName(row.repo)], ['tier', label(row.tier)], ['model', modelName(row.model)]] as const) {
         if (value && (event === 'launch' || !route[key])) route[key] = value;
       }
       routes.set(id, route);

@@ -1,3 +1,7 @@
+/** The dedup key every journal reader folds on: last appended snapshot per (station, pool, id) wins. */
+export const queueVisitKey = (visit: Pick<QueueVisit, 'station' | 'pool' | 'id'>): string =>
+  JSON.stringify([visit.station, visit.pool, visit.id]);
+
 /** Queue visits are immutable snapshots; append a newer snapshot on each transition. */
 export interface QueueVisit {
   id: string;
@@ -25,7 +29,7 @@ export function estimateQueueStats(visits: readonly QueueVisit[], now: number, w
   if (!Number.isFinite(now) || windows.some(w => !Number.isFinite(w) || w <= 0)) throw new Error('Invalid queue window');
   if (visits.some(v => !isQueueVisit(v))) throw new Error('Invalid queue visit');
   const latest = new Map<string, QueueVisit>();
-  for (const v of visits) latest.set(JSON.stringify([v.station, v.pool, v.id]), v);
+  for (const v of visits) latest.set(queueVisitKey(v), v);
   // Canonical order makes floating-point sums independent of journal arrival order.
   const all = [...latest.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
     .map(([, visit]) => visit).filter(v => v.arrivedAt < now);

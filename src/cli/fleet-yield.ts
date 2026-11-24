@@ -5,13 +5,14 @@ import {
   readFamilyYield, type FamilyYieldReport, type FamilyYieldRow,
 } from '../core/fleet/family-yield.js';
 import { readLedgerLines, type YieldLineReader } from '../core/fleet/ledger-lines.js';
+import { laneYieldLines, LANE_YIELD_SCHEMA, readLaneYield } from '../core/fleet/lane-yield-board.js';
 import { STOP_FILE_ENV } from '../core/fleet/stop-file.js';
 import type { YieldRow } from '../core/fleet/slot-yield.js';
 export { readLedgerLines, type YieldLineReader };
 import { runsRoot } from '../core/metrics/loop-collect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: phm fleet yield [--hours 24] [--metrics <jobs.jsonl>] [--json]';
+const usage = 'Usage: phm fleet yield [--by lane] [--hours 24 | --since 24h] [--metrics <jobs.jsonl>] [--json]';
 const MAX_HOURS = 8760;
 
 const tokens = (value: number | null) => value === null ? 'unknown' : String(value);
@@ -29,6 +30,9 @@ export function familyYieldLines(report: FamilyYieldReport): string[] {
     ...section(`Stop rows (pattern, until, reason; tab separated, for the job stop file ${STOP_FILE_ENV}):`, report.stops, r => r.line),
     ...section('By lane:', report.lanes, otherLine),
     ...section('By tier:', report.tiers, otherLine),
+    ...section('Lowest share merged:', report.launch_families.slice(0, 5), r => `${r.sentence}${r.pausedReason ? `; paused: ${r.pausedReason}` : ''}`),
+    ...section('Families to review before selecting again:', report.empty_recommendations,
+      r => `  ${r.family}: ${r.reason} Last successful PR in this window: ${r.last_successful_pr?.url ?? 'unknown'}.`),
   ];
 }
 
@@ -44,13 +48,20 @@ stop: ${FAMILY_STOP_MIN_FINISHED}+ finished runs and merged per launch under ${F
 Families sort by tokens spent on runs that did not merge. Missing token counts print as unknown, never zero.
 Each stop family prints one row: anchored pattern, until (epoch seconds, ${FAMILY_STOP_HOURS} h ahead), reason.
 phm jobs yield judges finer job kinds and can write the stop file itself (--stop-file).
-JSON is fleet.family-yield.v1.`);
+JSON is fleet.family-yield.v1. launch_families groups ids minus trailing digits and one optional letter,
+with launches, published PRs, merges, EMPTY counts, EMPTY-only tokens and merged_per_launch (worst first).
+Each launch family also has paused and pausedReason (null when active). Four recent no-source/no-change
+finishes pause it; a newer productive finish or merge clears the streak. Letter siblings count together.
+empty_recommendations lists job kinds with 3+ explicit empties, their counts and last successful PR in this window.
+Recommendations are advisory; missing outcomes stay separate and success means a merge that was not reverted.
+--by lane: one row per lane instead: launches, finished, PRs opened, merged PRs, empty rate, merged per launch and median minutes to merge. A job merged twice counts once; lanes with no launches are left out. JSON is ${LANE_YIELD_SCHEMA}.`);
     return 0;
   }
-  let hours: number | null = null, json = false, metrics: string | null = null;
+  let hours: number | null = null, json = false, metrics: string | null = null, byLane = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--json' && !json) json = true;
+    else if (arg === '--by' && !byLane && args[i + 1] === 'lane') { byLane = true; i++; }
     else if (arg === '--metrics' && metrics === null) {
       metrics = args[++i] ?? '';
       if (!metrics || metrics.startsWith('-')) { console.error(usage); return 2; }
@@ -61,6 +72,11 @@ JSON is fleet.family-yield.v1.`);
       hours = match ? Number(match[1]) * (match[2] === 'd' ? 24 : 1) : NaN;
     } else { console.error(usage); return 2; }
     if (hours !== null && !(hours > 0 && hours <= MAX_HOURS)) { console.error(usage); return 2; }
+  }
+  if (byLane) {
+    const lanes = await readLaneYield(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours ?? 24, now, read);
+    console.log(json ? JSON.stringify(sanitizePublicJson(lanes)) : laneYieldLines(lanes).join('\n'));
+    return 0;
   }
   const report = await readFamilyYield(metrics ?? join(runsRoot(), 'metrics', 'jobs.jsonl'), hours ?? 24, now, read);
   console.log(json ? JSON.stringify(sanitizePublicJson(report)) : familyYieldLines(report).join('\n'));

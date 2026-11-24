@@ -50,7 +50,7 @@ import { spendDown, type SpendDownItem } from './spend-down-model.js';
 import { accountStanding, laneSharePct, laneTotals, nextAccountReset, resetLocalTime, usageHeadline } from './usage-board-model.js';
 import { ResetTimeline } from './ResetTimeline.js';
 import { resetTimeline } from './reset-timeline-model.js';
-import { elapsedWords, leadWords, startWords, windowPace } from './window-pace-model.js';
+import { elapsedWords, leadWords, startClock, startWords, windowPace } from './window-pace-model.js';
 import styles from './fleet-usage.module.css';
 import compact from '../../../components/layout/compact-view.module.css';
 
@@ -84,8 +84,6 @@ function SpendDownStrip({ items, nowMs }: { items: SpendDownItem[]; nowMs: numbe
 }
 
 /** A window's start as a local clock time: the weekday inside six days, the date beyond. */
-const startTime = (nowMs: number) => (iso: string): string => new Date(iso).toLocaleString(undefined, nowMs - Date.parse(iso) < 6 * 86_400_000
-  ? { weekday: 'short', hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 /**
  * One provider-reported window as the shared WindowBar. A flagged limit is a
@@ -130,7 +128,7 @@ function WindowMeter({ account, window: w, nowMs }: { account: string; window: U
       </span>
       {pace !== null && (
         <span className={styles.pace} data-pace={pace.lead === null ? 'unread' : pace.lead < 0 ? 'behind' : pace.lead > 0 ? 'ahead' : 'level'}>
-          {[elapsedWords(pace), lead, startWords(pace, startTime(nowMs))].filter(Boolean).join(' · ')}
+          {[elapsedWords(pace), lead, startWords(pace, startClock(nowMs))].filter(Boolean).join(' · ')}
         </span>
       )}
     </li>
