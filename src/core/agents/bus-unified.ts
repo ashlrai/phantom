@@ -31,7 +31,7 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
+import { BUS_V2_TEXT_MAX, busBodyKind, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
   workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
@@ -1194,7 +1194,14 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * the value — the same exact-envelope match `comms bus read|watch --id`,
  * `fleet bus-follow --id` and `fleet_bus_inbox`'s `id` apply, never a
  * substring — so "is envelope X still pending for me" is one filtered
- * read that composes with every other filter.
+ * read that composes with every other filter. `bodyKind` keeps only mail
+ * whose body carries that exact kind discriminator — the v2 `kind` field,
+ * a `worker-handoff` assignment, a notice kind, a bus-transport v1
+ * `protocol.kind` or a `type`/`schema` notice discriminator, the same
+ * discriminator `busBodySummary` switches on — matched exactly and
+ * case-sensitively, so "which of my pending mail are work results" or
+ * "which are wake requests" is one filtered read; a body carrying no
+ * discriminator never matches.
  * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
@@ -1214,12 +1221,12 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string } = {},
+    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
   const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
-  const inReplyTo = page.inReplyTo, idFilter = page.id;
+  const inReplyTo = page.inReplyTo, idFilter = page.id, bodyKindFilter = page.bodyKind;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1247,6 +1254,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
     return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
+    return { status: 'invalid', reason: 'Invalid body kind.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -1319,6 +1329,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
+        (bodyKindFilter === undefined || busBodyKind(envelope.body) === bodyKindFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
@@ -2071,6 +2082,18 @@ export interface ChannelReadOptions {
    * one filtered read of the transcript.
    */
   id?: string;
+  /**
+   * Body-kind filter: only posts whose body carries this exact kind
+   * discriminator — the v2 `kind` field (`note`, `context`, `work.post`,
+   * `work.claim`, `work.status`, `work.result`, `work.release`, `wake`), a
+   * `worker-handoff` assignment or a notice kind, a bus-transport v1
+   * `protocol.kind`, or a `type`/`schema` notice discriminator — the same
+   * discriminator `busBodySummary` switches on, matched exactly and
+   * case-sensitively. A body carrying no discriminator never matches, so
+   * "which room posts are work results" or "which are wake requests" is one
+   * filtered read of the transcript, composing with every other filter.
+   */
+  bodyKind?: string;
   after?: number;
   limit?: number;
 }
@@ -2114,7 +2137,14 @@ export type ChannelReadPage =
  * field — the same own-property exact match `inbox --in-reply-to`,
  * `phm messages --in-reply-to` and the raw bus reads apply, never the
  * `replyTo` alias or a substring — so "which room posts answer envelope
- * X" is one filtered read of the transcript. `nextCursor`
+ * X" is one filtered read of the transcript. `bodyKind` keeps only posts
+ * whose body carries that exact kind discriminator — the v2 `kind` field,
+ * a `worker-handoff` assignment, a notice kind, a bus-transport v1
+ * `protocol.kind` or a `type`/`schema` notice discriminator, the same
+ * discriminator `busBodySummary` switches on — matched exactly and
+ * case-sensitively, so "which room posts are work results" or "which are
+ * wake requests" is one filtered read of the transcript; a body carrying
+ * no discriminator never matches. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -2130,7 +2160,7 @@ export type ChannelReadPage =
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
   const countMatched = page.matched === true, since = page.since, before = page.before, inReplyTo = page.inReplyTo;
-  const idFilter = page.id;
+  const idFilter = page.id, bodyKindFilter = page.bodyKind;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -2151,6 +2181,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
     return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
+    return { status: 'invalid', reason: 'Invalid body kind.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -2208,6 +2241,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (inReplyTo === undefined || busBodyInReplyToMatch(body, inReplyTo)) &&
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
+        (bodyKindFilter === undefined || busBodyKind(body) === bodyKindFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;

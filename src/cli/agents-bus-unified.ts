@@ -36,10 +36,10 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
@@ -180,6 +180,17 @@ filtered read each; on wakes the matched id is the hint's own id — the
 triggering envelope's wire id on a bus.send hint, the wh-… claim-holder
 id on those — decided on the queue row alone, so it needs no referent
 resolution and counts in matched like the other queue-tail filters.
+--body-kind on inbox and channel read keeps only rows whose body carries
+that exact kind discriminator — the v2 kind field (note, context,
+work.post, work.claim, work.status, work.result, work.release, wake), a
+worker-handoff assignment or a notice kind, a bus-transport v1
+protocol.kind, or a type/schema notice discriminator, the same
+discriminator the row summary switches on — matched exactly and
+case-sensitively, so "which of my pending mail are work results" or
+"which room posts are wake requests" is one filtered read; a body
+carrying no discriminator never matches, and an unrecognized but
+printable value is an honest empty match, never an error. It composes
+with every other filter and counts in matched like the rest.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -391,7 +402,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to']);
+  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -738,7 +749,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
           thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
-          contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
+          contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
           matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
@@ -782,7 +793,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
-        contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), matched: p.bools.has('--matched') }, options);
+        contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
+        matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume

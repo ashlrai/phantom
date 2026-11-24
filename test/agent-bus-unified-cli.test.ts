@@ -404,6 +404,41 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and channel reads by --body-kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // Real sends carry the note discriminator; raw posts cover the rest.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'note dm', '--id', 'c-dm-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'note ch', '--id', 'c-ch-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, { root }).status).toBe('posted');
+    post('c-wp', 'agent:nova', { kind: 'work.post', jobId: 'RQ-1', title: 't', repo: 'o/n' });
+    post('c-wake', 'agent:nova', { kind: 'wake', target: 'agent:nova', reason: 'look' });
+    post('c-ch-wr', 'group:release:general', { kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome: 'released' });
+    post('c-plain', 'agent:nova', { inReplyTo: 'c-dm-note', text: 'kindless' });
+
+    const ids = (json: { messages: { envelope: { id: string } }[] }) =>
+      json.messages.map(m => m.envelope.id).sort();
+    const inbox = await run(['inbox', 'nova', '--body-kind', 'note']);
+    expect(inbox.code).toBe(0);
+    expect(ids(inbox.json)).toEqual(['c-ch-note', 'c-dm-note']);
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'work.post'])).json)).toEqual(['c-wp']);
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'wake'])).json)).toEqual(['c-wake']);
+    // A kindless body never matches; an unrecognized kind is an honest empty page.
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'nonexistent'])).json)).toEqual([]);
+    const channel = await run(['channel', 'read', 'release', '--body-kind', 'note']);
+    expect(ids(channel.json)).toEqual(['c-ch-note']);
+    expect(ids((await run(['channel', 'read', 'release', '--body-kind', 'work.result'])).json)).toEqual(['c-ch-wr']);
+    expect(ids((await run(['channel', 'read', 'release', '--body-kind', 'work.post'])).json)).toEqual([]);
+    // A body kind must be a printable label; anything else fails closed.
+    expect(await run(['inbox', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--body-kind', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('filters inbox and channel reads by --priority', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

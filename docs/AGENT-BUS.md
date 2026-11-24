@@ -334,7 +334,7 @@ a channel. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
-[--in-reply-to <id>] [--id <id>] [--matched]
+[--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
@@ -379,7 +379,17 @@ answer envelope X" is one filtered read. `--id` keeps only the post whose
 own wire id is strictly equal to the value — the same exact-envelope
 match `comms bus read|watch --id`, `fleet bus-follow --id` and
 `fleet_bus_inbox`'s `id` apply, never a substring or a body citation —
-so "did envelope X reach the room" is one filtered read. `--matched` reports `matched`, the
+so "did envelope X reach the room" is one filtered read. `--body-kind`
+keeps only posts whose body carries that exact kind discriminator — the
+v2 `kind` field (`note`, `context`, `work.post`, `work.claim`,
+`work.status`, `work.result`, `work.release`, `wake`), a `worker-handoff`
+assignment or a notice kind, a bus-transport v1 `protocol.kind`, or a
+`type`/`schema` notice discriminator, the same discriminator the row
+summary switches on — matched exactly and case-sensitively, so "which
+room posts are work results" or "which are wake requests" is one
+filtered read of the transcript; a body carrying no discriminator never
+matches, and an unrecognized but printable value is an honest empty
+match, never an error. `--matched` reports `matched`, the
 true pending total — every post the same filters accept across the whole
 retained store — while `messages` still caps at `--limit`; because that
 read scans to the store's end, `nextCursor` then resumes at the newest
@@ -397,7 +407,7 @@ as history. `fleet_bus_channel` (the isolated fleet MCP tool) serves the
 same read with the same dimensions as arguments — `channel` required,
 every channel-read filter as its MCP counterpart (`topic`, `from`,
 `excludeFrom`, `thread`, `priority`, `job`, `since`, `before`, `contains`,
-`inReplyTo`, `id`) and
+`inReplyTo`, `id`, `bodyKind`) and
 `matched` as a JSON boolean — under the identical `readAgentChannel`
 validation, so an MCP-connected agent reads a room's transcript, its
 presence-free posts, sender handles and live hold/job annotations without
@@ -452,7 +462,7 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
-[--contains <text>] [--in-reply-to <id>] [--id <id>]`
+[--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -523,7 +533,17 @@ keeps only mail whose object body cites that envelope id through its own
 value — the same exact-envelope match `comms bus read|watch --id`,
 `fleet bus-follow --id`, `fleet_bus_inbox`'s `id` and `channel read --id`
 apply, never a substring or a body citation — so "is envelope X still
-pending for me" is one filtered read.
+pending for me" is one filtered read. `--body-kind` keeps only mail whose
+body carries that exact kind discriminator — the v2 `kind` field (`note`,
+`context`, `work.post`, `work.claim`, `work.status`, `work.result`,
+`work.release`, `wake`), a `worker-handoff` assignment or a notice kind,
+a bus-transport v1 `protocol.kind`, or a `type`/`schema` notice
+discriminator, the same discriminator the row summary switches on —
+matched exactly and case-sensitively, so "which of my pending mail are
+work results" or "which are wake requests" is one filtered read; a body
+carrying no discriminator never matches, and an unrecognized but
+printable value is an honest empty match, never an error. It composes
+with every other inbox filter.
 `--matched` additionally reports `matched`, the true pending total — every
 row the same filters accept across the whole retained store, the same count
 `work mine`'s inbox section reports — while `messages` still caps at

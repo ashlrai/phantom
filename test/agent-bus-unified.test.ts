@@ -22,7 +22,7 @@ import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.j
 import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import { publishGroupPresence, subscribeGroup } from '../src/core/fleet/bus-group.js';
-import { busBodySchema, busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodySchema, busV2ContractSummary } from '../src/core/agents/bus-v2-schema.js';
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -426,6 +426,109 @@ describe('thread-filtered reads', () => {
     expect(readAgentInbox('nova', { thread: 'has space' }, options)).toMatchObject({ status: 'invalid' });
     expect(readAgentChannel('release', { thread: '' }, options)).toMatchObject({ status: 'invalid' });
     expect(readAgentChannel('release', { thread: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('body-kind-filtered reads', () => {
+  it('narrows inbox and channel pages to one body-kind discriminator', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // One post per discriminator branch busBodyKind reads, plus a kindless body.
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    post('bk-note', 'agent:nova', { kind: 'note', text: 'a note' });
+    post('bk-context', 'agent:nova', { kind: 'context', text: 'ctx' });
+    post('bk-handoff', 'agent:nova', { kind: 'worker-handoff', taskId: 'RQ-DVL-BUS-1', prompt: 'do it' });
+    post('bk-wake', 'agent:nova', { kind: 'wake', target: 'nova', reason: 'look' });
+    post('bk-workpost', 'agent:nova', { kind: 'work.post', jobId: 'RQ-DVL-BUS-1', title: 't', repo: 'o/n' });
+    post('bk-custom', 'agent:nova', { kind: 'custom.kind', text: 'opaque' });
+    // A bus-transport v1 envelope wraps its kind under protocol, not top-level.
+    post('bk-proto', 'agent:nova', { protocol: { version: 1, kind: 'task' } });
+    // Kindless notices key their discriminator as type or schema.
+    post('bk-type', 'agent:nova', { type: 'forum.mention', text: 'mentioned' });
+    post('bk-schema', 'agent:nova', { schema: 'guardian-drain.v1' });
+    // A blank kind falls through to the type discriminator; a body with none never matches.
+    post('bk-blank', 'agent:nova', { kind: '   ', type: 'fallback.notice' });
+    post('bk-plain', 'agent:nova', { inReplyTo: 'bk-note', text: 'kindless reply' });
+    // Channel-addressed posts of three kinds, one per discriminator branch.
+    post('bk-ch-note', 'group:release:general', { kind: 'note', text: 'room note' });
+    post('bk-ch-work', 'group:release:general', { kind: 'work.result', jobId: 'RQ-DVL-BUS-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome: 'released' });
+    post('bk-ch-proto', 'group:release:general', { protocol: { version: 1, kind: 'result' } });
+    // A protocol kind also surfaces under its own literal on the channel page.
+    // Real sends carry the same discriminators the raw posts exercise.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'real dm', id: 'dm-real' }, options);
+    await sendWakeRequest({ from: 'atlas', to: 'nova', reason: 'ping', id: 'wake-real' }, options);
+
+    // The discriminator is read verbatim: every v2 kind, the worker-handoff and
+    // the custom opaque kind each match only their own literal.
+    const byKind = (kind: string) => {
+      const page = readAgentInbox('nova', { bodyKind: kind }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    expect(byKind('note')).toEqual(['bk-ch-note', 'bk-note', 'dm-real']);
+    expect(byKind('context')).toEqual(['bk-context']);
+    expect(byKind('worker-handoff')).toEqual(['bk-handoff']);
+    expect(byKind('wake')).toEqual(['bk-wake', 'wake-real']);
+    expect(byKind('work.post')).toEqual(['bk-workpost']);
+    expect(byKind('custom.kind')).toEqual(['bk-custom']);
+    // protocol.kind and the type/schema notices surface under their own literal.
+    expect(byKind('task')).toEqual(['bk-proto']);
+    expect(byKind('result')).toEqual(['bk-ch-proto']);
+    expect(byKind('forum.mention')).toEqual(['bk-type']);
+    expect(byKind('guardian-drain.v1')).toEqual(['bk-schema']);
+    // A blank top-level kind fell through to type; the kindless reply never matches.
+    expect(byKind('fallback.notice')).toEqual(['bk-blank']);
+    expect(byKind('nonexistent')).toEqual([]);
+    // The unfiltered page still sees every row the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(16);
+
+    // The same discriminator narrows a channel page, independent of delivery kind.
+    const channel = (kind: string) => {
+      const page = readAgentChannel('release', { bodyKind: kind }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    expect(channel('note')).toEqual(['bk-ch-note']);
+    expect(channel('work.result')).toEqual(['bk-ch-work']);
+    expect(channel('result')).toEqual(['bk-ch-proto']);
+    expect(channel('work.post')).toEqual([]);
+    // bodyKind composes with the delivery-kind filter on the inbox.
+    expect(readAgentInbox('nova', { bodyKind: 'note', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'dm-real' } }, { envelope: { id: 'bk-note' } }] });
+    expect(readAgentInbox('nova', { bodyKind: 'note', kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bk-ch-note' } }] });
+
+    // The matched total counts only rows the body-kind filter kept.
+    const counted = readAgentInbox('nova', { bodyKind: 'note', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+
+    // Kind must be a printable label; anything else refuses closed like thread.
+    expect(readAgentInbox('nova', { bodyKind: 'has space' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { bodyKind: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { bodyKind: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+
+  it('reads the same discriminator busBodySummary switches on', () => {
+    expect(busBodyKind({ kind: 'note', text: 'x' })).toBe('note');
+    expect(busBodyKind({ kind: 'work.result' })).toBe('work.result');
+    expect(busBodyKind({ protocol: { version: 1, kind: 'task' } })).toBe('task');
+    expect(busBodyKind({ type: 'forum.mention' })).toBe('forum.mention');
+    expect(busBodyKind({ schema: 'guardian-drain.v1' })).toBe('guardian-drain.v1');
+    // kind wins over protocol, protocol over type, type over schema.
+    expect(busBodyKind({ kind: 'note', protocol: { kind: 'task' }, type: 't', schema: 's' })).toBe('note');
+    expect(busBodyKind({ protocol: { kind: 'task' }, type: 't', schema: 's' })).toBe('task');
+    expect(busBodyKind({ type: 't', schema: 's' })).toBe('t');
+    // Blank discriminators fall through; no discriminator returns null.
+    expect(busBodyKind({ kind: '  ', type: 't' })).toBe('t');
+    expect(busBodyKind({ kind: '  ', protocol: { kind: '  ' }, type: '  ', schema: '  ' })).toBeNull();
+    expect(busBodyKind({ inReplyTo: 'm', text: 'kindless' })).toBeNull();
+    expect(busBodyKind(null)).toBeNull();
+    expect(busBodyKind('note')).toBeNull();
+    expect(busBodyKind([{ kind: 'note' }])).toBeNull();
   });
 });
 
