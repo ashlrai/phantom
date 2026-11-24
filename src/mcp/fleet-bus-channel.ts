@@ -36,14 +36,14 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 export const FLEET_BUS_CHANNEL_LIMIT_MAX = BUS_INBOX_MAX_READ;
 export const FLEET_BUS_CHANNEL_LIMIT_DEFAULT = 50;
 
-/** The printable-label rule `from`, `excludeFrom`, `thread`, `job` and `inReplyTo` share. */
+/** The printable-label rule `from`, `excludeFrom`, `thread`, `job`, `inReplyTo` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CHANNEL_KEYS = new Set([
   'channel', 'topic', 'after', 'limit', 'matched',
-  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains', 'inReplyTo',
+  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains', 'inReplyTo', 'id',
 ]);
-const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job', 'inReplyTo'] as const;
+const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job', 'inReplyTo', 'id'] as const;
 
 /** The `readAgentChannel` page fields the MCP arguments fill — `after`, `limit` and `matched` ride beside them. */
 export interface FleetBusChannelFilters {
@@ -57,6 +57,7 @@ export interface FleetBusChannelFilters {
   before?: number;
   contains?: string;
   inReplyTo?: string;
+  id?: string;
 }
 
 export interface FleetBusChannelArgs {
@@ -77,7 +78,8 @@ export interface FleetBusChannelArgs {
  * is required — the transcript has no meaningful default — and every other
  * key takes the same value rules `phm agents bus channel read` flags and
  * the other bus reads share: the channel-name grammar for `channel`/`topic`
- * (the group address's own namespace rule), printable routing labels,
+ * (the group address's own namespace rule), printable routing labels
+ * (`id` the exact-envelope match),
  * the P0–P3 priority enum, the shared `since` grammar and the bounded
  * `contains` needle normalized by `busReadContains`. Unknown keys, wrong
  * types, caller roots and malformed values are all refused before the

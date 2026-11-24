@@ -701,6 +701,30 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ inReplyTo: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to the one envelope carrying that wire id', () => {
+    const root = store();
+    post(root, T0, { id: 'e1', from: 'a', to: 'b', body: { kind: 'note', text: 'first' } });
+    post(root, T0 + 1_000, { id: 'e2', from: 'a', to: 'b', body: { kind: 'note', text: 'cites e1', inReplyTo: 'e1' } });
+    // A citation or a substring never satisfies the exact-id match.
+    post(root, T0 + 2_000, { id: 'e1-extra', from: 'a', to: 'b', body: { kind: 'note', text: 'substring id' } });
+    const hits = read(root, { id: 'e1' });
+    expect(hits.messages.map(m => m.id)).toEqual(['e1']);
+    expect(hits.matched).toBe(1);
+    // --id composes with the other filters; matched counts only the rows
+    // every filter accepts and limit caps the page, not the count.
+    expect(read(root, { id: 'e2', kind: 'reply' }).messages.map(m => m.id)).toEqual(['e2']);
+    expect(read(root, { id: 'e1', contains: 'missing' })).toMatchObject({ matched: 0, messages: [] });
+    expect(read(root, { id: 'e-gone' })).toMatchObject({ matched: 0, messages: [] });
+  });
+
+  it('parses --id as a printable envelope id and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ id: 'm-1' })).toEqual({ ok: true, query: { id: 'm-1' } });
+    expect(parseAgentMessagesQuery({ id: 'm-1', kind: 'reply', limit: '5' })).toEqual({ ok: true, query: { id: 'm-1', kind: 'reply', limit: 5 } });
+    expect(parseAgentMessagesQuery({ id: 'has space' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ id: '' }).ok).toBe(false);
+    expect(parseAgentMessagesQuery({ id: 'x'.repeat(129) }).ok).toBe(false);
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -711,11 +735,11 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1' }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2' }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?before=never')).status).toBe(400);
@@ -727,6 +751,8 @@ describe('phm messages projection', () => {
     expect((await send('/api/verse/agent-bus/messages?from=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?inReplyTo=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?id=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?id=a&id=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?from=a&from=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=a&excludeFrom=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?after=1')).status).toBe(400);

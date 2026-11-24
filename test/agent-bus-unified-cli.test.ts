@@ -712,6 +712,62 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'nova', '--in-reply-to', 'a', '--in-reply-to', 'b'])).toMatchObject({ code: 2 });
   });
 
+  it('filters inbox, channel read and wakes by --id', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'first', '--id', 'id-dm-1', '--priority', 'P1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'second', '--id', 'id-dm-2'])).json)
+      .toMatchObject({ status: 'posted' });
+    // A citing reply and a room post must never satisfy another id's filter.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'cites id-dm-1', '--reply-to', 'id-dm-1', '--id', 'id-dm-3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room one', '--id', 'id-ch-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room two', '--id', 'id-ch-2'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Inbox keeps only the addressed row carrying that wire id; --matched
+    // counts the same accepted set and the flag composes with the others.
+    const inbox = await run(['inbox', 'nova', '--id', 'id-dm-1']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['id-dm-1']);
+    expect((await run(['inbox', 'nova', '--id', 'id-ch-1'])).json.messages[0])
+      .toMatchObject({ kind: 'channel', envelope: { id: 'id-ch-1' } });
+    expect((await run(['inbox', 'nova', '--id', 'id-dm-1', '--matched'])).json.matched).toBe(1);
+    expect((await run(['inbox', 'nova', '--id', 'id-dm-1', '--kind', 'handoff'])).json.messages).toEqual([]);
+    expect((await run(['inbox', 'nova', '--id', 'id-absent'])).json.messages).toEqual([]);
+
+    // Channel read keeps only the room post carrying that wire id.
+    const room = await run(['channel', 'read', 'release', '--id', 'id-ch-2']);
+    expect(room.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['id-ch-2']);
+    expect((await run(['channel', 'read', 'release', '--id', 'id-ch-2', '--matched'])).json.matched).toBe(1);
+    expect((await run(['channel', 'read', 'release', '--id', 'id-dm-1'])).json.messages).toEqual([]);
+
+    // Wakes: the bus.send hint's own id is the triggering envelope's wire
+    // id, so the pending hint for id-dm-1 is one filtered read — per-agent
+    // and fleet-wide.
+    const wake = await run(['wakes', 'nova', '--id', 'id-dm-1']);
+    expect(wake.json).toMatchObject({ matched: 1 });
+    expect(wake.json.wakes.map((w: { id: string }) => w.id)).toEqual(['id-dm-1']);
+    expect((await run(['wakes', 'nova', '--id', 'id-dm-2'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', '--all', '--id', 'id-dm-1'])).json.wakes.map((w: { id: string }) => w.id))
+      .toEqual(['id-dm-1']);
+    expect((await run(['wakes', '--all', '--id', 'wh-' + 'a'.repeat(32)])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+
+    // A malformed id fails closed on every read.
+    expect(await run(['inbox', 'nova', '--id', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--id=']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--id', 'x'.repeat(129)]))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['inbox', 'nova', '--id', 'a', '--id', 'b'])).toMatchObject({ code: 2 });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });

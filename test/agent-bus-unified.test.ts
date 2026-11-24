@@ -1193,6 +1193,70 @@ describe('reply-citation-filtered reads', () => {
   });
 });
 
+describe('envelope-id-filtered reads', () => {
+  it('keeps only the row whose own wire id equals the value on inbox, channel and wakes reads', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'first', id: 'id-dm-1', priority: 'P1', wake: true }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'second', id: 'id-dm-2', priority: 'P2' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room one', id: 'id-ch-1' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'room two', id: 'id-ch-2' }, options);
+    // A substring, a citation and a near-miss id never match — the filter is
+    // the wire id's own strict equality, like the raw bus reads' --id.
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'cites id-dm-1',
+      replyTo: 'id-dm-1', id: 'id-dm-3' }, options);
+
+    // Inbox: the addressed row only, composing with the other filters and
+    // --matched counting the same accepted set.
+    const inbox = readAgentInbox('nova', { id: 'id-dm-1' }, options);
+    expect(inbox).toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-dm-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-ch-1' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ kind: 'channel', envelope: { id: 'id-ch-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-dm-1', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-dm-1' } }] });
+    expect(readAgentInbox('nova', { id: 'id-dm-1', kind: 'handoff' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+    const counted = readAgentInbox('nova', { id: 'id-dm-1', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(1);
+    // An id no addressed row carries is an honest empty page.
+    expect(readAgentInbox('nova', { id: 'id-absent' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Channel read: only the room post carrying that wire id.
+    const room = readAgentChannel('release', { id: 'id-ch-2' }, options);
+    expect(room).toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'id-ch-2' } }] });
+    const roomCounted = readAgentChannel('release', { id: 'id-ch-2', matched: true }, options);
+    if (roomCounted.status !== 'ok') throw new Error(`unexpected ${roomCounted.status}`);
+    expect(roomCounted.matched).toBe(1);
+    expect(readAgentChannel('release', { id: 'id-dm-1' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Wakes: the bus.send hint carries the triggering envelope's wire id as
+    // its own, so id-dm-1's pending hint is one filtered read — per-agent
+    // and fleet-wide — decided on the queue row alone.
+    const wake = readAgentWakes('nova', undefined, options, { id: 'id-dm-1' });
+    expect(wake).toMatchObject({ status: 'ok', matched: 1 });
+    if (wake.status !== 'ok') throw new Error('unreachable');
+    expect(wake.wakes.map(row => row.id)).toEqual(['id-dm-1']);
+    const fleet = readAllWakes(undefined, options, { id: 'id-dm-2' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 0, wakes: [] });
+    // A wh-… claim-holder hint id matches its own row the same way.
+    expect(readAllWakes(undefined, options, { id: 'wh-' + 'a'.repeat(32) }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+
+    // Malformed ids are refused on every read, never silently widened.
+    for (const bad of ['', 'has space', 'x'.repeat(129), 42 as never]) {
+      expect(readAgentInbox('nova', { id: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { id: bad }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentWakes('nova', undefined, options, { id: bad })).toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { id: bad })).toMatchObject({ status: 'invalid' });
+    }
+    expect(readAgentInbox('nova', { id: 'x'.repeat(128) }, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('envelope lookup by id', () => {
   it('resolves a retained envelope of any kind by its wire id', async () => {
     const options = setup();

@@ -1,5 +1,5 @@
 /** `phm agents messages`: thin argv adapter for core/fleet/agents-messages.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]
+export const AGENTS_MESSAGES_USAGE = `Usage: phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--id <id>] [--limit N] [--json]
 
 Recent agent-to-agent messages from the agent bus (default: the last hour,
 newest 50): time, from, to, kind, a summary of at most 160 characters and the
@@ -10,7 +10,8 @@ band; --job keeps the traffic naming one job; --thread keeps note/context
 bodies carrying that v2 thread label; --channel keeps posts addressed to
 group:<name>:*; --contains keeps summaries carrying that text;
 --from/--exclude-from keep or drop one sender's mail; --in-reply-to keeps
-only envelopes citing that id — with the same matching rules and identity
+only envelopes citing that id and --id keeps only the envelope whose own
+wire id equals it — with the same matching rules and identity
 resolution \`phm messages --help\` describes. --before keeps only messages
 received strictly before its cutoff, so --since and --before read one closed
 [since, before) window. from and to are the node ids the map draws
@@ -25,7 +26,7 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
   let json = false;
   const values: { since?: string; before?: string; limit?: string; agent?: string; with?: string; kind?: string;
     priority?: string; job?: string; thread?: string; channel?: string; contains?: string; from?: string;
-    excludeFrom?: string; inReplyTo?: string } = {};
+    excludeFrom?: string; inReplyTo?: string; id?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
@@ -33,7 +34,7 @@ export async function runAgentsMessagesCli(args: string[], out: (text: string) =
       : arg === '--with' ? 'with' : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority'
       : arg === '--job' ? 'job' : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel'
       : arg === '--contains' ? 'contains' : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom'
-      : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--limit' ? 'limit' : null;
+      : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--limit' ? 'limit' : null;
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(AGENTS_MESSAGES_USAGE); return 2; }
     values[key] = value; i++;
   }

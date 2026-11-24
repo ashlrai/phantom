@@ -36,11 +36,11 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--after <cursor>] [--limit <1..100>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--id <id>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -164,7 +164,16 @@ exact match phm messages --in-reply-to, comms bus read|watch
 --in-reply-to, fleet bus-follow --in-reply-to and fleet_bus_inbox's
 inReplyTo apply, never the replyTo alias or a substring — so "which of
 my pending mail / which room posts answer envelope X" is one filtered
-read, composing with every other filter.
+read, composing with every other filter. --id on inbox, channel read and
+wakes keeps only the row whose own id is strictly equal to the value —
+the same exact-envelope match comms bus read|watch --id, fleet
+bus-follow --id and fleet_bus_inbox's id apply, never a substring or a
+body citation — so "is envelope X still pending for me", "did envelope X
+reach the room" and "is there still a wake hint for envelope X" are one
+filtered read each; on wakes the matched id is the hint's own id — the
+triggering envelope's wire id on a bus.send hint, the wh-… claim-holder
+id on those — decided on the queue row alone, so it needs no referent
+resolution and counts in matched like the other queue-tail filters.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -715,7 +724,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (sub === 'read') {
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
           thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
-          contains: one('--contains'), inReplyTo: one('--in-reply-to'),
+          contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
           matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
@@ -759,7 +768,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
-        contains: one('--contains'), inReplyTo: one('--in-reply-to'), matched: p.bools.has('--matched') }, options);
+        contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
@@ -805,7 +814,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg() };
+        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id') };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {
