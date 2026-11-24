@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { jobLatency, mergeQueueLatency, mergeQueueLatencyText } from '../core/fleet/job-latency.js';
 export { jobLatency } from '../core/fleet/job-latency.js';
 
+const USAGE = 'Usage: phm fleet job-latency [--jobs <jobs.jsonl>] [--json]';
+
 export async function cmdFleetJobLatency(args: string[]): Promise<number> { return command(args, false); }
 export const cmdPulseMergeLatency = (args: string[]): Promise<number> => command(args, true);
 
@@ -15,7 +17,7 @@ Stages: publish to ci_start, ci_start to ci_complete, ci_complete to merged, pub
 JSON: pulse.merge-latency.v1; seconds are observed totals, never estimates.
 Each job ID must name one attempt. Missing, invalid, repeated or reversed boundaries are unknown.
 Outcome MERGED uses mergedAt when supplied, otherwise its event time. Line order does not matter.`
-    : 'Usage: phm fleet job-latency [--jobs <jobs.jsonl>] [--json]';
+    : USAGE;
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
   let path = join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl');
   let json = false, seenPath = false;

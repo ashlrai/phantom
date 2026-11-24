@@ -10,9 +10,21 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string };
+type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
+
+// Job conclusions that mean the check never reached a verdict: cancelled,
+// timed out, awaiting action, failed to start, or marked stale. Their logs
+// may be partial or absent, so they are incomplete evidence — the run
+// cannot prove the ref's checks and reads unknown, never clean. `skipped`
+// and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
+// required-check-neutral), not incomplete checks, and stay ignored.
+const INCOMPLETE_JOB_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+// The same set plus `failure` for the run level: a completed run that
+// produced no jobs at all and did not succeed (startup_failure and
+// friends) carries no verifiable job evidence either.
+const INCOMPLETE_RUN_CONCLUSIONS = new Set([...INCOMPLETE_JOB_CONCLUSIONS, 'failure']);
 
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
@@ -2065,9 +2077,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
-  async function logs(run: Run, head: string) {
+  async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    // A job that never reached a verdict — cancelled while queued, timed
+    // out, awaiting action, failed to start, or marked stale — is
+    // incomplete evidence even when its log is absent or empty: the run
+    // cannot prove the ref's checks, so the caller reads unknown rather
+    // than clean. The flag is computed from the job list itself, so a
+    // never-started job counts the same as one whose partial log would
+    // otherwise verify or drop silently.
+    let incomplete = data.jobs.some(job => INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -2106,7 +2126,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
-    return result;
+    // A completed run that instantiated no jobs at all and did not
+    // succeed — startup_failure and friends — has no job list to mark
+    // incomplete, so the run's own conclusion carries the verdict.
+    if (!incomplete && data.jobs.length === 0 && run.conclusion !== undefined && INCOMPLETE_RUN_CONCLUSIONS.has(run.conclusion)) {
+      incomplete = true;
+    }
+    return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
@@ -2115,7 +2141,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   for (const run of masterRuns ?? []) {
     if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }
     const evidence = await logs(run, run.head_sha);
-    if (evidence) masterLogs.push(...evidence); else masterKnown = false;
+    // An incomplete check (cancelled, timed-out, ...) keeps its verified
+    // job evidence — a sibling failure is still real master evidence —
+    // but the run cannot prove master green, so known drops to false.
+    if (evidence) { masterLogs.push(...evidence.entries); if (evidence.incomplete) masterKnown = false; }
+    else masterKnown = false;
   }
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
   const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
@@ -2433,18 +2463,24 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
+    let incomplete = false;
     const found: (Failure & { runId: number })[] = [];
     for (const run of latest) {
       if (run.status !== 'completed') { known = false; continue; }
       const evidence = await logs(run, pr.headRefOid);
+      // A run with an incomplete check — a job cancelled, timed out,
+      // awaiting action, failed to start or gone stale, or a jobless
+      // run that did not succeed — cannot prove the head's checks, so
+      // the PR reads unknown rather than fresh.
       if (!evidence) { known = false; continue; }
-      for (const log of evidence.filter(l => l.conclusion === 'failure')) {
+      if (evidence.incomplete) { known = false; incomplete = true; continue; }
+      for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
         const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
     }
-    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
+    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
       // Lint-guard, first-paint, test-runner and install-step failures are

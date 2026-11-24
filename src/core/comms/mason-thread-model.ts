@@ -21,6 +21,8 @@ export interface MasonThread {
   schema: typeof MASON_THREAD_SCHEMA;
   as_of: string;
   since: string;
+  /** ISO recorded-time ceiling the read applied, present only when one was given — the exclusive upper bound that pairs with `since` into one `[since, before)` window. */
+  before?: string;
   items: MasonThreadItem[];
   /** Sources that could not be read, in plain words. Empty when all were. */
   gaps: string[];
