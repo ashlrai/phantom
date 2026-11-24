@@ -637,6 +637,21 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
       const synced = syncCloudBacklogOutcomes();
       if (synced.registered > 0) try { log(`cloud improve: registered ${synced.registered} backlog PR(s) into the outcome ledger`); } catch { /* never throws */ }
     } catch { /* never throws */ }
+    // Post-merge observation: record merges of registered proposals and the
+    // default-branch commits that revert them (plus merged cloud tasks'
+    // revert state) into the outcome ledger — the scheduled half of
+    // `phm improve observe --repo <dir>`, which otherwise only runs when an
+    // operator remembers it against a checkout. The pass reads the fleet's
+    // enrolled mirrors and never creates one; a repository without a mirror
+    // keeps its observations unknown. Best-effort: a failure never blocks
+    // the launch, and a second pass appends nothing.
+    try {
+      const { syncImproveObservations } = await import('../improve/observe-sync.js');
+      const observed = syncImproveObservations();
+      if (observed.appended > 0 || observed.cloudUpdated > 0) {
+        try { log(`cloud improve: recorded ${observed.appended} outcome observation(s) across ${observed.scanned} repositor${observed.scanned === 1 ? 'y' : 'ies'} and ${observed.cloudUpdated} cloud task revert update(s)`); } catch { /* never throws */ }
+      }
+    } catch { /* never throws */ }
     return improveGuarded({ count: 1, auto: true });
   });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };
