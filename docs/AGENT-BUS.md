@@ -668,7 +668,14 @@ argument — the same printable routing-label rule — so an MCP-connected
 agent resolves the `post=`/`status=`/`receipt=`/handoff and wake-hint
 citations the other bus reads emit without shelling out to `phm`; it
 accepts no caller root or path and passes every lookup status through
-untouched.
+untouched. `fleet_bus_thread` (the isolated fleet MCP tool) serves the
+`fleet bus-thread --id <id>` read the same way — the root receipt plus
+every live envelope whose own `inReplyTo` field transitively cites it, in
+cursor order, including the kindless `{inReplyTo, text}` replies the
+classified projections never group — under the identical printable
+`id` rule, with `rootFound`/`complete`/`sourceFailure` keeping a proven
+miss distinct from an unreadable walk and no caller root or path
+accepted.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
