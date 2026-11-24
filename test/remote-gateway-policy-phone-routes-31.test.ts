@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { classifyRemoteRoute } from '../src/core/web/remote-gateway-policy.js';
 
-it.each(['/api/verse/fleet/admission', '/api/verse/fleet/memory/host-load'])('allows only the exact phone GET for %s', path => {
+it.each(['/api/fleet/releases', '/api/verse/fleet/yield', '/api/verse/fleet/admission', '/api/verse/fleet/memory/host-load'])('allows only the exact phone GET for %s', path => {
   expect(classifyRemoteRoute('GET', path)).toEqual({ kind: 'read', path });
   for (const method of ['POST', 'DELETE', 'PUT', 'HEAD']) expect(classifyRemoteRoute(method, path)).toEqual({ kind: 'deny' });
   for (const suffix of ['?by=tree', '?path=private', '/', '/private']) expect(classifyRemoteRoute('GET', path + suffix)).toEqual({ kind: 'deny' });

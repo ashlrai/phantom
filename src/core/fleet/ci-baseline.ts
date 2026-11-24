@@ -10,9 +10,21 @@ import { nextFixGeneration } from './ci-fix-generations.js';
 
 type Failure = { testId: string; file: string; names: string; excerpt: string };
 type Pr = { number: number; headRefOid: string; headRefName: string; files: { path: string }[] };
-type Run = { id: number; head_sha: string; workflow_id: number; status: string };
+type Run = { id: number; head_sha: string; workflow_id: number; status: string; conclusion?: string };
 type Job = { id: number; conclusion: string; head_sha: string };
 type Observation = { pr: Pr; failure: Failure; touched: boolean | null; runId: number };
+
+// Job conclusions that mean the check never reached a verdict: cancelled,
+// timed out, awaiting action, failed to start, or marked stale. Their logs
+// may be partial or absent, so they are incomplete evidence — the run
+// cannot prove the ref's checks and reads unknown, never clean. `skipped`
+// and `neutral` are deliberate non-verdicts (path filters, `if:` gates,
+// required-check-neutral), not incomplete checks, and stay ignored.
+const INCOMPLETE_JOB_CONCLUSIONS = new Set(['cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
+// The same set plus `failure` for the run level: a completed run that
+// produced no jobs at all and did not succeed (startup_failure and
+// friends) carries no verifiable job evidence either.
+const INCOMPLETE_RUN_CONCLUSIONS = new Set([...INCOMPLETE_JOB_CONCLUSIONS, 'failure']);
 
 const clean = (s: string) => scrubSecrets(stripVTControlCharacters(s)).slice(0, 2000);
 const lines = (s: string) => stripVTControlCharacters(s).split('\n').map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+\s+/, '').trim());
@@ -42,6 +54,73 @@ const FILE_PASS_LINE = /^[✓✔√]\s+(?:\|[^|]*\|\s+)?((?:test|src\/web-ui)\/[
 //   Bound candidate <sha> to event tree <tree>
 //   Bound candidate <sha> to event merge <sha> of base <sha>...
 const BOUND_LINE = /^Bound candidate ([a-f0-9]{40}) to event (?:tree|merge) [a-f0-9]{40}/;
+
+// Gate jobs that never run ci-source-binding.mjs (secret-shape, quick,
+// clean-tree, authority-drift, fast-gate, secret-scan, the whole
+// dependency-audit job) still prove their checkout through the runner's
+// own echo of the checkout step's resolved inputs:
+//
+//   ##[group]Run actions/checkout@<pinned>
+//   with:
+//     ref: <resolved sha>
+//     ...
+//   ##[endgroup]
+//
+// Every analyzed `ref:` expression (`pull_request.head.sha`,
+// `merge_group.head_sha`, `github.sha`) resolves to the run's head SHA, so
+// the echo verifies exactly like the binding receipt -- but only when the
+// log records at least one checkout and every checkout step pins `ref:` to
+// that head. A checkout pinned to a branch, tag or PR ref resolves to a
+// non-SHA value and never verifies; an unpinned checkout falls back to the
+// event default (the merge commit on pull_request), and a second checkout
+// of anything else makes the workspace ambiguous, so either leaves the
+// job unverifiable.
+const CHECKOUT_GROUP = /^##\[group\]Run actions\/checkout@\S/;
+const CHECKOUT_GROUP_END = '##[endgroup]';
+const CHECKOUT_WITH = 'with:';
+const CHECKOUT_ENV = 'env:';
+const CHECKOUT_REF = /^ref:\s*([a-f0-9]{40})$/;
+
+function checkoutRefsVerify(output: string[], head: string): boolean {
+  let groups = 0;
+  let bad = false;
+  let inCheckout = false;
+  let inWith = false;
+  let ref: string | null = null;
+  const close = () => {
+    if (!inCheckout) return;
+    groups++;
+    if (ref !== head) bad = true;
+    inCheckout = false;
+    inWith = false;
+    ref = null;
+  };
+  for (const line of output) {
+    if (CHECKOUT_GROUP.test(line)) {
+      close();
+      inCheckout = true;
+      continue;
+    }
+    if (!inCheckout) continue;
+    if (line === CHECKOUT_GROUP_END) {
+      close();
+      continue;
+    }
+    if (line === CHECKOUT_WITH) {
+      inWith = true;
+      continue;
+    }
+    if (inWith && line === CHECKOUT_ENV) {
+      inWith = false;
+      continue;
+    }
+    if (!inWith) continue;
+    const found = CHECKOUT_REF.exec(line);
+    if (found !== null) ref = found[1]!;
+  }
+  close();
+  return groups > 0 && !bad;
+}
 
 // TypeScript diagnostics (tsc/tsgo non-pretty output, identical in CI) name a
 // repo-relative file, position and diagnostic code:
@@ -477,6 +556,7 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   '.github/scripts/ci-site-lane.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mac-rotation.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-dep-graph.mjs': ['.github/workflows/ci.yml'],
+  '.github/scripts/ci-fast-select.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-fast-inputs.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-green-reuse.mjs': ['.github/workflows/ci.yml'],
   '.github/scripts/ci-mcp-selection.mjs': ['.github/workflows/ci.yml'],
@@ -1224,8 +1304,8 @@ const SECRET_GATE_INPUTS: Record<string, readonly string[]> = {
 // is a `node --test` invocation or a whitelisted gate script, all gate
 // lines naming the same file. Mixed bash, heredocs, `uses:` actions,
 // non-whitelisted scripts (ci-pack-smoke and release-version-provenance
-// already have dedicated parsers; ci-fast-select never exits nonzero)
-// and other commands stay unattributed. When the step then fails, a
+// already have dedicated parsers) and other commands stay
+// unattributed. When the step then fails, a
 // `not ok` or vitest FAIL line in its own output means the companion
 // test runner owns the failure and the gate group is suppressed;
 // otherwise the gate script is the identity -- the file, its import
@@ -1243,6 +1323,12 @@ const CI_SCRIPT_GATES: Record<string, string> = {
   'ci-site-lane.mjs': '(site-lane)',
   'ci-mac-rotation.mjs': '(mac-rotation)',
   'ci-dep-graph.mjs': '(dep-graph)',
+  // ci-fast-select pairs its node --test companion in one step: a
+  // companion `not ok` still suppresses this group, but the script's
+  // selection-failure fallback does not cover infrastructure exits
+  // (plan-file writes, module load, the fallback planner itself), and
+  // without the group those crashes leave every open PR unknown.
+  'ci-fast-select.mjs': '(fast-select)',
   'ci-fast-inputs.mjs': '(fast-inputs)',
   'ci-green-reuse.mjs': '(green-reuse)',
   'ci-mcp-selection.mjs': '(mcp-selection)',
@@ -1324,6 +1410,98 @@ function parseCiScriptGateFailures(log: string): Failure[] {
       }
       if (FAIL_LINE.test(line) || SUITE_FAIL_LINE.test(line) || /^not ok\b/.test(line)) suppressed = true;
       if (line !== '') { recent.push(line); if (recent.length > 4) recent.shift(); }
+    }
+  }
+  return out;
+}
+
+// The `Install dependencies` steps run a bare `npm ci` (with or without
+// --ignore-scripts/--no-audit/--no-fund): when the manifest pair or the
+// lockfile is broken on master, every fresh PR fails the same step before
+// any test runs, and npm's own `npm error <detail>` block is the only
+// evidence -- no vitest FAIL, TAP `not ok`, tsc diagnostic or report
+// shape names it, so without step attribution those PRs read unknown and
+// queue no fix. The same `##[group]Run` step tracking as the helper gates
+// applies, but a step qualifies only when every script line is a pure
+// `npm ci` invocation: `npm ci && npm run build` preambles, `npm install`
+// toolchain fetches, `uses:` actions, mixed bash and `npm run` script
+// steps (whose `npm error Lifecycle script` blocks this parser must not
+// claim) stay unattributed. The step fails only on npm's own diagnosis --
+// a runner kill or spawn death with no `npm error` line stays unknown.
+// Each failure groups under `package-lock.json > (install)`: the
+// manifest/lockfile pair plus shrinkwrap/.npmrc variants and the ci.yml
+// step definition are the closed input list a master fix restores (the
+// only workflow whose root install runs on analyzed refs with a
+// verifiable checkout), consulted through flatInputs like the other
+// gate maps, so these groups classify shared-baseline, pr-caused or
+// unknown -- never probable-flake.
+const INSTALL_STEP_FILE = 'package-lock.json';
+const INSTALL_STEP_NAMES = '(install)';
+const INSTALL_STEP_MAX = 8;
+const INSTALL_NPM_CI = /^npm\s+ci(?:\s+--?\S+)*$/;
+const INSTALL_NPM_ERROR = /^npm\s+(?:error|ERR!)\s+\S/;
+const INSTALL_STEP_INPUTS: Record<string, readonly string[]> = {
+  [INSTALL_STEP_NAMES]: ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', '.github/workflows/ci.yml'],
+};
+
+function parseInstallFailures(log: string): Failure[] {
+  const out: Failure[] = [];
+  // idle: no step context. script: collecting a Run block's script lines.
+  // meta: past the shell:/env: marker inside the block. output: scanning a
+  // step's output for npm's own error lines.
+  let phase: 'idle' | 'script' | 'meta' | 'output' = 'idle';
+  let disqualified = false;
+  let installCandidate = false;
+  let install = false;
+  const npmErrors: string[] = [];
+  const reset = () => {
+    phase = 'idle'; disqualified = false; installCandidate = false; install = false;
+    npmErrors.length = 0;
+  };
+  const resolveInstall = () => { install = installCandidate && !disqualified; };
+  for (const line of lines(log)) {
+    if (out.length >= INSTALL_STEP_MAX) break;
+    if (line.startsWith('##[group]')) {
+      // Any group boundary ends the current step: a new Run block starts
+      // script collection, anything else leaves the step unattributed.
+      reset();
+      const run = CI_STEP_GROUP.exec(line);
+      if (run !== null) {
+        phase = 'script';
+        const first = run[1];
+        if (first !== undefined && first !== '') {
+          if (INSTALL_NPM_CI.test(first)) installCandidate = true; else disqualified = true;
+        }
+      }
+      continue;
+    }
+    if (phase === 'script') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+        continue;
+      }
+      if (CI_STEP_META.test(line)) { phase = 'meta'; continue; }
+      if (line === '') continue;
+      if (INSTALL_NPM_CI.test(line)) installCandidate = true; else disqualified = true;
+      continue;
+    }
+    if (phase === 'meta') {
+      if (CI_STEP_END.test(line)) {
+        resolveInstall();
+        phase = 'output';
+      }
+      continue;
+    }
+    if (phase === 'output') {
+      if (CI_STEP_FAILED.test(line)) {
+        if (install && npmErrors.length > 0) {
+          out.push({ file: INSTALL_STEP_FILE, names: INSTALL_STEP_NAMES, testId: `${INSTALL_STEP_FILE} > ${INSTALL_STEP_NAMES}`, excerpt: clean(npmErrors.join('\n')) });
+        }
+        reset();
+        continue;
+      }
+      if (INSTALL_NPM_ERROR.test(line) && npmErrors.length < 8) npmErrors.push(line);
     }
   }
   return out;
@@ -1849,6 +2027,10 @@ export function parseBaselineFailures(log: string, repo?: string, auditException
     if (result.length >= 100) break;
     result.push(failure);
   }
+  for (const failure of parseInstallFailures(log)) {
+    if (result.length >= 100) break;
+    result.push(failure);
+  }
   for (const failure of parseMemoryBenchmarkFailures(log)) {
     if (result.length >= 100) break;
     result.push(failure);
@@ -1895,9 +2077,17 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     const seen = new Set<number>();
     return data.workflow_runs.filter(r => { if (seen.has(r.workflow_id)) return false; seen.add(r.workflow_id); return true; });
   }
-  async function logs(run: Run, head: string) {
+  async function logs(run: Run, head: string): Promise<{ entries: { conclusion: string; text: string }[]; incomplete: boolean } | null> {
     const data = await json<{ jobs: Job[]; total_count: number }>(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     if (!Array.isArray(data?.jobs) || data.total_count > 100) return null;
+    // A job that never reached a verdict — cancelled while queued, timed
+    // out, awaiting action, failed to start, or marked stale — is
+    // incomplete evidence even when its log is absent or empty: the run
+    // cannot prove the ref's checks, so the caller reads unknown rather
+    // than clean. The flag is computed from the job list itself, so a
+    // never-started job counts the same as one whose partial log would
+    // otherwise verify or drop silently.
+    let incomplete = data.jobs.some(job => INCOMPLETE_JOB_CONCLUSIONS.has(job.conclusion));
     const result: { conclusion: string; text: string }[] = [];
     for (const job of data.jobs) {
       if (job.conclusion === 'skipped') continue;
@@ -1920,6 +2110,14 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
         result.push({ conclusion: job.conclusion, text: r.stdout });
         continue;
       }
+      // Gate jobs that never run ci-source-binding.mjs prove the checkout
+      // through the runner's resolved `with: ref:` echo instead; it
+      // verifies only when every checkout step in the log pins `ref:` to
+      // the head.
+      if (checkoutRefsVerify(output, head)) {
+        result.push({ conclusion: job.conclusion, text: r.stdout });
+        continue;
+      }
       // Aggregator jobs that never check out the workspace (Merge Gate,
       // release autotag) cannot emit the checkout SHA this check requires.
       // Their logs are dropped from evidence only when they carry nothing
@@ -1928,7 +2126,13 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
       // unattributed evidence pass as head-verified.
       if (parseBaselineFailures(r.stdout, repo).length > 0 || output.some(line => PASS_LINE.test(line))) return null;
     }
-    return result;
+    // A completed run that instantiated no jobs at all and did not
+    // succeed — startup_failure and friends — has no job list to mark
+    // incomplete, so the run's own conclusion carries the verdict.
+    if (!incomplete && data.jobs.length === 0 && run.conclusion !== undefined && INCOMPLETE_RUN_CONCLUSIONS.has(run.conclusion)) {
+      incomplete = true;
+    }
+    return { entries: result, incomplete };
   }
   const branch = await json<{ commit: { sha: string } }>(`repos/${repo}/branches/master`);
   const masterRuns = branch?.commit?.sha ? await runs(branch.commit.sha) : null;
@@ -1937,7 +2141,11 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
   for (const run of masterRuns ?? []) {
     if (run.head_sha !== branch?.commit?.sha || run.status !== 'completed') { masterKnown = false; continue; }
     const evidence = await logs(run, run.head_sha);
-    if (evidence) masterLogs.push(...evidence); else masterKnown = false;
+    // An incomplete check (cancelled, timed-out, ...) keeps its verified
+    // job evidence — a sibling failure is still real master evidence —
+    // but the run cannot prove master green, so known drops to false.
+    if (evidence) { masterLogs.push(...evidence.entries); if (evidence.incomplete) masterKnown = false; }
+    else masterKnown = false;
   }
   const dependencyCache = new Map<string, Promise<Set<string> | null>>();
   const contentsCache = new Map<string, Promise<{ ok: boolean; absent: boolean; source: string | null }>>();
@@ -2255,26 +2463,33 @@ export async function analyzeCiBaseline(repo: string, gh: CloudGh = defaultCiGh)
     if (!latest?.length || data!.total_count > 100) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'unknown', reason: 'missing-or-capped-runs' }); continue; }
     if (latest.some(r => r.head_sha !== pr.headRefOid)) { freshness.push({ pr: pr.number, head: pr.headRefOid, state: 'stale', reason: 'stale-head' }); continue; }
     let known = true;
+    let incomplete = false;
     const found: (Failure & { runId: number })[] = [];
     for (const run of latest) {
       if (run.status !== 'completed') { known = false; continue; }
       const evidence = await logs(run, pr.headRefOid);
+      // A run with an incomplete check — a job cancelled, timed out,
+      // awaiting action, failed to start or gone stale, or a jobless
+      // run that did not succeed — cannot prove the head's checks, so
+      // the PR reads unknown rather than fresh.
       if (!evidence) { known = false; continue; }
-      for (const log of evidence.filter(l => l.conclusion === 'failure')) {
+      if (evidence.incomplete) { known = false; incomplete = true; continue; }
+      for (const log of evidence.entries.filter(l => l.conclusion === 'failure')) {
         const failures = parseBaselineFailures(log.text, repo, auditExceptions);
         if (!failures.length) known = false;
         found.push(...failures.map(failure => ({ ...failure, runId: run.id })));
       }
     }
-    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: 'unreadable-log-or-unverified-checkout' } : {}) });
+    freshness.push({ pr: pr.number, head: pr.headRefOid, state: known ? 'fresh' : 'unknown', ...(!known ? { reason: incomplete ? 'incomplete-check' : 'unreadable-log-or-unverified-checkout' } : {}) });
     if (!known) continue;
     for (const failure of found) {
-      // Lint-guard, first-paint and test-runner failures are per-file/
-      // per-arm/per-runner like eslint: the checkers grep source text,
-      // measure bundle bytes or wrap the suite run, and never read a
-      // file's imports, so the dependency set is each gate's closed
-      // input list rather than the import closure walk.
-      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
+      // Lint-guard, first-paint, test-runner and install-step failures are
+      // per-file/per-arm/per-runner/per-manifest like eslint: the checkers
+      // grep source text, measure bundle bytes, wrap the suite run or read
+      // the dependency manifests, and never read a file's imports, so the
+      // dependency set is each gate's closed input list rather than the
+      // import closure walk.
+      const flatInputs = LINT_GUARD_INPUTS[failure.names] ?? FIRST_PAINT_INPUTS[failure.names] ?? TEST_RUNNER_INPUTS[failure.names] ?? SECRET_GATE_INPUTS[failure.names] ?? INSTALL_STEP_INPUTS[failure.names] ?? BUILD_STEP_INPUTS[failure.file];
       const deps = flatInputs !== undefined ? new Set<string>(flatInputs) : await dependencies(failure.file);
       // Generated artifacts are produced by the clean-tree job, not the test
       // runner: the vitest harness ambient set cannot stale them, so only

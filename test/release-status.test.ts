@@ -2,10 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatReleases, formatReleaseStatus, readReleaseRows, releaseTagLines, getLocalReleaseStatus, getReleases, getReleaseStatus, releaseCadence, releaseRoots, releasesLeaderLine, RELEASES_SCHEMA } from '../src/core/release/status.js';
 import { cmdRelease, cmdReleases } from '../src/cli/release.js';
 import { cadenceMinutesFromEnv, TRAIN_SCHEMA } from '../src/core/release/train.js';
+
+import * as remoteTags from '../src/core/release/remote-git-backlog.js';
+beforeEach(() => { vi.spyOn(remoteTags, 'readRemoteGitRelease').mockImplementation(async row => ({ ...row, reason: 'remote tags unavailable' })); });
 
 describe('release status', () => {
   it('reads local tags and default branch commits and reports missing evidence', async () => {

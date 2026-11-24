@@ -364,7 +364,11 @@ and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes, no child processes, no network.
+is read-only: no writes, no child processes, no network. The isolated fleet
+MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
+the same `readUnfedReport` read this command and the tool share — with
+`windowHours` taking the `--window` bound; see
+[the fleet tool catalog](MCP-TOOLS.md#phantom-fleet--isolated-fleet-server-phm-mcp-fleet).
 
 ## Dispatch-neutral queue snapshot
 
@@ -969,6 +973,8 @@ Run `phm queue dedupe --json` to preview repeated READY jobs in the local router
 Run `phm queue dupcheck <job-id|prompt-file> [--json]` before launching a job to see whether its work is already on master. It pulls the commands (`phm foo bar`), flags, file paths and panel names out of the goal and looks each up in the CLI command list, `docs/CLI-REFERENCE.md`, the file tree and the pull requests merged in the last 7 days in `metrics/jobs.jsonl`. It prints `likely_done`, `partial`, `new` or `unknown` (the goal names nothing to look up) with the matching file or PR; a job id is read from `queue/ready.tsv`. `--json` carries `schema: "queue.dupcheck.v1"`. Read-only; the dispatcher can call `dupcheckJob` from `src/core/queue/dupcheck.ts`. An existing file alone never proves the work is done.
 
 The dispatcher runs the same check as a gate before it claims a row: `phm queue dupcheck <prompt-file> --gate --json` (schema `queue.dupcheck-gate.v1`). High confidence (this job id already merged, or every named command, flag and file is there and a named flag exists) means `skip`: the row is dropped as `DONE-NOOP`, never launched, and the reason and evidence (matching file, command or merged job) are recorded. Medium confidence (`likely_done` without that proof) means `warn`: the row launches and `contrib/mac/launch_precheck.py` adds one `Check this first:` line to its prompt. Everything else launches as before. Each decision is one row in `metrics/dupcheck.jsonl`; the daemon's `empty-tag-sync` job and `phm jobs empty --record` add an `outcome` row when a launched or warned job ends EMPTY `already_done`. `phm queue dupcheck --stats [--json]` (schema `queue.dupcheck-stats.v1`) shows skips, warned and plain launches, launches that ended `already_done`, and false skips (a skipped job that was launched later). The gate fails open: if `phm` is missing, slow or answers anything unexpected, the row launches.
+
+`phm ideas list` reads the same ledger as its `dupcheck-gate` signal: two or more skipped jobs that were launched later become a `dupcheck-gate:false-skips` idea, and jobs the gate let through (launch or warn) that still ended `already_done` become a `dupcheck-gate:missed-duplicates` idea once at least 3 did so and they are at least 10% of let-through decisions. A missing or unreadable ledger leaves the signal unknown.
 
 Run `phm queue autofill --lane <lane> [--min <n>]` to keep a lane from running dry. When the lane has fewer than `--min` ready jobs (default: its slot target) it drafts the gap in this order: open items from `phm ideas` (`source: "idea"`), then "Not built:" / "Gaps:" lines from the logs of jobs that ended empty in the last 72 hours (`"follow-up"`), then `phm bets propose` (`"bet"`). It skips anything already queued, running or shipped, and any job family that `phm jobs empty --by-family` marks `stop` for the lane. Every queued prompt starts with "Step 0: search master, deliver only the delta; end with no change if it already exists." and the ship-partial rule. It prints `{schema: "queue.autofill.v1", lane, running, target, queued, drafted: [{id, source, goal, prompt, ...}], skipped}`. A source that cannot be read adds nothing. It is a dry run; `--apply` adds each draft as a READY job through the normal queue add path. A full lane prints "Lane is full."; counts that cannot be read stay `null` and nothing is drafted.
 

@@ -156,7 +156,7 @@ export async function checkReturnPrs(
       timer = setTimeout(() => resolve(null), remaining);
     });
     const result = await Promise.race([checkOne(gh, row), timeout]).finally(() => clearTimeout(timer));
-    if (result === null) {
+    if (result === null || now() >= deadline) {
       expired = true;
       checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
     } else {

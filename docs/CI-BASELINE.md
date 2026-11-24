@@ -7,18 +7,35 @@ read-only: it does not rerun jobs, change tests, merge PRs, or update branches.
 The version 1 JSON report contains failure groups, per-PR freshness, master
 evidence, unknown reasons, and proposed update-branch commands. Latest workflow
 runs are checked against the current head and full checkout SHA in job logs.
-A job proves its checkout either by echoing `git log -1 --format=%H` followed
-by the head SHA, or by the `Bound candidate <sha> to event tree|merge ...`
-receipt `.github/scripts/ci-source-binding.mjs` prints after verifying
-`git rev-parse HEAD` equals the candidate revision; the bound revision must
-equal the analyzed head exactly. Jobs that never check out the workspace
-(aggregators such as Merge Gate) cannot emit either receipt; their logs are
-dropped from evidence only when they carry no parseable failure or per-test
-pass output. The default reporter's green-module pass lines are expected
-from checkout jobs that never bound a receipt, so they neither verify nor
-poison a run; any other consumable evidence in an unverifiable log keeps the
-run unknown. Unreadable, incomplete, capped, or unverified logs are unknown,
-never clean.
+A job proves its checkout one of three ways: echoing `git log -1
+--format=%H` followed by the head SHA; printing the `Bound candidate <sha>
+to event tree|merge ...` receipt `.github/scripts/ci-source-binding.mjs`
+emits after verifying `git rev-parse HEAD` equals the candidate revision;
+or, for gate jobs that never run the binding script (secret-shape, quick,
+clean-tree, authority-drift, fast-gate, secret-scan and the whole
+dependency-audit job), recording `actions/checkout` steps whose resolved
+`with: ref:` input is the analyzed head in every checkout group of the log.
+The bound revision or checkout ref must equal the analyzed head exactly; an
+unpinned checkout (which falls back to the event's merge commit on pull
+requests), a non-SHA ref or a second checkout of anything else leaves the
+job unverifiable. Jobs that never check out the workspace (aggregators such
+as Merge Gate) cannot emit any proof; their logs are dropped from evidence
+only when they carry no parseable failure or per-test pass output. The
+default reporter's green-module pass lines are expected from checkout jobs
+that never bound a receipt, so they neither verify nor poison a run; any
+other consumable evidence in an unverifiable log keeps the run unknown.
+Unreadable, incomplete, capped, or unverified logs are unknown, never clean.
+A job whose conclusion is not a verdict — `cancelled`, `timed_out`,
+`action_required`, `startup_failure` or `stale` — is incomplete evidence
+even when its log is absent or empty: the run cannot prove the ref's
+checks, so the PR reads `unknown` rather than `fresh` — freshness reason
+`incomplete-check`, distinct from `unreadable-log-or-unverified-checkout` —
+and master's known state drops while the run's verified job logs still
+feed failure parsing. `skipped` and `neutral` conclusions are
+deliberate non-verdicts, not incomplete checks. A completed run that
+instantiated no jobs at all reads the same way when its own conclusion is
+not `success`/`neutral`/`skipped` — the jobless `startup_failure` case has
+no job list to mark incomplete, so the run's conclusion carries it.
 Vitest FAIL lines -- including named-project labels such as `|unit|` or `|console|` --
 identify tests under `test/` and `src/web-ui/`; AssertionError summaries are scrubbed
 and capped at 2,000 characters per failure, with at most 100 failures per log.
@@ -426,8 +443,8 @@ step in a `##[group]Run <script>` block, so the analyzer attributes the
 marker to the step's script when every script line is a `node --test`
 invocation or one whitelisted gate script, all gate lines naming the
 same file: `ci-fetch-range`, `ci-source-binding`, `ci-site-lane`,
-`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-inputs`, `ci-green-reuse`
-and `ci-mcp-selection` group under
+`ci-mac-rotation`, `ci-dep-graph`, `ci-fast-select`, `ci-fast-inputs`,
+`ci-green-reuse` and `ci-mcp-selection` group under
 `.github/scripts/<script> > (<gate>)`. Mixed bash, `uses:` actions,
 non-whitelisted scripts and ambiguous multi-script steps stay
 unattributed, and a `not ok` or vitest `FAIL` line in the step's own
@@ -439,6 +456,24 @@ groups classify `shared-baseline`, `pr-caused` or `unknown` -- never
 `probable-flake`. Scripts whose pure steps only appear in jobs the
 analyzer's evidence never sees (macOS/Windows lanes, release
 pipelines, merge-group-only attribution) are not listed.
+
+The `Install dependencies` steps run a bare `npm ci` (with or without
+`--ignore-scripts`/`--no-audit`/`--no-fund`), so a broken manifest or
+lockfile on master fails every fresh PR before any test runs and npm's
+own `npm error <detail>` block is the only evidence. The analyzer
+tracks the same `##[group]Run` step boundaries, but a step qualifies
+only when every script line is a pure `npm ci` invocation: `npm ci &&
+npm run build` preambles, `npm install` toolchain fetches, `uses:`
+actions, mixed bash, `npm run` script steps (whose `npm error Lifecycle
+script` blocks must not be claimed) and steps that die without an
+`npm error` line stay unattributed. Failures group under
+`package-lock.json > (install)`; the dependency set is the closed input
+list -- `package.json`, `package-lock.json`, `npm-shrinkwrap.json`,
+`.npmrc` and `.github/workflows/ci.yml`, the only workflow whose root
+install runs on analyzed refs with a verifiable checkout -- with no
+vitest harness ambient set, so a PR touching any of them is
+`pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
+`unknown` -- never `probable-flake`.
 
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the

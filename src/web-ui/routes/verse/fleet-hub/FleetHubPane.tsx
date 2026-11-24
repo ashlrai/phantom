@@ -21,6 +21,7 @@ import { phoneTile } from './hub-phone-tile.js';
 import { hubBacklogQuery } from './hub-backlog-queries.js';
 import { backlogTile } from './hub-backlog-tile.js';
 import { fleetAdmissionQuery } from './fleet-admission-query.js';
+import { FamilyYieldCard } from './FamilyYieldCard.js';
 import styles from './fleet-hub.module.css';
 
 export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
@@ -93,6 +94,7 @@ export function FleetHubPane({ visible }: Pick<PaneProps, 'visible'>) {
       <strong>Job starts</strong>
       <span>{admission.status === 'error' ? 'starts unknown: could not refresh admission' : admission.data?.summary ?? 'starts unknown: waiting for admission reading'}</span>
     </section>
+    <FamilyYieldCard visible={visible} />
     <RunningJobsList enabled={visible && sectionVisible && documentVisible} />
     <button type="button" className={styles.primary} onClick={() => openDockPane('company')}>Company overview</button>
     <button type="button" className={styles.primary} disabled={workspaceIds.length === 0} onClick={() => openFleetWorkspace(workspaceIds)}>Open fleet workspace</button>

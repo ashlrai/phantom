@@ -31,6 +31,16 @@
  *   - BOUNDED AND BEST-EFFORT. The memstat read is capped at 64 KiB, the
  *     ledger dedup read at 512 KiB, appends per pass are capped, and the
  *     sync never throws: source problems come back as state.
+ *
+ * The read-back can also measure memory-guard constants against the
+ * recorded distribution: for each guard input it reports the share of
+ * field-carrying samples where the condition would fire, so the
+ * "tune from metrics/swapout-rate.jsonl" note in lane-autopilot has real
+ * denominators instead of a raw mean. The thresholds arrive as an
+ * injected parameter — this module stays inside the daemon's Tier-1
+ * import closure, so it must not import lane-autopilot itself. Shares
+ * are counts over recorded samples only — a field nobody measured
+ * stays null, never 0, and no guard supplied means no assessment.
  */
 import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -101,9 +111,11 @@ function statField(value: unknown, max: number | null): number | null | typeof I
  * schema, a parseable sampled_at, and each stat field either null or a
  * finite number inside the producer's range (free_pct 0..100, the GB and
  * per-minute figures unbounded above). Anything else is corrupt evidence,
- * counted and never partially trusted.
+ * counted and never partially trusted. Exported so the improvement
+ * backlog's memory fold validates rows by the same rule the writer and
+ * the vitals read-back apply.
  */
-function parseSwapoutRow(value: unknown): SwapoutSample | null {
+export function parseSwapoutRow(value: unknown): SwapoutSample | null {
   const sampledAt = sampledAtOf(value);
   if (sampledAt === null || !Number.isFinite(Date.parse(sampledAt))) return null;
   const row = value as Record<string, unknown>;
@@ -276,9 +288,46 @@ export interface SwapoutRateEvidence {
   swapoutsMean: number | null;
   swapoutsMax: number | null;
   swapoutsPositive: number;
+  /**
+   * How often each supplied memory-guard condition would have fired across
+   * the recorded samples — the calibration evidence the constants'
+   * "tune from metrics/swapout-rate.jsonl" note asks for. Each share is a
+   * fraction (0..1) over the samples carrying that input; null when the
+   * field was never measured or no guard was supplied. Advisory only:
+   * nothing here changes routing.
+   */
+  memoryGuard: SwapoutMemoryGuard | null;
+}
+
+/** The four lane-autopilot MEMORY_GUARD thresholds, injected by the caller. */
+export interface SwapoutGuardThresholds {
+  raiseFreePct: number;
+  lowFreePct: number;
+  growingSwapoutsPerMin: number;
+  swapBackstopGb: number;
+}
+
+export interface SwapoutMemoryGuard {
+  /** The guard constants the shares measure against, echoed for self-contained JSON. */
+  constants: SwapoutGuardThresholds;
+  /** Samples carrying each input — the denominators of the matching shares. */
+  freePctKnown: number;
+  swapGbKnown: number;
+  swapoutsKnown: number;
+  /** Share of free_pct samples below lowFreePct (a raise-blocking condition in memoryAllowsRaise). */
+  freeBelowLowShare: number | null;
+  /** Share of free_pct samples above raiseFreePct (the headroom a raise needs). */
+  freeAboveRaiseShare: number | null;
+  /** Share of swapouts_per_min samples at or above growingSwapoutsPerMin. */
+  swapoutsGrowingShare: number | null;
+  /** Share of swap_gb samples above swapBackstopGb. */
+  swapAboveBackstopShare: number | null;
 }
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
+const round4 = (v: number): number => Math.round(v * 10000) / 10000;
+/** Share of `known` samples; null when the field was never measured — unknown stays unknown. */
+const share = (hits: number, known: number): number | null => (known > 0 ? round4(hits / known) : null);
 
 /**
  * Bounded tail read of `<runs>/metrics/swapout-rate.jsonl`; aggregates the
@@ -287,13 +336,18 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
  * lines count as invalidRows and degrade the source without erasing valid
  * rows. Never throws.
  */
-export async function readSwapoutRateEvidence(runsDir: string): Promise<SwapoutRateEvidence> {
+export async function readSwapoutRateEvidence(
+  runsDir: string,
+  opts: { guard?: SwapoutGuardThresholds } = {},
+): Promise<SwapoutRateEvidence> {
+  const guard = opts.guard ?? null;
   const empty: SwapoutRateEvidence = {
     source: 'missing', state: 'unknown', samples: 0, invalidRows: 0,
     oldestAt: null, newestAt: null,
     freePctKnown: 0, freePctMin: null, freePctMean: null,
     swapGbKnown: 0, swapGbMax: null,
     swapoutsKnown: 0, swapoutsMean: null, swapoutsMax: null, swapoutsPositive: 0,
+    memoryGuard: null,
   };
   const source = await readSource(join(runsDir, SWAPOUT_RATE_LEDGER_RELATIVE), SWAPOUT_LEDGER_TAIL_BYTES, true);
   if (source.state === 'missing') return empty;
@@ -304,6 +358,7 @@ export async function readSwapoutRateEvidence(runsDir: string): Promise<SwapoutR
   let freeKnown = 0, freeMin = Number.POSITIVE_INFINITY, freeSum = 0;
   let swapKnown = 0, swapMax = Number.NEGATIVE_INFINITY;
   let outKnown = 0, outSum = 0, outMax = Number.NEGATIVE_INFINITY, outPositive = 0;
+  let freeBelowLow = 0, freeAboveRaise = 0, swapoutsGrowing = 0, swapAboveBackstop = 0;
   for (const line of source.text.split(/\r?\n/).filter(Boolean)) {
     let value: unknown;
     try { value = JSON.parse(line); } catch { invalidRows += 1; continue; }
@@ -313,11 +368,21 @@ export async function readSwapoutRateEvidence(runsDir: string): Promise<SwapoutR
     const ms = Date.parse(row.sampledAt);
     oldestMs = Math.min(oldestMs, ms);
     newestMs = Math.max(newestMs, ms);
-    if (row.freePct !== null) { freeKnown += 1; freeMin = Math.min(freeMin, row.freePct); freeSum += row.freePct; }
-    if (row.swapGb !== null) { swapKnown += 1; swapMax = Math.max(swapMax, row.swapGb); }
+    if (row.freePct !== null) {
+      freeKnown += 1; freeMin = Math.min(freeMin, row.freePct); freeSum += row.freePct;
+      if (guard !== null) {
+        if (row.freePct < guard.lowFreePct) freeBelowLow += 1;
+        if (row.freePct > guard.raiseFreePct) freeAboveRaise += 1;
+      }
+    }
+    if (row.swapGb !== null) {
+      swapKnown += 1; swapMax = Math.max(swapMax, row.swapGb);
+      if (guard !== null && row.swapGb > guard.swapBackstopGb) swapAboveBackstop += 1;
+    }
     if (row.swapoutsPerMin !== null) {
       outKnown += 1; outSum += row.swapoutsPerMin; outMax = Math.max(outMax, row.swapoutsPerMin);
       if (row.swapoutsPerMin > 0) outPositive += 1;
+      if (guard !== null && row.swapoutsPerMin >= guard.growingSwapoutsPerMin) swapoutsGrowing += 1;
     }
   }
   return {
@@ -336,5 +401,15 @@ export async function readSwapoutRateEvidence(runsDir: string): Promise<SwapoutR
     swapoutsMean: outKnown > 0 ? round2(outSum / outKnown) : null,
     swapoutsMax: outKnown > 0 ? round2(outMax) : null,
     swapoutsPositive: outPositive,
+    memoryGuard: guard === null ? null : {
+      constants: guard,
+      freePctKnown: freeKnown,
+      swapGbKnown: swapKnown,
+      swapoutsKnown: outKnown,
+      freeBelowLowShare: share(freeBelowLow, freeKnown),
+      freeAboveRaiseShare: share(freeAboveRaise, freeKnown),
+      swapoutsGrowingShare: share(swapoutsGrowing, outKnown),
+      swapAboveBackstopShare: share(swapAboveBackstop, swapKnown),
+    },
   };
 }

@@ -59,6 +59,10 @@ it('applies contains, since and priority filters to the claimable scan', async (
   const future = String(Date.now() + 3_600_000);
   expect(await run([...args(), '--since', future]))
     .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  // --before is the exclusive receivedAt ceiling: a cutoff before every
+  // receipt's arrival empties the same filtered scan.
+  expect(await run([...args(), '--before', '1']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
 });
 
 it('validates all flags without returning bodies or tokens', async () => {
@@ -66,7 +70,7 @@ it('validates all flags without returning bodies or tokens', async () => {
     [...args(), '--owner', 'duplicate'], args().map(x => x === '60000' ? '0' : x),
     args().map(x => x === '60000' ? '3e3' : x), args().map(x => x === root ? 'relative' : x),
     args().map(x => x === 'worker-a' ? 'bad label' : x), [...args(), '--unknown'],
-    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'],
+    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'],
     [...args(), '--contains', '   ']]) {
     expect(await run(bad)).toEqual({ code: 2, status: 'invalid' });
   }

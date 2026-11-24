@@ -53,7 +53,8 @@ Reflection is a separate single-flight off-tick job in resident ticks; it
 writes only learning reports and append-only genome entries and does not take
 the outward mutation fence. On the same self-improvement cadence a
 `reward-sync` off-tick job folds the jobs-ledger tail into the append-only
-reward-signal ledger (`src/core/metrics/reward-feed.ts`); it is best-effort,
+reward-signal ledger (`src/core/metrics/reward-feed.ts`), discounting merges
+the standing revert set proves did not hold; it is best-effort,
 never throws, and writes only under `~/.ashlr/metrics`. A `skill-nudge`
 off-tick job on the same cadence folds the same tail into candidate shadow
 skill cards (`src/core/fleet/skill-nudge.ts`), discounting merges the
@@ -80,7 +81,12 @@ appends at the bridge's cadence, and an unreadable ledger blocks the
 append rather than risking a duplicate row; it is best-effort, never
 throws, and writes only under the runs dir. `phm fleet vitals` reads the
 ledger back into its `swapout_rate` evidence so the distribution the
-thresholds should be tuned against is visible; unknown stays unknown.
+thresholds should be tuned against is visible; with the lane-autopilot
+thresholds injected, each `memoryGuard` share reports how often a
+MEMORY_GUARD condition would have fired across the samples carrying that
+field — the calibration denominator the constants' tune-from-the-ledger
+note asks for, advisory only and never a routing input; unknown stays
+unknown.
 A job that ignores
 cancellation remains single-flight until its work settles; shutdown cancels
 running jobs with bounded waiting. Once ticks keep reflection in-tick;

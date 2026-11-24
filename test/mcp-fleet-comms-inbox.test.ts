@@ -38,10 +38,12 @@ describe('fleet comms inbox', () => {
       .toEqual({ limit: 50, filter: { job: 'RQ-ABC-1' } });
     expect(parseFleetCommsInboxArgs({ since: '1735689600000' }))
       .toEqual({ limit: 50, filter: { since: 1735689600000 } });
+    expect(parseFleetCommsInboxArgs({ before: '1735689600000' }))
+      .toEqual({ limit: 50, filter: { before: 1735689600000 } });
     expect(parseFleetCommsInboxArgs({ contains: 'fake' }))
       .toEqual({ limit: 50, filter: { contains: 'fake' } });
-    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', contains: 'x', limit: 10 }))
-      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), contains: 'x' } });
+    expect(parseFleetCommsInboxArgs({ source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: '2h', before: '1h', contains: 'x', limit: 10 }))
+      .toEqual({ limit: 10, filter: { source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true, job: 'J1', since: expect.any(Number), before: expect.any(Number), contains: 'x' } });
   });
 
   it('rejects malformed filter values', () => {
@@ -50,6 +52,7 @@ describe('fleet comms inbox', () => {
       { severity: 'critical' }, { severity: true },
       { blocking: 'yes' }, { blocking: 1 }, { job: '' }, { job: 'has space' }, { job: 'x'.repeat(129) },
       { since: 'not-a-time' }, { since: '' }, { since: 1735689600000 },
+      { before: 'not-a-time' }, { before: '' }, { before: 1735689600000 }, { before: true },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
     ]) expect(parseFleetCommsInboxArgs(bad)).toBeNull();
   });
@@ -91,7 +94,7 @@ it('lists and routes the tool through the fleet server', async () => {
   const tool = (await client.listTools()).tools.find(tool => tool.name === 'fleet_comms_inbox');
   expect(tool).toBeDefined();
   expect(Object.keys((tool!.inputSchema as { properties: Record<string, unknown> }).properties))
-    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'contains']);
+    .toEqual(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
   const result = await client.callTool({ name: 'fleet_comms_inbox', arguments: { limit: 1 } });
   expect(JSON.parse((result.content as Array<{ text: string }>)[0].text)).toMatchObject({ items: [item], omitted: 2 });
   const filtered = await client.callTool({ name: 'fleet_comms_inbox',

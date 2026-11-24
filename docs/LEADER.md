@@ -565,11 +565,15 @@ its text says `re: <id>`. Unreadable inbox blocks are skipped and counted in
 The desktop inbox box and the phone box show the same chat above their Send.
 The default `phm leader thread` shows the whole conversation as plain lines.
 Add `--json` for the `leader.thread.v1` shape or `--text` for explicit plain
-lines. Optionally filter with `--since <hours|date>` or keep the newest n with
-`--limit <n>`. The same view is available at GET
-`/api/verse/leader/thread/merged?since=…&limit=…`. Each entry has `at`, `from` (`mason`,
+lines. Optionally filter with `--since <hours|date>` and `--before <hours|date>`
+or keep the newest n with `--limit <n>`. `since` keeps entries at or after its
+cutoff and `before` keeps entries strictly before its own, so the pair reads
+one `[since, before)` window — the same bound pair every other comms read
+applies; an entry with no readable date cannot be placed inside or outside
+the window, so neither bound ever drops it. The same view is available at GET
+`/api/verse/leader/thread/merged?since=…&before=…&limit=…`. Each entry has `at`, `from` (`mason`,
 `leader`, `teammate` or `unknown`), `channel`, `text`, `source` and `refs` (PR
-numbers named in the text). Without `--since`, no time filter is applied.
+numbers named in the text). Without `--since`/`--before`, no time filter is applied.
 A reply in both the outbox and the PLAN-LOG shows once, and an entry with no readable date
 keeps `at: null` ("time unknown") and sorts last.
 These journals are read only. `--follow` still streams the in-process Leader
@@ -579,7 +583,7 @@ journal; older entries may be omitted.
 
 ```sh
 ashlr leader say "focus: the flaky retry test in binshield"
-ashlr leader thread [--since 24] [--limit 20] [--json]
+ashlr leader thread [--since 24] [--before 2] [--limit 20] [--json]
 ashlr leader thread --legacy [--limit 20] [--text]
 ashlr leader answer <questionId> "yes, but only on ashlrcode"
 ashlr leader approve <actionId>
@@ -655,14 +659,20 @@ The compact brief (`leader.compact-brief.v1`) reads cached GitHub release eviden
 then local git tags for each missing repository. Its `release` counts include this
 fallback; `releaseRepos` gives the tag, tag date, commits since the tag, state,
 source and unknown reason. Local git is due over 20 commits or over seven days;
-otherwise it is ok. Missing clones, tags or default-branch refs and shallow
-history stay unknown. Tags describe local release state, not publication proof.
+otherwise it is ok. On `phm leader brief --json` or `phm fleet release-backlog
+--json`, shallow clones or missing local tags fall back to public remote version
+tags (highest stable version), their dates and GitHub compare counts. Each remote
+read has a five-second budget; readings are cached for ten minutes.
+Background compact reads use that cache without network calls. An unreachable
+remote stays unknown with a plain reason; an unreadable count stays null.
+Missing clones or default-branch refs stay unknown. Tags are not publication proof.
 The same evidence appears in `phm fleet release-backlog --json` under `repos[].git`.
 
 Default clone paths are `~/Projects/ashlrai/wt/guardian-<repo>`, then
 `~/.ashlr-runs/phm-live` for Phantom, then `~/Projects/ashlrai/<repo>`.
 Set `PHANTOM_RELEASE_CLONES` to a JSON object such as
 `{"phantom":"/path/to/phantom","locus":"/path/to/locus"}` to replace that list;
-unlisted repositories stay unknown with reason `no local clone`. Reads use
-`origin/HEAD` (or `origin/master`, then `origin/main` if unset), never fetch, and
-have a five-second budget per clone. Local refs reflect their last fleet refresh.
+unlisted repositories stay unknown with reason `no local clone`. Local reads use
+`origin/HEAD` (or `origin/master`, then `origin/main` if unset) and have a
+five-second budget per clone. Remote reads use `git ls-remote` against the public
+AshlrAI URL, without fetching or changing clones. Local refs reflect their last fleet refresh.

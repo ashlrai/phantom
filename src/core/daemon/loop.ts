@@ -447,7 +447,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { withApprovedKnowledge, knowledgeBlockFor } from '../learn/retro/inject.js';
 import { revertedPrKeys } from '../improve/reverted.js';
-import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { recordKnowledgeHits, recordKnowledgeRuns } from '../learn/retro/store.js';
 import { withFleetPlaybook, prepareFleetPlaybook, type PreparedFleetPlaybook } from '../playbooks/lanes.js';
 import { recordPlaybookUse } from '../playbooks/store.js';
 import { ROUTING_SESSION_OVERHEAD_TOKENS } from '../fleet/dispatch-router.js';
@@ -4828,11 +4828,13 @@ export async function tick(
         log: phaseLog,
       });
       // Reward substrate producer: fold the jobs-ledger tail into
-      // reward-signals.jsonl on the same self-improvement cadence. The sync is
-      // best-effort and append-only; launchOffTickJob keeps it single-flight.
+      // reward-signals.jsonl on the same self-improvement cadence, with the
+      // standing revert set so a merge git history proves did not hold never
+      // counts as held. The sync is best-effort and append-only;
+      // launchOffTickJob keeps it single-flight.
       launchOffTickJob('reward-sync', async signal => {
         const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
-        await syncRewardSignalsFromJobsLedger({ signal });
+        await syncRewardSignalsFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
       }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
       // Shadow skill learning: fold the same jobs-ledger tail into candidate
       // recovery skill cards, with the standing revert set so a merge that
@@ -5154,7 +5156,8 @@ export async function tick(
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
     return withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview, revertedPrKeys: revertedKeys });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview,
+        trajectoryId: `run:${runId}`, revertedPrKeys: revertedKeys });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -8427,7 +8430,10 @@ export async function tick(
               // no second resolution can substitute guidance or attribution.
               const prepared = preparedManagerPrompts.get(item.id)!;
               if (prepared.playbookUse) void recordPlaybookUse({ lane: 'fleet', key: attemptId, ...prepared.playbookUse });
-              if (prepared.knowledgeNoteIds.length) void recordKnowledgeHits(prepared.knowledgeNoteIds);
+              if (prepared.knowledgeNoteIds.length) {
+                void recordKnowledgeHits(prepared.knowledgeNoteIds);
+                void recordKnowledgeRuns(`run:${attemptId}`, prepared.knowledgeNoteIds);
+              }
             }
             recordUse(backend!);
             return { kind: 'started' as const, run };

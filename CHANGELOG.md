@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.70 |
-| Latest dated changelog release (2026-11-22) | 3.30.70 |
+| Source package | 3.30.72 |
+| Latest dated changelog release (2026-11-22) | 3.30.72 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -168,6 +168,33 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 ### Removed
 
 - Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.72] - 2026-11-22
+
+
+### Changes
+
+* **RQ-CL-DOCS-1795367711:** ([#8338](https://github.com/ashlrai/phantom/issues/8338)) ([c9d1e9c](https://github.com/ashlrai/phantom/commit/c9d1e9c17eea9ef521d74c673d3c69a73679533a))
+* **RQ-PHX-ADAPTDIGESTORIGINAL796S:** Bridge notes: lane adaptation digest ([#8341](https://github.com/ashlrai/phantom/issues/8341)) ([ec54f5c](https://github.com/ashlrai/phantom/commit/ec54f5cbde5f2ee7b816b56dd302780f3ffe7b24))
+* **RQ-PHX-SLACKORIGINALPROOF792S:** PR [#7504](https://github.com/ashlrai/phantom/issues/7504) preservation receipt ([#8339](https://github.com/ashlrai/phantom/issues/8339)) ([10bc82c](https://github.com/ashlrai/phantom/commit/10bc82c6294716aa6b0d2c7e4697ed8c8c1fc0da))
+* **RQ-YIELDCARDN25HQ8:** RQ-YIELDCARDN25HQ8 ([#8340](https://github.com/ashlrai/phantom/issues/8340)) ([6aa5479](https://github.com/ashlrai/phantom/commit/6aa5479eb884d9cbf98182513011e1fdae24c963))
+
+## [3.30.71] - 2026-11-22
+
+
+### Changes
+
+* **RQ-CL-DOCS-1795364719:** ([#8327](https://github.com/ashlrai/phantom/issues/8327)) ([1400ec0](https://github.com/ashlrai/phantom/commit/1400ec06cb1b2844f6ec933822131bbf2948e951))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795362217-N17:** ([#8321](https://github.com/ashlrai/phantom/issues/8321)) ([e7c250b](https://github.com/ashlrai/phantom/commit/e7c250b5f82a3d5f219a651c96679e858687c76b))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795364344-N17:** ([#8331](https://github.com/ashlrai/phantom/issues/8331)) ([30a9501](https://github.com/ashlrai/phantom/commit/30a9501670aa0914749db9fe65efebfc278edcbb))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795361627-N17:** ([#8318](https://github.com/ashlrai/phantom/issues/8318)) ([f974910](https://github.com/ashlrai/phantom/commit/f97491004081667853fc72acd0fbe6b1fda79cde))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795362954-N17:** ([#8324](https://github.com/ashlrai/phantom/issues/8324)) ([4d86182](https://github.com/ashlrai/phantom/commit/4d86182042ee8e52ea811f9db278330fd1ae6d94))
+* **RQ-DEVINCLOUD-RQ-DVL-RSI-1795364763-N17:** ([#8329](https://github.com/ashlrai/phantom/issues/8329)) ([c39c88c](https://github.com/ashlrai/phantom/commit/c39c88c3275e5678aa0e3b8a22915fcb0f585008))
+* **RQ-MOBILEADMITN24UQ8:** RQ-MOBILEADMITN24UQ8 ([#8323](https://github.com/ashlrai/phantom/issues/8323)) ([f9ad0bb](https://github.com/ashlrai/phantom/commit/f9ad0bbeb2f3951020aaef04034c6617620c2613))
+* **RQ-OPENPRSNAPQ8:** RQ-OPENPRSNAPQ8 ([#8320](https://github.com/ashlrai/phantom/issues/8320)) ([6d11ee0](https://github.com/ashlrai/phantom/commit/6d11ee087ff0f853c4aad337b8febb316900094e))
+* **RQ-PHX-CONSOLELAND793:** RQ-PHX-CONSOLELAND793 ([#8330](https://github.com/ashlrai/phantom/issues/8330)) ([6eacea4](https://github.com/ashlrai/phantom/commit/6eacea49644790697e92ca03c3b36f83a986e7be))
+* **RQ-PHX-FLEETCORELAND791B:** RQ-PHX-FLEETCORELAND791B ([#8325](https://github.com/ashlrai/phantom/issues/8325)) ([c2eb8ec](https://github.com/ashlrai/phantom/commit/c2eb8ecf112dc6c3f04827489904870d1b02e332))
+* **RQ-PHX-FLEETCORELAND791:** RQ-PHX-FLEETCORELAND791 — no eligible source ([#8326](https://github.com/ashlrai/phantom/issues/8326)) ([ce1a413](https://github.com/ashlrai/phantom/commit/ce1a4134e1bd0305d6fa1bc94192667a8cfab9f6))
 
 ## [3.30.70] - 2026-11-22
 

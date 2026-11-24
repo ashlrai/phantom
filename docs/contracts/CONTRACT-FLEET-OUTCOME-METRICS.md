@@ -262,6 +262,16 @@ Families of one job id are listed under `single`.
   in the job stop file format; `phm jobs yield --stop-file` keeps hand-pasted rows.
 - An unreadable file is `known: false` with null totals.
 
+`empty_recommendations` lists recurring job kinds with at least three explicit
+empty launches, most empties first. Run `phm fleet yield --json` to read the typed
+`EmptyFamilyRecommendation[]`: family, `review_family` action, launches, empty,
+merged and missing-outcome counts, reason, and `last_successful_pr` (job, URL,
+merge time). It uses `jobKind` grouping, including recurring `N<day><letter>Q8`
+ids. Success means a non-reverted merge within the launch cohort and window;
+open PRs and missing outcomes never count as empty or successful. The last PR
+is null without success or usable merge ordering; an unrecorded URL stays null.
+These recommendations are advisory and do not change dispatch or family stops.
+
 `src/core/fleet/family-yield.ts` exports `collapseFamily(id)`, `familyVerdict(row)`,
 the pure `familyYield(lines, now, hours)`, `familyYieldFromRuns(runs, now, hours, lanesTiers?)`,
 `readFamilyYield(path, hours, now, read?)` and `unknownFamilyYield(hours)`; it parses

@@ -1,8 +1,8 @@
 import { rejectUnknownOptions } from './args.js';
-import { ownerThreadOptions } from './comms-owner-thread.js';
+import { ownerThreadOptions, parseOwnerThreadFilterArgs } from './comms-owner-thread.js';
 import { readOwnerThreadHistory } from '../core/comms/owner-thread-archive.js';
 
-const usage = 'Usage: ashlr fleet owner-history [--before <seq>] [--limit <n>] [--json]';
+const usage = 'Usage: ashlr fleet owner-history [--before <seq>] [--limit <n>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--json]';
 export interface FleetOwnerHistoryDeps {
   options?: { runsDir: string };
   output?: (text: string) => void;
@@ -11,16 +11,21 @@ export interface FleetOwnerHistoryDeps {
 export async function cmdFleetOwnerHistory(args: string[], deps: FleetOwnerHistoryDeps = {}): Promise<number> {
   const output = deps.output ?? console.log; const error = deps.error ?? console.error;
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { output(usage); return 0; }
-  const bad = rejectUnknownOptions(args, { flags: ['--json'], values: ['--before', '--limit'] });
-  const validArgs = args.every((arg, i) => ['--json', '--before', '--limit'].includes(arg) || (i > 0 && ['--before', '--limit'].includes(args[i - 1]!)));
+  const valueFlags = ['--before', '--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'];
+  const known = ['--json', ...valueFlags];
+  const bad = rejectUnknownOptions(args, { flags: ['--json'], values: valueFlags });
+  const validArgs = args.every((arg, i) => known.includes(arg) || (i > 0 && valueFlags.includes(args[i - 1]!)));
   const number = (flag: string) => args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
   const beforeRaw = number('--before'); const limitRaw = number('--limit');
   const validNumber = (raw: string | undefined, max: number) => raw === undefined || (/^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) && Number(raw) > 0 && Number(raw) <= max);
-  if (bad || !validArgs || ['--json', '--before', '--limit'].some(flag => args.filter(arg => arg === flag).length > 1) ||
+  if (bad || !validArgs || known.some(flag => args.filter(arg => arg === flag).length > 1) ||
       (args.includes('--before') && beforeRaw === undefined) || (args.includes('--limit') && limitRaw === undefined) ||
       !validNumber(beforeRaw, Number.MAX_SAFE_INTEGER) || !validNumber(limitRaw, 500)) { error(usage); return 2; }
+  const parsed = parseOwnerThreadFilterArgs(args);
+  if (parsed.error !== undefined) { error(parsed.error); error(usage); return 2; }
   const history = readOwnerThreadHistory(deps.options ?? ownerThreadOptions({}), {
     ...(beforeRaw === undefined ? {} : { before: Number(beforeRaw) }), ...(limitRaw === undefined ? {} : { limit: Number(limitRaw) }),
+    ...(parsed.filter ?? {}),
   });
   if (args.includes('--json')) output(JSON.stringify(history));
   else {

@@ -2,6 +2,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readFleetStartStatus } from '../fleet/admission-status.js';
+import { readFamilyYield } from '../fleet/family-yield.js';
+import type { YieldLineReader } from '../fleet/ledger-lines.js';
 import { readFleetMemoryFiles, type FleetMemoryFiles } from '../fleet/memory-files.js';
 import { memoryView, type FleetMemoryView } from '../fleet/memory-view.js';
 import { readEngineAdmission, type EngineAdmissionView } from '../fleet/engine-admission-view.js';
@@ -43,6 +45,7 @@ export interface FleetMemoryApiDeps {
   /** Scans job folders and the free-disk trend; injected in tests. */
   readDiskPlan?: () => Promise<DiskPlanReportV1>;
   now?: () => number;
+  readYieldLines?: YieldLineReader;
 }
 
 /** ASHLR_RUNS_DIR overrides ~/.ashlr-runs — the fleet runs-dir convention fleet-runs-api uses. */
@@ -63,6 +66,11 @@ export function createFleetMemoryApi(deps: FleetMemoryApiDeps = {}): ApiModule {
   const readAdmission = deps.readAdmission ?? readEngineAdmission;
   const now = deps.now ?? Date.now;
   return async (_ctx, _req, res, path, method) => {
+    if (path === '/api/verse/fleet/yield') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      sendJson(res, 200, sanitizePublicJson(await readFamilyYield(join(deps.runsDir ?? defaultRunsDir(), 'metrics/jobs.jsonl'), 24, now(), deps.readYieldLines)));
+      return true;
+    }
     if (path === '/api/verse/fleet/admission') {
       if (method !== 'GET') { sendJson(res, 405, { v: 1, error: 'method not allowed' }); return true; }
       sendJson(res, 200, await readFleetStartStatus({ runsDir: deps.runsDir, now: now() }));

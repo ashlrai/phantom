@@ -1,5 +1,6 @@
 import { readFleetMetrics, type FleetMetrics, type RouterMetricsFeed } from './metrics-feed.js';
 import { readPoolBudgets } from './pool-budget-store.js';
+import { readGuardianStatus, type GuardianStatus } from './guardian-doctor.js';
 import type { PoolBudgetSnapshot } from './pool-budget.js';
 /**
  * M49: fleet control plane + observability — read-only aggregation.
@@ -1515,6 +1516,8 @@ export interface FleetLearningMetricAvailability {
 
 /** One whole-fleet read-only snapshot. */
 export interface FleetStatus {
+  /** Read-only guardian evidence; absent in legacy snapshots. */
+  guardian?: GuardianStatus;
   /** CLI-only disk attribution; bounded read-only census, never a deletion plan. */
   disk?: import('./disk-attribution.js').FleetDiskAttribution;
   /** Additive dashboard feed; optional for legacy snapshots. */
@@ -3282,6 +3285,7 @@ export async function buildFleetStatus(
   }
 
   const status: FleetStatus = {
+    guardian: await readGuardianStatus({ now: () => Date.parse(generatedAt) }),
     metrics: readFleetMetrics(options.readMetrics),
     schema: 'fleet.v1',
     memory: await readFleetMemory(options.memoryPaths),

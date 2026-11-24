@@ -34,6 +34,7 @@ export interface RemoteRequest {
 export type RemoteReadRoute = string;
 
 const READ_ROUTES = new Set<RemoteReadRoute>([
+  '/api/fleet/releases',
   '/api/verse/bootstrap',
   '/api/verse/version',
   '/api/verse/activity',
@@ -54,6 +55,7 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/fleet/runs',
   '/api/verse/fleet/runs/glance',
   '/api/verse/fleet/admission',
+  '/api/verse/fleet/yield',
   '/api/verse/fleet/memory/host-load',
   '/api/verse/fleet/ci-runs',
   '/api/verse/fleet/live/bus',
@@ -90,6 +92,11 @@ const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const ACTIVITY_CURSOR = /^v1\.[0-9a-f]{8}\.[et]\.\d{1,15}$/;
 // Fleet inbox read/post share this source label grammar with the Hub route.
 const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
+// The inbox read's remaining filters mirror the Hub's parseInboxReadQuery
+// grammar; the Hub re-validates instants and window order authoritatively.
+const FLEET_INBOX_PRIORITY = /^P[0-3]$/;
+const FLEET_INBOX_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+const FLEET_INBOX_CONTAINS_MAX = 512;
 // Client-minted idempotency key on inbox posts; the Hub owns the same grammar.
 const FLEET_INBOX_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // Body shape only: the Hub re-checks switch ids against RUNS_SWITCHES and lane
@@ -112,6 +119,21 @@ function exactParams(params: URLSearchParams, shape: Record<string, (value: stri
   const keys = [...params.keys()];
   return keys.length === Object.keys(shape).length
     && keys.every((key) => shape[key]?.(params.get(key) ?? '') === true && params.getAll(key).length === 1);
+}
+
+/** The inbox read requires `limit`; every other filter is optional and at most once. */
+function inboxReadParams(params: URLSearchParams): boolean {
+  const validators: Record<string, (value: string) => boolean> = {
+    limit: FLEET_READ_LIMIT,
+    source: (v) => FLEET_INBOX_SOURCE.test(v),
+    contains: (v) => v.trim().length > 0 && v.length <= FLEET_INBOX_CONTAINS_MAX,
+    priority: (v) => FLEET_INBOX_PRIORITY.test(v),
+    after: (v) => FLEET_INBOX_INSTANT.test(v),
+    before: (v) => FLEET_INBOX_INSTANT.test(v),
+  };
+  const keys = [...params.keys()];
+  return keys.includes('limit')
+    && keys.every((key) => validators[key]?.(params.get(key) ?? '') === true && params.getAll(key).length === 1);
 }
 
 function safeFile(path: string): boolean {
@@ -188,10 +210,7 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: (v) => v === '50' })
     || exactParams(params, { limit: (v) => v === '50', before: (v) => THREAD_ID.test(v) })
   )) return { kind: 'read', path };
-  if (path === '/api/verse/fleet/runs/inbox' && (
-    exactParams(params, { limit: FLEET_READ_LIMIT })
-    || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
-  )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/runs/inbox' && inboxReadParams(params)) return { kind: 'read', path };
   if (path === '/api/verse/fleet/ci-runs'
     && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
   if (path === '/api/verse/fleet/cos/list'

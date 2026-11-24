@@ -121,7 +121,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   'release-articles': ['status', 'metadata', 'enable', 'disable', 'import', 'sync', '--help'],
   release: ['status', 'notes', 'autonomy', '--since', '--write', '--json', '--file', '--help'],
   releases: ['--json', '--help'],
-  agents: ['apps', 'bus', 'conversations', 'help', 'list', 'messages', 'show', 'validate', 'versions'],
+  agents: ['apps', 'bus', 'conversations', 'help', 'list', 'messages', 'roster', 'show', 'validate', 'versions'],
   // Mirror the verb switch in src/cli/wb.ts (cmdWb).
   wb: ['secrets', 'steer', 'reprioritize', 'stop', '--text', '--priority', '--apply', '--json', '--help'],
   'openai-agents': ['sessions', 'inspect', 'turns', 'help'],
@@ -164,7 +164,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'status', 'session', 'watch', 'events', 'lanes', 'lane-slots', 'direction', 'init', 'pause', 'resume', 'doctor',
     'automerge-canary', 'receipt', 'evidence', 'scorecard', 'oversight',
     'judge-traces', 'judge-health', 'optimize-prompt', 'xreview', 'queue', 'outcomes', 'backlog', 'lane-slots',
-    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches', 'lane-auth', 'reverts',
+    'empties', 'shed-plan', 'deploy-plan', 'job-latency', 'supply', 'eval-report', 'feedback', 'repo-rate', 'runs', 'journal', 'parked', 'slow-prs', 'pr-hygiene', 'merge-batch', 'merge-batch-run', 'rebase-plan', 'merge-plan', 'bus', 'usage', 'research-digest', 'ideation', 'drive', 'wt-census', 'unfed', 'autopilot', 'launches', 'lane-auth', 'reverts', 'vitals',
     // Registered verbs the docs show (see FLEET_SUBCOMMAND_LOADERS). Each one
     // passes test/cli-help-no-side-effects; a registry verb whose --help still
     // misbehaves stays out until it is fixed.
@@ -191,7 +191,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'work-board', 'work-feed', 'work-result', 'workers', 'worklog', 'worktree-stale', 'wt-audit',
     'yield', 'graph', 'release-backlog',
   ],
-  bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
+  bus: ['thread', 'task', 'board', 'send', 'inbox', 'ack', 'recent', '--since', '--before', '--from', '--to', '--body', '--id', '--priority', '--ttl', '--limit', '--peer', '--root', '--queue-root', '--json', '--help'],
   estates: ['--repo', '--json', '--help'],
   'ci': ['baseline', 'reruns', '--repo', '--json', '--queue', '--queue-file', '--apply', '--help'],
   'ci-metrics': ['--json', '--help'],
@@ -216,7 +216,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
   library: ['show', 'list', '--kind', '--since', '--q', '--json', '--text', '--help'],
   friction: ['note', '--status', '--owner', '--runs-dir', '--no-record', '--json', '--help'],
   tools: ['parity', 'requires', '--needs', '--text', '--help'],
-  messages: ['--since', '--agent', '--limit', '--text', '--help'],
+  messages: ['--since', '--before', '--agent', '--limit', '--text', '--help'],
   connectors: ['add', 'list', 'remove', 'show', 'import', 'run', 'exec', 'config', 'mesh', 'tool', '--json', '--help'],
   agentnet: ['peers', 'channels', 'identity', '--json', '--help'],
   amplify: ['status', 'tick', 'goal', '--json', '--help'],
