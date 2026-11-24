@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lstatSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { readSource } from '../fleet/runs-parked-queue.js';
@@ -65,4 +66,58 @@ export async function writeEmailDropConfig(runsDir: string, config: EmailDropCon
     await rm(temporary, { force: true });
   }
   return path;
+}
+
+/** A folder any other local user can write could inject or swap .eml files. */
+export function isOtherWritable(path: string): boolean {
+  try { return (statSync(path).mode & 0o002) !== 0; }
+  catch { return false; } // missing dirs are handled by the normal empty-pass path
+}
+
+export type EmailDropInboxState = 'ok' | 'missing' | 'not-directory' | 'unreadable';
+
+export interface EmailDropInboxPending {
+  state: EmailDropInboxState;
+  /** Other-writable: `runEmailDropOnce` refuses the whole pass, so entries stay pending until permissions are fixed. */
+  unsafe: boolean;
+  /** `*.eml` directory entries still awaiting the pass — the same case-insensitive suffix rule the pass applies, never a parsed message. */
+  pending: number;
+  /** Newest entry mtime in epoch ms — filesystem evidence of the freshest arrival; null when no entry could be stat'ed. */
+  newestAtMs: number | null;
+}
+
+/**
+ * Read-only listing of the drop inbox: which `*.eml` entries still await
+ * `runEmailDropOnce`, without opening a single message. The same suffix rule,
+ * unsafe-folder check and never-follow-a-link stat discipline the pass uses.
+ * Every listed entry counts as pending — the pass fails unreadable, oversized
+ * or non-regular entries and leaves them in place — while a stat failure only
+ * costs that entry's mtime, never its count.
+ */
+export function readEmailDropInbox(dir: string): EmailDropInboxPending {
+  const empty = (state: EmailDropInboxState, unsafe = false): EmailDropInboxPending =>
+    ({ state, unsafe, pending: 0, newestAtMs: null });
+  let stat;
+  try {
+    stat = statSync(dir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return empty(code === 'ENOENT' ? 'missing' : code === 'ENOTDIR' ? 'not-directory' : 'unreadable');
+  }
+  if (!stat.isDirectory()) return empty('not-directory');
+  const unsafe = isOtherWritable(dir);
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => name.toLowerCase().endsWith('.eml')).sort();
+  } catch {
+    return empty('unreadable', unsafe);
+  }
+  let newestAtMs: number | null = null;
+  for (const name of names) {
+    try {
+      const mtime = lstatSync(join(dir, name)).mtimeMs;
+      if (Number.isFinite(mtime) && (newestAtMs === null || mtime > newestAtMs)) newestAtMs = mtime;
+    } catch { /* a vanished or unreadable entry keeps its pending count; only its mtime is lost */ }
+  }
+  return { state: 'ok', unsafe, pending: names.length, newestAtMs };
 }

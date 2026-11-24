@@ -1,5 +1,6 @@
 /** Read-only results for manually queued Q8 jobs over six hours. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet leader-score [--json]';
@@ -35,11 +36,11 @@ export async function fleetLeaderScore(read: TaskCheckReader = readTaskCheckJobs
   for (const { row } of rows.sort((a, b) => a.at - b.at)) {
     const id = row.job ?? row.job_id ?? row.id;
     if (typeof id !== 'string' || !id.endsWith('Q8') || /A\d{6}.*Q8$/.test(id)) continue;
-    if (!['launch', 'precheck_skip', 'publish', 'outcome'].includes(String(row.event))) continue;
+    if (!['launch', 'precheck_skip', 'publish', 'outcome'].includes(String(row.event)) && !isPrecheckSkipRow(row)) continue;
     const job = jobs.get(id) ?? { job: id, launched: false, precheck_code: null, pr_url: null, merged: false, ttm_s: null };
     jobs.set(id, job);
     if (row.event === 'launch') job.launched = true;
-    if (row.event === 'precheck_skip' && (typeof row.code === 'string' || typeof row.code === 'number')) job.precheck_code = row.code;
+    if (isPrecheckSkipRow(row) && (typeof row.code === 'string' || typeof row.code === 'number')) job.precheck_code = row.code;
     if ((row.event === 'publish' || row.event === 'outcome') && typeof row.url === 'string'
       && /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/.test(row.url)) job.pr_url = row.url;
     if (row.event === 'outcome') {

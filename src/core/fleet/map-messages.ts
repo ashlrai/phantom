@@ -5,8 +5,8 @@
  *
  * Not a second bus: a read-only projection of the durable bus inbox through the
  * `phm messages` read (agent-messages.ts) with the map's own agent-to-agent
- * rule. Only a short one-line summary leaves this read, and it is passed
- * through the shared secret scrub again here, so a message body is never
+ * rule. Display text and a short summary leave this read, and both are passed
+ * through the shared secret scrub again here, so the raw envelope is never
  * echoed. Names are routing labels, not proven identities; an agent the map
  * does not draw has a null node (unknown, never guessed).
  */
@@ -31,6 +31,8 @@ export interface MapMessage {
   kind: AgentMessageKind;
   summary: string;
   at: string;
+  /** Scrubbed display text, bounded to 8192 characters; never the raw envelope. */
+  text?: string;
 }
 export interface MapMessages {
   schema: 'fleet.map-messages.v1';
@@ -48,28 +50,44 @@ export interface MapMessages {
 }
 export interface MapMessagesOptions extends BusInboxOptions {
   limit?: number;
+  /** Exclusive upper time bound spelled like `since` (`10m`, `2h`, `1d`,
+   * epoch ms or ISO): only messages received strictly before it list,
+   * composing with `since` into one `[since, before)` window — a message
+   * stamped exactly at the cutoff drops, so adjacent windows never
+   * double-count it. Parsed under the read's own clock, so a relative
+   * spelling resolves against the same `now` `since` does; an invalid value
+   * makes the read null like a bad `since`. */
+  before?: string;
   /** The redaction applied to every summary. Defaults to the shared secret scrub. */
   redact?: (text: string) => string;
 }
 
 /** Pure: bus receipts in, newest-first messages out. */
-export function buildMapMessages(scan: ReturnType<typeof scanBusInbox>, since: number, now: number, limit: number, redact: (text: string) => string = scrubSecrets): MapMessages {
+export function buildMapMessages(scan: ReturnType<typeof scanBusInbox>, since: number, now: number, limit: number, redact: (text: string) => string = scrubSecrets, before?: number): MapMessages {
   const head = { schema: 'fleet.map-messages.v1' as const, version: 1 as const, generatedAt: new Date(now).toISOString(), since: new Date(since).toISOString(), source: scan.source };
   if (scan.source === 'unavailable') return { ...head, messages: null, matched: null, skipped: scan.skipped ?? 0 };
-  const rows = scan.rows.filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now);
+  const unique = new Map([...scan.rows].sort((a, b) => a.receivedAt - b.receivedAt || a.cursor - b.cursor).map(row => [row.envelope.id, row]));
+  const rows = [...unique.values()].filter(row => agentToAgent(row.envelope) && row.receivedAt >= since && row.receivedAt <= now
+    && (before === undefined || row.receivedAt < before));
   const all = projectAgentMessages(rows);
   const messages = all.slice(0, limit).map(message => {
     const from = mapEdgeAgent(message.from), to = mapEdgeAgent(message.to);
+    const body = unique.get(message.id)?.envelope.body;
+    const fields = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    const display = [fields.text, fields.prompt, fields.summary, fields.detail, fields.reason].find(value => typeof value === 'string');
+    const text = redact(scrubSecrets(typeof display === 'string' ? display : typeof body === 'string' ? body : message.summary)).slice(0, 8192);
     return { id: message.id, from: from.name, to: to.name, fromNode: from.node, toNode: to.node, kind: message.kind,
-      summary: redact(message.summary).replace(/\s+/g, ' ').trim().slice(0, MAP_EDGE_SUMMARY_MAX) || 'No text.', at: message.ts };
+      summary: redact(message.summary).replace(/\s+/g, ' ').trim().slice(0, MAP_EDGE_SUMMARY_MAX) || 'No text.', at: message.ts, text };
   });
   return { ...head, messages, matched: all.length, skipped: scan.skipped ?? 0 };
 }
 
-/** The one read behind the CLI, the API and the map. `since` is `10m`, `2h`, `1d`, epoch ms or an ISO time; null when it is none of those. */
+/** The one read behind the CLI, the API and the map. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. */
 export function readMapMessages(since: string = MAP_MESSAGES_DEFAULT_SINCE, options: MapMessagesOptions = {}): MapMessages | null {
   const now = (options.now ?? Date.now)(), from = parseSince(since, now);
-  return from === null ? null : buildMapMessages(scanBusInbox(options), from, now, options.limit ?? MAP_MESSAGES_DEFAULT_LIMIT, options.redact);
+  const beforeMs = options.before === undefined ? undefined : parseSince(options.before, now);
+  if (from === null || beforeMs === null) return null;
+  return buildMapMessages(scanBusInbox(options), from, now, options.limit ?? MAP_MESSAGES_DEFAULT_LIMIT, options.redact, beforeMs);
 }
 
 /** `limit` is a whole number from 1 to 100; null when it is anything else. */
@@ -77,15 +95,17 @@ export function parseMapMessagesLimit(value: string): number | null {
   return /^[1-9][0-9]{0,3}$/.test(value) && Number(value) <= MAP_MESSAGES_MAX_LIMIT ? Number(value) : null;
 }
 
-/** GET /api/fleet/map/messages[?since=15m&limit=20]: 200 the messages, 400 a bad query, 503 the typed "unknown" read. */
+/** GET /api/fleet/map/messages[?since=15m&before=1h&limit=20]: 200 the messages, 400 a bad query, 503 the typed "unknown" read. */
 export function mapMessagesResponse(url: string, options: BusInboxOptions = {}): { status: 200 | 400 | 503; body: MapMessages | { error: string } } {
   const params = new URL(url, 'http://localhost').searchParams;
-  if ([...params.keys()].some(key => key !== 'since' && key !== 'limit') || params.getAll('since').length > 1 || params.getAll('limit').length > 1) {
-    return { status: 400, body: { error: 'Use since and limit only, once each.' } };
+  if ([...params.keys()].some(key => key !== 'since' && key !== 'before' && key !== 'limit') || params.getAll('since').length > 1 || params.getAll('before').length > 1 || params.getAll('limit').length > 1) {
+    return { status: 400, body: { error: 'Use since, before and limit only, once each.' } };
   }
   const rawLimit = params.get('limit'), limit = rawLimit === null ? MAP_MESSAGES_DEFAULT_LIMIT : parseMapMessagesLimit(rawLimit);
   if (limit === null) return { status: 400, body: { error: `limit takes a whole number from 1 to ${MAP_MESSAGES_MAX_LIMIT}.` } };
-  const read = readMapMessages(params.get('since') ?? undefined, { ...options, limit });
+  const rawBefore = params.get('before');
+  if (rawBefore !== null && parseSince(rawBefore) === null) return { status: 400, body: { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
+  const read = readMapMessages(params.get('since') ?? undefined, { ...options, limit, before: rawBefore ?? undefined });
   if (!read) return { status: 400, body: { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
   return { status: read.source === 'unavailable' ? 503 : 200, body: read };
 }

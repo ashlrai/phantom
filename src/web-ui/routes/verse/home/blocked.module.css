@@ -1,0 +1,18 @@
+/* Blocked: one headline with a state mark, then a row per thing that is stopping work. One column at every width. */
+.headline::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-2); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+/* Blocked is amber: work is waiting, nothing is broken. Unknown keeps the hollow ring, so a missing reading never looks clear. */
+.headline[data-state='blocked'] { color: var(--status-warning-fg); font-weight: var(--font-weight-semibold); }
+.headline[data-state='blocked']::before { border-color: var(--status-warning-solid); background: var(--status-warning-solid); }
+.headline[data-state='clear']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.group { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.rows { display: flex; flex-direction: column; gap: var(--space-1); }
+.row { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; min-width: 0; min-height: 2.75rem; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: start; }
+button.row { cursor: pointer; }
+button.row:hover { border-color: var(--border-default); }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); min-width: 0; }
+.name { min-width: 0; font-family: var(--font-mono, monospace); font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.when { margin-inline-start: auto; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A hold reason is written by a job: three lines at most, so one long reason cannot push the next row off the screen. */
+.said { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+/* The second selector outranks Home's own `.card p` size, whichever sheet loads last. */
+.fact, .group p.fact { color: var(--text-secondary); font-size: var(--text-xs-size); }

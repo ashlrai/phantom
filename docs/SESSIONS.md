@@ -70,6 +70,28 @@ notice to the chat. Every copy shares one kept reading of
 and refreshes it once a minute while it is on screen; a healthy Leader, an
 unknown reading and a server without that read show nothing.
 
+Every session with a job says what the job was asked to do, as one line
+quoted from its brief. The dispatcher puts a view of the fleet in front of
+each prompt (`## CONTEXT` to `## END CONTEXT`: the roster, live claims, open
+pull requests), so the line is the first one written after it. A brief that
+opens with a heading has a title, shown as **Task**, with the job's own id
+dropped from its end. A job the router queued opens with the router's own
+line ("Job … Task from the Ashlr router queue, verbatim:") and then its queue
+row; the words of that row are shown as **Task** too. Any other brief gives
+its first line, shown as **Brief opens**, because an opening sentence is not
+a title. Nothing is reworded or summarised, and a line over 160 characters is
+cut. The line is under the
+first row of the session's Conversations card, on its row beside an open
+conversation, and at the top of the conversation's Summary; the find box
+above the cards looks in it. `phm sessions threads` and `phm sessions thread`
+print it under the session's own line, and both reads carry it as `task`.
+When no line can be read (no brief on record, or one cut off inside the fleet
+view) a card and the Summary say "Task unknown" rather than quote the roster;
+the leader, a helper and a server that sends no `task` show no line. On a
+card, a brief among the newest messages also starts after the fleet view,
+labelled "Brief, after its fleet view"; the opened conversation keeps the
+brief whole.
+
 For a session with a job, the summary opens with what the job has done, as a
 row of named readings: the latest recorded step and how long ago it was, the
 lines added and removed with the number of files changed, the commands seen
@@ -83,6 +105,20 @@ stays. A session with no job, or a server that sends no `work`, shows the
 summary as sentences only. In the list beside an open conversation, each
 session with a job has one more line: its lines added and removed, then the
 name of its latest step and how long ago, and any failed helpers.
+
+A session reads "done" once its job has published, which is not yet the end
+of the work. When the job ledger records what became of the pull request,
+the row of readings ends with **Pull request**: "Merged in 3m" (the time
+from the pull request opening to its merge), "Merged" when no time was
+recorded, "Closed, not merged", or "Still open 12m ago" (how long ago the
+fleet last checked). Its row in the list beside the conversation says the
+same in one word. The reading comes from the `outcome` rows the fleet writes
+to `metrics/jobs.jsonl` for the job's newest launch; a recorded merge stands
+even if a later row still says open. Until a row records an outcome there is
+no reading: a published pull request is not shown as open on a guess.
+`phm sessions thread <id>` and `phm sessions threads` say it as a summary
+sentence ("Its pull request merged 3m after it opened."), and the outcome
+step in the conversation now names the recorded state.
 
 A conversation opens at the newest entries of each record: 50 bus messages,
 10 of your messages, the Leader's last 5 replies, 12 log lines. When the
@@ -126,6 +162,14 @@ line, counts as new. When a
 conversation spans more than one day, each day's first message has a heading
 (**Today**, **Yesterday**, or the date).
 
+In the pane, choose All, Running, Quiet or Failed to narrow the tree (each
+shows its count from the same read), or type in the filter box to match a
+session's id, lane, model, repo, computer or last message. A parent stays
+visible, dashed, when only a session under it matches. Press `/` to reach the
+filter, ↑ and ↓ (or `j` and `k`) to move between sessions, Enter to open one in
+the Worker log, and Esc to clear the typed filter. Narrowing happens in the
+window only; it sends no request and changes nothing for agents.
+
 To see what one session is doing right now, run `phm sessions tail <id>`
 with the job id from the tree. It prints the session's lane, model, start and
 PR, then its last 200 log lines (`--lines N`, 1 to 200); `--follow` streams
@@ -162,7 +206,9 @@ helpers are running or failed. A part that could not be read says "unknown"
 rather than 0, and a session with no job shows none of it. These are the
 values the summary states in words, so the card leaves those sentences out
 and keeps the rest. A session that opened a pull request has a link to it at
-the foot of its card. The pane makes one request for all of them
+the foot of its card, and beside its figures what the job ledger records
+became of it: "PR merged in 3m", "PR closed, not merged" or "PR still open
+12m ago". A pull request with no recorded outcome shows none of these. The pane makes one request for all of them
 (`GET /api/verse/fleet/control/session-threads`) and asks again every 10
 seconds while it is on screen. The buttons above the cards show only the
 sessions in one state. The Order control in the bar, or O, changes where the

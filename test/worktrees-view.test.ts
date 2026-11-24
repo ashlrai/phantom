@@ -28,7 +28,7 @@ const JOBS: Record<string, { rows: unknown[]; mtimeHours?: number }> = {
 interface Host { jobs?: typeof JOBS; keep?: string; pinsValid?: boolean; dirty?: Set<string> }
 
 /** Fully readable fake host; every reader, the clean check, the remover and the log are spies. */
-function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
+export function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new Set(['RQ-DIRTY']) }: Host = {}) {
   const names = ['guardian-claude', ...Object.keys(jobs)];
   const files: Record<string, string> = { [`${RUNS}/queue/status.json`]: '{}', [`${RUNS}/queue/keep.txt`]: keep };
   const fs: WtAuditFs = {
@@ -50,6 +50,7 @@ function host({ jobs = JOBS, keep = 'RQ-KEPT\n', pinsValid = true, dirty = new S
     measure: vi.fn(() => ({ bytes: 2e9, complete: true })),
     remove: vi.fn(async () => undefined),
     logRemoval: vi.fn(async () => undefined),
+    readReapLog: vi.fn(async () => ({ state: 'missing' as const, text: '' })),
   } satisfies WorktreesDeps;
   return deps;
 }
@@ -111,8 +112,8 @@ describe('phm worktrees list', () => {
     const first = JSON.stringify(await readWorktrees('list', host()));
     expect(JSON.stringify(await readWorktrees('list', host()))).toBe(first);
     const parsed = JSON.parse(first) as WorktreesReport;
-    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows']);
-    expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'exitOnly', 'safe', 'hold']);
+    expect(Object.keys(parsed)).toEqual(['schema', 'generatedAt', 'sourcesOk', 'warnAt', 'counts', 'reclaimableBytes', 'reclaimableComplete', 'mode', 'rows', 'reaper']);
+    expect(Object.keys(parsed.rows[0]!)).toEqual(['job', 'repo', 'state', 'ageHours', 'bytes', 'clean', 'exitOnly', 'stale', 'safe', 'hold']);
     expect(parsed).toMatchObject({ schema: 'worktrees.v1', generatedAt: '2026-11-17T12:00:00.000Z', warnAt: 40, mode: 'list' });
   });
 });
@@ -383,5 +384,74 @@ describe('phm worktrees: reading run records', () => {
     const report = await readWorktrees('apply', deps);
     expect(report.removals).toEqual([{ job: 'RQ-RCONLY', status: 'refused', reason: 'unpushed-commits' }]);
     expect(deps.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('phm worktrees stale-no-publish', () => {
+  const jobsWith = (extra: typeof JOBS) => ({ ...extra });
+  const base = (extra: typeof JOBS, over: Partial<WorktreesDeps> = {}) =>
+    ({ ...host({ jobs: jobsWith(extra), dirty: new Set(['RQ-STALEDIRTY']) }), hasUnpushed: vi.fn(async () => false), ...over });
+
+  it('removes a stale, clean launch with no publish record and counts the bytes', async () => {
+    const deps = base({ 'RQ-STALE': { rows: [], mtimeHours: 30 } });
+    const report = await readWorktrees('apply', deps);
+    expect(row(report, 'RQ-STALE')).toMatchObject({ state: 'unknown', stale: true, safe: true, hold: null });
+    expect(deps.remove).toHaveBeenCalledWith('/wt/RQ-STALE', '/wt');
+    expect(report.removals).toEqual([{ job: 'RQ-STALE', status: 'removed', via: 'stale-no-publish' }]);
+    expect(report.freedBytes).toBe(2e9);
+    expect(formatWorktrees(report).join('\n')).toContain('Removed 1 (1 stale-no-publish), freed 2.0 GB.');
+  });
+
+  it('dry run lists the candidate with age and size and removes nothing', async () => {
+    const deps = base({ 'RQ-STALE': { rows: [], mtimeHours: 30 } });
+    const text = formatWorktrees(await readWorktrees('dry-run', deps)).join('\n');
+    expect(text).toContain('RQ-STALE\t-\tstale, never published\t30 h\t2.0 GB\tyes');
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same worktree when it is only 2 hours old', async () => {
+    const deps = base({ 'RQ-STALE': { rows: [], mtimeHours: 2 } });
+    const report = await readWorktrees('apply', deps);
+    expect(row(report, 'RQ-STALE')).toMatchObject({ stale: false, safe: false, hold: 'no-publish-record' });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('honours a custom stale window', async () => {
+    const deps = base({ 'RQ-STALE': { rows: [], mtimeHours: 5 } }, { staleHours: 4 });
+    expect(row(await readWorktrees('list', deps), 'RQ-STALE').safe).toBe(true);
+  });
+
+  it('keeps a stale worktree with uncommitted changes', async () => {
+    const deps = base({ 'RQ-STALEDIRTY': { rows: [], mtimeHours: 30 } });
+    const report = await readWorktrees('apply', deps);
+    expect(row(report, 'RQ-STALEDIRTY')).toMatchObject({ safe: false, hold: 'uncommitted-changes' });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps a stale worktree with commits that exist nowhere else', async () => {
+    const deps = base({ 'RQ-STALE': { rows: [], mtimeHours: 30 } }, { hasUnpushed: vi.fn(async () => true) });
+    expect(row(await readWorktrees('apply', deps), 'RQ-STALE').hold).toBe('unpushed-commits');
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps a stale-looking worktree whose job is live', async () => {
+    const deps = base({ 'RQ-LIVE': { rows: [launch('RQ-LIVE', 40)], mtimeHours: 40 } });
+    const report = await readWorktrees('apply', deps);
+    expect(row(report, 'RQ-LIVE')).toMatchObject({ state: 'live', stale: false, hold: 'live-job' });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps a stale-looking worktree with an open PR', async () => {
+    const open = { rows: [launch('RQ-OPEN', 50), { event: 'outcome', job: 'RQ-OPEN', state: 'OPEN', ts: iso(49) }], mtimeHours: 50 };
+    const deps = base({ 'RQ-OPEN': open });
+    const report = await readWorktrees('apply', deps);
+    expect(row(report, 'RQ-OPEN')).toMatchObject({ state: 'open', stale: false, hold: 'open-pr' });
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
+  it('CLI rejects a bad --stale-hours value', async () => {
+    const error = vi.fn();
+    expect(await cmdWorktrees(['--reap', '--stale-hours', 'soon'], { output: { log: vi.fn(), error } })).toBe(2);
+    expect(error.mock.calls[0]![0]).toContain('--stale-hours');
   });
 });

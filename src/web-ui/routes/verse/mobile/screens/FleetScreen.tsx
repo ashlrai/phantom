@@ -33,6 +33,7 @@ import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
 import { releasePrQuery } from '../../fleet/release-pr-query.js';
+import { RunningJobsList } from '../../fleet/RunningJobsList.js';
 import { hostView } from '../../fleet-host/fleet-host-model.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { isFleetRuns } from '../../ops/ops-runs-model.js';
@@ -468,6 +469,7 @@ export function FleetScreen() {
         )}
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
+      <RunningJobsList />
       <MapMessagesCard />
       <FleetUsageCard />
       <UsageResourcesCard />

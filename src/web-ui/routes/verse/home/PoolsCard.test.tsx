@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runway } from '../../../../core/usage/runway.js';
+import { poolShareSnapshot, poolSpendLine, runway } from '../../../../core/usage/runway.js';
 import { evictAll } from '../../../data/cache.js';
 import { installFetch, json } from '../context/context-fixtures.test-support.js';
 import { mockViewport } from '../shell/viewport.test-support.js';
@@ -74,4 +74,21 @@ describe('Pools card', () => {
       unmount(); evictAll(); viewport.restore?.();
     }
   });
+});
+
+
+it.each([1440, 390])('renders CLI spend-down rows with used, projected and reset marks at %s px', async width => {
+  const viewport = mockViewport(width);
+  const shares = poolShareSnapshot([{ pool: 'claude-api', unit: 'usd', usedPercent: 50, burnPerHour: 1, hoursToReset: 20, resetAt: '2026-11-19T08:00:00Z' },
+    { pool: 'zai', usedPercent: null, burnPerHour: null, hoursToReset: null }], null);
+  installFetch(({ path }) => path === '/api/usage/runway' ? json({ schema: 'pool.runway.v1', v: 1, headline: '', pools: [], shares }) : json({ summary: 'Free local slots' }));
+  render(<PoolsCard onOpenJob={vi.fn()} />);
+  expect(await screen.findByRole('button', { name: poolSpendLine(shares.pools[0]!) })).toBeVisible();
+  const meter = screen.getByRole('meter', { name: 'Claude API gift used' });
+  expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '50%' });
+  expect(meter.querySelector('[data-part="more"]')).toHaveStyle({ width: '20%' });
+  expect(screen.getByLabelText('Claude API gift expiry: 2026-11-19T08:00:00Z')).toBeVisible();
+  expect(screen.getByRole('meter', { name: 'Zai used' })).not.toHaveAttribute('aria-valuenow');
+  expect(screen.getByRole('button', { name: /Zai: unknown: no reading/ })).not.toHaveTextContent('0%');
+  viewport.restore();
 });

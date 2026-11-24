@@ -73,9 +73,9 @@ export function spanText(seconds: number | null): string {
 function mergedPrs(ledger: string, now: number, hours: number): { prs: Pr[]; malformed: number } {
   const { rows, malformed } = ledgerRows(ledger, now, hours + LOOKBACK_HOURS, true);
   const lanes = new Map<string, string>(), jobOfUrl = new Map<string, string>(), published = new Map<string, number>();
-  const urlOf = (row: Record<string, unknown>) => PR_URL.exec(String(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? ''));
+  const urlOf = (row: Record<string, unknown>) => PR_URL.exec(String([row.url, row.prUrl, row.pr_url, row.pr, row.html_url].find((v): v is string => typeof v === 'string') ?? ''));
   for (const { row, id, at } of rows) {
-    const lane = label(row.lane ?? row.pool), event = row.event;
+    const lane = label(row.lane) ?? label(row.pool) ?? label(row.arm), event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
     // The launch row decides a job's lane; other rows only fill gaps.
     if (id && lane && (event === 'launch' || !lanes.has(id))) lanes.set(id, lane);
     const url = urlOf(row);
@@ -86,7 +86,8 @@ function mergedPrs(ledger: string, now: number, hours: number): { prs: Pr[]; mal
   }
   const prs = new Map<string, Pr>();
   for (const { row, id, at } of rows) {
-    const merged = row.event === 'merged' || ((row.event === 'outcome' || row.source === 'metrics-outcomes-reconciler') && (row.state ?? row.outcome ?? row.status) === 'MERGED');
+    const event = [row.event, row.type, row.kind].find((v): v is string => typeof v === 'string');
+    const merged = event === 'merged' || ((event === 'outcome' || row.source === 'metrics-outcomes-reconciler') && (row.state ?? row.outcome ?? row.status ?? row.phase ?? row.result ?? row.conclusion) === 'MERGED');
     const url = merged ? urlOf(row) : null;
     if (!url) continue;
     const key = `${url[1]}#${url[2]}`.toLowerCase();

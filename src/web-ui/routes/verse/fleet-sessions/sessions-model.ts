@@ -3,8 +3,8 @@
  * same fleet.live-sessions.v1 list `phm sessions --json` prints. Narrowing is
  * defensive: a malformed row is dropped, a malformed field reads "unknown".
  */
-import { SESSION_FIELDS, type LiveSessionRow, type LiveSessionsV1, type SessionField } from '../../../../core/fleet/live-sessions.js';
-import { buildSessionTree, UNKNOWN_PARENT_ID, type SessionRecord, type SessionState } from '../../../../core/fleet/session-tree.js';
+import { flatTree, SESSION_FIELDS, type LiveSessionRow, type LiveSessionsV1, type SessionField } from '../../../../core/fleet/live-sessions.js';
+import { buildSessionTree, UNKNOWN_PARENT_ID, type SessionNode, type SessionRecord, type SessionState } from '../../../../core/fleet/session-tree.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 
@@ -79,4 +79,44 @@ export const liveSessionsQuery: QueryDef<LiveSessionsV1 | null> = {
 export function sessionsHeadline(list: LiveSessionsV1): string {
   const { quiet, otherComputers } = list.counts;
   return [list.tree.line, ...(quiet ? [`${quiet} quiet`] : []), ...(otherComputers ? [`${otherComputers} on another computer`] : [])].join(' · ');
+}
+
+/** What the list can be narrowed to. "quiet" is the server's own flag (no output for `quietAfterMinutes`). */
+export const SESSION_SCOPES = ['all', 'running', 'quiet', 'failed'] as const;
+export type SessionScope = (typeof SESSION_SCOPES)[number];
+/** One visible tree row. `context` marks a parent kept only so a matching session under it stays placed. */
+export interface SessionTreeRow { node: SessionNode; depth: number; context: boolean }
+
+const inScope = (scope: SessionScope, node: SessionNode, row: LiveSessionRow | undefined): boolean =>
+  scope === 'all' || (scope === 'quiet' ? row?.quiet === true : node.state === scope);
+
+/** Sessions per scope, counted from the same tree the rows come from (the "unknown parent" group is not a session). */
+export function sessionScopeCounts(list: LiveSessionsV1): Record<SessionScope, number> {
+  const rows = new Map(list.sessions.map(row => [row.job, row]));
+  const counts: Record<SessionScope, number> = { all: 0, running: 0, quiet: 0, failed: 0 };
+  for (const { node } of flatTree(list.tree.roots)) {
+    if (node.kind === 'unknown-parent') continue;
+    const row = node.jobId === null ? undefined : rows.get(node.jobId);
+    for (const scope of SESSION_SCOPES) if (inScope(scope, node, row)) counts[scope] += 1;
+  }
+  return counts;
+}
+
+/**
+ * The tree narrowed to one scope and a typed filter (every word must appear in the id, lane, model, repo, computer
+ * or last message). A parent of a match stays as context, so a match keeps its place in the tree.
+ */
+export function filterSessionTree(list: LiveSessionsV1, scope: SessionScope, query: string): { rows: SessionTreeRow[]; matches: number } {
+  const jobs = new Map(list.sessions.map(row => [row.job, row]));
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  let matches = 0;
+  const walk = (nodes: readonly SessionNode[], depth: number): SessionTreeRow[] => nodes.flatMap(node => {
+    const row = node.jobId === null ? undefined : jobs.get(node.jobId);
+    const hay = [node.id, node.agent, node.lane, node.model, node.repo, row?.computer, node.lastMessage].filter(Boolean).join('\n').toLowerCase();
+    const hit = node.kind !== 'unknown-parent' && inScope(scope, node, row) && words.every(word => hay.includes(word));
+    if (hit) matches += 1;
+    const below = walk(node.children, depth + 1);
+    return hit || below.length > 0 ? [{ node, depth, context: !hit && node.kind !== 'unknown-parent' }, ...below] : [];
+  });
+  return { rows: walk(list.tree.roots, 0), matches };
 }

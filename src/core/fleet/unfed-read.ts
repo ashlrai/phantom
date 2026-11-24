@@ -1,0 +1,99 @@
+/**
+ * The shared unfed-capacity read: assembles the `fleet.unfed.v1` report
+ * from the dispatcher's published files under the runs root — the one read
+ * path `phm fleet unfed` and the fleet MCP `fleet_unfed` tool both serve,
+ * so the CLI and MCP can never disagree about what a lane's utilization or
+ * unfed verdict means. Read-only: bounded file reads only — no writes, no
+ * child processes, no network. A missing or unreadable optional input
+ * degrades to "reasons unknown", never to a wrong answer; an absent or
+ * unreadable queue/status.json throws, and the caller decides how to
+ * report the failure.
+ */
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { readTail, runsRoot } from '../metrics/loop-collect.js';
+import {
+  currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides,
+  foldRouteRejections, foldUnfedHistory, type UnfedReport,
+} from './unfed-capacity.js';
+
+export const UNFED_DEFAULT_WINDOW_HOURS = 24;
+export const UNFED_MAX_WINDOW_HOURS = 24 * 7;
+
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/** router-queue.md is append-mostly Markdown history; give it a wider bound. */
+const ROUTER_QUEUE_MAX_BYTES = 32 * 1024 * 1024;
+/** The market log is mostly route decisions; the tail bounds the read. */
+const HISTORY_TAIL_BYTES = 32 * 1024 * 1024;
+/** The jobs ledger carries every lifecycle event; claims fold from its tail. */
+const CLAIMS_TAIL_BYTES = 32 * 1024 * 1024;
+
+async function readBounded(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {
+  try {
+    const info = await stat(path);
+    if (!info.isFile() || info.size > maxBytes) throw new Error('unreadable or over read bound');
+    return await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/** Optional market inputs: any read failure degrades to "reasons unknown", never to a wrong answer. */
+async function readOptional(path: string, maxBytes = MAX_FILE_BYTES): Promise<string | null> {
+  try {
+    return await readBounded(path, maxBytes);
+  } catch {
+    return null;
+  }
+}
+
+export interface UnfedReadOptions {
+  /** Runs root holding queue/ and metrics/. Default: ASHLR_RUNS_DIR, then ~/.ashlr-runs (as the CLI resolves it). */
+  runsDir?: string;
+  /** Fold window in hours for the history/override/claims/outcome/rejection sections. Default 24. */
+  windowHours?: number;
+  /** Evaluation clock; defaults to Date.now. */
+  now?: () => number;
+}
+
+/**
+ * One unfed report through the shared `fleet.unfed.v1` projection. Throws
+ * when queue/status.json is absent or its lanes map cannot be read — the
+ * same failure `phm fleet unfed` reports as its exit-2 error — and when a
+ * required input exceeds its read bound. Every other input is optional:
+ * a missing ready.tsv reads as no waiting rows, a missing market file
+ * leaves the matching fold `available: false`, and a tail-truncated jobs
+ * ledger marks its claim/outcome counts a lower bound.
+ */
+export async function readUnfedReport(options: UnfedReadOptions = {}): Promise<UnfedReport> {
+  const root = options.runsDir ?? runsRoot();
+  const status = await readBounded(join(root, 'queue', 'status.json'));
+  if (status === null) throw new Error('unfed-status-unreadable');
+  const ready = (await readBounded(join(root, 'queue', 'ready.tsv'))) ?? '';
+  const [slots, models, budget, adaptive, hold, routerQueue] = await Promise.all([
+    readOptional(join(root, 'queue', 'slots.json')),
+    readOptional(join(root, 'models.json')),
+    readOptional(join(root, 'queue', 'budget-overrides.json')),
+    readOptional(join(root, 'queue', 'adaptive.json')),
+    readOptional(join(root, 'HOLD')),
+    readOptional(join(root, 'queue', 'router-queue.md'), ROUTER_QUEUE_MAX_BYTES),
+  ]);
+  const history = (await readTail(join(root, 'metrics', 'work-market.jsonl'), HISTORY_TAIL_BYTES))?.text ?? null;
+  const jobsPath = join(root, 'metrics', 'jobs.jsonl');
+  const jobsText = (await readTail(jobsPath, CLAIMS_TAIL_BYTES))?.text ?? null;
+  // Stat after the tail read: the append-only ledger only grows, so a size
+  // over the bound here means the folded claims are a lower bound.
+  const jobsInfo = await stat(jobsPath).catch(() => null);
+  const nowMs = (options.now ?? Date.now)();
+  const window = options.windowHours ?? UNFED_DEFAULT_WINDOW_HOURS;
+  const jobsTruncated = jobsInfo !== null && jobsInfo.isFile() && jobsInfo.size > CLAIMS_TAIL_BYTES;
+  return {
+    ...currentUnfed(status, ready, { slots, models, budget, adaptive, hold, routerQueue, nowMs }),
+    history: foldUnfedHistory(history, nowMs, window),
+    overrides: foldMarketOverrides(history, nowMs, window),
+    claims: foldClaimOverrides(jobsText, nowMs, window, jobsTruncated),
+    decisionOutcomes: foldDecisionOutcomes(history, jobsText, nowMs, window, jobsTruncated),
+    rejections: foldRouteRejections(history, nowMs, window),
+  };
+}

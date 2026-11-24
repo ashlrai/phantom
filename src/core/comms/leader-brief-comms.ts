@@ -57,7 +57,7 @@ export function commsBriefFacts(inbox: UnifiedInbox, opts: { overdueMinutes?: nu
       unreadable.push(`${name} unreadable`);
       continue;
     }
-    if (!(report.pending > 0)) continue;
+    if (report.pending === null || !(report.pending > 0)) continue;
     const items = inbox.items.filter((i) => i.source === (name as UnifiedInboxItem['source']));
     if (name === 'imessage') {
       const ages = items.map((i) => waitedMinutes(i, nowMs)).filter((a): a is number => a !== null);

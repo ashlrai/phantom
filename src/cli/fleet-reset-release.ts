@@ -81,6 +81,7 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
     at: result?.at ?? resets.generatedAt,
     sourceState: resets.sourceState,
     claudeProbe,
+    problems: resets.problems ?? [],
     checked: result?.checked ?? resets.rows.length,
     planned: planned.map(publicRow),
     released: result?.released ?? [],
@@ -88,6 +89,7 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
   };
   if (json) output(JSON.stringify(sanitizePublicJson(payload)));
   else {
+    const unhealthy = payload.sourceState !== 'healthy';
     const lines = [`fleet reset-release: ${apply ? 'APPLIED' : 'DRY-RUN — no changes made'} · evidence ${payload.sourceState} · claude probe: ${claudeProbe} · checked ${payload.checked} lane(s)`];
     if (!apply) {
       for (const row of planned) lines.push(`  ${safe(row.tell)}`);
@@ -96,8 +98,10 @@ export async function cmdFleetResetRelease(args: string[], deps: Dependencies = 
       for (const row of payload.released) lines.push(`  released ${safe(row.lane)} (${row.state})`);
       for (const err of payload.errors) lines.push(`  error ${safe(err.lane)}: ${safe(err.message)}`);
       if (!payload.released.length && !payload.errors.length)
-        lines.push(payload.sourceState === 'healthy' ? '  nothing to release' : '  holds kept — unhealthy evidence proves nothing');
+        lines.push(unhealthy ? '  holds kept — unhealthy evidence proves nothing'
+          : `  checked ${payload.checked} lane(s), none held past a reset`);
     }
+    if (unhealthy) lines.push(`  failed: ${payload.problems.length ? payload.problems.join('; ') : `usage inputs are ${payload.sourceState}`}`);
     output(lines.join('\n'));
   }
   return payload.sourceState === 'healthy' && payload.errors.length === 0 ? 0 : 1;

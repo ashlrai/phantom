@@ -33,6 +33,8 @@ export interface SpendDownRow {
   projected_empty_at: string | null;
   /** The whole story in plain words: "spending on pace", "refilled, lane idle", "behind: will waste ~12%", "exhausted until Fri 6 PM", "unknown". */
   verdict: string;
+  /** One plain sentence for the whole row: "Claude: 45% used, 6 days left, on pace". Absent on older payloads. */
+  sentence?: string;
   /** Hours until the reset, one decimal; null when the reset is unknown or already passed. */
   resets_in_h: number | null;
   /** When the plan's last reading was captured; null when none was ever recorded. */
@@ -112,6 +114,26 @@ function verdictOf(row: PoolRow, state: SpendDownState, ageMin: number | null): 
   }
 }
 
+/** "6 days left", "5 hours left", "under an hour left"; "reset time unknown" when there is no future reset. */
+export function timeLeftText(hours: number | null): string {
+  if (hours === null) return 'reset time unknown';
+  if (hours < 1) return 'under an hour left';
+  if (hours < 48) return `${Math.round(hours)} hour${Math.round(hours) === 1 ? '' : 's'} left`;
+  return `${Math.round(hours / 24)} days left`;
+}
+
+/** The row in one sentence. Pace words: "on pace", "behind: will leave N% unused", "spent until <time>", "unknown". */
+export function poolSentence(row: Pick<SpendDownRow, 'label' | 'state' | 'used_frac' | 'resets_in_h' | 'reset_at' | 'projected_at_reset' | 'blocked'>): string {
+  if (row.used_frac === null) return `${row.label}: unknown`;
+  const pace = row.blocked === 'sign-in' ? 'blocked: sign-in'
+    : row.state === 'on-pace' || row.state === 'idle' ? 'on pace'
+    : row.state === 'under' ? `behind: will leave ${row.projected_at_reset === null ? 'some' : `${Math.round((1 - row.projected_at_reset) * 100)}%`} unused`
+    : row.state === 'over' ? 'ahead: will run out early'
+    : row.state === 'drained' ? (row.reset_at === null ? 'spent' : `spent until ${dayAndHour(row.reset_at)}`)
+    : 'unknown';
+  return `${row.label}: ${Math.round(row.used_frac * 100)}% used, ${timeLeftText(row.resets_in_h)}, ${pace}`;
+}
+
 /** ready jobs x median job minutes, in hours with one decimal; 0 for an empty queue; null when either input is unknown. */
 export function queuedHours(ready: number | null | undefined, medianMin: number | null | undefined): number | null {
   if (ready === null || ready === undefined) return null;
@@ -130,7 +152,7 @@ export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>,
     const resetsIn = Number.isFinite(resetMs) && Number.isFinite(nowMs) && resetMs > nowMs ? Math.round((resetMs - nowMs) / 360_000) / 10 : null;
     const fully = state === 'drained';
     const fix = signInFix(row, extras.heldReasons);
-    return {
+    const out: SpendDownRow = {
       id: row.id, label: poolLabel(row.id), state, used_frac: frac(row.usedPct), reset_at: row.resetAt,
       even_pace_frac: frac(row.elapsedPct),
       projected_at_reset: fully ? 1 : row.projectedUnusedPct === null ? null : frac(100 - row.projectedUnusedPct),
@@ -138,6 +160,7 @@ export function buildSpendDown(view: Pick<PoolsViewV1, 'pools' | 'generatedAt'>,
       running: row.running, target: row.target, queued_rows: ready,
       queued_hours: queuedHours(ready, extras.medianJobMinByLane?.[row.id]), blocked: fix === null ? null : 'sign-in', blocked_fix: fix,
     };
+    return { ...out, sentence: poolSentence({ ...out, resets_in_h: resetsIn }) };
   });
   return { schema: SPENDDOWN_SCHEMA, generated_at: view.generatedAt, pools };
 }

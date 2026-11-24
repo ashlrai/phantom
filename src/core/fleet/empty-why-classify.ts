@@ -1,3 +1,18 @@
+export const YIELD_EMPTY_LABELS = { no_eligible_source: 'no eligible source PR (or source PR already merged)', no_diff: 'worker finished with no changes', precheck_skip: 'precheck skipped the work', worker_error: 'worker failed', unknown: 'reason unknown' } as const;
+export type YieldEmptyReason = keyof typeof YIELD_EMPTY_LABELS;
+/** Reuse the EMPTY diagnostics; a bare EMPTY says nothing about its cause. */
+export function classifyYieldEmpty(text: string | null): YieldEmptyReason {
+  const tail = (text ?? '').split(/\r?\n/).slice(-FLEET_EMPTY_WHY_LOG_LINES).join('\n');
+  const diagnosis = diagnoseEmptyJob(tail, null);
+  if (/\bprecheck[ _-]?(?:code|exit|skip(?:ped)?)\b/i.test(tail)) return 'precheck_skip';
+  if (['sandbox or permission denial', 'provider quota or rate limit', 'timed out', 'tool error', 'test or typecheck failed and was reverted'].includes(diagnosis)
+    || /\bworker[_ -](?:error|failed)\b|\bexit(?: code)?[=: ]+[1-9]\d*\b|\btimeout\b|executable file not found/i.test(tail)) return 'worker_error';
+  if (/\bno eligible (?:source|PR|pull request|target)|\balready (?:merged|on master|on main|shipped|landed)\b|\bno_eligible_source\b/i.test(tail)
+    || diagnosis === 'already-on-master' || /\bNO[ _-]CANDIDATE\b/i.test(tail)) return 'no_eligible_source';
+  return /\bno[_ -]diff\b|\bno changes? (?:made|produced|needed)\b|\bfinished with no changes\b|\bnothing to commit\b|\bworking tree clean\b/i.test(tail)
+    || diagnosis === 'no-op change' ? 'no_diff' : 'unknown';
+}
+
 export const FLEET_EMPTY_WHY_LOG_LINES = 60;
 export const FLEET_EMPTY_WHY_REASONS = ['lint-env', 'interrupted', 'blocked', 'limit', 'other'] as const;
 export type FleetEmptyWhyReason = (typeof FLEET_EMPTY_WHY_REASONS)[number];

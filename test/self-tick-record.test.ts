@@ -38,6 +38,7 @@ describe('self-tick run record', () => {
       { hook: 'autofill', state: 'ran', items: 2, count: null, note: null },
       { hook: 'gaps', state: 'ran', items: 1, count: 4, note: null },
       { hook: 'reap', state: 'ran', items: 5, count: null, note: null },
+      { hook: 'stranded-requeue', state: 'not-recorded', items: null, count: null, note: null },
     ]);
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toMatchObject({ schema: 'fleet.self-tick-record.v1', mode: 'apply' });
@@ -53,7 +54,7 @@ describe('self-tick run record', () => {
     await runSelfTick({ runsDir: runs, now: () => NOW, steps: fakeSteps() });
     const last = readJson(SELF_TICK_LAST);
     expect(last.mode).toBe('dry-run');
-    expect(last.hooks.map((h: any) => [h.hook, h.state, h.items])).toEqual([['autofill', 'skipped', null], ['gaps', 'skipped', null], ['reap', 'ran', 5]]);
+    expect(last.hooks.map((h: any) => [h.hook, h.state, h.items])).toEqual([['autofill', 'skipped', null], ['gaps', 'skipped', null], ['reap', 'ran', 5], ['stranded-requeue', 'not-recorded', null]]);
     expect(last.hooks[0].note).toBe('dry run: would draft 3 jobs, queued none');
   });
 
@@ -77,6 +78,7 @@ describe('self-tick run record', () => {
       ['autofill', 'failed', 'lane read blew up'],
       ['gaps', 'skipped', 'autofill failed before the gap harvest'],
       ['reap', 'failed', 'disk went away'],
+      ['stranded-requeue', 'not-recorded', null],
     ]);
   });
 

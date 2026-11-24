@@ -41,9 +41,10 @@ describe('phm fleet self-tick --status', () => {
       { hook: 'autofill', state: 'ran', items: 3, count: null, note: null },
       { hook: 'gaps', state: 'ran', items: 2, count: 5, note: null },
       { hook: 'reap', state: 'ran', items: 7, count: null, note: null },
+      { hook: 'stranded-requeue', state: 'not-recorded', items: null, count: null, note: null },
     ]);
     expect(selfTickStatusLines(s)).toEqual([
-      `self-tick last ran ${AT} (30 min ago, apply)`, '  autofill 3 items', '  gaps: 5 candidates, 2 queued', '  reap 7 items',
+      `self-tick last ran ${AT} (30 min ago, apply)`, '  autofill 3 items', '  gaps: 5 candidates, 2 queued', '  reap 7 items', '  stranded-requeue not recorded',
     ]);
   });
 
@@ -61,7 +62,7 @@ describe('phm fleet self-tick --status', () => {
     const s = readSelfTickStatus(runs, NOW);
     if (s.state !== 'recorded') throw new Error('expected a record');
     expect(s.hooks.map(h => [h.hook, h.state, h.items, h.count])).toEqual([
-      ['autofill', 'skipped', null, null], ['gaps', 'skipped', null, null], ['reap', 'skipped', null, null],
+      ['autofill', 'skipped', null, null], ['gaps', 'skipped', null, null], ['reap', 'skipped', null, null], ['stranded-requeue', 'not-recorded', null, null],
     ]);
     expect(selfTickStatusLines(s)[2]).toBe('  gaps: skipped (custom-runs-dir-no-autofill)');
     expect(selfTickStatusLines(s)[3]).toBe('  reap skipped (below the warn line)');

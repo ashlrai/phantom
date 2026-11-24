@@ -27,6 +27,7 @@
  */
 import type { CSSProperties, ReactNode } from 'react';
 import { formatDecimalMetric, formatMetric } from '../../../components/charts/format-metric.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
 import { ENGINE_LABEL } from '../verse-model.js';
 import { nativeCreditBalanceTitle } from '../resources/codex-credit-value.js';
@@ -88,7 +89,7 @@ export function AccountCard({
 
   const head = (
     <>
-      <span className={styles.cardLabel}>{card.label}</span>
+      <span className={styles.cardLabel}><BrandMark brand={card.engine} size={14} inline />{card.label}</span>
       <StatusBadge status={card.verdict.state} tone={VERDICT_TONE[card.verdict.state]}>
         {card.verdict.headline}
       </StatusBadge>
