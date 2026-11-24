@@ -21,15 +21,19 @@ on:
   # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
     - cron: "17 */6 * * *"
+    # Daily install smokes only. Distinct from the six-hour cron so the full
+    # matrix can require that exact schedule and stay off this run.
+    - cron: "17 11 * * *"
   # Release-gate runs (Desktop release smoke + Release suites) are started by
   # release-prep.yml once per master sha and by Auto-tag on a tag, both via
   # workflow_dispatch release_gate=true. The old half-hour schedule duplicated
   # that and is gone (CI-PHANTOM-CRON-30MIN). After both jobs succeed on
   # master, release-gate-autotag dispatches Auto-tag with this exact SHA:
   # GITHUB_TOKEN dispatches do not produce a workflow_run event.
-  # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
-  # The scheduled run rotates the Mac exhaustive work over seven daily slices
-  # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
+  # Exhaustive macOS and Windows lanes stay off pull_request and merge_group.
+  # Path-gated affected checks and install smokes are the per-OS gates
+  # (Mason, Nov 24 2026). The six-hour run rotates the Mac exhaustive work
+  # over seven daily slices (.github/scripts/ci-mac-rotation.mjs).
   workflow_dispatch:
     inputs:
       release_gate:
@@ -41,6 +45,10 @@ on:
         type: choice
         default: all
         options: [all, '0', '1', '2', '3', '4', '5', '6']
+      install_smoke:
+        description: Run the per-OS npm install smokes for this commit and the published release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -504,7 +512,7 @@ jobs:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
       - name: Save dependency graph
-        if: steps.dep_graph.outputs.cache-hit != 'true'
+        if: steps.dep_graph.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -657,21 +665,21 @@ jobs:
           fi
           echo "Affected tests: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
       - name: Save backend typecheck receipt
-        if: success() && steps.backend_reuse.outputs.reuse != 'true'
+        if: success() && steps.backend_reuse.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: ${{ runner.temp }}/ci-green/typecheck-backend.json
           key: phantom-ci-green-v1-typecheck-backend-${{ steps.inputs.outputs.backend }}
       - name: Save web typecheck receipt
-        if: success() && steps.web_reuse.outputs.reuse != 'true'
+        if: success() && steps.web_reuse.outputs.reuse != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: ${{ runner.temp }}/ci-green/typecheck-web.json
           key: phantom-ci-green-v1-typecheck-web-${{ steps.inputs.outputs.web }}
       - name: Save affected-test receipt
-        if: success() && steps.tests_reuse.outputs.reuse != 'true' && steps.select.outputs.mode != 'docs'
+        if: success() && steps.tests_reuse.outputs.reuse != 'true' && steps.select.outputs.mode != 'docs' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         continue-on-error: true
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
@@ -698,6 +706,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
+      os_sensitive: ${{ steps.os.outputs.os_sensitive }}
+      xplat_install: ${{ steps.paths.outputs.xplat_install }}
       release_gate: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}
       mac_slice: ${{ steps.mac.outputs.mac_slice }}
       mac_general_exclude: ${{ steps.mac.outputs.mac_general_exclude }}
@@ -729,6 +739,23 @@ jobs:
           ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/ci-site-lane.mjs
+      - name: Classify OS-sensitive paths
+        id: os
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/ci-os-paths.mjs
+      # token empty: git diff only. pull-requests permission stays unset.
+      # signer_proof is computed and unused; Core owns that job.
+      - name: Apply shared path filters
+        id: paths
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          token: ''
+          filters: .github/path-filters/phantom.yml
+          base: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       - name: Select daily Mac rotation
         id: mac
         env:
@@ -736,10 +763,276 @@ jobs:
           MAC_SHARD_INPUT: ${{ github.event.inputs.mac_shard }}
         run: node .github/scripts/ci-mac-rotation.mjs plan
 
+  fast-windows:
+    name: Fast gate (windows)
+    needs: classify
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.os_sensitive == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        shell: bash
+    env:
+      ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      CI_FAST_BAIL: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
+      - name: Restore dependency graph
+        id: dep_graph
+        continue-on-error: true
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          restore-keys: phantom-dep-graph-v2-
+      - name: Update dependency graph
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
+      - name: Save dependency graph
+        if: steps.dep_graph.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      - name: Select affected tests
+        id: select
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-fast-select.mjs
+      - name: Hash typecheck inputs
+        id: inputs
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-fast-inputs.mjs plan
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Core no-emit type check
+        env:
+          PROJECTS: ${{ steps.inputs.outputs.projects }}
+        run: node .github/scripts/ci-os-typecheck.mjs
+      - name: Run affected tests
+        if: steps.select.outputs.mode != 'docs'
+        run: node .github/scripts/ci-fast-run.mjs
+
+  fast-macos:
+    name: Fast gate (macos)
+    needs: classify
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.os_sensitive == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 8
+    env:
+      ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      CI_FAST_BAIL: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
+      - name: Restore dependency graph
+        id: dep_graph
+        continue-on-error: true
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          restore-keys: phantom-dep-graph-v2-
+      - name: Update dependency graph
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
+      - name: Save dependency graph
+        if: steps.dep_graph.outputs.cache-hit != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+      - name: Select affected tests
+        id: select
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-fast-select.mjs
+      - name: Hash typecheck inputs
+        id: inputs
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-fast-inputs.mjs plan
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Core no-emit type check
+        env:
+          PROJECTS: ${{ steps.inputs.outputs.projects }}
+        run: node .github/scripts/ci-os-typecheck.mjs
+      - name: Run affected tests
+        if: steps.select.outputs.mode != 'docs'
+        run: node .github/scripts/ci-fast-run.mjs
+
+  install-smoke-linux:
+    name: install smoke (linux)
+    needs: classify
+    if: (github.event_name == 'schedule' && github.event.schedule == '17 11 * * *') || (github.event_name == 'workflow_dispatch' && inputs.install_smoke == true) || ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.xplat_install == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install this commit and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs commit
+      - name: Install the published release and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs release
+
+  install-smoke-windows:
+    name: install smoke (windows)
+    needs: classify
+    if: (github.event_name == 'schedule' && github.event.schedule == '17 11 * * *') || (github.event_name == 'workflow_dispatch' && inputs.install_smoke == true) || ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.xplat_install == 'true')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install this commit and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs commit
+      - name: Install the published release and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs release
+
+  install-smoke-macos:
+    name: install smoke (macos)
+    needs: classify
+    if: (github.event_name == 'schedule' && github.event.schedule == '17 11 * * *') || (github.event_name == 'workflow_dispatch' && inputs.install_smoke == true) || ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.classify.outputs.xplat_install == 'true')
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install this commit and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs commit
+      - name: Install the published release and run phm --version
+        run: node .github/scripts/ci-install-smoke.mjs release
+
+  gate-linux:
+    name: Gate (linux)
+    if: always()
+    needs: [fast-gate, install-smoke-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require Linux jobs
+        env:
+          GATE_NEEDS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-os-gate.mjs
+
+  gate-windows:
+    name: Gate (windows)
+    if: always()
+    needs: [fast-windows, install-smoke-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require Windows jobs
+        env:
+          GATE_NEEDS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-os-gate.mjs
+
+  gate-macos:
+    name: Gate (macos)
+    if: always()
+    needs: [fast-macos, install-smoke-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require macOS jobs
+        env:
+          GATE_NEEDS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-os-gate.mjs
+
   site:
     name: Site PR (ecosystem)
     needs: classify
-    if: needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -776,7 +1069,7 @@ jobs:
     # leaves them for the full lane, which builds first. The Merge Gate still reports.
     name: Docs PR (docs-only)
     needs: classify
-    if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'docs' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -811,7 +1104,7 @@ jobs:
     needs: classify
     # Direct master pushes take the seconds-fast gate only; a push event whose
     # ref is a tag is the reusable M33 verify call and keeps the full matrix.
-    if: needs.classify.outputs.lane == 'full' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && !(github.event_name == 'push' && github.ref == 'refs/heads/master') && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     # Node 22.15 is the hard minimum — install.sh and CONTRIBUTING.md both enforce it.
     # Ubuntu is the exhaustive authority, partitioned by Vitest's deterministic
     # file sharding so the full suite has margin below the hermetic hard cap.
@@ -1155,7 +1448,7 @@ jobs:
     # general Mac matrix, so waiting on mac-isolated only added a second Mac
     # queue wait to every PR.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     name: CI (Node 22, ${{ matrix.label }})
     strategy:
       fail-fast: false
@@ -1199,7 +1492,7 @@ jobs:
     # partition runs on every master push, reusable workflow_call runs and any PR
     # labelled `ci:full-mac`. Merge-queue commits defer it like PRs: the master
     # push that follows the queue still runs it.
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     name: Mac exhaustive (${{ matrix.shard }}/4)
     runs-on: macos-15
     # Complete single-worker partitions measured 60–65 minutes. Match the
@@ -1288,7 +1581,7 @@ jobs:
 
   mac-isolated:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     name: Mac exhaustive (isolated)
     runs-on: macos-15
     timeout-minutes: 30
@@ -1374,7 +1667,7 @@ jobs:
     # Own checkout and fixtures remain independent evidence. Queues with the
     # isolated lane rather than after it, so a PR waits on one Mac queue, not two.
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     runs-on: macos-latest
     timeout-minutes: 20
     # Full-audit FIFO pools are shared across runs; release jobs use other groups.
@@ -1575,7 +1868,7 @@ jobs:
 
   windows-service-authority:
     needs: classify
-    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'
+    if: needs.classify.outputs.lane == 'full' && github.event_name != 'push' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')
     name: Windows service authority (Server 2022)
     runs-on: windows-2022
     timeout-minutes: 15
@@ -1710,6 +2003,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          SCHEDULE: ${{ github.event.schedule }}
           GATE_NEEDS: ${{ toJSON(needs) }}
         run: |
           node <<'NODE'
@@ -1724,6 +2018,12 @@ jobs:
           if (outcome('secret-shape') !== 'success') throw new Error(`Secret-shape scan concluded ${outcome('secret-shape') ?? 'missing'}`);
           // Security floor: a skipped, cancelled or failed secret scan fails the gate.
           if (outcome('secret-scan') !== 'success') throw new Error(`Secret scan (diff) concluded ${outcome('secret-scan') ?? 'missing'}`);
+          // Daily install smokes use their own cron. Full lanes stay on the
+          // six-hour schedule and are skipped here; the OS gates own that run.
+          if (process.env.SCHEDULE === '17 11 * * *') {
+            console.log('Merge Gate passed: daily install smoke schedule');
+            process.exit(0);
+          }
           if (outcome('classify') !== 'success') throw new Error('CI classification did not pass');
           const lane = jobs.classify.outputs?.lane;
           if (lane !== 'site' && lane !== 'docs' && lane !== 'full') throw new Error('CI lane is missing or unknown');
@@ -1819,7 +2119,7 @@ jobs:
     # pinned scrub.pl. Retention 7 days.
     name: Daily fixup queue
     needs: [secret-shape, secret-scan, classify, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
-    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && ((github.event_name == 'schedule' && github.event.schedule == '17 */6 * * *') || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
