@@ -13,7 +13,7 @@ import { withCodexPeersSession, type LocusPeersEndpoint } from '../core/fleet/ad
 import { BUS_PROTOCOL_KINDS, BUS_PROTOCOL_VERSION, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyThread } from '../core/agents/bus-v2-schema.js';
-import { busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
+import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 const HELP = `phm comms bus group read <room> <topic> <cursor>
@@ -238,8 +238,7 @@ function filterPage(page: BusInboxPage, filters: BusFilters, addresses: BusAddre
   const channelPrefix = filters.channel === undefined ? undefined : `group:${filters.channel}:`;
   return { ...page, messages: page.messages.filter(({ envelope, receivedAt }) =>
     (filters.id === undefined || envelope.id === filters.id) &&
-    (filters.inReplyTo === undefined || envelope.body !== null && typeof envelope.body === 'object' &&
-      !Array.isArray(envelope.body) && Object.hasOwn(envelope.body, 'inReplyTo') && envelope.body.inReplyTo === filters.inReplyTo) &&
+    (filters.inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, filters.inReplyTo)) &&
     (addresses.to === undefined || addresses.to(envelope.to)) &&
     (channelPrefix === undefined || envelope.to.startsWith(channelPrefix)) &&
     (addresses.from === undefined || addresses.from(envelope.from)) &&

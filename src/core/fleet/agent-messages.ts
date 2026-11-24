@@ -7,7 +7,7 @@
  */
 import { scrubSecrets } from '../util/scrub.js';
 import { busBodyThread, PROVIDERS } from '../agents/bus-v2-schema.js';
-import { busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, labelIdentityOf,
+import { busBodyInReplyToMatch, busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, labelIdentityOf,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
 import { agentChannelNameSchema, readAgentRegistry, resolveAgent, BUS_CLIS, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
@@ -52,7 +52,7 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `from` keeps only the messages one sender wrote — the same sender-inclusion match `comms bus read|watch --from`, `agents bus inbox --from`, `agents bus channel read --from`, `agents bus wakes --from`, `fleet bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each row's `from` only so rows merely addressed to that agent never pass; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does; `inReplyTo` keeps only envelopes whose object body cites that envelope id through its own `inReplyTo` field — a row-level filter applied before projection on the raw body, the same own-property exact-match rule `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias or a substring, so "who answered envelope X" is one filtered read of the whole fleet timeline — replies addressed to anyone, not only the reader's own inbox; `channel` keeps only the envelopes addressed to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `agents bus inbox --channel` and `channel read` match — a row-level filter `readAgentMessages` applies before projection on the raw `to` label, so mail to agents and other rooms never reaches the page while every post in the named room still does; the value is the strict channel-name grammar, never a guessed match. */
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `from` keeps only the messages one sender wrote — the same sender-inclusion match `comms bus read|watch --from`, `agents bus inbox --from`, `agents bus channel read --from`, `agents bus wakes --from`, `fleet bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each row's `from` only so rows merely addressed to that agent never pass; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does; `inReplyTo` keeps only envelopes whose object body cites that envelope id through its own `inReplyTo` field — a row-level filter applied before projection on the raw body, the shared `busBodyInReplyToMatch` own-property exact-match rule `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`, `agents bus inbox --in-reply-to` and `agents bus channel read --in-reply-to` apply, never the `replyTo` alias or a substring, so "who answered envelope X" is one filtered read of the whole fleet timeline — replies addressed to anyone, not only the reader's own inbox; `channel` keeps only the envelopes addressed to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `agents bus inbox --channel` and `channel read` match — a row-level filter `readAgentMessages` applies before projection on the raw `to` label, so mail to agents and other rooms never reaches the page while every post in the named room still does; the value is the strict channel-name grammar, never a guessed match. */
 export interface AgentMessagesQuery { since?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; limit?: number }
 
 type Body = Record<string, unknown>;
@@ -142,17 +142,6 @@ export function classify(envelope: BusInboxReceipt['envelope'], body: Body | nul
 
 const JOB = /\b((?:RQ|FIXUP|LAND|FIX)-[A-Z0-9][A-Z0-9-]{2,80})\b/;
 const PR = /\b([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:#|\/pull\/)([1-9][0-9]{0,8})\b|(?:^|[\s(])#([1-9][0-9]{0,8})\b/;
-/** The `--in-reply-to` reply-citation filter every bus read shares: only an
- * object body carrying its own `inReplyTo` strictly equal to the cited
- * envelope id matches — exact and case-sensitive, never the `replyTo`
- * alias, a substring or an inherited property. The same rule
- * `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`
- * and `fleet_bus_inbox`'s `inReplyTo` apply. */
-const bodyInReplyToMatch = (body: unknown, inReplyTo: string): boolean => {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
-  const record = body as Record<string, unknown>;
-  return Object.hasOwn(record, 'inReplyTo') && record['inReplyTo'] === inReplyTo;
-};
 function related(body: Body | null, text: string, jobId: string | null): { job: string | null; pr: string | null } {
   const fields = body ? [body.rq, body.taskId, body.jobId, jobId, body.job,
     ...(Array.isArray(record(body.peer)?.refs) ? record(body.peer)!.refs as unknown[] : []),
@@ -316,8 +305,10 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
   // inbox --thread`, `channel read --thread`, `comms bus read|watch
   // --thread` and `fleet bus-follow --thread` apply — the second keeps
   // only object bodies whose own `inReplyTo` cites the named envelope —
-  // the same match `comms bus read|watch --in-reply-to`, `fleet
-  // bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply —
+  // the shared `busBodyInReplyToMatch` rule `comms bus read|watch
+  // --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s
+  // `inReplyTo`, `agents bus inbox --in-reply-to` and `channel read
+  // --in-reply-to` apply —
   // and the third keeps only envelopes addressed to `group:<channel>:*`,
   // the room prefix `agents bus inbox --channel` and `channel read` match,
   // decided on the raw `to` label so every topic of the named room lists
@@ -328,7 +319,7 @@ export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusIn
   const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
   const rows = scan.rows.filter(row =>
     (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
-    (query.inReplyTo === undefined || bodyInReplyToMatch(row.envelope.body, query.inReplyTo)) &&
+    (query.inReplyTo === undefined || busBodyInReplyToMatch(row.envelope.body, query.inReplyTo)) &&
     (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
   const registryRead = query.agent === undefined && query.with === undefined && query.from === undefined && query.excludeFrom === undefined
     ? undefined : readAgentRegistry({ root: options.root });

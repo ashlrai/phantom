@@ -668,6 +668,50 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--job', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and channel reads by --in-reply-to', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // The cited parent and replies carrying the v2 inReplyTo citation.
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'question', '--id', 'rt-q'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer one', '--reply-to', 'rt-q', '--id', 'rt-a1'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'answer two', '--reply-to', 'rt-q', '--id', 'rt-a2'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'elsewhere', '--reply-to', 'rt-x', '--id', 'rt-a3'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 'rt-p'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room answer', '--reply-to', 'rt-q', '--id', 'rt-ch'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'room noise', '--id', 'rt-noise'])).json)
+      .toMatchObject({ status: 'posted' });
+
+    // Inbox keeps the citing dm rows plus the room post nova receives as
+    // channel mail; channel read keeps only the citing post.
+    const inbox = await run(['inbox', 'nova', '--in-reply-to', 'rt-q']);
+    expect(inbox.code).toBe(0);
+    expect(inbox.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id).sort())
+      .toEqual(['rt-a1', 'rt-a2', 'rt-ch']);
+    const channel = await run(['channel', 'read', 'release', '--in-reply-to', 'rt-q']);
+    expect(channel.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rt-ch']);
+    // --matched counts accepted rows and the flag composes with the others.
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-q', '--matched'])).json.matched).toBe(3);
+    expect((await run(['channel', 'read', 'release', '--in-reply-to', 'rt-q', '--matched'])).json.matched).toBe(1);
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-q', '--kind', 'dm'])).json.messages
+      .map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['rt-a1', 'rt-a2']);
+    expect((await run(['inbox', 'nova', '--in-reply-to', 'rt-none'])).json.messages).toEqual([]);
+
+    // A citation that is not a printable label fails closed on both reads.
+    expect(await run(['inbox', 'nova', '--in-reply-to', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--in-reply-to=']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['inbox', 'nova', '--in-reply-to', 'a', '--in-reply-to', 'b'])).toMatchObject({ code: 2 });
+  });
+
   it('reports the true pending total with --matched and resumes before unshown mail', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
