@@ -82,6 +82,12 @@ invalid transitions (such as active directly to idle) throw. State is persisted
 atomically in private `~/.phantom/bots/seat-state.json`; listing can persist a
 lifecycle transition. Missing node storage is never initialized by observation.
 
+Each `phm bots seats --json` row includes `claimsOwner`: `ref` is the seat's
+participant label, `identity` is its resolved stable bus identity id (null
+when unresolved), and `registry` is `missing`, `available` or `unavailable`.
+These diagnostics use the same registry snapshot as claim matching. Missing,
+unreadable or unresolved identities keep exact-label matching.
+
 ## Inspect and hand off
 
 ```sh
