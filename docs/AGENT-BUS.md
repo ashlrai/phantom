@@ -28,7 +28,13 @@ read --thread`, `comms bus read|watch --thread` and `fleet bus-follow
 address prefix `agents bus inbox --channel` and `channel read` match,
 decided on the raw `to` label before projection — `--contains <text>` for
 only the messages whose scrubbed
-summary carries that text, `--exclude-from <name|lane>` for only the mail
+summary carries that text, `--from <name|lane>` for only the mail one sender
+wrote — the sender-inclusion counterpart of `--exclude-from`, the same
+identity-label match `comms bus read|watch --from`, `agents bus inbox --from`,
+`agents bus channel read --from`, `agents bus wakes --from`, `fleet
+bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each
+row's `from` only so rows merely addressed to that agent stay out —
+`--exclude-from <name|lane>` for only the mail
 one sender did not write, `--in-reply-to <id>` for only the envelopes whose
 object body cites that envelope id through its own `inReplyTo` field — the
 same own-property exact match `comms bus read|watch --in-reply-to`,
@@ -38,8 +44,7 @@ X" is one filtered read of the whole fleet timeline, replies addressed to
 anyone — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`,
-`excludeFrom`, `inReplyTo` and `limit` params. Both return `agent-messages.v1`: newest
+`contains`, `from`, `excludeFrom`, `inReplyTo` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line
@@ -97,7 +102,17 @@ address of one registered identity counts as that agent, so its labels never
 split the filter — the ref itself resolves exactly, so a case-variant or
 otherwise unregistered spelling names no identity and keeps the literal
 label match. With no readable registry the match stays on the literal
-label — an unreadable registry never widens a read. `--exclude-from` is the
+label — an unreadable registry never widens a read. `--from` is the same
+identity match pointed at the sender only, inverted: a handle, alias or
+`agent:` address of one registered identity keeps every message that
+identity wrote, under any of its labels, while messages merely addressed
+to it stay out — the same sender-inclusion rule `comms bus read|watch
+--from`, `agents bus inbox`/`channel read`/`wakes --from`, `fleet
+bus-follow --from` and `fleet_agent_inbox`'s `from` apply, so "everything
+agent X sent" is one filtered read of the whole fleet timeline; it
+composes with every other filter — a sender both included and excluded
+matches nothing — and `matched` counts only the rows it accepts.
+`--exclude-from` is the
 same identity match pointed at the sender only: a handle, alias or `agent:`
 address of one registered identity drops every message that identity wrote,
 under any of its labels, while messages merely addressed to it still list —

@@ -72,13 +72,13 @@ describe('fleet_agent_messages argument parsing', () => {
       since: '1800000000000', agent: 'agent:planner', with: 'agent:worker',
       kind: 'ASK', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: '  Parser   Fix ',
-      excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
+      from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
     });
     expect(parsed).toEqual({
       since: 1800000000000, agent: 'agent:planner', with: 'agent:worker',
       kind: 'ask', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: 'parser fix',
-      excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
+      from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
     });
   });
 
@@ -123,7 +123,8 @@ describe('fleet_agent_messages argument parsing', () => {
       { runsDir: '/tmp' }, { home: '/tmp' }, { after: 0 }, { matched: true },
       { agent: 'has space' }, { agent: '' }, { agent: 5 }, { agent: 'x'.repeat(129) },
       { with: 'has space' }, { with: 5 }, { job: 'has space' }, { job: '' }, { job: 5 },
-      { thread: 'has space' }, { thread: null }, { excludeFrom: null }, { excludeFrom: 'has space' },
+      { thread: 'has space' }, { thread: null }, { from: null }, { from: 'has space' }, { from: 5 },
+      { excludeFrom: null }, { excludeFrom: 'has space' },
       { inReplyTo: 'has space' }, { inReplyTo: '' }, { inReplyTo: 5 }, { inReplyTo: null }, { inReplyTo: 'x'.repeat(129) },
       { channel: 'Not A Channel' }, { channel: '-lead' }, { channel: 'x'.repeat(33) }, { channel: 5 },
       { kind: 'gossip' }, { kind: 'ASKS' }, { kind: 5 }, { kind: null },
@@ -145,12 +146,12 @@ describe('fleet_agent_messages reader', () => {
     const result = await readFleetAgentMessages(
       parseFleetAgentMessagesArgs({
         agent: 'planner', since: '1800000000000', kind: 'ask',
-        priority: 'P1', job: 'RQ-9', contains: 'Parser Fix', limit: 10,
+        priority: 'P1', job: 'RQ-9', contains: 'Parser Fix', from: 'sender', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'planner', since: 1800000000000, kind: 'ask',
-      priority: 'P1', job: 'RQ-9', contains: 'parser fix', limit: 10,
+      priority: 'P1', job: 'RQ-9', contains: 'parser fix', from: 'sender', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
@@ -199,6 +200,8 @@ describe('fleet_agent_messages MCP tool', () => {
       .toMatchObject({ type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] });
     expect(tool?.inputSchema.properties?.['contains'])
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
+    expect(tool?.inputSchema.properties?.['from'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['inReplyTo'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['limit'])
@@ -208,7 +211,8 @@ describe('fleet_agent_messages MCP tool', () => {
   it.each([
     [{ root: '/tmp/fake-root' }], [{ path: '/tmp/x' }], [{ cwd: '/tmp' }], [{ runsDir: '/tmp' }],
     [{ agent: 'has space' }], [{ agent: 5 }], [{ with: 'agent:worker' }], [{ with: 'has space' }],
-    [{ job: 'has space' }], [{ thread: null }], [{ excludeFrom: 'has space' }], [{ inReplyTo: 'has space' }], [{ inReplyTo: 5 }],
+    [{ job: 'has space' }], [{ thread: null }], [{ from: 'has space' }], [{ from: 5 }],
+    [{ excludeFrom: 'has space' }], [{ inReplyTo: 'has space' }], [{ inReplyTo: 5 }],
     [{ channel: 'Not A Channel' }], [{ channel: 5 }],
     [{ kind: 'gossip' }], [{ kind: 'ASKS' }], [{ kind: 5 }],
     [{ priority: 'P4' }], [{ priority: 'high' }], [{ priority: 5 }],
@@ -236,14 +240,14 @@ describe('fleet_agent_messages MCP tool', () => {
     const { parsed } = await callMessages(client, {
       agent: 'planner', with: 'agent:worker', since: '1800000000000',
       kind: 'ASK', priority: 'P2', job: 'RQ-9', thread: 't-1',
-      channel: 'fleet-ops', contains: 'Parser Fix', excludeFrom: 'agent:bot',
-      inReplyTo: 'm-9', limit: 10,
+      channel: 'fleet-ops', contains: 'Parser Fix', from: 'agent:sender',
+      excludeFrom: 'agent:bot', inReplyTo: 'm-9', limit: 10,
     });
     expect(agentMessages).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', with: 'agent:worker', since: 1800000000000,
       kind: 'ask', priority: 'P2', job: 'RQ-9', thread: 't-1',
-      channel: 'fleet-ops', contains: 'parser fix', excludeFrom: 'agent:bot',
-      inReplyTo: 'm-9', limit: 10,
+      channel: 'fleet-ops', contains: 'parser fix', from: 'agent:sender',
+      excludeFrom: 'agent:bot', inReplyTo: 'm-9', limit: 10,
     }));
     expect(parsed).toEqual(payload);
   });
