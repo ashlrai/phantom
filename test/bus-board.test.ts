@@ -244,6 +244,76 @@ describe('bus board threads', () => {
   });
 });
 
+describe('bus board thread read filters', () => {
+  it('filters deliveries, receipts, threads and tasks by the shared read rules', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const store = board();
+    const at = (iso: string) => vi.setSystemTime(new Date(iso));
+    const first = store.createThread('alice', 'Frobnicate plans').id;
+    store.joinThread('bob', first);
+    const second = store.createThread('carol', 'Watering rota').id;
+    store.joinThread('bob', second);
+
+    at('2026-01-01T00:00:00.000Z');
+    await store.post('alice', first, 'frobnicate the plan');
+    at('2026-01-01T00:01:00.000Z');
+    await store.post('alice', first, 'water the plants');
+    store.createTask('alice', first, 'item-frob', 'Frobnicate task');
+    store.createTask('alice', first, 'item-other', 'Water plants');
+
+    const T0 = Date.parse('2026-01-01T00:00:00.000Z');
+    const T1 = Date.parse('2026-01-01T00:01:00.000Z');
+    const created = (rows: { createdAt: string }[]) => rows.map((row) => row.createdAt);
+
+    // --contains keeps only posts whose text carries the needle; hops
+    // filters the same deliveries before projecting metadata, and
+    // pendingOnly composes with the same filter.
+    expect(created(store.readThread('bob', first, false, { contains: 'frobnicate' })))
+      .toEqual(['2026-01-01T00:00:00.000Z']);
+    expect(store.readThread('bob', first, true, { contains: 'absent' })).toHaveLength(0);
+    expect(created(store.hops('bob', first, { contains: 'water' })))
+      .toEqual(['2026-01-01T00:01:00.000Z']);
+
+    // [since, before) on createdAt: since inclusive, before exclusive —
+    // the same window board pending applies.
+    expect(created(store.readThread('bob', first, false, { sinceMs: T0 })))
+      .toEqual(['2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z']);
+    expect(created(store.readThread('bob', first, false, { beforeMs: T1 })))
+      .toEqual(['2026-01-01T00:00:00.000Z']);
+    expect(created(store.readThread('bob', first, false, { sinceMs: T0 + 1, beforeMs: T1 + 1 })))
+      .toEqual(['2026-01-01T00:01:00.000Z']);
+    expect(store.readThread('bob', first, false, { sinceMs: T1, beforeMs: T1 })).toHaveLength(0);
+
+    // Filtering never acknowledges: an acked delivery leaves pending reads
+    // under every filter while history keeps it.
+    const pending = store.readThread('bob', first, true, { contains: 'frobnicate' });
+    expect(pending).toHaveLength(1);
+    store.acknowledge('bob', first, pending[0]!.id);
+    expect(store.readThread('bob', first, true, { contains: 'frobnicate' })).toHaveLength(0);
+    expect(store.readThread('bob', first, false, { contains: 'frobnicate' })).toHaveLength(1);
+
+    // receipts window on receivedAt: the first ack lands at T1, the second
+    // at 02:00, so a 01:00 cutoff splits them one each way.
+    at('2026-01-01T02:00:00.000Z');
+    const remaining = store.readThread('bob', first, true);
+    expect(remaining).toHaveLength(1);
+    store.acknowledge('bob', first, remaining[0]!.id);
+    const cutoff = Date.parse('2026-01-01T01:00:00.000Z');
+    expect(store.receipts('alice', first)).toHaveLength(2);
+    expect(store.receipts('alice', first, { sinceMs: cutoff })).toHaveLength(1);
+    expect(store.receipts('alice', first, { beforeMs: cutoff })).toHaveLength(1);
+    expect(store.receipts('alice', first, { sinceMs: cutoff, beforeMs: cutoff })).toHaveLength(0);
+
+    // Title reads take --contains under the same normalized rule.
+    expect(store.listThreads('bob').map((row) => row.id).sort()).toEqual([first, second].sort());
+    expect(store.listThreads('bob', 'frobnicate').map((row) => row.id)).toEqual([first]);
+    expect(store.listThreads('bob', '  ABSENT  ')).toHaveLength(0);
+    expect(store.listTasks('alice', first).map((row) => row.itemId).sort()).toEqual(['item-frob', 'item-other']);
+    expect(store.listTasks('alice', first, 'frobnicate').map((row) => row.itemId)).toEqual(['item-frob']);
+    expect(store.listTasks('alice', first, 'absent')).toHaveLength(0);
+  });
+});
+
 describe('bus board task claims tied to fleet claims', () => {
   function taskOn(actor: string, itemId = 'fleet-item-1') {
     const store = board();
@@ -888,10 +958,61 @@ describe('phm bus CLI end-to-end', () => {
     expect(allFloor).toBe(0);
     expect(JSON.parse(output.at(-1)!).result.deliveries.matched).toBe(0);
 
-    // The filters belong to board pending alone — elsewhere they are refused.
+    // --job and --all stay board pending's own flags, and a filter valid
+    // nowhere on the command — a time bound on a title-only list, a text
+    // needle on text-less receipts — is refused rather than silently dropped.
     expect((await call(['thread', 'list', '--job', 'job-7'])).code).toBe(2);
-    expect((await call(['task', 'list', thread, '--contains', 'x'])).code).toBe(2);
-    expect((await call(['thread', 'list', '--before', '1d'])).code).toBe(2);
+    expect((await call(['thread', 'list', '--all'])).code).toBe(2);
+    expect((await call(['task', 'list', thread, '--before', '1d'])).code).toBe(2);
+    expect((await call(['thread', 'receipts', thread, '--contains', 'x'])).code).toBe(2);
+    // --contains now reaches the title reads it always applied to.
+    expect((await call(['task', 'list', thread, '--contains', 'absent-text'])).code).toBe(0);
+  });
+
+  it('filters the thread reads through argv', async () => {
+    const thread = (await call(['thread', 'create', 'Release board'])).value.result.id;
+    await call(['thread', 'join', thread], 'bob');
+    await call(['thread', 'post', thread, 'frobnicate the plan'], 'alice');
+    await call(['thread', 'post', thread, 'water the plants'], 'alice');
+    await call(['task', 'create', thread, 'job-t1', 'Frobnicate task'], 'alice');
+    await call(['task', 'create', thread, 'job-t2', 'Water plants'], 'alice');
+
+    // --contains narrows deliveries by post text on read, pending and hops.
+    const byText = await call(['thread', 'read', thread, '--contains', 'frobnicate'], 'bob');
+    expect(byText.code).toBe(0);
+    expect(byText.value.result).toHaveLength(1);
+    expect((await call(['thread', 'pending', thread, '--contains', 'absent'], 'bob')).value.result).toHaveLength(0);
+    expect((await call(['thread', 'hops', thread, '--contains', 'frobnicate'], 'bob')).value.result).toHaveLength(1);
+
+    // --since/--before bound deliveries on createdAt; an unparseable cutoff
+    // is a usage error like board pending's.
+    const future = await call(['thread', 'read', thread, '--since', '9999999999999'], 'bob');
+    expect(future.code).toBe(0);
+    expect(future.value.result).toHaveLength(0);
+    const window = await call(['thread', 'read', thread, '--since', '0', '--before', String(Date.now() + 60_000)], 'bob');
+    expect(window.value.result).toHaveLength(2);
+    expect((await call(['thread', 'read', thread, '--since', 'bogus'], 'bob')).code).toBe(2);
+
+    // Title reads take --contains; receipts take the time window on
+    // receivedAt — ack one delivery and bound it both ways.
+    const tasks = await call(['task', 'list', thread, '--contains', 'frobnicate'], 'bob');
+    expect(tasks.code).toBe(0);
+    expect(tasks.value.result).toHaveLength(1);
+    expect(tasks.value.result[0].itemId).toBe('job-t1');
+    const list = await call(['thread', 'list', '--contains', 'release'], 'bob');
+    expect(list.value.result.map((row: { id: string }) => row.id)).toEqual([thread]);
+
+    const read = await call(['thread', 'read', thread], 'bob');
+    const deliveryId = read.value.result[0].id;
+    await call(['thread', 'ack', thread, deliveryId], 'bob');
+    const receipts = await call(['thread', 'receipts', thread, '--since', '0'], 'alice');
+    expect(receipts.value.result).toHaveLength(1);
+    expect((await call(['thread', 'receipts', thread, '--before', '0'], 'alice')).value.result).toHaveLength(0);
+
+    // A filter valid nowhere on the command stays a usage error.
+    expect((await call(['thread', 'read', thread, '--job', 'job-t1'])).code).toBe(2);
+    expect((await call(['thread', 'join', thread, '--contains', 'x'])).code).toBe(2);
+    expect((await call(['task', 'claim', 'task-x', '--since', '1d'])).code).toBe(2);
   });
 
   it('serves the fleet-wide board pending digest through --all', async () => {
