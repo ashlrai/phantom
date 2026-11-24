@@ -2807,11 +2807,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`origin?`, `jobs?`) is the
+`excludeOwner?`, `contains?`, `origin?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
-not free), plus `asOf`. A malformed `key`, `owner` or `origin` answers
+not free), plus `asOf`. A malformed `key`, `owner`, `excludeOwner`,
+`contains` or `origin` answers
 `invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
@@ -2820,7 +2821,13 @@ resolves through the identity registry matches every label of that identity;
 an unresolvable ref or unreadable registry falls back to the exact owner
 label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
-mistaken for identity proof. A set `origin` narrows to one claim class —
+mistaken for identity proof. A set `excludeOwner` drops one holder under the
+same identity-label rule, inverted — the result's `excludeOwner` field
+reports the same resolution — so "what do the other seats hold" is one
+read. A set `contains` keeps claims whose `key`, `sourceId` or
+`repo`/`branch`/`path` target fields carry the needle as a case-insensitive
+substring — the same `busReadContains`/`busReadContainsMatch` rule every
+bus read's `--contains` applies. A set `origin` narrows to one claim class —
 `resource`, `message`, `team` or `board`, the `CoordinationOrigin` values
 `COORDINATION_ORIGINS` lists (queue path observations are never live and
 never list). With `jobs:true` each claim
@@ -2831,7 +2838,7 @@ the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--origin] [--jobs]`
+`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level

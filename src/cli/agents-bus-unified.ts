@@ -46,7 +46,7 @@ ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--origin <resource|message|team|board>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--jobs]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -388,7 +388,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--kind', '--channel', '--contains', '--exclude-from', '--reply-to', '--in-reply-to']);
+  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -1021,9 +1021,10 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       noExtra(2);
       if (sub === 'list') {
-        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'), origin: originArg(), jobs: p.bools.has('--jobs') });
+        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'),
+          excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(), jobs: p.bools.has('--jobs') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner must be a printable label; --origin must be resource, message, team or board');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters');
           return 2;
         }
         if (result.status !== 'ok') {
@@ -1032,6 +1033,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         }
         const ownerNote = result.owner === undefined ? '' :
           ` owner=${result.owner.ref} identity=${result.owner.identity ?? 'label'} registry=${result.owner.registry}`;
+        const excludeNote = result.excludeOwner === undefined ? '' :
+          ` excludeOwner=${result.excludeOwner.ref} identity=${result.excludeOwner.identity ?? 'label'} registry=${result.excludeOwner.registry}`;
         const feedNote = result.feed === undefined ? '' : ` feed=${result.feed}`;
         out(json ? JSON.stringify(result) : [
           ...result.claims.map(row => {
@@ -1041,7 +1044,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             const blocked = row.jobs ?? [];
             return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(claimJobLabel).join(',')}`;
           }),
-          `claims=${result.claims.length} source=${result.source}${ownerNote}${feedNote} as-of=${result.asOf}`,
+          `claims=${result.claims.length} source=${result.source}${ownerNote}${excludeNote}${feedNote} as-of=${result.asOf}`,
         ].join('\n'));
         return 0;
       }

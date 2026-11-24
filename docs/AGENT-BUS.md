@@ -1605,7 +1605,7 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--origin <resource|message|team|board>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--jobs]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
@@ -1613,7 +1613,13 @@ would block an acquire through the same overlap rule, by `--owner` to one
 holder — a handle, `agent:<handle>`, stable id or alias resolved through the
 identity registry, falling back to the exact owner label when the ref does
 not resolve or the registry is unreadable (the JSON `owner` field reports the
-`ref`, resolved `identity` or null, and `registry` state) — or by `--origin`
+`ref`, resolved `identity` or null, and `registry` state) — by
+`--exclude-owner` to every holder but one under the same identity-label
+rule, inverted (the JSON `excludeOwner` field reports the same resolution,
+so "what do the other seats hold" is one read) — by `--contains` to claims
+whose `key`, `sourceId` or `repo`/`branch`/`path` target fields carry the
+needle as a case-insensitive substring, the same `--contains` rule every
+bus read shares — or by `--origin`
 to one claim class (`resource` work leases, `message` message-id claims,
 `team` leases, `board` claims; queue path observations are never live and
 never list). A missing table
@@ -1625,9 +1631,11 @@ so a blocked job names its `agents bus show` handles),
 and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `fleet_bus_claims` (the isolated fleet MCP tool) serves the same
-`listBusClaims` read with `key`, `owner`, `origin` and `jobs` as its only
+`listBusClaims` read with `key`, `owner`, `excludeOwner`, `contains`,
+`origin` and `jobs` as its only
 arguments — the same `parseClaimKey` grammar, printable-label owner bound,
-`COORDINATION_ORIGINS` class filter and feed join the CLI flags share, under
+shared `--contains` bound, `COORDINATION_ORIGINS` class filter and feed join
+the CLI flags share, under
 the identical validation — so an MCP-connected agent reads the claim table's
 own projection without shelling out. Every coordination and feed root stays
 server-owned, `source` keeps `missing` verified-empty and `unavailable` an
