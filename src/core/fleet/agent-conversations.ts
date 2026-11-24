@@ -12,6 +12,7 @@
  */
 import { JOB_THREAD_PREFIX, agentName, projectAgentMessages } from './agent-messages.js';
 import { busBodyJobId, labelIdentityOf } from '../agents/bus-unified.js';
+import { busBodyKind } from '../agents/bus-v2-schema.js';
 import { agentLabels, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
@@ -53,6 +54,10 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
       id: m.id, from: m.from.name, to: m.to.name, kind: m.kind, subject: m.summary, at: Date.parse(m.ts),
       replyTo: text(body?.replyTo) ?? text(body?.inReplyTo),
       priority: m.priority, inReplyTo: ownInReplyTo(body),
+      // The same body-kind discriminator every bus read's body-kind filter
+      // applies, carried to the member item so the thread-level filter can
+      // match it; a body with no discriminator stays absent, never guessed.
+      bodyKind: busBodyKind(body) ?? undefined,
       ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key

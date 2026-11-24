@@ -749,6 +749,60 @@ describe('phm agents conversations --json', () => {
     expect(read({ inReplyTo: 'r1', from: 'grok' })).toEqual([]);
   });
 
+  it('thread keeps the declared bucket and bodyKind the member discriminator, whole threads', () => {
+    const root = bus([
+      [T0, 't1', 'leader', 'claude', { kind: 'note', text: 'ship it?', thread: 'release-1' }],
+      [T0 + MIN, 't2', 'claude', 'leader', { kind: 'note', text: 'on it', replyTo: 't1' }],
+      [T0 + 2 * MIN, 't3', 'grok', 'zai', { text: 'unrelated ping' }],
+      [T0 + 3 * MIN, 't4', 'peer-a', 'peer-b', { kind: 'work.post', jobId: 'RQ-T1', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'] }],
+    ]);
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    // t1 declares release-1 and t2 inherits the bucket through replyTo: one thread.
+    expect(read({ thread: 'release-1' })).toEqual(['release-1']);
+    // The match is exact, never a substring or a reply-chain root.
+    expect(read({ thread: 'release' })).toEqual([]);
+    expect(read({ thread: 't1' })).toEqual([]);
+    // A job:<id> bucket is a declared key too; an undeclared chain's root
+    // envelope id stays --id's match, never --thread's.
+    expect(read({ thread: 'job:RQ-T1' })).toEqual(['job:RQ-T1']);
+    expect(read({ thread: 't3' })).toEqual([]);
+    expect(read({ id: 't3' })).toEqual(['t3']);
+    // bodyKind reads each member's own discriminator: t1/t2 are notes,
+    // t4 is a work.post, t3's kindless body names no provable kind.
+    expect(read({ bodyKind: 'note' })).toEqual(['release-1']);
+    expect(read({ bodyKind: 'work.post' })).toEqual(['job:RQ-T1']);
+    expect(read({ bodyKind: 'context' })).toEqual([]);
+    // They compose like every other member-level filter.
+    expect(read({ thread: 'release-1', bodyKind: 'note' })).toEqual(['release-1']);
+    expect(read({ thread: 'release-1', bodyKind: 'work.post' })).toEqual([]);
+    expect(read({ bodyKind: 'note', from: 'leader' })).toEqual(['release-1']);
+    expect(read({ bodyKind: 'note', from: 'grok' })).toEqual([]);
+    // The member items carry the fields the filters read, verbatim.
+    const thread = readAgentConversations({ thread: 'release-1' }, { root, now: () => NOW }).conversations![0]!;
+    expect(thread.messages.map(m => m.thread)).toEqual(['release-1', 'release-1']);
+    expect(thread.messages.map(m => m.bodyKind)).toEqual(['note', 'note']);
+  });
+
+  it('the CLI --thread and --body-kind filter and refuse bad values', async () => {
+    const root = bus([
+      [T0, 't1', 'leader', 'claude', { kind: 'note', text: 'ship it?', thread: 'release-1' }],
+      [T0 + MIN, 't2', 'claude', 'leader', { kind: 'note', text: 'on it', replyTo: 't1' }],
+      [T0 + 2 * MIN, 't3', 'grok', 'zai', { kind: 'work.status', jobId: 'RQ-T2', status: 'running', text: 'working' }],
+    ]);
+    const lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--thread', 'release-1', '--json'])).toBe(0);
+    const byThread = JSON.parse(lines.pop()!);
+    expect(byThread.conversations.map((c: { id: string }) => c.id)).toEqual(['release-1']);
+    expect(byThread.matched).toBe(1);
+    expect(await run(['--body-kind', 'work.status', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-T2']);
+    expect(await run(['--thread'])).toBe(2);
+    expect(await run(['--body-kind', '--json'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('the CLI prints that JSON, filters, and refuses unknown flags', async () => {
     const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
     const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });

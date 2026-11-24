@@ -47,6 +47,15 @@ export interface ConversationMessage {
    * own-property exact match every bus read's `--in-reply-to` shares. Absent
    * when the body cites nothing through that field. */
   inReplyTo?: string;
+  /** The body's own kind discriminator — the same `busBodyKind` read every
+   * bus read's body-kind filter applies: the v2 `kind` (`note`, `context`,
+   * `work.post`, `work.claim`, `work.status`, `work.result`, `work.release`,
+   * `wake`), a `worker-handoff` or notice kind, a bus-transport v1
+   * `protocol.kind`, else the `type`/`schema` a kindless notice keys on.
+   * Absent when the body carries none, so it never matches a `bodyKind`
+   * filter — the same "unknown stays out" rule every other own-field filter
+   * keeps. */
+  bodyKind?: string;
 }
 
 export interface ConversationAgent { name: string; label: string; known: boolean; node: string | null }
@@ -57,6 +66,10 @@ export interface ConversationItem {
   priority?: BusPriority;
   /** The body's own `inReplyTo` citation, verbatim — never the `replyTo` alias; absent when the body cites nothing through that field. */
   inReplyTo?: string;
+  /** The member's declared conversation bucket — a thread label, `threadId`, `job:<id>` or origin key — verbatim; absent when the message declared none and joined its thread by reply chain alone, so it never matches a `thread` filter. */
+  thread?: string;
+  /** The member's body kind discriminator, verbatim — the same `busBodyKind` field the thread-level `bodyKind` filter reads; absent when the body carries none. */
+  bodyKind?: string;
 }
 /** Two agents that exchanged messages in this thread, for the map's line. */
 export interface ConversationLink { a: string; b: string; count: number; lastAt: string }
@@ -183,6 +196,29 @@ export interface ConversationQuery {
    * the same needs-`--agent` rule the messages read enforces. Whole threads,
    * never partial message lists. */
   with?: string;
+  /** Keep only threads where at least one member message declared this exact
+   * conversation bucket — a thread label, `threadId`, `job:<id>` or origin
+   * key, the same declared-key space the projection groups on — strictly
+   * equal to the value, never a substring or a reply-chain root: an
+   * undeclared chain whose members carry no bucket names no provable thread
+   * and never matches (its root envelope id is `--id`'s match, not this
+   * one's). The same exact own-field rule every bus read's `--thread`
+   * applies — `phm messages --thread`, `agents bus inbox --thread`,
+   * `channel read --thread` and `agents bus wakes --thread` — so "the
+   * conversation labelled X" is one filtered read. Whole threads, never
+   * partial message lists. */
+  thread?: string;
+  /** Keep only threads where at least one member message's body carries this
+   * exact kind discriminator — the same `busBodyKind` field and own-field
+   * exact match every bus read's body-kind filter applies (`agents bus
+   * inbox --body-kind`, `channel read --body-kind`, `agents bus wakes
+   * --body-kind`): the v2 `kind` (`note`, `context`, `work.post`,
+   * `work.claim`, `work.status`, `work.result`, `work.release`, `wake`), a
+   * `worker-handoff` or notice kind, a bus-transport v1 `protocol.kind`,
+   * else the `type`/`schema` a kindless notice keys on. A member message
+   * whose body carries no discriminator names no provable kind and never
+   * matches. Whole threads, never partial message lists. */
+  bodyKind?: string;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -238,7 +274,9 @@ export function groupConversations(messages: readonly ConversationMessage[], now
       links: [...links.values()],
       messages: items.map(m => ({ id: m.id, at: new Date(m.at).toISOString(), from: m.from, to: m.to, kind: m.kind, subject: m.subject,
         ...(m.priority === undefined ? {} : { priority: m.priority }),
-        ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }) })),
+        ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }),
+        ...(m.thread === null || m.thread === undefined ? {} : { thread: m.thread }),
+        ...(m.bodyKind === undefined ? {} : { bodyKind: m.bodyKind }) })),
     });
   }
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
@@ -303,7 +341,18 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * each side through the same name/identity-key match) — so "our thread"
  * is one filtered read while a thread where the two only share a third
  * party or a room never passes; a `with` with no `agent` is an honest
- * empty list, never a widened one. Every one of
+ * empty list, never a widened one. `thread` keeps only the threads where
+ * at least one member message declared that exact conversation bucket —
+ * the same declared-key space the projection groups on (a thread label,
+ * `threadId`, `job:<id>` or origin key), strictly equal, never a
+ * substring — so "the conversation labelled X" is one filtered read
+ * while an undeclared reply chain, whose members carry no bucket, names
+ * no provable thread and never matches (its root envelope id stays
+ * `--id`'s match). `bodyKind` keeps only the threads where at least one
+ * member message's body carries that exact kind discriminator — the
+ * same `busBodyKind` own-field exact match every bus read's body-kind
+ * filter applies — so "which threads carry work.post traffic" is one
+ * filtered read. Every one of
  * these is a member-level test: whole threads survive, never partial
  * message lists, and the matched member stays in `messages[]`.
  */
@@ -351,6 +400,8 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && mentions(c)
     && (query.inReplyTo === undefined || c.messages.some(m => m.inReplyTo === query.inReplyTo))
     && (query.id === undefined || c.messages.some(m => m.id === query.id))
+    && (query.thread === undefined || c.messages.some(m => m.thread === query.thread))
+    && (query.bodyKind === undefined || c.messages.some(m => m.bodyKind === query.bodyKind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))
