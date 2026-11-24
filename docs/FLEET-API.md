@@ -575,7 +575,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -648,7 +648,14 @@ member message's `from` so a thread the agent only receives in never
 passes; `--exclude-from <name>` drops every thread where any member message
 was sent under that agent's labels — the same sender-exclusion rule,
 composing with `--from` so a sender both included and excluded matches
-nothing. Every one of these is a member-level test: whole threads survive,
+nothing. `--with <name>` narrows `--agent` to the threads holding the
+two-way exchange between the two named agents — the same pairwise rule
+`phm messages --agent <a> --with <b>` applies, decided on each member
+message's from/to endpoints in either direction, each side matching by
+the same name/identity-key rule — so "our thread" is one filtered read
+while a thread where the two only share a third party or a room never
+passes; `--with` without `--agent` is a usage error, never a widened
+read. Every one of these is a member-level test: whole threads survive,
 never partial message lists, and the matched member stays in `messages[]`.
 `--limit <1..1024>`
 caps the threads returned, longest-waiting order kept, while `matched` still
@@ -667,10 +674,11 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
-the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
+the same filters as arguments (`agent`, `with` — the other agent in a
+two-way exchange, which needs `agent` — `waiting`/`blocked` booleans,
 `state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
 `channel`, `priority`, `from`, `excludeFrom`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
