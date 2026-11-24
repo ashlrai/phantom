@@ -3,7 +3,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectChangedPaths, selectChangedFiles } from './verify-changed.mjs';
+import { collectChangedPaths, typecheckProjects } from './verify-changed.mjs';
 
 export function parseArgs(argv) {
   const options = { slots: Number(process.env.PHANTOM_TSC_SLOTS ?? 4), waitSeconds: 600, timeoutSeconds: 900, seed: true, json: false, help: false };
@@ -15,7 +15,7 @@ export function parseArgs(argv) {
     else if (arg === '--help') options.help = true;
     else if (arg === '--project') {
       options.project = argv[++i];
-      if (!['backend', 'web', 'all'].includes(options.project)) throw new Error('Invalid --project');
+      if (!['backend', 'web', 'desktop', 'all'].includes(options.project)) throw new Error('Invalid --project');
     } else if (numbers[arg]) options[numbers[arg]] = Number(argv[++i]);
     else throw new Error(`Unknown option: ${arg}`);
   }
@@ -26,9 +26,11 @@ export function parseArgs(argv) {
 }
 
 export function selectProjects(changedPaths, projectFlag) {
-  if (projectFlag === 'all') return ['backend', 'web'];
+  if (projectFlag === 'all') return ['backend', 'web', 'desktop'];
   if (projectFlag) return [projectFlag];
-  return selectChangedFiles(changedPaths, []).webTypecheck ? ['backend', 'web'] : ['backend'];
+  // Backend always runs: its shared build-info is the long pole this tool warms.
+  const projects = typecheckProjects(changedPaths);
+  return ['backend', 'web', 'desktop'].filter((name) => name === 'backend' || projects[name]);
 }
 
 export function slotState({ pidAlive, ageMs, now }) {
@@ -91,7 +93,7 @@ function runProject(root, project, local, timeoutSeconds, setChild) {
   return new Promise((done) => {
     const start = Date.now();
     const cache = mtime(local) == null ? 'cold' : 'warm';
-    const config = project === 'backend' ? 'tsconfig.json' : 'src/web-ui/tsconfig.json';
+    const config = project === 'backend' ? 'tsconfig.json' : project === 'desktop' ? 'desktop/tsconfig.json' : 'src/web-ui/tsconfig.json';
     // Tee diagnostics unchanged while counting TypeScript diagnostic codes.
     const child = spawn(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit', '--incremental', '--tsBuildInfoFile', local, '-p', config], { cwd: root, detached: true, stdio: ['inherit', 'pipe', 'pipe'] });
     setChild(child);
@@ -124,7 +126,7 @@ function killGroup(child) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
-    console.log('Usage: node scripts/typecheck-fast.mjs [--project backend|web|all] [--slots N] [--wait-seconds N] [--timeout-seconds N] [--no-seed] [--json] [--help]');
+    console.log('Usage: node scripts/typecheck-fast.mjs [--project backend|web|desktop|all] [--slots N] [--wait-seconds N] [--timeout-seconds N] [--no-seed] [--json] [--help]');
     return;
   }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');

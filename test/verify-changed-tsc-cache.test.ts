@@ -32,9 +32,10 @@ beforeAll(() => {
   writeFileSync(join(root, 'node_modules/typescript/bin/tsc'), `
     const fs = require('node:fs');
     const path = require('node:path');
-    const project = process.argv[4] === 'tsconfig.json' ? 'backend' : 'web';
+    const configs = { backend: 'tsconfig.json', web: 'src/web-ui/tsconfig.json', desktop: 'desktop/tsconfig.json' };
+    const project = Object.keys(configs).find((name) => configs[name] === process.argv[4]);
     const file = path.resolve('.ashlr-gate/verify', project + '.tsbuildinfo');
-    if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['--noEmit', '-p', project === 'backend' ? 'tsconfig.json' : 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', file])) process.exit(8);
+    if (!project || JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['--noEmit', '-p', configs[project], '--incremental', '--tsBuildInfoFile', file])) process.exit(8);
     if (process.env.FAKE_MODE === 'timeout') setInterval(() => {}, 1000);
     else {
       const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'cold';

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { collectChangedPaths, docsCheckPreflight, masterMovedAuthorityDrift, selectChangedFiles } from '../scripts/verify-changed.mjs';
+import { collectChangedPaths, docsCheckPreflight, masterMovedAuthorityDrift, selectChangedFiles, typecheckArgs, typecheckProjects } from '../scripts/verify-changed.mjs';
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn(), spawnSync: vi.fn() }));
 
@@ -126,5 +126,33 @@ describe('Git changed-path discovery', () => {
       ['diff', '--name-only', '--no-renames', '-z', '--'],
       ['ls-files', '--others', '--exclude-standard', '-z'],
     ]);
+  });
+});
+
+describe('typecheck project selection', () => {
+  it('selects the desktop project for desktop paths, its extends base, and shared manifests', () => {
+    expect(typecheckProjects(['desktop/fleet-map/fleet-node-map.ts'])).toEqual({ backend: false, web: false, desktop: true });
+    expect(typecheckProjects(['desktop/tsconfig.json']).desktop).toBe(true);
+    expect(typecheckProjects(['desktop/README.md']).desktop).toBe(true);
+    // desktop/tsconfig.json extends the web config, so that file feeds both projects.
+    expect(typecheckProjects(['src/web-ui/tsconfig.json'])).toEqual({ backend: false, web: true, desktop: true });
+    expect(typecheckProjects(['package.json'])).toEqual({ backend: true, web: true, desktop: true });
+    expect(typecheckProjects(['package-lock.json']).desktop).toBe(true);
+  });
+
+  it('keeps the desktop project unselected for backend, web-only and docs paths', () => {
+    // src/core feeds desktop through relative imports, the same accepted gap
+    // the web project already has: only Merge Gate's full typecheck covers it.
+    expect(typecheckProjects(['src/core/graph/types.ts'])).toEqual({ backend: true, web: false, desktop: false });
+    expect(typecheckProjects(['src/web-ui/app.tsx'])).toEqual({ backend: false, web: true, desktop: false });
+    expect(typecheckProjects(['docs/guide.md'])).toEqual({ backend: false, web: false, desktop: false });
+    expect(typecheckProjects([])).toEqual({ backend: false, web: false, desktop: false });
+  });
+
+  it('names a distinct incremental build-info file per project', () => {
+    const args = typecheckArgs('/root', 'desktop/tsconfig.json');
+    expect(args.slice(0, 4)).toEqual(['--noEmit', '-p', 'desktop/tsconfig.json', '--incremental']);
+    expect(args.at(-1)).toContain('.ashlr-gate');
+    expect(args.at(-1)).toMatch(/desktop\.tsbuildinfo$/);
   });
 });

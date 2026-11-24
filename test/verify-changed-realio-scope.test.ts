@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { eslintPreflight, runRealioCheck, runWebTypecheck } from '../scripts/verify-changed.mjs';
+import { eslintPreflight, runDesktopTypecheck, runRealioCheck, runWebTypecheck } from '../scripts/verify-changed.mjs';
 
 const missingOutput = `
 [check-realio-lane-membership] The following test files use a real-io marker
@@ -76,6 +76,22 @@ describe('web compiler selection', () => {
     expect(run).toHaveBeenCalledOnce();
     expect(runWebTypecheck('/fixture', 60, run, () => ({ error: { code: 'ETIMEDOUT' } }), () => true)).toBe(false);
     expect(run).toHaveBeenCalledOnce();
+  });
+});
+
+describe('desktop compiler selection', () => {
+  it('uses tsgo on the desktop tsconfig when installed', () => {
+    const spawn = vi.fn(() => ({ status: 0 }));
+    const run = vi.fn();
+    expect(runDesktopTypecheck('/fixture', 60, run, spawn, () => true)).toBe(true);
+    expect(spawn).toHaveBeenCalledWith('/fixture/node_modules/.bin/tsgo', ['--noEmit', '-p', 'desktop/tsconfig.json', '--incremental', '--tsBuildInfoFile', '/fixture/.ashlr-gate/verify/desktop.tsbuildinfo'], expect.objectContaining({ timeout: 60_000 }));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('falls back to tsc with the desktop config and build-info path', () => {
+    const run = vi.fn(() => true);
+    expect(runDesktopTypecheck('/fixture', 60, run, vi.fn(), () => false)).toBe(true);
+    expect(run).toHaveBeenCalledWith('desktop typecheck', 'node_modules/typescript/bin/tsc', ['--noEmit', '-p', 'desktop/tsconfig.json', '--incremental', '--tsBuildInfoFile', '/fixture/.ashlr-gate/verify/desktop.tsbuildinfo'], 60);
   });
 });
 
