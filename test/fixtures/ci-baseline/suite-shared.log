@@ -1,0 +1,13 @@
+ ❯ test/example.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| test/example.test.ts [ test/example.test.ts ]
+Error: Cannot find module './gone.js' imported from /home/runner/work/phantom/phantom/test/example.test.ts
+ ❯ test/example.test.ts:2:1
+      1| import { it } from 'vitest';
+      2| import './gone.js';
+       | ^
+
+ Test Files  1 failed (1)
+      Tests  no tests

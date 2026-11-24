@@ -81,7 +81,7 @@ describe('reading job roots and the CLI', () => {
 
   const deps = (ps: string | null, out: string[]) => ({
     ps: async () => ps, jobRoots: () => [{ jobId: 'RQ-ONE', pid: 400 }, { jobId: 'RQ-TWO', pid: 500 }],
-    load: () => ({ load1: 74.2, load5: 70, load15: 60, cores: 18, ratio: 4.1 }), now: () => 0, write: (text: string) => { out.push(text); },
+    load: () => ({ load1: 74.2, load5: 70, load15: 60, cores: 18, ratio: 4.1 }), now: () => 0, owners: () => ({}), write: (text: string) => { out.push(text); },
   });
 
   it('prints a schema and version in JSON and the same top line for people', async () => {
@@ -89,7 +89,7 @@ describe('reading job roots and the CLI', () => {
     expect(await cmdHost(['load', '--json'], deps(fixture('fleet-heavy'), json))).toBe(0);
     const report = JSON.parse(json.join('')) as HostLoadReport;
     expect(report).toMatchObject({ schema: 'host.load.v1', version: 1, state: 'known' });
-    expect(Object.keys(report)).toEqual(['schema', 'version', 'generatedAt', 'state', 'load1', 'cores', 'jobRoots', 'processes', 'cpuPercent', 'summary', 'groups', 'gaps']);
+    expect(Object.keys(report)).toEqual(['schema', 'version', 'generatedAt', 'state', 'load1', 'cores', 'jobRoots', 'processes', 'cpuPercent', 'summary', 'groups', 'gaps', 'owners']);
     expect(await cmdHost(['load'], deps(fixture('fleet-heavy'), human))).toBe(0);
     const lines = human.join('').split('\n');
     expect(lines[0]).toBe(report.summary);

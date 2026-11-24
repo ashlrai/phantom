@@ -31,7 +31,10 @@ describe('Leader thread references', () => {
     const first = within(row).getByRole('button', { name: 'Open log for RQ-PHX-ONE' });
     expect(within(row).getByRole('button', { name: 'Open log for RQ-PHX-TWO' })).toBeInTheDocument();
     expect(within(row).getByRole('link', { name: '#42' })).toHaveAttribute('href', 'https://github.com/acme/app/pull/42');
-    expect(within(row).getAllByRole('button')).toHaveLength(2);
+    // Each job is its log and its conversation: two buttons a job, none for the pull request.
+    expect(within(row).getAllByRole('button')).toHaveLength(4);
+    expect(within(row).getByRole('button', { name: 'Open the conversation with RQ-PHX-ONE' })).toHaveTextContent('RQ-PHX-ONE');
+    expect(within(row).getByRole('button', { name: 'Open the conversation with RQ-PHX-TWO' })).toBeInTheDocument();
     expect(screen.getAllByLabelText('Mentioned')).toHaveLength(1);
     expect(screen.getByText('Please check RQ-PHX-THREE.').closest('section')).not.toContainElement(row);
     fireEvent.click(first);

@@ -1125,6 +1125,8 @@ export interface AshlrConfig {
    * consensus stores and cannot provide execution authority.
    */
   fleet?: {
+    /** Settings ▸ Live build limits: how far behind master the running build may be before the `build-stale` alert. Unset = 50 commits / 24 hours. */
+    buildStale?: { commits?: number; hours?: number };
     sharedQueue?: {
       /**
        * 'off'        - single-machine mode (default, no shared file).

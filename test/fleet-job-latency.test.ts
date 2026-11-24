@@ -10,12 +10,55 @@ afterEach(() => vi.restoreAllMocks());
 
 it('ranks measured phases and excludes ambiguous and missing boundaries', async () => {
   const report = jobLatency(await readFile(fixture, 'utf8'));
-  expect(report).toMatchObject({ jobs: 2, ignored_events: 1 });
+  expect(report).toMatchObject({ jobs: 3, ignored_events: 1 });
   expect(report.top_wastes.map(x => [x.phase, x.total_seconds, x.measured_jobs, x.missing_jobs])).toEqual([
-    ['merge', 50, 1, 1], ['ci', 40, 1, 1], ['model', 30, 1, 1], ['checkout', 20, 1, 1], ['queue_wait', 10, 1, 1],
+    ['worker', 150, 2, 1], ['merge', 50, 1, 2], ['ci', 40, 1, 2],
+    ['queue_wait', 30, 2, 1], ['model', 30, 1, 2], ['publish_wait', 30, 1, 2], ['checkout', 20, 1, 2],
   ]);
   expect(report.top_wastes.every(x => x.fix_line.length > 0)).toBe(true);
   expect(jobLatency('{"job":"a","event":"launch","ts":"2026-01-01T00:00:02Z"}\n{"job":"a","event":"queued","ts":"2026-01-01T00:00:03Z"}').top_wastes).toEqual([]);
+});
+
+it('reads the production ledger dialects: enqueue arrival, PUBLISHED/published publish, reconciler MERGED', () => {
+  const rows = [
+    // dispatchd's queue-arrival stamp is `enqueue`; the publish producer's
+    // claim is an outcome/state PUBLISHED row; the reconciler appends MERGED.
+    { job: 'RQ-A', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-A', event: 'launch', ts: '2026-01-01T00:00:10Z' },
+    { job: 'RQ-A', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+    { jobId: 'RQ-A', prUrl: 'https://github.com/x/y/pull/1', outcome: 'PUBLISHED', ts: '2026-01-01T00:01:30Z' },
+    // The reconciler copies the publish row and only swaps the outcome: this
+    // is merge evidence, never a second publish boundary.
+    { event: 'publish', jobId: 'RQ-A', prUrl: 'https://github.com/x/y/pull/1', outcome: 'MERGED', ts: '2026-01-01T00:04:00Z', mergedAt: '2026-01-01T00:04:00Z' },
+    // `published` is the publish spelling visit-sync and dispatchd normalize.
+    { job: 'RQ-B', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-B', event: 'launch', ts: '2026-01-01T00:00:05Z' },
+    { job: 'RQ-B', event: 'finish', ts: '2026-01-01T00:00:50Z' },
+    { job: 'RQ-B', event: 'published', url: 'https://github.com/x/y/pull/2', ts: '2026-01-01T00:01:00Z' },
+    // A closed-PR reconciler row is close evidence, never a second publish.
+    { event: 'publish', jobId: 'RQ-B', prUrl: 'https://github.com/x/y/pull/2', outcome: 'CLOSED', ts: '2026-01-01T00:02:00Z', closedAt: '2026-01-01T00:02:00Z' },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  const phase = (name: string) => report.phases.find(p => p.phase === name)!;
+  expect(phase('queue_wait')).toMatchObject({ total_seconds: 15, measured_jobs: 2, missing_jobs: 0 });
+  expect(phase('worker')).toMatchObject({ total_seconds: 95, measured_jobs: 2, missing_jobs: 0 });
+  expect(phase('publish_wait')).toMatchObject({ total_seconds: 40, measured_jobs: 2, missing_jobs: 0 });
+  // publish→merged is measurable even though no ci_start/ci_complete exists.
+  const merge = mergeQueueLatency(text);
+  expect(merge.phases.find(p => p.phase === 'open_to_merge')).toMatchObject({ total_seconds: 150, measured_jobs: 1, missing_jobs: 1 });
+});
+
+it('keeps conflicting publish dialects ambiguous rather than picking one', () => {
+  const text = [
+    { job: 'RQ-C', event: 'enqueue', ts: '2026-01-01T00:00:00Z' },
+    { job: 'RQ-C', event: 'launch', ts: '2026-01-01T00:00:10Z' },
+    { job: 'RQ-C', event: 'finish', ts: '2026-01-01T00:01:00Z' },
+    { job: 'RQ-C', event: 'publish', url: 'https://github.com/x/y/pull/3', ts: '2026-01-01T00:01:20Z' },
+    { jobId: 'RQ-C', prUrl: 'https://github.com/x/y/pull/3', outcome: 'PUBLISHED', ts: '2026-01-01T00:01:40Z' },
+  ].map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  expect(report.phases.find(p => p.phase === 'publish_wait')).toMatchObject({ total_seconds: null, measured_jobs: 0, missing_jobs: 1 });
 });
 
 it('supports JSON, reports read errors, and is registered', async () => {
@@ -49,16 +92,32 @@ it('uses actual merge time, aliases and shuffled events without counting duplica
   const report = mergeQueueLatency(rows.map(row => JSON.stringify(row)).join('\n'));
   expect(report.schema).toBe('pulse.merge-latency.v1');
   expect(report.phases.map(p => [p.phase, p.total_seconds, p.measured_jobs, p.missing_jobs])).toEqual([
-    ['check_wait', 60, 1, 0], ['ci', 60, 1, 0], ['merge', 60, 1, 0],
+    ['check_wait', 60, 1, 0], ['ci', 60, 1, 0], ['merge', 60, 1, 0], ['open_to_merge', 180, 1, 0],
   ]);
   expect(mergeQueueLatency([event('ci_start', start), event('ci_complete', start)].map(row => JSON.stringify(row)).join('\n')).phases[1]?.total_seconds).toBe(0);
+});
+
+it('reads the remaining timestamp aliases and the kind event key', () => {
+  const rows = [
+    { job: 'attempt-1', kind: 'enqueue', time: '2026-01-01T00:00:00Z' },
+    { job: 'attempt-1', type: 'launch', at: '2026-01-01T00:00:10Z' },
+    { job: 'attempt-1', event: 'finish', recordedAt: '2026-01-01T00:01:00Z' },
+    { job: 'attempt-1', outcome: 'PUBLISHED', updatedAt: '2026-01-01T00:01:30Z' },
+  ];
+  const text = rows.map(row => JSON.stringify(row)).join('\n');
+  const report = jobLatency(text);
+  const phase = (name: string) => report.phases.find(p => p.phase === name)!;
+  expect(report).toMatchObject({ jobs: 1, ignored_events: 0 });
+  expect(phase('queue_wait')).toMatchObject({ total_seconds: 10, measured_jobs: 1 });
+  expect(phase('worker')).toMatchObject({ total_seconds: 50, measured_jobs: 1 });
+  expect(phase('publish_wait')).toMatchObject({ total_seconds: 30, measured_jobs: 1 });
 });
 
 it('exposes versioned pulse JSON and plain text, including unreadable ledgers and usage errors', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   expect(await cmdPulse(['merge-latency', '--jobs', fixture, '--json'])).toBe(0);
-  expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'pulse.merge-latency.v1', known: true, jobs: 2 });
+  expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'pulse.merge-latency.v1', known: true, jobs: 3 });
   expect(await cmdPulse(['merge-latency', '--jobs', fixture])).toBe(0);
   expect(log.mock.calls.at(-1)![0]).toContain('Waiting for checks: unknown');
   expect(log.mock.calls.at(-1)![0]).toContain('Running checks: 40s total observed');

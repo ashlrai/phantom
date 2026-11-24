@@ -23,6 +23,30 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('fleet heartbeat', () => {
+  it('bounds hung probes, cancels them, and retains the independent stale tick', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const pending = readFleetHeartbeat({ queueStatus: async () => queue(45),
+        supervisorStatuses: async s => { signal = s; return new Promise(() => {}); } }, NOW, 30);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect((await pending).sources.map(s => s.reason)).toEqual(['old', 'timeout']);
+      expect(signal?.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      const cli = cmdFleetHeartbeat([], { reader: { ...reader(null), queueStatus: () => new Promise(() => {}) }, now: () => NOW });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await cli).toBe(1);
+      expect(out).toContain('queue/status.json: probe timed out STALE');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('reports failed probes without exposing their errors or silently declaring health', async () => {
+    const view = await readFleetHeartbeat({ queueStatus: () => { throw new Error('private fixture detail'); },
+      supervisorStatuses: async () => { throw new Error('private fixture detail'); } }, NOW, 30);
+    expect(view.sources.map(s => s.reason)).toEqual(['unreadable', 'unreadable']);
+    expect(JSON.stringify(view)).not.toContain('private fixture detail');
+  });
+
   it('all fresh prints one line per source and exits 0', async () => {
     const r = reader(queue(5), [{ name: 'status-main.md', text: `# Supervisor ${at(10)}\nmain: up\n` }]);
     expect(await cmdFleetHeartbeat([], { reader: r, now: () => NOW })).toBe(0);

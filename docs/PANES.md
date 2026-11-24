@@ -18,6 +18,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-direct` | Direct | none | `src/web-ui/routes/verse/fleet-direct/fleet-direct.pane.tsx` |
 | `fleet-dispatch` | Dispatch | — | `src/web-ui/routes/verse/fleet-dispatch/fleet-dispatch.pane.tsx` |
 | `fleet-events` | Fleet events | `mod+alt+e` | `src/web-ui/routes/verse/fleet-events/fleet-events.pane.tsx` |
+| `fleet-inventory` | Inventory | none | `src/web-ui/routes/verse/inventory/inventory.pane.tsx` |
 | `fleet-forum` | Forum | none | `src/web-ui/routes/verse/fleet-forum/fleet-forum.pane.tsx` |
 | `fleet-goals` | Goals | — | `src/web-ui/routes/verse/fleet-goals/fleet-goals.pane.tsx` |
 | `fleet-graph` | Graph | — | `src/web-ui/routes/verse/fleet-graph/fleet-graph.pane.tsx` |
@@ -37,6 +38,7 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `fleet-pools` | Pools | none | `src/web-ui/routes/verse/fleet-pools/fleet-pools.pane.tsx` |
 | `fleet-queue` | Queue | `mod+alt+q` | `src/web-ui/routes/verse/fleet-queue/fleet-queue.pane.tsx` |
 | `fleet-releases` | Releases | — | `src/web-ui/routes/verse/fleet-releases/fleet-releases.pane.tsx` |
+| `fleet-router` | Router | none | `src/web-ui/routes/verse/fleet-router/fleet-router.pane.tsx` |
 | `fleet-sessions` | Sessions | none | `src/web-ui/routes/verse/fleet-sessions/fleet-sessions.pane.tsx` |
 | `fleet-skills` | Skills | none | `src/web-ui/routes/verse/fleet-installed/fleet-installed.pane.tsx` |
 | `fleet-steer` | Steer | none | `src/web-ui/routes/verse/fleet-steer/fleet-steer.pane.tsx` |
@@ -54,8 +56,10 @@ Every tab in the desktop console's dock is a pane registered from a `*.pane.tsx`
 | `leader-journal` | Leader journal | `mod+alt+j` | `src/web-ui/routes/verse/leader-journal/leader-journal.pane.tsx` |
 | `leader-thread` | Leaders | `mod+alt+l` | `src/web-ui/routes/verse/leader-thread/leader-thread.pane.tsx` |
 | `library` | Library | — | `src/web-ui/routes/verse/library/library.pane.tsx` |
+| `mason-thread` | Mason | none | `src/web-ui/routes/verse/mason-thread/mason-thread.pane.tsx` |
 | `models` | Models | none | `src/web-ui/routes/verse/models/models.pane.tsx` |
 | `reasoning` | Reasoning | — | `src/web-ui/routes/verse/reasoning/reasoning.pane.tsx` |
+| `session-wall` | Conversations | none | `src/web-ui/routes/verse/session-wall/session-wall.pane.tsx` |
 | `sources` | Sources | — | `src/web-ui/routes/verse/reasoning/sources.pane.tsx` |
 | `terminal` | Terminal | — | `src/web-ui/routes/verse/terminal/terminal.pane.tsx` |
 | `worker-log` | Worker log | — | `src/web-ui/routes/verse/fleet-job-log/fleet-job-log.pane.tsx` |

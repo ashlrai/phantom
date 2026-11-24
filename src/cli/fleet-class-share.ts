@@ -1,29 +1,20 @@
 /** Offline accounting only; never changes dispatch or merge authority. */
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { laneClassShare } from '../core/fleet/lane-class-share.js';
+import { readJobsTail } from '../core/fleet/report-ledger.js';
 
 const usage = `ashlr fleet class-share [--hours N] [--json]
 Read-only event totals in the trailing window. Missing finishes contribute zero known tokens; PRs dedupe by URL.`;
 
+/** Retained tail bound for the class-share ledger read. */
+const CLASS_SHARE_JOBS_TAIL_BYTES = 32 * 1024 * 1024;
+
+/** Newest CLASS_SHARE_JOBS_TAIL_BYTES of metrics/jobs.jsonl; any read failure throws. */
 export async function readClassShareJobs(): Promise<string> {
-  const file = await open(join(homedir(), '.ashlr-runs/metrics/jobs.jsonl'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const limit = 32 * 1024 * 1024;
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > limit) throw new Error('Unavailable metrics');
-    const buffer = Buffer.alloc(limit + 1);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset);
-      if (!bytesRead) break;
-      offset += bytesRead;
-    }
-    if (offset > limit) throw new Error('Unavailable metrics');
-    return buffer.subarray(0, offset).toString('utf8');
-  } finally { await file.close(); }
+  const read = await readJobsTail(join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl'), CLASS_SHARE_JOBS_TAIL_BYTES);
+  if (read.text === null) throw new Error('Unavailable metrics');
+  return read.text;
 }
 
 export async function cmdFleetClassShare(args: string[], readJobs = readClassShareJobs, now = Date.now()): Promise<number> {

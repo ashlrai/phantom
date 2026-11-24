@@ -68,7 +68,7 @@ describe('phm apps restart, dry-run and safety', () => {
   it('lists running, closed and unknown apps with typed kind, process name and last action', async () => {
     const lastActions = () => new Map([['cursor' as const, { action: 'open', outcome: 'done', at: '2026-11-18T10:00:00.000Z' }]]);
     const report = await readMacApps({ probe, home: '/Users/fixture', lastActions });
-    expect(report).toMatchObject({ schema: 'phm.apps/1', version: 1, probe: 'partial' });
+    expect(report).toMatchObject({ schema: 'phm.apps/2', version: 2, probe: 'partial' });
     const by = (id: string) => report.apps.find(a => a.id === id)!;
     expect(by('claude')).toMatchObject({ kind: 'agent-app', running: true, memoryMb: 200, processName: 'Claude', lastAction: null });
     expect(by('cursor')).toMatchObject({ kind: 'ide', running: false, processName: null, lastAction: { action: 'open', outcome: 'done' } });

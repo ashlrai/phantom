@@ -1,4 +1,5 @@
 import { scrubSecrets } from '../../util/scrub.js';
+import { validNodeTask } from './task.js';
 import type { NodeCapacity } from './capacity.js';
 import type { LeaderLease, NodeSession, QueueJobV1 } from './queue-v1.js';
 
@@ -99,6 +100,7 @@ export function parseState(value: unknown): NodesState {
     (j.owner === undefined || validId(j.owner)) && (j.requires === undefined || list(j.requires, validCap)) &&
     (j.declined === undefined || (Array.isArray(j.declined) && j.declined.length <= 16 && j.declined.every(token))) &&
     (j.pack === undefined || validId(j.pack)) && (j.secrets === undefined || list(j.secrets, validSecretName)) &&
+    (j.task === undefined || (j.pack === 'codex-file' && validNodeTask(j.task))) &&
     ['pending', 'running', 'completed'].includes(String(j.state)) &&
     (j.executionHostId === undefined || validId(j.executionHostId)) &&
     (j.startedAt === undefined || integer(j.startedAt)) && (j.completedAt === undefined || integer(j.completedAt)) &&

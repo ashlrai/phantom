@@ -26,7 +26,8 @@ async function record(dir: string, name: string, text: string, minutesAgo: numbe
   const when = new Date(at - minutesAgo * 60_000);
   await utimes(join(dir, name), when, when);
 }
-const lane = (running: number, target: number, queued: number) => ({ running, target, queued, held: false });
+const lane = (running: number, target: number, queued: number, effectiveTarget?: number) =>
+  ({ running, target, queued, held: false, ...(effectiveTarget === undefined ? {} : { effective_target: effectiveTarget }) });
 
 /** One runs directory holding every kind, plus records that must stay off the list. */
 async function fixture(): Promise<string> {
@@ -41,7 +42,7 @@ async function fixture(): Promise<string> {
   await record(dir, 'pub-one.publish', 'RESULT PR none\n', 100);
   await record(dir, 'old-one.launch', 'HELD: ultra reading older than 8h\n', 8 * 24 * 60);
   await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: ago(0), paused: false, mem_free_pct: 50,
-    lanes: { grok: lane(0, 3, 2), cursor: lane(0, 1, 0), devin: lane(0, 0, 0), claude: lane(2, 8, 1) } }));
+    lanes: { grok: lane(0, 3, 2), cursor: lane(0, 1, 0), devin: lane(0, 0, 0), claude: lane(2, 8, 1), zai: lane(0, 3, 0, 0) } }));
   await writeFile(join(dir, 'metrics/jobs.jsonl'), [
     { job: 'grok-one', event: 'launch', lane: 'grok', ts: ago(4000) },
     { job: 'grok-one', event: 'launch', lane: 'grok', ts: ago(5) },
@@ -70,9 +71,21 @@ describe('fleet held: launched but not actually running', () => {
     ]);
   });
 
+  it('reads launch, finish and publish facts through the jobs-ledger field dialect', () => {
+    const tail = [
+      { job_id: 'dial-one', type: 'launch', pool: 'claude', at: ago(180) },
+      { jobId: 'dial-one', kind: 'finish', timestamp: ago(120) },
+      { id: 'dial-two', event: 'published', lane: 'claude', recordedAt: ago(90) },
+      { job_id: 'dial-two', type: 'finish', at: ago(100) },
+    ].map(row => JSON.stringify(row)).join('\n');
+    expect(fleetNotRunning({ lanes: [], launches: [], metricsTail: tail, now })).toEqual([
+      { job_or_lane: 'dial-one', kind: 'finished_no_publish', since: ago(120), reason: 'Finished with no publish record', unblock: 'Republish this job or requeue it' },
+    ]);
+  });
+
   it('leaves out a lane with target 0, fresh launches, published jobs and week-old records', async () => {
     const names = (await read(await fixture())).notRunning!.map(row => row.job_or_lane);
-    for (const name of ['devin', 'grok', 'claude', 'fresh-one', 'pub-one', 'merged-one', 'cursor-old', 'old-one']) expect(names).not.toContain(name);
+    for (const name of ['devin', 'grok', 'claude', 'zai', 'fresh-one', 'pub-one', 'merged-one', 'cursor-old', 'old-one']) expect(names).not.toContain(name);
   });
 
   it('returns an empty list without throwing when the runs directory is missing', async () => {
@@ -99,6 +112,13 @@ describe('fleet held: launched but not actually running', () => {
     expect(rows).toEqual([{ job_or_lane: 'zai', kind: 'idle_lane', reason: 'Lane held: owner hold', since: null, unblock: 'Release the hold on this lane' }]);
     expect(formatNotRunning(rows)).toBe('Not actually running: 1\nzai  idle_lane\n  Why: Lane held: owner hold\n  Next: Release the hold on this lane');
     expect(formatNotRunning([])).toMatch(/^Nothing is stuck/);
+  });
+
+  it('treats a lane shed to zero launch slots as curtailed, not idle', () => {
+    const shed = { lane: 'gemini', running: 0, target: 3, queued: 0, held: false, effectiveTarget: 0 };
+    expect(fleetNotRunning({ lanes: [shed], launches: [], metricsTail: '', now })).toEqual([]);
+    const partial = { ...shed, effectiveTarget: 2 };
+    expect(fleetNotRunning({ lanes: [partial], launches: [], metricsTail: '', now }).map(row => row.job_or_lane)).toEqual(['gemini']);
   });
 });
 

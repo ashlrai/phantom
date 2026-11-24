@@ -68,16 +68,28 @@ function parseSteer(verb: string, args: string[]): { request?: SteerRequest; jso
   return { request: { action: 'job.stop', job: positionals[0]! }, ...out };
 }
 
+const isHelpFlag = (arg: string): boolean => arg === '--help' || arg === '-h';
+
+/**
+ * The read verbs take only `--json`. A help flag beside `--json` (in either order) is a
+ * help request, answered before any companion read. Any other argument is not a help
+ * request and keeps its refusal, so `locus --bogus --help` still exits 2.
+ */
+function isReadVerbHelp(args: string[]): boolean {
+  const rest = args.slice(1);
+  return rest.some(isHelpFlag) && rest.every(arg => arg === '--json' || isHelpFlag(arg));
+}
+
 export async function cmdWb(args: string[]): Promise<number> {
   const verb = args[0];
-  if (verb === undefined || verb === '--help' || verb === '-h') { console.log(HELP); return 0; }
+  if (verb === undefined || isHelpFlag(verb)) { console.log(HELP); return 0; }
+  if ((verb === 'locus' || verb === 'secrets') && isReadVerbHelp(args)) { console.log(HELP); return 0; }
   if (verb === 'locus') {
     if (args.slice(1).some(arg => arg !== '--json') || args.length > 2) { console.error(HELP); return 2; }
     console.log(JSON.stringify(await readWbLocus(), null, 2));
     return 0;
   }
   if (verb === 'secrets') {
-    if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return 0; }
     if (args.slice(1).some(arg => arg !== '--json')) { console.error(HELP); return 2; }
     return cmdSecrets(args.slice(1));
   }

@@ -40,6 +40,8 @@ export interface HostTopReport {
   host: {
     load1: number | null; load5: number | null; cores: number | null;
     pressure: 'normal' | 'warning' | 'critical' | null; swapUsedGb: number | null; memoryFreePercent: number | null;
+    /** Where free disk is heading. An older server may still omit it. */
+    disk?: HostDiskTrend;
   };
   /** Exactly the sum of the buckets. cpuPercent is ps CPU, where 100 is one busy core. */
   totals: { cpuPercent: number; rssMb: number; processes: number };
@@ -53,10 +55,101 @@ export interface HostTopReport {
   gaps: string[];
 }
 
+/** The free-disk floor the trend measures to, in GB: the same reuse-only line as the fleet's disk guards. */
+export const HOST_DISK_FLOOR_GB = 100;
+/** Reaching the floor in fewer hours than this is a warning. */
+export const HOST_DISK_WARN_HOURS = 12;
+/** A change smaller than this many GB per hour reads as holding steady. */
+const HOST_DISK_FLAT_GB_PER_HOUR = 0.1;
+
+/** One free-disk reading: `at` is epoch seconds, `freeGb` is decimal GB. */
+export interface HostDiskSample { at: number; freeGb: number }
+
+export interface HostDiskTrend {
+  /** The newest reading, or null when nothing was readable. */
+  freeGb: number | null;
+  /** How fast free disk is changing in GB per hour: positive falling, negative rising, null when unknown. */
+  gbPerHour: number | null;
+  /** The last run of readings said in plain words; `unknown` when there are fewer than two. */
+  direction: 'falling' | 'flat' | 'rising' | 'unknown';
+  /** The floor free disk is measured against, in GB. */
+  floorGb: number;
+  /** Hours until free disk reaches the floor: 0 when already at or below it, null when unknown or not falling. */
+  hoursToFloor: number | null;
+  /** The warning horizon that `warning` is measured against, in hours. */
+  warnUnderHours: number;
+  warning: 'below-floor' | 'under-warn-hours' | null;
+  /** How many readings the trend used, the live reading included. */
+  samples: number;
+  /** When the newest reading was taken; null when nothing was readable. */
+  observedAt: string | null;
+}
+
+/**
+ * The free-disk trend over the readings given: GB per hour, hours to the floor, and whether that is too soon.
+ * The trend is the last run of readings moving one way, so a cleanup that raises free disk starts a new run
+ * instead of hiding a fall behind it. Junk rows (negative, infinite, or future-dated) are ignored; the last
+ * row wins for a repeated timestamp. Pure: no clock, no disk, no writes.
+ */
+export function diskTrend(samples: readonly HostDiskSample[], floorGb: number, now: number): HostDiskTrend {
+  const trend: HostDiskTrend = { freeGb: null, gbPerHour: null, direction: 'unknown', floorGb, hoursToFloor: null,
+    warnUnderHours: HOST_DISK_WARN_HOURS, warning: null, samples: 0, observedAt: null };
+  const rows = new Map<number, number>();
+  for (const { at, freeGb } of samples) {
+    if (!Number.isFinite(at) || !Number.isFinite(freeGb) || at < 0 || freeGb < 0 || at * 1000 > now) continue;
+    rows.set(at, freeGb);
+  }
+  const sorted = [...rows].sort((a, b) => a[0] - b[0]);
+  trend.samples = sorted.length;
+  const newest = sorted.at(-1);
+  if (!newest) return trend;
+  trend.freeGb = round1(newest[1]);
+  trend.observedAt = new Date(newest[0] * 1000).toISOString();
+  let start = sorted.length - 1;
+  if (start > 0) {
+    // Walk back while the readings keep moving the way the newest step moved (equals keep the run going).
+    const rising = sorted[start - 1]![1] <= sorted[start]![1];
+    while (start > 0 && (rising ? sorted[start - 1]![1] <= sorted[start]![1] : sorted[start - 1]![1] >= sorted[start]![1])) start--;
+    const first = sorted[start]!;
+    const perHour = (first[1] - newest[1]) * 3600 / (newest[0] - first[0]);
+    if (Math.abs(perHour) < HOST_DISK_FLAT_GB_PER_HOUR) trend.direction = 'flat';
+    else { trend.gbPerHour = Math.round(perHour * 100) / 100; trend.direction = perHour > 0 ? 'falling' : 'rising'; }
+  }
+  if (trend.freeGb <= floorGb) { trend.hoursToFloor = 0; trend.warning = 'below-floor'; }
+  else if (trend.direction === 'falling' && trend.gbPerHour !== null) {
+    trend.hoursToFloor = Math.round((trend.freeGb - floorGb) / trend.gbPerHour * 10) / 10;
+    if (trend.hoursToFloor < HOST_DISK_WARN_HOURS) trend.warning = 'under-warn-hours';
+  }
+  return trend;
+}
+
+const diskHoursWords = (hours: number): string =>
+  hours < 1 ? 'under an hour' : `about ${hours < 10 ? Math.round(hours * 10) / 10 : Math.round(hours)} hours`;
+
+/** The free-disk part of the host line. Unknown is said as unknown. */
+export function describeHostDisk(disk: HostDiskTrend | null | undefined): string {
+  if (!disk || disk.freeGb === null) return 'free disk unknown';
+  const free = `${disk.freeGb} GB`;
+  if (disk.direction === 'unknown') return `free disk ${free}, no trend yet`;
+  if (disk.direction === 'flat') return `free disk ${free}, holding steady`;
+  const rate = `${Math.abs(disk.gbPerHour!).toFixed(1)} GB an hour`;
+  if (disk.direction === 'rising') return `free disk ${free}, rising ${rate}`;
+  return `free disk ${free}, falling ${rate}${disk.hoursToFloor === null ? '' : `, ${diskHoursWords(disk.hoursToFloor)} to the ${disk.floorGb} GB floor`}`;
+}
+
+/** The warning line, shown wherever the report is: null when there is nothing to warn about. */
+export function hostDiskWarningLine(disk: HostDiskTrend | null | undefined): string | null {
+  if (!disk || !disk.warning) return null;
+  if (disk.warning === 'below-floor') return `Warning: free disk is ${disk.freeGb} GB, below the ${disk.floorGb} GB floor.`;
+  return `Warning: free disk is ${disk.freeGb} GB, falling ${disk.gbPerHour!.toFixed(1)} GB an hour; it reaches the ${disk.floorGb} GB floor in ${diskHoursWords(disk.hoursToFloor!)}.`;
+}
+
 export const hostTopMemory = (rssMb: number): string => rssMb >= 1024 ? `${(rssMb / 1024).toFixed(rssMb >= 10240 ? 0 : 1)} GB` : `${rssMb} MB`;
 
-/** The load, pressure and swap line, shared by the CLI and the card. Unknown is said as unknown. */
+/** The load, pressure, swap and free-disk line, shared by the CLI and the card. Unknown is said as unknown.
+ *  A disk that is heading for its floor too soon moves to its own warning line instead of this one. */
 export function describeHostTop(host: HostTopReport['host']): string {
   const load = host.load1 === null ? 'Load unknown' : `Load ${round1(host.load1)}${host.load5 === null ? '' : ` (${round1(host.load5)} over 5 minutes)`}${host.cores === null ? '' : ` on ${host.cores} cores`}`;
-  return `${load} · memory pressure ${host.pressure ?? 'unknown'} · swap used ${host.swapUsedGb === null ? 'unknown' : `${host.swapUsedGb} GB`}`;
+  const base = `${load} · memory pressure ${host.pressure ?? 'unknown'} · swap used ${host.swapUsedGb === null ? 'unknown' : `${host.swapUsedGb} GB`}`;
+  return host.disk && !host.disk.warning ? `${base} · ${describeHostDisk(host.disk)}` : base;
 }

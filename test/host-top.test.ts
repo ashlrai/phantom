@@ -1,20 +1,27 @@
-/** `phm host top`: canned ps and vm_stat text in, typed buckets and one plain line out. Nothing here runs a command or reads the real home. */
-import { readFileSync } from 'node:fs';
+/** `phm host top`: canned ps, vm_stat and disk readings in, typed buckets and one plain line out. Nothing here runs a command or reads the real home. */
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { cmdHost } from '../src/cli/host.js';
-import { HOST_TOP_BUCKETS, buildHostTop, describeHostTop, readHostTopReport, type HostTopBucketId, type HostTopInput, type HostTopReport } from '../src/core/fleet/host-top.js';
+import {
+  HOST_TOP_BUCKETS, buildHostTop, describeHostTop, diskTrend, hostDiskWarningLine, parseDiskHistory, readDiskSamples, readHostTopReport,
+  type HostTopBucketId, type HostTopInput, type HostTopReport,
+} from '../src/core/fleet/host-top.js';
 import { createFleetMemoryApi, VERSE_FLEET_HOST_TOP_PATH } from '../src/core/verse/fleet-memory-api.js';
 import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 
 const fixture = (name: string): string => readFileSync(join(__dirname, 'fixtures', 'host-top', `${name}.txt`), 'utf8');
 const GB = 1024 ** 3;
+const HOUR = 3600;
+const UNKNOWN_DISK = { freeGb: null, gbPerHour: null, direction: 'unknown', floorGb: 100, hoursToFloor: null, warnUnderHours: 12, warning: null, samples: 0, observedAt: null };
 const SWAP = 'vm.swapusage: total = 11264.00M  used = 10444.80M  free = 819.20M  (encrypted)';
 const input = (over: Partial<HostTopInput> = {}): HostTopInput => ({
   psText: fixture('busy-mac'), jobRoots: [{ jobId: 'RQ-ONE', pid: 300 }], load: { load1: 41.23, load5: 38, cores: 18 },
-  vmStatText: fixture('vm-stat'), swapText: SWAP, pressureText: '2\n', totalBytes: 64 * GB, frontApp: '/Applications/Cursor.app', now: 0, ...over,
+  vmStatText: fixture('vm-stat'), swapText: SWAP, pressureText: '2\n', totalBytes: 64 * GB, frontApp: '/Applications/Cursor.app',
+  diskSamples: [{ at: 0, freeGb: 412 }], now: 0, ...over,
 });
 const bucket = (report: HostTopReport, id: HostTopBucketId) => report.buckets.find(b => b.id === id)!;
 const brief = (report: HostTopReport) => Object.fromEntries(report.buckets.map(b => [b.id, [b.cpuPercent, b.rssMb, b.processes]]));
@@ -91,17 +98,18 @@ describe('buildHostTop', () => {
     expect(report.suggestion).toEqual({ line: 'Nothing is using much of this Mac. The largest is Cursor, using 500 MB and 3% CPU.', bucket: null, action: null });
   });
 
-  it('reads load, memory pressure, swap and free memory, and shows unknown as unknown', () => {
+  it('reads load, memory pressure, swap, free memory and the free-disk trend, and shows unknown as unknown', () => {
     const known = buildHostTop(input());
-    expect(known.host).toEqual({ load1: 41.23, load5: 38, cores: 18, pressure: 'warning', swapUsedGb: 10.2, memoryFreePercent: 6 });
-    expect(describeHostTop(known.host)).toBe('Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure warning · swap used 10.2 GB');
-    const blind = buildHostTop(input({ jobRoots: null, load: { load1: null, load5: null, cores: null }, vmStatText: null, swapText: 'odd words', pressureText: '3', totalBytes: null, frontApp: null }));
-    expect(blind.host).toEqual({ load1: null, load5: null, cores: null, pressure: null, swapUsedGb: null, memoryFreePercent: null });
-    expect(describeHostTop(blind.host)).toBe('Load unknown · memory pressure unknown · swap used unknown');
+    expect(known.host).toEqual({ load1: 41.23, load5: 38, cores: 18, pressure: 'warning', swapUsedGb: 10.2, memoryFreePercent: 6,
+      disk: { ...UNKNOWN_DISK, freeGb: 412, samples: 1, observedAt: '1970-01-01T00:00:00.000Z' } });
+    expect(describeHostTop(known.host)).toBe('Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure warning · swap used 10.2 GB · free disk 412 GB, no trend yet');
+    const blind = buildHostTop(input({ jobRoots: null, load: { load1: null, load5: null, cores: null }, vmStatText: null, swapText: 'odd words', pressureText: '3', totalBytes: null, frontApp: null, diskSamples: [] }));
+    expect(blind.host).toEqual({ load1: null, load5: null, cores: null, pressure: null, swapUsedGb: null, memoryFreePercent: null, disk: UNKNOWN_DISK });
+    expect(describeHostTop(blind.host)).toBe('Load unknown · memory pressure unknown · swap used unknown · free disk unknown');
     expect(blind.state).toBe('partial');
-    expect(blind.gaps.slice(0, 6)).toEqual([
+    expect(blind.gaps.slice(0, 7)).toEqual([
       'Fleet job roots are unknown, so fleet workers are counted under other buckets.', 'The app in front is unknown.', 'Load is unknown.',
-      'Memory pressure is unknown.', 'Swap used is unknown.', 'Free memory is unknown.',
+      'Memory pressure is unknown.', 'Swap used is unknown.', 'Free memory is unknown.', 'Free disk is unknown.',
     ]);
     // Without job roots the worker tree is not claimed for the fleet, and without a front app nothing is quit.
     expect(bucket(blind, 'fleet-workers').processes).toBe(0);
@@ -115,12 +123,87 @@ describe('buildHostTop', () => {
   });
 });
 
+describe('diskTrend', () => {
+  it('reads a falling trend: GB per hour, hours to the floor, and a warning under 12 hours', () => {
+    expect(diskTrend([{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 340 }], 100, 3 * HOUR * 1000)).toEqual({
+      freeGb: 340, gbPerHour: 30, direction: 'falling', floorGb: 100, hoursToFloor: 8, warnUnderHours: 12,
+      warning: 'under-warn-hours', samples: 2, observedAt: '1970-01-01T02:00:00.000Z',
+    });
+    expect(hostDiskWarningLine(diskTrend([{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 340 }], 100, 3 * HOUR * 1000)))
+      .toBe('Warning: free disk is 340 GB, falling 30.0 GB an hour; it reaches the 100 GB floor in about 8 hours.');
+  });
+
+  it('stays quiet when the floor is far away, and measures hours against the floor it is given', () => {
+    expect(diskTrend([{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 394 }], 100, 2 * HOUR * 1000))
+      .toMatchObject({ gbPerHour: 3, direction: 'falling', hoursToFloor: 98, warning: null });
+    expect(diskTrend([{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 340 }], 250, 3 * HOUR * 1000))
+      .toMatchObject({ floorGb: 250, hoursToFloor: 3, warning: 'under-warn-hours' });
+    expect(hostDiskWarningLine(diskTrend([{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 394 }], 100, 2 * HOUR * 1000))).toBe(null);
+  });
+
+  it('warns below the floor even without a trend', () => {
+    expect(diskTrend([{ at: 0, freeGb: 96.4 }], 100, HOUR * 1000))
+      .toMatchObject({ freeGb: 96.4, direction: 'unknown', hoursToFloor: 0, warning: 'below-floor' });
+  });
+
+  it('reads holding steady when the readings barely move', () => {
+    expect(diskTrend([{ at: 0, freeGb: 400.02 }, { at: HOUR, freeGb: 400.05 }, { at: 2 * HOUR, freeGb: 399.98 }], 100, 2 * HOUR * 1000))
+      .toMatchObject({ freeGb: 400, direction: 'flat', gbPerHour: null, hoursToFloor: null, warning: null });
+  });
+
+  it('reads rising after a cleanup, measured from the cleanup onward', () => {
+    const trend = diskTrend([{ at: 0, freeGb: 400 }, { at: HOUR, freeGb: 380 }, { at: 2 * HOUR, freeGb: 460 }, { at: 3 * HOUR, freeGb: 480 }], 100, 3 * HOUR * 1000);
+    expect(trend).toMatchObject({ freeGb: 480, gbPerHour: -50, direction: 'rising', hoursToFloor: null, warning: null, samples: 4 });
+    expect(describeHostTop(buildHostTop(input({ now: 4 * HOUR * 1000, diskSamples: [{ at: HOUR, freeGb: 380 }, { at: 3 * HOUR, freeGb: 480 }] })).host))
+      .toBe('Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure warning · swap used 10.2 GB · free disk 480 GB, rising 50.0 GB an hour');
+  });
+
+  it('says one reading is no trend yet, and empty input is unknown', () => {
+    expect(diskTrend([{ at: HOUR, freeGb: 412 }], 100, 2 * HOUR * 1000))
+      .toMatchObject({ freeGb: 412, gbPerHour: null, direction: 'unknown', hoursToFloor: null, warning: null, samples: 1 });
+    expect(diskTrend([], 100, HOUR * 1000)).toEqual(UNKNOWN_DISK);
+  });
+
+  it('ignores damaged readings and keeps the last row for a repeated time', () => {
+    const readings = [
+      { at: -5, freeGb: 900 }, { at: 5 * HOUR, freeGb: 900 }, { at: HOUR, freeGb: -1 }, { at: HOUR, freeGb: Number.NaN },
+      { at: HOUR, freeGb: 400 }, { at: 2 * HOUR, freeGb: 380 }, { at: 2 * HOUR, freeGb: 370 },
+    ];
+    expect(diskTrend(readings, 100, 4 * HOUR * 1000)).toMatchObject({ freeGb: 370, gbPerHour: 30, direction: 'falling', samples: 2 });
+  });
+});
+
+describe('disk readings', () => {
+  it('parses the sampler history, skipping rows that are not readings', () => {
+    expect(parseDiskHistory(JSON.stringify([
+      { at: 0, free_gb: 400, sizes_gb: { '/x': 1 } }, { at: 3600 }, 'junk', null, { at: 'soon', free_gb: 1 }, { at: 7200, free_gb: 370.5 },
+    ]))).toEqual([{ at: 0, freeGb: 400 }, { at: 7200, freeGb: 370.5 }]);
+    expect(parseDiskHistory(null)).toEqual([]);
+    expect(parseDiskHistory('not json')).toEqual([]);
+    expect(parseDiskHistory('{"at": 1}')).toEqual([]);
+  });
+
+  it('adds one live reading to the sampler history, and works with neither', async () => {
+    const runs = mkdtempSync(join(tmpdir(), 'host-top-disk-'));
+    try {
+      mkdirSync(join(runs, 'queue'), { recursive: true });
+      writeFileSync(join(runs, 'queue', 'disk-growth-history.json'), JSON.stringify([{ at: 0, free_gb: 400 }, { at: HOUR, free_gb: 385 }]));
+      expect(await readDiskSamples(runs, async () => ({ at: 2 * HOUR, freeGb: 370 }))).toEqual([
+        { at: 0, freeGb: 400 }, { at: HOUR, freeGb: 385 }, { at: 2 * HOUR, freeGb: 370 },
+      ]);
+      expect(await readDiskSamples(runs, async () => null)).toEqual([{ at: 0, freeGb: 400 }, { at: HOUR, freeGb: 385 }]);
+      expect(await readDiskSamples(join(runs, 'nowhere'), async () => null)).toEqual([]);
+    } finally { rmSync(runs, { recursive: true, force: true }); }
+  });
+});
+
 describe('phm host top', () => {
   const texts: Record<string, string> = { vm_stat: fixture('vm-stat'), 'sysctl vm.swapusage': SWAP, 'sysctl -n kern.memorystatus_vm_pressure_level': '1' };
-  const deps = (ps: string | null, out: string[]) => ({
+  const deps = (ps: string | null, out: string[], over: { now?: () => number; diskSamples?: () => Promise<{ at: number; freeGb: number }[]> } = {}) => ({
     ps: async () => ps, jobRoots: () => [{ jobId: 'RQ-ONE', pid: 300 }], load: () => ({ load1: 41.23, load5: 38, load15: 30, cores: 18, ratio: 2.3 }),
     run: async (file: string, args: string[]) => texts[[file.split('/').pop(), ...args].join(' ')] ?? null,
-    frontApp: async () => '/Applications/Cursor.app', totalBytes: 64 * GB, selfPid: 0, now: () => 0, write: (text: string) => { out.push(text); },
+    frontApp: async () => '/Applications/Cursor.app', totalBytes: 64 * GB, selfPid: 0, now: () => 0,
+    diskSamples: async () => [{ at: 0, freeGb: 412 }], write: (text: string) => { out.push(text); }, ...over,
   });
 
   it('prints schema and version in JSON, and the same line for people', async () => {
@@ -129,15 +212,36 @@ describe('phm host top', () => {
     const report = JSON.parse(json.join('')) as HostTopReport;
     expect(report).toMatchObject({ schema: 'host.top.v1', version: 1, generatedAt: '1970-01-01T00:00:00.000Z', state: 'known', biggest: 'docker', host: { pressure: 'normal', swapUsedGb: 10.2 } });
     expect(Object.keys(report)).toEqual(['schema', 'version', 'generatedAt', 'state', 'host', 'totals', 'buckets', 'frontApp', 'biggest', 'suggestion', 'gaps']);
+    expect(Object.keys(report.host)).toEqual(['load1', 'load5', 'cores', 'pressure', 'swapUsedGb', 'memoryFreePercent', 'disk']);
+    expect(report.host.disk).toEqual({ ...UNKNOWN_DISK, freeGb: 412, samples: 1, observedAt: '1970-01-01T00:00:00.000Z' });
     expect(Object.keys(report.buckets[0]!)).toEqual(['id', 'name', 'cpuPercent', 'rssMb', 'processes', 'items', 'sharePercent']);
     expect(await cmdHost(['top'], deps(fixture('busy-mac'), human))).toBe(0);
     const lines = human.join('').split('\n');
-    expect(lines.slice(0, 3)).toEqual(['Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure normal · swap used 10.2 GB', report.suggestion.line, 'App in front: Cursor']);
+    expect(lines.slice(0, 3)).toEqual(['Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure normal · swap used 10.2 GB · free disk 412 GB, no trend yet', report.suggestion.line, 'App in front: Cursor']);
     expect(lines).toContainEqual(expect.stringMatching(/^Docker\s+300\.0\s+22 GB\s+2$/));
     expect(lines).toContainEqual(expect.stringMatching(/^Total\s+764\.5\s+41 GB\s+23$/));
     expect(lines.some(line => line.startsWith('  '))).toBe(false);
     expect(await cmdHost(['top', '--groups'], deps(fixture('busy-mac'), groups))).toBe(0);
     expect(groups.join('').split('\n')).toContainEqual(expect.stringMatching(/^ {2}com\.docker\.virtualization\s+295\.0\s+22 GB\s+1$/));
+  });
+
+  it('shows the free-disk trend against a floor it is given, as a warning line when it is close', async () => {
+    const over = { now: () => 4 * HOUR * 1000, diskSamples: async () => [{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 340 }] };
+    const json: string[] = [], human: string[] = [];
+    expect(await cmdHost(['top', '--json', '--floor', '250'], deps(fixture('busy-mac'), json, over))).toBe(0);
+    expect(JSON.parse(json.join('')).host.disk).toEqual({ ...UNKNOWN_DISK, freeGb: 340, gbPerHour: 30, direction: 'falling', floorGb: 250, hoursToFloor: 3, warning: 'under-warn-hours', samples: 2, observedAt: '1970-01-01T02:00:00.000Z' });
+    expect(await cmdHost(['top', '--floor', '250'], deps(fixture('busy-mac'), human, over))).toBe(0);
+    const lines = human.join('').split('\n');
+    // A disk heading for its floor too soon leaves the host line for its own warning line.
+    expect(lines[0]).toBe('Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure normal · swap used 10.2 GB');
+    expect(lines[1]).toBe('Warning: free disk is 340 GB, falling 30.0 GB an hour; it reaches the 250 GB floor in about 3 hours.');
+  });
+
+  it('keeps a far-off floor in the host line, with no warning', async () => {
+    const human: string[] = [];
+    const over = { now: () => 4 * HOUR * 1000, diskSamples: async () => [{ at: 0, freeGb: 400 }, { at: 2 * HOUR, freeGb: 394 }] };
+    expect(await cmdHost(['top'], deps(fixture('busy-mac'), human, over))).toBe(0);
+    expect(human.join('').split('\n')[0]).toBe('Load 41.2 (38 over 5 minutes) on 18 cores · memory pressure normal · swap used 10.2 GB · free disk 394 GB, falling 3.0 GB an hour, about 98 hours to the 100 GB floor');
   });
 
   it('exits 1 when ps cannot be read, 2 on bad usage, and never throws when every read fails', async () => {
@@ -146,6 +250,9 @@ describe('phm host top', () => {
     expect(JSON.parse(out.join(''))).toMatchObject({ state: 'unknown', biggest: null });
     expect(await cmdHost(['top', '--kill'], deps('', out))).toBe(2);
     expect(await cmdHost(['top', '--json', '--json'], deps('', out))).toBe(2);
+    for (const bad of [['--floor'], ['--floor', 'lots'], ['--floor', '-1'], ['--floor', '100', '--floor', '100'], ['--floor', '100', '--json', '--json']]) {
+      expect(await cmdHost(['top', ...bad], deps('', out))).toBe(2);
+    }
     const fail = () => Promise.reject(new Error('denied'));
     const failing = await readHostTopReport({ ps: fail, run: fail, frontApp: fail, jobRoots: () => { throw new Error('denied'); }, load: () => ({ load1: null, load5: null, load15: null, cores: null, ratio: null }) });
     expect(failing).toMatchObject({ state: 'unknown', frontApp: null, host: { pressure: null, swapUsedGb: null } });

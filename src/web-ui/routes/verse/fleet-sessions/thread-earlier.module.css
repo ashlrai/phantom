@@ -1,0 +1,17 @@
+/* The foot of a session conversation: what was left out, and the way to the earlier entries (ThreadEarlier.tsx). */
+.earlier { display: flex; flex-direction: column; gap: var(--space-1); }
+.earlier:empty { display: none; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; padding-left: var(--space-2); border-left: 2px solid var(--border-default); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+/* The accent edge says the conversation on screen is deeper than the one a fresh opening shows. */
+.row[data-state='full'] { border-left-color: var(--accent-500); animation: thread-earlier-in var(--duration-base) var(--ease-decelerate); }
+.action { flex: none; padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; cursor: pointer; }
+.action:hover, .action:focus-visible { background: var(--bg-hover); }
+.action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.action kbd { padding: 0 var(--space-1); border: 1px solid currentColor; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); opacity: 0.8; }
+.busy { animation: thread-earlier-busy 1.2s ease-in-out infinite; }
+
+@keyframes thread-earlier-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes thread-earlier-busy { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .row[data-state='full'], .busy { animation: none; }
+}

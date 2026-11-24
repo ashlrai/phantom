@@ -119,12 +119,13 @@ export interface AutopilotState {
   pushes: number;
   /**
    * The replacement cut from this head: its branch, its PR number (0 until the
-   * open-PR call confirmed one), and the head it was cut from. `queued` is set
-   * once the recut re-entered the merge queue, so a repeated event never asks
+   * open-PR call confirmed one), and the head it was cut from. `headSha` pins
+   * the verified replacement commit when available (absent in older state).
+   * `queued` is set once the recut re-entered the merge queue, so a repeated event never asks
    * GitHub twice. While set, this PR is superseded — it waits for the recut
    * and closes after it merges.
    */
-  recut?: { branch: string; number: number; fromHead: string; queued?: boolean; retryAt?: string };
+  recut?: { branch: string; number: number; fromHead: string; headSha?: string; queued?: boolean; retryAt?: string };
   /** Fix attempts per failure signature, and `merge-base:<head>:<base>`/`recut:<head>:<base>` attempts. */
   attempts: Record<string, number>;
   /** Heads the autopilot pushed from (a stale read of one is never acted on twice). */

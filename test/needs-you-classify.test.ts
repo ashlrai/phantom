@@ -9,7 +9,7 @@ import { makeCfg } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
 import {
   AUTO_REASON, LIMIT_REASONS, NEEDS_YOU_AUDIT_FILE, classifyNeedsYou, listNeedsYou, readNeedsYouAudit,
-  resolveAutoNeedsYou, type NeedsYouOptions,
+  batchNeedsYou, resolveAutoNeedsYou, type NeedsYouOptions,
 } from '../src/core/needs-you/index.js';
 
 describe('classifyNeedsYou', () => {
@@ -174,6 +174,43 @@ describe('phm needs-you CLI', () => {
     out = [];
     expect(await run(['resolve'])).toBe(2);
     expect(await run(['--bogus'])).toBe(2);
+  });
+});
+
+describe('phm needs-you batch', () => {
+  let home = '';
+  let out: string[] = [];
+  const run = (args: string[]) => cmdNeedsYou([...args, '--runs-dir', join(home, 'runs')], {
+    output: (t) => out.push(t), error: (t) => out.push(t), now: () => 0, bus: { root: join(home, 'fleet') },
+  });
+  beforeEach(() => {
+    out = [];
+    home = mkdtempSync(join(tmpdir(), 'example-needs-you-batch-'));
+    mkdirSync(join(home, 'runs'));
+    writeFileSync(join(home, 'runs', 'NEEDS-MASON.md'),
+      '- [ ] Pick the example test runner\n- [ ] Delete the example archive\n- [ ] Email the launch note to our customers\n');
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it('puts only hard limits in one message with a one-word reply each, and resolves nothing', async () => {
+    expect(await run(['batch', '--json'])).toBe(0);
+    const json = JSON.parse(out[0]!);
+    expect(json).toMatchObject({ schema: 'phantom.needs-you.batch.v1', count: 2 });
+    expect(json.message).toBe([
+      '2 things need you:',
+      '1. Delete the example archive (deletes or overwrites data) — yes or no',
+      '2. Email the launch note to our customers (a message to someone outside the team) — yes or no',
+      'Reply with one word each, like: 1 yes, 2 yes',
+    ].join('\n'));
+    expect(json.items.map((i: { title: string }) => i.title)).not.toContain('Pick the example test runner');
+    expect(readFileSync(join(home, 'runs', 'NEEDS-MASON.md'), 'utf8')).not.toContain('[x]');
+  });
+
+  it('says so plainly when nothing needs Mason', async () => {
+    writeFileSync(join(home, 'runs', 'NEEDS-MASON.md'), '- [ ] Pick the example test runner\n');
+    expect(await run(['batch'])).toBe(0);
+    expect(out).toEqual(['Nothing needs you.']);
+    expect(batchNeedsYou({ runsDir: join(home, 'runs') }).message).toBe('');
   });
 });
 

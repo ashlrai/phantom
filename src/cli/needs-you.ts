@@ -3,17 +3,19 @@
  * that lets the fleet clear everything else. Thin: logic in core/needs-you.
  */
 import {
-  listNeedsYou, readNeedsYouAudit, resolveAutoNeedsYou, type NeedsYouOptions,
+  batchNeedsYou, listNeedsYou, readNeedsYouAudit, resolveAutoNeedsYou, type NeedsYouOptions,
 } from '../core/needs-you/index.js';
 
 export const NEEDS_YOU_USAGE = `Usage: phm needs-you [--json] [--runs-dir DIR]
        phm needs-you resolve --auto [--dry-run] [--json] [--runs-dir DIR]
+       phm needs-you batch [--json] [--runs-dir DIR]
        phm needs-you log [--json] [--runs-dir DIR]
   Lists open items with their class: hard_limit (secrets, money, a send outside
   the team, deleting data, or a password/2FA/device approval) waits on you;
   auto is ordinary work. resolve --auto takes each auto item's forward action
   and writes an audit record; --dry-run shows the same records and changes
-  nothing. log lists those records.`;
+  nothing. batch puts every item that needs you into one message with a
+  one-word reply each. log lists the audit records.`;
 
 export interface NeedsYouCliDeps extends Pick<NeedsYouOptions, 'now' | 'resolve' | 'bus'> {
   output?: (text: string) => void;
@@ -24,7 +26,7 @@ export async function cmdNeedsYou(args: string[], deps: NeedsYouCliDeps = {}): P
   const output = deps.output ?? ((text: string) => console.log(text));
   const error = deps.error ?? ((text: string) => { process.stderr.write(`${text}\n`); });
   if (args.some(arg => arg === '--help' || arg === '-h')) { output(NEEDS_YOU_USAGE); return 0; }
-  const verb = args[0] === 'resolve' || args[0] === 'log' ? args[0] : 'list';
+  const verb = args[0] === 'resolve' || args[0] === 'log' || args[0] === 'batch' ? args[0] : 'list';
   const flags = new Set<string>();
   let runsDir: string | undefined;
   for (let i = verb === 'list' ? 0 : 1; i < args.length; i++) {
@@ -48,6 +50,14 @@ export async function cmdNeedsYou(args: string[], deps: NeedsYouCliDeps = {}): P
       `${report.resolved.length} ${report.dryRun ? 'would resolve' : 'resolved'}, ${report.failed.length} failed, ${report.hardLimit} still need you.`,
     ].join('\n'));
     return report.ledger === 'unavailable' || report.failed.length ? 1 : 0;
+  }
+
+  if (verb === 'batch') {
+    const batch = batchNeedsYou(options);
+    if (json) output(JSON.stringify(batch));
+    else if (batch.ledger === 'unavailable') error('The needs-you list could not be read.');
+    else output(batch.message || 'Nothing needs you.');
+    return batch.ledger === 'unavailable' ? 1 : 0;
   }
 
   if (verb === 'log') {

@@ -147,7 +147,7 @@ follow-up ID. "Pin" means a Security re-pin is required before live install.
 | `src/core/fleet/autopilot.ts` planner | dead | only `test/fleet-autopilot-recut-c405.test.ts` imports it; the advertised `phm fleet autopilot` verb does not exist | delete it with its test, or wire the verb | none | RQ-FLEET-AUTOPILOT-PLANNER-1 |
 | `lane-autopilot` targets | inert | printed by `phm resources autopilot` only; no writer | keep as a report; do not treat as a constraint | — | — |
 | `publish.sh` CODEOWNERS `T1` match | dead as a gate | informational only | remove the branch or label it advisory | none | RQ-PUBLISH-T1-CLEANUP-1 (pin) |
-| `PUBLISH_FULL_TESTS` default 0 | inert | `publish.sh` | keep off; Merge Gate is the full check | — | — |
+| `PUBLISH_FULL_TESTS` default 0 | inert | `publish.sh` | keep off; Merge Gate is the required hosted check | — | — |
 | Judge gate without `PUBLISH_JUDGE_CMD` | inert | `publish.sh` | keep: opt-in by host | — | — |
 | `held_reason == "auth_failure"` clause in `hard_down` | possibly dead | no writer in this checkout; an operator may write it by hand | keep (harmless, forward-compatible) | — | — |
 

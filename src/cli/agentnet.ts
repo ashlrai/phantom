@@ -3,7 +3,7 @@ import { listPeers, proposeSlackAction, type PeerSession } from '../core/agentne
 import { consumePeerWork } from '../core/agentnet/work-dispatch.js';
 import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { readPeerFleet } from '../core/agentnet/mesh-read.js';
-const usage = 'phm agentnet peers mesh|work-feed [--json]\nphm agentnet peers list|read|send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]\nphm agentnet peers post <to> <work-post-json> [--json]\nphm agentnet peers dispatch [--after <cursor>] [--apply] [--json]\nphm agentnet channels propose <name> [--apply] [--json]\nphm agentnet identity register <callsign> [--json]';
+const usage = 'phm agentnet peers mesh|work-feed [--json]\nphm agentnet peers list|read|send <to|#channel-id> <task|review|handoff|query|social> <text> [--reply-to <id>] [--thread <id>] [--json]\nphm agentnet peers post <to> <work-json> [--json]\nphm agentnet peers dispatch [--after <cursor>] [--apply] [--json]\nphm agentnet channels propose <name> [--apply] [--json]\nphm agentnet identity register <callsign> [--json]';
 export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, session: PeerSession = {
   lane: process.env.PHM_AGENTNET_LANE ?? '', sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: readEnvironmentCredential('PHM_AGENTNET_SESSION_TOKEN') ?? '',
 }): Promise<number> {
@@ -32,7 +32,9 @@ export async function cmdAgentnet(args: string[], options: PeerBusOptions = {}, 
     }
     else if (group === 'peers' && verb === 'post' && positional.length === 4 && !apply && !replyTo && !threadId) {
       if (kind!.length > 8000) return 2;
-      result = await sendPeerMessage({ toAgent: name, kind: 'task', text: 'Work feed proposal', work: JSON.parse(kind!) }, session, options);
+      const body = JSON.parse(kind!);
+      result = await sendPeerMessage({ toAgent: name, kind: 'task',
+        text: body?.kind === 'work.status' ? 'Work status update' : 'Work feed proposal', work: body }, session, options);
     }
     else if (group === 'peers' && verb === 'send' && positional.length === 5 && !apply) {
       result = await sendPeerMessage({ ...(name!.startsWith('#') ? { channel: name!.slice(1) } : { toAgent: name }), kind, text,

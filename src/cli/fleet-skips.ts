@@ -2,6 +2,7 @@
 import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet skips [--hours N] [--json]';
@@ -59,10 +60,10 @@ export async function fleetSkips(read: SkipsReader = readJobsTail, hours = 6, no
       if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
       row = v as Record<string, unknown>;
     } catch { continue; }
-    if (row.event !== 'launch' && row.event !== 'precheck_skip') continue;
+    if (row.event !== 'launch' && !isPrecheckSkipRow(row)) continue;
     const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
     if (!Number.isFinite(at) || at < now - hours * HOUR || at > now) continue;
-    const skip = row.event === 'precheck_skip';
+    const skip = row.event !== 'launch';
     bump(report.totals, skip);
     [label(row.repo), label(row.pool ?? row.lane)].forEach((name, i) => {
       const g = maps[i]!.get(name) ?? { name, launches: 0, skips: 0, skip_share: 0 };

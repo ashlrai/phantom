@@ -140,7 +140,10 @@ describe('betsCounts', () => {
 function readers(runsDir: string, files: Record<string, string>, over: Partial<LoopReaders> = {}): LoopReaders {
   return {
     runsDir, now: () => T0,
-    readText: async (path) => files[path.slice(runsDir.length + 1)] ?? null,
+    readText: async (path) => {
+      const text = files[path.slice(runsDir.length + 1)];
+      return text === undefined ? null : { text, truncated: false };
+    },
     gh: async () => null, installed: async () => null, nodes: () => null, peerTasks: async () => null, ncpu: () => 8,
     ...over,
   };
@@ -165,7 +168,7 @@ describe('bet store and CLI', () => {
       { event: 'outcome', job: 'RQ-BET-FAST', lane: 'claude', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/9', ts: iso(30) },
     ].map(r => JSON.stringify(r)).join('\n');
     const r = readers(runs, { 'metrics/jobs.jsonl': jobs, 'metrics/bets.jsonl': readFileSync(join(runs, 'metrics', 'bets.jsonl'), 'utf8') });
-    const dry = await scoreCycle({ ...r, readText: async (p) => p.endsWith('bets.jsonl') ? readFileSync(p, 'utf8') : r.readText(p, 0) }, { dryRun: true });
+    const dry = await scoreCycle({ ...r, readText: async (p) => p.endsWith('bets.jsonl') ? { text: readFileSync(p, 'utf8'), truncated: false } : r.readText(p, 0) }, { dryRun: true });
     expect(dry.written).toBe(false);
     expect(dry.decisions[0]).toMatchObject({ decision: 'killed', numbers: { laneHours: 2, merged: 1, jobs: 1, value: 0.17 } });
 
@@ -197,7 +200,10 @@ describe('bet store and CLI', () => {
     expect(await cmdBets(['launch', '--id', 'RQ-BET-Z', '--hypothesis', 'h', '--metric', 'spare_slots', '--max-lane-hours', 'x', '--max-cycles', '1'], io)).toBe(2);
     expect(await cmdBets(['kill', 'RQ-BET-NONE', '--reason', 'r'], io)).toBe(2);
     expect(await cmdBets(['frob'], io)).toBe(2);
-    expect(await cmdBets([], io)).toBe(2);
+    // No verb is the leader batch view now (phm bets); an unknown flag is still a usage error.
+    expect(await cmdBets(['--bogus'], io)).toBe(2);
+    expect(await cmdBets([], { ...io, leaderBets: async o => ({ schema: 'fleet.leader-bets.v1', version: 1, window_hours: o.hours, known: true, queue_known: true, batches: [], summary: 'No leader bets in this window.' }) })).toBe(0);
+    expect(out.pop()).toBe('No leader bets in this window.');
     expect(await cmdBets(['--help'], io)).toBe(0);
     expect(out.pop()).toContain('Usage: phm bets');
   });

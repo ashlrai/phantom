@@ -43,6 +43,7 @@ import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, isSharedFeedReport, type FeedFilter, type FeedKind } from './feed-model.js';
 import { buildAwayDigest } from './away-digest.js';
 import { AwayDigestCard } from './AwayDigestCard.js';
+import { LeaderBetsCard } from './LeaderBetsCard.js';
 import { FeedAskButton } from './FeedAskButton.js';
 import { feedTellText } from './feed-tell-text.js';
 import { releaseFeedItems } from './release-feed-items.js';
@@ -186,6 +187,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   if (sharedReady) return <SharedFeed visible={visible} now={now} openPane={openPane} openJob={openJob} />;
 
   return <div className={`${styles.root} ${compact.view}`}>
+    <LeaderBetsCard visible={visible} />
     {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
     <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>

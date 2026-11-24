@@ -35,6 +35,7 @@ function clock(ts: string | null): string {
 
 const list: CSSProperties = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' };
 const bubble: CSSProperties = { maxWidth: '85%', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', padding: '6px 10px', borderRadius: 10, border: '1px solid var(--border, rgba(127,127,127,.3))' };
+const badge: CSSProperties = { padding: '0 6px', borderRadius: 999, border: '1px solid var(--border, rgba(127,127,127,.3))' };
 const meta: CSSProperties = { display: 'block', fontSize: '0.75em', opacity: 0.75, marginTop: 2 };
 
 export function LeaderChatList({ chat, nowMs = Date.now(), limit = 20 }: { chat: LeaderChat; nowMs?: number; limit?: number }) {
@@ -50,7 +51,7 @@ export function LeaderChatList({ chat, nowMs = Date.now(), limit = 20 }: { chat:
       const words = chatStateWords(m, nowMs);
       const late = m.state === 'open-over-2h';
       return <li key={m.id} data-direction={m.direction} data-state={m.state} style={{ ...bubble, alignSelf: mine ? 'flex-end' : 'flex-start' }}>
-        <span style={{ ...meta, marginTop: 0 }}>{mine ? 'You' : 'Leader'} · {clock(m.ts)}</span>
+        <span style={{ ...meta, marginTop: 0 }}>{mine ? 'You' : 'Leader'} · {clock(m.ts)} · <span data-testid="channel-badge" style={badge}>{m.channel}</span></span>
         {m.text}
         {words ? <span style={{ ...meta, fontWeight: late ? 600 : undefined, color: late ? 'var(--warning, #b45309)' : undefined }}>{m.state === 'answered' || m.received ? '✓ ' : ''}{words}</span> : null}
       </li>;

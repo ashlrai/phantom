@@ -234,3 +234,11 @@
   color: var(--text-secondary);
   font-size: 0.85em;
 }
+
+/* One line, only when a lane is idle with usage left. */
+.laneSupply {
+  margin: 0;
+  padding: var(--space-2);
+  font-size: var(--text-xs-size);
+  overflow-wrap: anywhere;
+}

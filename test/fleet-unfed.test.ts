@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdFleetUnfed } from '../src/cli/fleet-unfed.js';
-import { currentUnfed, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
+import { currentUnfed, foldClaimOverrides, foldDecisionOutcomes, foldMarketOverrides, foldRouteRejections, foldUnfedHistory, readyHints, renderUnfed } from '../src/core/fleet/unfed-capacity.js';
 
 let dir: string;
 const saved = process.env.ASHLR_RUNS_DIR;
@@ -36,6 +36,8 @@ const READY = [
 ].join('\n');
 const unfedRow = (ts: number, lanes: Record<string, unknown>) =>
   JSON.stringify({ schema: 'work-market.v1', event: 'unfed_capacity', ts, lanes });
+const decisionRow = (job: string, ts: number, override: unknown = { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback' }) =>
+  JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job, ts, chosen_lane: 'claude', preferred_lane: 'codex-personal', override });
 
 async function run(args: string[] = ['--json']) {
   const out = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -130,6 +132,304 @@ describe('foldUnfedHistory', () => {
   });
 });
 
+describe('foldMarketOverrides', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts,
+      chosen_lane: 'claude', preferred_lane: 'codex-personal',
+      override: { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', preferred_lane_blocked_by: ['saturated'] },
+      ...extra,
+    });
+
+  it("collapses route decisions to each job's latest in-window decision", () => {
+    const journal = [
+      // Same job decided twice: only the latest counts, and it ran on-hint.
+      decision('RQ-A', t - 300),
+      decision('RQ-A', t - 60, { override: null, chosen_lane: 'codex-personal' }),
+      decision('RQ-B', t - 120),
+      decision('RQ-B', t - 30, { override: { from: null, to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-C', t - 90, { chosen_lane: null, override: null, reason_codes: ['no_runnable_lane'] }),
+      // Out-of-window, future, missing-ts, malformed and non-decision rows never count.
+      decision('RQ-D', t - 25 * 3600),
+      decision('RQ-E', t + 3600),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-F' }),
+      '{"event":"route_decision" broken',
+      unfedRow(t - 60, {}),
+      // Overrides with malformed lane or reason fields are not counted.
+      decision('RQ-G', t - 40, { override: { from: 'bad lane!', to: 'claude', reason: 'preferred_lane_fallback' } }),
+      decision('RQ-H', t - 40, { override: { from: 'codex-personal', to: 'claude', reason: 'NOT_A_CODE' } }),
+    ].join('\n');
+    expect(foldMarketOverrides(journal, now, 24)).toEqual({
+      available: true,
+      decided: 5, // RQ-A, RQ-B, RQ-C, RQ-G, RQ-H
+      overridden: 1, // only RQ-B's latest decision left its (open) hint
+      byReason: { resource_fit: 1 },
+      lanes: [{ from: null, to: 'devin', reason: 'resource_fit', jobs: 1 }],
+    });
+  });
+
+  it('tallies overrides by reason and hinted->chosen lane, largest first', () => {
+    const journal = [
+      decision('RQ-A', t - 100),
+      decision('RQ-B', t - 90),
+      decision('RQ-C', t - 80, { override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-D', t - 70, { override: { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback' } }),
+    ].join('\n');
+    const tally = foldMarketOverrides(journal, now, 24);
+    expect(tally.decided).toBe(4);
+    expect(tally.overridden).toBe(4);
+    expect(tally.byReason).toEqual({ preferred_lane_fallback: 3, resource_fit: 1 });
+    expect(tally.lanes).toEqual([
+      { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', jobs: 2 },
+      { from: 'claude', to: 'codex-cmp', reason: 'preferred_lane_fallback', jobs: 1 },
+      { from: 'codex-personal', to: 'devin', reason: 'resource_fit', jobs: 1 },
+    ]);
+  });
+
+  it('says when there is no history file', () => {
+    expect(foldMarketOverrides(null, now, 24)).toEqual({ available: false, decided: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldMarketOverrides('', now, 24)).toEqual({ available: true, decided: 0, overridden: 0, byReason: {}, lanes: [] });
+  });
+});
+
+describe('foldClaimOverrides', () => {
+  const now = 1_800_000_000_000;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  // dispatchd stamps jobs.jsonl rows with local time and a %z offset; ISO with Z parses the same way.
+  const claim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ event: 'claim', job, repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
+  const batchClaim = (job: string, ts: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ event: 'batch_claim', job, batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts, ...extra });
+
+  it('tallies claim launches that left their hinted lane, batch_session included', () => {
+    const journal = [
+      claim('RQ-A', iso(now - 100_000)),
+      claim('RQ-B', iso(now - 90_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      claim('RQ-B', iso(now - 80_000), { lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      batchClaim('RQ-C', iso(now - 70_000), { lane_hint: 'devin', lane_override: 'batch_session' }),
+      batchClaim('RQ-D', iso(now - 60_000), { lane_hint: null, lane_override: 'resource_fit' }),
+      // Out-of-window, future, missing-ts, malformed and non-claim rows never count.
+      claim('RQ-E', iso(now - 25 * 3_600_000)),
+      claim('RQ-F', iso(now + 3_600_000)),
+      claim('RQ-G', 'not a date'),
+      claim('', iso(now - 50_000), { lane_hint: 'claude', lane_override: 'resource_fit' }),
+      claim('RQ-H', iso(now - 50_000), { lane: 'bad lane!', lane_hint: 'claude', lane_override: 'resource_fit' }),
+      JSON.stringify({ event: 'finish', job: 'RQ-I', lane: 'claude', ts: iso(now - 40_000), lane_hint: 'devin', lane_override: 'batch_session' }),
+      '{"event":"claim" broken',
+      // lane_override without a recorded lane_hint, or with a malformed one, cannot name its origin.
+      claim('RQ-J', iso(now - 30_000), { lane_override: 'resource_fit' }),
+      claim('RQ-K', iso(now - 30_000), { lane_hint: 'bad lane!', lane_override: 'resource_fit' }),
+      // An invalid override code is not counted.
+      claim('RQ-L', iso(now - 20_000), { lane_hint: 'devin', lane_override: 'NOT_A_CODE' }),
+    ].join('\n');
+    expect(foldClaimOverrides(journal, now, 24)).toEqual({
+      available: true, truncated: false,
+      claimed: 8, // RQ-A, RQ-B x2, RQ-C, RQ-D, RQ-J, RQ-K, RQ-L — events, not distinct jobs
+      overridden: 4, // RQ-B x2, RQ-C, RQ-D
+      byReason: { preferred_lane_fallback: 2, batch_session: 1, resource_fit: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', claims: 2 },
+        { from: null, to: 'claude', reason: 'resource_fit', claims: 1 },
+        { from: 'devin', to: 'claude', reason: 'batch_session', claims: 1 },
+      ],
+    });
+  });
+
+  it('reads the dispatchd %z timestamp form', () => {
+    const journal = claim('RQ-A', '2026-11-20T14:23:45-0500', { lane_hint: 'devin', lane_override: 'batch_session' });
+    const at = Date.parse('2026-11-20T19:23:45.000Z');
+    expect(foldClaimOverrides(journal, at + 60_000, 24).overridden).toBe(1);
+    expect(foldClaimOverrides(journal, at - 25 * 3_600_000, 24).claimed).toBe(0);
+  });
+
+  it('marks a tail-truncated ledger as a lower bound', () => {
+    const journal = claim('RQ-A', iso(now - 1000));
+    expect(foldClaimOverrides(journal, now, 24, true)).toMatchObject({ available: true, truncated: true, claimed: 1 });
+    expect(foldClaimOverrides(null, now, 24, true)).toEqual({ available: false, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+    expect(foldClaimOverrides('', now, 24)).toEqual({ available: true, truncated: false, claimed: 0, overridden: 0, byReason: {}, lanes: [] });
+  });
+});
+
+describe('foldDecisionOutcomes', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts,
+      chosen_lane: 'claude', preferred_lane: 'codex-personal',
+      override: { from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback' },
+      ...extra,
+    });
+  const outcome = (job: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ event: 'finish', job, phase: 'MERGED', ts: iso(now - 500), ...extra });
+
+  it('joins each decided job to its recorded outcome, grouped by how the hint fared', () => {
+    const market = [
+      // hinted: chose the declared preferred lane, merged.
+      decision('RQ-H', t - 500, { chosen_lane: 'codex-personal', preferred_lane: 'codex-personal', override: null, work_class: 'judgment' }),
+      // overridden: left the hint with a recorded reason; merged then reverted.
+      decision('RQ-O', t - 400, { work_class: 'standard' }),
+      // open: no declared preference; closed without a merge.
+      decision('RQ-P', t - 300, { preferred_lane: null, override: null, work_class: 'bulk' }),
+      // unrouted: latest decision chose no lane.
+      decision('RQ-U', t - 200, { chosen_lane: null, preferred_lane: null, override: null }),
+      // unexplained: left a declared preference with no well-formed override record.
+      decision('RQ-X', t - 100, { chosen_lane: 'devin', preferred_lane: 'codex-personal', override: null }),
+      // decided twice: only the latest in-window decision counts.
+      decision('RQ-D', t - 900, { chosen_lane: 'devin', preferred_lane: 'codex-personal', override: { from: 'codex-personal', to: 'devin', reason: 'resource_fit' } }),
+      decision('RQ-D', t - 50, { chosen_lane: 'codex-personal', preferred_lane: 'codex-personal', override: null }),
+      // Out-of-window and non-decision rows never count.
+      decision('RQ-OLD', t - 25 * 3600),
+      unfedRow(t - 60, {}),
+    ].join('\n');
+    const jobs = [
+      outcome('RQ-H'),
+      outcome('RQ-O', { reverted: true }),
+      outcome('RQ-P', { phase: 'CLOSED' }),
+      // RQ-U and RQ-X have claim rows but no terminal state: unresolved.
+      JSON.stringify({ event: 'claim', job: 'RQ-U', lane: 'claude', ts: iso(now - 400) }),
+      JSON.stringify({ event: 'claim', job: 'RQ-X', lane: 'devin', ts: iso(now - 300) }),
+      outcome('RQ-D'),
+      // A job never decided does not join.
+      outcome('RQ-NOPE'),
+    ].join('\n');
+    const report = foldDecisionOutcomes(market, jobs, now, 24);
+    expect(report.available).toBe(true);
+    expect(report.jobsAvailable).toBe(true);
+    expect(report.jobsTruncated).toBe(false);
+    expect(report.decided).toBe(6); // RQ-H, RQ-O, RQ-P, RQ-U, RQ-X, RQ-D
+    expect(report.hinted).toEqual({ decided: 2, known: 2, merged: 2, unmerged: 0, reverted: 0, unresolved: 0 });
+    expect(report.overridden).toEqual({ decided: 1, known: 1, merged: 1, unmerged: 0, reverted: 1, unresolved: 0 });
+    expect(report.open).toEqual({ decided: 1, known: 1, merged: 0, unmerged: 1, reverted: 0, unresolved: 0 });
+    expect(report.unrouted).toEqual({ decided: 1, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 1 });
+    expect(report.unexplained).toEqual({ decided: 1, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 1 });
+    expect(report.byReason).toEqual({ preferred_lane_fallback: 1 });
+    expect(report.byClass).toEqual({
+      judgment: { decided: 1, known: 1, merged: 1, unmerged: 0, reverted: 0, unresolved: 0 },
+      standard: { decided: 1, known: 1, merged: 1, unmerged: 0, reverted: 1, unresolved: 0 },
+      bulk: { decided: 1, known: 1, merged: 0, unmerged: 1, reverted: 0, unresolved: 0 },
+      unclassified: { decided: 3, known: 1, merged: 1, unmerged: 0, reverted: 0, unresolved: 2 },
+    });
+  });
+
+  it('keeps unresolved honest when the jobs ledger is absent, empty or truncated', () => {
+    const market = decision('RQ-A', t - 100);
+    const missing = foldDecisionOutcomes(market, null, now, 24, true);
+    expect(missing).toMatchObject({ available: true, jobsAvailable: false, jobsTruncated: false, decided: 1 });
+    expect(missing.overridden).toEqual({ decided: 1, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 1 });
+    const empty = foldDecisionOutcomes(market, '', now, 24);
+    expect(empty.jobsAvailable).toBe(true);
+    expect(empty.overridden.unresolved).toBe(1);
+    const truncated = foldDecisionOutcomes(market, outcome('RQ-A'), now, 24, true);
+    expect(truncated.jobsTruncated).toBe(true);
+    expect(truncated.overridden).toMatchObject({ decided: 1, merged: 1 });
+  });
+
+  it('says when there is no market journal', () => {
+    expect(foldDecisionOutcomes(null, outcome('RQ-A'), now, 24)).toMatchObject({
+      available: false, jobsAvailable: true, decided: 0,
+      hinted: { decided: 0 }, overridden: { decided: 0 }, open: { decided: 0 },
+      unrouted: { decided: 0 }, unexplained: { decided: 0 }, byReason: {}, byClass: {},
+    });
+    expect(foldDecisionOutcomes('', '', now, 24)).toMatchObject({ available: true, jobsAvailable: true, decided: 0 });
+  });
+});
+
+describe('foldRouteRejections', () => {
+  const now = 1_800_000_000_000;
+  const t = now / 1000;
+  const rejected = (lane: string, ...codes: string[]) => ({ lane, reason_codes: codes });
+  const decision = (job: string, ts: number, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      schema: 'work-market.v1', event: 'route_decision', job, ts,
+      chosen_lane: 'claude', preferred_lane: 'codex-personal', override: null,
+      ...extra,
+    });
+
+  it("collapses to each job's latest decision and tallies rejected lanes by reason", () => {
+    const journal = [
+      // Same job decided twice: only the latest rejection set counts.
+      decision('RQ-A', t - 300, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      decision('RQ-A', t - 60, { rejected_lanes: [rejected('codex-cmp', 'saturated'), rejected('devin', 'quota_exhausted', 'held')] }),
+      decision('RQ-B', t - 120, { rejected_lanes: [rejected('codex-cmp', 'missing_capability'), rejected('devin', 'quota_exhausted')] }),
+      // An unrouted decision still records why every lane was rejected.
+      decision('RQ-C', t - 90, { chosen_lane: null, preferred_lane: null, reason_codes: ['no_runnable_lane'], rejected_lanes: [rejected('codex-cmp', 'held'), rejected('devin', 'provider_backoff')] }),
+      // A routed decision with no rejected lanes contributes decided only.
+      decision('RQ-D', t - 80, { rejected_lanes: [] }),
+      // Out-of-window, future, malformed-ts, broken and non-decision rows never count.
+      decision('RQ-OLD', t - 25 * 3600, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      decision('RQ-FUTURE', t + 3600, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-NOTS' }),
+      '{"event":"route_decision" broken',
+      unfedRow(t - 60, {}),
+    ].join('\n');
+    expect(foldRouteRejections(journal, now, 24)).toEqual({
+      available: true,
+      decided: 4, // RQ-A (latest), RQ-B, RQ-C, RQ-D
+      unrouted: 1, // RQ-C
+      lanes: [
+        { lane: 'codex-cmp', jobs: 3, reasons: { saturated: 1, missing_capability: 1, held: 1 } },
+        { lane: 'devin', jobs: 3, reasons: { quota_exhausted: 2, held: 1, provider_backoff: 1 } },
+      ],
+      // byReason counts each job once per reason across all its rejected lanes:
+      // RQ-A contributes saturated+quota_exhausted+held, RQ-B missing_capability+quota_exhausted,
+      // RQ-C held+provider_backoff — so quota_exhausted and held each reach 2.
+      byReason: { quota_exhausted: 2, held: 2, saturated: 1, missing_capability: 1, provider_backoff: 1 },
+    });
+  });
+
+  it('counts a job once per reason however many lanes rejected it for that reason', () => {
+    const journal = [
+      decision('RQ-A', t - 100, { rejected_lanes: [rejected('codex-cmp', 'quota_exhausted'), rejected('devin', 'quota_exhausted'), rejected('omlx', 'local_opt_in_required')] }),
+      decision('RQ-B', t - 90, { rejected_lanes: [rejected('devin', 'quota_exhausted')] }),
+    ].join('\n');
+    const tally = foldRouteRejections(journal, now, 24);
+    expect(tally.byReason).toEqual({ quota_exhausted: 2, local_opt_in_required: 1 });
+    expect(tally.lanes).toEqual([
+      { lane: 'devin', jobs: 2, reasons: { quota_exhausted: 2 } },
+      { lane: 'codex-cmp', jobs: 1, reasons: { quota_exhausted: 1 } },
+      { lane: 'omlx', jobs: 1, reasons: { local_opt_in_required: 1 } },
+    ]);
+  });
+
+  it('skips malformed rejected_lanes entries and reason codes, never guessing', () => {
+    const journal = [
+      decision('RQ-A', t - 100, {
+        rejected_lanes: [
+          'not-an-object',
+          { lane: 'bad lane!', reason_codes: ['quota_exhausted'] },
+          { lane: 'omlx' },                                  // no reason_codes array
+          { lane: 'omlx', reason_codes: 'quota_exhausted' }, // reason_codes not an array
+          { lane: 'claude', reason_codes: ['NOT_A_CODE', 'also bad', 'quota_exhausted'] },
+          { lane: 'devin', reason_codes: ['quota_exhausted', 'quota_exhausted'] }, // dup code deduped
+          { lane: 'devin', reason_codes: ['saturated'] },    // duplicate lane: first entry wins
+        ],
+      }),
+      // rejected_lanes present but not an array records nothing.
+      decision('RQ-B', t - 90, { rejected_lanes: 'quota_exhausted' }),
+    ].join('\n');
+    expect(foldRouteRejections(journal, now, 24)).toEqual({
+      available: true,
+      decided: 2,
+      unrouted: 0,
+      lanes: [
+        { lane: 'claude', jobs: 1, reasons: { quota_exhausted: 1 } },
+        { lane: 'devin', jobs: 1, reasons: { quota_exhausted: 1 } },
+      ],
+      // RQ-A hit quota_exhausted on two lanes but counts once; RQ-B recorded none.
+      byReason: { quota_exhausted: 1 },
+    });
+  });
+
+  it('says when there is no market journal', () => {
+    expect(foldRouteRejections(null, now, 24)).toEqual({ available: false, decided: 0, unrouted: 0, lanes: [], byReason: {} });
+    expect(foldRouteRejections('', now, 24)).toEqual({ available: true, decided: 0, unrouted: 0, lanes: [], byReason: {} });
+  });
+});
+
 describe('phm fleet unfed', () => {
   it('is registered as a fleet verb', async () => {
     const mod = await FLEET_SUBCOMMAND_LOADERS.unfed!();
@@ -158,19 +458,77 @@ describe('phm fleet unfed', () => {
   });
 
   it('reports utilization, unfed lanes and windowed history from the runs directory', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: LANES }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: LANES,
+    }));
     writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
     const t = Date.now() / 1000;
     writeFileSync(join(dir, 'metrics', 'work-market.jsonl'), [
       unfedRow(t - 600, { 'codex-cmp': { unfed: true, headroom: 2, waiting_elsewhere: 4, blocked: { missing_capability: 4 } } }),
       unfedRow(t - 3 * 3600, { 'codex-cmp': { unfed: true, headroom: 1, waiting_elsewhere: 1, blocked: {} } }),
+      decisionRow('RQ-M1', t - 500),
+      decisionRow('RQ-M2', t - 400),
+      // RQ-M1's latest decision also records the lanes it rejected and why.
+      JSON.stringify({ schema: 'work-market.v1', event: 'route_decision', job: 'RQ-M1', ts: t - 100, chosen_lane: 'claude', preferred_lane: 'codex-personal', override: null,
+        rejected_lanes: [{ lane: 'codex-cmp', reason_codes: ['saturated'] }, { lane: 'devin', reason_codes: ['quota_exhausted'] }] }),
+    ].join('\n') + '\n');
+    const claimTs = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ event: 'claim', job: 'RQ-J1', repo: 'phantom', lane: 'claude', tier: 'work', ts: claimTs(50_000) }),
+      JSON.stringify({ event: 'batch_claim', job: 'RQ-J2', batch: 'B-1', repo: 'phantom', lane: 'claude', tier: 'work', ts: claimTs(40_000), lane_hint: 'devin', lane_override: 'batch_session' }),
+      JSON.stringify({ event: 'claim', job: 'RQ-J3', repo: 'phantom', lane: 'codex-cmp', tier: 'work', ts: claimTs(30_000), lane_hint: 'codex-personal', lane_override: 'preferred_lane_fallback' }),
+      JSON.stringify({ event: 'claim', job: 'RQ-J4', repo: 'phantom', lane: 'devin', tier: 'work', ts: claimTs(3_700_000) }),
+      // Recorded outcomes for the two decided jobs: RQ-M1 merged, RQ-M2 closed unmerged.
+      JSON.stringify({ event: 'finish', job: 'RQ-M1', phase: 'MERGED', ts: claimTs(20_000) }),
+      JSON.stringify({ event: 'finish', job: 'RQ-M2', phase: 'CLOSED', ts: claimTs(10_000) }),
     ].join('\n') + '\n');
     const json = await run(['--json', '--window', '1']);
     expect(json.code).toBe(1);
     const report = JSON.parse(json.lines[0]!);
-    expect(report).toMatchObject({ schema: 'fleet.unfed.v1', readOnly: true, source: 'derived', unfedLanes: ['codex-cmp'], unfedSlots: 3 });
+    expect(report).toMatchObject({
+      schema: 'fleet.unfed.v1', readOnly: true, source: 'derived',
+      unfedLanes: ['codex-cmp'], unfedSlots: 3,
+      statusAsOf: expect.any(String), statusFresh: true,
+    });
     expect(report.history).toMatchObject({ windowHours: 1, available: true, ticks: 1 });
     expect(report.history.lanes[0]).toMatchObject({ lane: 'codex-cmp', unfedTicks: 1, slotTicks: 2 });
+    // RQ-M1's latest in-window decision ran on-hint; only RQ-M2 counts as overridden.
+    expect(report.overrides).toEqual({
+      available: true, decided: 2, overridden: 1,
+      byReason: { preferred_lane_fallback: 1 },
+      lanes: [{ from: 'codex-personal', to: 'claude', reason: 'preferred_lane_fallback', jobs: 1 }],
+    });
+    // Claims count launch events in the window: RQ-J4 is outside it, RQ-J1 ran on-hint.
+    expect(report.claims).toEqual({
+      available: true, truncated: false, claimed: 3, overridden: 2,
+      byReason: { batch_session: 1, preferred_lane_fallback: 1 },
+      lanes: [
+        { from: 'codex-personal', to: 'codex-cmp', reason: 'preferred_lane_fallback', claims: 1 },
+        { from: 'devin', to: 'claude', reason: 'batch_session', claims: 1 },
+      ],
+    });
+    // Decision outcomes join the same two decided jobs to their finish rows:
+    // RQ-M1's latest decision left its preference with no override record
+    // (unexplained) and merged; RQ-M2 recorded an override and closed unmerged.
+    expect(report.decisionOutcomes).toEqual({
+      available: true, jobsAvailable: true, jobsTruncated: false, decided: 2,
+      hinted: { decided: 0, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 0 },
+      overridden: { decided: 1, known: 1, merged: 0, unmerged: 1, reverted: 0, unresolved: 0 },
+      open: { decided: 0, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 0 },
+      unrouted: { decided: 0, known: 0, merged: 0, unmerged: 0, reverted: 0, unresolved: 0 },
+      unexplained: { decided: 1, known: 1, merged: 1, unmerged: 0, reverted: 0, unresolved: 0 },
+      byReason: { preferred_lane_fallback: 1 },
+      byClass: { unclassified: { decided: 2, known: 2, merged: 1, unmerged: 1, reverted: 0, unresolved: 0 } },
+    });
+    // Only RQ-M1's latest decision recorded rejected_lanes; RQ-M2's did not.
+    expect(report.rejections).toEqual({
+      available: true, decided: 2, unrouted: 0,
+      lanes: [
+        { lane: 'codex-cmp', jobs: 1, reasons: { saturated: 1 } },
+        { lane: 'devin', jobs: 1, reasons: { quota_exhausted: 1 } },
+      ],
+      byReason: { saturated: 1, quota_exhausted: 1 },
+    });
     vi.restoreAllMocks();
     const text = await run([]);
     expect(text.code).toBe(1);
@@ -180,10 +538,27 @@ describe('phm fleet unfed', () => {
     expect(body).toContain('3 slot(s) could be filled now across codex-cmp; 4 rows waiting.');
     expect(body).toContain('Last 24h: 2 tick(s) left capacity unfed.');
     expect(body).toContain('codex-cmp: 2 tick(s), 3 slot-tick(s) lost (missing_capability 4)');
+    expect(body).toContain('Last 24h: 2 job(s) decided, 1 left their hinted lane.');
+    expect(body).toContain('override reasons: preferred_lane_fallback 1');
+    expect(body).toContain('codex-personal -> claude (preferred_lane_fallback): 1 job(s)');
+    // The text run uses the default 24h window, so RQ-J4 (62 min old) counts as a claim too.
+    expect(body).toContain('Last 24h: 4 claim(s) launched, 2 left their hinted lane.');
+    expect(body).toContain('claim override reasons: batch_session 1, preferred_lane_fallback 1');
+    expect(body).toContain('codex-personal -> codex-cmp (preferred_lane_fallback): 1 claim(s)');
+    expect(body).toContain('devin -> claude (batch_session): 1 claim(s)');
+    expect(body).toContain('Last 24h: outcomes for 2 decided job(s): 1 merged, 1 unmerged, 0 unresolved.');
+    expect(body).toContain('overridden: 1 decided, 0 merged, 1 unmerged, 0 unresolved');
+    expect(body).toContain('unexplained: 1 decided, 1 merged, 0 unmerged, 0 unresolved');
+    expect(body).toContain('Last 24h: lane rejections across 2 decided job(s): quota_exhausted 1, saturated 1');
+    expect(body).toContain('codex-cmp: 1 job(s) rejected (saturated 1)');
+    expect(body).toContain('devin: 1 job(s) rejected (quota_exhausted 1)');
   });
 
   it('exits 0 with no unfed capacity and no history file', async () => {
-    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({ lanes: { a: { running: 2, target: 2 } } }));
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(),
+      lanes: { a: { running: 2, target: 2 } },
+    }));
     const result = await run([]);
     expect(result.code).toBe(0);
     expect(result.lines).toEqual([
@@ -193,13 +568,80 @@ describe('phm fleet unfed', () => {
       'Last 24h: no metrics/work-market.jsonl history.',
     ]);
   });
+
+  it('flags a stale status snapshot in json and text without hiding the counts', async () => {
+    const staleTick = new Date(Date.now() - 10 * 60_000).toISOString();
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: staleTick, lanes: LANES,
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), READY);
+    const json = await run(['--json']);
+    expect(json.code).toBe(1);
+    const report = JSON.parse(json.lines[0]!);
+    expect(report).toMatchObject({ statusAsOf: staleTick, statusFresh: false, unfedLanes: ['codex-cmp'] });
+    vi.restoreAllMocks();
+    const text = await run([]);
+    expect(text.code).toBe(1);
+    expect(text.lines.join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${staleTick}`);
+    expect(text.lines.join('\n')).toContain('3 slot(s) could be filled now across codex-cmp');
+  });
+});
+
+describe('status freshness', () => {
+  const NOW = 1_800_000_000_000;
+  const status = (lastTick?: unknown) => JSON.stringify({
+    schema: 'dispatchd.status.v1',
+    lanes: { a: { running: 0, target: 2 } },
+    ...(lastTick === undefined ? {} : { last_tick: lastTick }),
+  });
+  const render = (report: ReturnType<typeof currentUnfed>) =>
+    renderUnfed({ ...report, history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) });
+
+  it('marks a fresh dispatcher tick fresh and reports its timestamp', () => {
+    const tick = new Date(NOW - 30_000).toISOString();
+    const report = currentUnfed(status(tick), '', { nowMs: NOW });
+    expect(report.statusAsOf).toBe(tick);
+    expect(report.statusFresh).toBe(true);
+    expect(render(report).join('\n')).not.toContain('Status snapshot');
+  });
+
+  it('flags stale, future, missing and unverifiable ticks without hiding the counts', () => {
+    const stale = new Date(NOW - 121_000).toISOString();
+    const old = currentUnfed(status(stale), '', { nowMs: NOW });
+    expect(old.statusFresh).toBe(false);
+    expect(old.statusAsOf).toBe(stale);
+    expect(render(old).join('\n')).toContain(`Status snapshot is stale: last dispatcher tick ${stale}`);
+    // Exactly at the two-minute boundary is still fresh.
+    expect(currentUnfed(status(new Date(NOW - 120_000).toISOString()), '', { nowMs: NOW }).statusFresh).toBe(true);
+    // A future-dated tick proves nothing about freshness.
+    expect(currentUnfed(status(new Date(NOW + 60_000).toISOString()), '', { nowMs: NOW }).statusFresh).toBe(false);
+    // No readable tick: age unknown, never assumed fresh.
+    for (const bad of [status(undefined), status('not a date'), status(1_800_000_000)]) {
+      const report = currentUnfed(bad, '', { nowMs: NOW });
+      expect(report.statusFresh).toBe(false);
+      expect(report.statusAsOf).toBeNull();
+    }
+    expect(render(currentUnfed(status(undefined), '', { nowMs: NOW })).join('\n'))
+      .toContain('Status snapshot age unknown: status.json has no readable last_tick');
+    // A file without the dispatcher schema is not a live tick at all.
+    const foreign = JSON.stringify({ lanes: { a: { running: 0, target: 2 } }, last_tick: new Date(NOW).toISOString() });
+    expect(currentUnfed(foreign, '', { nowMs: NOW }).statusFresh).toBe(false);
+  });
+
+  it('leaves freshness unknown when no evaluation clock is supplied', () => {
+    const report = currentUnfed(JSON.stringify({ lanes: { a: { running: 0, target: 2 } } }), '');
+    expect(report.statusFresh).toBeNull();
+    expect(report.statusAsOf).toBeNull();
+    expect(render(report).join('\n')).not.toContain('Status snapshot');
+  });
 });
 
 describe('renderUnfed', () => {
   it('says so when there are no lanes', () => {
-    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24) };
+    const report = { ...currentUnfed('{"lanes":{}}', ''), history: foldUnfedHistory('', 0, 24), overrides: foldMarketOverrides('', 0, 24), claims: foldClaimOverrides('', 0, 24), decisionOutcomes: foldDecisionOutcomes('', '', 0, 24), rejections: foldRouteRejections('', 0, 24) };
     expect(renderUnfed(report)).toEqual(['No lanes in queue/status.json.', 'No unfed capacity: 0 rows waiting.',
-      'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.']);
+      'Derived from lane counts and ready.tsv hints: this dispatcher does not publish reasons.', 'Last 24h: no unfed ticks recorded.',
+      'Last 24h: no route decisions recorded.', 'Last 24h: no claims recorded.']);
   });
 });
 
@@ -256,5 +698,198 @@ describe('derived market reasons', () => {
     expect(report.source).toBe('dispatcher');
     expect(report.derivedReasons).toBe(false);
     expect(report.resources.find(r => r.lane === 'codex-cmp')!.blocked).toEqual({ saturated: 1 });
+  });
+});
+
+describe('ready row validation', () => {
+  const VLANES = {
+    a: { running: 0, target: 2, held: false },
+    b: { running: 0, target: 2, held: false },
+  };
+  const vrow = (job: string, lane: string, tier = 'work', req?: string, repo = 'phantom') =>
+    [job, repo, lane, tier, `/q/prompts/${job}.md`, ...(req === undefined ? [] : [req])].join('\t');
+
+  it('rejects rows the dispatcher drops before the market sees them', () => {
+    const ready = [
+      vrow('RQ-OK', 'a'),
+      vrow('RQ-BADKEY', 'a', 'work', '{"preferred_lane":"a","bogus":1}'),
+      vrow('RQ-BADPREF', 'a', 'work', '{"preferred_lane":"NOT_A_LANE"}'),
+      vrow('RQ-BADNEEDS', 'a', 'work', '{"needs":"git"}'),
+      vrow('RQ-BADNEEDSCAP', 'a', 'work', '{"needs":["git","Bad_Cap"]}'),
+      vrow('RQ-BADTIERORD', 'a', 'work', '{"min_tier":"work","max_tier":"fast"}'),
+      vrow('RQ-BADREPO', 'other', 'a', 'work', '{"repo":"phantom"}'),
+      vrow('RQ-NULLSPEC', 'a', 'work', 'null'),
+      vrow('RQ-ARRSPEC', 'a', 'work', '[1,2]'),
+      vrow('RQ BAD JOB', 'a'),
+      vrow('RQ-BADTIER', 'a', 'bogus-tier'),
+      vrow('RQ-BADREPOP', 'a', 'work', undefined, 'a/b'),
+      vrow('RQ-BADLANECOL', 'NOT_A_LANE'),
+      'RQ-SHORT\ta\tb',
+    ].join('\n');
+    const hints = readyHints(ready);
+    expect(hints.waiting).toBe(1);
+    expect(hints.invalid).toBe(12);
+    expect(Object.fromEntries(hints.byLane)).toEqual({ a: 1 });
+    const report = currentUnfed(JSON.stringify({ lanes: VLANES }), ready);
+    expect(report.waiting).toBe(1);
+    expect(report.invalidRows).toBe(12);
+    // Only the valid row waits, hinted at a: b still sees one row elsewhere.
+    expect(report.resources.find(r => r.lane === 'b')).toMatchObject({ waitingElsewhere: 1, unfed: true });
+    expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 1, waitingElsewhere: 0, unfed: false });
+  });
+
+  it('resolves spec-less rows from the router-queue.md envelope like the dispatcher', () => {
+    const routerQueue = [
+      '- READY RQ-ENV (P1, pool=codex-personal, needs=git|secrets:DEPLOY_KEY, tier=mid): do the thing',
+      '- CLAIMED 03:17 dispatchd worker RQ-ENV2 (lane=claude, exclusive=true, impact=2): other',
+      '- READY RQ-SPEC (P1, pool=claude): conflicting envelope the spec column overrides',
+    ].join('\n');
+    const ready = [
+      vrow('RQ-ENV', 'codex-cmp'),
+      vrow('RQ-ENV2', 'codex-cmp'),
+      vrow('RQ-PLAIN', 'codex-cmp'),
+      vrow('RQ-SPEC', 'codex-cmp', 'work', '{"preferred_lane":"devin"}'),
+    ].join('\n');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.waiting).toBe(4);
+    expect(hints.invalid).toBe(0);
+    // pool=/lane= attrs beat the lane column; an embedded spec column beats the envelope.
+    expect(hints.rows[0]).toMatchObject({ hint: 'codex-personal', needs: ['git', 'secrets:DEPLOY_KEY'] });
+    expect(hints.rows[1]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[2]).toMatchObject({ hint: 'codex-cmp', needs: [] });
+    expect(hints.rows[3]).toMatchObject({ hint: 'devin' });
+  });
+
+  it('rejects a row whose envelope fails validation', () => {
+    const routerQueue = '- READY RQ-BADENV (P1, pool=codex-cmp, exclusive=maybe): x';
+    const hints = readyHints(vrow('RQ-BADENV', 'codex-cmp'), routerQueue);
+    expect(hints.waiting).toBe(0);
+    expect(hints.invalid).toBe(1);
+  });
+
+  it('rejects an envelope row whose lane column is not a lane id', () => {
+    // dispatchd runs work_market.requirements on the raw row before the
+    // envelope replaces the spec: the lane column defaults to preferred_lane
+    // and must be a lane id or empty, or the row is invalid — never open supply.
+    const routerQueue = [
+      '- READY RQ-BADLANE (P1, pool=codex-cmp): valid envelope',
+      '- READY RQ-OPENLANE (P1, pool=claude): envelope supplies the hint',
+    ].join('\n');
+    const ready = [
+      vrow('RQ-BADLANE', 'NOT_A_LANE'),
+      vrow('RQ-OPENLANE', ''),
+      'RQ-RAWOPEN\tphantom\t\twork\t/q/prompts/RQ-RAWOPEN.md',
+    ].join('\n');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.waiting).toBe(2);
+    expect(hints.invalid).toBe(1);
+    // An empty lane cell stays open: the envelope's pool= hint applies, and a
+    // spec-less row with no envelope line stays unhinted.
+    expect(hints.rows[0]).toMatchObject({ hint: 'claude' });
+    expect(hints.rows[1]).toMatchObject({ hint: null });
+  });
+
+  it('keeps the row repo through the envelope like the dispatcher re-parse', () => {
+    const routerQueue = '- READY RQ-ENV (P1): open envelope row';
+    const ready = vrow('RQ-ENV', 'codex-cmp');
+    const hints = readyHints(ready, routerQueue);
+    expect(hints.rows[0]).toMatchObject({ hint: null, repo: 'phantom' });
+    // repo_unserved is scored by the real repo: served on codex-cmp's allowlist,
+    // blocked on claude's — never reported for every envelope row at once.
+    const lanes = {
+      'codex-cmp': { running: 0, target: 1, held: false },
+      claude: { running: 0, target: 1, held: false },
+    };
+    const slots = JSON.stringify({ 'codex-cmp': { repos: ['phantom'] }, claude: { repos: ['other-repo'] } });
+    const report = currentUnfed(JSON.stringify({ lanes }), ready, { slots, routerQueue });
+    const byLane = Object.fromEntries(report.resources.map(r => [r.lane, r]));
+    expect(byLane['codex-cmp']!.blocked).toEqual({ deferred_after_selection: 1 });
+    expect(byLane.claude!.blocked).toEqual({ repo_unserved: 1 });
+  });
+
+  it('counts every JID+tier-valid row by raw lane column when admission stopped', () => {
+    const status = JSON.stringify({ lanes: VLANES, paused: 'hold' });
+    const ready = [
+      vrow('RQ-OK', 'a'),
+      vrow('RQ-BADSPEC', 'a', 'work', '{"bogus":1}'),
+      vrow('RQ-BADTIER', 'a', 'bogus-tier'),
+    ].join('\n');
+    const report = currentUnfed(status, ready);
+    expect(report.fleetStop).toBe('admission_stopped');
+    // The stopped _waiting never parses requirements: the bad spec still waits,
+    // hinted by its raw lane column; the bad tier row does not.
+    expect(report.waiting).toBe(2);
+    expect(report.invalidRows).toBe(2);
+    expect(report.resources.find(r => r.lane === 'a')).toMatchObject({ readyHinted: 2, waitingElsewhere: 0, unfed: false });
+    expect(report.resources.find(r => r.lane === 'b')).toMatchObject({ waitingElsewhere: 2, unfed: true, blocked: { admission_stopped: 2 } });
+  });
+});
+
+describe('fleet stop verdicts', () => {
+  const STOP_LANES = { a: { running: 0, target: 2, held: false }, b: { running: 1, target: 1, held: false } };
+  const TWO_WAITING = [row('RQ-A', 'b'), row('RQ-B', 'b')].join('\n');
+
+  it('reports admission_stopped from a pause marker or a tripped admission gate', () => {
+    for (const extra of [
+      { paused: 'maintenance window' },
+      { admission: { gate_reason: 'loadavg 8.0 > 4.0 (2 x ncpu)', admit: false, decision: 'stop' } },
+    ]) {
+      const report = currentUnfed(JSON.stringify({ lanes: STOP_LANES, ...extra }), TWO_WAITING);
+      expect(report.source).toBe('derived');
+      expect(report.fleetStop).toBe('admission_stopped');
+      expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({ admission_stopped: 2 });
+      expect(report.resources.find(r => r.lane === 'b')!.blocked).toEqual({});
+    }
+  });
+
+  it('reports global_admission when the fleet cap or launch budget was spent', () => {
+    for (const extra of [
+      { admission: { running: 4, cap: 4, claim_limit: 8, admit: false, decision: 'stop' } },
+      { admission: { running: 1, cap: 9, claim_limit: 8, admit: false, decision: 'stop' }, launched_this_tick: ['RQ-1', 'RQ-2', 'RQ-3', 'RQ-4', 'RQ-5', 'RQ-6', 'RQ-7', 'RQ-8'] },
+      { admission: { admit: false, decision: 'stop' } },
+    ]) {
+      const report = currentUnfed(JSON.stringify({ lanes: STOP_LANES, ...extra }), TWO_WAITING);
+      expect(report.fleetStop).toBe('global_admission');
+      expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({ global_admission: 2 });
+    }
+  });
+
+  it('leaves per-lane derivation alone when the tick admitted work', () => {
+    const status = JSON.stringify({
+      lanes: STOP_LANES,
+      admission: { running: 1, cap: 9, claim_limit: 8, admit: true, decision: 'admit', gate_reason: null },
+      launched_this_tick: ['RQ-1'],
+    });
+    const report = currentUnfed(status, TWO_WAITING);
+    expect(report.fleetStop).toBeNull();
+    expect(report.resources.find(r => r.lane === 'a')!.blocked).toEqual({});
+  });
+
+  it('reads the stop code back from dispatcher-published blocked reasons', () => {
+    const status = JSON.stringify({
+      lanes: STOP_LANES,
+      unfed_capacity: {
+        waiting: 2,
+        lanes: {
+          a: { waiting_elsewhere: 2, blocked: { admission_stopped: 2 } },
+          b: { waiting_elsewhere: 0, blocked: {} },
+        },
+      },
+    });
+    const report = currentUnfed(status, TWO_WAITING);
+    expect(report.source).toBe('dispatcher');
+    expect(report.fleetStop).toBe('admission_stopped');
+  });
+
+  it('prints the fleet stop line in text output', async () => {
+    writeFileSync(join(dir, 'queue', 'status.json'), JSON.stringify({
+      schema: 'dispatchd.status.v1', last_tick: new Date().toISOString(), lanes: STOP_LANES, paused: 'hold',
+    }));
+    writeFileSync(join(dir, 'queue', 'ready.tsv'), TWO_WAITING);
+    const result = await run([]);
+    expect(result.code).toBe(1);
+    expect(result.lines).toContain('a  0/2 running (0%), 0 hinted here  UNFED: 2 free, 2 rows waiting elsewhere (admission_stopped 2)');
+    expect(result.lines.join('\n')).toContain('Fleet admission stopped (pause, disk guard or load gate)');
+    expect(result.lines.join('\n')).toContain('status.json admission verdict');
   });
 });

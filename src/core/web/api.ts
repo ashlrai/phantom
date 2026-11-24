@@ -1251,6 +1251,18 @@ export async function handleApi(
       sendJson(res, 200, await readUsageSpend());
       return true;
     }
+    if (path === '/api/usage/burn' && method === 'GET') {
+      // Same report as `phm fleet burn --json` (usage.burn.v1).
+      const { readBurnWho } = await import('../usage/burn-who.js');
+      sendJson(res, 200, await readBurnWho());
+      return true;
+    }
+    if (path === '/api/fleet/pace' && method === 'GET') {
+      // Same report as `phm fleet pace --json` (fleet.pace.v1).
+      const { readFleetPace } = await import('../fleet/pace-verdict.js');
+      sendJson(res, 200, await readFleetPace());
+      return true;
+    }
     if (path === '/api/usage/runway' && method === 'GET') {
       // Same snapshot as `phm pool runway --json` (pool.runway.v1).
       const { readPoolRunway } = await import('../usage/runway-read.js');
@@ -1888,9 +1900,10 @@ export async function handleApi(
     }
 
     if (path === '/api/fleet/releases' && method === 'GET') {
-      // The same report as `phm releases --json`: local clones only, never tags or publishes.
+      // Legacy PR cadence plus the commit status shared with `phm release status --json`.
       const { getReleases } = await import('../release/status.js');
-      sendJson(res, 200, getReleases());
+      const { readReleaseRepos } = await import('../release/release-repos.js');
+      sendJson(res, 200, { ...getReleases(), releaseRepos: await readReleaseRepos() });
       return true;
     }
 
@@ -1898,6 +1911,17 @@ export async function handleApi(
       const { readEmptyJobs } = await import('../fleet/empty-jobs.js');
       const report = await readEmptyJobs();
       sendJson(res, report ? 200 : 503, report ?? { error: 'Jobs ledger is unreadable.' });
+      return true;
+    }
+
+    if (path === '/api/fleet/outcomes' && method === 'GET') {
+      // What each finished job produced (fleet.job-outcomes.v1), the report `phm fleet outcomes --lane <lane> --json` prints.
+      const hoursText = getQueryParam(req.url ?? '', 'hours') ?? '';
+      const hours = hoursText ? Number(hoursText) : 24;
+      if (!/^\d*\.?\d*$/.test(hoursText) || !Number.isFinite(hours) || hours <= 0 || hours > 2160) { sendJson(res, 400, { error: 'Use hours from 1 to 2160.' }); return true; }
+      const lane = getQueryParam(req.url ?? '', 'lane');
+      const { readJobOutcomes } = await import('../fleet/job-outcomes.js');
+      sendJson(res, 200, await readJobOutcomes({ hours, ...(lane && lane !== 'all' ? { lane } : {}) }));
       return true;
     }
 
@@ -1972,6 +1996,12 @@ export async function handleApi(
       return true;
     }
 
+    if (path === '/api/fleet/machines' && method === 'GET') {
+      const { readFleetMachines } = await import('./fleet-machines-route.js');
+      sendJson(res, 200, readFleetMachines());
+      return true;
+    }
+
     // ── GET /api/fleet/board ─────────────────────────────────────────────
     // RQ-SWE3-BOARDUI-1: the Leader-as-CEO board the last Leader tick
     // recorded at <runs>/coordination/leader-board.json — lanes, READY depth
@@ -1996,8 +2026,29 @@ export async function handleApi(
     // local usage readers. READ-ONLY bounded fs reads; never throws on
     // absent/degraded inputs; same no-auth read class as /api/fleet.
     if (path === '/api/fleet/lanes' && method === 'GET') {
-      const { getFleetLaneSnapshot } = await import('../fleet/lane-console.js');
-      sendJson(res, 200, await getFleetLaneSnapshot());
+      const [{ getFleetLaneSnapshot }, { fleetLaneEmptyNotes }] = await Promise.all([
+        import('../fleet/lane-console.js'), import('../fleet/lane-empty-notes.js')]);
+      sendJson(res, 200, await getFleetLaneSnapshot({ emptyNotes: fleetLaneEmptyNotes }));
+      return true;
+    }
+
+    // ── GET /api/fleet/local-capacity ────────────────────────────────────
+    // How many local-model workers fit in free memory (local.capacity.v1), the same answer as
+    // `phm local capacity`. Read-only (vm_stat and the process table); unknown is workers: null.
+    if (path === '/api/fleet/local-capacity' && method === 'GET') {
+      const { readLocalCapacity } = await import('../fleet/local-capacity.js');
+      sendJson(res, 200, await readLocalCapacity());
+      return true;
+    }
+
+    // ── GET /api/fleet/lane-yield[?hours=24] ─────────────────────────────
+    // Merged PRs per launch for every lane (fleet.lane-yield.v1), the same report as
+    // `phm fleet yield --by lane`. Read-only; an unreadable ledger is known: false.
+    if (path === '/api/fleet/lane-yield' && method === 'GET') {
+      const [{ readLaneYield }, { runsRoot }, { join }] = await Promise.all([import('../fleet/lane-yield-board.js'), import('../metrics/loop-collect.js'), import('node:path')]);
+      const raw = Number(new URL(req.url ?? '', 'http://localhost').searchParams.get('hours') ?? 24);
+      const hours = Number.isFinite(raw) && raw > 0 && raw <= 168 ? raw : 24;
+      sendJson(res, 200, await readLaneYield(join(runsRoot(), 'metrics', 'jobs.jsonl'), hours, Date.now()));
       return true;
     }
 
@@ -2048,6 +2099,20 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/map/messages ──────────────────────────────────────
+    // The last agent-to-agent messages (fleet.map-messages.v1) for the live
+    // edges on the fleet map and the phone list; the read behind `phm fleet
+    // map messages --json`. READ-ONLY bus read; short scrubbed summaries, never
+    // bodies. Same no-auth read class as /api/fleet/message-graph.
+    if (path === '/api/fleet/map/messages' && method === 'GET') {
+      const { mapMessagesResponse } = await import('../fleet/map-messages.js');
+      let response: ReturnType<typeof mapMessagesResponse>;
+      try { response = mapMessagesResponse(req.url ?? path); }
+      catch { response = { status: 503, body: { error: 'Map messages unavailable.' } }; }
+      sendJson(res, response.status, response.body);
+      return true;
+    }
+
     // ── GET /api/fleet/sessions ──────────────────────────────────────────
     // Unified agent-session list (fleet.sessions.v1): queued/parked/
     // launching/running/publishing/exited/stale sessions plus a bounded
@@ -2059,6 +2124,12 @@ export async function handleApi(
     if (path === '/api/fleet/sessions' && method === 'GET') {
       const { getFleetSessions } = await import('../fleet/runs-sessions.js');
       sendJson(res, 200, await getFleetSessions());
+      return true;
+    }
+
+    // RQ-PHX-SLACKBRIDGEDESK671: offline Slack bridge state; same read class as /api/fleet/job.
+    if (path === '/api/fleet/slack-bridge' && method === 'GET') {
+      (await import('./slack-bridge-read-api.js')).handleSlackBridgeRead(res);
       return true;
     }
 
@@ -2479,6 +2550,17 @@ export async function handleApi(
       return true;
     }
 
+    // ── GET /api/fleet/leader-bets ───────────────────────────────────────────
+    // fleet.leader-bets.v1: the same read as `phm bets`; feeds the Feed's "Leader bets" card.
+    if (path === '/api/fleet/leader-bets' && method === 'GET') {
+      const { LEADER_BETS_MAX_HOURS, readLeaderBets } = await import('../fleet/leader-batches.js');
+      const raw = new URL(req.url ?? '', 'http://localhost').searchParams.get('hours');
+      const hours = raw === null ? undefined : /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (hours !== undefined && !(hours >= 1 && hours <= LEADER_BETS_MAX_HOURS)) sendJson(res, 400, { error: 'Use hours 1 to 8760.' });
+      else sendJson(res, 200, await readLeaderBets({ hours }));
+      return true;
+    }
+
     if (path === '/api/feed' && method === 'GET') {
       const { FEED_QUERY_ERROR, parseFeedQuery, readFeed } = await import('../feed.js');
       const params = new URL(req.url ?? '', 'http://localhost').searchParams;
@@ -2797,11 +2879,27 @@ export async function handleApi(
         sendJson(res, 405, { error: 'method not allowed' });
         return true;
       }
-      const [{ readResourceLedger }, { buildPoolsView }] = await Promise.all([
-        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'),
+      const [{ readResourceLedger }, { buildPoolsView }, { readUsageSamples }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/usage-history.js'),
       ]);
       const now = Date.now();
-      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now));
+      const { readLiveCaps } = await import('../fleet/model-caps.js');
+      sendJson(res, 200, buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now }), await readLiveCaps(now)));
+      return true;
+    }
+
+    // ── GET /api/app/pools/spenddown (pools.spenddown.v1, the spend-down chart; same data as `phm pools spenddown`) ──
+    if (path === '/api/app/pools/spenddown') {
+      if (method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        sendJson(res, 405, { error: 'method not allowed' });
+        return true;
+      }
+      const [{ readResourceLedger }, { buildPoolsView }, { readSpendDown }, { readUsageSamples }] = await Promise.all([
+        import('../fleet/runs-resource-ledger.js'), import('../fleet/pools-view.js'), import('../fleet/pools-spenddown.js'), import('../fleet/usage-history.js'),
+      ]);
+      const now = Date.now();
+      sendJson(res, 200, await readSpendDown(buildPoolsView(await readResourceLedger({ now: () => now }), now, await readUsageSamples({ nowMs: now })), { nowMs: now }));
       return true;
     }
 
