@@ -443,6 +443,24 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   ledger so one missing file silences only its class, truncated tails
   are stated as lower bounds, and rows emit only for the fleet's own
   repository since the reaper is this install's machinery —
+  and the stray-stop reaper's own audit ledger, the
+  `{at, lane, job, pid, result}` rows `stopStray` appends to
+  `stray-stops.jsonl` at the runs dir root — one per SIGTERM (or
+  already-gone pid) on a live process still inside a finished job's
+  worktree, written by the self-tick's stray-stop step,
+  `phm fleet stray-stop --apply` and the fleet-holds stop route
+  (otherwise only visible through `phm fleet stray-slots`'s live
+  report — the ledger was write-only audit with no trend fold, while
+  the sibling stuck-job feed covers the marker and kill ledgers under
+  `queue/`, not this runs-dir-root stop ledger). A lane cell becomes
+  an item while its distinct job count reaches the recurring bar of
+  three inside the 72-hour window; the lane is the ledger's own
+  recorded field, repo attribution joins `metrics/jobs.jsonl` as
+  enrichment that degrades rather than suppressing the stop evidence,
+  the signalled/already-gone result mix is quoted as recorded,
+  truncated tails are stated as lower bounds, and rows emit only for
+  the fleet's own repository since the reaper is this install's
+  machinery —
   and the cloud lesson holdout trial's adverse verdicts, the
   randomized served-vs-holdout landing comparison `lessonTrial`
   (src/core/improve/lesson-trial.ts) folds from the cloud task files
@@ -1055,7 +1073,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
-  source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
+  source-yield, gateway-shadow, recheck, stuck-job, stray-stop, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
@@ -1154,6 +1172,14 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   contrib/mac machinery boundary, keep the find-which-side-owns-the-cause
   framing per class — the launch→reap handoff dropping finish evidence
   versus jobs hanging past the stuck bar — with the same owner-side
+  no-change escape, and emit only for the fleet's own repository since
+  the reaper is this install's machinery. Stray-stop
+  items name the stray-stops ledger, `phm fleet stray-slots` and the
+  pinned contrib/mac machinery boundary, keep the
+  find-where-finished-jobs-leak-processes framing — the finish
+  lifecycle and queue/marker protocol's consumers this repository owns
+  versus the pinned dispatcher and launcher — quoting the recorded
+  signalled/already-gone result mix, with the same owner-side
   no-change escape, and emit only for the fleet's own repository since
   the reaper is this install's machinery. Lesson-trial
   items name the holdout trial, the `phm improve lessons` report and the

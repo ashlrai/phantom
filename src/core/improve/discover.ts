@@ -174,6 +174,16 @@
  *     finish evidence, or jobs that keep hanging instead of ending —
  *     become work instead of sitting in two write-only audit files
  *     `phm jobs stuck` and `phm job show` only ever read live or per-job;
+ *   - the stray-stop reaper's own audit ledger: the {at, lane, job, pid,
+ *     result} rows stopStray appends to stray-stops.jsonl at the runs
+ *     dir root — one per SIGTERM (or already-gone pid) on a live process
+ *     still inside a finished job's worktree, written by the self-tick's
+ *     stray-stop step, `phm fleet stray-stop --apply` and the
+ *     fleet-holds stop route (strayStopBacklogItems below), so recurring
+ *     process leaks — finished jobs leaving children that hold lane
+ *     slots until the next reaper pass — become work instead of sitting
+ *     in a write-only audit file `phm fleet stray-slots` only ever
+ *     serves live;
  *   - the cloud lesson holdout trial's adverse verdicts: the randomized
  *     served-vs-holdout landing comparison lessonTrial folds from the
  *     cloud task files and revert ledgers — overall and per knowledge
@@ -548,6 +558,7 @@ import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
+import { strayStopBacklogItems } from './stray-stop-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
@@ -859,6 +870,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // 'unknown' rather than suppressing the reaper evidence, and only the
   // fleet's own repository inherits the items.
   items.push(...await stuckJobBacklogItems({ repo }));
+
+  // Stray-stop ledger: the stray-stop reaper's own audit trail — one
+  // {at, lane, job, pid, result} row per SIGTERM (or already-gone pid)
+  // stopStray made on a live process still inside a finished job's
+  // worktree — becomes backlog items too. Until now stray-stops.jsonl
+  // was write-only audit with no reader at all: `phm fleet stray-slots`
+  // serves only the live report and the sibling stuck-job feed covers
+  // the marker/kill ledgers under queue/, not this runs-dir-root stop
+  // ledger. A lane cell emits only at the recurring bar of distinct
+  // jobs inside the window, repo attribution joins metrics/jobs.jsonl
+  // as enrichment, truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items.
+  items.push(...await strayStopBacklogItems({ repo }));
 
   // Cloud lesson holdout trial: the randomized served-vs-holdout landing
   // comparison lessonTrial computes over the cloud task files and revert
