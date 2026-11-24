@@ -198,8 +198,8 @@ To install the CLI while developing:
 | `npm run docs:sync` | Regenerate every generated docs surface (freshness blocks, site pages, CODEMAP inventory, llms indexes); `-- --check` reports drift without writing |
 | `node scripts/check-test-names.mjs` | Flag duplicate test names across `test/` that collide in name-keyed reports |
 | `node scripts/generate-cli-docs.mjs` | Regenerate `docs/cli.md` from `phm --help` output; `--check` compares without writing |
-| `npm run typecheck` | Strict backend and web type checks, without emitting files |
-| `npm run typecheck:fast` | The same two projects through `tsgo`, the native compiler; what `npm run gate` phase A runs |
+| `npm run typecheck` | Strict backend, web and desktop type checks, without emitting files |
+| `npm run typecheck:fast` | The same three projects through `tsgo`, the native compiler; what `npm run gate` phase A runs |
 | `npm run gate` | Fast local gate: build, static checks, the tests related to your diff and the smoke set, against the merge-base with `origin/master`; `-- --base <ref>` picks another base and `-- --json` prints a machine-readable result. Local feedback only; it never pushes or contacts model providers |
 | `npm run gate:full` | The same static checks, then the complete backend and web suites |
 | `npm run check:quarantine` | Validate `queue/quarantine.tsv`; with `-- --base origin/master`, also require a live ledger row for every skip marker your diff adds and refuse an added `.only` |

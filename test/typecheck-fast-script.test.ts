@@ -20,9 +20,16 @@ describe('fast typecheck helpers', () => {
     expect(selectProjects([])).toEqual(['backend']);
     expect(selectProjects(['src/web-ui/deleted.tsx'])).toEqual(['backend', 'web']);
     expect(selectProjects(['src/web-ui-other/a.ts'])).toEqual(['backend']);
-    expect(selectProjects([], 'all')).toEqual(['backend', 'web']);
+    expect(selectProjects([], 'all')).toEqual(['backend', 'web', 'desktop']);
     expect(selectProjects([], 'web')).toEqual(['web']);
     expect(selectProjects(['src/web-ui/a.ts'], 'backend')).toEqual(['backend']);
+  });
+
+  it('adds the desktop project for desktop paths, its extends base and shared manifests', () => {
+    expect(selectProjects(['desktop/fleet-map/fleet-node-map.ts'])).toEqual(['backend', 'desktop']);
+    expect(selectProjects(['src/web-ui/tsconfig.json'])).toEqual(['backend', 'web', 'desktop']);
+    expect(selectProjects(['package.json'])).toEqual(['backend', 'web', 'desktop']);
+    expect(selectProjects(['docs/guide.md'])).toEqual(['backend']);
   });
 
   it('classifies slots and seeds on missing or older local caches', () => {

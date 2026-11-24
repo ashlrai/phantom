@@ -14,6 +14,7 @@ describe('parseArgs', () => {
   it('accepts valid --project values', () => {
     expect(parseArgs(['--project', 'backend']).project).toBe('backend');
     expect(parseArgs(['--project', 'web']).project).toBe('web');
+    expect(parseArgs(['--project', 'desktop']).project).toBe('desktop');
     expect(parseArgs(['--project', 'all']).project).toBe('all');
   });
 
@@ -31,8 +32,8 @@ describe('parseArgs', () => {
 });
 
 describe('selectProjects', () => {
-  it('returns both projects when projectFlag is all', () => {
-    expect(selectProjects([], 'all')).toEqual(['backend', 'web']);
+  it('returns every project when projectFlag is all', () => {
+    expect(selectProjects([], 'all')).toEqual(['backend', 'web', 'desktop']);
   });
 
   it('returns only the requested project when explicitly specified', () => {
