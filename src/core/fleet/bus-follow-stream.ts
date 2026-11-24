@@ -6,7 +6,7 @@ import { BUS_PRIORITIES, BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMa
   type BusEnvelope, type BusPriority, type BusProtocolKind } from './bus-envelope.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
-import { busBodyThread } from '../agents/bus-v2-schema.js';
+import { busBodyKind, busBodyThread } from '../agents/bus-v2-schema.js';
 
 export const BUS_FOLLOW_MAX_DURATION_MS = 3_600_000;
 export const BUS_FOLLOW_MIN_INTERVAL_MS = 100;
@@ -77,6 +77,16 @@ export interface BusFollowRequest {
    * the same field `agents bus inbox --thread` and `channel read --thread`
    * match; bodies carrying no thread never match. */
   thread?: string;
+  /** Optional body-kind filter: `busBodyKind` on the retained body — the v2
+   * `kind` field, a `worker-handoff` assignment, a notice kind, a
+   * bus-transport v1 `protocol.kind` or a `type`/`schema` notice
+   * discriminator — the same exact, case-sensitive match
+   * `agents bus inbox --body-kind`, `channel read --body-kind`,
+   * `agents bus wakes --body-kind`, `comms bus read|watch --body-kind` and
+   * `fleet_bus_inbox`'s `bodyKind` apply. A body carrying no discriminator
+   * never matches; checkpoints still advance past filtered rows exactly
+   * like every other filter. */
+  bodyKind?: string;
   /** Optional received-at floor in epoch ms: rows received before the cutoff
    * never emit, the same inclusive `receivedAt >= since` match
    * `agents bus inbox --since` resolves its grammar to once per read. */
@@ -141,6 +151,7 @@ export function validBusFollowRequest(request: BusFollowRequest): boolean {
     (request.excludeFrom === undefined || label(request.excludeFrom)) &&
     (request.priority === undefined || BUS_PRIORITIES.includes(request.priority)) &&
     (request.thread === undefined || label(request.thread)) &&
+    (request.bodyKind === undefined || label(request.bodyKind)) &&
     (request.since === undefined || (Number.isSafeInteger(request.since) && request.since >= 0)) &&
     (request.before === undefined || (Number.isSafeInteger(request.before) && request.before >= 0)) &&
     busReadContains(request.contains) !== null &&
@@ -251,6 +262,7 @@ export async function followBusStream(request: BusFollowRequest, deps: BusFollow
         if (request.kind !== undefined && protocolOf(row.envelope.body)?.kind !== request.kind) continue;
         if (request.topic !== undefined && !topicMatches(request.topic, protocolOf(row.envelope.body)?.topic ?? '')) continue;
         if (request.thread !== undefined && busBodyThread(row.envelope.body) !== request.thread) continue;
+        if (request.bodyKind !== undefined && busBodyKind(row.envelope.body) !== request.bodyKind) continue;
         if (request.since !== undefined && row.receivedAt < request.since) continue;
         if (request.before !== undefined && row.receivedAt >= request.before) continue;
         if (containsNeedle !== undefined && !busReadContainsMatch(row.envelope.body, containsNeedle)) continue;

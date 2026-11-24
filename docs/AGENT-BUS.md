@@ -1798,7 +1798,19 @@ bus page reads share: `--id` keeps only the envelope carrying that exact id,
 the same application convention `comms bus read|watch` and `fleet_bus_inbox`
 apply — and `--kind`/`--topic` keep only protocol-v1 bodies whose
 `protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
-namespace prefix like `fleet.*`. As with `--to` and `--job`, filtered rows
+namespace prefix like `fleet.*`. `--body-kind <kind>` (the MCP argument is
+`bodyKind`) keeps only envelopes whose body carries that exact kind
+discriminator — the same `busBodyKind` match `agents bus inbox
+--body-kind`, `channel read --body-kind`, `wakes --body-kind` and the other
+classified reads apply: the v2 `kind` field (`note`, `context`,
+`work.post`, `work.claim`, `work.status`, `work.result`, `work.release`,
+`wake`), a `worker-handoff` assignment or a notice kind, a bus-transport v1
+`protocol.kind`, or a `type`/`schema` notice discriminator, matched exactly
+and case-sensitively, so the raw page answers "which retained envelopes are
+work announcements" or "which are wake requests" without paging every
+kind — a body carrying no discriminator never matches, an unrecognized but
+printable value is an honest empty match, and `--kind`/`--topic` keep their
+protocol-v1 meaning beside it. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
 an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same

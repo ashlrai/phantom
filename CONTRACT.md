@@ -3590,7 +3590,8 @@ unreadable-store/`matched` rules, and a malformed id answering
 `invalid`;
 `filter.bodyKind` keeps only hints whose resolved referent body carries
 that exact kind discriminator — the same `busBodyKind` match the
-inbox/channel `bodyKind` filters apply, decided on the resolved
+inbox/channel `bodyKind` filters and the raw bus reads'
+`bodyKind`/`--body-kind` apply, decided on the resolved
 referent (the v2 `kind` field, a `worker-handoff` assignment, a
 bus-transport v1 `protocol.kind` or a `type`/`schema` notice
 discriminator, exact and case-sensitive) — with a resolved claim-holder
@@ -3804,7 +3805,9 @@ window and contains dimensions above — `before` the exclusive
 `[since, before)` window, the same match `comms bus read|watch --before`
 and `fleet_bus_inbox`'s `before` apply — it also takes `id`/`inReplyTo` — the exact
 envelope-id and own-property reply-correlation matches — `kind`/`topic` —
-the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — and
+the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules —
+`bodyKind`, the exact `busBodyKind` kind-discriminator match the other bus
+reads' `bodyKind`/`--body-kind` share — and
 `channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads
 share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
