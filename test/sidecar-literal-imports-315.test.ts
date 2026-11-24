@@ -24,6 +24,9 @@ const ROOT = join(__dirname, '..');
 const ALLOWED: Record<string, string> = {
   // A user-installed plugin lives on disk outside the binary by definition.
   'src/core/plugins/registry.ts': 'loads operator-installed plugin entry points from disk',
+  // Playwright is an optional, operator-installed driver and not a Phantom dependency, so there is
+  // nothing to bundle; a literal specifier would also fail typecheck/bundling when it is absent.
+  'src/core/usage/live/browser.ts': 'loads the optional operator-installed Playwright driver by variable name',
 };
 
 // This consumer deliberately runs the current installed Node package's helper,

@@ -1,55 +1,36 @@
-/** Assert every verb listed in docs/FLEET-VERBS.md still has its source file on disk.
+/** Assert every verb row in docs/FLEET-VERBS.md names a source file that exists
+and is registered in the generated fleet subcommand registry.
 
-Note: this test does NOT assert the reverse — new fleet verbs may land before
-the doc is updated. That is intentional: doc lags source, source never breaks.
+The verb list is read from the doc table itself, so a new row is checked without
+editing this test. The test does NOT assert the reverse: new fleet verbs may land
+before the doc is updated. That is intentional: doc lags source, source never
+breaks.
 */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
 import * as assert from 'node:assert';
+import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 
-const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROW = /^\| ([a-z0-9-]+) \| `(src\/cli\/fleet-[a-z0-9-]+\.ts)` \|/;
 
-const VERBS = [
-  'admission',
-  'backlog',
-  'bet-trace',
-  'brains',
-  'bus-thread',
-  'canary-ladder',
-  'ci-failures',
-  'ci-nightly',
-  'class-share',
-  'dead-heads',
-  'dispatch-summary',
-  'dirty-landed',
-  'edit-collisions',
-  'grok-usage',
-  'job-class-share',
-  'job-read',
-  'lane-models',
-  'lane-truth',
-  'launch-proof',
-  'memory',
-  'mission',
-  'meter-drop',
-  'real-supply',
-  'runs-read',
-  'ship-gap',
-  'starved',
-  'stray-slots',
-  'trim',
-  'wait-jobs',
-  'workers',
-];
+const ROWS = readFileSync(join(ROOT, 'docs', 'FLEET-VERBS.md'), 'utf8')
+  .split('\n')
+  .map(line => ROW.exec(line))
+  .filter((m): m is RegExpExecArray => m !== null)
+  .map(m => ({ verb: m[1]!, file: m[2]! }));
 
 describe('docs/FLEET-VERBS.md verbs', () => {
-  for (const verb of VERBS) {
-    it(`src/cli/fleet-${verb}.ts exists`, () => {
-      const path = join(CLI_ROOT, `fleet-${verb}.ts`);
-      assert.ok(existsSync(path), `fleet-${verb}.ts should exist`);
+  it('lists verbs', () => {
+    assert.ok(ROWS.length > 50, `expected a populated table, parsed ${ROWS.length} rows`);
+  });
+  for (const { verb, file } of ROWS) {
+    it(`${verb}: ${file} exists and is registered`, () => {
+      assert.ok(existsSync(join(ROOT, file)), `${file} is documented but missing`);
+      assert.ok(verb in FLEET_SUBCOMMAND_LOADERS, `fleet ${verb} is documented but not in the registry`);
     });
   }
 });

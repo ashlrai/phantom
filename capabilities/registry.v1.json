@@ -29,6 +29,8 @@
     { "id": "claude-fable-5-2", "name": "Claude Fable 5.2", "lane": "claude", "family": "claude-fable", "catalogId": "claude:claude-fable-5-2", "providerModelId": "claude-fable-5-2", "allowance": "claude-max-weekly-fable" },
     { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.1-sol", "providerModelId": "gpt-6.1-sol" },
     { "id": "gpt-6.1-terra", "name": "GPT-6.1 Terra", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.1-terra", "providerModelId": "gpt-6.1-terra" },
+    { "id": "gpt-6.2-astra", "name": "GPT-6.2 Astra", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.2-astra", "providerModelId": "gpt-6.2-astra" },
+    { "id": "gpt-6.2-sol", "name": "GPT-6.2 Sol", "lane": "codex", "family": "gpt", "catalogId": "codex:gpt-6.2-sol", "providerModelId": "gpt-6.2-sol" },
     { "id": "swe-2-high", "name": "Devin SWE-2 (high)", "lane": "devin", "family": "devin-swe", "catalogId": null, "providerModelId": "swe-2-high" },
     { "id": "grok-4.7", "name": "Grok 4.7", "lane": "grok", "family": "grok", "catalogId": "grok-cli:grok-4.7", "providerModelId": "grok-4.7" },
     { "id": "grok-4.7-build-fast", "name": "Grok 4.7 Build Fast", "lane": "grok", "family": "grok", "catalogId": "grok-cli:grok-4.7-build-fast", "providerModelId": "grok-4.7-build-fast" },
@@ -94,6 +96,12 @@
       "surfaces": ["claude-code", "codex-cli", "devin-cli", "devin-desktop"],
       "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
       "launch": { "command": "npx", "args": ["-y", "-p", "@ashlr/stack@0.3.6", "-p", "ashlr-stack-mcp@0.3.6", "-p", "phantom-secrets@0.7.9", "ashlr-stack-mcp"] }
+    },
+    {
+      "id": "context7", "kind": "mcp", "description": "Context7 companion: current library and framework documentation lookup.",
+      "surfaces": ["claude-code", "claude-desktop", "codex-cli", "codex-desktop", "devin-cli", "devin-desktop", "cursor-desktop"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "@upstash/context7-mcp@4.7.1"] }
     },
     {
       "id": "ashlr", "kind": "mcp", "description": "ashlr-plugin MCP: token-efficient read, grep and edit tools.",

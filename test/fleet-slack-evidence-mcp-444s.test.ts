@@ -5,6 +5,7 @@
  * roots, fake ids, in-memory transports; freshness is persisted-evidence age
  * only, never live reachability.
  */
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -54,10 +55,12 @@ function fixture(journal?: string, messages?: Record<string, unknown>) {
 }
 
 const request = { at: '2024-11-07T12:00:00.000Z', decision: 'ingested', bus: 'posted',
-  channelId: 'C0FAKE0001', threadTs: THREAD, messageTs: '1731000010.000100', authorId: 'UFAKE', text: 'private text' };
+  channelId: 'C0FAKE0001', threadTs: THREAD, messageTs: '1731000010.000100', authorId: 'UFAKE', text: 'private text',
+  requestId: fakeRequestId('444s') };
+const key1 = replyKey(request.requestId);
 const sent = { channel: request.channelId, thread: THREAD, state: 'sent', ts: '1731000050.000100',
   digest: 'synthetic-digest', clientId: 'synthetic-client' };
-const answered = { journal: `${JSON.stringify(request)}\n`, messages: { key1: sent } };
+const answered = { journal: `${JSON.stringify(request)}\n`, messages: { [key1]: sent } };
 
 /** Sorted relative file list plus contents — proves the read wrote nothing. */
 function snapshot(dir: string): string {
@@ -67,11 +70,11 @@ function snapshot(dir: string): string {
 }
 
 describe('fleet_slack_evidence over MCP', () => {
-  it('is advertised read-only with a required thread and optional age bound', async () => {
+  it('is advertised read-only with a required thread and optional channel, message and age bound', async () => {
     const tool = (await (await connect()).listTools()).tools.find(t => t.name === 'fleet_slack_evidence');
     expect(tool?.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     expect(tool?.inputSchema).toMatchObject({ required: ['thread'], additionalProperties: false });
-    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'maxAgeSeconds']);
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(['thread', 'channelId', 'messageTs', 'maxAgeSeconds']);
   });
 
   it('dispatches validated args to the injected reader', async () => {
@@ -106,14 +109,14 @@ describe('fleet_slack_evidence over MCP', () => {
 
   it('keeps stale freshness, degraded sources and absent evidence distinguishable', async () => {
     const old = { ...request, at: '2024-11-07T12:00:00.000Z' };
-    const degraded = fixture(`${JSON.stringify(old)}\nnot-json\n`, { key1: sent });
+    const degraded = fixture(`${JSON.stringify(old)}\nnot-json\n`, { [key1]: sent });
     const stale = parse(await (await connect({ slackEvidence: realReader(degraded.deps) }))
       .callTool({ name: 'fleet_slack_evidence', arguments: { thread: THREAD, maxAgeSeconds: 60 } }));
     expect(stale).toMatchObject({ sources: { journal: 'degraded', sends: 'ok' },
       freshness: { maxAgeSeconds: 60, verdict: 'stale' } });
     expect(stale.rows[0].outcome).toBe('answered');
 
-    const recent = fixture(`${JSON.stringify({ ...old, at: '2024-11-07T17:59:30.000Z' })}\n`, { key1: sent });
+    const recent = fixture(`${JSON.stringify({ ...old, at: '2024-11-07T17:59:30.000Z' })}\n`, { [key1]: sent });
     const fresh = parse(await (await connect({ slackEvidence: realReader(recent.deps) }))
       .callTool({ name: 'fleet_slack_evidence', arguments: { thread: THREAD, maxAgeSeconds: 60 } }));
     expect(fresh.freshness).toMatchObject({ verdict: 'fresh' });

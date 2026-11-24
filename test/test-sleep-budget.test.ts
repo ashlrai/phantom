@@ -133,6 +133,21 @@ const ALLOW: readonly AllowEntry[] = [
     fragment: 'setTimeout(() => r(\'hung\'), 8_000)',
     reason: 'race fallback labelling a hung child; only elapses when hung-child detection itself hangs',
   },
+  {
+    file: 'fleet-handoff-run-cli-cancel-111.test.ts',
+    fragment: 'delay(20000)',
+    reason: 'hang fallback after a real child signal: only elapses when the harness fails to exit',
+  },
+  {
+    file: 'fleet-handoff-run-cli-cancel-111.test.ts',
+    fragment: 'delay(5000)',
+    reason: 'hang fallback after SIGKILL of a real child: only elapses when the process does not die',
+  },
+  {
+    file: 'handoff-receive-exit-cleanup116.test.ts',
+    fragment: 'setTimeout(resolve, 5000)',
+    reason: 'cleanup race fallback for a real worker: only elapses when the in-flight exit never settles',
+  },
 ];
 
 const flat = (text: string) => text.replace(/\s+/g, ' ');

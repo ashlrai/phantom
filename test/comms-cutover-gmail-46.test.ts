@@ -41,10 +41,10 @@ describe('Gmail cutover evidence', () => {
     }
   });
 
-  it('reports a fresh plan within target without exposing inboxes', async () => {
+  it('keeps a fresh plan partial when a sibling triage observation is stale, and never exposes inboxes', async () => {
     const result = await report({ readGmailTriage: () => triage('2020-01-01'), readGmailPlans: () => plans() });
     expect(result.capabilities.gmailInboxTriage)
-      .toEqual({ state: 'ready', reason: 'gmail-inboxes-within-target', nextStep: 'phm fleet gmail-archive-plan' });
+      .toEqual({ state: 'unverified', reason: 'gmail-triage-evidence-partial', nextStep: 'phm fleet gmail-triage' });
     expect(JSON.stringify(result)).not.toContain('inbox-a');
     expect(JSON.stringify(result)).not.toContain('inbox-b');
     expect(result.overall.commsbotRetirement).toBe('not-evidenced');

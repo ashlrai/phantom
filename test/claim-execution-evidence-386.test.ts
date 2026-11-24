@@ -85,15 +85,16 @@ describe('joinClaimExecution', () => {
     expect(report.rows[0]).toMatchObject({ state: 'CLAIMED_NO_WORKER', worker: null });
   });
 
-  it('matches when either repo is empty and picks the youngest matching worker', () => {
+  it('skips a blank repo and a different owner, and runs the youngest valid match', () => {
     const report = joinClaimExecution(
       board([claim({ id: 'RQ-PHX-FAKEJOB1', repo: 'ashlrai/phantom' })]),
       snapshot([
         worker({ pid: 11, repo: 'other/phantom', ageSeconds: 900 }),
         worker({ pid: 22, repo: '', ageSeconds: 120 }),
         worker({ pid: 33, repo: 'phantom', ageSeconds: 450 }),
+        worker({ pid: 44, repo: 'phantom', ageSeconds: 800 }),
       ]), NOW);
-    expect(report.rows[0]).toMatchObject({ state: 'RUNNING', worker: { pid: 22 } });
+    expect(report.rows[0]).toMatchObject({ state: 'RUNNING', worker: { pid: 33 } });
   });
 
   it('excludes expired claims, caps rows at 50 and keeps newest claimedAt first', () => {

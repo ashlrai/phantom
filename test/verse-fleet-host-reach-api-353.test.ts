@@ -20,6 +20,7 @@ import { narrowTailnetPeers } from '../src/web-ui/routes/verse/fleet-host/tailne
 const NOW = new Date('2026-11-14T10:00:00.000Z');
 const HOME = '/Users/fakehome';
 const STATUS = JSON.stringify({
+  BackendState: 'Running',
   Self: { HostName: 'mac-self', TailscaleIPs: ['100.64.0.9'] },
   Peer: {
     a: { HostName: 'mac-primary', OS: 'macOS', Online: true, LastSeen: '2026-11-14T09:59:00Z', DNSName: 'mac-primary.tail-x.ts.net.', TailscaleIPs: ['100.64.0.1'] },

@@ -549,6 +549,10 @@ function rootPackageIsPortable(
     'docs/RUNTIME_ACTIVATION_AUTHORITY.md',
     'docs/REMOTE-PHONE.md',
     'docs/MACHINE-TELEMETRY.md',
+    'docs/REPO-OWNERS.md',
+    'docs/PRODUCTION-METRICS.md',
+    'docs/IMPACT-METRICS.md',
+    'docs/ECOSYSTEM-CHANGELOG.md',
     'docs/contracts/CONTRACT-M515.md',
     'docs/contracts/CONTRACT-M521.md',
     'docs/contracts/CONTRACT-M568.md',
@@ -559,6 +563,7 @@ function rootPackageIsPortable(
     'scripts/lib/docs-pages.d.mts',
     'scripts/scorecard-history-worker.mjs',
     'scripts/local-app-transaction.mjs',
+    'scripts/canonical-launcher-digests.json',
     // Fixed host imports for builtin custody; never admit the scripts directory
     // or candidate/controller entrypoints through a wildcard declaration.
     'scripts/evaluators/preparation-verification-activity.mjs',

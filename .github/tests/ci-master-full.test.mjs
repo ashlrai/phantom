@@ -20,8 +20,9 @@ function fixture(runs = [run(20)], inventories = {}, calls = []) {
     calls.push(path);
     if (path.endsWith('/workflows/ci.yml')) return { id: 10, path: '.github/workflows/ci.yml' };
     if (path.includes('/workflows/10/runs?')) {
-      assert.match(path, /event=schedule&branch=master/);
-      return { workflow_runs: runs };
+      const event = path.match(/event=(schedule|workflow_dispatch)&branch=master/)?.[1];
+      assert.ok(event, `unexpected runs query ${path}`);
+      return { workflow_runs: runs.filter(r => r.event === event) };
     }
     const id = Number(path.match(/\/runs\/(\d+)\/attempts\/\d+\/jobs/)?.[1]);
     assert.ok(id, `unexpected path ${path}`);
@@ -52,13 +53,44 @@ for (const outcome of ['failure', 'cancelled', 'skipped', 'neutral', 'timed_out'
 
 test('pending full, missing marker, failed workflow and wrong source cannot authorize', async () => {
   for (const extra of [{ status: 'in_progress', conclusion: null }, { conclusion: 'failure' }, { head_branch: 'worker' },
-    { event: 'push' }, { workflow_id: 11 }, { head_repository: { id: 42 } }, { path: '.github/workflows/fake.yml' }]) {
+    { workflow_id: 11 }, { head_repository: { id: 42 } }, { path: '.github/workflows/fake.yml' }]) {
     await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([run(20, candidate, extra)]) }));
   }
   const matrix = [{ name: 'CI (Node 22, ubuntu, authority 1/3)', conclusion: 'success' }];
   await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([run(20), run(19)], { 20: matrix }) }));
   await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([]) }));
   await assert.rejects(requireFullGreen({ repo, candidate, api: async () => { throw new Error('unavailable'); } }));
+});
+
+test('a push-event run is never fetched as full evidence', async () => {
+  await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([run(20, candidate, { event: 'push' })]) }), /missing, red or pending/);
+});
+
+test('green full on an ancestor admits the candidate; unrelated or unverified ancestry refuses', async () => {
+  const api = fixture([run(20, previous)]);
+  assert.equal((await requireFullGreen({ repo, candidate, api, isAncestor: async (r, base, head) => r === repo && base === previous && head === candidate })).id, 20);
+  await assert.rejects(requireFullGreen({ repo, candidate, api, isAncestor: async () => false }), /candidate has no current/);
+  await assert.rejects(requireFullGreen({ repo, candidate, api, isAncestor: async () => { throw new Error('compare unavailable'); } }));
+  // An injected reader never reaches the network for ancestry.
+  await assert.rejects(requireFullGreen({ repo, candidate, api }), /candidate has no current/);
+  // A red latest full still refuses even when an older green is an ancestor.
+  const red = fixture([run(21, previous), run(20, previous)], { 21: [check('failure')] });
+  await assert.rejects(requireFullGreen({ repo, candidate, api: red, isAncestor: async () => true }), /missing, red or pending/);
+});
+
+test('a green manual full dispatch qualifies only with full matrix, a Mac slice and every job green', async () => {
+  const d = (id, extra = {}) => run(id, candidate, { event: 'workflow_dispatch', ...extra });
+  const jobs = (extra = []) => [{ name: 'CI (Node 22, ubuntu, authority 1/3)', status: 'completed', conclusion: 'success' },
+    { name: 'Mac exhaustive (1/4)', status: 'completed', conclusion: 'success' }, { ...check('skipped') }, ...extra];
+  assert.equal((await requireFullGreen({ repo, candidate, api: fixture([d(30), run(20)], { 30: jobs() }) })).id, 30);
+  for (const bad of [[{ name: 'Merge Gate', status: 'completed', conclusion: 'failure' }], [{ name: 'Windows service authority (Server 2022)', status: 'completed', conclusion: 'cancelled' }]]) {
+    await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([d(30, { conclusion: 'failure' }), run(20)], { 30: jobs(bad) }) }), /missing, red or pending/);
+  }
+  const noMac = [{ name: 'CI (Node 22, ubuntu, authority 1/3)', status: 'completed', conclusion: 'success' }, { name: 'Mac exhaustive (1/4)', status: 'completed', conclusion: 'skipped' }];
+  await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([d(30), run(20)], { 30: noMac }) }), /missing, red or pending/);
+  // An in-flight dispatched full blocks; a dispatch that never ran the matrix is ignored.
+  await assert.rejects(requireFullGreen({ repo, candidate, api: fixture([d(30, { status: 'in_progress', conclusion: null }), run(20)], { 30: jobs() }) }), /missing, red or pending/);
+  assert.equal((await requireFullGreen({ repo, candidate, api: fixture([d(30), run(20)], { 30: [{ name: 'Quick typecheck', status: 'completed', conclusion: 'success' }] }) })).id, 20);
 });
 
 test('half-hour release preparation cannot qualify a SHA or hide a red full', async () => {
@@ -164,7 +196,7 @@ for (const conclusion of ['success', 'failure']) {
     writeFileSync(summary, '');
     const data = { workflow: { id: 10, path: '.github/workflows/ci.yml' },
       runs: { workflow_runs: [run(20)] }, jobs: { total_count: 1, jobs: [check(conclusion)] } };
-    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst p=process.argv.at(-1);const d=${JSON.stringify(data)};process.stdout.write(JSON.stringify(p.endsWith('/ci.yml')?d.workflow:p.includes('/jobs?')?d.jobs:d.runs));\n`, { mode: 0o700 });
+    writeFileSync(join(dir, 'gh'), `#!${process.execPath}\nconst p=process.argv.at(-1);const d=${JSON.stringify(data)};process.stdout.write(JSON.stringify(p.endsWith('/ci.yml')?d.workflow:p.includes('/jobs?')?d.jobs:p.includes('event=schedule')?d.runs:{workflow_runs:[]}));\n`, { mode: 0o700 });
     const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/ci-master-full.mjs', import.meta.url)), 'require'], {
       encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SHA: candidate,
         GITHUB_REPOSITORY: repo, GITHUB_REPOSITORY_ID: '1263526319', GITHUB_REPOSITORY_OWNER_ID: '258113726',

@@ -160,7 +160,7 @@ import {
   VERSE_MEMORY_BODY_MAX_BYTES,
 } from './types.js';
 import { handleVerseEventsSse, VERSE_EVENTS_PATH_RE, VERSE_SESSION_ID_RE } from './verse-stream.js';
-import { handleUiAppearance, VERSE_UI_APPEARANCE_PATH } from './ui-appearance-api.js';
+import { handleAppearanceSettings, handleUiAppearance, VERSE_APPEARANCE_SETTINGS_PATH, VERSE_UI_APPEARANCE_PATH } from './ui-appearance-api.js';
 import type { ApiModule } from './api-modules.js';
 import { REASONING_API_PREFIX } from '../reasoning/types.js';
 import { VERSE_FLEET_CONTROL_HOLDS_PATH } from '../fleet/runs-lane-hold.js';
@@ -199,7 +199,7 @@ export function isVerseApiPath(path: string): boolean {
 // ---------------------------------------------------------------------------
 
 /** Stable ids, in mount order. */
-export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
+export type MountedApiModuleId = 'health' | 'reasoning' | 'fleet-history' | 'budget' | 'cloud-timeline' | 'cloud' | 'devin' | 'jev' | 'runs-history' | 'release-pr' | 'fleet-holds' | 'fleet-graph-live' | 'fleet-graph' | 'fleet-usage-audit' | 'fleet-ci-runs' | 'fleet-memory' | 'fleet-usage-producers' | 'fleet-apps' | 'fleet-inbox-acks' | 'fleet-self-tick' | 'fleet-main-red-age';
 
 export interface MountedApiModule {
   id: MountedApiModuleId;
@@ -251,12 +251,12 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-usage-audit', load: async () => (await import('./fleet-usage-audit-api.js')).handleFleetUsageAuditApi },
   // Host memory guard projection: GET /api/verse/fleet/memory (core/verse/fleet-memory-api.ts); read-only.
   { id: 'fleet-memory', load: async () => (await import('./fleet-memory-api.js')).handleFleetMemoryApi },
+  { id: 'fleet-usage-producers', load: async () => (await import('./fleet-usage-producers-api.js')).handleFleetUsageProducersApi },
   // Local desktop app status and bounded launch, focus and restart actions.
   { id: 'fleet-inbox-acks', load: async () => (await import('./fleet-inbox-acks-api.js')).handleFleetInboxAcksApi },
   { id: 'fleet-apps', load: async () => (await import('./fleet-apps-recovery-api.js')).handleFleetAppsRecoveryApi },
   { id: 'fleet-standby' as MountedApiModuleId, load: async () => (await import('./fleet-standby-api.js')).handleFleetStandbyApi },
-  // Teammate iMessage reply age: GET /api/verse/comms/teammate-reply-age (core/verse/comms-teammate-reply-age-api.ts); read-only, times and flags only.
-  { id: 'comms-teammate-reply-age' as MountedApiModuleId, load: async () => (await import('./comms-teammate-reply-age-api.js')).handleCommsTeammateReplyAgeApi },
+  // Teammate reply age is owned by the workbench family comms-teammate-reply, which delegates to the age handler. It is not a separate A10 mount.
   // Self-tick last-run record: GET /api/verse/fleet/self-tick (core/verse/fleet-self-tick-api.ts); read-only, never takes the tick lock.
   { id: 'fleet-self-tick', load: async () => (await import('./fleet-self-tick-api.js')).handleFleetSelfTickApi },
   // Fleet graph registry: GET /api/verse/fleet/graph (core/verse/fleet-graph-api.ts); read-only.
@@ -269,6 +269,8 @@ const DEFAULT_API_MODULES: readonly MountedApiModule[] = [
   { id: 'fleet-doctor' as MountedApiModuleId, load: async () => (await import('./fleet-doctor-api.js')).handleFleetDoctorApi },
   { id: 'fleet-landed-closes' as MountedApiModuleId, load: async () => (await import('./landed-closes-api.js')).handleLandedClosesApi },
   { id: 'fleet-slow-prs' as MountedApiModuleId, load: async () => (await import('./slow-prs-api.js')).handleSlowPrsApi },
+  // The `phm commands` catalog for the palette, plus bounded read-only runs (core/verse/commands-api.ts).
+  { id: 'commands' as MountedApiModuleId, load: async () => (await import('./commands-api.js')).handleCommandsApi },
 ];
 
 let mountedModules: readonly MountedApiModule[] = DEFAULT_API_MODULES;
@@ -2137,6 +2139,18 @@ export async function handleVerseApi(
       if (path !== `${VERSE_API_PREFIX}/whats-new`) { sendJson(res, 404, { error: 'Whats-new route not found.' }); return true; }
       return (await import('./whats-new-api.js')).handleWhatsNewApi(req, res, path, method);
     }
+    if (path === `${VERSE_API_PREFIX}/shipped`) {
+      // Read-only weekly summary of merged work; the same report as `phm shipped --json`.
+      return (await import('./whats-new-api.js')).handleShippedApi(req, res, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/fleet/lane-supply`) {
+      // Read-only lane supply report; the same fleet.lane-supply.v1 as `phm fleet lane-supply --json`.
+      return (await import('./lane-supply-api.js')).handleLaneSupplyApi(req, res, method);
+    }
+    if (path === `${VERSE_API_PREFIX}/supply`) {
+      // Read-only self-supply report; the same doctor.supply.v1 as `phm doctor supply --json`.
+      return (await import('./supply-api.js')).handleSupplyApi(req, res, method);
+    }
     if (path === '/api/verse/owner-assist' || path.startsWith('/api/verse/owner-assist/')) {
       return (await import('./owner-assist-api.js')).handleOwnerAssistApi(ctx, req, res, path, method);
     }
@@ -2584,6 +2598,7 @@ export async function handleVerseApi(
     }
 
     if (path === VERSE_UI_APPEARANCE_PATH) return handleUiAppearance(ctx, req, res, method);
+    if (path === VERSE_APPEARANCE_SETTINGS_PATH) return handleAppearanceSettings(ctx, req, res, method);
 
     // ── workbench families (V3.10 Tracks B + C) ─────────────────────────
     // After every V1 route, like the modules below. Prefix-routed: a path a

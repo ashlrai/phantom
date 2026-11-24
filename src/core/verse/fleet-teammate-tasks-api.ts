@@ -62,7 +62,7 @@ async function readBindings(raw: Raw, jobId?: string): Promise<TeammateBindings>
 }
 
 /** Read-only: never enqueues, cancels, runs or takes the store lock. `bind` is a test seam for binding evidence. */
-export function createFleetTeammateTasksApi(read: () => Raw = () => listTeammateTasks(), now: () => Date = () => new Date(),
+export function createFleetTeammateTasksApi(read: () => Raw | Promise<Raw> = () => listTeammateTasks(), now: () => Date = () => new Date(),
   bind: (raw: Raw, jobId?: string) => Promise<TeammateBindings> | TeammateBindings = readBindings): ApiModule {
   return async (_ctx, req, res, path, method) => {
     if (path !== '/api/verse/fleet/control/teammate-tasks') return false;
@@ -75,14 +75,19 @@ export function createFleetTeammateTasksApi(read: () => Raw = () => listTeammate
       sendJson(res, 400, { error: 'invalid query parameters' }); return true;
     }
     let body;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const raw = read();
+      const raw = await Promise.race([
+        Promise.resolve().then(() => read()),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 5_000); }),
+      ]);
       if (raw.state !== 'healthy') throw new Error('unavailable');
       // A failed binding read never drops tasks: every row degrades to an unavailable, unconfirmed state.
       const bindings = await Promise.resolve().then(() => bind(raw, jobId)).catch(() => new Map() as TeammateBindings);
       body = projectTeammateTasks(raw, now().toISOString(), jobId, bindings);
     }
     catch { sendJson(res, 503, { error: 'teammate tasks unavailable' }); return true; }
+    finally { if (timer !== undefined) clearTimeout(timer); }
     sendJson(res, 200, body);
     return true;
   };

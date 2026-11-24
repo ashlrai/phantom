@@ -1631,7 +1631,7 @@ function buildClaudeLaunch(session: VerseSession, text: string, launch: VerseSea
   // capacity frees, hand off when it resets beyond the horizon instead of
   // sleeping through it.
   const watchdogEnv = isLocal ? {} : claudeRetryWatchdogEnv(pinnedClaudeVersion(launch),
-    nearestResetWindowMs(launch.seat.health.windows, Date.now()) ?? 0);
+    nearestResetWindowMs(launch.seat?.health?.windows ?? [], Date.now()) ?? 0);
   const env: Record<string, string> = isLocal
     ? {
       PATH: harness!.path,

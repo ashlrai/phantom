@@ -76,6 +76,12 @@ class RouteHysteresis(unittest.TestCase):
         (q.parent / 'PAUSE').write_text('fixture pause')
         for evidence, expected in [({'quota': False}, 'codex-cmp'),
                                    ({'held': True}, 'codex-cmp'),
+                                   # RQ-CONSTRAINT-AUDIT-1: a manual hold stays sticky; an autobackoff hold is hard-down.
+                                   ({'held': True, 'held_by': 'manual'}, 'codex-cmp'),
+                                   ({'held': False, 'held_by': 'autobackoff'}, 'codex-cmp'),
+                                   ({'held': True, 'held_by': 'autobackoff',
+                                     'held_until': '2999-01-01T00:00:00+00:00'}, 'claude'),
+                                   ({'held': True, 'held_reason': 'credits exhausted (RQ-X)'}, 'claude'),
                                    ({'quota': 0}, 'claude'),
                                    ({'auth_failed': True}, 'claude')]:
             state = {'job': {'pool': 'codex-cmp', 'decided_at': time.time(), 'moves': []}}
@@ -84,6 +90,16 @@ class RouteHysteresis(unittest.TestCase):
             (q / 'ready.tsv').write_text('job\tphantom\tclaude\twork\tunused\n')
             tick(tmp.name).check_returncode()
             self.assertEqual(json.loads((q / 'route-state.json').read_text())['job']['pool'], expected)
+        # An operator HOLD-list entry is never routed around, even when the lane is also backed off.
+        (q.parent / 'HOLD').write_text('codex-cmp\n')
+        state = {'job': {'pool': 'codex-cmp', 'decided_at': time.time(), 'moves': []}}
+        (q / 'route-state.json').write_text(json.dumps(state))
+        (q / 'slots.json').write_text(json.dumps({'codex-cmp': {'held': True, 'held_by': 'autobackoff',
+                                                                'held_until': '2999-01-01T00:00:00+00:00'}}))
+        (q / 'ready.tsv').write_text('job\tphantom\tclaude\twork\tunused\n')
+        tick(tmp.name).check_returncode()
+        self.assertEqual(json.loads((q / 'route-state.json').read_text())['job']['pool'], 'codex-cmp')
+        (q.parent / 'HOLD').unlink()
         (q / 'route-state.json').write_text('{broken')
         self.assertEqual(tick(tmp.name).returncode, 1)
         self.assertEqual((q / 'route-state.json').read_text(), '{broken')

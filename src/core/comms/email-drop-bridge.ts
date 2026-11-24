@@ -53,6 +53,7 @@ import { allowOperatorMessage } from '../fleet/operator-glance.js';
 import { emailPaired, rememberEmailPair } from '../fleet/operator-glance-read.js';
 import { composeOwnerStatusReply, isOwnerStatusRequest, OWNER_STATUS_FALLBACK } from '../agents/owner-status-reply.js';
 import { dkimPasses, readOperatorSecret, stripPairingSecret } from '../fleet/operator-proof.js';
+import { isOtherWritable } from './email-drop-config.js';
 import { emailFleetStatus, type EmailFleetStatusReaders } from './email-fleet-status.js';
 import { isEmailNeedsCommand, runEmailNeedsCommand } from './email-needs-command.js';
 import { listNeedsMason } from '../fleet/needs-mason-resolve.js';
@@ -124,12 +125,6 @@ export interface EmailDropCounts {
   status?: { queued: number; duplicate: number };
   /** Set when the pass did nothing because this folder is writable by other users. */
   unsafeFolder?: 'inbox' | 'processed' | 'outbox';
-}
-
-/** A folder any other local user can write could inject or swap .eml files. */
-function isOtherWritable(path: string): boolean {
-  try { return (statSync(path).mode & 0o002) !== 0; }
-  catch { return false; } // missing dirs are handled by the normal empty-pass path
 }
 
 const BODY_CAP_BYTES = 8 * 1024;

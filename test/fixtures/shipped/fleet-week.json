@@ -1,0 +1,16 @@
+[
+  { "repo": "ashlrai/phantom", "number": 201, "title": "feat: live agent map in 3D", "merged_at": "2026-11-14T10:00:00Z", "labels": [], "files": ["src/web-ui/routes/verse/map/Map3d.tsx", "src/core/verse/map.ts"] },
+  { "repo": "ashlrai/phantom", "number": 205, "title": "Live agent map in 3D (part 2)", "merged_at": "2026-11-15T10:00:00Z", "labels": [], "files": ["src/web-ui/routes/verse/map/Map3d.tsx"] },
+  { "repo": "ashlrai/phantom", "number": 202, "title": "Phone inbox shows approvals", "merged_at": "2026-11-14T09:00:00Z", "labels": [], "files": ["src/web-ui/routes/verse/mobile/screens/InboxScreen.tsx"] },
+  { "repo": "ashlrai/phantom", "number": 5, "title": "fix: keep the roster sorted", "merged_at": "2026-11-13T09:00:00Z", "labels": [], "files": ["src/core/fleet/roster.ts"] },
+  { "repo": "ashlrai/phantom", "number": 203, "title": "bridge: FIXUP-CI-roster-retry", "merged_at": "2026-11-13T10:00:00Z", "labels": [], "files": ["src/core/fleet/roster.ts"] },
+  { "repo": "ashlrai/phantom", "number": 204, "title": "Bump the parser", "merged_at": "2026-11-13T11:00:00Z", "labels": [{ "name": "dependencies" }], "files": ["package.json"] },
+  { "repo": "ashlrai/phantom", "number": 206, "title": "Add a beta banner", "merged_at": "2026-11-13T12:00:00Z", "labels": [], "files": ["src/web-ui/routes/verse/home/Banner.tsx"] },
+  { "repo": "ashlrai/phantom", "number": 207, "title": "Revert \"Add a beta banner\"", "merged_at": "2026-11-14T12:00:00Z", "labels": [], "files": ["src/web-ui/routes/verse/home/Banner.tsx"] },
+  { "repo": "ashlrai/phantom", "number": 208, "title": "More cases for the roster", "merged_at": "2026-11-12T12:00:00Z", "labels": [], "files": ["test/roster.test.ts"] },
+  { "repo": "ashlrai/ashlr-plugin", "number": 40, "title": "Add a savings badge", "merged_at": "2026-11-16T08:00:00Z", "labels": [], "files": [{ "path": "hooks/badge.ts" }] },
+  { "repo": "ashlrai/ashlr-plugin", "number": 41, "title": "Add a quiet mode", "merged_at": "2026-11-12T08:00:00Z", "labels": [], "files": ["src/quiet.ts"] },
+  { "repo": "ashlrai/ashlr-plugin", "number": 42, "title": "Revert \"Add a quiet mode\"", "merged_at": "2026-11-13T08:00:00Z", "labels": [], "files": ["src/quiet.ts"] },
+  { "repo": "ashlrai/ashlr-plugin", "number": 43, "title": "Revert \"Revert \"Add a quiet mode\"\"", "merged_at": "2026-11-14T08:00:00Z", "labels": [], "files": ["src/quiet.ts"] },
+  { "repo": "ashlrai/ashlr-md", "number": 5, "title": "Faster preview for long notes", "mergedAt": "2026-11-15T08:00:00Z", "labels": ["documentation"], "files": ["src/preview.ts"] }
+]

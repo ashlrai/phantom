@@ -34,8 +34,12 @@ describe('capAskFanoutByBudget', () => {
       reading('codex-cmp', 'weeklyPct', 50), reading('codex-cmp', 'credits', 2)]));
     expect(cap).toMatchObject({ granted: 2, limiting: 'credits' });
   });
-  it('holds a held pool at 0 regardless of its readings', () => {
+  it('holds Claude at 0 until a positive observed weekly allowance, then meters it', () => {
     expect(capAskFanoutByBudget(3, 'claude', snapshot([reading('claude', 'weeklyPct', 90)])))
+      .toMatchObject({ granted: 3, limiting: null });
+    expect(capAskFanoutByBudget(3, 'claude', snapshot([reading('claude', 'weeklyPct', 0)])))
+      .toMatchObject({ granted: 0, limiting: 'held' });
+    expect(capAskFanoutByBudget(3, 'claude', snapshot([])))
       .toMatchObject({ granted: 0, limiting: 'held' });
   });
   it('treats capacity as a direct slot count for capacity-only pools', () => {

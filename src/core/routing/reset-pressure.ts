@@ -138,6 +138,10 @@ export interface ResetCalendarPool {
   remainingPercent: number | null;
   /** Spendable credit balance in the pool's own units; absent or 0 means no credits lane. */
   creditBalance?: number | null;
+  /** Marginal USD per million tokens for this connected resource; 0 proves free capacity. */
+  costPerMTok?: number | null;
+  /** Measured window percent burned per hour; absent or null when unknown. Drives the runway policy (usage/runway.ts). */
+  burnPerHour?: number | null;
 }
 
 /** Refuse malformed calendar entries; an unparseable reset is not evidence. */
@@ -148,8 +152,15 @@ export function validResetCalendarPool(value: unknown): value is ResetCalendarPo
   if (v.resetAt !== null && (typeof v.resetAt !== 'string' || !Number.isFinite(Date.parse(v.resetAt)))) return false;
   if (v.remainingPercent !== null && (typeof v.remainingPercent !== 'number' ||
     !Number.isFinite(v.remainingPercent) || v.remainingPercent < 0 || v.remainingPercent > 100)) return false;
-  return v.creditBalance === undefined || v.creditBalance === null ||
-    typeof v.creditBalance === 'number' && Number.isFinite(v.creditBalance) && v.creditBalance >= 0;
+  return [v.creditBalance, v.costPerMTok, v.burnPerHour].every(n => n == null || typeof n === 'number' && Number.isFinite(n) && n >= 0);
+}
+
+/** Closest spendable reset, then zero-cost capacity, then cheapest known marginal cost. */
+export function compareSpendPriority(a: ResetCalendarPool | undefined, b: ResetCalendarPool | undefined, nowMs: number): number {
+  const reset = (p: ResetCalendarPool | undefined) => p && (p.remainingPercent ?? 0) > 0 &&
+    p.resetAt !== null && Date.parse(p.resetAt) > nowMs ? Date.parse(p.resetAt) : Infinity;
+  const cost = (p: ResetCalendarPool | undefined) => p?.costPerMTok ?? Infinity;
+  return reset(a) - reset(b) || cost(a) - cost(b) || 0;
 }
 
 export interface ResetPaceStatus {
@@ -203,8 +214,8 @@ function compareLaneIds(a: string, b: string): number {
 /**
  * Lane order for spending: every spendable weekly quota lane precedes every
  * credits lane, because the weekly allowance expires and the balance does
- * not. Weekly lanes rank by required burn (most behind first), then earlier
- * reset, then pool id. A weekly lane whose reset already passed is stale
+ * not. Weekly lanes rank by earlier reset, then required burn, then pool id.
+ * A weekly lane whose reset already passed is stale
  * evidence and drops out; one with a known remainder but no usable reset
  * keeps its lane after the paced ones. Credits lanes rank by balance.
  */
@@ -233,7 +244,7 @@ export function resetLaneOrder(pools: readonly ResetCalendarPool[], nowMs: numbe
   weekly.sort((a, b) => {
     const ap = a.pace === null ? Infinity : -a.pace;
     const bp = b.pace === null ? Infinity : -b.pace;
-    return ap - bp || resetRank(a.lane) - resetRank(b.lane) || compareLaneIds(a.lane.pool, b.lane.pool);
+    return resetRank(a.lane) - resetRank(b.lane) || ap - bp || compareLaneIds(a.lane.pool, b.lane.pool);
   });
   credits.sort((a, b) => b.balance - a.balance || compareLaneIds(a.lane.pool, b.lane.pool));
   return [...weekly.map((row) => row.lane), ...credits.map((row) => row.lane)];

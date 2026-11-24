@@ -1,3 +1,4 @@
+/** Compare the latest queue status snapshot with the live worker processes to show what really launched. Read-only; never dispatches. */
 import { readFleetRunsDirState, type FleetRunsDirState } from '../core/fleet/runs-dir-state.js';
 import { listLiveWorkers, type LiveWorkersSnapshot } from '../core/fleet/runs-live-workers.js';
 import { launchProofCheck } from '../core/fleet/launch-proof-check.js';

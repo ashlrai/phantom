@@ -89,7 +89,7 @@ describe('joinClaimExecution worker proof', () => {
   ])('a matching worker with contract-broken evidence (%s) is UNKNOWN', (_name, over) => {
     const report = reportFor([malformedWorker({ pid: 99, ...over })]);
     expect(report.rows[0]).toMatchObject({ state: 'UNKNOWN', worker: null });
-    expect(report.reasons).toContain(MALFORMED_REASON);
+    expect(report.reasons).toContain('repo' in over ? 'repository identity invalid' : MALFORMED_REASON);
   });
 
   it('an invalid youngest record cannot hide a valid older matching worker', () => {

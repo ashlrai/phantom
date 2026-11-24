@@ -12,15 +12,19 @@
  *   - Sign out ends the read session (clearReadSession) after a sheet that
  *     says what it means — it is not a change on the Mac, so it is not a
  *     guarded action.
- * The theme is the workbench's own store (useTheme), so the phone and the Mac
- * browser share one choice.
+ * Appearance (theme, accent, text size, density) is the workbench's own
+ * store (useAppearance, the same one Settings ▸ Appearance writes), so the
+ * phone and the Mac share one choice and every tap applies at once.
  */
 import { useEffect, useState } from 'react';
 import { clearMutationToken, clearReadSession } from '../../../../data/auth-store.js';
 import { isRemoteMobileMode } from '../../../../data/remote-mode.js';
 import { currentRemoteSession, remotePushPublicKey, subscribeRemotePush } from '../../../../data/remote-session.js';
-import { useMutationHold, useQuery, useRefetch, useTheme } from '../../../../data/hooks.js';
-import type { ThemePreference } from '../../../../data/theme-store.js';
+import { useMutationHold, useQuery, useRefetch } from '../../../../data/hooks.js';
+import { useAppearance } from '../../../../data/appearance-hooks.js';
+import { ACCENT_PRESETS, matchingAccentPreset } from '../../../../data/appearance-presets.js';
+import type { Density, ThemePreference, UiScale } from '../../../../data/appearance-store.js';
+import { accentHex } from '../../../../design/contrast.js';
 import { writeVerseLayoutPreference } from '../../../../app/console-mode.js';
 import { requestGuarded } from '../../shell/guard-store.js';
 import { usePollWhileVisible } from '../../shell/section-visibility.js';
@@ -39,6 +43,18 @@ const THEMES: ReadonlyArray<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+  { value: 'high-contrast', label: 'High contrast' },
+];
+
+const TEXT_SIZES: ReadonlyArray<{ value: UiScale; label: string }> = [
+  { value: 'default', label: 'Default' },
+  { value: 'large', label: 'Large' },
+  { value: 'xlarge', label: 'Extra large' },
+];
+
+const DENSITIES: ReadonlyArray<{ value: Density; label: string }> = [
+  { value: 'comfortable', label: 'Comfortable' },
+  { value: 'compact', label: 'Compact' },
 ];
 
 const REACH: Readonly<Record<Reachability, { word: string; tone: Tone; detail: string }>> = {
@@ -74,7 +90,8 @@ function useStandalone(): boolean | null {
 export function MoreScreen() {
   const { permissions, reachability, activity, navigate } = useMobile();
   const hold = useMutationHold();
-  const theme = useTheme();
+  const { appearance, set: setAppearance } = useAppearance();
+  const accent = matchingAccentPreset(appearance);
   const standalone = useStandalone();
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -215,10 +232,36 @@ export function MoreScreen() {
       </Section> : null}
 
       <Section title="Appearance" flat>
-        <div className={ui.chips} role="group" aria-label="Theme">
+        <p className={styles.label} id="more-theme">Theme</p>
+        <div className={ui.chips} role="group" aria-labelledby="more-theme">
           {THEMES.map((t) => (
-            <button key={t.value} type="button" className={ui.chip} aria-pressed={theme.theme === t.value} onClick={() => theme.set(t.value)}>
+            <button key={t.value} type="button" className={ui.chip} aria-pressed={appearance.theme === t.value} onClick={() => setAppearance({ theme: t.value })}>
               {t.label}
+            </button>
+          ))}
+        </div>
+        <p className={styles.label} id="more-accent">Accent color</p>
+        <div className={ui.chips} role="group" aria-labelledby="more-accent">
+          {ACCENT_PRESETS.map((p) => (
+            <button key={p.id} type="button" className={ui.chip} aria-pressed={accent?.id === p.id} onClick={() => setAppearance({ accentH: p.h, accentS: p.s, accentL: p.l })}>
+              <span className={styles.swatch} style={{ background: accentHex(p.h, p.s, p.l) }} aria-hidden="true" />
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <p className={styles.label} id="more-text-size">Text size</p>
+        <div className={ui.chips} role="group" aria-labelledby="more-text-size">
+          {TEXT_SIZES.map((t) => (
+            <button key={t.value} type="button" className={ui.chip} aria-pressed={appearance.uiScale === t.value} onClick={() => setAppearance({ uiScale: t.value })}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <p className={styles.label} id="more-density">Density</p>
+        <div className={ui.chips} role="group" aria-labelledby="more-density">
+          {DENSITIES.map((d) => (
+            <button key={d.value} type="button" className={ui.chip} aria-pressed={appearance.density === d.value} onClick={() => setAppearance({ density: d.value })}>
+              {d.label}
             </button>
           ))}
         </div>

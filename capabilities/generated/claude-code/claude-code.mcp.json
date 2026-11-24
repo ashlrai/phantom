@@ -9,6 +9,13 @@
       ],
       "command": "npx"
     },
+    "context7": {
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.7.1"
+      ],
+      "command": "npx"
+    },
     "lexicon": {
       "args": [
         "-y",

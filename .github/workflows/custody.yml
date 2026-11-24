@@ -1,10 +1,18 @@
 name: Custody helper
 
 on:
-  # Daily full-suite policy (Mason, Oct 28 2026): macOS custody runs with the
-  # daily master run, never per PR or per push.
+  # Runs when custody sources change on master, plus a weekly run to catch
+  # macOS image or Swift toolchain drift. Never per PR (CI-PHANTOM-DAILY-CRONS:
+  # zero commits touched these paths in the 30 days before Nov 16 2026, yet the
+  # daily macOS run kept firing).
+  push:
+    branches: [master]
+    paths:
+      - "tools/custody/**"
+      - "scripts/install-custody.sh"
+      - ".github/workflows/custody.yml"
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "0 10 * * 1"
   workflow_dispatch:
 
 permissions:

@@ -11,6 +11,7 @@ export type ThemePreference = 'system' | 'light' | 'dark' | 'high-contrast';
 const THEME_STORAGE_KEY = 'ashlr.theme.v1';
 
 function applyTheme(pref: ThemePreference): void {
+  if (typeof document === 'undefined') return;
   const root = document.documentElement;
   if (pref === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', pref);

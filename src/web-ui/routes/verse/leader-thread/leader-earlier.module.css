@@ -1,0 +1,68 @@
+/* The row at the top of the Leader conversation: how far back it reaches, and the way further. */
+.root {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  line-height: var(--text-xs-line);
+  font-variant-numeric: tabular-nums;
+}
+
+.line { margin: 0; }
+.root[data-state='error'] .line { color: var(--status-danger-fg); }
+.root[data-state='done'] .line { letter-spacing: var(--tracking-label); }
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard);
+}
+
+.action[data-quiet='true'] { border-color: transparent; color: var(--text-tertiary); text-decoration: underline; }
+.action:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.action:disabled { color: var(--text-disabled); cursor: default; }
+.action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+/* While a page is on its way a line sweeps under the row, so the wait reads as work and not as a stall. */
+.sweep {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--border-subtle);
+}
+
+.sweep::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inline-size: 30%;
+  background: var(--accent-500);
+  animation: earlier-sweep 1.1s var(--ease-standard) infinite;
+}
+
+@keyframes earlier-sweep {
+  from { inset-inline-start: -30%; }
+  to { inset-inline-start: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action { transition: none; }
+  .sweep::after { inline-size: 100%; animation: none; }
+}

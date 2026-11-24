@@ -1,4 +1,5 @@
 import { createAppAdapters, DRIVE_TARGETS, loopbackAppRequest, loopbackDeskCall, type AppAction, type DriveTarget } from '../core/drive/apps.js';
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { scrubSecrets } from '../core/util/scrub.js';
 
 export async function cmdDriveApp(args: string[]): Promise<number> {
@@ -13,7 +14,7 @@ export async function cmdDriveApp(args: string[]): Promise<number> {
       options[key] = flags[++i]!;
     }
     if (!options['--json']) throw new Error('--json required');
-    const request = loopbackAppRequest(process.env['PHM_DRIVE_ORIGIN'] ?? 'http://127.0.0.1:7777', process.env['PHM_DRIVE_READ_TOKEN'] ?? '', process.env['PHM_DRIVE_MUTATION_TOKEN'] ?? '');
+    const request = loopbackAppRequest(process.env['PHM_DRIVE_ORIGIN'] ?? 'http://127.0.0.1:7777', readEnvironmentCredential('PHM_DRIVE_READ_TOKEN') ?? '', readEnvironmentCredential('PHM_DRIVE_MUTATION_TOKEN') ?? '');
     // DESK is wired only when a live chat-turn bearer is configured; the bearer is never printed.
     const bearer = process.env['PHM_DRIVE_DESK_BEARER'];
     const desk = bearer ? loopbackDeskCall(process.env['PHM_DRIVE_ORIGIN'] ?? 'http://127.0.0.1:7777', bearer) : undefined;

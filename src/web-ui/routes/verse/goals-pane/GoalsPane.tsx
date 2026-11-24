@@ -1,6 +1,7 @@
 /**
- * routes/verse/goals-pane/GoalsPane.tsx: every open goal, its progress, its
- * next milestone and the mission state, beside the Leader thread. Goals change
+ * routes/verse/goals-pane/GoalsPane.tsx: the fleet's standing goals
+ * (FleetGoalCards, same data as `phm goals`), then every open goal, its
+ * progress, its next milestone and the mission state, beside the Leader thread. Goals change
  * through `ashlr goals` or the Add form; the only other write here is a
  * steering line to the Leader. Each source fails on
  * its own. All text is untrusted and rendered as React text, never HTML.
@@ -13,12 +14,14 @@ import { paneLinkUrl } from '../dock/pane-link.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { repoBacklogView } from '../fleet-merges/repo-backlog-model.js';
 import { repoBacklogQuery } from '../fleet-merges/repo-backlog-queries.js';
+import { FleetGoalCards } from './FleetGoalCards.js';
 import { GoalAddForm } from './GoalAddForm.js';
 import { GoalSteer } from './GoalSteer.js';
 import { GoalMetric, useGoalMetrics } from './GoalMetric.js';
 import { goalLine, goalsHeadline, openGoals } from './goals-pane-model.js';
 import { prBacklogGoal, prBacklogTotal } from './pr-backlog-goal-model.js';
 import styles from './goals-pane.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 // First known backlog total this session: the "since you opened Phantom" baseline.
 let sessionBacklogBaseline: number | null = null;
@@ -38,14 +41,15 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
     return prBacklogGoal(rows, previous);
   }, [prBacklog.data]);
 
-  const goalsFailed = Boolean(goals.error) && goals.data === undefined;
+  const malformedGoals = goals.data !== undefined && !Array.isArray(goals.data);
+  const goalsFailed = malformedGoals || Boolean(goals.error) && goals.data === undefined;
   const missionFailed = Boolean(mission.error) && mission.data === undefined;
   const lines = openGoals(goals.data ?? []).map(goalLine);
   const loading = goals.data === undefined && !goalsFailed;
 
   return (
-    <div className={styles.root}>
-      {goals.data ? <h2 className={styles.headline}>{goalsHeadline(goals.data)}</h2> : null}
+    <div className={`${styles.root} ${compact.view}`}>
+      {!malformedGoals && goals.data ? <h2 className={styles.headline}>{goalsHeadline(goals.data)}</h2> : null}
       <p className={styles.mission}>
         {missionFailed
           ? 'Mission state unavailable'
@@ -56,10 +60,11 @@ export function GoalsPane({ visible = true, host }: Pick<Partial<PaneProps>, 'vi
         <span className={styles.metricValue}>{prGoal.value}</span>
         {prGoal.trend ? <span>{prGoal.trend}</span> : null}
       </p>
+      <FleetGoalCards visible={visible} host={host} />
       <GoalAddForm />
       {goalsFailed ? <CardNote tone="danger">{goals.error?.message ?? 'Could not read goals.'}</CardNote> : null}
       {loading ? <CardNote>Loading goals</CardNote> : null}
-      {goals.data && lines.length === 0 ? (
+      {!malformedGoals && goals.data && lines.length === 0 ? (
         <CardNote>No open goals. Add one above, or with `ashlr goals add "&lt;objective&gt;"`.</CardNote>
       ) : null}
       {lines.map(line => (

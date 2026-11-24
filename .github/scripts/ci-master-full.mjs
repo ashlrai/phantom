@@ -14,7 +14,14 @@ export const FULL_REQUIRED = Object.freeze([
   'mac-general', 'mac-isolated', 'native-macos-broker-foundation',
   'windows-service-authority', 'merge-gate',
 ]);
-export const FULL_SKIPPED = Object.freeze(['quick', 'site', 'docs', 'release-build']);
+export const FULL_SKIPPED = Object.freeze(['quick', 'clean-tree', 'authority-drift', 'fast-gate', 'site', 'docs', 'release-build']);
+// Full evidence sources: the six-hour schedule, and a manual full dispatch of
+// the canonical CI workflow on master (the workflow header documents dispatch as
+// a full run). A dispatched full has no receipt job, so it qualifies only when
+// the run is green, the full matrix and a Mac exhaustive slice ran, and every
+// job is success or skipped.
+export const FULL_EVENTS = Object.freeze(['schedule', 'workflow_dispatch']);
+const MAC_PREFIX = 'Mac exhaustive (';
 const CLASSIFY_JOB = 'Classify PR site lane';
 const RELEASE_JOB = 'Desktop release smoke';
 const sha = value => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
@@ -30,6 +37,26 @@ export function githubRead(path) {
       stdio: ['ignore', 'pipe', 'pipe'],
     }));
   } catch { throw new Error('CI metadata unavailable; refusing unverified full evidence'); }
+}
+
+// Ancestor read for tag admission: exact compare path only, read-only token.
+export function githubIsAncestor(repo, base, head) {
+  assert.ok(repo === 'ashlrai/phantom' && sha(base) && sha(head), 'unreviewed compare');
+  let data;
+  try {
+    data = JSON.parse(execFileSync('gh', ['api', '--hostname', 'github.com', `repos/${repo}/compare/${base}...${head}`], {
+      encoding: 'utf8', timeout: 20_000, maxBuffer: 4 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    }));
+  } catch { throw new Error('compare unavailable; refusing unverified ancestry'); }
+  return data?.status === 'identical' || data?.status === 'ahead';
+}
+const refuseAncestor = async () => false;
+
+function dispatchedFullGreen(run, jobs) {
+  const ran = jobs.filter(job => job.conclusion !== 'skipped');
+  return run.status === 'completed' && run.conclusion === 'success' &&
+    ran.some(job => job.name?.startsWith('CI (Node 22,')) && ran.some(job => job.name?.startsWith(MAC_PREFIX)) &&
+    jobs.every(job => job.status === 'completed' && (job.conclusion === 'success' || job.conclusion === 'skipped'));
 }
 
 export function fullFailures(needs) {
@@ -56,13 +83,20 @@ export async function fullHistory({ repo, api = githubRead, excludeRun = 0, late
     assert.ok(Date.now() < deadline, 'full history deadline exceeded');
     return api(path);
   };
-  for (let page = 1; page <= 5; page++) {
-    const data = await read(`${prefix}/workflows/${workflow.id}/runs?event=schedule&branch=master&per_page=100&page=${page}`);
+  // One page of each full source, newest first by run id across sources.
+  const runs = new Map();
+  for (const event of FULL_EVENTS) {
+    const data = await read(`${prefix}/workflows/${workflow.id}/runs?event=${event}&branch=master&per_page=100&page=1`);
     assert.ok(Array.isArray(data.workflow_runs), 'missing scheduled CI history');
-    for (const run of [...data.workflow_runs].sort((a, b) => b.id - a.id)) {
+    for (const run of data.workflow_runs) {
       assert.ok(positive(run.id) && positive(run.run_attempt) && sha(run.head_sha) &&
-        run.event === 'schedule' && run.head_branch === 'master' && run.workflow_id === workflow.id &&
+        run.event === event && run.head_branch === 'master' && run.workflow_id === workflow.id &&
         run.path === workflow.path && run.head_repository?.id === 1263526319, 'scheduled CI identity differs');
+      runs.set(run.id, run);
+    }
+  }
+  {
+    for (const run of [...runs.values()].sort((a, b) => b.id - a.id)) {
       // A rerun must not call a newer scheduled run its previous green.
       if (excludeRun && run.id >= excludeRun) continue;
       const jobs = await read(`${prefix}/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
@@ -81,20 +115,27 @@ export async function fullHistory({ repo, api = githubRead, excludeRun = 0, late
       // older green evidence while its shape or result remains unknown.
       if (check?.conclusion === 'skipped' && !matrixRan && run.status === 'completed') continue;
       if (!check && !matrixRan && run.status === 'completed') continue;
-      evidence.push({ ...run, qualified: run.status === 'completed' && run.conclusion === 'success' &&
-        check?.status === 'completed' && check.conclusion === 'success' });
+      // A dispatch that never started the full matrix (for example the release
+      // gate input) is not a full attempt.
+      if (run.event === 'workflow_dispatch' && !matrixRan && run.status === 'completed') continue;
+      evidence.push({ ...run, qualified: run.event === 'workflow_dispatch' ? dispatchedFullGreen(run, jobs.jobs) :
+        run.status === 'completed' && run.conclusion === 'success' && check?.status === 'completed' && check.conclusion === 'success' });
       if (latestOnly || evidence.at(-1).qualified) return evidence;
     }
-    if (data.workflow_runs.length < 100) break;
   }
   return evidence.sort((a, b) => b.id - a.id);
 }
 
-export async function requireFullGreen({ repo, candidate, api = githubRead }) {
+// The latest full attempt must be green. It may be on the candidate itself or
+// on an ancestor of it; the candidate's own required fast checks are enforced
+// by the Auto-tag checks step before this runs. A red or pending latest full
+// still refuses, so a newer failure is never hidden by an older green.
+export async function requireFullGreen({ repo, candidate, api = githubRead, isAncestor = api === githubRead ? githubIsAncestor : refuseAncestor }) {
   assert.ok(sha(candidate), 'candidate must be an exact SHA');
   const latest = (await fullHistory({ repo, api, latestOnly: true }))[0];
   assert.ok(latest?.qualified, 'latest scheduled full is missing, red or pending; refusing to tag');
-  assert.equal(latest.head_sha, candidate, 'candidate has no current scheduled full qualification; refusing to tag');
+  if (latest.head_sha === candidate) return latest;
+  assert.ok(await isAncestor(repo, latest.head_sha, candidate), 'candidate has no current scheduled full qualification; refusing to tag');
   return latest;
 }
 

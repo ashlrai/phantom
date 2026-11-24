@@ -1,7 +1,7 @@
 import { amplifyRunsDir, amplifyTick, readAmplifyGoal, readAmplifyStatus } from '../core/amplify/index.js';
 const USAGE = 'Usage: phm amplify status|tick|goal [--json] [--limit 1..100 (goal only)]';
 export async function cmdAmplify(args: string[], deps = { root: amplifyRunsDir(), now: Date.now }) {
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(USAGE); return 0; }
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
   const [verb, ...flags] = args;
   let json = false, limit = 10;
   const seen = new Set<string>();

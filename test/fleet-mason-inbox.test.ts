@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { INBOX_ATTACH_MAX_CHARS } from '../src/core/fleet/inbox-attachment.js';
 import {
   appendInboxEntry, formatInboxEntry, INBOX_MAX_CHARS, parseInbox, readInboxEntries,
 } from '../src/core/fleet/mason-inbox.js';
@@ -52,7 +53,7 @@ describe('Mason inbox', () => {
 
   it('refuses invalid text before creating any files', async () => {
     expect(await appendInboxEntry(' \r\n ', { runsDir })).toEqual({ ok: false, reason: 'empty' });
-    expect(await appendInboxEntry('x'.repeat(INBOX_MAX_CHARS + 1), { runsDir })).toEqual({ ok: false, reason: 'too-long' });
+    expect(await appendInboxEntry('x'.repeat(INBOX_ATTACH_MAX_CHARS + 1), { runsDir })).toEqual({ ok: false, reason: 'too-long' });
     expect(await appendInboxEntry('sk-FAKEFAKEFAKEFAKEFAKEFAKE1234', { runsDir })).toEqual({ ok: false, reason: 'secret-shaped' });
     expect(await readInboxEntries({ runsDir })).toEqual({ sourceState: 'missing', entries: [] });
     await expect(readFile(join(runsDir, 'dispatch-events.log'))).rejects.toMatchObject({ code: 'ENOENT' });

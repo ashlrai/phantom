@@ -60,8 +60,10 @@ function fixture(journal: string, messages: Record<string, unknown>) {
   return { deps: { runsDir, stateRoot, now: NOW } as FleetSlackEvidenceDeps };
 }
 
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
+const rid = (channelId: string, ts: string) => fakeRequestId(`448s:${channelId}:${ts}`);
 const entry = (channelId: string, at: string, messageTs: string, bus?: string) => ({
-  at, decision: 'ingested', ...(bus === undefined ? {} : { bus }), channelId, threadTs: THREAD, messageTs,
+  at, decision: 'ingested', ...(bus === undefined ? {} : { bus }), channelId, threadTs: THREAD, messageTs, requestId: rid(channelId, messageTs),
 });
 const sent = (channel: string, ts: string) => ({ channel, thread: THREAD, state: 'sent', ts });
 
@@ -72,7 +74,7 @@ const sharedJournal = [
   entry(CHANNEL_B, '2024-11-07T17:59:40.000Z', TARGET_TS, 'posted'),
   entry(CHANNEL_A, '2024-11-07T17:59:50.000Z', SIBLING_TS, 'posted'),
 ].map(row => JSON.stringify(row)).join('\n') + '\n';
-const sharedMessages = { a: sent(CHANNEL_A, '1731002390.000100') };
+const sharedMessages = { [replyKey(rid(CHANNEL_A, TARGET_TS))]: sent(CHANNEL_A, '1731002390.000100') };
 
 describe('fleet_slack_evidence messageTs over MCP', () => {
   it('advertises optional messageTs alongside thread, channelId and maxAgeSeconds', async () => {

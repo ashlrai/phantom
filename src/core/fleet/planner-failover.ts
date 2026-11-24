@@ -52,6 +52,8 @@ export interface PlannerHealth {
   /** ok → null. failing → 'usage-limit' | 'auth-rejected' | 'executor-fail'.
    *  unknown → 'missing-events-log' | 'unreadable-events-log' | 'no-leader-rows'. */
   reason: string | null;
+  /** Executor token on the newest failed LEADER row (the login that died); absent unless failing. */
+  executor?: string;
 }
 export interface PlannerCandidate { provider: string; argv: readonly string[] }
 export type PlannerRunnerChoice =
@@ -94,7 +96,7 @@ function parseResetPhrase(raw: string): string | null {
 }
 
 /** Newest successfully parsed "try again at …" in the retained log tail, or null. */
-function parseResetAt(text: string): string | null {
+export function parseResetAt(text: string): string | null {
   let found: string | null = null;
   for (const match of text.matchAll(TRY_AGAIN)) {
     const parsed = parseResetPhrase(match[1]!);
@@ -103,7 +105,7 @@ function parseResetAt(text: string): string | null {
   return found;
 }
 
-interface LeaderRow { ms: number; at: string; failed: boolean; order: number }
+interface LeaderRow { ms: number; at: string; failed: boolean; order: number; executor: string }
 
 /** LEADER rows from the events tail, newest first (ms desc, file order breaks ties). */
 function leaderRows(text: string, now: number): LeaderRow[] {
@@ -113,7 +115,7 @@ function leaderRows(text: string, now: number): LeaderRow[] {
     if (!m || m[3] !== 'LEADER') continue;
     const timestamp = localTimestamp(`${m[1]} ${m[2]}`);
     if (!Number.isFinite(timestamp.ms) || timestamp.ms > now) continue;
-    rows.push({ ms: timestamp.ms, at: timestamp.at, failed: LEADER_FAILED.test((m[4] ?? '').trim()), order: rows.length });
+    rows.push({ ms: timestamp.ms, at: timestamp.at, failed: LEADER_FAILED.test((m[4] ?? '').trim()), order: rows.length, executor: (m[4] ?? '').trim().split(/\s+/)[0] ?? '' });
   }
   return rows.sort((a, b) => (b.ms - a.ms) || (b.order - a.order));
 }
@@ -138,6 +140,7 @@ function assess(events: { state: Source; text: string }, runLogText: string, now
     failingSince: rows[depth]!.at,
     lastGoodPassAt: rows[depth + 1]?.at ?? null,
     resetAt,
+    ...(newest.executor ? { executor: newest.executor } : {}),
     reason: usage ? 'usage-limit' : isAuthRejectedText(runLogText) ? 'auth-rejected' : 'executor-fail',
   };
 }

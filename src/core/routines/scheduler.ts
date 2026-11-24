@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { parse, stringify } from 'yaml';
 import { ashlrHome } from '../cloud/store.js';
+import { assertPermitted, endpointPermitted } from '../policy/local-only.js';
 import { scrubSecrets } from '../util/scrub-secrets.js';
 
 export interface Routine {
@@ -77,7 +78,9 @@ export const invoke: Invoke = async (e, r) => {
   }
   if (e.kind === 'omlx') {
     if (!e.model) throw new Error('oMLX requires model');
-    const response = await fetch('http://127.0.0.1:8000/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: e.model, messages: [{ role: 'user', content: r.prompt }] }), signal: AbortSignal.timeout(300_000) });
+    const omlxUrl = 'http://127.0.0.1:8000/v1/chat/completions';
+    assertPermitted(endpointPermitted(omlxUrl));
+    const response = await fetch(omlxUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: e.model, messages: [{ role: 'user', content: r.prompt }] }), signal: AbortSignal.timeout(300_000) });
     if (!response.ok) throw new Error(response.status === 429 ? 'rate limit' : 'oMLX unhealthy');
     const body = await response.json() as { choices?: { message: { content: string } }[] };
     if (!body.choices?.[0]?.message.content) throw new Error('oMLX empty response');

@@ -11,7 +11,7 @@ const NOW = Date.parse('2026-11-14T12:00:00.000Z');
 const HOME = '/Users/fakeuser';
 
 function statusBody(peers: Record<string, unknown>, self: unknown = 'fake-self-mac'): string {
-  return JSON.stringify({ Self: { HostName: self }, Peer: peers });
+  return JSON.stringify({ BackendState: 'Running', Self: { HostName: self }, Peer: peers });
 }
 
 function deps(over: Partial<TailnetPeersDeps> = {}): TailnetPeersDeps {

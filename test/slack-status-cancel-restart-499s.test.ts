@@ -1,0 +1,82 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSlackLeaderAdapter, flushSlackLeaderReplies, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
+import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
+import { readSlackSendReceipts } from '../src/core/agents/slack-send-receipts.js';
+import { openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
+import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+
+const owner = 'U0OWNER', bot = 'U0BOT', channel = 'D0LEADER', team = 'T0FAKE', thread = '1793920000.000001';
+const config = `[mason]\nidentities=[{channel="slack",id="${owner}"}]\n[team]\nidentities=[{channel="slack",id="${owner}"}]\n[slack]\nbridge_id="slack"\nteam_id="${team}"\nown_user_id="${bot}"\nown_bot_id="B0BOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="${channel}"\n`;
+let root = '';
+afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+describe('cancelled Slack status reply across restarts', { timeout: 30000 }, () => {
+  it('retains the composed reply and delivers it once after restart', async () => {
+    root = mkdtempSync(join(tmpdir(), 'slack-cancel-499s-'));
+    const options = { configDir: join(root, 'config'), runsDir: join(root, 'runs'), busRoot: join(root, 'bus'), now: () => Date.parse('2026-11-06T02:00:00Z') };
+    mkdirSync(options.configDir, { mode: 0o700 });
+    writeFileSync(join(options.configDir, 'agent-network.toml'), config, { mode: 0o600 });
+    writeFileSync(join(options.configDir, 'comms.toml'), 'confirmedByMason=true\n', { mode: 0o600 });
+    const posts: Record<string, unknown>[] = [];
+    const call: SlackCall = vi.fn(async (method, body = {}) => {
+      if (method === 'auth.test') return { team_id: team, user_id: bot, bot_id: 'B0BOT' };
+      if (method === 'apps.connections.open') return { url: 'wss://wss-primary.slack.com/FAKE-EXAMPLE' };
+      if (method === 'conversations.info') return { channel: { id: channel, is_im: true, context_team_id: team } };
+      if (method === 'conversations.members') return { members: [bot, owner], response_metadata: { next_cursor: '' } };
+      if (method === 'users.info') return { user: { id: body.user, team_id: team, is_bot: body.user === bot } };
+      if (method === 'chat.postMessage') { posts.push(body); return { channel, ts: `1793920002.00000${posts.length}` }; }
+      throw new Error(`unexpected synthetic method: ${method}`);
+    });
+    const event = (id: number) => ({ type: 'events_api', envelope_id: `delivery-${id}`, payload: { team_id: team, event_id: `Ev-cancel-${id}`, event: { type: 'message', user: owner, channel, ts: `1793920001.00000${id}`, thread_ts: thread, text: 'Phantom status' } } });
+    const receive = async (id: number, signal: AbortSignal, compose: () => Promise<string>) => {
+      const policy = readSlackDeliveryPolicy(options)!;
+      const adapter = createSlackLeaderAdapter({ ...options, call, signal, statusReply: { ask: text => text === 'Phantom status', compose, fallback: 'unavailable' } });
+      let routed: Awaited<ReturnType<typeof adapter.route>> | undefined;
+      const handlers: Record<string, (event: { data?: unknown }) => void> = {};
+      const socket = { readyState: 1, addEventListener: (type: string, fn: (event: { data?: unknown }) => void) => { handlers[type] = fn; }, send: vi.fn(), close: vi.fn() };
+      await openSlackSocket({ call, config: policy.config, ingest: { config: policy.config, teamIdentities: policy.teamIdentities, runsDir: options.runsDir, busRoot: options.busRoot }, leaderAdapter: { ...adapter, route: async envelope => routed = await adapter.route(envelope) }, connect: () => socket });
+      handlers.message!({ data: JSON.stringify(event(id)) });
+      await vi.waitFor(() => expect(routed).toBeDefined(), { timeout: 5000 });
+      expect(routed).toMatchObject({ owned: true, durable: true });
+      return routed!;
+    };
+    const receipts = () => readSlackSendReceipts({ stateRoot: join(options.runsDir, 'slack-transport') });
+    const trace = () => readSlackRequestTrace({ runsDir: options.runsDir, stateRoot: join(options.runsDir, 'slack-transport'), now: () => new Date('2026-11-06T02:01:00Z') });
+    const inbox = () => listBusInboxAfter(0, 50, { root: options.busRoot, now: options.now });
+    const controller = new AbortController();
+    let resolveComposition!: (text: string) => void;
+    const composition = new Promise<string>(resolve => { resolveComposition = resolve; });
+    const first = await receive(1, controller.signal, () => composition);
+    expect(first.statusAnswer).toBeDefined();
+    expect(trace().rows).toEqual([expect.objectContaining({ ingress: 'posted' })]);
+    controller.abort();
+    resolveComposition('Synthetic status');
+    expect(await first.statusAnswer).toMatchObject({ answered: false });
+    expect(posts).toHaveLength(0);
+    expect(receipts().receipts.filter(row => row.state === 'sent')).toHaveLength(0);
+    expect(trace().counts.answered).toBe(0);
+    const state = JSON.parse(readFileSync(join(options.runsDir, 'leader/network-state.json'), 'utf8'));
+    const routes = Object.values(state.routes) as Array<{ channelRef: string; reply: { delivered: boolean; text?: string } }>;
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toMatchObject({ channelRef: `slack:${team}:${channel}:${thread}`, reply: { delivered: false, text: 'Synthetic status' } });
+    const before = inbox();
+    const restarted = new AbortController();
+    expect(await flushSlackLeaderReplies({ ...options, call, signal: restarted.signal })).toEqual({ state: 'completed', sent: 1 });
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ channel, thread_ts: thread, text: 'Leader: Synthetic status' });
+    expect(receipts()).toMatchObject({ state: 'ok', receipts: [{ state: 'sent', channel, thread }] });
+    expect(trace().rows).toEqual([expect.objectContaining({ ingress: 'posted', outcome: 'answered', replyTs: '1793920002.000001' })]);
+    expect(await flushSlackLeaderReplies({ ...options, call, signal: new AbortController().signal })).toEqual({ state: 'completed', sent: 0 });
+    const replay = await receive(1, new AbortController().signal, async () => 'unexpected');
+    expect(replay.statusAnswer).toBeUndefined();
+    expect(inbox()).toEqual(before);
+    expect(posts).toHaveLength(1);
+    const fresh = await receive(2, new AbortController().signal, async () => 'Fresh status');
+    expect(await fresh.statusAnswer).toMatchObject({ answered: true });
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toMatchObject({ channel, thread_ts: thread, text: 'Leader: Fresh status' });
+  });
+});

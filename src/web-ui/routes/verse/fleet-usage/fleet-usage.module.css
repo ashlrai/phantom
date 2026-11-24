@@ -1,28 +1,42 @@
-.root { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
+/* The board's one sentence, then one quiet line of when. Same pair as the Pools board. */
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); line-height: var(--text-lg-line); font-weight: var(--font-weight-semibold); }
+.meta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.headline + .meta { margin-top: calc(var(--space-2) * -1); }
 .message, .notice, .loading { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); }
 .notice { color: var(--text-primary); }
 .spendDown { margin: 0; color: var(--text-primary); font-size: var(--text-xs-size); font-weight: 600; }
 .loading { display: flex; flex-direction: column; gap: var(--space-2); }
 
-/* One dense row per provider account: label on the left, its reported
-   windows on the right — exactly as many meters as the provider sent. */
+/* One card per provider account: brand mark, name and plan, then its
+   reported windows — exactly as many meters as the provider sent. */
 .rows { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
-.row { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
-.account { flex: none; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.windows { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; min-width: 0; }
+.row { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); }
+.head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.account { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm-size); line-height: var(--text-sm-line); font-weight: var(--font-weight-semibold); }
+.tag { flex: none; padding: 0 var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-full); color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-xs-line); }
+.tag[data-standing='unread'] { border-color: var(--status-warning-solid); color: var(--status-warning-fg); }
+.windows { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; min-width: 0; }
+.windows:empty { display: none; }
 .reason { color: var(--text-secondary); overflow-wrap: anywhere; }
 .asOf { color: var(--text-tertiary); }
 
-/* label — thin track — percent — reset countdown */
-.window { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+/* label — bar — percent — reset countdown, then (where the window's start is known) one quiet line of pace */
+.window { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.bar { flex: 1 1 4rem; display: flex; min-width: 2rem; }
+.pace { flex: 1 0 100%; color: var(--text-tertiary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pace[data-pace='behind'] { color: var(--text-secondary); }
+.barKey { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-tertiary); }
 .windowLabel { flex: none; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.track { flex: 1 1 auto; display: block; min-width: 2rem; height: 4px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
-.fill { display: block; height: 100%; background: var(--accent-500); transition: width var(--duration-base, 180ms) var(--ease-standard); }
-.track[data-tone='warn'] .fill { background: var(--status-warning-solid); }
-.track[data-tone='danger'] .fill { background: var(--status-danger-solid); }
+/* Only the provider's limit flag draws this full bar: a flag, not a measurement. Every reading is a WindowBar. */
+.track { flex: 1 1 4rem; display: block; min-width: 2rem; height: 6px; border-radius: var(--radius-full); background: var(--meter-track); overflow: hidden; }
+.fill { display: block; height: 100%; background: var(--status-danger-solid); }
 .pct { flex: none; min-width: 3.5ch; text-align: right; font-variant-numeric: tabular-nums; }
 .flag { flex: none; color: var(--status-danger-solid); font-weight: 600; }
 .reset { flex: none; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The same reset as a local clock time, quieter, after the countdown. */
+.resetAt { color: var(--text-tertiary); }
+.resetAt::before { content: ' · '; }
 
 .laneSection { min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
 .title { margin: 0 0 var(--space-2); color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
@@ -30,6 +44,10 @@
 .table th { padding: 0 var(--space-2) var(--space-1) 0; color: var(--text-tertiary); font-weight: 400; text-align: left; }
 .table td { padding: 0 var(--space-2) 0 0; font-variant-numeric: tabular-nums; }
 .num { text-align: right; }
+/* Each lane's tokens against the busiest lane, as a thin bar under its row. A lane with no reading has no bar. */
+.laneRow { background: linear-gradient(var(--accent-500), var(--accent-500)) no-repeat left bottom / var(--share, 0%) 2px; }
+.laneRow td { padding-bottom: var(--space-1); padding-top: var(--space-1); }
+.laneMark { margin-inline-end: var(--space-1); vertical-align: -0.15em; }
 
 .auditRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); overflow-wrap: anywhere; }
 .verdict { border: 1px solid currentColor; border-radius: var(--radius-full); padding: 0 var(--space-2); color: var(--text-secondary); }
@@ -40,3 +58,9 @@
 .incident[data-tone='danger'] { color: var(--status-danger-solid); }
 .incident[data-tone='warn'] { color: var(--status-warning-solid); }
 .incident .verdict { color: inherit; }
+
+@media (width < 720px) {
+  .windowLabel { max-width: none; white-space: normal; overflow: visible; }
+  .window { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .windowLabel, .reset, .pace { grid-column: 1 / -1; white-space: normal; }
+}

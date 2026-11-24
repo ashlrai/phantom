@@ -1,6 +1,7 @@
 /** Read-only Telegram commands. Never probe providers or start a daemon. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { formatOperatorGlance, isOperatorStatusAsk } from '../fleet/operator-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import type { AshlrConfig } from '../types.js';
@@ -32,7 +33,7 @@ export async function localTelegramCommand(text: string, cfg: AshlrConfig): Prom
   void cfg;
   if (isOperatorStatusAsk(text)) {
     try {
-      return formatOperatorGlance(await readOperatorGlance());
+      return formatOperatorGlance(await readOperatorGlance({ loadRecovery: loadAppsRecoveryIncident }));
     } catch {
       return 'Fleet status unavailable.';
     }

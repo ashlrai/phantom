@@ -9,7 +9,8 @@ interface AckRow {
   timestamp: string;
   rowid: number;
   status: 'accepted' | 'duplicate';
-  delivery: 'recorded-not-sent' | 'unknown';
+  /** This pre-attempt journal contains no independently correlated delivery proof. */
+  delivery: 'unknown';
 }
 export interface AckEvidence {
   sourceState: SourceState;
@@ -61,7 +62,9 @@ export async function readImessageAckEvidence(limit: number, runsDir?: string, r
           || (row.status !== 'accepted' && row.status !== 'duplicate')) throw new Error();
         if (rowid === undefined || row.rowid === rowid) {
           report.rows.push({ timestamp: row.at, rowid: row.rowid, status: row.status,
-            delivery: row.delivery === 'recorded-not-sent' ? 'recorded-not-sent' : 'unknown' });
+            // Legacy labels describe the record before an attempt, not its outcome.
+            // Never promote unverified delivery/proof fields supplied in this journal.
+            delivery: 'unknown' });
         }
       } catch { report.malformedRows++; }
     }

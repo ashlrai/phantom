@@ -1,9 +1,12 @@
 name: CI
 
 on:
-  # PRs and the merge queue run only the seconds-fast gate (Mason, Oct 28 2026:
-  # merge fast, test later, fix forward daily). Full suites run every six hours on
-  # master, on manual dispatch, and on reusable workflow_call.
+  # PRs and the merge queue run the seconds-fast gate (Mason, Oct 28 2026:
+  # merge fast, fix forward on the scheduled full run). Secret scans, the
+  # generated-file check and advisory Quick typecheck stay as GATE-SPLIT left
+  # them. RQ-CI-FASTGATE-2 adds a blocking typecheck plus affected tests on
+  # pull_request and merge_group (p90 target under 60s). Full suites stay on
+  # the six-hour master schedule, manual dispatch, and reusable workflow_call.
   pull_request:
     branches: ["**"]
     types: [opened, synchronize, reopened]
@@ -18,8 +21,12 @@ on:
   # Full suite on master every six hours at 17 minutes past the hour.
   schedule:
     - cron: "17 */6 * * *"
-    # Release preparation reuses green push CI; it never reruns full suites.
-    - cron: "0,30 * * * *"
+  # Release-gate runs (Desktop release smoke + Release suites) are started by
+  # release-prep.yml once per master sha and by Auto-tag on a tag, both via
+  # workflow_dispatch release_gate=true. The old half-hour schedule duplicated
+  # that and is gone (CI-PHANTOM-CRON-30MIN). After both jobs succeed on
+  # master, release-gate-autotag dispatches Auto-tag with this exact SHA:
+  # GITHUB_TOKEN dispatches do not produce a workflow_run event.
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
   # The scheduled run rotates the Mac exhaustive work over seven daily slices
   # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
@@ -57,24 +64,51 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           filter: blob:none
-          fetch-depth: 0
+          fetch-depth: 1
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
+      - name: Prove secret-shape strength
+        run: node --test .github/tests/secret-shape-strength.test.mjs
       - name: Scan candidate diff (fail closed)
         env:
           SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
-          if [ -z "${BASE_SHA}" ]; then BASE_SHA="$(git rev-parse "${HEAD_SHA}^1")"; fi
+          if [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            echo "secret-shape base is missing" >&2
+            exit 1
+          fi
+          if [ -z "${BASE_SHA}" ]; then
+            if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+              git fetch --no-tags --filter=blob:none --unshallow origin
+            fi
+            if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+              echo "secret-shape base is missing" >&2
+              exit 1
+            fi
+            BASE_SHA="$(git rev-parse "${HEAD_SHA}^")"
+          fi
           base="$(git merge-base "${BASE_SHA}" "${HEAD_SHA}")"
           git diff --no-color --no-ext-diff "${base}" "${HEAD_SHA}" > "${RUNNER_TEMP}/candidate.diff"
           perl .github/tests/secret-shape/scrub.pl --check --allow-fixtures < "${RUNNER_TEMP}/candidate.diff"
 
   quick:
-    # Per-PR, merge-queue and master-push typecheck plus authority drift checks.
+    # Master-push typecheck that also publishes the protected-branch compiler
+    # state fast-gate restores. On PR and merge_group it is advisory and runs
+    # only the selected MCP output contract test: fast-gate, beside this job,
+    # is the blocking typecheck plus affected tests there.
+    # Generated-file and authority-drift checks live in their own jobs below.
     # Start alongside classification so the longest fast job has no serial wait.
     # This also checks docs-only PRs. Full suites run in the daily run.
     # A push event whose ref is a TAG is the reusable M33 verify call — it keeps
@@ -89,9 +123,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           filter: blob:none
-          fetch-depth: 0
+          fetch-depth: 1
+          sparse-checkout: |
+            .github
+            package.json
+            package-lock.json
+            tsconfig.json
+            src/web-ui/tsconfig.json
+            eslint.config.js
+          sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
       - name: Select MCP output contract test
         id: mcp_selection
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -101,68 +149,45 @@ jobs:
         run: |
           node --test .github/tests/ci-mcp-selection.test.mjs
           node .github/scripts/ci-mcp-selection.mjs
+      # Only the release-please PR may change the release version. A hand bump
+      # still gets a tag and draft from auto-tag, but the release train refuses
+      # it (release_message_mismatch) and it is never published (#4098, #4735).
+      # PR-only: the merge queue admits a PR after its PR checks pass.
+      - name: Require release-please provenance for version bumps
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          node --test .github/tests/release-version-provenance.test.mjs
+          node .github/scripts/release-version-provenance.mjs
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.22.3'
           cache: npm
-      # Read-only dirty diff on every PR, merge_group, and master push. Runs
-      # the tracked-file generator and fails if any path changes, including
-      # docs/llms.txt. No auto-commit and no path exemptions.
-      - name: Check generated files
+      # PR and merge queue: fast-gate already runs this exact typecheck as the
+      # blocking check, so Quick skips its duplicate and only runs the selected
+      # MCP output contract test. Master pushes still typecheck here and
+      # publish the compiler state fast-gate restores (CI-PHANTOM-QUICK-DUP).
+      # The sparse checkout above carries only config files. The master-push
+      # typecheck and the selected MCP contract test read src/ and test/, so
+      # materialize the full tree first, exactly as fast-gate does. Without
+      # this, tsgo fails with TS18003 (no inputs) on every master push.
+      - name: Materialize the full tree
+        if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: |
-          set -euo pipefail
-          node scripts/generate-docs-llms.mjs
-          status="$(git status --porcelain --untracked-files=normal)"
-          if [ -n "$status" ]; then
-            printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
-            exit 1
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
           fi
-      # Source-identical fast path (pull_request and merge_group only): the
-      # exact whole tracked tree of the checked-out candidate is compared with
-      # the authenticated current canonical base. The proof code is fetched
-      # from the canonical base tip, never from candidate bytes; every unknown,
-      # malformed, drifted or unavailable input falls back to the unchanged
-      # normal steps below, and master pushes never reach this step.
-      - name: Prove source-identical history fast path
-        id: history
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          verdict=fallback
-          case "${GITHUB_REPOSITORY:-}:${GITHUB_REPOSITORY_ID:-}:${GITHUB_REPOSITORY_OWNER_ID:-}" in
-            ashlrai/phantom:1263526319:258113726|ashlrai/ashlr-hub:1263526319:258113726) ;;
-            *) echo "equal=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
-          esac
-          dir="${RUNNER_TEMP}/ci-history-source"
-          rm -rf -- "$dir"
-          mkdir -p -- "$dir"
-          api() { timeout 20 gh api --hostname github.com "$1" 2>/dev/null || true; }
-          decode() {
-            node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);if(r.type!=="file"||r.encoding!=="base64"||typeof r.content!=="string"||r.content.length>700000)process.exit(1);process.stdout.write(Buffer.from(r.content.replace(/[^A-Za-z0-9+/=]/g,""),"base64"))}catch{process.exit(1)}})'
-          }
-          tip="$(api "repos/${GITHUB_REPOSITORY}/git/ref/heads/master" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s).object?.sha;process.stdout.write(/^[0-9a-f]{40}$/.test(v??"")?v:"")}catch{}})')"
-          if [ -n "$tip" ]; then
-            ok=1
-            for f in ci-history-source.mjs github-repository-binding.mjs; do
-              api "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/${f}?ref=${tip}" | decode > "$dir/$f" || ok=0
-            done
-            if [ "$ok" = 1 ] && [ -s "$dir/ci-history-source.mjs" ] && [ -s "$dir/github-repository-binding.mjs" ]; then
-              out="$(ASHLR_HISTORY_PROOF_SOURCE_SHA="$tip" timeout 75 node "$dir/ci-history-source.mjs" 2>"$dir/helper.log" || true)"
-              case "$out" in equal) verdict=equal ;; esac
-              cat "$dir/helper.log" >&2 2>/dev/null || true
-            fi
-          fi
-          if [ "$verdict" = equal ]; then echo "equal=true" >> "$GITHUB_OUTPUT"; else echo "equal=false" >> "$GITHUB_OUTPUT"; fi
-          exit 0
       - name: Install dependencies
-        if: steps.history.outputs.equal != 'true' || steps.mcp_selection.outputs.mcp_output == 'true'
+        if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Hash protected-branch compiler inputs
         id: compiler_inputs
-        if: steps.history.outputs.equal != 'true'
+        if: github.event_name == 'push'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
@@ -182,7 +207,7 @@ jobs:
       - name: Restore protected-branch compiler state
         # Read the protected base's incremental graph; tsgo still validates the
         # candidate below. Only a successful master push saves compiler state.
-        if: steps.history.outputs.equal != 'true'
+        if: github.event_name == 'push'
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: |
@@ -193,7 +218,7 @@ jobs:
           # current completed master graph, never a candidate/queue artifact.
           restore-keys: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-
       - name: Core no-emit type check
-        if: steps.history.outputs.equal != 'true'
+        if: github.event_name == 'push'
         # Both projects enable incremental/no-emit checking in their tsconfig.
         # Keep this step name stable for release evidence consumers.
         run: |
@@ -242,16 +267,378 @@ jobs:
             node_modules/.cache/phantom-backend.tsbuildinfo
             node_modules/.cache/phantom-web.tsbuildinfo
           key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-${{ github.run_id }}-${{ github.run_attempt }}
-      # Full authority shards are deferred; drift must still fail the required gate.
+      - name: Test MCP output contract
+        if: steps.mcp_selection.outputs.mcp_output == 'true'
+        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
+
+  clean-tree:
+    # Split out of Quick typecheck (RQ-PH-GATE-SPLIT-1) so a stale generated file
+    # is a hard Merge Gate requirement while Quick stays advisory. The stable
+    # check name is also read by Auto-tag on the exact tagged sha.
+    name: Check generated files
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          filter: blob:none
+          fetch-depth: 1
+          # Hashing uses tree ids, so a receipt hit never checks out docs.
+          # A miss materializes docs and scripts in the next step.
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Hash generated-file inputs
+        id: clean_hash
+        run: node .github/scripts/ci-fast-inputs.mjs clean-tree
+      - name: Restore generated-files green result
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/clean-tree.json
+          key: phantom-ci-green-v1-clean-tree-${{ steps.clean_hash.outputs.hash }}
+      - name: Decide generated-files reuse
+        id: clean_reuse
+        env:
+          RECEIPT_HASH: ${{ steps.clean_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
+      - name: Materialize generated-file inputs
+        if: steps.clean_reuse.outputs.reuse != 'true'
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
+      - name: Set up Node.js 22
+        if: steps.clean_reuse.outputs.reuse != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+      # Read-only dirty diff on every PR, merge_group, and master push. Runs
+      # the tracked-file generator and fails if any path changes, including
+      # docs/llms.txt. No auto-commit and no path exemptions. A proven green
+      # receipt for the same docs tree skips the generator; a miss runs it.
+      - name: Check generated files
+        env:
+          RECEIPT_HASH: ${{ steps.clean_hash.outputs.hash }}
+        run: |
+          set -euo pipefail
+          if node .github/scripts/ci-green-reuse.mjs verify --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"; then
+            echo "reused a prior green generated-files result"
+          else
+            node scripts/canonical-launcher-digests.mjs --check
+            node --test .github/tests/canonical-launcher-digests.test.mjs
+            node scripts/generate-docs-llms.mjs
+            status="$(git status --porcelain --untracked-files=normal)"
+            if [ -n "$status" ]; then
+              printf 'generated files are stale; commit the regenerated tree:\n%s\n' "$status" >&2
+              exit 1
+            fi
+            node .github/scripts/ci-green-reuse.mjs write --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"
+          fi
+      - name: Save generated-files green result
+        if: steps.clean_reuse.outputs.reuse != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/clean-tree.json
+          key: phantom-ci-green-v1-clean-tree-${{ steps.clean_hash.outputs.hash }}
+
+  authority-drift:
+    # Split out of Quick typecheck (RQ-PH-GATE-SPLIT-1). Advisory for merge:
+    # it is deliberately not in Merge Gate needs, so it never lengthens the
+    # gate. It must still run and report on every fast event so Auto-tag and
+    # the release gate can require it green on the exact sha.
+    name: Check authority drift (hermetic)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Keep blobs local so expanding the sparse tree needs no lazy fetch.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Hash authority drift inputs
+        id: drift_hash
+        run: node .github/scripts/ci-fast-inputs.mjs authority
+      - name: Restore authority drift green result
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/authority-drift.json
+          key: phantom-ci-green-v1-authority-drift-${{ steps.drift_hash.outputs.hash }}
+      - name: Decide authority drift reuse
+        id: drift_reuse
+        env:
+          RECEIPT_HASH: ${{ steps.drift_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job authority-drift --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/authority-drift.json"
+      - name: Materialize the full tree
+        if: steps.drift_reuse.outputs.reuse != 'true'
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
+      - name: Set up Node.js 22
+        if: steps.drift_reuse.outputs.reuse != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        if: steps.drift_reuse.outputs.reuse != 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # Full authority shards are deferred; drift is checked here on every fast event.
+      # A miss runs these two tests. A matching green receipt skips them.
       - name: Check authority drift (hermetic)
-        if: steps.history.outputs.equal != 'true'
+        if: steps.drift_reuse.outputs.reuse != 'true'
         run: >-
           HOME=$(mktemp -d) npm run test:ci -- --maxWorkers=1 --fileParallelism=false
           test/authority-codeowners-310b.test.ts
           test/authority-tier1-closure-310b.test.ts
-      - name: Test MCP output contract
-        if: steps.mcp_selection.outputs.mcp_output == 'true'
-        run: HOME=$(mktemp -d) npm run test:ci -- test/mcp-output-efficiency.test.ts
+      - name: Record authority drift green result
+        if: steps.drift_reuse.outputs.reuse != 'true'
+        env:
+          RECEIPT_HASH: ${{ steps.drift_hash.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs write --job authority-drift --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/authority-drift.json"
+      - name: Save authority drift green result
+        if: steps.drift_reuse.outputs.reuse != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/authority-drift.json
+          key: phantom-ci-green-v1-authority-drift-${{ steps.drift_hash.outputs.hash }}
+
+  fast-gate:
+    # Blocking per-PR and merge-queue gate (RQ-CI-FASTGATE-2), beside Quick
+    # with no needs. Typecheck plus the tests the diff selects. Docs-only
+    # diffs typecheck and run zero tests. Real-io, serial-cpu and dist-bound
+    # suites stay on the master full schedule. Merge-group failures write an
+    # attribution report and nothing else. Quick, clean-tree, secret-shape and
+    # Merge Gate keep their GATE-SPLIT roles.
+    name: Fast gate (typecheck + affected tests)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      # PR: base..head. merge_group: the whole batch, base_sha..head_sha.
+      ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+      ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+    steps:
+      # Keep blobs local for dependency-graph reads and full-tree expansion.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github
+            package.json
+            package-lock.json
+            tsconfig.json
+            src/web-ui/tsconfig.json
+            eslint.config.js
+            test/config
+          sparse-checkout-cone-mode: false
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
+      - name: Restore dependency graph
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v1-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: phantom-dep-graph-v1-
+      - name: Update dependency graph
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
+      - name: Select affected tests
+        id: select
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: |
+          node --test --test-name-pattern "warm sparse checkout" .github/tests/ci-fast-select.test.mjs
+          node .github/scripts/ci-fast-select.mjs
+      - name: Hash typecheck and affected tests
+        id: inputs
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: |
+          node .github/scripts/ci-fast-inputs.mjs plan
+          node .github/scripts/ci-fast-inputs.mjs tests "$RUNNER_TEMP/fast-gate-plan.json"
+      - name: Restore backend typecheck result
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/typecheck-backend.json
+          key: phantom-ci-green-v1-typecheck-backend-${{ steps.inputs.outputs.backend }}
+      - name: Restore web typecheck result
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/typecheck-web.json
+          key: phantom-ci-green-v1-typecheck-web-${{ steps.inputs.outputs.web }}
+      - name: Restore affected-test result
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/fast-tests.json
+          key: phantom-ci-green-v1-fast-tests-${{ steps.inputs.outputs.hash }}
+      - name: Decide backend typecheck reuse
+        id: backend_reuse
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.backend }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-backend --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+      - name: Decide web typecheck reuse
+        id: web_reuse
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.web }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job typecheck-web --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+      - name: Decide affected-test reuse
+        id: tests_reuse
+        env:
+          RECEIPT_HASH: ${{ steps.inputs.outputs.hash }}
+        run: node .github/scripts/ci-green-reuse.mjs announce --job fast-tests --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
+      - name: Materialize the full tree
+        if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
+      - name: Set up Node.js 22
+        if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true' || (steps.select.outputs.mode != 'docs' && steps.tests_reuse.outputs.reuse != 'true')
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Hash protected-branch compiler inputs
+        id: compiler_inputs
+        if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          const base = process.env.BASE_SHA;
+          if (!/^[0-9a-f]{40}$/.test(base)) throw new Error('Invalid protected base SHA');
+          const hash = createHash('sha256');
+          for (const file of ['package-lock.json', 'tsconfig.json', 'src/web-ui/tsconfig.json']) {
+            hash.update(file + '\0');
+            hash.update(execFileSync('git', ['show', `${base}:${file}`]));
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `hash=${hash.digest('hex')}\n`);
+          NODE
+      - name: Restore protected-branch compiler state
+        # Read-only. Same master-only family Quick publishes. No compiler-state save here.
+        if: steps.backend_reuse.outputs.reuse != 'true' || steps.web_reuse.outputs.reuse != 'true'
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            node_modules/.cache/phantom-backend.tsbuildinfo
+            node_modules/.cache/phantom-web.tsbuildinfo
+          key: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          restore-keys: master-typecheck-v3-${{ runner.os }}-${{ steps.compiler_inputs.outputs.hash }}-master-
+      - name: Core no-emit type check
+        # Keep this step name stable for release evidence consumers.
+        # Both receipts must match or the real check runs. One matching
+        # receipt can limit the run to the other project.
+        env:
+          BACKEND_REUSE: ${{ steps.backend_reuse.outputs.reuse }}
+          WEB_REUSE: ${{ steps.web_reuse.outputs.reuse }}
+          PROJECTS: ${{ steps.inputs.outputs.projects }}
+          BACKEND_HASH: ${{ steps.inputs.outputs.backend }}
+          WEB_HASH: ${{ steps.inputs.outputs.web }}
+        run: |
+          started=$SECONDS
+          if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json" \
+            && node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
+            echo "Reused prior green typecheck results" >> "$GITHUB_STEP_SUMMARY"
+          else
+            case "$PROJECTS" in
+              web)
+                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"; then
+                  npm run typecheck:web
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                else
+                  npm run typecheck
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                fi
+                ;;
+              backend)
+                if node .github/scripts/ci-green-reuse.mjs verify --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"; then
+                  npx --no-install tsgo --noEmit
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                else
+                  npm run typecheck
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                  node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                fi
+                ;;
+              *)
+                npm run typecheck
+                node .github/scripts/ci-green-reuse.mjs write --job typecheck-backend --hash "$BACKEND_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-backend.json"
+                node .github/scripts/ci-green-reuse.mjs write --job typecheck-web --hash "$WEB_HASH" --receipt "$RUNNER_TEMP/ci-green/typecheck-web.json"
+                ;;
+            esac
+          fi
+          echo "Incremental backend + web typecheck: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run affected tests
+        if: steps.select.outputs.mode != 'docs'
+        env:
+          TESTS_HASH: ${{ steps.inputs.outputs.hash }}
+        run: |
+          started=$SECONDS
+          if node .github/scripts/ci-green-reuse.mjs verify --job fast-tests --hash "$TESTS_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"; then
+            echo "reused a prior green affected-test result"
+          else
+            node .github/scripts/ci-fast-run.mjs
+            node .github/scripts/ci-green-reuse.mjs write --job fast-tests --hash "$TESTS_HASH" --receipt "$RUNNER_TEMP/ci-green/fast-tests.json"
+          fi
+          echo "Affected tests: $((SECONDS - started))s" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save backend typecheck receipt
+        if: success() && steps.backend_reuse.outputs.reuse != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/typecheck-backend.json
+          key: phantom-ci-green-v1-typecheck-backend-${{ steps.inputs.outputs.backend }}
+      - name: Save web typecheck receipt
+        if: success() && steps.web_reuse.outputs.reuse != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/typecheck-web.json
+          key: phantom-ci-green-v1-typecheck-web-${{ steps.inputs.outputs.web }}
+      - name: Save affected-test receipt
+        if: success() && steps.tests_reuse.outputs.reuse != 'true' && steps.select.outputs.mode != 'docs'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/ci-green/fast-tests.json
+          key: phantom-ci-green-v1-fast-tests-${{ steps.inputs.outputs.hash }}
+      - name: Attribute merge group failure
+        if: failure() && github.event_name == 'merge_group'
+        run: node .github/scripts/ci-fast-attribute.mjs
+      - name: Upload merge group attribution
+        if: failure() && github.event_name == 'merge_group'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: merge-group-attribution
+          path: merge-group-attribution.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   classify:
     name: Classify PR site lane
@@ -259,18 +646,27 @@ jobs:
     timeout-minutes: 5
     outputs:
       lane: ${{ steps.lane.outputs.lane }}
-      release_gate: ${{ (github.event_name == 'schedule' && github.event.schedule == '0,30 * * * *') || (github.event_name == 'workflow_dispatch' && inputs.release_gate == true) }}
+      release_gate: ${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}
       mac_slice: ${{ steps.mac.outputs.mac_slice }}
       mac_general_exclude: ${{ steps.mac.outputs.mac_general_exclude }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Keep ancestry for behind PR validation without downloading historical blobs.
+          # Ancestry for behind-PR validation is fetched on demand and unshallowed
+          # if the shallow window cannot see the merge base.
           filter: blob:none
-          fetch-depth: 0
+          fetch-depth: 1
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
       - name: Bind candidate source
         env:
           ASHLR_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -554,6 +950,10 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          # tsc + vite exceed the default old-space ceiling on 7GB macOS runners (exit 134);
+          # a ceiling, not a reservation, so Linux/Windows are unaffected.
+          NODE_OPTIONS: --max-old-space-size=5120
 
       # Save all generated bytes immediately after the successful build, before
       # tests can touch dist. Pack smoke later checks this exact same-job snapshot.
@@ -790,6 +1190,10 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+        env:
+          # tsc + vite exceed the default old-space ceiling on 7GB macOS runners (exit 134);
+          # a ceiling, not a reservation, so Linux/Windows are unaffected.
+          NODE_OPTIONS: --max-old-space-size=5120
       - name: Test complete Mac general partition
         if: needs.classify.outputs.mac_slice == ''
         id: lane
@@ -869,6 +1273,10 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+        env:
+          # tsc + vite exceed the default old-space ceiling on 7GB macOS runners (exit 134);
+          # a ceiling, not a reservation, so Linux/Windows are unaffected.
+          NODE_OPTIONS: --max-old-space-size=5120
       - name: Test complete Mac isolated suites
         if: needs.classify.outputs.mac_slice == ''
         id: lane
@@ -1154,9 +1562,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          filter: blob:none
+          fetch-depth: 1
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Fetch the candidate range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
+        run: node .github/scripts/ci-fetch-range.mjs
       - name: Install pinned Gitleaks
         env:
           GITLEAKS_VERSION: 8.30.0
@@ -1181,26 +1598,39 @@ jobs:
         run: |
           set -euo pipefail
           case "$EVENT_NAME" in
-            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" ;;
-            merge_group) base="$MG_BASE" ;;
-            push) base="$PUSH_BEFORE" ;;
-            *) base="" ;;
+            pull_request) base="$(git merge-base "$PR_BASE" "$HEAD_SHA")" || base="" ;;
+            merge_group|push) base="$(node .github/scripts/ci-fetch-range.mjs scan-base)" || base="" ;;
+            *)
+              if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+                git fetch --no-tags --filter=blob:none --unshallow origin
+              fi
+              if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+                base=""
+              else
+                base="$(git rev-parse "${HEAD_SHA}^" 2>/dev/null || true)"
+              fi
+              ;;
           esac
-          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then base="${HEAD_SHA}~1"; fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "secret scan refused an incomplete commit range" >&2
+            exit 1
+          fi
           # A PR must not allowlist its own leak: ignore any repo-supplied config.
           rm -f .gitleaks.toml .gitleaksignore
           echo "scanning ${base}..${HEAD_SHA}"
           "$RUNNER_TEMP/gitleaks-bin/gitleaks" git . --log-opts="${base}..${HEAD_SHA}" --redact --no-banner --max-target-megabytes 5 --timeout 120
 
   merge-gate:
-    # One stable required check. PR and merge_group: Secret-shape scan, Classify
-    # and Quick typecheck must pass, and every full lane must
-    # be skipped. Daily, dispatch and workflow_call runs: Secret-shape scan plus the
+    # One stable required check. PR and merge_group: Secret-shape scan, Secret
+    # scan, Classify, Check generated files (clean-tree) and Fast gate must
+    # pass, Quick typecheck is advisory, and every full lane must be skipped.
+    # Master push: the same, except Fast gate is skipped (it is per-PR only).
+    # Daily, dispatch and workflow_call runs: Secret-shape scan plus the
     # selected full lanes. Exact dependency keys; anything skipped, cancelled or
     # missing that should have run is a failure.
     name: Merge Gate
     # macOS lanes are not needed: they never run on PR or merge_group (waiver).
-    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, windows-service-authority, release-build]
+    needs: [secret-shape, secret-scan, classify, clean-tree, quick, fast-gate, site, docs, ci, windows-service-authority, release-build]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1214,7 +1644,7 @@ jobs:
           node <<'NODE'
           const jobs = JSON.parse(process.env.GATE_NEEDS || 'null');
           const full = ['ci', 'windows-service-authority'];
-          const expected = ['secret-shape', 'secret-scan', 'classify', 'quick', 'site', 'docs', ...full, 'release-build'];
+          const expected = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'quick', 'fast-gate', 'site', 'docs', ...full, 'release-build'];
           if (!jobs || typeof jobs !== 'object' || Array.isArray(jobs) ||
               expected.some((name) => !Object.hasOwn(jobs, name)) || Object.keys(jobs).length !== expected.length) {
             throw new Error('CI dependency inventory is incomplete');
@@ -1248,9 +1678,21 @@ jobs:
           // stale branch) does not block the merge. The daily full lane and
           // main-guardian remain the correctness floor. Secret-shape, secret-scan
           // and classify stay hard requirements.
-          const chosen = release ? ['release-build'] : fast ? [] : selected;
+          // RQ-PH-GATE-SPLIT-1: clean-tree (Check generated files) is a hard
+          // requirement on every fast event. It is designed not to run on
+          // schedule, dispatch and tag-push (reusable) events, where it must be
+          // skipped; if it did run there, only success is accepted.
+          // authority-drift (Check authority drift (hermetic)) is advisory and
+          // deliberately off Merge Gate needs; Auto-tag and the release gate
+          // read it from the exact sha instead.
+          // RQ-CI-FASTGATE-2: fast-gate (typecheck plus affected tests) is a
+          // hard requirement on pull_request and merge_group only. Master
+          // pushes and every other event skip it. It does not replace
+          // clean-tree, secret-shape or secret-scan.
+          const fastGate = process.env.EVENT_NAME === 'pull_request' || process.env.EVENT_NAME === 'merge_group';
+          const chosen = release ? ['release-build'] : fastGate ? ['clean-tree', 'fast-gate'] : fast ? ['clean-tree'] : selected;
           const advisory = fast && !release ? ['quick'] : [];
-          const excluded = ['quick', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
+          const excluded = ['quick', 'clean-tree', 'fast-gate', ...lanes].filter((name) => !chosen.includes(name) && !advisory.includes(name));
           // A reusable workflow_call runs under the caller's push event: the Windows
           // service lane is deferred there, so it must be skipped, never failed.
           const deferred = process.env.EVENT_NAME === 'push' ? ['windows-service-authority'] : [];
@@ -1262,6 +1704,7 @@ jobs:
             if (outcome(name) !== 'skipped' && outcome(name) !== 'success') console.log(`ADVISORY ${name} concluded ${outcome(name) ?? 'missing'} — not blocking (fast lane)`);
           }
           for (const name of excluded) {
+            if (name === 'clean-tree' && outcome(name) === 'success') continue;
             if (outcome(name) !== 'skipped') throw new Error(`${lane} CI excluded job ${name} concluded ${outcome(name) ?? 'missing'}`);
           }
           console.log(`Merge Gate passed: ${fast ? 'fast' : 'full'} ${lane} CI`);
@@ -1271,7 +1714,7 @@ jobs:
     # Independent of Merge Gate's fast branch. Only the six-hour master run
     # produces this receipt; half-hour release preparation is never evidence.
     name: Master full qualification
-    needs: [secret-shape, secret-scan, classify, quick, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
+    needs: [secret-shape, secret-scan, classify, quick, clean-tree, authority-drift, fast-gate, site, docs, ci, ci-shared-macos, mac-general, mac-isolated, native-macos-broker-foundation, windows-service-authority, merge-gate, release-build]
     if: ${{ always() && github.event_name == 'schedule' && github.event.schedule == '17 */6 * * *' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1436,6 +1879,10 @@ jobs:
       # Lockfile-keyed, never commit-keyed: an exact hit restores and skips the
       # post-job save, so runs stop re-uploading and evicting each other's
       # entries. A Cargo.lock change falls back to the toolchain prefix.
+      # Node modules are restored by setup-node (cache: npm). Cargo and
+      # Electron downloads are cached. The Rust toolchain is not: a restored
+      # toolchain can replace the 1.97.1 pin, so rust-toolchain installs it
+      # on every run and this cache does not keep it.
       - name: Cache native compiler inputs
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
@@ -1443,9 +1890,13 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
+            ~/.cache/electron/
+            ~/.cache/electron-builder/
+            ~/Library/Caches/electron/
+            ~/Library/Caches/electron-builder/
             ${{ steps.tree.outputs.root }}/desktop/src-tauri/target/
-          key: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-          restore-keys: release-native-v2-${{ runner.os }}-${{ runner.arch }}-1.97.1-
+          key: release-native-v4-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: release-native-v4-${{ runner.os }}-${{ runner.arch }}-1.97.1-
       - name: Install pinned build tools
         if: steps.eligible.outputs.ready == 'true' && steps.existing.outputs.ready != 'true'
         timeout-minutes: 5
@@ -1521,3 +1972,52 @@ jobs:
       - name: Finish bounded release smoke phase
         if: steps.eligible.outputs.ready == 'true'
         run: node .github/scripts/release-smoke-phase.mjs finish
+
+  release-suites:
+    # RELEASE-GATE-SPLIT-1: release-relevant suites on the exact release-prep
+    # SHA. Runs only beside a Desktop release smoke that actually smoked
+    # (ready == 'true'); otherwise it is skipped and Auto-tag holds. Not in
+    # Merge Gate needs, so merge-queue required checks are unchanged. Hermetic:
+    # no secrets, no signing identity, no notarization; the signing-path tests
+    # exercise fail-closed verification code only. Auto-tag reads this check
+    # by name when RELEASE_GATE_MODE == 'split'. The suite list lives in
+    # .github/scripts/ci-release-suites.mjs.
+    name: Release suites (build + signing path)
+    needs: [secret-shape, classify, release-build]
+    if: needs.classify.outputs.release_gate == 'true' && needs.release-build.outputs.ready == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build, release contracts, signing path, release scripts
+        run: node .github/scripts/ci-release-suites.mjs
+
+  release-gate-autotag:
+    name: Dispatch Auto-tag for green release-gate SHA
+    needs: [release-build, release-suites]
+    if: github.event_name == 'workflow_dispatch' && inputs.release_gate == true && github.ref == 'refs/heads/master' && needs['release-build'].result == 'success' && needs['release-suites'].result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Dispatch Auto-tag for exact release-gate SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/auto-tag.yml/dispatches" --input - <<EOF
+          {"ref":"master","inputs":{"sha":"${GITHUB_SHA}"}}
+          EOF

@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loadAppsRecoveryIncident } from '../core/fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../core/fleet/operator-glance-read.js';
 import { formatOperatorGlance } from '../core/fleet/operator-glance.js';
 
@@ -17,7 +18,11 @@ export async function cmdFleetGlance(args: string[], opts: { runsDir?: string; n
   }
   try {
     const now = (opts.now ?? (() => new Date()))();
-    const glance = await readOperatorGlance({ runsDir: root ?? opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), now: () => now });
+    const glance = await readOperatorGlance({
+      runsDir: root ?? opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'),
+      now: () => now,
+      loadRecovery: loadAppsRecoveryIncident,
+    });
     console.log(json ? JSON.stringify(glance) : formatOperatorGlance(glance, now.getTime()));
     return 0;
   } catch {

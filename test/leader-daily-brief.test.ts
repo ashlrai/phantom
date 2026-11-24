@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { leaderDailyBrief } from '../src/core/comms/leader-daily-brief.js';
+import { releaseCadence } from '../src/core/release/status.js';
 import { projectPoolBudgets } from '../src/core/fleet/pool-budget.js';
 import type { BriefFacts } from '../src/core/comms/leader-brief.js';
 
@@ -12,16 +13,20 @@ describe('leader daily brief', () => {
       needs: () => ({ status: 'available', items: [{ text: '2FA required' }, { text: 'review a PR' }] }),
       budgets: async () => projectPoolBudgets([{ pool: 'claude', bucket: 'weeklyPct', remaining: 42, timestamp: '2026-11-03T12:00:00.000Z', resetAt: null, source: 'manual' }], now),
       proposals: () => ({ complete: true, proposals: [{ id: 'p-1', title: 'Improve routing' }] }),
+      releases: () => releaseCadence([{ repo: 'ashlrai/locus', latestTag: 'v0.9.1', taggedAt: '2026-10-24T12:30:00Z', mergedPrsSinceTag: 62 }], +now),
     });
+    expect(text.split('\n').at(-1)).toBe('Release due: locus, 62 PRs since v0.9.1, 10 days');
     expect(text).toContain('merged feature');
     expect(text).toContain('2FA required');
     expect(text).not.toContain('review a PR');
-    expect(text).toContain('claude weeklyPct=42% (held)');
+    expect(text).toContain('claude weeklyPct=42%');
+    expect(text).not.toContain('(held)');
     expect(text).toContain('Improve routing [p-1]');
   });
   it('reports unavailable sources without claiming empty results', async () => {
     const fail = () => { throw new Error('offline'); };
-    const text = await leaderDailyBrief('/unused', now, { facts: fail, needs: fail, budgets: fail, proposals: fail });
+    const text = await leaderDailyBrief('/unused', now, { facts: fail, needs: fail, budgets: fail, proposals: fail, releases: fail });
     expect(text.match(/unavailable/g)).toHaveLength(4);
+    expect(text.split('\n').at(-1)).toBe('Release due: unknown');
   });
 });

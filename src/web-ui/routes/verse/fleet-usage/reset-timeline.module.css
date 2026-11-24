@@ -1,0 +1,37 @@
+/* "Resets ahead" on the Usage board: one row per window that gave a reset
+   instant, all on the same line of time. Columns are fixed so every row's
+   track starts and ends at the same place as the scale above it. */
+.root { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.title { margin: 0; color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.summary, .undated { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.undated { color: var(--text-tertiary); }
+
+.marks { display: flex; flex-direction: column; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: minmax(0, 13rem) minmax(4rem, 1fr) 12.5rem 6.5rem; align-items: center; column-gap: var(--space-3); min-width: 0; }
+.name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand { margin-inline-end: var(--space-1); vertical-align: -0.15em; }
+.when { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row[data-limit] .usage { color: var(--status-danger-solid); font-weight: 600; }
+
+/* The scale: "now" at the left edge, then hours or days. */
+.scale { position: relative; grid-column: 2; height: var(--text-xs-line); color: var(--text-tertiary); font-size: var(--text-2xs-size); }
+.tickLabel { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.tickLabel[data-edge='start'] { transform: none; }
+
+/* A row's track: faint tick lines, the wait drawn from now, the reset at its end. */
+.track { position: relative; display: block; height: var(--space-4); border-inline-start: 1px solid var(--border-strong); }
+.tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-subtle); }
+.run { position: absolute; left: 0; top: 50%; height: 2px; margin-top: -1px; background: var(--border-strong); transition: width var(--duration-base, 180ms) var(--ease-standard); }
+.dot { position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: var(--radius-full); background: var(--accent-500); transition: left var(--duration-base, 180ms) var(--ease-standard); }
+/* Flagged at a limit until this reset: a square in the danger colour, and the words beside it. */
+.row[data-limit] .dot { border-radius: 1px; background: var(--status-danger-solid); }
+.row[data-limit] .run { background: var(--status-danger-solid); }
+
+@media (width < 720px) {
+  .row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 0; }
+  .name { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  .usage { grid-column: 2; grid-row: 1; }
+  .track, .when { grid-column: 1 / -1; }
+  .scale { grid-column: 1 / -1; }
+}

@@ -110,6 +110,7 @@
 :root[data-console-layout='compact'] .frame { width: 100%; height: auto; }
 :root[data-console-layout='compact'] .resizer { display: none; }
 :root[data-console-layout='compact'] .sidebar {
+  width: 100%;
   height: auto; max-height: 42vh; overflow: auto;
   border-right: 0; border-bottom: 1px solid var(--border-subtle);
   padding: var(--space-2);

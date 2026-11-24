@@ -262,8 +262,13 @@ describe('claim-to-verified cross-channel trace (acceptance item 4)', () => {
 
     const plan = planNotifications(transitions, new Set());
     expect(plan.notices.map((n) => n.state)).toEqual(['ASSIGNED', 'VERIFIED']);
-    expect(plan.notices[0]).toMatchObject({ itemId: id, detail: OWNER, sourceChannel: 'slack', sourceThread: `T000FAKE/C000FAKE/${SLACK_TS}` });
-    expect(plan.notices[1]).toMatchObject({ itemId: id, detail: 'PR #4321', sourceChannel: 'slack' });
+    expect(plan.notices[0]).toMatchObject({
+      itemId: id,
+      detail: `${OWNER} (claim bus-claim:slack:1dbf6e6e360fcf2845b3e4e2ebdd6a6d777e8dbf827a5c3c84519b0bca8b9f7d:1:1700000000000)`,
+      sourceChannel: 'slack',
+      sourceThread: `T000FAKE/C000FAKE/${SLACK_TS}`,
+    });
+    expect(plan.notices[1]).toMatchObject({ itemId: id, detail: 'PR #4321 head fakehead321', sourceChannel: 'slack' });
 
     const posted: string[] = [];
     const ledgerPath = join(runsDir, 'work-board-notify', 'sent.jsonl');
@@ -290,6 +295,7 @@ describe('claim-to-verified cross-channel trace (acceptance item 4)', () => {
     expect(sentSet).toEqual(new Set(plan.notices.flatMap((n) => [
       boardNotifyLedgerKey(n.itemId, n.state),
       boardNotifyLedgerKey(n.itemId, n.state, n.delta),
+      JSON.stringify(['board-notify-provenance', n.itemId, n.state, 'modern']),
     ])));
     // A repeated pass — same transitions against the durable ledger — plans
     // nothing new, and an unchanged board diffs to nothing at all.

@@ -32,13 +32,20 @@ import { makeFixture, makeCfg, type H1Fixture } from './helpers/h1-fixture.js';
 import { cmdFleet } from '../src/cli/fleet-entry.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
 import { killSwitchOn, setKill } from '../src/core/sandbox/policy.js';
+import { PRIVATE_STORAGE_TEST_CONTROL, _setPrivateStorageTestControlForTest } from '../src/core/util/private-storage.js';
 import type { WebServerOptions } from '../src/core/types.js';
+import { createSemanticPrivateStorageHarness, trustedWindowsSystemRootForTest } from './helpers/semantic-private-storage.js';
 
 let fx: H1Fixture;
 let openHandles: Array<{ close(): Promise<void> }> = [];
 
 beforeEach(() => {
   expect.hasAssertions();
+  if (process.platform === 'win32') {
+    _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, {
+      runner: createSemanticPrivateStorageHarness({ systemRoot: trustedWindowsSystemRootForTest() }).runner,
+    });
+  }
   fx = makeFixture();
   openHandles = [];
   serviceMocks.ensureRunning.mockReset();
@@ -59,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  if (process.platform === 'win32') _setPrivateStorageTestControlForTest(PRIVATE_STORAGE_TEST_CONTROL, undefined);
   for (const h of openHandles) {
     try { await h.close(); } catch { /* ignore */ }
   }

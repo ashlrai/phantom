@@ -1,0 +1,12 @@
+{"event":"launch","job":"PR","repo":"phantom","lane":"work","model":"model-a","ts":"2026-11-09T10:00:00Z"}
+{"event":"finish","job":"PR","exit_code":0,"empty":false,"ts":"2026-11-09T10:05:00Z"}
+{"event":"publish","job":"PR","url":"https://github.com/ashlrai/phantom/pull/3","ts":"2026-11-09T10:06:00Z"}
+{"event":"outcome","state":"MERGED","url":"https://github.com/ashlrai/phantom/pull/3","ts":"2026-11-09T10:07:00Z","ttm_s":60}
+{"event":"launch","job_id":"EMPTY","repo":"locus","lane":"fast","timestamp":"2026-11-09T10:08:00Z"}
+{"event":"finish","job_id":"EMPTY","exit_code":0,"empty":true,"timestamp":"2026-11-09T10:09:00Z"}
+{"event":"launch","jobId":"FAILED","repo":"phantom","lane":"fast","at":"2026-11-09T10:10:00Z"}
+{"event":"finish","jobId":"FAILED","exit_code":1,"empty":true,"at":"2026-11-09T10:11:00Z"}
+{bad
+{"event":"launch","job":"FUTURE","ts":"2026-11-10T00:01:00Z"}
+{"event":"launch","job":"BAD-TIME","ts":"bad"}
+{"event":"queued","job":"IGNORED","ts":"2026-11-09T10:12:00Z"}

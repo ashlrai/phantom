@@ -1,11 +1,30 @@
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
+import { isGroupPresenceBody } from './bus-group.js';
 
 export interface FleetEdgeEndpoint { address: string; provider: string | null }
 export interface FleetEdge { from: FleetEdgeEndpoint; to: FleetEdgeEndpoint; messages: number; messagesLastHour: number; lastAt: number }
 export interface FleetEdges { schema: 'fleet.edges.v1'; source: 'available' | 'missing' | 'unavailable'; edges: FleetEdge[] | null }
 
+/** The transport dead-letter sink (docs/AGENT-BUS.md "Dead letters"): the
+ * router files delivery-failure notices under this address; they are reports
+ * with their own transport read, never mail between agents. Kept a literal:
+ * the shared constant lives in bus-transport-file, whose import would pull
+ * the transport router into this read projection's closure. */
+const BUS_DEAD_LETTER_ADDRESS = 'bus.dead-letter';
+
+/** One agent wrote to another: not a note to self, a broadcast to `leaders`, a
+ * person, an outside channel, a dead-letter notice or a presence observation
+ * (system traffic with its own read, never a message slot). */
+export const agentToAgent = (envelope: BusInboxReceipt['envelope']): boolean =>
+  !(envelope.from === envelope.to || envelope.to === 'leaders' || envelope.to === BUS_DEAD_LETTER_ADDRESS ||
+    envelope.sender?.human || envelope.external || isGroupPresenceBody(envelope.body));
+
 /** Routing labels are claims, not authenticated identities. Never expose message bodies. */
-export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): FleetEdge[] {
+export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now(), windowMinutes?: number): FleetEdge[] {
+  if (windowMinutes !== undefined) {
+    if (!Number.isInteger(windowMinutes) || windowMinutes < 1 || windowMinutes > 1440) throw new Error('Minutes must be 1..1440');
+    rows = rows.filter(row => row.receivedAt > now - windowMinutes * 60_000 && row.receivedAt <= now);
+  }
   const edges = new Map<string, FleetEdge>();
   const providers = new Map<string, Set<string>>();
   for (const { envelope } of rows) {
@@ -15,7 +34,7 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): Fl
   }
   const providerFor = (address: string) => { const names = providers.get(address); return names?.size === 1 ? [...names][0]! : null; };
   for (const { envelope, receivedAt } of rows) {
-    if (envelope.from === envelope.to || envelope.to === 'leaders' || envelope.sender?.human || envelope.external) continue;
+    if (!agentToAgent(envelope)) continue;
     const provider = providerFor(envelope.from);
     const key = JSON.stringify([envelope.from, envelope.to, provider]);
     const edge = edges.get(key);
@@ -26,7 +45,7 @@ export function projectFleetEdges(rows: BusInboxReceipt[], now = Date.now()): Fl
   return [...edges.values()].sort((a, b) => b.lastAt - a.lastAt || a.from.address.localeCompare(b.from.address));
 }
 
-export function readFleetEdges(options: BusInboxOptions = {}): FleetEdges {
+export function readFleetEdges(options: BusInboxOptions & { windowMinutes?: number } = {}): FleetEdges {
   const source = inspectBusInbox(options).source;
   if (source !== 'available') return { schema: 'fleet.edges.v1', source, edges: null };
   const rows: BusInboxReceipt[] = [];
@@ -35,7 +54,7 @@ export function readFleetEdges(options: BusInboxOptions = {}): FleetEdges {
     const result = listBusInboxAfter(cursor, BUS_INBOX_MAX_READ, options);
     if (result.status !== 'ok') return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };
     rows.push(...result.messages);
-    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now()) };
+    if (result.messages.length < BUS_INBOX_MAX_READ || result.nextCursor <= cursor) return { schema: 'fleet.edges.v1', source, edges: projectFleetEdges(rows, options.now?.() ?? Date.now(), options.windowMinutes) };
     cursor = result.nextCursor;
   }
   return { schema: 'fleet.edges.v1', source: 'unavailable', edges: null };

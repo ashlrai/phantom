@@ -7,6 +7,7 @@ import { scrubSecrets } from '../util/scrub-secrets.js';
 import { defaultGitRunner, type GitRunner } from '../verse/git-ops.js';
 import { readCiEvidence } from './ci-evidence.js';
 import { readCiRunFacts } from './ci-run-facts.js';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, resolveDropJobRoot, validateDropJob, writeDropJob } from './drop-job-writer.js';
 
 type Candidate = { number: number; jobId: string; head: string; run: number };
@@ -85,6 +86,7 @@ export async function runRedPrFix(opts: RedFixOptions): Promise<RedFixReport> {
     catch { return { code: 1, stdout: '', stderr: '', timedOut: false, truncated: false, missing: false }; }
   } : defaultGitRunner;
   const seen = new Set<number>();
+  const familyStats = await readLaunchFamilies(root, (opts.now ?? Date.now)());
   for (const pr of prs as Record<string, unknown>[]) {
     if (!pr || typeof pr !== 'object' || !Number.isSafeInteger(pr['number']) || (pr['number'] as number) < 1 ||
       typeof pr['title'] !== 'string' || typeof pr['headRefOid'] !== 'string' || !sha.test(pr['headRefOid']) ||
@@ -109,6 +111,7 @@ export async function runRedPrFix(opts: RedFixOptions): Promise<RedFixReport> {
       if (entry.skipped) continue;
       if (!free) { entry.skipped = 'attempts-exhausted'; continue; }
       entry.fixId = free;
+      if (pausedFamily(familyStats, `RQ-PHX-${free}`)) { entry.skipped = 'family-paused'; continue; }
       const raw = JSON.parse(await gh(['api', '-H', 'Accept: application/vnd.github+json', `repos/${opts.repo}/actions/runs/${c.run}/jobs?per_page=100`]));
       if (!Array.isArray(raw.jobs) || raw.jobs.length >= 100) throw new Error();
       const job = raw.jobs.find((j: { conclusion?: string; id?: number }) => j.conclusion === 'failure' && Number.isSafeInteger(j.id) && j.id! > 0);

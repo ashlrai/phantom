@@ -24,7 +24,9 @@ function writePrivate(name: string, value: unknown): void {
     { anchorPath: root, label: 'Node pool state' });
 }
 export function readPoolConfig(): PoolConfig | null {
-  const root = poolDirectory(), path = join(root, 'config.json');
+  // A missing config is not a write. poolDirectory() creates the directory,
+  // so a read must not call it until the file is known to exist.
+  const root = join(ashlrHome(), 'node-pool'), path = join(root, 'config.json');
   if (!existsSync(path)) return null;
   const read = readStableRegularFile(path, { anchorPath: root, maxFileBytes: 4096, remainingBytes: 4096 });
   if (!read.ok) throw new Error('Invalid node pool config');

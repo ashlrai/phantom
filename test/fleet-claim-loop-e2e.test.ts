@@ -82,7 +82,7 @@ it('completes one cloud-independent pick, durable claim, owner refusal and idemp
     result: 'VERIFIED', from: 'agent-a', at: new Date(now).toISOString(), evidenceKind: 'tests', evidence: `tests ${tests}` })]);
   expect(board().claims).toEqual([]);
   const returnedDisk = readFileSync(path, 'utf8');
-  expect(returnedDisk.trim().split('\n').map(line => JSON.parse(line).kind)).toEqual(['claim', 'release', 'post']);
+  expect(returnedDisk.trim().split('\n').map(line => JSON.parse(line).kind)).toEqual(['claim', 'return', 'post']);
 
   now += 1000;
   expect(returnFleetClaim(input, { path, now })).toEqual({ ok: true, outcome: 'already-returned',

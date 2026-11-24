@@ -101,12 +101,18 @@ export function readRuntimeIdentity(deps: RuntimeIdentityDeps): RuntimeIdentity 
 
   const versionDrift = installed !== UNKNOWN && source !== UNKNOWN && installed !== source;
 
+  let rawStatePath: string | null = null;
   let statePath = UNKNOWN;
-  try { statePath = clean(deps.statePath(), home) ?? UNKNOWN; } catch { /* reason below */ }
+  try {
+    const resolved = deps.statePath();
+    const reported = clean(resolved, home);
+    if (reported !== null) { rawStatePath = resolved; statePath = reported; }
+  } catch { /* reason below */ }
   const fleetState: FleetStateIdentity = { path: statePath, mtime: UNKNOWN, ageSeconds: UNKNOWN, stale: UNKNOWN };
   try {
     // Stat the real path; only the reported copy is redacted.
-    const mtimeMs = deps.statMtimeMs(deps.statePath());
+    if (rawStatePath === null) throw new Error('state path unavailable');
+    const mtimeMs = deps.statMtimeMs(rawStatePath);
     const mtime = Number.isFinite(mtimeMs) ? new Date(mtimeMs) : null;
     // An out-of-range or nonfinite mtime yields an invalid Date; it cannot
     // certify freshness, so it is reported unknown like a missing file.

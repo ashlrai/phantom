@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { orchestrateFleet, type OrchestrationOptions } from '../core/fleet/orchestrate.js';
 import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { readChiefOfStaffSnapshot, type FleetChiefOfStaffDeps } from './fleet-chief-of-staff.js';
+import { readEnvironmentCredential } from '../core/integrations/secrets.js';
 import { ownerThreadOptions } from './comms-owner-thread.js';
 
 const usage = 'Usage: phm fleet orchestrate [--snapshot <path|auto>] [--top <1..8>] [--apply] [--json]\nOne advisory cycle; preview by default. Apply delegates through the authenticated peer bus and records a desktop owner-thread brief. Existing dispatch executes jobs.';
@@ -33,7 +34,7 @@ export async function cmdFleetOrchestrate(args: string[], deps: FleetChiefOfStaf
       ...deps, directory: deps.directory ?? join(root, 'queue/specialists'),
       now: deps.now ? () => deps.now!().getTime() : undefined,
       session: deps.session ?? (apply ? { lane: process.env.PHM_AGENTNET_LANE ?? '',
-        sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: process.env.PHM_AGENTNET_SESSION_TOKEN ?? '' } : undefined),
+        sessionId: process.env.PHM_AGENTNET_SESSION_ID ?? '', token: readEnvironmentCredential('PHM_AGENTNET_SESSION_TOKEN') ?? '' } : undefined),
       owner: deps.owner ?? (apply ? ownerThreadOptions({}) : undefined),
     });
     out(json ? JSON.stringify({ ...result, sources }) : result.brief);

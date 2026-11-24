@@ -16,22 +16,22 @@ function join(repo: string, workers: LiveWorker[]) {
 }
 
 describe('claim execution repository binding', () => {
-  it.each([['', 'phantom'], ['ashlrai/phantom', ''], ['bad//identity', 'phantom'], ['ashlrai/phantom', 'bad//identity']])
-  ('reports unknown for invalid repository identities', (claimRepo, workerRepo) => {
+  it.each([['', 'phantom'], ['ashlrai/phantom', ''], ['bad//identity', 'phantom'], ['ashlrai/phantom', 'bad//identity']])(
+  'reports unknown for invalid repository identities', (claimRepo, workerRepo) => {
     const report = join(claimRepo, [worker(workerRepo)]);
     expect(report.rows[0]).toMatchObject({ state: 'UNKNOWN', worker: null });
     expect(report.counts).toEqual({ running: 0, claimedNoWorker: 0, unknown: 1 });
     expect(report.reasons).toEqual(['repository identity invalid']);
     expect(JSON.stringify(report)).not.toContain('bad//identity');
   });
-  it.each([['ashlrai/phantom', 'other/phantom'], ['ashlrai/phantom', 'other']])
-  ('treats different valid repositories as nonmatches', (claimRepo, workerRepo) => {
+  it.each([['ashlrai/phantom', 'other/phantom'], ['ashlrai/phantom', 'other']])(
+  'treats different valid repositories as nonmatches', (claimRepo, workerRepo) => {
     const report = join(claimRepo, [worker(workerRepo)]);
     expect(report.rows[0]).toMatchObject({ state: 'CLAIMED_NO_WORKER', worker: null });
     expect(report.counts).toEqual({ running: 0, claimedNoWorker: 1, unknown: 0 });
   });
-  it.each([['ashlrai/phantom', 'phantom'], ['phantom', 'ashlrai/phantom'], ['ashlrai/phantom', 'ashlrai/phantom']])
-  ('accepts compatible repository identities', (claimRepo, workerRepo) => {
+  it.each([['ashlrai/phantom', 'phantom'], ['phantom', 'ashlrai/phantom'], ['ashlrai/phantom', 'ashlrai/phantom']])(
+  'accepts compatible repository identities', (claimRepo, workerRepo) => {
     const report = join(claimRepo, [worker(workerRepo)]);
     expect(report.rows[0]).toMatchObject({ state: 'RUNNING', worker: { pid: 42 } });
     expect(report.counts).toEqual({ running: 1, claimedNoWorker: 0, unknown: 0 });

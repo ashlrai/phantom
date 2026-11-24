@@ -17,6 +17,9 @@ const source: Check<'healthy' | 'degraded' | 'missing' | 'not-landed'> = (v): v 
   v === 'healthy' || v === 'degraded' || v === 'missing' || v === 'not-landed';
 const mergeItem: Check<{ repo: string; number: number; title: string; mergedAt?: string | null; openedAt?: string | null }> =
   shape({ repo: str, number: num, title: str, mergedAt: optional(s), openedAt: optional(s) });
+type NotRunningKind = 'held_launch' | 'idle_lane' | 'launched_no_finish' | 'finished_no_publish';
+const notRunningKind: Check<NotRunningKind> = (v): v is NotRunningKind =>
+  v === 'held_launch' || v === 'idle_lane' || v === 'launched_no_finish' || v === 'finished_no_publish';
 const fleetRunsShape = shape({
   v: ((v): v is 1 => v === 1), generatedAt: str,
   sources: shape({ runsDir: source, workers: source, inbox: source, codex: source, merges: source }),
@@ -31,11 +34,12 @@ const fleetRunsShape = shape({
   codexPersonal: nullable(shape({ usedPct: n, resetsAt: s, asOf: s })),
   inbox: array(shape({ at: str, source: str, text: str })),
   drop: nullable(shape({ pending: array(shape({ lane: str, file: str })), done: num })),
+  notRunning: optional(array(shape({ job_or_lane: str, kind: notRunningKind, reason: str, since: s, unblock: str }))),
 });
 const hostShape = nullable(shape({ load1: n, load5: n, load15: n, cores: n, ratio: n }));
 type Host = typeof hostShape extends Check<infer T> ? T : never;
 type BaseFleetRuns = typeof fleetRunsShape extends Check<infer T> ? T : never;
-export type FleetRuns = Omit<BaseFleetRuns, 'claimed'> & { claimed?: BaseFleetRuns['claimed']; host?: Host };
+export type FleetRuns = Omit<BaseFleetRuns, 'claimed' | 'notRunning'> & { claimed?: BaseFleetRuns['claimed']; notRunning?: BaseFleetRuns['notRunning']; host?: Host };
 export const isFleetRuns: Check<FleetRuns> = (v): v is FleetRuns =>
   fleetRunsShape(v) && (!('host' in v) || hostShape(v.host));
 export const countText = (n: number | null): string => n === null ? '—' : String(n);

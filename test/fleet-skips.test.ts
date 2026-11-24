@@ -24,6 +24,15 @@ it('counts per repo and lane, worst skip share first, within the window', async 
   expect(r.by_lane.map(g => g.name)).toEqual(['devin', 'claude-api']);
   expect((await fleetSkips(read(...fixture), 12, now)).by_repo.map(g => g.name)).toContain('old');
 });
+it('counts the live skipped_empty+code spelling but not other skipped_empty rows', async () => {
+  const r = await fleetSkips(read(
+    row('launch', 1), row('skipped_empty', 1, { code: 10 }), row('precheck_skip', 2, { code: 11 }),
+    row('skipped_empty', 1, { reason: 'task_empty_repeat_24h' }),
+    row('skipped_empty', 1, { code: 10, applied: false }),
+    row('precheck_parked', 1, { code: 13 }),
+  ), 6, now);
+  expect(r.totals).toEqual({ launches: 1, skips: 2, skip_share: 2 / 3 });
+});
 it('only reads the last 3000 lines and reports unreadable metrics as unknown', async () => {
   const reader = vi.fn(async (_n: number) => Array.from({ length: 3001 }, () => row('launch', 1)));
   expect((await fleetSkips(reader, 6, now)).totals!.launches).toBe(3000);

@@ -1,0 +1,55 @@
+# Recovers open auto-merge PRs whose Merge Gate or fast-gate failed because
+# master's same check was red. REST gh api only. One rerun of the failed jobs
+# per head SHA, bounded in the state file. The merge queue updates a behind
+# branch; this job does not. It starts from its schedule and from
+# workflow_dispatch. It is not a required check and does not change rulesets,
+# App permissions, signing, notarization, secret-shape, or clean-tree.
+name: Unrelated PR recovery
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: unrelated-pr-recover
+  cancel-in-progress: false
+
+jobs:
+  recover-unrelated-pr-failures:
+    name: recover-unrelated-pr-failures
+    if: github.repository == 'ashlrai/phantom'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout recovery script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/ci-unrelated-recover.mjs
+            .github/tests/ci-unrelated-recover.test.mjs
+            .github/workflows/unrelated-pr-recover.yml
+          sparse-checkout-cone-mode: false
+      - name: Restore recovery budget
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4
+        with:
+          path: recover-state.json
+          key: unrelated-pr-recover-${{ github.run_id }}
+          restore-keys: unrelated-pr-recover-
+      - name: Test and recover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RECOVER_STATE: recover-state.json
+        run: |
+          set -euo pipefail
+          node --test .github/tests/ci-unrelated-recover.test.mjs
+          node .github/scripts/ci-unrelated-recover.mjs

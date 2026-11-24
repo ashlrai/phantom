@@ -7,9 +7,9 @@
  * records stale once they age past TEAMMATE_LIVE_STATUS_STALE_MS instead of
  * letting stale records read as current.
  */
-import { constants as fsConstants, closeSync, existsSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
+import { constants as fsConstants, closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative as relativePath, resolve, sep } from 'node:path';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -27,6 +27,10 @@ const SOURCE_MAX_CHARS = 1200;
 export const CONTEXT_MAX_CHARS = 20000;
 const VITALS_MAX_CHARS = 14000;
 const TAIL_READ_BYTES = 96 * 1024;
+/** Hard ceiling on any tail read, whatever a caller asks for. */
+export const TAIL_MAX_READ_BYTES = 256 * 1024;
+/** Only the newest lines of a ledger reach the prompt. */
+export const TAIL_MAX_LINES = 40;
 
 type SourceKind = 'durable' | 'status';
 
@@ -135,32 +139,94 @@ function safeTailFile(stat: BigIntStats): boolean {
 }
 
 /**
- * Read only the last maxBytes of a regular file; dispatch logs reach tens of MB
- * so readStableRegularFile's whole-file byte cap cannot tail them. Applies the
- * same ownership/link/mode discipline as the stable reader before opening.
+ * Resolve `relative` under runsDir and prove it stays there: no absolute or
+ * `..` segments, the real parent directory is runsDir's real path or inside
+ * it, and the final component is not a symlink. Returns null when unsafe.
  */
-function tailRegularFile(file: string, maxBytes: number): string | null {
+function containedRunsPath(runsDir: string, relative: string): string | null {
+  try {
+    if (isAbsolute(relative) || relative.split(/[\\/]/).some(part => part === '..' || part === '')) return null;
+    const realRuns = realpathSync(resolve(runsDir));
+    const file = join(resolve(runsDir), relative);
+    const realParent = realpathSync(dirname(file));
+    if (realParent !== realRuns && !realParent.startsWith(realRuns + sep)) return null;
+    const candidate = join(realParent, file.slice(dirname(file).length + 1));
+    const nested = relativePath(realRuns, candidate);
+    if (nested === '' || nested.startsWith('..') || isAbsolute(nested)) return null;
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read only the last maxBytes (capped at TAIL_MAX_READ_BYTES) and the last
+ * maxLines of a regular file inside runsDir; dispatch logs reach tens of MB so
+ * readStableRegularFile's whole-file byte cap cannot tail them. The path is
+ * realpath-contained in runsDir, symlinks are refused by lstat and O_NOFOLLOW,
+ * the opened inode must match the inspected one, and any error returns null.
+ */
+export function tailRunsFile(runsDir: string, relative: string, maxBytes: number, maxLines: number = TAIL_MAX_LINES): string | null {
   let fd: number | undefined;
   try {
+    const file = containedRunsPath(runsDir, relative);
+    if (file === null) return null;
     const before = lstatSync(file, { bigint: true });
     if (!safeTailFile(before)) return null;
     fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     const opened = fstatSync(fd, { bigint: true });
     if (!safeTailFile(opened) || opened.dev !== before.dev || opened.ino !== before.ino) return null;
+    const cap = Math.max(0, Math.min(Number.isSafeInteger(maxBytes) ? maxBytes : 0, TAIL_MAX_READ_BYTES));
     const size = Number(opened.size);
-    const start = Math.max(0, size - maxBytes);
+    const start = Math.max(0, size - cap);
     const buf = Buffer.alloc(size - start);
-    readSync(fd, buf, 0, buf.length, start);
-    let text = buf.toString('utf8');
+    const count = buf.length > 0 ? readSync(fd, buf, 0, buf.length, start) : 0;
+    let text = buf.subarray(0, count).toString('utf8');
     const nl = text.indexOf('\n');
-    if (start > 0 && nl >= 0) text = text.slice(nl + 1);
-    return text.trimEnd();
+    if (start > 0) text = nl >= 0 ? text.slice(nl + 1) : '';
+    const lines = text.trimEnd().split('\n');
+    const keep = Math.max(0, Number.isSafeInteger(maxLines) ? maxLines : TAIL_MAX_LINES);
+    return lines.slice(-keep).join('\n');
   } catch {
     return null;
   } finally {
     if (fd !== undefined) {
       try { closeSync(fd); } catch { /* already closed */ }
     }
+  }
+}
+
+/**
+ * Remove query strings and fragments from every scheme URL in `text`; they
+ * can carry tokens or signed parameters and never belong in a model prompt.
+ */
+export function stripUrlQueries(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>|)\]]+/gi, url => url.replace(/[?#].*$/, ''));
+}
+
+function sanitizedTail(text: string, keepChars: number): string {
+  const sanitized = stripUrlQueries(text);
+  if (sanitized.length <= keepChars) return sanitized;
+  const start = sanitized.length - keepChars;
+  const tail = sanitized.slice(start);
+  return /\s/.test(sanitized[start - 1]) ? tail : tail.replace(/^\S+/, '');
+}
+
+/** Publish rows keep only an exact GitHub pull/issue URL; anything else is dropped. */
+function publishUrl(url: unknown): string {
+  if (typeof url !== 'string') return '';
+  const bare = stripUrlQueries(url.trim());
+  return /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/(pull|issues)\/\d+$/.test(bare) ? bare : '';
+}
+
+/** Parse a status record, returning null for malformed JSON or a non-object. */
+export function parseStatusRecord(text: string | null): StatusJson | null {
+  if (text === null) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as StatusJson : null;
+  } catch {
+    return null;
   }
 }
 
@@ -175,12 +241,12 @@ function fmtNum(value: unknown): string {
  * queue/status.json, queue/admission.json and the tail of the dispatch ledgers;
  * nothing here is estimated.
  */
-function fleetVitalsDigest(runsDir: string): string {
+export function fleetVitalsDigest(runsDir: string): string {
   const parts: string[] = [];
   const statusRead = readSource(runsDir, 'queue/status.json');
-  if (statusRead.text !== null) {
+  const st = parseStatusRecord(statusRead.text);
+  if (statusRead.text !== null && st !== null) {
     try {
-      const st = JSON.parse(statusRead.text) as StatusJson;
       const lines: string[] = [];
       lines.push(`tick=${st.last_tick ?? '?'} queue_depth=${st.queue_depth ?? '?'} paused=${JSON.stringify(st.paused ?? null)} mem_free=${fmtNum(st.mem_free_pct)}% swap_gb=${fmtNum(st.swap_gb)} launched_this_tick=${JSON.stringify(st.launched_this_tick ?? [])}`);
       const adm = st.admission;
@@ -213,7 +279,7 @@ function fleetVitalsDigest(runsDir: string): string {
       }
       const pubs = (st.recent_publishes ?? []).slice(0, 8);
       if (pubs.length > 0) {
-        lines.push(`recent publishes (${st.publishes_24h ?? '?'} in 24h): ${pubs.map(p => `${p.job ?? '?'} ${p.url ?? ''}`.trim()).join(' | ')}`);
+        lines.push(`recent publishes (${st.publishes_24h ?? '?'} in 24h): ${pubs.map(p => `${p?.job ?? '?'} ${publishUrl(p?.url)}`.trim()).join(' | ')}`);
       }
       const events = (st.recent_events ?? []).slice(-14);
       if (events.length > 0) lines.push(`recent events: ${events.join(' | ')}`);
@@ -228,6 +294,8 @@ function fleetVitalsDigest(runsDir: string): string {
     } catch {
       parts.push('fleet vitals (queue/status.json digest): status.json present but unparseable');
     }
+  } else if (statusRead.text !== null) {
+    parts.push('fleet vitals (queue/status.json digest): status.json present but unparseable');
   } else {
     parts.push(`fleet vitals (queue/status.json digest): ${statusRead.state === 'missing' ? 'missing' : 'unavailable'}`);
   }
@@ -236,10 +304,10 @@ function fleetVitalsDigest(runsDir: string): string {
     ['dispatchd tail', 'dispatchd.log', 3500],
     ['jobs.jsonl tail', 'metrics/jobs.jsonl', 4500],
   ] as const) {
-    const tail = tailRegularFile(join(runsDir, relative), TAIL_READ_BYTES);
-    if (tail !== null && tail.length > 0) parts.push(`${label}:\n${tail.slice(-keepChars)}`);
+    const tail = tailRunsFile(runsDir, relative, TAIL_READ_BYTES, TAIL_MAX_LINES);
+    if (tail !== null && tail.length > 0) parts.push(`${label}:\n${sanitizedTail(tail, keepChars)}`);
   }
-  return parts.join('\n').slice(0, VITALS_MAX_CHARS);
+  return stripUrlQueries(parts.join('\n')).slice(0, VITALS_MAX_CHARS);
 }
 
 /**
@@ -267,5 +335,5 @@ export function buildTeammateOperationalContext(runsDir: string, nowMs: number):
     sections.push(vitals);
     sections.push('');
   }
-  return scrubSecrets(sections.join('\n')).slice(0, CONTEXT_MAX_CHARS);
+  return stripUrlQueries(scrubSecrets(sections.join('\n'))).slice(0, CONTEXT_MAX_CHARS);
 }

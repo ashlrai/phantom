@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { parseClaimKey, workPostBodySchema, workResultBodySchema } from '../agents/bus-v2-schema.js';
+import { parseClaimKey, workPostBodySchema } from '../agents/bus-v2-schema.js';
 import { localWriteGate, outboundGate } from '../agents/send-gate.js';
 import { matchProtectedPath } from '../authority/protected-paths.js';
 import { QUEUE_TIER_SCOPE } from '../drive/queue-tier.js';
@@ -16,6 +16,9 @@ import { scrubSecrets } from '../util/scrub.js';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { readPeerInbox, type PeerBusOptions } from './peer-bus.js';
 import { agentnetPaths, authenticatePeer, callsignSchema, readPeerBindings, readPeerJson, type PeerSession } from './slack-identities.js';
+import { workDispatchJournalPath, workDispatchJournalSchema as journalSchema,
+  workDispatchReceiptSchema as receiptSchema, workDispatchResultBody as resultBody,
+  type WorkDispatchReceipt as Receipt } from './work-dispatch-journal.js';
 
 const tier = z.enum(['fast', 'mid', 'work', 'frontier']);
 const path = z.string().min(1).max(256).regex(/^[A-Za-z0-9_./-]+(?![\s\S])/)
@@ -25,24 +28,14 @@ const policySchema = z.object({ version: z.literal(1), enabled: z.literal(true),
   repositories: z.array(z.object({ repo: z.string().max(128).regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+(?![\s\S])/),
     tierCeiling: tier, paths: z.array(path).min(1).max(128) }).strict()).min(1).max(32),
 }).strict();
-const receiptSchema = workResultBodySchema.extend({ peer: callsignSchema, consumer: callsignSchema,
-  digest: z.string().regex(/^[a-f0-9]{64}$/), at: z.number().int().nonnegative(),
-  queueDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  sent: workResultBodySchema.shape.outcome.optional(),
-}).strict();
-const journalSchema = z.object({ version: z.literal(1), receipts: z.array(receiptSchema).max(512) }).strict();
-type Receipt = z.infer<typeof receiptSchema>;
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const queueDigest = (job: QueueJob) => hash([job.id, job.repo, job.tier, job.priority, job.scope, job.acceptance,
   job.deps, job.exclusive, job.min_tier, job.max_cost_class, job.pool, job.preferred_lane, job.needs]);
-const resultBody = (row: Receipt) => workResultBodySchema.parse({ kind: row.kind, jobId: row.jobId,
-  claimKey: row.claimKey, queueId: row.queueId, receiptId: row.receiptId, outcome: row.outcome,
-  ...(row.reason ? { reason: row.reason } : {}) });
 
 /** One cursor page, at most eight conversions. Host policy is never accepted in a message/CLI flag. */
 export async function consumePeerWork(session: PeerSession, input: { apply?: boolean; after?: number } = {}, options: PeerBusOptions = {}) {
   const paths = { ...agentnetPaths(), ...options }, apply = input.apply === true;
-  const directory = join(paths.busRoot, 'agentnet'), file = join(directory, 'work-dispatch.json');
+  const directory = join(paths.busRoot, 'agentnet'), file = workDispatchJournalPath(paths.busRoot);
   const policyPath = join(dirname(paths.bindings), 'dispatch.json');
   const now = () => (options.now ?? Date.now)();
   const results: Array<{ status: string; reason?: string; queueId?: string; receiptId?: string }> = [];

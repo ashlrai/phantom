@@ -19,12 +19,14 @@ it('ingests typed tasks and legacy work without executing typed responses', () =
     expect(first.status).toBe('acquired');
     if (first.status !== 'acquired') throw new Error('expected task');
     expect(first.receipt.envelope.id).toBe('task');
-    expect(claim('fake-b')).toEqual({ status: 'empty' });
+    // 'task' is the only claimable receipt on fleet.ops and fake-a's lease holds it.
+    expect(claim('fake-b')).toEqual({ status: 'empty', candidates: 1, held: 1 });
     expect(post('legacy', { kind: 'work' }).status).toBe('posted');
     const legacy = claim('fake-b');
     expect(legacy.status).toBe('acquired');
     if (legacy.status !== 'acquired') throw new Error('expected legacy work');
     expect(legacy.receipt.envelope.id).toBe('legacy');
-    expect(claim('fake-c')).toEqual({ status: 'empty' });
+    // Both claimable receipts are now held — 'task' by fake-a, 'legacy' by fake-b.
+    expect(claim('fake-c')).toEqual({ status: 'empty', candidates: 2, held: 2 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -17,6 +17,8 @@ export type LaneForecast = 'early' | 'on-pace' | 'underuse' | 'unknown';
 export type LaneEngine = 'claude' | 'codex' | 'grok' | 'local' | 'devin' | 'cursor' | 'dot' | 'other';
 
 export interface WorldLaneRow {
+  history: { points: { t: number; fraction: number; gapBefore: boolean }[];
+    exhaustAt: string | null; resetAt: string | null; burnPerHour: number | null } | null;
   key: string;
   lane: string;
   label: string;
@@ -25,6 +27,8 @@ export interface WorldLaneRow {
   remaining: string;
   reset: string;
   resetAt: string | null;
+  /** Countdown to the fresh reset, e.g. "resets in 3h 12m"; null when the reset is unknown. */
+  resetIn: string | null;
   burn: string;
   forecast: LaneForecast;
   forecastText: string;
@@ -70,6 +74,10 @@ const EXTRA: Readonly<Record<string, { label: string; engine: LaneEngine }>> = {
   'codex-cmp': { label: 'Codex company', engine: 'codex' },
   'grok-bot': { label: 'Grok Bot', engine: 'grok' },
   terra: { label: 'Terra', engine: 'other' },
+  zai: { label: 'GLM Lite', engine: 'other' },
+  gemini: { label: 'Gemini', engine: 'other' },
+  agy: { label: 'Antigravity', engine: 'other' },
+  instinct: { label: 'Instinct', engine: 'other' },
   omlx: { label: 'oMLX', engine: 'local' },
   ollama: { label: 'Ollama', engine: 'local' },
 };
@@ -136,6 +144,19 @@ function isoLabel(value: string): string | null {
   const h12 = hours % 12 === 0 ? 12 : hours % 12;
   const minutes = String(date.getUTCMinutes()).padStart(2, '0');
   return `${months[date.getUTCMonth()]} ${date.getUTCDate()}, ${h12}:${minutes} ${hours < 12 ? 'AM' : 'PM'} UTC`;
+}
+
+export function resetCountdown(resetAt: string | null, nowMs: number): string | null {
+  if (!resetAt) return null;
+  const left = Date.parse(resetAt) - clock(nowMs);
+  if (!Number.isFinite(left)) return null;
+  if (left <= 0) return 'reset due';
+  const minutes = Math.ceil(left / 60_000);
+  if (minutes < 60) return `resets in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `resets in ${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`;
+  const days = Math.floor(hours / 24);
+  return `resets in ${days}d${hours % 24 ? ` ${hours % 24}h` : ''}`;
 }
 
 function forecastText(verdict: LaneForecast): string {
@@ -297,10 +318,27 @@ function badgeOf(primary: Signal, nowMs: number): { freshness: LaneFreshness; ob
 function unknownRow(lane: string, label: string, engine: LaneEngine, key: string): WorldLaneRow {
   const summary = `${label}: usage unknown, remaining unknown, reset unknown, burn unknown, forecast unknown. Source unknown. Observed unknown.`;
   return {
-    key, lane, label, engine, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null,
+    key, lane, label, engine, history: null, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null, resetIn: null,
     burn: 'unknown', forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null,
     source: 'unknown', observedAt: null, freshness: 'unknown', age: 'unknown', summary,
   };
+}
+
+function parseHistory(raw: unknown): WorldLaneRow['history'] {
+  const h = asRecord(raw);
+  if (!h || !Array.isArray(h['points'])) return null;
+  const points = h['points'].flatMap(rawPoint => {
+    const p = asRecord(rawPoint);
+    const t = typeof p?.['observedAt'] === 'string' ? Date.parse(p['observedAt']) : NaN;
+    const used = p?.['used'], limit = p?.['limit'];
+    return Number.isFinite(t) && typeof used === 'number' && Number.isFinite(used)
+      && typeof limit === 'number' && Number.isFinite(limit) && limit > 0 && Number.isFinite(used / limit)
+      ? [{ t, fraction: used / limit, gapBefore: p?.['gapBefore'] === true }] : [];
+  });
+  const stamp = (v: unknown): string | null => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? v : null;
+  const rate = asRecord(h['burn'])?.['perHour'];
+  return points.length ? { points, exhaustAt: stamp(h['exhaustAt']), resetAt: stamp(h['resetAt']),
+    burnPerHour: typeof rate === 'number' && Number.isFinite(rate) && rate >= 0 ? rate : null } : null;
 }
 
 function project(lane: Record<string, unknown>, label: string, engine: LaneEngine, windows: readonly Record<string, unknown>[], nowMs: number, key: string): WorldLaneRow {
@@ -328,8 +366,8 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const source = primary.source ?? 'unknown';
   const summary = `${label}: usage ${usage}, remaining ${remainingText}, reset ${resetText}, burn ${burnText}, forecast ${text}. Source ${source}. Observed ${badge.freshness}${badge.observedAt ? ` ${badge.observedAt}` : ''}.`;
   return {
-    key, lane: laneName, label, engine, usage, remaining: remainingText, reset: resetText, resetAt,
-    burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
+    key, lane: laneName, label, engine, history: parseHistory(lane['history']), usage, remaining: remainingText, reset: resetText, resetAt,
+    resetIn: resetCountdown(resetAt, nowMs), burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
     source, observedAt: badge.observedAt, freshness: badge.freshness, age: badge.age, summary,
   };
 }
@@ -411,9 +449,9 @@ export function worldLaneRows(document: unknown, nowMs: number): WorldLaneRow[] 
 export function sameWorldLaneRow(left: WorldLaneRow, right: WorldLaneRow): boolean {
   return left.key === right.key && left.lane === right.lane && left.label === right.label
     && left.engine === right.engine && left.usage === right.usage && left.remaining === right.remaining
-    && left.reset === right.reset && left.resetAt === right.resetAt && left.burn === right.burn
+    && left.reset === right.reset && left.resetAt === right.resetAt && left.resetIn === right.resetIn && left.burn === right.burn
     && left.forecast === right.forecast && left.forecastText === right.forecastText
     && left.exhaustFraction === right.exhaustFraction && left.source === right.source
     && left.observedAt === right.observedAt && left.freshness === right.freshness && left.age === right.age
-    && left.summary === right.summary;
+    && left.summary === right.summary && JSON.stringify(left.history) === JSON.stringify(right.history);
 }

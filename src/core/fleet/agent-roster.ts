@@ -9,6 +9,7 @@
  * Claims come from the coordination table (claim-store). Message-id rows
  * project back to the bus message id. Fencing tokens never leave the store.
  */
+import { brandBadge } from '../brand/registry.js';
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -633,7 +634,8 @@ export async function collectAgentRoster(deps: AgentRosterDeps = {}): Promise<Ag
   };
 }
 
-export function formatAgentRoster(roster: AgentRoster): string {
+/** `color` adds the provider brand glyph before each provider name; default off so piped output is unchanged. */
+export function formatAgentRoster(roster: AgentRoster, opts: { color?: boolean } = {}): string {
   const lines = [
     `Agent roster ${roster.schema}`,
     `observed ${roster.observedAt}  latency ${roster.latencyMs}ms  sources ${roster.sources.length}`,
@@ -643,7 +645,7 @@ export function formatAgentRoster(roster: AgentRoster): string {
   if (roster.sessions.length === 0) lines.push('(no known sessions)');
   for (const item of roster.sessions) {
     lines.push([
-      item.provider,
+      brandBadge(item.provider, opts.color === true) + item.provider,
       item.sessionId,
       item.title ?? '',
       item.state,

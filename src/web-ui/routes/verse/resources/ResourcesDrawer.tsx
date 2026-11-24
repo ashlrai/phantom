@@ -74,6 +74,7 @@ import styles from './ResourcesDrawer.module.css';
 import { projectResourceDisplay } from './resource-display-model.js';
 import type { ProviderResourceDescriptor } from '../../../../core/resources/provider-aggregation-types.js';
 import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
+import { LaneAllowanceCards } from './LaneAllowanceCards.js';
 import { refreshDevinConsumption } from '../devin/devin-queries.js';
 import { collectionNotice } from './collection-notice.js';
 const ResetSpendingControl = lazy(() => import('../budget/ResetSpendingControl.js').then(module => ({ default: module.ResetSpendingControl })));
@@ -475,6 +476,7 @@ export function ResourcesDrawer({ mode, compact = false, now: fixedNow }: Resour
           <p className={styles.subtle}>{RESOURCES_EMPTY_TEXT}</p>
         ) : null}
         <UsagePace />
+        <LaneAllowanceCards />
         <CreditPools accountNames={new Map(data.seats.map(seat => [seat.id, seat.label]))} />
         <div className={styles.groupingControls} role="group" aria-label="Resource grouping">
           <button type="button" aria-pressed={grouping === 0} onClick={() => setGrouping(0)}>By tier</button>

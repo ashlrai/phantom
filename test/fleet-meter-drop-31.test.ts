@@ -19,7 +19,7 @@ afterEach(async () => { vi.restoreAllMocks(); await Promise.all(dirs.splice(0).m
 describe('meter drop verdicts', () => {
   it('flags a meter unchanged after sixty minutes with twelve running jobs', async () => {
     const row = (await report()).providers[0]!;
-    expect(row.verdict).toBe('flat_with_work');
+    expect(row.verdict).toBe('flat');
     expect(row.running).toBe(12);
     expect(row.windows[0]).toMatchObject({ delta: 0, observedMinutes: 60, stale: false });
   });
@@ -28,38 +28,52 @@ describe('meter drop verdicts', () => {
     expect(await verdict({}, [earlier, { ...later, usedPercent: 5, resetAt: '2026-11-07T12:00:00Z' }])).toBe('moving');
   });
   it('reports a flat meter without running work as idle', async () => {
-    expect(await verdict({ running: 0 })).toBe('flat_idle');
-    expect(await verdict({ running: 0, queued: 9 })).toBe('flat_idle');
+    expect(await verdict({ running: 0 })).toBe('idle');
+    expect(await verdict({ running: 0, queued: 9 })).toBe('idle');
   });
-  it('keeps missing evidence unknown, never moving', async () => {
-    expect(await verdict({}, [])).toBe('unknown');
-    expect(await verdict({}, [earlier])).toBe('unknown');
-    expect(await verdict({}, [{ ...earlier, usedPercent: null }, later])).toBe('unknown');
-    expect(await verdict(null)).toBe('unknown');
+  it('says no meter when there is no usable reading', async () => {
+    expect(await verdict({}, [])).toBe('no meter');
+    expect(await verdict({}, [{ ...earlier, usedPercent: null }])).toBe('no meter');
+    expect(await verdict(null)).toBe('watching');
   });
-  it('keeps ambiguous or stale evidence unknown, never moving', async () => {
-    expect(await verdict({}, [earlier, { ...later, sampledAt: earlier.sampledAt }])).toBe('unknown');
-    expect(await verdict({}, [earlier, { ...earlier, usedPercent: 70 }])).toBe('unknown');
-    expect(await verdict({}, [earlier, { ...later, usedPercent: 101 }])).toBe('unknown');
-    expect(await verdict({}, [earlier, { ...later, sampledAt: 'not-a-date' }])).toBe('unknown');
-    expect(await verdict({}, [earlier, { ...later, sampledAt: '2026-10-31T12:30:00Z' }])).toBe('unknown');
-    expect(await verdict({}, [earlier, { ...later, sampledAt: '2026-10-31T11:44:00Z' }])).toBe('unknown');
+  it('keeps one reading, ambiguous or short evidence at watching, never flat or moving', async () => {
+    expect(await verdict({}, [earlier])).toBe('watching');
+    expect(await verdict({}, [{ ...earlier, usedPercent: null }, later])).toBe('watching');
+    expect(await verdict({}, [earlier, { ...later, sampledAt: earlier.sampledAt }])).toBe('watching');
+    expect(await verdict({}, [earlier, { ...earlier, usedPercent: 70 }])).toBe('watching');
+    expect(await verdict({}, [earlier, { ...later, usedPercent: 101 }])).toBe('watching');
+    expect(await verdict({}, [earlier, { ...later, sampledAt: 'not-a-date' }])).toBe('watching');
+    expect(await verdict({}, [earlier, { ...later, sampledAt: '2026-10-31T12:30:00Z' }])).toBe('watching');
+    // Flat for only 30 minutes is not yet an hour.
+    expect(await verdict({}, [{ ...earlier, sampledAt: '2026-10-31T11:30:00Z' }, later])).toBe('watching');
   });
-  it('requires every observed window to resolve before a flat or moving call', async () => {
+  it('says stale when the newest reading is older than the pools freshness bound', async () => {
+    const old = (at: string) => ({ ...earlier, sampledAt: at });
+    expect(await verdict({}, [old('2026-10-31T09:00:00Z'), old('2026-10-31T10:30:00Z')])).toBe('stale');
+    expect((await report({}, [old('2026-10-31T09:00:00Z'), old('2026-10-31T10:30:00Z')])).incidents).toBe(0);
+  });
+  it('requires every observed window to be proven before a flat call', async () => {
     const primary = { window: 'primary:300' };
     expect(await verdict({}, [earlier, { ...later, usedPercent: 55 }, { ...earlier, ...primary }, { ...later, ...primary }])).toBe('moving');
-    expect(await verdict({}, [earlier, later, { ...earlier, ...primary }])).toBe('unknown');
-    expect(await verdict({}, [earlier, later, { ...earlier, ...primary, usedPercent: null }])).toBe('unknown');
+    expect(await verdict({}, [earlier, later, { ...earlier, ...primary }, { ...later, ...primary }])).toBe('flat');
+    expect(await verdict({}, [earlier, later, { ...earlier, ...primary }])).toBe('watching');
+    expect(await verdict({}, [earlier, later, { ...earlier, ...primary, usedPercent: null }])).toBe('watching');
   });
   it('needs proven work for an incident and proven quiet for idle', async () => {
-    expect(await verdict({ running: null })).toBe('unknown');
-    expect(await verdict({ running: 'many' as never })).toBe('unknown');
+    expect(await verdict({ running: null })).toBe('watching');
+    expect(await verdict({ running: 'many' as never })).toBe('watching');
     expect(await verdict({ running: 0 }, [earlier, { ...later, usedPercent: 50 }])).toBe('moving');
+  });
+  it('moves with three running jobs and a rising meter, goes flat after an hour with none', async () => {
+    expect(await verdict({ running: 3 }, [earlier, { ...later, usedPercent: 43 }])).toBe('moving');
+    const flat = await report({ running: 3 });
+    expect(flat.providers[0]).toMatchObject({ verdict: 'flat', running: 3 });
+    expect(flat.incidents).toBe(1);
   });
   it('keeps a moved meter moving when lane evidence is lost', async () => {
     expect((await readMeterDrop({ lanes: async () => { throw new Error('fixture-secret'); }, meters: async () => [earlier, { ...later, usedPercent: 55 }] }, now)).providers[0]!.verdict).toBe('moving');
-    expect((await readMeterDrop({ lanes: async () => { throw new Error('fixture-secret'); }, meters: async () => [earlier, later] }, now)).providers[0]!.verdict).toBe('unknown');
-    expect((await readMeterDrop({ lanes: async () => [lane], meters: async () => { throw new Error('fixture-secret'); } }, now)).providers[0]!.verdict).toBe('unknown');
+    expect((await readMeterDrop({ lanes: async () => { throw new Error('fixture-secret'); }, meters: async () => [earlier, later] }, now)).providers[0]!.verdict).toBe('watching');
+    expect((await readMeterDrop({ lanes: async () => [lane], meters: async () => { throw new Error('fixture-secret'); } }, now)).providers[0]!.verdict).toBe('no meter');
   });
   it('ranks incidents first and counts them', async () => {
     const lanes: LaneState[] = [
@@ -75,7 +89,7 @@ describe('meter drop verdicts', () => {
     ];
     const result = await readMeterDrop({ lanes: async () => lanes, meters: async () => samples }, now);
     expect(result.providers.map(row => row.provider)).toEqual(['codex-cmp', 'terra', 'claude-max', 'grok-ultra']);
-    expect(result.providers.map(row => row.verdict)).toEqual(['flat_with_work', 'unknown', 'flat_idle', 'moving']);
+    expect(result.providers.map(row => row.verdict)).toEqual(['flat', 'watching', 'idle', 'moving']);
     expect(result.incidents).toBe(1);
   });
   it('strips untrusted provider and window names from the report', async () => {
@@ -99,7 +113,7 @@ it('reads the newest personal rollout for two timed samples and writes nothing',
   await utimes(join(sessions, 'rollout-new.jsonl'), new Date(now), new Date(now));
   const result = await readMeterDrop(defaultLaneTruthReaders(home, now), now);
   expect(result.providers).toHaveLength(1);
-  expect(result.providers[0]).toMatchObject({ provider: 'codex-personal', running: 12, verdict: 'flat_with_work' });
+  expect(result.providers[0]).toMatchObject({ provider: 'codex-personal', running: 12, verdict: 'flat' });
   expect(result.providers[0]!.windows[0]).toMatchObject({ window: 'secondary:10080', delta: 0, observedMinutes: 60 });
   expect(JSON.stringify(result)).not.toContain('fixture-secret');
   expect(await readFile(path, 'utf8')).toBe(slots);
@@ -115,7 +129,7 @@ it('validates CLI options before reading and emits JSON or plain verdicts', asyn
   expect(await cmdFleetMeterDrop(['--help'], readers, now)).toBe(0);
   expect(lanes).not.toHaveBeenCalled();
   expect(await cmdFleetMeterDrop(['--json'], readers, now)).toBe(0);
-  expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'fleet.meter-drop.v1', incidents: 1, providers: [{ provider: 'codex-personal', verdict: 'flat_with_work', running: 12 }] });
+  expect(JSON.parse(log.mock.calls.at(-1)![0] as string)).toMatchObject({ schema: 'fleet.meter-drop.v1', incidents: 1, providers: [{ provider: 'codex-personal', verdict: 'flat', running: 12 }] });
   expect(await cmdFleetMeterDrop([], readers, now)).toBe(0);
-  expect(log.mock.calls.at(-1)![0]).toBe('codex-personal: flat_with_work');
+  expect(log.mock.calls.at(-1)![0]).toBe('codex-personal: flat');
 });

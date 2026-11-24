@@ -1,7 +1,7 @@
 /**
  * `ashlr fleet meter-incident` — turns the read-only `fleet meter-drop`
  * report into incidents on the shared fleet bus. Every provider whose meter
- * stayed flat while its lane ran jobs ('flat_with_work') gets one 'meter-flat'
+ * stayed flat while its lane ran jobs ('flat') gets one 'meter-flat'
  * P1 envelope per clock hour; the hour bucket inside the envelope id makes a
  * rerun inside the same hour a 'duplicate', not a second incident. Without
  * --apply this is a dry run: it prints the incidents it would post and writes
@@ -13,12 +13,14 @@ import {
   buildMeterIncidentEnvelope, planMeterIncidents, postMeterIncidents,
   type MeterIncidentPost,
 } from '../core/fleet/meter-incident.js';
-import { defaultLaneTruthReaders, type LaneTruthReaders } from './fleet-lane-truth.js';
+import { homedir } from 'node:os';
+import { defaultMeterDropReaders } from '../core/fleet/meter-drop-readers.js';
+import type { LaneTruthReaders } from './fleet-lane-truth.js';
 import { readMeterDrop } from './fleet-meter-drop.js';
 
 const usage = `Usage: ashlr fleet meter-incident [--json] [--apply] [--runs-dir <abs>]
 Without --apply this is a dry run: it prints the incidents it would post and
-writes nothing. With --apply every 'flat_with_work' provider gets one
+writes nothing. With --apply every 'flat' provider gets one
 'meter-flat' P1 envelope on the shared fleet bus, deduped per clock hour.
 --runs-dir roots the bus store under that directory like the other
 bus-posting verbs' dir flags; without it the canonical store is used.`;
@@ -47,7 +49,7 @@ export async function cmdFleetMeterIncident(args: string[], deps: Dependencies =
   const nowMs = now();
   let report;
   try {
-    report = await readMeterDrop(deps.readers ?? defaultLaneTruthReaders(), nowMs);
+    report = await readMeterDrop(deps.readers ?? defaultMeterDropReaders(homedir(), nowMs), nowMs);
   } catch {
     console.error('fleet meter-incident: meter evidence unavailable');
     return 1;

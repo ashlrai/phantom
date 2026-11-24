@@ -143,7 +143,7 @@ export async function readFleetBridgeCheck(deps: FleetBridgeCheckDeps = {}): Pro
   const readClaims = deps.claims ?? (() => {
     let board: FleetBoard | null;
     try {
-      board = readFleetBoard();
+      board = readFleetBoard({ reap: false });
     } catch {
       board = null;
     }

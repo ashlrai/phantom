@@ -41,17 +41,42 @@ export function orderKey(entryAt: string): string | null {
       Number(match[1]!.slice(3)) < 1 || Number(match[1]!.slice(3)) > 31 || Number(match[2]!.slice(0, 2)) > 23) return null;
   return `${match[1]} ${match[2]}`;
 }
-const cache = new Map<string, { mtime: number; keys: string[] }>();
+const cache = new Map<string, { mtime: number; keys: string[]; channel: string | null }>();
+const ORDER_CHANNELS = ['slack', 'desktop', 'telegram', 'email', 'imessage'];
+function orderChannelHint(body: string): string | null {
+  const match = body.match(/\b(slack|desktop|telegram|email|imessage)\b/i);
+  const channel = match?.[1]?.toLowerCase() ?? null;
+  return channel !== null && ORDER_CHANNELS.includes(channel) ? channel : null;
+}
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` accepts:
+ * ids job|job_id|jobId|id, events event|type|kind, phases
+ * outcome|state|status plus producer aliases, timestamps
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt, and PR links
+ * url|pr_url|prUrl|pr|html_url. */
+const pickStr = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+const JOB_LEDGER_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const EVENT_LEDGER_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_LEDGER_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
+const TS_LEDGER_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const URL_LEDGER_KEYS = ['url', 'pr_url', 'prUrl', 'pr', 'html_url'] as const;
+
 /** Explicit merge evidence in a metrics/jobs.jsonl row. Producers write a
- * MERGED phase on `state`/`outcome`/`status` (metrics-outcomes reconciler,
- * dispatchd outcome rows), `event` = 'merged', or a parseable
+ * MERGED phase on `state`/`outcome`/`status` and the producer aliases
+ * `phase`/`result`/`conclusion` (metrics-outcomes reconciler, dispatchd
+ * outcome rows), `event`/`type`/`kind` = 'merged', or a parseable
  * `merged_at`/`mergedAt` timestamp. Substrings ('unmerged', 'not_merged',
  * 'merge_failed', 'MERGED_PENDING') and unparseable timestamps are not
  * evidence. */
 function hasMergeEvidence(row: Record<string, unknown>): boolean {
-  const phase = String(row.state ?? row.outcome ?? row.status ?? '').trim().toUpperCase();
+  const phase = (pickStr(row, PHASE_LEDGER_KEYS) ?? '').toUpperCase();
   if (phase === 'MERGED') return true;
-  if (String(row.event ?? '').trim().toLowerCase() === 'merged') return true;
+  if ((pickStr(row, EVENT_LEDGER_KEYS) ?? '').toLowerCase() === 'merged') return true;
   for (const key of ['merged_at', 'mergedAt'] as const) {
     const value = row[key];
     if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))) return true;
@@ -111,27 +136,29 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
     for (const line of text.split(/\r?\n/).filter(Boolean)) {
       try {
         const row = JSON.parse(line) as Record<string, unknown>;
-        const id = row.job ?? row.job_id ?? row.id;
-        const merged = typeof id === 'string' && id.startsWith('RQ-') && hasMergeEvidence(row);
+        const id = pickStr(row, JOB_LEDGER_KEYS);
+        const merged = id !== null && id.startsWith('RQ-') && hasMergeEvidence(row);
         if (merged) {
-          const url = typeof row.url === 'string' ? row.url
-            : typeof row.pr_url === 'string' ? row.pr_url
-            : typeof row.prUrl === 'string' ? row.prUrl
-            : typeof row.pr === 'string' ? row.pr : null;
+          const url = pickStr(row, URL_LEDGER_KEYS);
           merges.set(id, url ?? merges.get(id) ?? null);
         }
-        if (row.event === 'outcome' && row.empty === true && typeof id === 'string' && id.startsWith('RQ-') && typeof row.ts === 'string') {
+        const event = pickStr(row, EVENT_LEDGER_KEYS);
+        const normalized = event === 'published' ? 'publish' : event;
+        const tsText = pickStr(row, TS_LEDGER_KEYS);
+        if (normalized === 'outcome' && row.empty === true && id !== null && id.startsWith('RQ-') && tsText !== null) {
           // Same `+hhmm` offset tolerance as empty-job-ledger.ts.
-          const emptyTs = Date.parse(row.ts.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+          const emptyTs = Date.parse(tsText.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
           if (Number.isFinite(emptyTs) && emptyTs >= (empties.get(id) ?? -Infinity)) empties.set(id, emptyTs);
         }
-        if (row.event !== 'publish' || typeof row.job !== 'string' || typeof row.url !== 'string' ||
-            typeof row.ts !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
+        const job = pickStr(row, JOB_LEDGER_KEYS);
+        const url = pickStr(row, URL_LEDGER_KEYS);
+        if (normalized !== 'publish' || job === null || url === null || tsText === null ||
+            !Number.isFinite(Date.parse(tsText))) {
           if (!merged) result.sources.publishes = 'degraded';
           continue;
         }
-        const ts = Date.parse(row.ts);
-        if (ts >= (publishes.get(row.job)?.ts ?? -Infinity)) publishes.set(row.job, { url: row.url, ts });
+        const ts = Date.parse(tsText);
+        if (ts >= (publishes.get(job)?.ts ?? -Infinity)) publishes.set(job, { url, ts });
       } catch { result.sources.publishes = 'degraded'; }
     }
   } catch (error) { result.sources.publishes = sourceError(error); }
@@ -144,7 +171,8 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
     try {
       let cached = cache.get(file.path);
       if (!cached || cached.mtime !== file.mtime) {
-        cached = { mtime: file.mtime, keys: parseOrderCitations(await boundedText(file.path, 16 * 1024)) };
+        const body = await boundedText(file.path, 16 * 1024);
+        cached = { mtime: file.mtime, keys: parseOrderCitations(body), channel: orderChannelHint(body) };
         cache.set(file.path, cached);
       }
       let launched = false;
@@ -164,6 +192,7 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
       if (state === 'queued' && lane === null) lane = queued.lanes.get(file.id) ?? null;
       for (const order of result.orders) {
         if (!cached.keys.includes(order.key) || order.jobs.some(job => job.id === file.id)) continue;
+        if (cached.channel !== null && order.source.toLowerCase() !== cached.channel) continue;
         order.jobs.push({ id: file.id, lane, state, url: publish?.url ?? merges.get(file.id) ?? null, ...(endedEmpty !== undefined ? { endedEmptyAt: endedEmpty } : {}) });
       }
     } catch { result.sources.prompts = 'degraded'; }

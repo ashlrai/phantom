@@ -1,0 +1,81 @@
+# Predicted-reds preflight for the six-hour full suite.
+# The full suite cron is 17 */6 (00:17, 06:17, 12:17, 18:17 UTC). This workflow
+# starts at 37 5,11,17,23, which is 40 minutes earlier. Auto-tag starts the
+# same workflow with workflow_dispatch on master when it runs. It runs only
+# the predicted set on a GitHub-hosted
+# runner. It does not change Merge Gate, the secret-shape or clean-tree gates,
+# signing, tags, drafts, or the release workflows.
+name: Preflight fixer
+
+on:
+  schedule:
+    - cron: "37 5,11,17,23 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: preflight-fixer
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: >-
+      github.repository == 'ashlrai/phantom' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master')
+    name: Preflight predicted tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          fetch-depth: 40
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.3"
+      - name: Test preflight planning
+        run: node --test .github/tests/preflight-fixer.test.mjs
+      - name: Plan predicted tests
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFLIGHT_CAUSE: ${{ github.event_name }}
+        run: node .github/scripts/preflight-fixer.mjs plan
+      - name: Install dependencies
+        if: steps.plan.outputs.run_tests == 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run predicted tests
+        if: steps.plan.outputs.run_tests == 'true'
+        env:
+          ASHLR_TEST_CI_TIMEOUT_MS: "1200000"
+          ASHLR_TEST_CI_IDLE_TIMEOUT_MS: "480000"
+        run: node .github/scripts/preflight-fixer.mjs run
+      - name: Verify scrubber
+        if: always() && steps.plan.outputs.report == 'true'
+        env:
+          SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+        run: |
+          set -euo pipefail
+          echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+      - name: Publish predicted reds
+        if: always() && steps.plan.outputs.report == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/preflight-fixer.mjs report
+      - name: Upload predicted reds
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preflight-reds
+          path: preflight-reds.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,20 @@
+/* Phone first: one column, nothing wider than the screen at 390 px. */
+.view { display: flex; flex-direction: column; gap: var(--space-3); max-width: 760px; min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.chip { min-height: 44px; padding: 0 var(--space-3); border: 1px solid var(--border-subtle); border-radius: 999px; background: transparent; color: inherit; font: inherit; }
+.chip[aria-pressed='true'] { background: var(--border-subtle); font-weight: var(--font-weight-semibold); }
+.note, .who, .hour { color: var(--text-tertiary); font-size: var(--text-xs-size); }
+.hour { margin: var(--space-2) 0 0; font-weight: var(--font-weight-semibold); text-transform: uppercase; }
+.list { list-style: none; margin: 0; padding: 0; }
+.row { padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }
+.line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2); width: 100%; min-height: 44px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.line { cursor: pointer; }
+.kind { font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.kind[data-kind='incident'] { color: var(--status-danger-fg); }
+.text { flex: 1 1 100%; overflow-wrap: anywhere; }
+.who { flex: 1 1 100%; overflow-wrap: anywhere; }
+.pr { display: inline-block; padding: var(--space-2) 0; }
+.detail { margin: var(--space-2) 0 0; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: 8px; font-size: var(--text-xs-size); overflow-wrap: anywhere; }
+.detail pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.more { overflow-x: auto; }
+.empty { padding: var(--space-4) 0; }

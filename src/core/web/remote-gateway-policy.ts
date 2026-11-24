@@ -34,6 +34,7 @@ export interface RemoteRequest {
 export type RemoteReadRoute = string;
 
 const READ_ROUTES = new Set<RemoteReadRoute>([
+  '/api/fleet/releases',
   '/api/verse/bootstrap',
   '/api/verse/version',
   '/api/verse/activity',
@@ -53,11 +54,15 @@ const READ_ROUTES = new Set<RemoteReadRoute>([
   '/api/verse/devin/previews',
   '/api/verse/fleet/runs',
   '/api/verse/fleet/runs/glance',
+  '/api/verse/fleet/admission',
+  '/api/verse/fleet/yield',
+  '/api/verse/fleet/memory/host-load',
   '/api/verse/fleet/ci-runs',
   '/api/verse/fleet/live/bus',
   '/api/verse/fleet/live/queue',
   '/api/verse/fleet/live/drop-jobs',
   '/api/verse/agent-bus',
+  '/api/verse/agent-bus/needs-mason/asks/batch',
   '/api/verse/fleet/control/switches',
   '/api/verse/fleet/control/lanes',
   '/api/verse/fleet/control/holds',
@@ -87,6 +92,11 @@ const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const ACTIVITY_CURSOR = /^v1\.[0-9a-f]{8}\.[et]\.\d{1,15}$/;
 // Fleet inbox read/post share this source label grammar with the Hub route.
 const FLEET_INBOX_SOURCE = /^[A-Za-z0-9 ._-]{1,40}$/;
+// The inbox read's remaining filters mirror the Hub's parseInboxReadQuery
+// grammar; the Hub re-validates instants and window order authoritatively.
+const FLEET_INBOX_PRIORITY = /^P[0-3]$/;
+const FLEET_INBOX_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
+const FLEET_INBOX_CONTAINS_MAX = 512;
 // Client-minted idempotency key on inbox posts; the Hub owns the same grammar.
 const FLEET_INBOX_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // Body shape only: the Hub re-checks switch ids against RUNS_SWITCHES and lane
@@ -109,6 +119,21 @@ function exactParams(params: URLSearchParams, shape: Record<string, (value: stri
   const keys = [...params.keys()];
   return keys.length === Object.keys(shape).length
     && keys.every((key) => shape[key]?.(params.get(key) ?? '') === true && params.getAll(key).length === 1);
+}
+
+/** The inbox read requires `limit`; every other filter is optional and at most once. */
+function inboxReadParams(params: URLSearchParams): boolean {
+  const validators: Record<string, (value: string) => boolean> = {
+    limit: FLEET_READ_LIMIT,
+    source: (v) => FLEET_INBOX_SOURCE.test(v),
+    contains: (v) => v.trim().length > 0 && v.length <= FLEET_INBOX_CONTAINS_MAX,
+    priority: (v) => FLEET_INBOX_PRIORITY.test(v),
+    after: (v) => FLEET_INBOX_INSTANT.test(v),
+    before: (v) => FLEET_INBOX_INSTANT.test(v),
+  };
+  const keys = [...params.keys()];
+  return keys.includes('limit')
+    && keys.every((key) => validators[key]?.(params.get(key) ?? '') === true && params.getAll(key).length === 1);
 }
 
 function safeFile(path: string): boolean {
@@ -138,6 +163,8 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
       || path === '/api/verse/fleet/live' || path === '/api/verse/fleet/live/drop-jobs'
       || path === '/api/verse/fleet/control/switches' || path === '/api/verse/fleet/control/lanes'
       || path === '/api/verse/fleet/control/holds'
+      // An answer can release money or a send outside the team: it always asks again on the phone.
+      || path === '/api/verse/agent-bus/needs-mason/asks/answer'
       || path === '/api/verse/leader') return { kind: 'write', path, stepUp: true };
     const inbox = /^\/api\/inbox\/([^/]+)\/(approve|reject)$/.exec(path);
     if (inbox && PROPOSAL_ID.test(inbox[1]!)) return { kind: 'write', path, stepUp: true };
@@ -183,10 +210,7 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
     exactParams(params, { limit: (v) => v === '50' })
     || exactParams(params, { limit: (v) => v === '50', before: (v) => THREAD_ID.test(v) })
   )) return { kind: 'read', path };
-  if (path === '/api/verse/fleet/runs/inbox' && (
-    exactParams(params, { limit: FLEET_READ_LIMIT })
-    || exactParams(params, { limit: FLEET_READ_LIMIT, source: (v) => FLEET_INBOX_SOURCE.test(v) })
-  )) return { kind: 'read', path };
+  if (path === '/api/verse/fleet/runs/inbox' && inboxReadParams(params)) return { kind: 'read', path };
   if (path === '/api/verse/fleet/ci-runs'
     && exactParams(params, { hours: FLEET_CI_HOURS })) return { kind: 'read', path };
   if (path === '/api/verse/fleet/cos/list'
@@ -203,6 +227,13 @@ export function classifyRemoteRoute(method: string | undefined, rawTarget: strin
   }
   if (path === '/api/fleet/job'
     && exactParams(params, { id: isFleetJobIdParam })) return { kind: 'read', path };
+  // The job window: same redacted facts and log lines as /api/fleet/job, plus
+  // a numeric tail cursor so the phone fetches only newer lines.
+  if (path === '/api/fleet/job/window') {
+    const after = (v: string): boolean => /^[0-9]{1,15}(?![\s\S])/.test(v);
+    if (exactParams(params, { id: isFleetJobIdParam, lines: FLEET_READ_LIMIT })
+      || exactParams(params, { id: isFleetJobIdParam, lines: FLEET_READ_LIMIT, after })) return { kind: 'read', path };
+  }
   if (path === '/api/verse/checkpoints'
     && exactParams(params, { chatId: (v) => CHECKPOINT_ID.test(v) })) return { kind: 'read', path };
   if (path === '/api/verse/checkpoints/diff') {
@@ -263,6 +294,9 @@ export function validateRemoteMutation(decision: RemoteRouteDecision, body: unkn
   if (path === '/api/verse/fleet/live/drop-jobs') return keys(body, ['id', 'lane', 'tier', 'body'])
     && validateDropJob({ id: body.id, lane: body.lane, tier: body.tier, body: body.body }).ok;
   if (path === '/api/verse/agent-bus') return validateBusEnvelope(body).ok;
+  // Shape only: the asks route checks the id and that the answer is one of that ask's own choices.
+  if (path === '/api/verse/agent-bus/needs-mason/asks/answer') return keys(body, ['id', 'answer'])
+    && boundedText(body.id, 64) && boundedText(body.answer, 80);
   if (path === '/api/verse/leader') return (keys(body, ['action', 'actionId'])
     && body.action === 'veto' && boundedText(body.actionId, 128))
     || (keys(body, ['action', 'itemId']) && body.action === 'dismiss' && boundedText(body.itemId, 256));

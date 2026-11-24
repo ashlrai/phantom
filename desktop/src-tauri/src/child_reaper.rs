@@ -62,7 +62,14 @@ mod tests {
     fn repeated_detached_children_are_reaped() {
         let mut ids = Vec::new();
         for _ in 0..64 {
-            let child = Command::new("/usr/bin/true").spawn().unwrap();
+            let mut command = Command::new("/usr/bin/true");
+            // Even close-on-exec descriptors retain broker flocks until exec.
+            // Coordinate this stress test with the parallel macOS fixtures.
+            #[cfg(target_os = "macos")]
+            let child =
+                crate::native_metadata_launch::spawn_outside_fixture_leases(&mut command).unwrap();
+            #[cfg(not(target_os = "macos"))]
+            let child = command.spawn().unwrap();
             ids.push(child.id() as i32);
             drop(ReapOnDrop::new(child));
         }

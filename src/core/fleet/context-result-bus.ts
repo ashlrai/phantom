@@ -145,8 +145,12 @@ export async function runContextReply(opts: ContextReplyOptions, io: ContextRepl
   const resultCode = exitCode || (verification === undefined || verification === 'pass' ? 0 : 1);
   const ttl = request.ttl - Math.ceil(performance.now() - started);
   if (ttl <= 0) return { workerExit, ...checkedFields, replyReceipt: { status: 'expired' }, exitCode: resultCode || 1, reply: null };
+  const requestBody = request.body;
+  const taskId = requestBody !== null && typeof requestBody === 'object' && !Array.isArray(requestBody)
+    && typeof (requestBody as { taskId?: unknown }).taskId === 'string'
+    ? { taskId: (requestBody as { taskId: string }).taskId } : {};
   const checked = validateBusEnvelope({ id: opts.replyId, from: request.to, to: request.from, priority: request.priority, ttl,
-    body: { inReplyTo: request.id, kind: 'worker-exit', exitCode, succeeded: resultCode === 0, ...checkedFields, ...evidence } });
+    body: { inReplyTo: request.id, kind: 'worker-exit', exitCode, succeeded: resultCode === 0, ...taskId, ...checkedFields, ...evidence } });
   if (!checked.ok) return { workerExit, ...checkedFields, replyReceipt: { status: 'invalid' }, exitCode: resultCode || 1, reply: null };
   const replyReceipt = publishContextReply(checked.value, 0, bus);
   const posted = replyReceipt.status === 'posted' || replyReceipt.status === 'duplicate';

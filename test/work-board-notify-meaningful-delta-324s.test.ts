@@ -129,7 +129,10 @@ describe('durable delta ledger', () => {
   it('reads legacy rows conservatively and records delta digests once-only', async () => {
     const ledgerPath = boardNotifyLedgerPath(dir);
     appendBoardNotifyLedger(ledgerPath, { v: 1, at: AT, itemId: 'req-legacy', state: 'BLOCKED', channel: 'slack', thread: TS_A, receipt: 'r-1' });
-    expect(readBoardNotifySent(ledgerPath)).toEqual(new Set([boardNotifyLedgerKey('req-legacy', 'BLOCKED')]));
+    expect(readBoardNotifySent(ledgerPath)).toEqual(new Set([
+      boardNotifyLedgerKey('req-legacy', 'BLOCKED'),
+      '["board-notify-provenance","req-legacy","BLOCKED","legacy"]',
+    ]));
 
     const notice = (delta: string): BoardNotice => ({
       itemId: 'req-delta-1', state: 'BLOCKED', asOf: AT, delta, detail: 'dep', source: 'bus-reply:r',
@@ -144,9 +147,11 @@ describe('durable delta ledger', () => {
     const sent = readBoardNotifySent(ledgerPath)!;
     expect(sent).toEqual(new Set([
       boardNotifyLedgerKey('req-legacy', 'BLOCKED'),
+      '["board-notify-provenance","req-legacy","BLOCKED","legacy"]',
       boardNotifyLedgerKey('req-delta-1', 'BLOCKED'),
       boardNotifyLedgerKey('req-delta-1', 'BLOCKED', n1.delta),
       boardNotifyLedgerKey('req-delta-1', 'BLOCKED', n2.delta),
+      '["board-notify-provenance","req-delta-1","BLOCKED","modern"]',
     ]));
     // A fresh read (restart) dedupes both deltas; identical evidence replays nothing.
     expect(planNotifications([transition(), transition({ evidence: { asOf: AT2, source: 's', dependency: 'dep-alpha' } })], sent).notices).toEqual([]);
@@ -251,6 +256,7 @@ describe('cmdFleetBoardNotify meaningful deltas', { timeout: 60_000 }, () => {
     expect(readBoardNotifySent(boardNotifyLedgerPath(dir))!).toEqual(new Set([
       boardNotifyLedgerKey('slack-delta-2', 'BLOCKED'),
       boardNotifyLedgerKey('slack-delta-2', 'BLOCKED', retryA.delta),
+      '["board-notify-provenance","slack-delta-2","BLOCKED","modern"]',
     ]));
   });
 

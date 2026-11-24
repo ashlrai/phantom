@@ -45,7 +45,7 @@ const ingest = (messages: IntakeMsg[]) =>
   ingestIMessages(cfg(), { runsDir, busRoot: busRoot(), now, platform: 'darwin', poll: async () => ({ ok: true, messages }) });
 const inboxPath = () => join(runsDir, 'leader', 'MASON-INBOX.md');
 const busEnvelopes = () => {
-  const page = listBusInboxAfter(0, 100, { root: busRoot() });
+  const page = listBusInboxAfter(0, 100, { root: busRoot(), now: () => now().getTime() });
   return page.status === 'ok' ? page.messages.map((m) => m.envelope) : [];
 };
 const teammateRows = () =>

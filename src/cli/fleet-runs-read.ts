@@ -130,7 +130,9 @@ function formatParked(state: FleetQueueV1): string {
     ...state.groups.map(group => `${group.reason} (${value(group.lane)}): ${group.count} [${group.jobs.join(', ')}]`),
     ...((state.unmetDeps ?? []).map(row =>
       `UNMET-DEP ${row.job} (${value(row.lane)}): ${row.unmet.join(', ')}`)),
-    `Precheck skips last 24h: ${value(state.skipsLast24h)}`,
+    `Precheck skips last 24h: ${value(state.health ? state.health.counts.skips : state.skipsLast24h)}`,
+    ...(state.health ? [`Repeated skip groups last 24h: ${value(state.health.counts.repeatedSkipGroups)}`,
+      ...state.health.repeatedSkips.map(skip => `${skip.job}: skipped ${skip.count} times (${skip.code}: ${skip.reason}); last ${skip.lastAt}`)] : []),
     ...state.skips.map(skip => `${skip.at} ${skip.job} ${skip.code}: ${skip.reason}`),
   ].join('\n');
 }
@@ -292,6 +294,7 @@ export async function cmdFleetRunsRead(verb: Verb | string, args: string[] = [],
       else {
         const filtered = { ...state, byLane: state.byLane.filter(row => row.lane === lane),
           groups: state.groups.filter(row => row.lane === lane),
+          health: state.health ? { ...state.health, repeatedSkips: [] } : undefined,
           unmetDeps: (state.unmetDeps ?? []).filter(row => row.lane === lane), skips: [],
           laneFilter: { lane: sanitizePublicJson(lane), global: ['sources', 'total', 'ready', 'parked', 'malformed', 'skipsLast24h'], omitted: ['skips'] } };
         emit(filtered, formatParked, `Lane filter: ${filtered.laneFilter.lane}; totals and source health are global; unattributed skips omitted\n`);

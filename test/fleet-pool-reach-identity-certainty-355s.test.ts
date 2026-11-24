@@ -50,7 +50,7 @@ const COMPLETE_PEERS = {
 };
 
 function statusBody(peerMap: Record<string, unknown>, self = 'mac-self'): string {
-  return JSON.stringify({ Self: { HostName: self }, Peer: peerMap });
+  return JSON.stringify({ BackendState: 'Running', Self: { HostName: self }, Peer: peerMap });
 }
 
 function harness() {

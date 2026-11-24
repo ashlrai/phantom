@@ -1,0 +1,14 @@
+.strip { margin: 0 0 var(--space-4); }
+.title { margin: 0 0 var(--space-1); font-size: var(--text-sm-size); color: var(--text-primary); }
+.headline, .note { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); color: var(--text-secondary); overflow-wrap: anywhere; }
+.list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+/* One line on desktop; wraps to two inside a 390 px phone. */
+.row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); font-size: var(--text-xs-size); color: var(--text-secondary); overflow-wrap: anywhere; }
+.pool { min-width: 8rem; color: var(--text-primary); }
+.state { min-width: 4.5rem; font-weight: 600; }
+.facts { font-variant-numeric: tabular-nums; }
+.advice { flex: 1 1 14rem; }
+.row[data-state='starve'] .pool, .row[data-state='starve'] .state, .row[data-state='starve'] .advice { color: var(--status-danger-fg); }
+.row[data-state='spend'] .state { color: var(--status-success-fg); }
+.row[data-state='pace'] .state { color: var(--status-info-fg); }
+.row[data-state='unknown'] .state { color: var(--status-unknown-fg); }

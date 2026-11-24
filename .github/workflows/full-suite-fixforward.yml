@@ -1,0 +1,53 @@
+# RELEASE-GATE-SPLIT-1: the exhaustive full suite (CI at 17 */6 * * *, plus a
+# manual full dispatch) stays red when it fails, but no longer blocks Auto-tag
+# in split mode. This workflow turns each completed full attempt into router
+# work: red opens or updates ONE open P0 fix-forward issue per failing SHA,
+# green closes every open one. Lines come from job names and conclusions
+# only (no logs, env or artifacts), pass through the pinned scrub.pl, and use
+# the RQ-FIXUP line shape the fixup-queue job already emits.
+name: Full suite fix-forward
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+
+permissions: {}
+
+concurrency:
+  group: full-suite-fixforward
+  cancel-in-progress: false
+
+jobs:
+  file:
+    if: >-
+      github.repository == 'ashlrai/phantom' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read     # job inventory of the completed CI run
+      contents: read
+      issues: write     # open, comment on and close P0 fix-forward issues
+    steps:
+      - name: Checkout scripts and scrubber
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/full-suite-fixforward.mjs
+            .github/scripts/github-repository-binding.mjs
+            .github/tests/secret-shape/scrub.pl
+          sparse-checkout-cone-mode: false
+      - name: File or close P0 fix-forward
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCRUB_SHA256: 5aa902abedbb3bf7fa8d893b93969e247c82ff62ac26cd082215caabfb740265
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "${SCRUB_SHA256}  .github/tests/secret-shape/scrub.pl" | sha256sum --check --strict
+          node .github/scripts/full-suite-fixforward.mjs

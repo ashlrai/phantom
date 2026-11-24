@@ -116,8 +116,18 @@ describe('team protocol', () => {
     expect(b.ok).toBe(false);
     expect(acquireClaim(T, grok, { repo: 'ashlrai/phantom', branch: 'feat/y' }, 'other').ok).toBe(true);
     expect(() => releaseClaim(T, grok, (a as { claimId: string }).claimId)).toThrow(/holder/);
-    releaseClaim(T, codex, (a as { claimId: string }).claimId);
+    expect(releaseClaim(T, codex, (a as { claimId: string }).claimId)).toEqual({
+      released: (a as { claimId: string }).claimId,
+    });
     expect(acquireClaim(T, grok, { repo: 'ashlrai/phantom', branch: 'feat/x' }, 'docs').ok).toBe(true);
+  });
+
+  it('releases an acquired team claim by its owner', () => {
+    const claim = acquireClaim(T, codex, { repo: 'ashlrai/phantom', branch: 'feat/release' }, 'round-trip');
+    expect(claim.ok).toBe(true);
+    if (!claim.ok) throw new Error('Claim acquisition failed');
+    expect(releaseClaim(T, codex, claim.claimId)).toEqual({ released: claim.claimId });
+    expect(teamState(T).claims.some(row => row.id === claim.claimId)).toBe(false);
   });
 
   it('claims expire', () => {
