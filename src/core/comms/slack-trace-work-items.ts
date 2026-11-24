@@ -13,12 +13,12 @@ import type { WorkItemEvidence } from './work-item-state.js';
 /** One live fleet claim joined to the Slack thread it is bound to. */
 export interface SlackTraceClaim { claimId: string; repo: string; agent: string; threadKey: string }
 
-function threadOf(ref: string): { channelId: string; threadTs: string } | undefined {
+function threadOf(ref: string): { teamId: string; channelId: string; threadTs: string } | undefined {
   const parsed = parseSlackThreadRef(ref);
-  if (parsed) return { channelId: parsed.channelId, threadTs: parsed.rootTs };
+  if (parsed) return { teamId: parsed.teamId, channelId: parsed.channelId, threadTs: parsed.rootTs };
   const parts = ref.split('/');
   if (parts.length === 3 && isSlackTeamId(parts[0]) && isSlackChannelId(parts[1]) && isSlackTs(parts[2])) {
-    return { channelId: parts[1]!, threadTs: parts[2]! };
+    return { teamId: parts[0]!, channelId: parts[1]!, threadTs: parts[2]! };
   }
   return undefined;
 }
@@ -27,15 +27,19 @@ export function slackTraceRowsToWorkItems(
   rows: readonly SlackTraceRow[],
   claims: readonly SlackTraceClaim[],
 ): WorkItemEvidence[] {
-  const byThread = new Map<string, SlackTraceClaim>();
+  const byThread = new Map<string, Map<string, SlackTraceClaim>>();
   for (const claim of claims) {
     const thread = threadOf(claim.threadKey);
-    if (!thread || !claim.agent.trim() || !claim.claimId.trim()) continue;
+    if (!thread || !claim.repo.trim() || !claim.agent.trim() || !claim.claimId.trim()) continue;
     const key = `${thread.channelId}:${thread.threadTs}`;
-    if (!byThread.has(key)) byThread.set(key, claim);
+    const candidates = byThread.get(key) ?? new Map<string, SlackTraceClaim>();
+    const identity = JSON.stringify([thread.teamId, claim.repo, claim.claimId, claim.agent]);
+    candidates.set(identity, claim);
+    byThread.set(key, candidates);
   }
   return rows.map((row) => {
-    const claim = byThread.get(`${row.channelId}:${row.threadTs}`);
+    const candidates = byThread.get(`${row.channelId}:${row.threadTs}`);
+    const claim = candidates?.size === 1 ? candidates.values().next().value : undefined;
     return {
       id: `slack:${row.channelId}:${row.messageTs}`,
       ...(row.ingress !== 'unknown' ? { receivedAt: row.at } : {}),
