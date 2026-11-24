@@ -718,7 +718,17 @@ cursor order, including the kindless `{inReplyTo, text}` replies the
 classified projections never group — under the identical printable
 `id` rule, with `rootFound`/`complete`/`sourceFailure` keeping a proven
 miss distinct from an unreadable walk and no caller root or path
-accepted.
+accepted. `phm agents bus thread <id>` serves the same
+`fleet.bus-thread.v1` projection on the unified bus surface, so an agent
+that found an id through `inbox`, `show`, `wakes` or `work mine` expands
+it to the whole reply exchange without leaving `agents bus`: the id takes
+the same printable routing-label rule (`invalid` on a malformed one, the
+same answer `show` gives), `--json` passes the projection through
+untouched, and the human read marks the root row and decorates sender and
+recipient handles best-effort the way `show` decorates `fromAgent` — an
+unreadable registry keeps the raw routing labels. Exit is 0 only when the
+walk completed and found the root; a proven miss, an incomplete walk or
+an unreadable store exits 1, never an invented empty thread.
 
 **Work announcements.** `phm agents bus work post --job <id> --title <text>
 --repo <owner/name> [--claim <key>]... [--provider <p>] [--tier <fast|mid|work|frontier>
