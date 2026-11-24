@@ -9,7 +9,23 @@ import { probeNpmRegistry, registryBytes } from './registry.js';
 export interface ReleaseUpdateResult {
   from: string | null; to: string | null; verified: boolean; rolled_back: boolean;
   log_line: string; attestation: 'unknown' | 'verified'; updated: boolean; error: string | null;
+  /** True when the new release is installed but resident services were resumed on the old process, not restarted. */
+  restart_held?: boolean;
+  /** Why the restart was held (for example authority-digest-changed). */
+  held_reason?: string | null;
 }
+
+/**
+ * Decides, for a smoke-tested candidate release, whether resident services may
+ * restart onto it. A hold still installs the release and swaps the links, but
+ * resumes the running services on their current process so an admitted grant
+ * keeps covering the code that is acting until Mason re-approves.
+ */
+export type RestartGate = (candidateRoot: string, version: string) => {
+  restart: boolean; reason: string;
+  /** launchd targets (label suffixes) that are always resumed in place, never relaunched, even when restart is true. */
+  hold?: readonly string[];
+};
 const basePath = (home: string) => join(home, '.local/share/ashlr');
 const readPointer = (path: string): string | null => fs.lstatSync(path, { throwIfNoEntry: false }) ? fs.readlinkSync(path) : null;
 
@@ -23,6 +39,7 @@ type Run = (command: string, args: string[]) => { status: number | null; stdout?
 interface Options {
   home?: string; check?: boolean; run?: Run;
   services?: () => string[];
+  restartGate?: RestartGate;
 }
 function atomicLink(path: string, target: string): void {
   const temporary = `${path}.update-${process.pid}`;
@@ -44,6 +61,8 @@ export async function updateReleaseDirectory(root: string, options: Options = {}
   };
   const changed: Array<[string, string | null]> = [], paused: string[] = [];
   let stage: string | undefined, candidate: string | undefined, locked = false;
+  let holdLabels: readonly string[] = [];
+  const held = (target: string) => holdLabels.some((label) => target.endsWith(`/${label}`));
   const lock = join(base, '.update-lock');
   const log = () => {
     result.log_line = `Phantom ${result.from ?? 'unknown'} to ${result.to ?? 'unknown'}: ${result.error ?? (result.updated ? 'updated' : 'up to date')}; integrity: ${result.verified ? 'verified' : 'unknown'}; attestation: ${result.attestation}; rolled back: ${result.rolled_back}`;
@@ -106,6 +125,8 @@ export async function updateReleaseDirectory(root: string, options: Options = {}
     candidate = destination;
     const smoke = checkedRun(join(destination, 'phm'), ['--version']);
     if (smoke.stdout?.trim() !== result.to) throw new Error('Release smoke version mismatch');
+    const gate = options.restartGate ? options.restartGate(destination, result.to) : { restart: true, reason: 'ungated' };
+    holdLabels = gate.hold ?? [];
     for (const target of options.services?.() ?? []) {
       paused.push(target);
       // SIGSTOP keeps launchd registration intact and prevents KeepAlive relaunch.
@@ -117,7 +138,11 @@ export async function updateReleaseDirectory(root: string, options: Options = {}
       if (fs.readlinkSync(path) !== before) throw new Error('CLI link changed');
       atomicLink(path, join(current, 'phm')); changed.push([path, before]);
     }
-    for (const target of paused) checkedRun('launchctl', ['kickstart', '-k', target]);
+    // A held restart resumes the stopped process in place (SIGCONT) instead of
+    // relaunching it, so the running code and its admitted grant stay paired.
+    const inPlace = (target: string) => !gate.restart || held(target);
+    for (const target of paused) checkedRun('launchctl', inPlace(target) ? ['kill', 'SIGCONT', target] : ['kickstart', '-k', target]);
+    if (paused.some(inPlace)) { result.restart_held = true; result.held_reason = gate.reason; }
     result.updated = true; log();
   } catch (error) {
     result.error = error instanceof Error && /^(Unsupported|Registry|Release|GitHub|Current|CLI|Candidate|Service) /.test(error.message)
@@ -131,7 +156,9 @@ export async function updateReleaseDirectory(root: string, options: Options = {}
       if (candidate) fs.rmSync(candidate, { recursive: true, force: true });
     } catch { result.error = 'Release rollback failed'; }
     for (const target of paused) {
-      try { checkedRun('launchctl', ['kickstart', '-k', target]); }
+      // A held target (the resident daemon) is only ever resumed in place:
+      // the updater never relaunches it, so an admitted start is never undone.
+      try { checkedRun('launchctl', held(target) ? ['kill', 'SIGCONT', target] : ['kickstart', '-k', target]); }
       catch { result.error = 'Service recovery failed'; }
     }
     if (!options.check) { try { log(); } catch { result.error = 'Release install log unavailable'; } }
