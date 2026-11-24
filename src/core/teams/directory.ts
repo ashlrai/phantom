@@ -15,7 +15,7 @@ export class DirectoryInputError extends Error {}
 /** The caller is not allowed to change the team. Distinct from bad input so surfaces can answer 403. */
 export class DirectoryRefusedError extends DirectoryInputError {}
 export const OWNER_ONLY = 'Only a team owner can add or remove teammates, from their own terminal.';
-/** `actor` must come from localHumanActor (the local OS user), never from a flag or request field. */
+/** `actor` must be a verified human principal, never a flag or request field. */
 function assertOwner(directory: TeamDirectory, actor: TeamActor): void {
   const owners = directory.people.filter(isOwner);
   if (!owners.length) throw new DirectoryRefusedError(`This team has no owner yet. Run phm team join --team ${directory.team} first; the first person to join becomes the owner.`);

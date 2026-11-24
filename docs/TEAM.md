@@ -153,9 +153,12 @@ email drafts (terminal-only), the Security pin queue (staged packages under
 `~/.ashlr-runs/staged/`, read-only; pins stay with Security) and explicit holds
 from `$ASHLR_HOME/holds.json` (`{"holds":[{"id","title","detail?","since?","resolvedAt?"}]}`;
 a hold stays listed until it has `resolvedAt` or is removed). The page's
-Approve/Deny buttons make the same decision as `phm team approve|deny`: the
-server derives the human identity from the local OS user, refuses agent
-processes, and never accepts an identity from the request.
+Approve/Deny buttons post the decision only. The server records the
+authenticated principal: a web token is `web-token.<fingerprint>`, never a
+human. A human-required decision needs a custody presence assertion over the
+approval id and decision, or the route answers `human-presence-required`.
+`phm team approve|deny` still uses the local human process and refuses an
+agent process. Neither path accepts an identity from the request.
 
 ### Onboarding walkthrough checks
 

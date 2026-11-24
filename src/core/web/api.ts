@@ -85,6 +85,9 @@ import { buildRollup } from '../observability/rollup.js';
 import { loadGenome } from '../genome/store.js';
 import { recall } from '../genome/recall.js';
 import { buildApprovalsProjection, decideTeamApproval } from '../approvals/surface.js';
+import {
+  HumanPresenceRequired, agentActorForToken, approvalPresenceBytes, humanActorForPresence, verifyPresenceSignature,
+} from '../approvals/actor.js';
 import { DEFAULT_TEAM } from '../teams/index.js';
 import { decideApprovalRequest, listProposals, loadProposal, setStatus } from '../inbox/store.js';
 import { approvalRequestForProposal, isApprovalRequestRevision } from '../inbox/pending-authority.js';
@@ -2502,10 +2505,11 @@ export async function handleApi(
       return true;
     }
 
-    // POST /api/approvals/team/:id/decision {decision, team?}: the human's
-    // click is the approval. Gated like every dispatch mutation (404 without
-    // --allow-dispatch, token + JSON); identity is derived locally by
-    // decideApproval (localHumanActor), never taken from the body.
+    // POST /api/approvals/team/:id/decision {decision, team?, assertion?}.
+    // Gated like every dispatch mutation (404 without --allow-dispatch, token
+    // + JSON). The actor is the authenticated principal, never a body field
+    // and never the server process. A bare token is an agent. A human
+    // decision needs a custody presence assertion over this id and decision.
     if (path.startsWith('/api/approvals/team/') && method === 'POST') {
       if (!ctx.allowDispatch) {
         sendJson(res, 404, { error: 'not found' });
@@ -2526,16 +2530,35 @@ export async function handleApi(
         return true;
       }
       const b = body as Record<string, unknown> | null;
-      if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'decision' && k !== 'team')
-        || (b['decision'] !== 'approve' && b['decision'] !== 'deny') || (b['team'] !== undefined && typeof b['team'] !== 'string')) {
-        sendJson(res, 400, { error: 'expected decision (approve or deny) and optional team' });
+      const decision = b?.['decision'];
+      if (!b || typeof b !== 'object' || Array.isArray(b)
+        || Object.keys(b).some((k) => k !== 'decision' && k !== 'team' && k !== 'assertion')
+        || (decision !== 'approve' && decision !== 'deny')
+        || (b['team'] !== undefined && typeof b['team'] !== 'string')
+        || (b['assertion'] !== undefined && typeof b['assertion'] !== 'string')) {
+        sendJson(res, 400, { error: 'expected decision (approve or deny), optional team, and optional assertion' });
         return true;
       }
       try {
-        sendJson(res, 200, decideTeamApproval((b['team'] as string | undefined) || DEFAULT_TEAM, id, b['decision']));
+        const team = (b['team'] as string | undefined) || DEFAULT_TEAM;
+        const assertion = b['assertion'];
+        if (typeof assertion === 'string') {
+          const ok = await verifyPresenceSignature(approvalPresenceBytes(id, decision), assertion);
+          if (!ok) {
+            sendJson(res, 403, { error: 'human-presence-required', code: 'human-presence-required' });
+            return true;
+          }
+          sendJson(res, 200, decideTeamApproval(team, id, decision, humanActorForPresence(ctx.token), { presenceProven: true }));
+        } else {
+          sendJson(res, 200, decideTeamApproval(team, id, decision, agentActorForToken(ctx.token)));
+        }
       } catch (e) {
-        // Agent-process env, non-owner/admin, stale or already-decided: all refusals, none applied.
-        sendJson(res, 403, { error: e instanceof Error ? e.message : 'approval refused' });
+        if (e instanceof HumanPresenceRequired) {
+          sendJson(res, 403, { error: e.message, code: e.code });
+        } else {
+          // Non-owner/admin, stale or already-decided: refusals, none applied.
+          sendJson(res, 403, { error: e instanceof Error ? e.message : 'approval refused' });
+        }
       }
       return true;
     }

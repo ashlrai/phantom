@@ -339,6 +339,7 @@
     "src/core/amplify/index.ts",
     "src/core/amplify/snapshot.ts",
     "src/core/app-update-status.ts",
+    "src/core/approvals/actor.ts",
     "src/core/approvals/surface.ts",
     "src/core/apps-known.ts",
     "src/core/apps-last-used.ts",

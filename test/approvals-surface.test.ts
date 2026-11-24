@@ -1,10 +1,13 @@
+import { generateKeyPairSync, sign as signBytes } from 'node:crypto';
 import { mkdirSync, utimesSync, writeFileSync, symlinkSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebServerHandle } from '../src/core/types.js';
-import { appendEvent, ownerConfigPath, requestAccess, teamState, type TeamActor } from '../src/core/teams/index.js';
+import { appendEvent, appendUnlocked, localHumanActor, ownerConfigPath, requestAccess, requestHandoff, teamState, type TeamActor } from '../src/core/teams/index.js';
+import { readEvents } from '../src/core/teams/store.js';
 import { AGENT_ENV_MARKERS } from '../src/core/teams/identity.js';
+import { _setApprovalPresencePublicKeyForTest, approvalPresenceBytes, principalFromWebToken } from '../src/core/approvals/actor.js';
 import {
   buildApprovalsProjection, decideTeamApproval, holdsConfigPath, readHolds, readStagedPins,
 } from '../src/core/approvals/surface.js';
@@ -32,7 +35,19 @@ beforeEach(() => {
   appendEvent(T, mason, 'member.joined', {});
 });
 
+function presenceSigner() {
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const pem = publicKey.export({ type: 'spki', format: 'pem' });
+  _setApprovalPresencePublicKeyForTest(typeof pem === 'string' ? pem : pem.toString());
+  return {
+    sign(approvalId: string, decision: 'approve' | 'deny') {
+      return signBytes('sha256', approvalPresenceBytes(approvalId, decision), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64');
+    },
+  };
+}
+
 afterEach(async () => {
+  _setApprovalPresencePublicKeyForTest(null);
   vi.restoreAllMocks();
   for (const s of servers.splice(0)) await s.close();
   if (prevAshlrHome === undefined) delete process.env['ASHLR_HOME']; else process.env['ASHLR_HOME'] = prevAshlrHome;
@@ -96,14 +111,14 @@ describe('team approvals', () => {
     })]);
     expect(renderApprovals(p)).toContain(`phm team approve ${r.approvalId}`);
 
-    expect(decideTeamApproval(T, r.approvalId, 'approve')).toMatchObject({ state: 'approved' });
+    expect(decideTeamApproval(T, r.approvalId, 'approve', localHumanActor())).toMatchObject({ state: 'approved' });
     expect((await buildApprovalsProjection(T)).teamApprovals.items).toEqual([]);
   });
 
-  it('refuses to decide from an agent process: the click is the approval, never an agent', () => {
+  it('refuses the local human terminal when the process is an agent', () => {
     const r = requestAccess(T, codex, { type: 'member.invited', memberId: 'human:evan' });
     vi.stubEnv('CODEX_THREAD_ID', 'thread-1');
-    expect(() => decideTeamApproval(T, r.approvalId, 'approve')).toThrow(/not an agent process/);
+    expect(() => decideTeamApproval(T, r.approvalId, 'approve', localHumanActor())).toThrow(/not an agent process/);
     expect(teamState(T).approvals.find((a) => a.id === r.approvalId)?.state).toBe('pending');
     vi.unstubAllEnvs();
   });
@@ -160,14 +175,73 @@ describe('/api/approvals', () => {
     expect(bad.status).toBe(400);
     const spoof = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T, actor: 'human:x' });
     expect(spoof.status).toBe(400);
+    const spoofObject = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T, actor: { kind: 'human', id: 'human:mason' } });
+    expect(spoofObject.status).toBe(400);
+    const signer = presenceSigner();
+    const spoofWithProof = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, {
+      decision: 'approve', team: T, actor: 'human:mason', assertion: signer.sign(r.approvalId, 'approve'),
+    });
+    expect(spoofWithProof.status).toBe(400);
     const noToken = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T }, { 'x-ashlr-token': 'wrong' });
     expect(noToken.status).toBe(401);
     expect(teamState(T).approvals[0]!.state).toBe('pending');
 
-    const ok = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T });
+    const bare = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T });
+    expect(bare.status).toBe(403);
+    expect(JSON.parse(bare.body)).toMatchObject({ code: 'human-presence-required' });
+    expect(teamState(T).approvals[0]).toMatchObject({ state: 'pending', decidedBy: null });
+    expect(JSON.stringify(readEvents(T))).not.toContain(h.token);
+
+    const ok = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, {
+      decision: 'approve', team: T, assertion: signer.sign(r.approvalId, 'approve'),
+    });
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ state: 'approved' });
     expect(teamState(T).approvals[0]).toMatchObject({ state: 'approved', decidedBy: mason.id });
+    const decided = readEvents(T).find((e) => e.type === 'approval.decided');
+    expect(decided?.actor).toMatchObject({ kind: 'human', id: mason.id, principal: principalFromWebToken(h.token).id });
+    expect(decided?.payload['principal']).toBe(principalFromWebToken(h.token).id);
+    expect(JSON.stringify(decided)).not.toContain(h.token);
+  });
+
+  it('refuses an assertion replayed onto another id or decision', async () => {
+    const first = requestAccess(T, codex, { type: 'member.invited', memberId: 'human:evan' });
+    const second = requestAccess(T, codex, { type: 'repo.linked', repo: 'ashlrai/phantom' });
+    const h = await server();
+    const signer = presenceSigner();
+    const proof = signer.sign(first.approvalId, 'approve');
+    const otherId = await call(h, 'POST', `/api/approvals/team/${second.approvalId}/decision`, { decision: 'approve', team: T, assertion: proof });
+    const otherDecision = await call(h, 'POST', `/api/approvals/team/${first.approvalId}/decision`, { decision: 'deny', team: T, assertion: proof });
+    expect(otherId.status).toBe(403);
+    expect(JSON.parse(otherId.body).code).toBe('human-presence-required');
+    expect(otherDecision.status).toBe(403);
+    expect(JSON.parse(otherDecision.body).code).toBe('human-presence-required');
+    expect(teamState(T).approvals.every((a) => a.state === 'pending')).toBe(true);
+  });
+
+  it('records an agent-allowed decision as the token principal', async () => {
+    const handoff = requestHandoff(T, codex, { title: 'note a review' });
+    const approval = appendUnlocked(T, codex, 'approval.requested', { handoffId: handoff.handoffId, audience: 'agent' });
+    const h = await server();
+    const res = await call(h, 'POST', `/api/approvals/team/${approval.id}/decision`, { decision: 'approve', team: T });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ state: 'approved' });
+    const principal = principalFromWebToken(h.token);
+    expect(teamState(T).approvals.find((a) => a.id === approval.id)).toMatchObject({ state: 'approved', decidedBy: principal.id });
+    const decided = readEvents(T).find((e) => e.type === 'approval.decided' && e.payload['approvalId'] === approval.id);
+    expect(decided?.actor).toMatchObject({ kind: 'agent', id: principal.id, principal: principal.id });
+    expect(JSON.stringify(decided)).not.toContain(h.token);
+    expect(teamState(T).handoffs.find((row) => row.id === handoff.handoffId)?.state).toBe('open');
+  });
+
+  it('does not downgrade a consequential approval when the log asks for an agent audience', async () => {
+    const handoff = requestHandoff(T, codex, { title: 'ship', action: 'merge' });
+    const forged = appendUnlocked(T, codex, 'approval.requested', { handoffId: handoff.handoffId, audience: 'agent' });
+    const h = await server();
+    const res = await call(h, 'POST', `/api/approvals/team/${forged.id}/decision`, { decision: 'approve', team: T });
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).code).toBe('human-presence-required');
+    expect(teamState(T).approvals.find((a) => a.id === forged.id)?.state).toBe('pending');
   });
 
   it('does not expose the decision route without --allow-dispatch', async () => {
@@ -176,13 +250,24 @@ describe('/api/approvals', () => {
     expect(res.status).toBe(404);
   });
 
-  it('refuses with 403 when the server runs inside an agent process', async () => {
+  it('does not attribute a human from the server environment', async () => {
     const r = requestAccess(T, codex, { type: 'member.invited', memberId: 'human:evan' });
     const h = await server();
     vi.stubEnv('CODEX_THREAD_ID', 'thread-1');
-    const res = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T });
+    const bare = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, { decision: 'approve', team: T });
+    expect(bare.status).toBe(403);
+    expect(JSON.parse(bare.body).code).toBe('human-presence-required');
+    expect(teamState(T).approvals[0]).toMatchObject({ state: 'pending', decidedBy: null });
+
+    const signer = presenceSigner();
+    const proved = await call(h, 'POST', `/api/approvals/team/${r.approvalId}/decision`, {
+      decision: 'approve', team: T, assertion: signer.sign(r.approvalId, 'approve'),
+    });
     vi.unstubAllEnvs();
-    expect(res.status).toBe(403);
-    expect(teamState(T).approvals[0]!.state).toBe('pending');
+    expect(proved.status).toBe(200);
+    expect(teamState(T).approvals[0]).toMatchObject({ state: 'approved', decidedBy: mason.id });
+    const decided = readEvents(T).find((e) => e.type === 'approval.decided');
+    expect(decided?.actor.kind).toBe('human');
+    expect(decided?.actor.principal).toBe(principalFromWebToken(h.token).id);
   });
 });

@@ -2,7 +2,7 @@
 import type { ApiModule } from './api-modules.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { scrubSecrets } from '../util/scrub.js';
-import { localHumanActor } from '../teams/identity.js';
+import { agentActorForToken } from '../approvals/actor.js';
 import { inviteMember, memberIdForGithubUser } from '../teams/membership.js';
 import { validId, type TeamActor } from '../teams/protocol.js';
 import { teamState, type TeamState } from '../teams/state.js';
@@ -18,7 +18,10 @@ export interface TeamApiDeps {
   readTeam?: (team: string) => TeamState;
   /** Default: inviteMember — the locked append, with its own owner/admin check. */
   invite?: typeof inviteMember;
-  /** Default: localHumanActor — this node's OS-user identity, never a request field. */
+  /**
+   * Test seam. Production omits this and uses the web-token principal, which
+   * is an agent and cannot invite. Never a request field.
+   */
   actor?: () => TeamActor;
 }
 
@@ -51,7 +54,7 @@ const refused = (res: Parameters<ApiModule>[2]): void => {
 export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
   const readTeam = deps.readTeam ?? teamState;
   const invite = deps.invite ?? inviteMember;
-  const actor = deps.actor ?? localHumanActor;
+  const actorFor = (token: string): TeamActor => deps.actor ? deps.actor() : agentActorForToken(token);
 
   function view(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): void {
     let team: string;
@@ -86,7 +89,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
     });
   }
 
-  async function inviteMemberRoute(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2]): Promise<void> {
+  async function inviteMemberRoute(req: Parameters<ApiModule>[1], res: Parameters<ApiModule>[2], token: string): Promise<void> {
     const body = await jsonBody(req);
     if (!record(body) || !hasExactKeys(body, ['team', 'githubUser'])) {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid invite body' }); return;
@@ -99,7 +102,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
       sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid GitHub username' }); return;
     }
     let who: TeamActor;
-    try { who = actor(); } catch { refused(res); return; }
+    try { who = actorFor(token); } catch { refused(res); return; }
     try {
       const r = invite(team, who, githubUser);
       sendJson(res, 201, { v: 1, team: r.team, member: r.member, invite: r.invite, grants: r.grants, next: r.next });
@@ -123,7 +126,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
           const body = await jsonBody(req);
           if (!record(body) || Object.keys(body).length !== 2 || !validTeamId(body.team) || !('person' in body)) throw new DirectoryInputError('Invalid teammate request.');
           let who: TeamActor;
-          try { who = actor(); } catch { throw new DirectoryRefusedError(OWNER_ONLY); }
+          try { who = actorFor(ctx.token); } catch { throw new DirectoryRefusedError(OWNER_ONLY); }
           sendJson(res, 201, addTeamPerson(body.team, who, body.person));
         }
       } catch (error) {
@@ -140,7 +143,7 @@ export function createTeamApi(deps: TeamApiDeps = {}): ApiModule {
     if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
     if (method === 'POST' && !passesMutationGate(req, res, ctx.token)) return true;
     if (route === 'view') view(req, res);
-    else await inviteMemberRoute(req, res);
+    else await inviteMemberRoute(req, res, ctx.token);
     return true;
   };
 }

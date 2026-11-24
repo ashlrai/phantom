@@ -93,7 +93,7 @@ describe('agent access requests', () => {
   it('agents can never decide: self-approve, spoofed human id and member-role humans all fail', () => {
     const r = requestAccess(T, codex, { type: 'member.invited', memberId: 'human:evan' });
     const before = readEvents(T);
-    expect(() => decideApproval(T, codex, r.approvalId, 'approve')).toThrow(/humans/);
+    expect(() => decideApproval(T, codex, r.approvalId, 'approve')).toThrow(/human-presence-required/);
     expect(() => decideApproval(T, { kind: 'human', id: 'agent:codex/acct-2' }, r.approvalId, 'approve')).toThrow(/humans/);
     expect(() => decideApproval(T, { kind: 'human', id: 'human:impostor' }, r.approvalId, 'approve')).toThrow(/derived locally/);
     // A human member (not owner/admin) cannot decide either.
