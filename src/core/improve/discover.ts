@@ -502,6 +502,7 @@ import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
+import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1168,6 +1169,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // machinery and carries no repository column.
   items.push(...await auditBacklogItems({ repo }));
+
+  // Desktop render-crash journal: the console's own error boundaries
+  // report every caught render crash through POST
+  // /api/verse/desktop-errors, and recordDesktopError appends one
+  // scrubbed {at, surface, message, stack?, componentStack?,
+  // appVersion?, fingerprint} line per post-dedupe sighting to
+  // desktop/errors.jsonl under the runs dir, rotating once to
+  // errors.1.jsonl at 2 MiB. Until now the ledger's only reader was
+  // `ashlr fleet desktop-errors` — a report someone had to run with a
+  // 24-hour window and a 50-group cap — so a crash fingerprint
+  // recurring day after day in this repo's own console never became a
+  // recurrence, never work. Same bounded no-follow tail reads of both
+  // files and the writer's own record contract; a fingerprint emits
+  // only at the recurring bars of records across distinct UTC days
+  // inside the window, an unreadable read yields nothing while a
+  // truncated tail folds lower-bound flagged, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's console and carries no repository column.
+  items.push(...await desktopErrorBacklogItems({ repo }));
   return { items, errors };
 }
 

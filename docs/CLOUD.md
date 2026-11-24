@@ -935,7 +935,29 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   outside the window and non-partition names are never read, a
   truncated partition tail is stated as a lower bound, and rows emit
   only for the fleet's own repository since the journal describes
-  this install's machinery and carries no repository column.
+  this install's machinery and carries no repository column,
+  and the desktop render-crash journal's recurring fingerprints, the
+  per-crash {at, surface, message, stack?, componentStack?,
+  appVersion?, fingerprint} rows recordDesktopError in
+  `src/core/verse/desktop-error-report.ts` appends to
+  `<runs>/desktop/errors.jsonl` — with a single errors.1.jsonl
+  rotation once the live file passes 2 MiB — on every caught render
+  crash the console's error boundaries report through
+  `src/web-ui/lib/report-desktop-error.ts` to POST
+  /api/verse/desktop-errors (otherwise only visible through `ashlr
+  fleet desktop-errors`, a report someone had to run with a
+  24-hour window and a 50-group cap, so a crash recurring day after
+  day in this repo's own console never became work). A cell — one
+  fingerprint, the writer's sha256 of surface + first stack frame +
+  message — becomes an item only while its in-window records reach
+  the recurring bars of three across two distinct UTC days inside
+  the 7-day window; every record is already a post-dedupe sighting
+  (the writer drops a repeat fingerprint inside ten minutes), so
+  units count distinct sightings, malformed lines and off-contract
+  rows drop like the writer's contract, a truncated ledger tail is
+  stated as a lower bound, and rows emit only for the fleet's own
+  repository since the journal describes this install's console and
+  carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -944,7 +966,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
-  audit-trail and fleet-self-tick items carry priority 3;
+  audit-trail, desktop-console and fleet-self-tick items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1150,7 +1172,16 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   owner-side no-change escape for a correctly configured hold, a
   rolled-forward window or pinned ops machinery, and emit only for
   the fleet's own repository since the journal records this
-  install's actions and carries no repository column. They
+  install's actions and carries no repository column. Desktop-console
+  items name the crash journal, `ashlr fleet desktop-errors`,
+  `src/core/verse/desktop-error-report.ts` and the reporting call
+  sites under src/web-ui, keep the find-the-throwing-surface framing —
+  the surface's error boundary catching a recurring fault versus a
+  crash a restart or deploy already fixed — with the same owner-side
+  no-change escape for a rolled-forward window or pinned ops
+  machinery, and emit only for the fleet's own repository since the
+  journal records this install's console and carries no repository
+  column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
