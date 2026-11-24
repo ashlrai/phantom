@@ -12,11 +12,18 @@
  *    latest base, so a pending or green PR there is left alone). The host calls
  *    `updatePullRequestBranch` with the MERGE method and `expectedHeadOid`:
  *    a base merge commit on top of the head, never a rewrite or force-push.
- *  - conflict: CONFLICTING/DIRTY needs an agent. One fix-forward line per
- *    head goes to the RQ queue under the same id refix-loop uses
- *    (`drainKey`), so the two producers can never double-append. Recovery
- *    re-reads open PRs before acting and after mechanical resolution; a green
- *    recovered head re-enters only through the same gated auto-merge path.
+ *  - conflict: CONFLICTING/DIRTY is first recut automatically when a resolver
+ *    is wired (core/fleet/merge-recut.ts): the current default branch is
+ *    merged into the PR head in a throwaway worktree, mechanical conflicts
+ *    (lockfile, generated, changelog) are resolved, and the single merge
+ *    commit is pushed back as a lease-protected fast-forward — never a
+ *    rewrite. A recut head restarts every required check and re-enters only
+ *    through the same gated auto-merge path. What the recut cannot prove
+ *    mechanical keeps the agent lane: one fix-forward line per head goes to
+ *    the RQ queue under the same id refix-loop uses (`drainKey`), so the two
+ *    producers can never double-append. Recovery re-reads open PRs before
+ *    acting and after resolution; a mid-flight observation race ('transient')
+ *    spends no lane job and retries under the same budget.
  *
  * What this cycle never does: merge, use --admin, skip required checks,
  * enable auto-merge outside a merge queue, touch held or non-fleet PRs, or
@@ -57,6 +64,10 @@ export interface MergeQueuePr {
   id: string;
   number: number;
   headSha: string;
+  /** PR head branch name; the automatic recut pushes its merge commit here. */
+  headRef: string;
+  /** Head repository (`owner/name`); `null` for fork-hosted heads. */
+  headRepo: string | null;
   baseRef: string;
   isDraft: boolean;
   author: string;
@@ -116,13 +127,18 @@ export interface MergeQueueIo {
   /** updatePullRequestBranch(pullRequestId, expectedHeadOid, updateMethod: MERGE). */
   updateBranch(repo: string, pr: MergeQueuePr): void;
   /**
-   * Optional mechanical conflict resolution (core/fleet/conflict-resolve.ts):
-   * merge the base into the PR head in a throwaway worktree and push the merge
-   * commit (never a force-push). 'resolved' means a new head was pushed and the
-   * PR needs no agent; 'real' means a conflict a model must read. A throw is
-   * treated as 'real'. Absent: every conflict goes straight to the lane.
+   * Optional automatic recut (core/fleet/merge-recut.ts): merge the current
+   * default branch into the PR head in a throwaway worktree, resolve the
+   * mechanical conflicts (conflict-resolve.ts policy) and push the single
+   * merge commit back to the PR branch — a lease-protected fast-forward,
+   * never a force-push. 'resolved' means the head was recut and the PR needs
+   * no agent; 'real' means a conflict a model must read; 'transient' means an
+   * observation raced (moved head or branch, provider failure) and the PR
+   * should retry under its existing budget instead of spending a lane. A
+   * throw is still treated as 'real'. Absent: every conflict goes straight to
+   * the lane.
    */
-  resolveConflict?(repo: string, pr: MergeQueuePr): 'resolved' | 'real';
+  resolveConflict?(repo: string, pr: MergeQueuePr): 'resolved' | 'real' | 'transient';
   readQueueIds(): Set<string>;
   appendQueueLine(line: string): void;
   /** Canonical hold list as "<short>#<n>"; must throw if unreadable. */
@@ -388,8 +404,16 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
           ({ pr, action } = current);
           // Mechanical first: lockfile, generated and changelog conflicts never need a model.
           if (action === 'conflict' && io.resolveConflict) {
-            let outcome: 'resolved' | 'real' = 'real';
+            let outcome: 'resolved' | 'real' | 'transient' = 'real';
             try { outcome = io.resolveConflict(repo, pr); } catch { io.log(`MERGEQ_GH_ERROR resolve ${repo}#${pr.number}`); }
+            if (outcome === 'transient') {
+              // The recut observed a race (moved head or branch, provider
+              // failure): spend no lane job, retry under the same budget.
+              result.failed.push(pr.number);
+              summary.failed++;
+              io.log(`MERGEQ_GH_ERROR resolve ${repo}#${pr.number}`);
+              continue;
+            }
             if (outcome === 'resolved') {
               result.resolved.push(pr.number);
               summary.resolved++;

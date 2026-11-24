@@ -5,7 +5,12 @@
 //        [--hold-file PATH] [--state-file PATH] [--via-locus]
 //     One enqueue/rebase/conflict pass over the seven approved repos
 //     (src/core/drive/merge-queue-loop.ts). `gh` must already be authorized;
-//     --via-locus runs it as `locus exec -- gh`. Prints the JSON summary.
+//     --via-locus runs it as `locus exec -- gh`. Conflicting same-repo
+//     codex-bridge PRs are first recut automatically (dist core/fleet/
+//     merge-recut.js): current default branch merged into the head, mechanical
+//     conflicts resolved, one merge commit pushed back as a lease-protected
+//     fast-forward; what is not provably mechanical still drains to the lane.
+//     Prints the JSON summary.
 //
 //   node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE_DIR ...
 //        [--ref REF] [--day YYYY-MM-DD] [--out PATH]
@@ -19,8 +24,8 @@
 // Defaults live under ~/.ashlr-runs (queue/, metrics/).
 // stderr carries only constant MERGEQ_* lines; provider output is never echoed.
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +44,8 @@ const SNAPSHOT_QUERY = `query($name: String!, $cursor: String) {
     pullRequests(states: OPEN, first: 50, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        id number headRefOid baseRefName isDraft author { login }
+        id number headRefOid headRefName baseRefName isDraft author { login }
+        headRepository { nameWithOwner }
         mergeable mergeStateStatus reviewDecision isInMergeQueue
         autoMergeRequest { enabledAt }
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
@@ -163,6 +169,9 @@ export function readSnapshot(gh, repo, claims = []) {
         id: String(node.id ?? ''),
         number: Number(node.number),
         headSha: String(node.headRefOid ?? ''),
+        headRef: String(node.headRefName ?? ''),
+        headRepo: typeof node.headRepository?.nameWithOwner === 'string' && node.headRepository.nameWithOwner
+          ? node.headRepository.nameWithOwner : null,
         baseRef: String(node.baseRefName ?? ''),
         isDraft: node.isDraft === true,
         author: String(node.author?.login ?? ''),
@@ -197,6 +206,7 @@ async function cycle(args) {
   const stateFile = resolve(flags['--state-file'] ?? `${queue}.mergeq-state.json`);
   const { runMergeQueueCycle, normalizeMergeQueueState } = await import('../dist/core/drive/merge-queue-loop.js');
   const { claimBoard } = await import('../dist/core/agents/claim-store.js');
+  const { makeMergeRecutResolver } = await import('../dist/core/fleet/merge-recut.js');
   const gh = makeGh(flags['--via-locus'] === true);
   const run = (query, pr) => gh(['api', 'graphql', '-H', 'GraphQL-Features: merge_queue',
     '-f', `query=${query}`, '-f', `id=${pr.id}`, '-f', `oid=${pr.headSha}`]);
@@ -210,6 +220,9 @@ async function cycle(args) {
     enqueue: (repo, pr) => enqueueMergeQueuePr(gh, repo, pr),
     dequeue: (repo, pr) => dequeueMergeQueuePr(gh, repo, pr),
     updateBranch: (_repo, pr) => ensureOk(run(UPDATE, pr)),
+    // Automatic recut for conflicting fleet PRs; dry runs never call it and a
+    // 'transient' outcome (moved head/branch, provider failure) never drains.
+    resolveConflict: makeMergeRecutResolver(makeRecutRunner()),
     readQueueIds: () => readQueueIds(queue),
     appendQueueLine: (line) => {
       mkdirSync(dirname(queue), { recursive: true, mode: 0o700 });
@@ -231,6 +244,44 @@ function git(dir, args) {
     encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0', TZ: 'UTC' },
   });
+}
+
+// Synchronous MergeRecutRunner (src/core/fleet/merge-recut.ts) for the loop's
+// conflict arm: one disposable object store + worktree per recut, bounded
+// processes, no shell, and provider output is never echoed upward.
+const READ_LIMIT_BYTES = 2 * 1024 * 1024;
+export function makeRecutRunner() {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', TZ: 'UTC' };
+  return {
+    git(args, opts = {}) {
+      try {
+        const stdout = execFileSync('git', [...args], {
+          cwd: opts.cwd, encoding: 'utf8', timeout: 60_000, maxBuffer: 64 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'ignore'], env,
+        });
+        return { code: 0, stdout: stdout ?? '' };
+      } catch (error) {
+        // Provider text may carry credentials; the core module reasons on
+        // constant strings only, so discard it here too.
+        if (opts.allowFail && typeof error.status === 'number') return { code: error.status, stdout: '' };
+        throw new Error('git failed');
+      }
+    },
+    readFile(path) {
+      if (statSync(path).size > READ_LIMIT_BYTES) throw new Error('oversized file');
+      return readFileSync(path, 'utf8');
+    },
+    writeFile(path, text) { writeFileSync(path, text, { mode: 0o600 }); },
+    mkdir(path) { mkdirSync(path, { recursive: true, mode: 0o700 }); },
+    mkdtemp(prefix) { return mkdtempSync(join(tmpdir(), prefix)); },
+    rmrf(path) { rmSync(path, { recursive: true, force: true }); },
+    run(cwd, argv) {
+      try {
+        execFileSync(argv[0], argv.slice(1), { cwd, timeout: 300_000, stdio: 'ignore', env });
+        return true;
+      } catch { return false; }
+    },
+  };
 }
 
 async function metrics(args) {
