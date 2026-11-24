@@ -8,6 +8,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const SCHEMA = 'phantom-dep-graph.v1';
+// Bumped when specifier resolution changes. Older graphs are rebuilt, not reused.
+export const RESOLVER = 2;
 const CODE = /\.(?:[cm]?[jt]sx?)$/;
 const SPEC = /(?:^|[\s;])(?:import|export)\s+(?:type\s+)?(?:[^'";]*?\sfrom\s*)?['"](\.[^'"]+)['"]|import\(\s*['"](\.[^'"]+)['"]\s*\)|require\(\s*['"](\.[^'"]+)['"]\s*\)/g;
 
@@ -28,7 +30,10 @@ export function resolveSpecifier(fromFile, spec, files) {
   const joined = `${dir}/${spec}`.replace(/^\//, '');
   const raw = joined.split('/').reduce((acc, part) => {
     if (part === '' || part === '.') return acc;
-    if (part === '..') return acc.slice(0, acc.lastIndexOf('/'));
+    if (part === '..') {
+      const slash = acc.lastIndexOf('/');
+      return slash === -1 ? '' : acc.slice(0, slash);
+    }
     return acc ? `${acc}/${part}` : part;
   }, '');
   const base = raw.replace(/\.(?:[cm]?js|[cm]?ts|tsx|jsx)$/, '');
@@ -44,6 +49,18 @@ function emptyGraph() {
   return { schema: SCHEMA, files: {} };
 }
 
+const COMMIT = /^[0-9a-f]{40}$/;
+
+function commitOf(value) {
+  return typeof value === 'string' && COMMIT.test(value) ? value : '';
+}
+
+/** Exact HEAD pin with a non-empty file map from the current resolver. */
+export function graphCoversCommit(graph, head) {
+  return graph?.commit === head && COMMIT.test(head) && graph.resolver === RESOLVER
+    && graph.files && Object.keys(graph.files).length > 0;
+}
+
 export function normalizeGraph(value) {
   if (!value || value.schema !== SCHEMA || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) return emptyGraph();
   const files = {};
@@ -54,9 +71,18 @@ export function normalizeGraph(value) {
       hash: node.hash,
       imports: node.imports.filter((item) => typeof item === 'string'),
       ...(unresolved.length ? { unresolved } : {}),
+      ...(node.dynamic === true ? { dynamic: true } : {}),
     };
   }
-  return { schema: SCHEMA, files, ...(Object.values(files).some((node) => node.unresolved?.length) ? { unknown: true } : {}) };
+  const commit = commitOf(value.commit);
+  const resolver = value.resolver === RESOLVER ? RESOLVER : 0;
+  return {
+    schema: SCHEMA,
+    files,
+    ...(commit ? { commit } : {}),
+    ...(resolver ? { resolver } : {}),
+    ...(Object.values(files).some((node) => node.unresolved?.length) ? { unknown: true } : {}),
+  };
 }
 
 const ASSET = /\.(?:css|scss|sass|less|svg|png|gif|webp|jpe?g|woff2?|mp3|mp4)$/i;
@@ -72,11 +98,14 @@ function importEdges(text, from, files) {
     if (target && target !== from) imports.push(target);
     else if (!target) unresolved.push(spec);
   }
-  if (/import\s*\(\s*`[^`]*\.\.?\/[^`]*`/.test(text)) unresolved.push('dynamic');
+  // A non-literal import() (template or expression) has no static target.
+  // String-literal import() is already in SPEC. Kept off `unresolved` so one
+  // dynamic file does not mark the whole graph unknown for typecheck.
+  const dynamic = /import\s*\(\s*(?!['"])/.test(text);
   for (const match of text.matchAll(/\/\/\/\s*<reference\s+path="(\.[^"]+)"/g)) {
     if (!resolveSpecifier(from, match[1], files)) unresolved.push(match[1]);
   }
-  return { imports, unresolved };
+  return { imports, unresolved, dynamic };
 }
 
 /**
@@ -95,6 +124,7 @@ export function updateGraph(previous, listing) {
         hash: entry.hash,
         imports: old.imports.filter((item) => available.has(item)),
         ...(old.unresolved?.length ? { unresolved: old.unresolved } : {}),
+        ...(old.dynamic === true ? { dynamic: true } : {}),
       };
       continue;
     }
@@ -105,6 +135,7 @@ export function updateGraph(previous, listing) {
       hash: entry.hash,
       imports: edges.imports,
       ...(entry.path.startsWith('src/') && edges.unresolved.length ? { unresolved: edges.unresolved } : {}),
+      ...(entry.path.startsWith('src/') && edges.dynamic ? { dynamic: true } : {}),
     };
   }
   const unknown = Object.values(files).some((node) => node.unresolved?.length);
@@ -233,9 +264,34 @@ function blobTexts(cwd, hashes) {
   return texts;
 }
 
+function headSha(cwd) {
+  return git(cwd, ['rev-parse', 'HEAD']).trim();
+}
+
+function isAncestor(cwd, ancestor, descendant) {
+  if (!/^[0-9a-f]{40}$/.test(ancestor) || !/^[0-9a-f]{40}$/.test(descendant)) return false;
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], { cwd, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function updateFromGit(cwd, outPath) {
   let previous = emptyGraph();
   try { previous = normalizeGraph(JSON.parse(readFileSync(outPath, 'utf8'))); } catch { /* first build */ }
+  const head = headSha(cwd);
+  // An exact pin for this checkout skips the reparse. A master-published
+  // graph (ancestor of HEAD, current resolver) is updated incrementally.
+  // Anything else is rebuilt so a foreign cache cannot keep stale edges.
+  if (graphCoversCommit(previous, head)) {
+    console.log(`dependency graph: reused ${Object.keys(previous.files).length} files at ${head}`);
+    return previous;
+  }
+  const priorCommit = previous.commit ?? '';
+  const sameHistory = priorCommit === head || isAncestor(cwd, priorCommit, head);
+  if (previous.resolver !== RESOLVER || !sameHistory) previous = emptyGraph();
   const entries = listing(cwd);
   const prior = previous.files;
   const missing = entries.filter((entry) => prior[entry.path]?.hash !== entry.hash);
@@ -243,10 +299,11 @@ function updateFromGit(cwd, outPath) {
   const texts = blobTexts(cwd, missing.map((entry) => entry.hash));
   for (const entry of missing) entry.text = texts.get(entry.hash) ?? '';
   const { graph, reparsed } = updateGraph(previous, entries);
+  const stamped = { ...graph, commit: head, resolver: RESOLVER };
   mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, JSON.stringify(graph));
+  writeFileSync(outPath, JSON.stringify(stamped));
   console.log(`dependency graph: ${Object.keys(graph.files).length} files, ${reparsed} reparsed`);
-  return graph;
+  return stamped;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
