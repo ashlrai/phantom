@@ -1,0 +1,2 @@
+.panel { min-width: 0; overflow-wrap: anywhere; }
+.details summary { min-height: 44px; cursor: pointer; }

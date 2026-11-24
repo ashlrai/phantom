@@ -1,0 +1,14 @@
+[
+  { "title": "bridge(RQ-HOMECARD1): RQ-HOMECARD1: add a Shipped card to Home (#101)", "number": 101, "mergedAt": "2026-11-16T10:00:00Z", "paths": ["src/web-ui/routes/verse/home/ShippedCard.tsx", "src/web-ui/routes/verse/home/ShippedCard.test.tsx"] },
+  { "title": "fix(desktop): restore the window size after restart", "number": 102, "mergedAt": "2026-11-15T09:00:00Z", "paths": ["desktop/src-tauri/src/main.rs"] },
+  { "title": "feat(cli): add phm shipped", "number": 103, "mergedAt": "2026-11-14T08:00:00Z", "paths": ["src/cli/shipped.ts", "src/cli/help.ts", "docs/cli.md"] },
+  { "title": "RQ-LANES7: show held lanes in the roster", "number": 104, "mergedAt": "2026-11-13T08:00:00Z", "paths": ["src/core/fleet/roster.ts", "src/cli/fleet.ts"] },
+  { "title": "Telegram replies keep their thread", "number": 105, "mergedAt": "2026-11-12T08:00:00Z", "paths": ["src/core/comms/telegram-channel.ts"] },
+  { "title": "docs: explain the update channel", "number": 106, "mergedAt": "2026-11-12T07:00:00Z", "paths": ["docs/DESKTOP-UPDATE-CHANNEL.md"] },
+  { "title": "Speed up the index build", "number": 107, "mergedAt": "2026-11-12T06:00:00Z", "paths": ["src/core/index-engine.ts"] },
+  { "title": "Tidy the merge path", "number": null, "mergedAt": "2026-11-12T05:00:00Z", "paths": [] },
+  { "title": "recut of #101: add a Shipped card to Home (#108)", "number": 108, "mergedAt": "2026-11-16T12:00:00Z", "paths": ["src/web-ui/routes/verse/home/ShippedCard.tsx"] },
+  { "title": "chore(master): release 3.30.37 (#109)", "number": 109, "mergedAt": "2026-11-16T13:00:00Z", "paths": ["CHANGELOG.md", "package.json"] },
+  { "title": "Cover the roster with more cases", "number": 110, "mergedAt": "2026-11-15T13:00:00Z", "paths": ["test/roster.test.ts", "test/fixtures/roster.json"] },
+  { "title": "feat(cli): an older change outside the week", "number": 90, "mergedAt": "2026-11-01T08:00:00Z", "paths": ["src/cli/help.ts"] }
+]

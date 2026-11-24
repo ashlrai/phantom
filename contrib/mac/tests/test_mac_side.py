@@ -169,6 +169,59 @@ class ClosedPrune(unittest.TestCase):
                  {'event': 'outcome', 'job': 'RQ-X', 'state': 'MERGED', 'url': 'new'}]
         self.assertEqual(prune.closed_jobs(rows), {'RQ-X': 'MERGED'})
 
+    def test_375_terminal_worktrees_removed_once_and_five_kept_with_reasons(self):
+        self.wtroot = self.runs.parent / 'wt-large'; self.wtroot.mkdir()
+        terminal = [f'RQ-MDA1102-{i:03d}Q8' for i in range(375)]
+        kept = {'RQ-KEEP': 'keep-list', 'RQ-LIVE': 'live-process', 'RQ-LEASED': 'claimed',
+                'RQ-REAP': 'claimed', 'RQ-PROTECTED': 'protected-payload'}
+        rows = []
+        for job in terminal + list(kept):
+            git('worktree', 'add', '-q', '--detach', str(self.wtroot / job), cwd=self.repo)
+            rows.append({'event': 'outcome', 'job': job, 'state': 'MERGED'})
+        (self.runs / 'metrics/jobs.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        marker = self.runs / 'queue/run/RQ-REAP.reaping'; marker.mkdir(); os.utime(marker, (1, 1))
+        payload = self.wtroot / 'RQ-PROTECTED/node_modules/Documents'; payload.mkdir(parents=True)
+        (payload / 'sentinel').write_text('retain')
+        for expected in (375, 0):
+            result = self.run_cli('--apply', '--max', '375')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['removed'], expected)
+            self.assertEqual({it['job']: it['why'] for it in report['skipped']}, kept)
+            self.assertEqual(len(report['skipped']), 5)
+        lines = (self.runs / 'dispatch-events.log').read_text().splitlines()
+        removed = [line.split('WT_REMOVED ')[1] for line in lines if 'WT_REMOVED ' in line]
+        self.assertEqual(sorted(removed), terminal)
+        for job, why in kept.items():
+            self.assertEqual(sum(f'REAP_SKIP {why} {job}' in line for line in lines), 2)
+        self.assertEqual(sorted(p.name for p in self.wtroot.iterdir()), sorted(kept))
+        self.assertEqual((payload / 'sentinel').read_text(), 'retain')
+        self.assertTrue(marker.is_dir())
+
+    def test_unknown_processes_report_every_id_without_removing(self):
+        with patch.object(prune, 'live_commands', side_effect=RuntimeError()):
+            with patch('builtins.print') as output:
+                code = prune.main(['--apply', '--json', '--wtroot', str(self.wtroot), '--runs', str(self.runs)])
+        report = json.loads(output.call_args.args[0])
+        self.assertEqual(code, 1)
+        self.assertFalse(report['known'])
+        self.assertIsNone(report['removable'])
+        self.assertEqual(report['unknown_reasons'], ['processes-unavailable'])
+        self.assertEqual(report['removed'], 0)
+        self.assertEqual(len(report['skipped']), 8)
+        self.assertTrue(all(it['why'] == 'processes-unavailable' for it in report['skipped']))
+        self.assertEqual((self.runs / 'dispatch-events.log').read_text().count('REAP_SKIP'), 8)
+        with patch.object(prune.os, 'listdir', side_effect=PermissionError()):
+            self.assertEqual(prune.plan(str(self.wtroot), str(self.runs), [], '')[1], {'worktrees-unavailable': 1})
+
+    def test_recheck_error_and_false_git_success_do_not_claim_removal(self):
+        item = {'job': 'RQ-MERGED', 'path': str(self.wtroot / 'RQ-MERGED')}
+        with patch.object(prune, 'git', return_value=subprocess.CompletedProcess([], 0, str(self.repo / '.git'), '')):
+            removed, failed = prune.apply([item], 1, lambda _: True)
+            self.assertEqual((removed, failed[0]['why']), ([], 'worktree-remains'))
+            removed, failed = prune.apply([item], 1, unittest.mock.Mock(side_effect=RuntimeError()))
+            self.assertEqual((removed, failed[0]['why']), ([], 'state-unavailable'))
+
 
 if __name__ == '__main__':
     unittest.main()

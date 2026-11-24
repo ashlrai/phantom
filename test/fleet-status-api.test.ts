@@ -12,11 +12,13 @@ test('projects bounded observations without free text and expires availability',
   await mkdir(join(root, 'queue'));
   const now = Date.parse('2026-01-01T12:00:00Z');
   await writeFile(join(root, 'queue/status.json'), JSON.stringify({ last_tick: '2026-01-01T12:00:00Z', paused: false, mem_free_pct: 50,
-    lanes: { work: { running: 1, target: 3, queued: 0, held: false, held_reason: '/secret/path' } }, rollup_24h: { by_lane: { work: { merged: 2 } } }, secret: 'private-value' }));
+    lanes: { work: { running: 1, target: 3, effective_target: 2, queued: 0, held: false, held_reason: '/secret/path' } }, rollup_24h: { by_lane: { work: { merged: 2 } } }, secret: 'private-value' }));
   await writeFile(join(root, 'queue/claimed.tsv'), 'job-1\twork\twork\t12:00\t1767268800\n');
   const report = await fleetStatusApi(root, () => now);
   expect(report.sessions).toEqual([{ job: 'job-1', lane: 'work', tier: 'work', claimedAt: '2026-01-01T12:00:00.000Z' }]);
-  expect(report.lanes[0]).toMatchObject({ available: 2, merged24h: 2 });
+  expect(report.awareness).toMatchObject({ schema: 'fleet.awareness.v1', queue: { laneQueued: 0 } });
+  expect(report.awareness.lanes[0]).toMatchObject({ running: 1, target: 3, effectiveTarget: 2, available: 1 });
+  expect(report.lanes[0]).toMatchObject({ available: 1, effectiveTarget: 2, merged24h: 2 });
   expect(report.queue).toBeNull();
   expect(JSON.stringify(report)).not.toMatch(/private-value|secret\/path/);
   expect((await fleetStatusApi(root, () => now + 60_001)).lanes[0]?.available).toBeNull();

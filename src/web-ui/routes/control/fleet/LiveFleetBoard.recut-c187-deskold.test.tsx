@@ -1,7 +1,7 @@
 /**
  * recut-c187-deskold — coverage for the #4083 (RQ-SWE3-RESBAR-VERIFY-1) recut:
  * the Live Fleet board resolves lane → provider marks through the shared
- * providerEngine helper from ProviderLogo instead of a local copy, so local /
+ * brand registry (BrandMark) instead of a local copy, so local /
  * ollama lanes get the 'local' mark the deleted copy never returned.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

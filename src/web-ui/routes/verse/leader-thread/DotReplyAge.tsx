@@ -52,7 +52,6 @@ export function DotReplyAge({ visible = true }: { visible?: boolean }) {
       className={leaderStyles.channel}
       role="status"
       data-dot-reply={view.bucket}
-      style={view.bucket === 'late' ? { borderColor: 'var(--status-danger-solid)', color: 'var(--status-danger-fg)' } : undefined}
     >{view.text}</span>
   );
 }

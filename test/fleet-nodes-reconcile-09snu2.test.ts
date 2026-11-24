@@ -36,7 +36,7 @@ it('reads deterministic inventory and reports heartbeat evidence in JSON and tex
   const result = JSON.parse(first.output);
   expect(result.sourcePath).toBe(file);
   expect(result.observedAt).toBe(new Date(now).toISOString());
-  expect(result.nodes.map((n: { id: string; status: string }) => [n.id, n.status])).toEqual([['fresh', 'ready'], ['offline', 'down'], ['stale', 'stale'], ['unknown', 'unknown']]);
+  expect(result.nodes.map((n: { id: string; status: string }) => [n.id, n.status])).toEqual([['fresh', 'ready'], ['mbp8', 'offline'], ['offline', 'down'], ['stale', 'stale'], ['unknown', 'unknown']]);
   expect(run(['--now', new Date(now).toISOString()]).output).toContain('stale  worker  stale  heartbeat 2m');
   expect(readFileSync(file, 'utf8')).toContain('fresh');
 });

@@ -20,6 +20,7 @@ import { ensurePrivateDirectory, writePrivateFileAtomic } from '../src/core/vers
 import { resolveLeaderPreferences } from '../src/core/vision/leader-preferences.js';
 import { resolveLeaderCadence } from '../src/core/vision/leader-cadence.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import './helpers/local-memory.js';
 
 import {
   LEADER_SYSTEM_PROMPT,

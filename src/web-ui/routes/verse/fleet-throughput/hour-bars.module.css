@@ -1,0 +1,29 @@
+/* A row of bars across the window. Bars stand on a hairline; the row under the line holds a mark for each bar
+   that had a PR merged. The same picture as the Models board's work line, so the two boards read alike. */
+.row { display: flex; gap: 1px; width: 100%; min-width: 0; height: 1.75rem; border-radius: var(--radius-sm); cursor: crosshair; touch-action: pan-y; }
+.row[data-size='fleet'] { gap: 2px; height: 3rem; }
+.row:focus { outline: none; }
+.row:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.column { display: grid; flex: 1 1 0; grid-template-rows: 1fr 3px; gap: 2px; min-width: 0; }
+.bar { display: flex; align-items: flex-end; min-width: 0; border-bottom: 1px solid var(--border-default); }
+.bar i { display: block; width: 100%; border-radius: 1px 1px 0 0; background: var(--accent-500); transition: height var(--duration-base) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
+/* An hour the report holds no count for: hatched, never an empty bar. */
+.column[data-unread] .bar { background: repeating-linear-gradient(135deg, var(--status-unknown-solid) 0 2px, transparent 2px 6px); }
+.mark { border-radius: var(--radius-full); }
+.column[data-merged] .mark { background: var(--status-success-solid); }
+/* The reading cursor: one bar of time held on every row at once. The held column is washed, the rest step back. */
+.row[data-cursor] .column:not([data-at]) .bar i { opacity: 0.4; }
+.column[data-at] { border-radius: 1px; background: var(--bg-hover); }
+.column[data-at] .bar { border-bottom-color: var(--text-primary); }
+
+/* The fleet's row under the figure tiles: bars, one sentence, then the key. */
+.hours { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-canvas); }
+.line, .key { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.line[data-cursor-line] { color: var(--text-primary); font-weight: var(--font-weight-medium); }
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.key span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.key i { display: inline-block; flex: none; }
+.key i[data-part='bar'] { width: 0.25rem; height: 0.75rem; border-radius: 1px 1px 0 0; background: var(--accent-500); }
+.key i[data-part='mark'] { width: 0.5rem; height: 3px; border-radius: var(--radius-full); background: var(--status-success-solid); }
+
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }

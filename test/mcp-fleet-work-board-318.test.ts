@@ -90,12 +90,15 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(tool?.inputSchema.properties?.['limit'])
       .toMatchObject({ type: 'integer', minimum: 1, maximum: 100, default: 20 });
     expect(tool?.inputSchema.properties?.['thread']).toMatchObject({ type: 'string', maxLength: 512 });
+    expect(tool?.inputSchema.properties?.['state'])
+      .toMatchObject({ type: 'string', enum: ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'] });
   });
 
   it.each([
     [{ root: '/tmp/fake-root' }], [{ limit: 0 }], [{ limit: 101 }], [{ limit: 1.5 }],
     [{ limit: '5' }], [{ limit: null }], [{ thread: 5 }], [{ thread: null }],
-    [{ thread: 'x'.repeat(513) }], [{ path: '/tmp/x' }], [{ command: 'read' }],
+    [{ thread: 'x'.repeat(513) }], [{ state: 'bogus' }], [{ state: 'running' }],
+    [{ state: 5 }], [{ state: null }], [{ path: '/tmp/x' }], [{ command: 'read' }],
     [{ extra: 1 }], [{ limit: 1, root: '/tmp/fake-root' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const workBoard = vi.fn();
@@ -110,9 +113,25 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     const client = await connect({ status: async () => ({}), loop: async () => ({}), workBoard });
     const { parsed } = await callBoard(client);
     expect(parsed).toEqual({ fake: 'board' });
-    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined });
     await callBoard(client, { limit: 5, thread: REF_A });
-    expect(workBoard).toHaveBeenLastCalledWith({ limit: 5, thread: REF_A });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 5, thread: REF_A, state: undefined });
+    await callBoard(client, { state: 'BLOCKED' });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: 'BLOCKED' });
+  });
+
+  it('filters real board items by classified state with a true matched total', async () => {
+    post(slackRequest('slack-request-a', REF_A));
+    post(busRequest('bus-request-b'));
+    post(busRequest('bus-request-c'));
+    const { parsed } = await callBoard(await connect(), { state: 'RECEIVED', limit: 1 });
+    expect(parsed['state']).toBe('RECEIVED');
+    expect(parsed['matched']).toBe(3);
+    expect(parsed['truncated']).toBe(true);
+    const items = parsed['items'] as Array<Record<string, unknown>>;
+    expect(items).toHaveLength(1);
+    expect(items[0]!['id']).toBe('bus-request-c');
+    expect(items[0]!['state']).toBe('RECEIVED');
   });
 
   it('reports an empty board on an empty store, never inventing items', async () => {

@@ -24,6 +24,7 @@ import { publishCapacitySnapshotFrom, setBudgetCapacitySourceForTest } from '../
 import { readCapacitySnapshot, writeCapacitySnapshot, type CapacitySnapshot } from '../src/core/routing/budget-store.js';
 import type { VerseAccountCollector } from '../src/core/verse/accounts.js';
 import type { AshlrConfig } from '../src/core/types.js';
+import * as liveEngine from '../src/core/usage/resource-live/engine.js';
 
 const cfg = {} as AshlrConfig;
 
@@ -80,6 +81,40 @@ function harness(): Harness {
 const foreign = (h: Harness, ageMs: number): CapacitySnapshot => ({ v: 1, publishedAt: new Date(h.clock.now - ageMs).toISOString(), seats: [] });
 
 describe('daemon capacity publisher (c8)', () => {
+  it('refreshes the rail while dormant, single-flights and logs repeated failures only once', async () => {
+    const h = harness();
+    h.snapshot.current = foreign(h, 0);
+    let release!: () => void;
+    const refresh = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    h.deps.refreshResourceLive = refresh;
+    const pub = createDaemonCapacityPublisher(cfg, h.deps);
+    const first = pub.cycle();
+    expect(pub.cycle()).toBe(first);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    release(); await first;
+    h.deps.refreshResourceLive = async () => { throw new Error('private details'); };
+    await pub.cycle(); await pub.cycle();
+    expect(h.logs.filter(s => s.includes('resource usage'))).toEqual([
+      'daemon resource usage refresh failed; existing readings retain their original expiration',
+    ]);
+    h.deps.refreshResourceLive = async () => { throw new liveEngine.ResourceLiveBusyError(); };
+    expect((await pub.cycle()).state).toBe('dormant');
+  });
+
+  it('default wiring builds the configured bounded tick and refuses tests/non-daemons', async () => {
+    const tick = vi.spyOn(liveEngine, 'runResourceLiveTick').mockResolvedValue({} as liveEngine.ResourceLiveTickResult);
+    const deps = defaultDaemonCapacityPublisherDeps();
+    expect(deps.refreshResourceLive).toBeTypeOf('function');
+    await deps.refreshResourceLive!(cfg);
+    expect(tick).not.toHaveBeenCalled();
+    try {
+      vi.stubEnv('ASHLR_IN_DAEMON', '1'); vi.stubEnv('VITEST', ''); vi.stubEnv('NODE_ENV', '');
+      vi.stubEnv('ASHLR_DAEMON_CAPACITY_PUBLISHER', '1');
+      await deps.refreshResourceLive!({ ...cfg, usage: { liveSources: { operatorPageFallback: true } } });
+      expect(tick).toHaveBeenCalledWith(expect.objectContaining({ deadlineMs: 20_000,
+        sources: expect.objectContaining({ 'claude-weekly': expect.arrayContaining([expect.objectContaining({ tier: 'visible-window' })]) }) }));
+    } finally { vi.unstubAllEnvs(); vi.restoreAllMocks(); }
+  });
   it.each(['failure', 'lease'] as const)('idles repeated cycles after %s until the retry deadline', async (condition) => {
     const h = harness();
     h.refreshingReads = 0;

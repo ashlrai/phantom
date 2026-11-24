@@ -40,6 +40,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
+import { ancillaryStopReason, type AncillaryBudgetOptions } from './ancillary-budget.js';
 import type { AshlrConfig, Proposal, DecisionEntry } from '../types.js';
 import {
   isQualifiedJudgeOutcome,
@@ -231,7 +232,7 @@ function resolveWorkSource(
 // Options (test seams are underscore-prefixed; production path uses real APIs)
 // ---------------------------------------------------------------------------
 
-export interface CounterfactualOpts {
+export interface CounterfactualOpts extends AncillaryBudgetOptions {
   /** Override the sample cap (else cfg.foundry.counterfactualSampleCap ?? 10). */
   maxSamples?: number;
   /** Test seam: read judge traces. */
@@ -350,8 +351,14 @@ export async function runCounterfactualReplay(
     details: [],
     notes: [note],
   });
+  const stopped = (): boolean => ancillaryStopReason(opts ?? {}) !== undefined;
+  const interrupted = (): CounterfactualReport => emptyReport(`replay skipped: ${ancillaryStopReason(opts ?? {})}`);
+  const persist = (report: CounterfactualReport): void => {
+    if (!stopped()) (opts?._persistFn ?? persistReport)(report);
+  };
 
   try {
+    if (stopped()) return interrupted();
     // --- Resolve the bounded sample cap -------------------------------------
     const cfgCap = (cfg?.foundry as Record<string, unknown> | undefined)?.[
       'counterfactualSampleCap'
@@ -369,6 +376,7 @@ export async function runCounterfactualReplay(
     // Snapshot proposal authority exactly once. Replays and merged-label
     // qualification below must observe the same complete persistence boundary.
     const proposalSource = await readProposalSnapshot(opts?._readProposalsFn);
+    if (stopped()) return interrupted();
     if (proposalSource.sourceState === 'degraded' || !proposalSource.complete) {
       return emptyReport('calibration withheld: proposal source is degraded or incomplete');
     }
@@ -376,7 +384,7 @@ export async function runCounterfactualReplay(
     const proposalsById = uniqueProposalIndex(proposalSource);
     if (cap <= 0) {
       const r = emptyReport('sample cap <= 0 — nothing replayed');
-      (opts?._persistFn ?? persistReport)(r);
+      persist(r);
       return r;
     }
 
@@ -417,7 +425,7 @@ export async function runCounterfactualReplay(
       const r = emptyReport(qualifiedOutcomes.length > 0
         ? 'no replayable proposals (merged proposal authority missing or unrecoverable)'
         : 'no judged proposals with a recorded outcome found');
-      (opts?._persistFn ?? persistReport)(r);
+      persist(r);
       return r;
     }
 
@@ -427,10 +435,11 @@ export async function runCounterfactualReplay(
       const { resolveFrontierJudgeClient } = await import('./manager.js');
       resolveJudge = resolveFrontierJudgeClient;
     }
+    if (stopped()) return interrupted();
     const judgeClient = resolveJudge(cfg);
     if (!judgeClient) {
       const r = emptyReport('no frontier judge client available — cannot re-judge');
-      (opts?._persistFn ?? persistReport)(r);
+      persist(r);
       return r;
     }
 
@@ -457,6 +466,7 @@ export async function runCounterfactualReplay(
     const notes: string[] = [];
 
     for (const trace of withOutcome) {
+      if (stopped()) return interrupted();
       if (details.length >= cap) break;
 
       try {
@@ -479,7 +489,9 @@ export async function runCounterfactualReplay(
         const workSource = resolveWorkSource(proposal, ledgerEntry);
 
         // Re-judge with the CURRENT frontier judge (never saw the outcome).
-        const verdict = await judgeProposalFn(proposal, cfg, judgeClient, { recordTrace: false });
+        if (stopped()) return interrupted();
+        const verdict = await judgeProposalFn(proposal, cfg, judgeClient, { recordTrace: false, ...(opts?.signal ? { signal: opts.signal } : {}) });
+        if (stopped()) return interrupted();
 
         const replayIntent = verdictToIntent(verdict.verdict);
         const outcomeIntent = outcomeToIntent(trace.outcome);
@@ -502,11 +514,12 @@ export async function runCounterfactualReplay(
       }
     }
 
+    if (stopped()) return interrupted();
     if (details.length === 0) {
       const r = {
         ...emptyReport('no replayable proposals (outcomes present but diffs unrecoverable)'),
       };
-      (opts?._persistFn ?? persistReport)(r);
+      persist(r);
       return r;
     }
 
@@ -569,13 +582,15 @@ export async function runCounterfactualReplay(
       notes,
     };
 
-    (opts?._persistFn ?? persistReport)(report);
+    if (stopped()) return interrupted();
+    persist(report);
     return report;
   } catch {
+    if (stopped()) return interrupted();
     // Never throws — return an empty report describing the failure.
     const r = emptyReport('unexpected error during counterfactual replay');
     try {
-      (opts?._persistFn ?? persistReport)(r);
+      persist(r);
     } catch {
       /* best-effort */
     }

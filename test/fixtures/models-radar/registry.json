@@ -1,0 +1,8 @@
+[
+  {"id": "claude-fable-5-1", "provider": "anthropic", "verified_source": "https://platform.claude.com/docs/en/models/overview", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "claude-opus-5-5", "provider": "anthropic", "verified_source": "https://platform.claude.com/docs/en/models/overview", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "glm-5.3", "provider": "zai", "verified_source": "https://docs.z.ai/guides/llm/glm-5.3.md", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "gpt-6-astra", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "gpt-6-luna", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "grok-4.7", "provider": "xai", "verified_source": "https://docs.x.ai/developers/models", "verified_at": "2026-11-17", "status": "verified"}
+]

@@ -81,6 +81,7 @@ function planRow(reading: ResourceLiveReading, samples: readonly HistorySample[]
   // Local capacity has no allowance: nothing to pace, always worth using first.
   if (reading.remaining === null) {
     if (reading.class === 'free') return { ...measured, action: 'burn', reason: 'Free capacity with no allowance. Use it first.' };
+    if (reading.class === 'expiring' && !expired) return { ...measured, action: 'burn', reason: 'Zero-cost until it expires. Use it first.' };
     return { ...measured, action: 'steady', reason: 'Reading carries no remaining amount.' };
   }
   if (reading.remaining <= 0) {

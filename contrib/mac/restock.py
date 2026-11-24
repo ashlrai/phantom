@@ -8,8 +8,55 @@ import os, re, sys, json, time, fcntl, subprocess, math
 from datetime import datetime, timezone
 from launch_precheck import (precheck, park, parked as precheck_parked, park_key,
                              attempt_identity, empty_reason, read_attempts, with_prompt,
-                             admission_history, terminal_target)
+                             admission_history, terminal_target, merged_jobs)
 import queue_gate
+
+# External cycle generators also enter here. Use the CLI's shared pause decision.
+family_yield = None
+family_skip_logged = set()
+def family_paused(job):
+    global family_yield
+    if not re.search(r"LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN", job): return False
+    if family_yield is None:
+        try:
+            report = json.loads(subprocess.run(["phm", "fleet", "yield", "--json", "--metrics", R + "/metrics/jobs.jsonl"],
+                capture_output=True, text=True, timeout=15, check=True).stdout)
+            family_yield = {r["family"]: r.get("pausedReason") or "recent workers found no source or made no changes"
+                            for r in report["launch_families"] if r.get("paused") is True}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+            family_yield = {}  # Unknown evidence never suppresses work.
+    family = re.sub(r"\d+[A-Za-z]?$", "", job)
+    if family not in family_yield: return False
+    if family not in family_skip_logged:
+        print("skip %s: %s" % (re.sub(r"^RQ-(?:PHX-)?", "", family), family_yield[family]), file=sys.stderr)
+        family_skip_logged.add(family)
+    return True
+
+def semantic_dedupe(lines):
+    """Pure admission plan; keep in parity with core/queue/semantic-dedupe.ts."""
+    rows, unknown, repeats, marked = [], [], [], {}
+    target = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w.-]+\.(?:tsx?|mjs|cjs|jsx?|py|rs|go|md|json|ya?ml|toml|sh|css|html)\b|\bmodule\s+`?[\w.-]+`?", re.ASCII)
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*-\s+(READY|CLAIMED|RUNNING)\b", line, re.I): continue
+        m = re.match(r"^\s*-\s+(READY|CLAIMED|RUNNING)\s+(?:\S+\s+)*?([\w.-]+)(?: r\d+)?\s+\(([^)]*)\):\s*(.*)", line, re.I | re.ASCII)
+        repo = re.search(r"\brepo=(?:ashlrai/)?([\w.-]+)(?=[,;\s)]|$)", m[3] if m else "", re.I | re.ASCII)
+        goal = m[4].lower() if m else ""
+        files = {re.sub(r"^module\s+`?|`$|\.+$", "", s) for s in target.findall(goal)}
+        tokens = set(re.findall(r"[a-z0-9]+", re.sub(r"\b(?:add\s+)?(?:one|single|1)[ -](?:test[ -])?case\b", " ", target.sub(" ", goal)))) - set("a an the to in of and or for with at on by is it be as acceptance".split())
+        if not m or not repo or not files or len(tokens) < 3:
+            unknown.append(dict(id=m[2] if m else None, line=i + 1, reason="Missing id, repo, file/module, or three goal tokens")); continue
+        prs = ','.join(sorted(re.findall(r"(?:\bpr[=#]|#|/pull/)(\d+)", m[3] + ' ' + goal, re.I)))
+        rows.append(dict(id=m[2], repo=repo[1].lower(), files=files, tokens=tokens, prs=prs, index=i, ready=m[1].upper() == "READY"))
+    kept = [r for r in rows if not r['ready']]
+    for row in (r for r in rows if r['ready']):
+        prior = next((p for p in kept if p['id'] != row['id'] and p['repo'] == row['repo'] and p['prs'] == row['prs'] and p['files'] & row['files']
+                      and len(p['tokens'] & row['tokens']) / len(p['tokens'] | row['tokens']) >= 0.5), None)
+        if prior is None: kept.append(row); continue
+        repeats.append(dict(id=row['id'], repeatOf=prior['id'], repo=row['repo'], file=sorted(prior['files'] & row['files'])[0],
+                            match='semantic-goal', reason='semantic-goal-overlap', jaccard=len(prior['tokens'] & row['tokens']) / len(prior['tokens'] | row['tokens'])))
+        marked[row['index']] = re.sub(r"^(\s*-\s+)READY\b", lambda m: m[1] + 'DUPLICATE-OF-' + prior['id'], lines[row['index']], flags=re.I)
+    return repeats, unknown, marked
+
 H = os.path.expanduser("~"); R = H + "/.ashlr-runs"; Q = R + "/queue"; EV = R + "/dispatch-events.log"
 # Separate fixed read-only slice: never copy a ready.tsv job into the node queue.
 # Opt-in and Security re-pin required before live adoption. Keep dry runs read-only.
@@ -160,10 +207,9 @@ for row in ready_raw:
     if f[0] in queue_seen:
         queue_diagnostics["duplicate"] += 1; continue
     queue_seen.add(f[0]); need[f[2]] = max(need[f[2]] - 1, 0)
-merged = set(); completed = set(); recent_outcomes = {}
-for x in rd(R + "/metrics/jobs.jsonl").splitlines():
-    try: d = json.loads(x)
-    except Exception: continue
+empty_attempts = read_attempts(R); completed = merged_jobs(empty_attempts)
+merged = {job for _, job in completed}; recent_outcomes = {}
+for d in empty_attempts:
     if not isinstance(d, dict) or d.get("launched") is False: continue
     job = d.get("job")
     stamp = d.get("ts", d.get("timestamp", d.get("at")))
@@ -177,12 +223,6 @@ for x in rd(R + "/metrics/jobs.jsonl").splitlines():
     if isinstance(job, str) and epoch is not None and 0 <= time.time() - epoch < 24 * 3600 and (empty or success):
         previous = recent_outcomes.get(job)
         if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
-    if d.get("event") == "outcome" and d.get("state") == "MERGED" and isinstance(d.get("job"), str):
-        merged.add(d["job"])
-        repo = d.get("repo")
-        if repo is None or isinstance(repo, str):
-            # Legacy outcomes omit repo; job IDs are fleet-wide identities.
-            completed.add((repo.removeprefix("ashlrai/") if repo is not None else None, d["job"]))
 # A merged outcome plus the original identical task is evidence for suppressing
 # a later copy. Missing or ambiguous history never proves completion.
 completed_groups = set(); group_outcomes = {}
@@ -258,7 +298,7 @@ skips = {}; picks = {l: [] for l in CODEX}; dep_parks = []; done = []; checked =
 # Bound network prechecks while allowing skipped rows to backfill lane demand.
 pc_left = max(20, sum(need.values()))
 def skip(j, why): skips[why] = skips.get(why, 0) + 1
-empty_attempts = read_attempts(R); empty_bases = {}
+empty_bases = {}
 _, terminal_prs = admission_history(empty_attempts, time.time())
 def empty_gate(j, repo, prompt):
     if repo not in empty_bases: empty_bases[repo] = attempt_identity(repo, "", H)
@@ -287,8 +327,15 @@ for line in ready_raw:
     ids = gate_ids(rd(pf))
     if not ids: parked_diagnostics["empty_gate"] += 1; continue
     if any(d not in merged for d in ids): parked_diagnostics["waiting"] += 1; continue
+    if family_paused(j): continue
+    try:
+        fields = line.split("\t")
+        spec = work_market.requirements([j, repo, lane, tier, pf] + fields[6 if PARK_DEP.match(fields[0]) else 5:])
+        if work_market.needs_gh(rd(pf)) and "gh" not in spec["needs"]: spec["needs"].append("gh")
+        spec = work_market.requirements([j, repo, lane, tier, pf, json.dumps(spec)])
+    except (ValueError, TypeError): parked_diagnostics["invalid"] += 1; continue
     need[lane] = max(need[lane] - 1, 0)
-    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf])))
+    unparks.append((j, ids, line, "\t".join([j, repo, lane, tier, pf, json.dumps(spec, separators=(",", ":"))])))
 # Recover up to observed PR capacity promptly, with one hourly probe at saturation.
 # Reservations prevent repeated ticks from spending the same capacity twice.
 # Unknown evidence stays parked; the separate publish drip still applies.
@@ -309,7 +356,7 @@ for line in ready_raw:
             and os.path.realpath(pf).startswith(os.path.realpath(Q + "/prompts") + "/")
             and os.path.isfile(pf) and rd(pf).strip()):
         parked_seen.add(j)
-        rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
+        if not family_paused(j): rate_candidates.append((j, line, "\t".join([j, repo, lane, tier, pf])))
 def rate_count(now):
     try:
         stamp, count = rd(R + "/phantom-open-prs").split()
@@ -327,6 +374,9 @@ seclist = []
 for i, j, a2, t2, raw2 in recs:
     if SEC.search(NEGS.sub("", raw2)): seclist.append((i, j)); skip(j, "hold-security")
 parked = {i for i, j in seclist}
+duplicates, dedupe_unknown, duplicate_lines = semantic_dedupe([line if i not in parked else '' for i, line in enumerate(lines)])
+for duplicate in duplicates: skip(duplicate['id'], 'semantic-goal-overlap')
+recs = [r for r in recs if r[0] not in duplicate_lines]
 # Impact and priority precede bold/repository preferences at both admission boundaries.
 def market_rank(record):
     try: rank = work_market.priority(work_market.from_envelope(record[2]))
@@ -381,7 +431,7 @@ picked_specs = {}
 for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if all(len(picks[l]) >= need[l] for l in CODEX): break
     if i in parked: continue
-    try: spec = work_market.from_envelope(attrs)
+    try: spec = work_market.from_envelope(attrs, text)
     except (ValueError, TypeError): skip(j, "invalid-requirements"); continue
     if re.search(r"(?i)not bridge|owner-authored|\bowners?\b|RETIRED|folds into|reuse the kept worktree|repos=|standing|tier=local", attrs + " " + text[:200]): skip(j, "not-bridge/fold/kept-reuse"); continue
     if not re.match(r"^[A-Z]", j): skip(j, "bad-id"); continue
@@ -399,11 +449,11 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     if any(t not in SCOPE_BUDGETS for t in tiers) or len(set(tiers)) > 1: skip(j, "unknown-tier"); continue
     if rm and rm.group(1) not in GS_REPOS: skip(j, "non-fleet-repo"); continue
     if not rm or not os.path.isdir(H + "/Projects/ashlrai/" + rm.group(1)): skip(j, "no-repo"); continue
+    if family_paused(j): skip(j, "family-paused"); continue
     pool = pm.group(1) if pm and pm.group(1) != "any" else "any"
     if pool not in CODEX: pool = "any"   # unknown enqueue hints never strand shared work
     if pool == "any" and devin_default(tm, attrs): pool = "devin"   # frontier/long-horizon -> devin by default
     if pool == "any": pool = max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if pool not in CODEX: skip(j, "lane-" + pool); continue
     if pool == "codex-local":
         fits, reason = local_fit(attrs, text)
         if not fits:
@@ -428,8 +478,8 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     # instead of silently skipping; restock unparks them once jobs.jsonl shows every id MERGED.
     if any(not re.match(r"^[A-Za-z0-9._-]+$", d) or not landed(d) for d in deps):
         if j in inq or any(x[0] == j for x in dep_parks): skip(j, "after-unlanded"); continue
-        lane = pool if pool in CODEX else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-        dep_parks.append((j, rm.group(1), lane, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        dep_parks.append((j, rm.group(1), pool, tier, attrs, text, i, [d for d in deps if isinstance(d, str)]))
+        picked_specs[j] = spec
         skip(j, "parked-dep"); continue
     b = busy(j)
     if b: skip(j, b); continue
@@ -451,9 +501,12 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
         skip(j, "recent-empty-streak"); continue
     if quality_group and quality_group in quality_groups:
         skip(j, "duplicate-single-case-test-file"); continue
-    # balance codex lanes: line pool first, else the lane with more unmet need (cmp wins ties)
-    lane = pool if len(picks[pool]) < need[pool] or pool in ("codex-local", "omlx") else max(GENERAL, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
-    if len(picks[lane]) >= need[lane]: continue
+    # Keep capability needs in ready.tsv so dispatch cannot route a repair back to an incapable lane.
+    candidates = [pool] if pool in ("codex-local", "omlx") else GENERAL
+    capable = [l for l in candidates if len(picks[l]) < need[l]
+               and set(spec["needs"]).issubset(work_market.executor_capabilities(l, slots.get(l, {})) or set())]
+    if not capable: skip(j, "no-capable-capacity"); continue
+    lane = pool if pool in capable else max(capable, key=lambda l: (need[l] - len(picks[l]), l == "devin"))
     prompt = prompt_body(j, rm.group(1), lane, tier, attrs, text)
     reason = empty_gate(j, rm.group(1), prompt)
     if reason:
@@ -503,6 +556,7 @@ for j, ids, _old, _new in ([] if "--json" in sys.argv else unparks): print(("DRY
 for j, repo, l, tier, pf, p, i, deps in ([] if "--json" in sys.argv else dep_out): print(("DRY " if DRY else "") + "PARKED-DEP\t%s\tdeps=%s" % (j, ",".join(deps)))
 if "--json" in sys.argv:
     print(json.dumps({"dry_run": DRY, "queued": len(out), "done_noop": [j for _, j, *_ in done], "skips": skips,
+                      "dedupe": {"repeats": duplicates, "unknown": dedupe_unknown},
                       "jobs": [{"job": j, "repo": repo, "tier": tier, "requirements": picked_specs[j]} for j, repo, _l, tier, *_tail in out],
                       "scope_budgets": SCOPE_BUDGETS,
                       "queue_diagnostics": queue_diagnostics, "parked_diagnostics": parked_diagnostics,
@@ -514,7 +568,7 @@ if not DRY:
     park_state = {j: e for j, e in park_state.items() if j in ready_ids}
     park_tmp = PARKF + ".%d.tmp" % os.getpid()
     open(park_tmp, "w").write(json.dumps(park_state)); os.replace(park_tmp, PARKF)
-if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates): sys.exit(0)
+if DRY or (not out and not seclist and not done and not unparks and not dep_out and not rate_candidates and not duplicates): sys.exit(0)
 for j, repo, l, tier, pf, p, i in out: open(pf, "w").write(p)
 for j, repo, l, tier, pf, p, i, deps in dep_out: open(pf, "w").write(p)
 # RQ-READYLOCK-SCOPE: take ready.lock with a timeout (ASHLR_READY_LOCK_TIMEOUT, default 10 s) and log waits and
@@ -622,7 +676,7 @@ if out or unparks or dep_out or rate_candidates:
             for j, repo, l, tier, pf, p, i in out:
                 f.write("\t".join([j, repo, l, tier, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
             for j, repo, l, tier, pf, p, i, deps in dep_out:
-                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf]) + "\n")
+                f.write("\t".join(["PARKED-DEP.%s" % l, j, l, tier, repo, pf, json.dumps(picked_specs[j], separators=(",", ":"))]) + "\n")
         os.replace(Q + "/ready.tsv.tmp", Q + "/ready.tsv")
 if out:
     with open(Q + "/claimed.tsv", "a") as f:
@@ -654,6 +708,7 @@ if not DRY:   # NOOP streaks: +1 per retirement, cleared when the job really que
 for i, j in seclist:   # park security-pinned lines; the tag stays on the line and READY is never restored
     lines[i] = re.sub(r"^- READY ", "- HOLD-SECURITY %s restock " % HM, lines[i], count=1)
     if PIN not in lines[i]: lines[i] = lines[i].rstrip() + " " + PIN
+for i, line in duplicate_lines.items(): lines[i] = line
 # RQ-PHX-RESTOCKAPPENDRACE31: the early read is stale by now, and a writer appending in between had
 # its lines erased by the whole-file replace. Re-read just before it and carry the appended tail
 # through; same-index lines keep this pass's CLAIMED/HOLD-SECURITY marks.

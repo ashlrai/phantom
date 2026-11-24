@@ -3,7 +3,7 @@ import { useQuery, useRefetch, useRefresh } from '../../../data/hooks.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
 import { missionQuery, type MissionControl, type MissionDecision, type MissionHealth, type MissionJob, type MissionMain, type MissionResource } from './mission-queries.js';
-import { ProviderLogo, providerEngine } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import styles from './fleet-mission.module.css';
 
 type Detail = 'jobs' | 'choices' | 'time' | 'mains' | 'incidents' | 'memory' | 'plan';
@@ -77,8 +77,7 @@ function DetailView({ data, detail }: { data: MissionControl; detail: Detail }) 
     case 'time':
       return data.resources.length === 0 ? <p className={styles.quiet}>Not reported yet.</p>
         : <ul className={styles.rows}>{data.resources.map((row) => {
-          const mark = providerEngine(row.id);
-          return <li className={styles.row} key={row.id}><span className={styles.lane}>{mark ? <ProviderLogo engine={mark} /> : null}{row.label}</span><span className={styles.meta}>{timeLeft(row)}</span></li>;
+          return <li className={styles.row} key={row.id}><span className={styles.lane}><BrandMark brand={row.id} />{row.label}</span><span className={styles.meta}>{timeLeft(row)}</span></li>;
         })}</ul>;
     case 'mains':
       return data.mains.length === 0 ? <p className={styles.quiet}>Not reported yet.</p>

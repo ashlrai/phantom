@@ -35,6 +35,13 @@ describe('repo .mcp.json companion servers', () => {
     expect(args('stack')).toContain(`phantom-secrets@${reviewed('secrets')}`);
   });
 
+  it('wires Context7 keyless, pinned, and with no env or header values', () => {
+    const c7 = config.mcpServers.context7;
+    expect(c7?.args).toEqual(['-y', '@upstash/context7-mcp@4.7.1']);
+    expect(c7?.env).toBeUndefined();
+    expect(JSON.stringify(c7)).not.toMatch(/key|token|header/i);
+  });
+
   it('points the Ashlr.AI Plugin at the project it is launched in', () => {
     // ashlr-mcp runs its router from the package directory and refuses every
     // path outside it unless the project is named, so without this env the

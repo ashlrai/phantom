@@ -39,7 +39,7 @@ describe('Historical startup usage display', () => {
       observedAt: new Date(NOW).toISOString(),
       credits: { hasCredits: false, unlimited: false, balance: '0' }, creditsExpiresAt: new Date(NOW + 1).toISOString() }) }], { now: NOW })[0]!;
     expect(barRows([zero], { now: NOW, healthRead: false })[0]?.creditLabel).toBe('No credits reported');
-    expect(barRows([{ ...projected, signedOut: true }], { now: NOW, healthRead: false })[0]?.creditLabel).toBe('Credits unconfirmed');
+    expect(barRows([{ ...projected, signedOut: true }], { now: NOW, healthRead: false })[0]?.creditLabel).toBe('Credits: not reported by this plan');
     expect(resourceCreditHistory({ ...s, lastKnownUsage: history({ creditHistory: { ...creditHistory, observedAt: '2026-10-02T12:00:00.000Z' } }) }, NOW)).toBeNull();
     expect(resourceCreditHistory({ ...s, engine: 'claude' }, NOW)).toBeNull();
     const unknownPlan = buildCapacityRows([{ ...s, lastKnownUsage: history({ creditHistory: { ...creditHistory, planType: null } }) }], { now: NOW })[0]!;

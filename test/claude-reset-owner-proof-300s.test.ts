@@ -49,7 +49,7 @@ const seed = async (slots: Record<string, unknown>) => {
 const AUTOBACKOFF = `autobackoff claude job=j-1 until=${HELD_UNTIL} src=fake`;
 const usage = (usedPercent: number): ClaudeAccountUsageResult => ({
   schemaVersion: 1, scope: 'claude-native-auth-status', status: 'observed', reason: 'usage-native-current',
-  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: null,
+  loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'max', accountHint: null, accountScope: null,
   startedAt: NOW_ISO, finishedAt: NOW_ISO, quotaFresh: true,
   windows: [{ id: 'seven_day', usedPercent, resetsAt: '2026-11-12T10:00:00Z' }],
 });

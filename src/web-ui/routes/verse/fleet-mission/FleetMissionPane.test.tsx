@@ -61,7 +61,7 @@ it('shows the briefing first and opens one detail at a time', async () => {
   expect(screen.getByText('41% free')).toBeInTheDocument();
 });
 
-it('shows the devin lane time left with its provider mark, and leaves unmetered lanes mark-free and unreported', async () => {
+it('shows provider marks independently of whether lane time left has reported', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({
     ...briefing,
     resources: [
@@ -77,7 +77,8 @@ it('shows the devin lane time left with its provider mark, and leaves unmetered 
   expect(devinRow?.querySelector('svg[data-provider="devin"]')).not.toBeNull();
   const terraRow = screen.getByText('Time left has not reported').closest('li');
   expect(terraRow).not.toBeNull();
-  expect(terraRow?.querySelector('svg')).toBeNull();
+  expect(terraRow?.querySelector('svg[data-provider="codex"]')).not.toBeNull();
+  expect(terraRow).toHaveTextContent('Terra');
 });
 
 it('says a missing slice has not reported, and survives a missing route', async () => {

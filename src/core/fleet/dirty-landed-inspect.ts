@@ -5,7 +5,7 @@
  * Git objects and scratch refs live in a temporary bare repository; the host
  * repository and GitHub state are never written.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultGitRunner } from '../verse/git-ops.js';
@@ -24,14 +24,16 @@ export interface DirtyLandedPr {
   head: string;
   /** The PR's base branch (`master` for every fleet PR); '' when unreadable. */
   base: string;
+  /** Base tip used for this inspection; absent when the read failed. */
+  baseSha?: string;
   class: DirtyLandedClass;
   /** Paths the PR changes relative to its merge-base. */
   changedPaths: string[];
-  /** Changed paths whose head content already matches the base tip. */
+  /** Changed paths already present on the base tip, including later base edits. */
   landedPaths: string[];
-  /** Changed paths whose head content still differs from the base tip. */
+  /** Changed paths with missing or conflicting work on the base tip. */
   remainingPaths: string[];
-  /** Fixed machine token explaining an `unknown` class — never stderr text. */
+  /** Fixed machine token explaining suppression or an unknown class; never stderr. */
   reason?: string;
   /** Bounded evidence for unusually wide zero-line diffs, when available. */
   diffAnomaly?: { kind: 'zero-line'; files: number; causes: ('mode-only' | 'generated-path' | 'other-zero-line')[] };
@@ -59,7 +61,7 @@ async function git(dir: string, args: string[], maxStdoutBytes = GIT_MAX_BYTES) 
 
 /** NUL-delimited `git diff --name-only`; null when the diff cannot be read. */
 async function diffPaths(dir: string, a: string, b: string): Promise<string[] | null> {
-  const diff = await git(dir, ['diff', '--name-only', '-z', a, b]);
+  const diff = await git(dir, ['diff', '--no-renames', '--name-only', '-z', a, b]);
   if (diff.code !== 0 || diff.timedOut || diff.truncated) return null;
   return diff.stdout.split('\0').filter(path => path.length > 0);
 }
@@ -127,10 +129,28 @@ export async function inspectDirtyLanded(dir: string, row: DirtyRow, remote: str
   const differing = await diffPaths(dir, base, head);
   if (differing === null) return unknownDirtyLanded(row, 'diff-failed');
   const diffAnomaly = await classifyWideDiff(dir, mergeBase, head, changedPaths);
-  const stillDiffering = new Set(differing);
+  let stillDiffering = new Set(differing);
+  if (changedPaths.some(path => stillDiffering.has(path))) {
+    // A clean merge can prove a patch landed even when later base edits make
+    // whole files differ. Never infer absence from a conflicted/failed preview.
+    // Override repository/global merge drivers: union or an "ours" driver can
+    // silently discard missing work. This file belongs to the scratch repo.
+    await writeFile(join(dir, 'info', 'attributes'), '* merge=text\n');
+    const merge = await git(dir, ['-c', 'core.hooksPath=/dev/null', '-c', 'merge.renormalize=false',
+      'merge-tree', '--write-tree', '--no-messages', base, head]);
+    const tree = merge.stdout.trim();
+    if (merge.code === 0 && !merge.timedOut && !merge.truncated && SHA.test(tree)) {
+      const missing = await diffPaths(dir, base, tree);
+      const changed = new Set(changedPaths);
+      // A base-side rename can move missing work outside the original paths.
+      if (missing !== null && missing.every(path => changed.has(path))) stillDiffering = new Set(missing);
+    }
+  }
+  const classification = classifyDirtyLanded(changedPaths, stillDiffering);
   return {
-    number: row.number, title: row.title, head: row.headSha, base: row.baseRef,
-    class: classifyDirtyLanded(changedPaths, stillDiffering),
+    number: row.number, title: row.title, head: row.headSha, base: row.baseRef, baseSha: base,
+    class: classification,
+    ...(classification === 'landed' ? { reason: 'already-present-on-base' } : {}),
     ...(diffAnomaly ? { diffAnomaly } : {}),
     changedPaths,
     landedPaths: changedPaths.filter(path => !stillDiffering.has(path)),

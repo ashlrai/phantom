@@ -33,6 +33,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import './helpers/local-memory.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -211,7 +212,7 @@ describe('M164 invariant 1 — substantive sources → frontier under quality po
     const result = routeTask(item, qualityCfg(), ALL_CTX);
 
     expect(result.engine).toBe('codex');
-    expect(result.model).toBe('gpt-6.1-sol');
+    expect(result.model).toBe('gpt-6.2-sol');
     expect(result.reason).toMatch(/quality policy/i);
   });
 

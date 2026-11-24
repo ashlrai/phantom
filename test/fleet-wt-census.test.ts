@@ -1,7 +1,7 @@
 /** Hermetic tests for `phm fleet wt-census` — every reader is injected, and
  * the one real-git case builds a throwaway repo under the OS temp dir. */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import type { WtAuditFs, WtAuditState } from '../src/core/fleet/wt-audit.js';
 import { cmdFleetWtCensus } from '../src/cli/fleet-wt-census.js';
 import type { MaintRoots } from '../src/core/disk-maint/protect.js';
 import type { KeptWorktrees } from '../src/core/worktree-retention.js';
+import { readFleetDiskAttribution, formatFleetDiskAttribution } from '../src/core/fleet/disk-attribution.js';
 
 const NOW = Date.parse('2026-11-15T12:00:00Z');
 const HOUR = 3_600_000;
@@ -210,6 +211,48 @@ describe('readWtCensus', () => {
     launch('RQ-DIRTY', 40), finish('RQ-DIRTY', 30), outcome('RQ-DIRTY', 'MERGED', 25),
     launch('RQ-RUNSWT', 50), finish('RQ-RUNSWT', 45), outcome('RQ-RUNSWT', 'MERGED', 40),
   ];
+
+  it('attributes disk use and ranks safe candidates while retaining active jobs and their artifacts', async () => {
+    const deps = { ...healthyDeps(spec, { rows, git: cleanGit({ dirty: async dir => dir.endsWith('RQ-DIRTY') }),
+      measure: dir => ({ bytes: dir.endsWith('RQ-RUNSWT') ? 3e9 : 1e9, complete: true }) }),
+    artifactBytes: async () => 123 };
+    const report = await readFleetDiskAttribution(deps);
+    expect(report.schema).toBe('fleet.disk-attribution.v1');
+    expect(report.readOnly).toBe(true);
+    expect(report.cleanupCandidates.map(c => c.job)).toEqual(['RQ-RUNSWT', 'RQ-MERGED', 'RQ-PUB']);
+    expect(report.entries.find(c => c.job === 'RQ-RUN')).toMatchObject({ bytes: 1e9, cleanup: 'retain', reason: expect.stringContaining('running') });
+    expect(report.entries.filter(c => c.kind === 'job-artifact').every(c => c.cleanup === 'retain' && c.bytes === 123)).toBe(true);
+    expect(report.categories[0]).toMatchObject({ count: 9, bytes: 11e9, complete: true });
+    expect(JSON.stringify(await readFleetDiskAttribution(deps))).toBe(JSON.stringify(report));
+    const reordered = { ...deps, fs: { ...deps.fs!, entries: async (path: string) => (await deps.fs!.entries(path))?.reverse() ?? null } };
+    expect(JSON.stringify(await readFleetDiskAttribution(reordered))).toBe(JSON.stringify(report));
+    expect(formatFleetDiskAttribution(report).join('\n')).toContain('Largest safe cleanup candidates: 3');
+  });
+
+  it('reports missing paths and partial measurements as unknown, never as safe zero-byte cleanup', async () => {
+    const absent = await readFleetDiskAttribution(healthyDeps({ failDirs: true, entries: { [RUNS]: null } }));
+    expect(absent.categories.every(c => c.bytes === null && !c.complete)).toBe(true);
+    expect(absent.cleanupCandidates).toEqual([]);
+    const partial = await readFleetDiskAttribution({ ...healthyDeps(spec, { rows,
+      measure: () => ({ bytes: 42, complete: false }) }), artifactBytes: async () => null });
+    expect(partial.categories.every(c => c.bytes === null && !c.complete)).toBe(true);
+    expect(partial.categories[0].measuredBytes).toBe(9 * 42);
+    expect(partial.cleanupCandidates).toEqual([]);
+    expect(formatFleetDiskAttribution(partial).join('\n')).toContain('unknown (measured at least');
+  });
+
+  it('measures real artifact metadata without following links or changing files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fleet-disk-'));
+    try {
+      writeFileSync(join(root, 'RQ-JOB.log'), 'retained evidence');
+      symlinkSync(join(root, 'RQ-JOB.log'), join(root, 'RQ-LINK.log'));
+      const report = await readFleetDiskAttribution({ runsRoot: root, wtRoot: join(root, 'absent'), ps: () => '', readPins: () => ({ paths: [], valid: true }) });
+      expect(report.entries.find(e => e.job === 'RQ-JOB')).toMatchObject({ bytes: 17, cleanup: 'retain' });
+      expect(report.entries.find(e => e.job === 'RQ-LINK')).toMatchObject({ bytes: null, complete: false });
+      expect(report.cleanupCandidates).toEqual([]);
+      expect(readFileSync(join(root, 'RQ-JOB.log'), 'utf8')).toBe('retained evidence');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 
   it('classifies the fleet into safe-reap, hold and unknown with repo, fin and sizes', async () => {
     const dirtyMap = new Map([[`${WT}/RQ-DIRTY`, true]]);

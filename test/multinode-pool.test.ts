@@ -7,7 +7,8 @@ import { emptyState, parseState, type NodesState, type NodesStore } from '../src
 import { executePool, initializePool, PRIMARY_TIMEOUT_MS, type PoolRole } from '../src/core/drive/nodes/pool.js';
 import { callPool, configurePool, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../src/core/drive/nodes/pool-host.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../src/core/drive/nodes/ssh.js';
-import { probeNodeLanes } from '../src/core/drive/nodes/worker.js';
+import { probeNodeLanes, probeProviderBinaries } from '../src/core/drive/nodes/worker.js';
+import { providerBinaryCandidates, resolveProviderBinary } from '../src/core/drive/nodes/provider-binary.js';
 import type { spawnSync } from 'node:child_process';
 
 class MemoryStore implements NodesStore {
@@ -63,6 +64,8 @@ describe('multi-Mac durable fencing witness', () => {
   it('fences pre-promotion claims and refuses primary resurrection on return', () => {
     const f = fixture();
     const s = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+    const capacity = JSON.stringify({ hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null });
+    f.run('primary', 'beat', ['--node', 'worker', '--session', String(s), '--capacity', capacity]);
     f.run('primary', 'enqueue', ['--job', 'j', '--requires', 'codex']);
     const old = f.run('primary', 'pull', ['--node', 'worker', '--session', String(s)]).result['claim'] as
       { token: number; leaderToken: number };
@@ -77,6 +80,8 @@ describe('multi-Mac durable fencing witness', () => {
     f.store.state.nodes[0]!.expiresAt = 0;
     f.store.state.jobs[0]!.claim!.expiresAt = 0;
     const next = f.run('backup', 'join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+    f.run('backup', 'beat', ['--node', 'worker', '--session', String(next), '--capacity',
+      JSON.stringify({ ...JSON.parse(capacity), sampledAtMs: 1000 + PRIMARY_TIMEOUT_MS })]);
     const fresh = f.run('backup', 'pull', ['--node', 'worker', '--session', String(next)]).result['claim'] as typeof old;
     expect(fresh.token).toBeGreaterThan(old.token);
     const stale = ['--node', 'worker', '--session', String(s), '--job', 'j', '--token', String(old.token), '--leader-token', String(old.leaderToken)];
@@ -147,9 +152,27 @@ describe('SSH routing and device-local provider lanes', () => {
     expect(sshApprovalStep('main-mac')).toContain('StrictHostKeyChecking=ask main-mac true');
   });
   it('advertises only provider CLIs signed in on this device without reading their output', () => {
-    const run = vi.fn((command: string) => ({ status: command === 'codex' ? 0 : 1 })) as unknown as typeof spawnSync;
-    expect(probeNodeLanes(run)).toEqual(['codex']);
-    for (const call of vi.mocked(run).mock.calls) expect(call[2]).toMatchObject({ stdio: 'ignore', timeout: 5000 });
+    const run = vi.fn((command: string) => ({ status: command === '/opt/homebrew/bin/codex' ? 0 : 1 })) as unknown as typeof spawnSync;
+    expect(probeNodeLanes(run, {}, { home: '/Users/air', executable: () => true })).toEqual(['codex']);
+    for (const call of vi.mocked(run).mock.calls) expect(call[2]).toMatchObject({ stdio: 'ignore', timeout: 5000, shell: false });
+  });
+  it('omits codex when no allowlisted absolute binary exists, even if a PATH lookup would sign in', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    expect(probeNodeLanes(run, {}, { home: '/Users/air', execPath: '/nonexistent/node', executable: () => false })).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  });
+  it('probes and receipts the exact resolved binary in allowlist order, never a bare command', () => {
+    const run = vi.fn(() => ({ status: 0 })) as unknown as typeof spawnSync;
+    const executable = (path: string) => path === '/usr/local/bin/codex' || path === '/Users/air/.local/bin/claude';
+    expect(probeProviderBinaries(run, { home: '/Users/air', execPath: '/x/bin/node', executable }))
+      .toEqual({ codex: '/usr/local/bin/codex', claude: '/Users/air/.local/bin/claude' });
+    expect(vi.mocked(run).mock.calls.map(c => c[0])).toEqual(['/usr/local/bin/codex', '/Users/air/.local/bin/claude']);
+    expect(vi.mocked(run).mock.calls[0]![1]).toEqual(['login', 'status']);
+    expect(providerBinaryCandidates('codex', { home: '/Users/air', execPath: '/Users/air/.nvm/v24/bin/node' })).toEqual([
+      '/opt/homebrew/bin/codex', '/usr/local/bin/codex', '/Users/air/.local/bin/codex', '/Users/air/.npm-global/bin/codex',
+      '/Users/air/.nvm/v24/bin/codex']);
+    expect(resolveProviderBinary('codex', { home: '/Users/air', executable: path => path === '/Users/air/.npm-global/bin/codex' }))
+      .toBe('/Users/air/.npm-global/bin/codex');
   });
 });
 
@@ -177,6 +200,8 @@ describe('durable SSH pool round trip', () => {
       const ssh = (_host: string, request: unknown) => at(backupRoot, () => serveNodeRpc(backup, request as NodeRpcRequest));
       const run = (verb: string, args: string[]) => at(primaryRoot, () => callPool(primary, verb, args, ssh));
       const session = run('join', ['--node', 'worker', '--caps', 'codex']).result['session'];
+      run('beat', ['--node', 'worker', '--session', String(session), '--capacity', JSON.stringify({
+        hostId: 'mac', sampledAtMs: now, ramBytes: 8 * 1024 ** 3, slots: 1, held: null })]);
       run('enqueue', ['--job', 'disk-job', '--requires', 'codex']);
       expect(run('pull', ['--node', 'worker', '--session', String(session)]).result['pulled']).toBe(true);
       const mirror = JSON.parse(readFileSync(join(primaryRoot, 'node-pool', 'primary-mirror.json'), 'utf8')) as NodesState;

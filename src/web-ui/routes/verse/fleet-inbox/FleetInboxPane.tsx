@@ -14,6 +14,7 @@ import { JOB_ID_RE } from '../fleet-job-log/worker-log-model.js';
 import { requestWorkerLogJob } from '../fleet-job-log/worker-log-selection.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../shell/section-visibility.js';
+import { inboxEntryKind, partitionInboxNoise } from './inbox-noise-model.js';
 import { filterEntries, groupByDay, quoteForMessage, readInboxEntries } from './fleet-inbox-model.js';
 import { fleetInboxQuery, fleetRunsQuery, ordersTraceQuery } from './fleet-inbox-queries.js';
 import { githubUrl, jobsForEntry, narrowOrderTrace, orderJobsLine, stateWord } from './order-trace-model.js';
@@ -70,7 +71,9 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const entries = channel === null ? inbox.entries : inbox.entries.filter(entry => channelKey(entry.source) === channel);
   const annotated = annotateAck(filterEntries(entries, { source, text }), snapshot.data, Date.now());
-  const groups = groupByDay(annotated, today);
+  const { orders: realOrders, noise } = partitionInboxNoise(annotated);
+  const [showNoise, setShowNoise] = useState(false);
+  const groups = groupByDay(realOrders, today);
   const { waiting, overdue } = seenCounts(annotated.filter(entry => entry.plannerAck !== 'acked' && entry.plannerAck !== 'skipped'));
   usePollWhileVisible(() => setClockTick(tick => tick + 1), 10_000, { enabled: visible && waiting > 0 });
   const matching = posted && posted.until > Date.now() && visible && sectionVisible && documentVisible
@@ -113,6 +116,13 @@ export function FleetInboxPane({ visible, host }: PaneProps) {
     <div className={styles.filters} aria-label="Filter by source">
       {['', ...new Set(inbox.entries.map(e => e.source))].map(s => <Button key={s} size="sm" aria-pressed={channel === null && source === s} onClick={() => { setChannel(null); setSource(s); }}>{s || 'All sources'}</Button>)}
     </div>
+    {noise.length > 0 && <p><Button size="sm" variant="ghost" aria-expanded={showNoise} onClick={() => setShowNoise(v => !v)}>{noise.length} status asks / misfires hidden</Button></p>}
+    {showNoise && noise.length > 0 && <section aria-label="Hidden status asks and misfires">
+      {noise.map((entry, i) => <article className={styles.row} key={`${entry.at}-${i}`}>
+        <div className={styles.meta}><time>{entry.at === '—' ? '—' : `${entry.at.slice(0, 10)} ${entry.at.slice(11)} ET`}</time><Tag>{entry.sourceLabel}</Tag><Tag>{inboxEntryKind(entry) === 'misfire' ? 'misfire' : 'status ask'}</Tag></div>
+        <p className={styles.text}>{entry.text}</p>
+      </article>)}
+    </section>}
     {groups.length === 0 && <EmptyState compact title={inbox.entries.length ? 'No matching orders' : 'No orders yet'} />}
     {groups.map(group => <section key={group.day} aria-label={group.label}>
       <h3 className={styles.day}>{group.label}{group.day !== '—' && ' · ET'}</h3>

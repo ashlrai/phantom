@@ -34,6 +34,7 @@ import { percentText, tidyProse } from '../autonomy/format.js';
 import { CONNECTION_TONE, CONNECTION_WORD, usableAgainPhrase, type HealthTone } from '../health/health-model.js';
 import { seatReopensAt, seatSubscription, type SeatCapacityClass, type SeatWindowView } from '../seat-subscription.js';
 import { visibleWindows, windowNote } from './provider-windows.js';
+import type { WindowPeriod } from './window-period.js';
 import { SEAT_CAPACITY_WORD } from '../verse-model.js';
 
 export type { SeatCapacityClass };
@@ -60,6 +61,8 @@ export interface CapacityWindowRow {
   resetsAt: string | null;
   /** True for the window that constrains work right now. */
   binding: boolean;
+  /** When the window began, where the seat's reset provenance says; absent = not known. */
+  period?: WindowPeriod | null;
 }
 
 export interface CapacityConnection {
@@ -179,6 +182,7 @@ function windowRow(w: SeatWindowView, binding: boolean): CapacityWindowRow {
     resetText: w.resetText,
     resetsAt: w.resetsAt,
     binding,
+    ...(w.period ? { period: w.period } : {}),
   };
 }
 

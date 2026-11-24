@@ -55,10 +55,11 @@ describe('intent modules satisfy the Tier-1 runtime import closure (PR #5315)', 
     expect(closure).not.toContain(NATIVE_EDIT);
   });
 
+  // This walk took 3.29s on origin/master; leave headroom for larger closures.
   it('every module the intent files reach is already blessed', () => {
     // The only unblessed file the walk may touch is native-edit.ts itself:
     // nothing inside the closure imports it, and it imports nothing outside it.
     const reached = reachableClosure(INTENT_MODULES);
     expect(reached.filter((file) => !blessed.has(file))).toEqual([NATIVE_EDIT]);
-  });
+  }, 10_000);
 });

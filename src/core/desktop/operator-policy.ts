@@ -33,7 +33,7 @@ export const SCREEN_RECORDING_PANE = 'System Settings > Privacy & Security > Scr
 export const SCREEN_RECORDING_LEGACY_PANE = 'Screen Recording';
 
 export const DESKTOP_OPERATOR_BUILD =
-  'swiftc -O -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift';
+  'swiftc -O -target arm64-apple-macos13.0 -framework ApplicationServices -framework Cocoa -framework Vision -o ~/.ashlr/bin/desktop-operator tools/desktop-operator/main.swift';
 
 /** Matches computer.rs MAX_SCROLL. */
 export const MAX_SCROLL = 50;

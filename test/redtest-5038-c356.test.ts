@@ -1,16 +1,12 @@
 /**
- * RQ-PHX-REDTESTFIXC356 pin for the failure that sank PR #5038 on CI.
+ * RQ-PHX-REDTESTFIXC356 pin for Tier-1 coverage of approval decisions.
  *
- * The PR's `Quick typecheck` job failed in "Check authority drift
- * (hermetic)": `test/authority-tier1-closure-310b.test.ts` asserted that
- * the Tier-1 runtime import closure had not grown, but the PR head
- * carried a base-era `test/fixtures/authority/tier1-closure.json` against
- * newer merged-in source. Rebuilt on current master the diff is clean —
- * and this test keeps it that way: every relative runtime import edge in
- * the two closure-member files the PR changes must resolve to a path
- * already inside the Tier-1 closure snapshot. If a future edit adds an
- * edge to a file outside the snapshot, the authority suite (and this
- * pin) fails until the snapshot is regenerated under review.
+ * #6737 extracted the shared HTTP mutation gate into api-http-helpers.ts
+ * and intentionally shrank the closure, so the API route aggregator and its
+ * approvals projection are no longer closure members. The authorization
+ * helpers that gate HTTP mutations and derive/record team approvals remain
+ * in the closure. Keep their relative runtime import edges inside the
+ * snapshot so a future refactor cannot silently remove their protection.
  *
  * Self-contained on purpose: importing `src/core/authority/**` would make
  * this file a Tier-1 test and require a CODEOWNERS entry, so the import
@@ -25,10 +21,11 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SNAPSHOT = join(ROOT, 'test', 'fixtures', 'authority', 'tier1-closure.json');
 
-/** Files changed by PR #5038 that sit inside the Tier-1 closure. */
+/** Authorization helpers that must remain in the Tier-1 closure. */
 const CLOSURE_MEMBER_FILES = [
-  'src/core/approvals/surface.ts',
-  'src/core/web/api.ts',
+  'src/core/web/api-http-helpers.ts',
+  'src/core/teams/identity.ts',
+  'src/core/teams/workspace.ts',
 ];
 
 /**
@@ -78,12 +75,12 @@ function resolveToRepoPath(fromFile: string, specifier: string): string | null {
   return rel.replace(/\.(?:js|mjs|cjs)$/, (ext) => (ext === '.mjs' ? '.mts' : ext === '.cjs' ? '.cts' : '.ts'));
 }
 
-describe('redtest-5038-c356: PR #5038 Tier-1 import edges stay inside the closure', () => {
+describe('redtest-5038-c356: approval authorization stays in the Tier-1 closure', () => {
   const closure = new Set<string>(
     (JSON.parse(readFileSync(SNAPSHOT, 'utf8')) as { closure: string[] }).closure,
   );
 
-  it('the changed files are still closure members (snapshot has not dropped them)', () => {
+  it('the authorization helpers are still closure members', () => {
     for (const file of CLOSURE_MEMBER_FILES) {
       expect(closure.has(file), `${file} left the Tier-1 closure snapshot`).toBe(true);
     }
@@ -104,9 +101,8 @@ describe('redtest-5038-c356: PR #5038 Tier-1 import edges stay inside the closur
     expect(
       outside,
       [
-        'These import edges point outside the Tier-1 closure snapshot. An',
-        'edge added by #5038 would grow the closure and fail',
-        'authority-tier1-closure-310b — regenerate under review:',
+        'These authorization import edges point outside the Tier-1 closure snapshot.',
+        'Review the change, then regenerate under review:',
         '  ASHLR_UPDATE_TIER1_CLOSURE=1 npx vitest run test/authority-tier1-closure-310b.test.ts',
       ].join('\n'),
     ).toEqual([]);

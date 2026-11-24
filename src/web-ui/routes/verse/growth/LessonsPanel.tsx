@@ -35,6 +35,8 @@ import {
   causeChart,
   parseScopeForm,
   scopeLabel,
+  trialLine,
+  trialSummary,
 } from './lessons-model.js';
 import styles from './lessons.module.css';
 
@@ -247,36 +249,42 @@ export function LessonsPanel() {
           <Card title="Approved knowledge" caption={state ? budgetLine(state.knowledge.approvedBytes, state.knowledge.capBytes) : undefined}>
             {!state ? (
               <CardNote tone="unknown">{lessons.data?.reason ?? 'Loading…'}</CardNote>
-            ) : state.knowledge.approved.length === 0 && state.playbook.length === 0 ? (
-              <CardNote>No approved lessons yet.</CardNote>
             ) : (
-              <ul className={styles.list}>
-                {state.knowledge.approved.map((n) => (
-                  <li key={n.id} className={styles.note}>
-                    <p className={styles.noteText}>{n.text}</p>
-                    <p className={styles.meta}>
-                      {scopeLabel(n.scope)} · used {n.hits}×{n.lastHitAt ? `, last ${formatRelative(n.lastHitAt)}` : ''}{n.edited ? ' · edited' : ''}
-                    </p>
-                    {n.scope.repo ? (
-                      <div className={styles.actions}>
-                        {n.agentsMdTaskId ? (
-                          <Tag size="sm">AGENTS.md proposal queued</Tag>
-                        ) : (
-                          <Button size="sm" variant="ghost" disabled={busy || guard.readOnly} onClick={() => agentsMd(n)}>
-                            Propose for AGENTS.md
-                          </Button>
-                        )}
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-                {state.playbook.map((p) => (
-                  <li key={`${p.addedAt}:${p.text}`} className={styles.note}>
-                    <p className={styles.noteText}>{p.text}</p>
-                    <p className={styles.meta}>Leader veto lesson{p.hits > 0 ? ` · repeated ${p.hits}×` : ''} · read by the Leader</p>
-                  </li>
-                ))}
-              </ul>
+              <>
+                {state.knowledge.trial ? <CardNote>{trialSummary(state.knowledge.trial)}</CardNote> : null}
+                {state.knowledge.approved.length === 0 && state.playbook.length === 0 ? (
+                  <CardNote>No approved lessons yet.</CardNote>
+                ) : (
+                  <ul className={styles.list}>
+                    {state.knowledge.approved.map((n) => (
+                      <li key={n.id} className={styles.note}>
+                        <p className={styles.noteText}>{n.text}</p>
+                        <p className={styles.meta}>
+                          {scopeLabel(n.scope)} · used {n.hits}×{n.lastHitAt ? `, last ${formatRelative(n.lastHitAt)}` : ''}{n.edited ? ' · edited' : ''}
+                        </p>
+                        {n.trial ? <p className={styles.meta}>{trialLine(n.trial)}</p> : null}
+                        {n.scope.repo ? (
+                          <div className={styles.actions}>
+                            {n.agentsMdTaskId ? (
+                              <Tag size="sm">AGENTS.md proposal queued</Tag>
+                            ) : (
+                              <Button size="sm" variant="ghost" disabled={busy || guard.readOnly} onClick={() => agentsMd(n)}>
+                                Propose for AGENTS.md
+                              </Button>
+                            )}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                    {state.playbook.map((p) => (
+                      <li key={`${p.addedAt}:${p.text}`} className={styles.note}>
+                        <p className={styles.noteText}>{p.text}</p>
+                        <p className={styles.meta}>Leader veto lesson{p.hits > 0 ? ` · repeated ${p.hits}×` : ''} · read by the Leader</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </Card>
         </div>

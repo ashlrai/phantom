@@ -75,6 +75,7 @@ export function Sparkline({
   area = false,
   describe,
   color = CHART_SEQUENTIAL,
+  target = null,
 }: {
   points: (number | null)[];
   /** Pixels, or `fill` to span the containing box (StatTile). */
@@ -87,6 +88,8 @@ export function Sparkline({
   describe?: (v: number) => string;
   /** The line's ink (default: the quantity azure). */
   color?: string;
+  /** A dashed reference line at this value (a goal's target); the scale always includes it. */
+  target?: number | null;
 }) {
   const fill = width === 'fill';
   const [boxRef, measured] = useFillWidth(fill);
@@ -102,8 +105,9 @@ export function Sparkline({
   if (known.length < 2) {
     body = <line className={styles.flat} x1={1} x2={w - 1} y1={height - 1.5} y2={height - 1.5} />;
   } else {
-    const min = Math.min(...known, 0);
-    const max = Math.max(...known, 0);
+    const ref = target !== null && Number.isFinite(target) ? [target] : [];
+    const min = Math.min(...known, ...ref, 0);
+    const max = Math.max(...known, ...ref, 0);
     const range = max - min || 1;
     const stepX = (w - PAD * 2) / Math.max(1, points.length - 1);
     const yOf = (v: number) => PAD + (1 - (v - min) / range) * (height - PAD * 2);
@@ -145,6 +149,7 @@ export function Sparkline({
               ) : null,
             )
           : null}
+        {ref.length ? <line className={styles.target} data-target={ref[0]} x1={1} x2={w - 1} y1={yOf(ref[0]!)} y2={yOf(ref[0]!)} /> : null}
         {runs.map((run, i) => (
           <path key={i} className={`${styles.line} ${plot.draw}`} pathLength={1} stroke={color} d={smoothPath(run)} />
         ))}

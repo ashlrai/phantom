@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import { evictAll } from '../../../data/cache.js';
 import type { FleetRuns } from '../ops/ops-runs-model.js';
 import { FleetHostPane } from './FleetHostPane.js';
+import { hostResponse } from './host-fetch.test-support.js';
 
 const runs: FleetRuns = {
   v: 1, generatedAt: '2026-10-31T12:00:00Z', sources: { runsDir: 'healthy', workers: 'healthy', inbox: 'healthy', codex: 'healthy', merges: 'healthy' },
@@ -13,7 +14,7 @@ const runs: FleetRuns = {
 };
 beforeEach(() => { evictAll(); });
 afterEach(() => { vi.unstubAllGlobals(); });
-const serve = (data: FleetRuns) => vi.stubGlobal('fetch', vi.fn(async () => Response.json(data)));
+const serve = (data: FleetRuns) => vi.stubGlobal('fetch', vi.fn(async (url: string) => hostResponse(url, data)));
 
 it('renders planner rows and the personal lane explanation', async () => {
   serve(runs); render(<FleetHostPane visible />);

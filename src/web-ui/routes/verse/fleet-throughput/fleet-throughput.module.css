@@ -1,0 +1,18 @@
+/* One readable column: the window switch and headline on top, then the flow and the hourly charts. Wraps the same at 390 px. */
+.root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 56rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-wrap: anywhere; }
+.head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.head h2 { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-weight: var(--font-weight-semibold); }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.meta, .note { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.meta { margin-top: calc(var(--space-2) * -1); }
+/* Main's state mark sits beside the words that say the same thing. Unknown is a hollow ring, never a green dot. */
+.main::before { content: ''; display: inline-block; box-sizing: border-box; width: 0.5rem; height: 0.5rem; margin-inline-end: var(--space-1); border: 1px solid var(--status-unknown-solid); border-radius: var(--radius-full); vertical-align: 0.05em; }
+.main[data-main='green']::before { border-color: var(--status-success-solid); background: var(--status-success-solid); }
+.main[data-main='red']::before { border-color: var(--status-danger-solid); background: var(--status-danger-solid); }
+.main[data-main='red'] { color: var(--status-danger-fg); }
+.note[data-stale] { color: var(--status-warning-fg); }
+/* The two hourly charts sit side by side when the pane is wide enough for both. */
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: var(--space-3); }
+.pair > * { min-width: 0; }
+.unread { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.unread .meta { margin-top: 0; }

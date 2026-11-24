@@ -304,6 +304,7 @@ export interface AppControl {
   open(target: string): Promise<AppControlResult>;
   focus(target: string): Promise<AppControlResult>;
   quit(target: string): Promise<AppControlResult>;
+  quitResolved(app: RunningApp | null): Promise<AppControlResult>;
 }
 
 export interface AppControlOptions {
@@ -376,8 +377,25 @@ export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): 
   const bundleOf = (target: string, app: RunningApp | null): string | null =>
     app?.bundleId ?? (/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(target.trim()) ? target.trim() : null);
 
+  async function quitResolvedApp(app: RunningApp | null): Promise<AppControlResult> {
+    if (!app) return { ok: true, action: 'quit', running: false, frontmost: false, detail: 'not running; nothing to quit.' };
+    const bundle = app.bundleId;
+    if (!bundle || computerAppPolicy(bundle).ceiling === null) return fail('quit', 'denied', 'that app is never available to agents.');
+    const read = await readTreeWithAccess(call, bundle, maxDepth, `Quit the ${app.name} app`);
+    if (!read.ok) return fail('quit', 'unreadable', `cannot confirm ${app.name} has nothing unsaved: ${read.error}`);
+    if (read.truncated || read.entries.length === 0) return fail('quit', 'unreadable', 'cannot confirm unsaved state from an incomplete accessibility tree.');
+    const unsaved = detectUnsavedState(read.entries);
+    if (unsaved.length > 0) return fail('quit', 'unsaved-state', `${app.name} may have unsaved work (${unsaved.join(', ')}).`);
+    const quitItem = read.entries.find((e) => e.role === 'AXMenuItem' && e.enabled && /^quit\b/i.test(label(e).trim()));
+    if (!quitItem) return fail('quit', 'failed', `${app.name}: no Quit menu item in its accessibility tree.`);
+    const pressed = await call('computer_ax_press', { app: bundle, ref: quitItem.ref });
+    if (pressed.isError) return fail('quit', 'failed', toText(pressed).slice(0, 300));
+    return { ok: true, action: 'quit', running: false, frontmost: false, detail: `pressed Quit in ${app.name}.` };
+  }
+
   return {
     list,
+    quitResolved: quitResolvedApp,
     async status(target) {
       const found = await find(target);
       if (!found.ok) return fail('status', 'failed', found.error);
@@ -419,20 +437,7 @@ export function createAppControl(call: ToolCall, opts: AppControlOptions = {}): 
     async quit(target) {
       const found = await find(target);
       if (!found.ok) return fail('quit', 'failed', found.error);
-      if (!found.app) return { ok: true, action: 'quit', running: false, frontmost: false, detail: 'not running; nothing to quit.' };
-      const bundle = found.app.bundleId;
-      if (!bundle || computerAppPolicy(bundle).ceiling === null) return fail('quit', 'denied', 'that app is never available to agents.');
-      const read = await readTreeWithAccess(call, bundle, maxDepth, `Quit the ${found.app.name} app`);
-      // Unreadable means unsaved state cannot be ruled out, so it is treated as unsaved.
-      if (!read.ok) return fail('quit', 'unreadable', `cannot confirm ${found.app.name} has nothing unsaved: ${read.error}`);
-      if (read.truncated || read.entries.length === 0) return fail('quit', 'unreadable', 'cannot confirm unsaved state from an incomplete accessibility tree.');
-      const unsaved = detectUnsavedState(read.entries);
-      if (unsaved.length > 0) return fail('quit', 'unsaved-state', `${found.app.name} may have unsaved work (${unsaved.join(', ')}).`);
-      const quitItem = read.entries.find((e) => e.role === 'AXMenuItem' && e.enabled && /^quit\b/i.test(label(e).trim()));
-      if (!quitItem) return fail('quit', 'failed', `${found.app.name}: no Quit menu item in its accessibility tree.`);
-      const pressed = await call('computer_ax_press', { app: bundle, ref: quitItem.ref });
-      if (pressed.isError) return fail('quit', 'failed', toText(pressed).slice(0, 300));
-      return { ok: true, action: 'quit', running: false, frontmost: false, detail: `pressed Quit in ${found.app.name}.` };
+      return quitResolvedApp(found.app);
     },
   };
 }

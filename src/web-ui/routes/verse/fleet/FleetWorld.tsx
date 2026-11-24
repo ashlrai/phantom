@@ -13,15 +13,17 @@ import { AgentEdges } from './AgentEdges.js';
 import { RunsGraph } from './RunsGraph.js';
 import { VERSE_ANCHOR_EVENT, type VerseAnchorRequest } from '../verse-ui-store.js';
 const ComputeMap = lazy(() => import('../company/ComputeMap.js').then(m => ({ default: m.ComputeMap })));
+// Same tree, poll and job detail as the Org pane and `phm org`; no second data source.
+const OrgTree = lazy(() => import('../fleet-org/OrgTree.js').then(m => ({ default: m.OrgTree })));
 
 export default function FleetWorld({ read, refreshing = false, readFailed = false, agentWorkspace = false, initialLens = 'workspaces' }: {
   read: OptionalRead<FleetLiveSnapshotV1> | undefined;
   refreshing?: boolean;
   readFailed?: boolean;
   agentWorkspace?: boolean;
-  initialLens?: 'workspaces' | 'runs' | 'compute';
+  initialLens?: 'workspaces' | 'runs' | 'compute' | 'org';
 }) {
-  const [lens, setLens] = useState(initialLens);
+  const [lens, setLens] = useState<'workspaces' | 'runs' | 'compute' | 'org'>(initialLens);
   // Fleet stays mounted between visits. An explicit map navigation must also
   // work after the operator explored another lens during an earlier visit.
   useEffect(() => {
@@ -33,13 +35,14 @@ export default function FleetWorld({ read, refreshing = false, readFailed = fals
     return () => window.removeEventListener(VERSE_ANCHOR_EVENT, revealMap);
   }, []);
   const lensSwitch = <Segmented aria-label="World lens" value={lens} onChange={setLens}
-    options={[{ value: 'workspaces', label: 'Workspaces' }, { value: 'runs', label: 'Runs graph' }, { value: 'compute', label: 'Compute & agents' }]} />;
+    options={[{ value: 'workspaces', label: 'Workspaces' }, { value: 'runs', label: 'Runs graph' }, { value: 'compute', label: 'Compute & agents' }, { value: 'org', label: 'Org' }]} />;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const filterId = useId();
   const inspectorId = useId();
   const live = read?.value;
   if (lens === 'compute') return <section aria-label="Fleet world">{lensSwitch}<Suspense fallback={<p>Loading compute map…</p>}><ComputeMap visible /></Suspense></section>;
+  if (lens === 'org') return <section aria-label="Fleet world">{lensSwitch}<Suspense fallback={<p>Loading the org…</p>}><OrgTree visible /></Suspense></section>;
   if (lens === 'runs') return <section aria-label="Fleet world">{lensSwitch}<RunsGraph /></section>;
   if (!read) return <section aria-label="Fleet world">{lensSwitch}{readFailed ? <p role="status">Fleet data could not be read. Try refreshing Fleet.</p> : <p aria-busy="true">Loading the fleet world…</p>}</section>;
   if (!live) return <section aria-label="Fleet world">{lensSwitch}<p role="status">{read.reason ?? 'Fleet data is unavailable.'}</p></section>;

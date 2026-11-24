@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { cmdFleetSlackTrace } from '../src/cli/fleet-slack-trace.js';
 
 const roots: string[] = [];
@@ -9,8 +10,10 @@ const thread = '1731000000.000100';
 const reply = '1731000050.000100';
 const now = () => new Date('2024-11-07T18:00:00.000Z');
 const request = { at: '2024-11-07T12:00:00.000Z', decision: 'ingested', bus: 'posted',
-  channelId: 'C0FAKE0001', threadTs: thread, messageTs: '1731000010.000100' };
+  channelId: 'C0FAKE0001', threadTs: thread, messageTs: '1731000010.000100', requestId: fakeRequestId('435s:1') };
+const key = replyKey(request.requestId);
 const sent = { channel: request.channelId, thread, state: 'sent', ts: reply };
+const stored = { [key]: sent };
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -40,18 +43,20 @@ function snapshot(root: string) {
 
 const ingested = JSON.stringify(request) + '\n';
 it.each([
-  ['answered', ingested, { sent }, [], 0, 'ok', 'ok', 'answered'],
-  ['answered filtered thread', ingested, { sent }, ['--thread', thread], 0, 'ok', 'ok', 'answered'],
+  ['answered', ingested, stored, [], 0, 'ok', 'ok', 'answered'],
+  ['answered filtered thread', ingested, stored, ['--thread', thread], 0, 'ok', 'ok', 'answered'],
   ['both missing', undefined, undefined, [], 1, 'missing', 'missing', undefined],
-  ['journal missing', undefined, { sent }, [], 1, 'missing', 'ok', undefined],
+  ['journal missing', undefined, stored, [], 1, 'missing', 'ok', undefined],
   ['sends missing', ingested, undefined, [], 1, 'ok', 'missing', 'unanswered'],
   ['empty stores', '', {}, [], 1, 'ok', 'ok', undefined],
-  ['ignored only', `${JSON.stringify({ ...request, decision: 'ignored' })}\n`, { sent }, [], 1, 'ok', 'ok', undefined],
-  ['unmatched thread', ingested, { sent }, ['--thread', '1731002000.000100'], 1, 'ok', 'ok', undefined],
-  ['degraded journal with answered row', ingested + 'invalid\n', { sent }, [], 1, 'degraded', 'ok', 'answered'],
-  ['degraded sends with answered row', ingested, { sent, invalid: {} }, [], 1, 'ok', 'degraded', 'answered'],
+  ['ignored only', `${JSON.stringify({ ...request, decision: 'ignored' })}\n`, stored, [], 1, 'ok', 'ok', undefined],
+  ['unmatched thread', ingested, stored, ['--thread', '1731002000.000100'], 1, 'ok', 'ok', undefined],
+  ['degraded journal with answered row', ingested + 'invalid\n', stored, [], 1, 'degraded', 'ok', 'answered'],
+  ['degraded sends with answered row', ingested, { ...stored, invalid: {} }, [], 1, 'ok', 'degraded', 'answered'],
   ['unanswered', ingested, {}, [], 1, 'ok', 'ok', 'unanswered'],
-  ['uncertain', ingested, { attempt: { ...sent, state: 'attempted' } }, [], 1, 'ok', 'ok', 'uncertain'],
+  // The degraded probe: a store row under a non-hex key is invalid, so the whole store is degraded.
+  ['invalid store key', ingested, { sent }, [], 1, 'ok', 'degraded', 'unanswered'],
+  ['uncertain', ingested, { [key]: { ...sent, state: 'attempted' } }, [], 1, 'ok', 'ok', 'uncertain'],
   ['bus failed', `${JSON.stringify({ ...request, bus: 'failed' })}\n`, {}, [], 1, 'ok', 'ok', 'bus-failed'],
 ] as const)('%s requires durable matching evidence', async (_name, journal, messages, args, code, journalState, sendsState, outcome) => {
   const deps = fixture(journal, messages);
@@ -69,7 +74,7 @@ it.each([
 });
 
 it('requires every request to be answered', async () => {
-  const deps = fixture(ingested + JSON.stringify({ ...request, messageTs: '1731000020.000100' }), { sent });
+  const deps = fixture(ingested + JSON.stringify({ ...request, messageTs: '1731000020.000100', requestId: fakeRequestId('435s:2') }), stored);
   const before = snapshot(deps.root);
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   expect(await cmdFleetSlackTrace(['--json'], deps)).toBe(1);

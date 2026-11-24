@@ -28,7 +28,8 @@ function fixture() {
   let now = START;
   const unrelated = vi.fn((): never => { throw new Error('unexpected unrelated seam'); });
   const log = vi.fn(async () => []);
-  const board = vi.fn((options?: { now?: number }) => readFleetBoard({ path, now: options?.now }));
+  const board = vi.fn((options?: { now?: number; reap?: boolean }) =>
+    readFleetBoard({ path, now: options?.now, reap: options?.reap }));
   const owners = vi.fn((date: Date) => defaultOwnersReply(date, {
     read: surface => readSurfaceOwner(surface, { board, log, now: () => date.getTime() }),
   }));

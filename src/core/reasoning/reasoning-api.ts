@@ -22,12 +22,12 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../web/api.js';
 import type { VerseApiContext } from '../verse/verse-api.js';
 import type { ApiModule } from '../verse/api-modules.js';
-import { DigestBuilder } from './insights.js';
+import { computeReasoningDigest, DEFAULT_DIGEST_DAYS, resetReasoningDigestCache } from './digest.js';
 import { codexInteractiveOptIn, ingestCodexRollouts } from './ingest-codex.js';
 import { ingestFleetAgentLogs } from './ingest-fleet.js';
 import { ingestVerseSessionLogs } from './ingest-verse.js';
 import { applyReasoningRetention } from './retention.js';
-import { DAY_MS, reasoningRoot, scanFeatures, scanSteps, storeGeneration } from './store.js';
+import { DAY_MS, reasoningRoot, scanFeatures, scanSteps } from './store.js';
 import {
   REASONING_API_PREFIX,
   REASONING_DIGEST_PATH,
@@ -35,17 +35,15 @@ import {
   REASONING_STEPS_DEFAULT_LIMIT,
   REASONING_STEPS_MAX_LIMIT,
   REASONING_STEPS_PATH,
-  type ReasoningDigest,
   type ReasoningOutcome,
   type ReasoningStepV1,
   type ReasoningStepsResponse,
 } from './types.js';
 
-export const DEFAULT_DIGEST_DAYS = 14;
+export { computeReasoningDigest, DEFAULT_DIGEST_DAYS };
+
 export const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1_000;
 const FIRST_RUN_WAIT_MS = 2_000;
-const DIGEST_CACHE_TTL_MS = 60_000;
-const DIGEST_MIN_FRESH_MS = 10_000;
 const MAX_QUERY_CHARS = 200;
 const MAX_SESSION_ID_CHARS = 256;
 
@@ -112,7 +110,7 @@ export function resetReasoningApiState(): void {
   maintenance = null;
   lastMaintenanceMs = 0;
   firstRunDone = false;
-  digestCache.clear();
+  resetReasoningDigestCache();
 }
 
 async function awaitFirstRun(cfg: unknown): Promise<void> {
@@ -127,36 +125,6 @@ async function awaitFirstRun(cfg: unknown): Promise<void> {
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
-
-const digestCache = new Map<string, { generation: number; atMs: number; digest: ReasoningDigest }>();
-
-/** Build the digest for the last `days` days (cached per generation for DIGEST_CACHE_TTL_MS). */
-export async function computeReasoningDigest(
-  days = DEFAULT_DIGEST_DAYS,
-  options: { root?: string; nowMs?: number } = {},
-): Promise<ReasoningDigest> {
-  const nowMs = options.nowMs ?? Date.now();
-  const key = `${options.root ?? reasoningRoot()}|${days}`;
-  const cached = digestCache.get(key);
-  // Fresh for DIGEST_MIN_FRESH_MS no matter what (a live chat bumps the store
-  // generation every flush; recomputing a 0.5 s digest per poll is waste),
-  // then valid until the store changes or DIGEST_CACHE_TTL_MS passes.
-  if (options.nowMs === undefined && cached && (
-    nowMs - cached.atMs < DIGEST_MIN_FRESH_MS ||
-    (cached.generation === storeGeneration() && nowMs - cached.atMs < DIGEST_CACHE_TTL_MS)
-  )) {
-    return cached.digest;
-  }
-  const generation = storeGeneration();
-  const window = { fromMs: nowMs - days * DAY_MS, toMs: nowMs };
-  const builder = new DigestBuilder(window);
-  const scanOptions = options.root ? { root: options.root } : {};
-  await scanSteps(window, (step) => { builder.addStep(step); }, scanOptions);
-  await scanFeatures(window, (feature) => { builder.addFeature(feature); }, scanOptions);
-  const digest = builder.build(nowMs);
-  if (options.nowMs === undefined) digestCache.set(key, { generation, atMs: nowMs, digest });
-  return digest;
-}
 
 function outcomeKey(source: string, conversation: string | null, turnId: string | null): string {
   return `${source}\u0000${conversation ?? ''}\u0000${turnId ?? ''}`;

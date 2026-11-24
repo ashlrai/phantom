@@ -161,8 +161,14 @@ function parseJob(line: string, parsed: ParsedLine & { id: string }): { job: Que
   if (needs !== undefined) job.needs = needs.replace(/^\[|\]$/g, '').split('|');
   const minTier = routing('min_tier');
   if (minTier !== undefined) job.min_tier = minTier as QueueJob['min_tier'];
+  const maxTier = routing('max_tier');
+  if (maxTier !== undefined) job.max_tier = maxTier as QueueJob['max_tier'];
   const maxCost = routing('max_cost_class');
   if (maxCost !== undefined) job.max_cost_class = maxCost as QueueJob['max_cost_class'];
+  const dataClass = routing('data_class');
+  if (dataClass !== undefined) job.data_class = dataClass as QueueJob['data_class'];
+  const workClass = routing('work_class');
+  if (workClass !== undefined) job.work_class = workClass as QueueJob['work_class'];
   const exclusive = routing('exclusive');
   if (exclusive !== undefined) {
     if (!['true', 'false'].includes(exclusive)) throw new Error('Invalid exclusive');
@@ -221,7 +227,10 @@ const marketFields = (job: QueueJob): string => [
   job.preferred_lane !== undefined ? `preferred_lane=${job.preferred_lane}` : '',
   job.needs !== undefined ? `needs=${job.needs.join('|')}` : '',
   job.min_tier !== undefined ? `min_tier=${job.min_tier}` : '',
+  job.max_tier !== undefined ? `max_tier=${job.max_tier}` : '',
   job.max_cost_class !== undefined ? `max_cost_class=${job.max_cost_class}` : '',
+  job.data_class !== undefined ? `data_class=${job.data_class}` : '',
+  job.work_class !== undefined ? `work_class=${job.work_class}` : '',
   job.exclusive !== undefined ? `exclusive=${job.exclusive}` : '',
   job.impact !== undefined ? `impact=${job.impact}` : '',
 ].filter(Boolean).map(field => `, ${field}`).join('');

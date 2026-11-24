@@ -4,6 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { parseReadyTsv } from './lane-console.js';
+import { MARKET_LANE_ID } from './unfed-market.js';
 import { scrubSecrets } from '../util/scrub.js';
 
 export const VERSE_FLEET_LIVE_QUEUE_PATH = '/api/verse/fleet/live/queue';
@@ -13,22 +14,39 @@ export interface ParkedUnmetDep { job: string; lane: string | null; unmet: strin
 export interface ParkedMetDep { job: string; lane: string | null; gates: string[] }
 export interface ParkedGroup { reason: string; lane: string | null; count: number; jobs: string[] }
 export interface PrecheckSkip { at: string; job: string; code: string; reason: string }
+export interface QueueHealthReport {
+  schema: 'fleet.queue-health.v1';
+  windowHours: 24;
+  /** Counts cover the bounded readable snapshot; source states describe gaps. */
+  counts: { ready: number | null; parked: number | null; skips: number | null; repeatedSkipGroups: number | null };
+  /** Same job, code and reason observed at least twice in the trailing 24 hours. */
+  repeatedSkips: Array<{ job: string; code: string; reason: string; count: number; lastAt: string }>;
+}
 export type Source = 'healthy' | 'missing' | 'degraded';
 export interface FleetQueueV1 {
   v: 1; generatedAt: string;
   sources: Record<'ready' | 'skips', Source>;
   total: number; ready: number; parked: number; malformed: number;
+  /**
+   * READY rows carrying no lane hint — the shared market's open rows, which
+   * any capable executor may claim. They count in `ready`/`total` like every
+   * READY row but are never attributed to a lane, so byLane/nextUp/groups
+   * cannot name them. Rows the market rejects (invalid_requirements) are not
+   * open supply: they land in `malformed` instead.
+   */
+  unhinted: number;
   byLane: Array<{ lane: string; ready: number; parked: number; phantom?: number; other?: number; otherRepos?: string[] }>;
   nextUp?: Array<{ lane: string; jobs: string[] }>;
   groups: ParkedGroup[];
   /** Parked dependency rows still waiting on MERGED outcomes (RQ-QUEUE-AUTOUNPARK-1). */
   unmetDeps?: ParkedUnmetDep[];
-  /** Opt-in via `depDetail`: parked dependency rows whose gate ids are all MERGED but were never unparked — a stale-park signal. */
-  metDeps?: ParkedMetDep[];
   /** READY router jobs without a recorded LAUNCH; null when unreadable (RQ-QUEUEAGE2N9JQ8). */
   stuck?: import('../queue/stuck.js').StuckQueue | null;
+  /** Opt-in via `depDetail`: parked dependency rows whose gate ids are all MERGED but were never unparked — a stale-park signal. */
+  metDeps?: ParkedMetDep[];
   skips: PrecheckSkip[];
   skipsLast24h: number | null;
+  health?: QueueHealthReport;
 }
 
 const JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -58,16 +76,41 @@ export function parseDependencyGateIds(text: string): string[] {
   return out;
 }
 
+/** jobs.jsonl field dialects, the same sets dispatchd `_vc_pick` and
+ * metrics-outcomes accept: ids take job|job_id|jobId|id, events
+ * event|type|kind, and phases outcome|state|status plus the producer
+ * aliases phase|result|conclusion. Reconciler rows keep the PUBLISHED
+ * row's publish-shaped event while carrying a terminal outcome;
+ * batcher.project_row maps them to event:"outcome" at read time. */
+const LEDGER_JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const LEDGER_EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const LEDGER_PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
+
+const ledgerPick = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+};
+
 /** MERGED job ids from a bounded jobs.jsonl metrics ledger. */
 export function mergedJobsFromJsonl(text: string): Set<string> {
   const merged = new Set<string>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as { event?: unknown; state?: unknown; job?: unknown };
-      if (row.event === 'outcome' && row.state === 'MERGED' && typeof row.job === 'string' && JOB_ID.test(row.job)) {
-        merged.add(row.job);
-      }
+      const row = JSON.parse(line) as Record<string, unknown>;
+      const job = ledgerPick(row, LEDGER_JOB_KEYS);
+      const phase = ledgerPick(row, LEDGER_PHASE_KEYS)?.toUpperCase() ?? null;
+      if (!job || !JOB_ID.test(job) || phase !== 'MERGED') continue;
+      // Outcome evidence: an outcome/merged event, an eventless phase row
+      // (batcher/_vc_event infer outcome), or a reconciler row whose
+      // terminal phase arrives on a publish-shaped event.
+      const event = ledgerPick(row, LEDGER_EVENT_KEYS)?.toLowerCase() ?? null;
+      if (event !== null && event !== 'outcome' && event !== 'merged' &&
+          row['source'] !== 'metrics-outcomes-reconciler') continue;
+      merged.add(job);
     } catch { /* skip malformed ledger lines */ }
   }
   return merged;
@@ -113,10 +156,11 @@ export function localTimestamp(raw: string): { at: string; ms: number } {
   return { at: raw, ms: Number.NaN };
 }
 
-function parseSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number; dropped: number } {
+function parseSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number; dropped: number; repeatedSkips: QueueHealthReport['repeatedSkips'] } {
   const rows: Array<{ value: PrecheckSkip; ms: number; order: number }> = [];
   let dropped = 0;
   let last24h = 0;
+  const groups = new Map<string, { job: string; code: string; reason: string; count: number; lastAt: string; ms: number }>();
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const cells = line.replace(/\r$/, '').split('\t');
@@ -128,11 +172,22 @@ function parseSkips(text: string, nowMs: number, limit?: number): { skips: Prech
       continue;
     }
     const timestamp = localTimestamp(at);
-    if (timestamp.ms <= nowMs && timestamp.ms >= nowMs - 24 * 60 * 60 * 1000) last24h++;
-    rows.push({ value: { at: scrubSecrets(timestamp.at), job, code: scrubSecrets(code), reason: scrubSecrets(reason) }, ms: timestamp.ms, order: rows.length });
+    const value = { at: scrubSecrets(timestamp.at), job: scrubSecrets(job), code: scrubSecrets(code), reason: scrubSecrets(reason) };
+    if (timestamp.ms <= nowMs && timestamp.ms >= nowMs - 24 * 60 * 60 * 1000) {
+      last24h++;
+      const key = JSON.stringify([value.job, value.code, value.reason]);
+      const group = groups.get(key) ?? { ...value, count: 0, lastAt: value.at, ms: timestamp.ms };
+      group.count++;
+      if (timestamp.ms > group.ms) { group.ms = timestamp.ms; group.lastAt = value.at; }
+      groups.set(key, group);
+    }
+    rows.push({ value, ms: timestamp.ms, order: rows.length });
   }
   rows.sort((a, b) => (Number.isFinite(b.ms) ? b.ms : -Infinity) - (Number.isFinite(a.ms) ? a.ms : -Infinity) || b.order - a.order);
-  return { skips: rows.slice(0, boundedLimit(limit)).map((row) => row.value), last24h, dropped };
+  const repeatedSkips = [...groups.values()].filter(group => group.count > 1)
+    .sort((a, b) => b.count - a.count || a.job.localeCompare(b.job) || a.code.localeCompare(b.code) || a.reason.localeCompare(b.reason))
+    .map(({ job, code, reason, count, lastAt }) => ({ job, code, reason, count, lastAt }));
+  return { skips: rows.slice(0, boundedLimit(limit)).map((row) => row.value), last24h, dropped, repeatedSkips };
 }
 
 export function parsePrecheckSkips(text: string, nowMs: number, limit?: number): { skips: PrecheckSkip[]; last24h: number } {
@@ -164,6 +219,74 @@ export async function readSource(path: string, max: number, tail: boolean): Prom
   } finally { await file?.close().catch(() => undefined); }
 }
 
+export interface SourceEnds {
+  state: Source;
+  /**
+   * Complete lines from the first `max` bytes, then complete lines from the
+   * last `max` bytes. A file no larger than `max` is read whole. When the
+   * file exceeds `max` the windows can overlap, so a line may appear twice;
+   * the uncovered middle is never read and `truncated` says so.
+   */
+  text: string;
+  /** True when the file exceeded `max` and only the two end windows were read. */
+  truncated: boolean;
+}
+
+/**
+ * Bounded read of both ends of one regular file for append-only ledgers whose
+ * evidence sits at both extremes — the oldest events near the head and the
+ * newest at the tail — where either single window would miss one side. Each
+ * window is cut back to whole lines: the head drops its trailing partial
+ * line, the tail drops its leading partial line. Same missing/degraded
+ * contract as readSource.
+ */
+export async function readSourceEnds(path: string, max: number): Promise<SourceEnds> {
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    const before = await lstat(path);
+    if (!before.isFile()) throw new Error('invalid source');
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = await file.stat();
+    if (!info.isFile()) throw new Error('invalid source');
+    const size = info.size;
+    if (size <= max) {
+      const buffer = Buffer.alloc(size);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      return { state: 'healthy', text: buffer.subarray(0, length).toString('utf8'), truncated: false };
+    }
+    const ends: string[] = [];
+    const head = Buffer.alloc(max);
+    let headLength = 0;
+    while (headLength < head.length) {
+      const { bytesRead } = await file.read(head, headLength, head.length - headLength, headLength);
+      if (!bytesRead) break;
+      headLength += bytesRead;
+    }
+    const headText = head.subarray(0, headLength).toString('utf8');
+    const headLastNewline = headText.lastIndexOf('\n');
+    ends.push(headLastNewline >= 0 ? headText.slice(0, headLastNewline) : '');
+    const tail = Buffer.alloc(max);
+    const tailStart = size - max;
+    let tailLength = 0;
+    while (tailLength < tail.length) {
+      const { bytesRead } = await file.read(tail, tailLength, tail.length - tailLength, tailStart + tailLength);
+      if (!bytesRead) break;
+      tailLength += bytesRead;
+    }
+    const tailText = tail.subarray(0, tailLength).toString('utf8');
+    const tailFirstNewline = tailText.indexOf('\n');
+    ends.push(tailFirstNewline >= 0 ? tailText.slice(tailFirstNewline + 1) : '');
+    return { state: 'healthy', text: ends.filter(part => part.length > 0).join('\n'), truncated: true };
+  } catch (error) {
+    return { state: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded', text: '', truncated: false };
+  } finally { await file?.close().catch(() => undefined); }
+}
+
 export async function readFleetQueue(opts: { runsDir?: string; now?: () => number; limit?: number; depDetail?: boolean; onWaitingJob?: (lane: string, id: string) => void } = {}): Promise<FleetQueueV1> {
   const now = (opts.now ?? Date.now)();
   const root = opts.runsDir ?? join(homedir(), '.ashlr-runs');
@@ -179,6 +302,7 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
   let repoColumn = -1;
   const parsedRows: Array<{ row: ReturnType<typeof parseReadyTsv>['rows'][number]; originalState: string | undefined; unsafeRepo: boolean }> = [];
   let dropped = 0;
+  let unhinted = 0;
   /** Private prompt paths captured from raw cells — never emitted publicly. */
   const rawDepPromptByJob = new Map<string, string>();
   for (const raw of readySource.text.split('\n')) {
@@ -198,8 +322,24 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const first = cells[0] ?? '';
     const positional = !header || (statusColumn !== 0 && (/^READY$/i.test(first) || PARKED.test(first)));
     const input = positional && PARKED.test(first) ? `status=${first}\t${cells.slice(1).join('\t')}` : line;
-    const result = parseReadyTsv(positional ? input : `${header}\n${input}`);
+    // Dispatcher rows are [job, repo, pool, tier, prompt], unlike the
+    // generic positional format [job, pool, tier, repo, title]. A lane cell
+    // the market would not accept as a preferred_lane — empty (open hint) or
+    // invalid (invalid_requirements) — needs the dialect's requirements-aware
+    // verdict, so probe those rows through the shared parser and keep the
+    // header verdict for anything else — malformed stays malformed instead
+    // of surfacing as a generic-positional row or a bogus lane.
+    const dispatcherShape = positional && cells.length === 5 && JOB_ID.test(first) &&
+      !/^READY$/i.test(first) && !PARKED.test(first) &&
+      /^(?:frontier|work|mid|fast)$/.test(cells[3] ?? '');
+    const openProbe = dispatcherShape && !MARKET_LANE_ID.test(cells[2] ?? '');
+    let result = parseReadyTsv(dispatcherShape && !openProbe ? `id\trepo\tpool\ttier\ttitle\n${line}`
+      : positional ? input : `${header}\n${input}`);
+    if (openProbe && result.unhinted === 0 && result.invalid === 0) {
+      result = parseReadyTsv(`id\trepo\tpool\ttier\ttitle\n${line}`);
+    }
     dropped += result.dropped;
+    unhinted += result.unhinted;
     const row = result.rows[0];
     if (!row) continue;
     const originalState = positional
@@ -235,7 +375,15 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     const poolParked = parseParkedState(row.pool);
     const parkedState = statusParked.parked ? statusParked : poolParked;
     if (!row.id || !JOB_ID.test(row.id) || (!parkedState.parked && row.status !== 'READY')) { malformed++; continue; }
-    const lane = (parkedState.parked ? parkedState.lane : null) ?? row.pool;
+    // The parser uppercases the whole PARKED marker inside `status`, so its
+    // lane capture can differ in case from the lane the row's own pool cell
+    // names (lane-column parked rows carry the marker's lane there verbatim).
+    // When both spellings name the same lane, keep the pool's file-original
+    // casing so every ready.tsv dialect attributes one lane key.
+    const markerLane = parkedState.lane;
+    const lane = markerLane !== null && markerLane.toLowerCase() === row.pool.toLowerCase()
+      ? row.pool
+      : markerLane ?? row.pool;
     opts.onWaitingJob?.(lane, row.id);
     const counts = lanes.get(lane) ?? { lane, ready: 0, parked: 0, phantom: 0, other: 0, otherRepos: new Set<string>() };
     lanes.set(lane, counts);
@@ -265,18 +413,29 @@ export async function readFleetQueue(opts: { runsDir?: string; now?: () => numbe
     }
   }
   if (malformed) readySource.state = 'degraded';
+  const readyTotal = ready + unhinted;
   const skips = parseSkips(skipsSource.text, now, opts.limit);
   if (skips.dropped) skipsSource.state = 'degraded';
   const { unmetDeps, metDeps } = await readUnmetDeps(root, depPromptByJob, opts.depDetail === true);
   return {
     v: 1, generatedAt: new Date(now).toISOString(), sources: { ready: readySource.state, skips: skipsSource.state },
-    total: ready + parked, ready, parked, malformed,
+    total: readyTotal + parked, ready: readyTotal, parked, malformed, unhinted,
     byLane: [...lanes.values()].map((counts) => ({ ...counts, otherRepos: [...counts.otherRepos].sort().slice(0, 5) })).sort((a, b) => a.lane.localeCompare(b.lane)),
     nextUp: [...nextUp.entries()].map(([lane, jobs]) => ({ lane, jobs })).sort((a, b) => a.lane.localeCompare(b.lane)),
     groups: [...groups.values()].map((group) => ({ ...group, jobs: group.jobs.sort().slice(0, 8) }))
       .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason) || (a.lane ?? '').localeCompare(b.lane ?? '')),
     unmetDeps,
     ...(metDeps === undefined ? {} : { metDeps }),
+    health: {
+      schema: 'fleet.queue-health.v1', windowHours: 24,
+      counts: {
+        ready: readySource.state === 'healthy' || readySource.text ? readyTotal : null,
+        parked: readySource.state === 'healthy' || readySource.text ? parked : null,
+        skips: skipsSource.state === 'healthy' || skipsSource.text ? skips.last24h : null,
+        repeatedSkipGroups: skipsSource.state === 'healthy' || skipsSource.text ? skips.repeatedSkips.length : null,
+      },
+      repeatedSkips: skips.repeatedSkips,
+    },
     skips: skips.skips, skipsLast24h: skipsSource.state === 'degraded' && !skipsSource.text ? null : skips.last24h,
   };
 }
@@ -302,8 +461,8 @@ async function readUnmetDeps(
       if (text !== null) ids = parseDependencyGateIds(text);
     }
     const unmet = ids.filter((id) => !merged.has(id));
-    if (unmet.length > 0) rows.push({ job, lane: meta.lane, unmet });
-    else if (includeMet && ids.length > 0) met.push({ job, lane: meta.lane, gates: ids });
+    if (unmet.length > 0 && rows.length < 50) rows.push({ job, lane: meta.lane, unmet });
+    else if (includeMet && unmet.length === 0 && ids.length > 0 && met.length < 50) met.push({ job, lane: meta.lane, gates: ids });
     if (rows.length >= 50 && (!includeMet || met.length >= 50)) break;
   }
   return { unmetDeps: rows, metDeps: includeMet ? met : undefined };
