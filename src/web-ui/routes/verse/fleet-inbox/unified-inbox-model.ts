@@ -6,8 +6,8 @@ const DETAIL_MAX = 300;
 /** The CLI twin of this card. */
 export const UNIFIED_INBOX_COMMAND = 'phm comms inbox';
 
-const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'conversations', 'seats', 'gmail', 'linkedin', 'requests', 'email-outbox', 'team-approvals', 'proposals'] as const;
-const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'agent-thread', 'seat-handoff', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-stuck', 'team-approval', 'inbox-proposal'] as const;
+const SOURCES = ['needs-you', 'needs-you-delivery', 'imessage', 'teammate-tasks', 'owner-thread', 'owner-delivery', 'drafts', 'bus', 'mailbox', 'board', 'conversations', 'wakes', 'seats', 'peer-dispatch', 'gmail', 'linkedin', 'requests', 'email-inbox', 'email-outbox', 'team-approvals', 'proposals', 'slack'] as const;
+const KINDS = ['needs-you', 'needs-you-delivery', 'teammate-text', 'teammate-task', 'owner-message', 'owner-reply-undelivered', 'draft-approval', 'bus-work', 'bus-handoff', 'mailbox-message', 'board-delivery', 'board-task', 'agent-thread', 'wake-hint', 'seat-handoff', 'peer-dispatch-result', 'gmail-over-target', 'linkedin-message', 'comms-request', 'email-inbound', 'email-stuck', 'team-approval', 'inbox-proposal', 'slack-request'] as const;
 const SEVERITIES = ['info', 'warn', 'high'] as const;
 const STATES = ['healthy', 'missing', 'degraded', 'unavailable'] as const;
 const EXPIRES_SOON_MS = 30 * 60_000;
@@ -32,8 +32,9 @@ export interface UnifiedInboxEntry {
 }
 
 export interface UnifiedInboxSources {
-  /** null: the source was absent from the response. */
-  [source: string]: { state: InboxSourceState; pending: number } | null;
+  /** null: the source was absent from the response. `pending` is null when
+   * the source could not be read — its pending total is unknown, never 0. */
+  [source: string]: { state: InboxSourceState; pending: number | null } | null;
 }
 
 export type UnifiedInboxView =
@@ -65,15 +66,16 @@ export function readUnifiedInboxView(data: unknown): UnifiedInboxView | null {
   const sources: UnifiedInboxSources = {};
   for (const source of SOURCES) {
     const report = (data.sources as Record<string, unknown>)[source];
-    sources[source] = isRecord(report) && oneOf(STATES, report.state) && isCount(report.pending)
+    sources[source] = isRecord(report) && oneOf(STATES, report.state) &&
+      (report.pending === null || isCount(report.pending))
       ? { state: report.state, pending: report.pending } : null;
   }
   const items = data.items.map(readEntry).filter((e): e is UnifiedInboxEntry => e !== null);
   return { total: data.total, omitted: data.omitted, sources, items };
 }
 
-const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'iMessage', 'owner-thread': 'Owner thread', 'owner-delivery': 'Owner delivery', drafts: 'Drafts', bus: 'Bus', conversations: 'Conversations', seats: 'Seats', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals' };
-const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'Teammate text', 'owner-thread': 'Owner message', 'owner-delivery': 'Undelivered reply', drafts: 'Draft', bus: 'Bus work', conversations: 'Agent thread', seats: 'Seat handoff', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal' };
+const SOURCE_NAMES: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'iMessage', 'teammate-tasks': 'Teammate tasks', 'owner-thread': 'Owner thread', 'owner-delivery': 'Owner delivery', drafts: 'Drafts', bus: 'Bus', mailbox: 'Mailbox', board: 'Board', conversations: 'Conversations', wakes: 'Wakes', seats: 'Seats', 'peer-dispatch': 'Peer dispatch', gmail: 'Gmail', linkedin: 'LinkedIn', requests: 'Requests', 'email-inbox': 'Email inbox', 'email-outbox': 'Email outbox', 'team-approvals': 'Team approvals', proposals: 'Proposals', slack: 'Slack' };
+const ITEM_LABELS: Record<InboxSource, string> = { 'needs-you': 'Needs you', 'needs-you-delivery': 'Needs-you delivery', imessage: 'Teammate text', 'teammate-tasks': 'Teammate task', 'owner-thread': 'Owner message', 'owner-delivery': 'Undelivered reply', drafts: 'Draft', bus: 'Bus work', mailbox: 'Mailbox mail', board: 'Board item', conversations: 'Agent thread', wakes: 'Wake hint', seats: 'Seat handoff', 'peer-dispatch': 'Peer result', gmail: 'Gmail inbox', linkedin: 'LinkedIn message', requests: 'Comms request', 'email-inbox': 'Inbound email', 'email-outbox': 'Stuck reply', 'team-approvals': 'Team approval', proposals: 'Proposal', slack: 'Slack request' };
 
 /** "Needs you 3 · iMessage 1 · Drafts 0 · Bus degraded 2"; a missing source shows "—", never 0. */
 export function sourceSummary(sources: UnifiedInboxSources): string {
@@ -81,7 +83,7 @@ export function sourceSummary(sources: UnifiedInboxSources): string {
     const report = sources[source] ?? null;
     if (report === null || report.state === 'missing') return `${SOURCE_NAMES[source]} —`;
     const state = report.state === 'healthy' ? '' : ` ${report.state}`;
-    return `${SOURCE_NAMES[source]}${state} ${report.state === 'unavailable' ? '—' : report.pending}`;
+    return `${SOURCE_NAMES[source]}${state} ${report.pending === null || report.state === 'unavailable' ? '—' : report.pending}`;
   }).join(' · ');
 }
 
@@ -104,10 +106,11 @@ export function itemLine(item: UnifiedInboxEntry, nowMs: number): { label: strin
 }
 
 const SOURCE_COMMANDS: Record<InboxSource, string> = {
-  'needs-you': 'phm fleet needs', 'needs-you-delivery': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'owner-thread': 'phm comms thread', 'owner-delivery': 'phm comms thread',
-  drafts: 'phm drafts list --status pending', bus: 'phm fleet bus-claim', conversations: 'phm agents conversations',
-  seats: 'phm bots handoffs', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
-  'email-outbox': 'phm fleet email-outbox', 'team-approvals': 'phm approvals', proposals: 'phm inbox',
+  'needs-you': 'phm fleet needs', 'needs-you-delivery': 'phm fleet needs', imessage: 'phm fleet teammate-texts', 'teammate-tasks': 'phm fleet imessage-tasks list', 'owner-thread': 'phm comms thread', 'owner-delivery': 'phm comms thread',
+  drafts: 'phm drafts list --status pending', bus: 'phm fleet bus-claim', mailbox: 'phm bus inbox', board: 'phm bus board pending', conversations: 'phm agents conversations',
+  wakes: 'phm agents bus wakes --all',
+  seats: 'phm bots handoffs', 'peer-dispatch': 'phm agentnet peers dispatch --apply', gmail: 'phm fleet gmail-archive-plan', linkedin: 'phm drafts list --status pending', requests: 'phm comms status',
+  'email-inbox': 'phm comms email-cycle', 'email-outbox': 'phm fleet email-outbox', 'team-approvals': 'phm approvals', proposals: 'phm inbox', slack: 'phm fleet slack-trace',
 };
 const STATE_MEANINGS: Record<Exclude<InboxSourceState, 'healthy'>, string> = {
   missing: 'not set up on this Mac', degraded: 'read partly; some items may be missing', unavailable: 'could not be read',

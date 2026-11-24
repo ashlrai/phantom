@@ -125,6 +125,26 @@ describe('parseAuditLedger', () => {
     expect(map.get('RQ-A')).toMatchObject({ rows: 1, finishSeen: true, finishMs: null });
     expect(map.has('bad/id')).toBe(false);
   });
+
+  it('reads the ledger dialect: aliases, eventless and reconciler rows', () => {
+    const map = parseAuditLedger(jobsText([
+      // Aliased launch/finish plus an eventless reconciler outcome.
+      { jobId: 'RQ-A', kind: 'launch', at: iso(NOW - 30 * HOUR) },
+      { jobId: 'RQ-A', type: 'finish', timestamp: iso(NOW - 20 * HOUR) },
+      { jobId: 'RQ-A', prUrl: 'https://github.com/o/r/pull/1', outcome: 'MERGED', mergedAt: iso(NOW - 10 * HOUR), source: 'metrics-outcomes-reconciler' },
+      // A publish claim in the PUBLISHED phase dialect keeps its prUrl.
+      { job_id: 'RQ-B', event: 'publish', prUrl: 'https://github.com/o/r/pull/2', outcome: 'PUBLISHED', ts: iso(NOW - 5 * HOUR) },
+      // A publish-shaped reconciler row is both a publish claim and an outcome.
+      { jobId: 'RQ-C', event: 'publish', prUrl: 'https://github.com/o/r/pull/3', outcome: 'MERGED', mergedAt: iso(NOW - 4 * HOUR), source: 'metrics-outcomes-reconciler' },
+      // A publish claim carrying a phase but no reconciler source records no outcome.
+      { job: 'RQ-D', event: 'publish', url: 'https://github.com/o/r/pull/4', state: 'MERGED' },
+    ]));
+    expect(map.get('RQ-A')).toMatchObject({ rows: 3, outcomeState: 'merged', finishSeen: true, publishUrl: null });
+    expect(map.get('RQ-A')!.outcomeMs).toBe(NOW - 10 * HOUR);
+    expect(map.get('RQ-B')).toMatchObject({ rows: 1, publishUrl: 'https://github.com/o/r/pull/2', outcomeState: null });
+    expect(map.get('RQ-C')).toMatchObject({ rows: 1, outcomeState: 'merged', publishUrl: 'https://github.com/o/r/pull/3' });
+    expect(map.get('RQ-D')).toMatchObject({ rows: 1, outcomeState: null, publishUrl: 'https://github.com/o/r/pull/4' });
+  });
 });
 
 describe('mergedUrlsFromLedger', () => {
@@ -135,6 +155,22 @@ describe('mergedUrlsFromLedger', () => {
       publish('C', 'pr', 1, 'https://github.com/o/r/pull/11'),
     ]));
     expect([...urls]).toEqual(['https://github.com/o/r/pull/9']);
+  });
+
+  it('collects urls from dialect outcome rows and skips unsourced publish claims', () => {
+    const urls = mergedUrlsFromLedger(jobsText([
+      // Eventless reconciler row: prUrl is the link field.
+      { jobId: 'A', prUrl: 'https://github.com/o/r/pull/9', outcome: 'MERGED', mergedAt: iso(NOW), source: 'metrics-outcomes-reconciler' },
+      // Publish-shaped reconciler row carrying a terminal phase.
+      { event: 'publish', jobId: 'B', pr_url: 'https://github.com/o/r/pull/10', outcome: 'MERGED', source: 'metrics-outcomes-reconciler' },
+      // A publish claim with a phase but no reconciler source is not outcome evidence.
+      { event: 'publish', job: 'C', url: 'https://github.com/o/r/pull/11', state: 'MERGED' },
+      // Canonical outcome row still counts.
+      outcome('D', 'MERGED', 1, 'https://github.com/o/r/pull/12'),
+    ]));
+    expect([...urls].sort()).toEqual([
+      'https://github.com/o/r/pull/10', 'https://github.com/o/r/pull/12', 'https://github.com/o/r/pull/9',
+    ]);
   });
 });
 

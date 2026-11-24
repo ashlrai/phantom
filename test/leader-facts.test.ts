@@ -24,6 +24,23 @@ describe('leader facts', () => {
       expect(await readdir(join(root, 'leader'))).toEqual(['facts.json']);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+  it('reads publish evidence through the jobs-ledger field dialect', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'leader-facts-'));
+    try {
+      await mkdir(join(root, 'queue')); await mkdir(join(root, 'metrics'));
+      await writeFile(join(root, 'queue/router-queue.md'), '- READY RQ-C (repo=phantom, src=leader): work\n');
+      await writeFile(join(root, 'metrics/jobs.jsonl'), [
+        { jobId: 'RQ-C', type: 'launch', timestamp: '2026-01-02T00:00:00Z' },
+        { id: 'RQ-C', kind: 'published', pr_url: 'https://github.com/ashlrai/phantom/pull/9', outcome: 'ok', updatedAt: '2026-01-02T01:00:00Z' },
+      ].map(row => JSON.stringify(row)).join('\n'));
+      const gh: CloudGh = async args => ({ ok: true, stderr: '', stdout: JSON.stringify(
+        args[1]?.includes('/pulls/') ? { state: 'open', merged_at: null }
+          : args[1] === 'search/issues' ? { total_count: 0, incomplete_results: false, items: [] } : {},
+      ) });
+      const facts = await writeLeaderFacts(root, gh, Date.parse('2026-01-03T00:00:00Z'));
+      expect(facts.jobs).toEqual([{ id: 'RQ-C', repo: 'ashlrai/phantom', publish_result: 'ok', pr_url: 'https://github.com/ashlrai/phantom/pull/9', pr_state: 'open', merged_at: null }]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('discovers recent Q8 pull requests independently of the local ledger', async () => {
     const root = await mkdtemp(join(tmpdir(), 'leader-facts-'));
     try {

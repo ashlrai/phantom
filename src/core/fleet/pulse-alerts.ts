@@ -8,14 +8,15 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensurePrivateDirectory, writePrivateFileAtomic } from '../verse/preferences.js';
 import { defaultRunsDir } from './landed-closes-read.js';
-import { BUILD_STALE_COMMITS, BUILD_STALE_HOURS, buildStaleText, buildStaleness, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
+import { buildStaleText, buildStaleness, buildUnidentifiedText, resolveBuildStaleLimits, savedBuildStaleLimits, type BuildStaleLimits, type MaybeBuildReport } from './build-stale.js';
 import type { CadenceV1 } from '../release/cadence.js';
 import type { SpendSnapshot } from '../usage/spend.js';
 import type { StarvedRead } from './lane-starved.js';
+import { summarizeSkips, type SkippedJobsV1 } from './skipped-jobs.js';
 import type { ThroughputMark } from './throughput.js';
 
 export const PULSE_ALERTS_SCHEMA = 'fleet.pulse.alerts.v1' as const;
-export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'build-stale'] as const;
+export const PULSE_ALERT_KINDS = ['stalled', 'starved', 'wasting', 'pool_waste', 'release_stale', 'build-stale', 'skipped'] as const;
 export type PulseAlertKind = (typeof PULSE_ALERT_KINDS)[number];
 export interface PulseAlertV1 {
   kind: PulseAlertKind;
@@ -39,7 +40,9 @@ export interface PulseAlertInputs { marks: readonly ThroughputMark[] | null; sta
   /** The live build (`phm doctor build`); absent means not checked, null means the read failed. */
   build?: MaybeBuildReport;
   /** Override the build-stale limits (50 commits, 24 hours). */
-  buildLimits?: BuildStaleLimits }
+  buildLimits?: BuildStaleLimits;
+  /** Precheck skips in the last SKIP_ALERT_HOURS; absent means not checked, null means the ledger could not be read. */
+  skips?: SkippedJobsV1 | null }
 
 export const STALL_MINUTES = 30;
 export const WASTING_JOBS = 20;
@@ -47,6 +50,8 @@ export const WASTING_JOBS = 20;
 export const WASTING_MIN_JOBS = 5;
 export const WASTING_RATE = 0.4;
 export const POOL_WASTE_PERCENT = 10;
+/** How far back a precheck skip counts toward the skipped alert. */
+export const SKIP_ALERT_HOURS = 6;
 /** How far back the ledger is scanned for the last launch, the last merge and the last 20 jobs per lane. */
 export const ALERT_LOOKBACK_H = 72;
 const MIN = 60_000;
@@ -57,7 +62,7 @@ const minutesText = (ms: number): string => ms >= 120 * MIN ? `${Math.floor(ms /
 /** Pure: the active alerts for these inputs at `now`. */
 export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAlertsV1 {
   const alerts: PulseAlertV1[] = [], unknown: string[] = [];
-  const { marks, starved, spend, releases, build, buildLimits } = inputs;
+  const { marks, starved, spend, releases, build, buildLimits, skips } = inputs;
 
   if (!marks) unknown.push('Stalled, wasting: the job metrics file could not be read.');
   else {
@@ -118,12 +123,26 @@ export function buildPulseAlerts(inputs: PulseAlertInputs, now: number): PulseAl
 
   if (build === null) unknown.push('Live build: it could not be read.');
   else if (build) {
-    if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
+    const unidentified = buildUnidentifiedText(build);
+    if (unidentified) alerts.push({ kind: 'build-stale', lane: 'unidentified', since: null, detail: unidentified.detail, fix_hint: unidentified.fix });
+    else if (buildStaleness(build, now, buildLimits) === 'unknown') unknown.push('Live build: how far behind master is not known here.');
     const text = buildStaleText(build, now, buildLimits);
     if (text && build.commit?.state === 'known') {
       const behind = build.behind?.state === 'known' ? build.behind.since : null;
       alerts.push({ kind: 'build-stale', lane: build.commit.sha.slice(0, 7), since: behind ?? null, detail: text.detail, fix_hint: text.fix });
     }
+  }
+
+  if (skips === null) unknown.push('Skipped jobs: the job metrics file could not be read.');
+  else if (skips && (skips.repeated.length || skips.leader_skipped.length)) {
+    const parts = [
+      skips.repeated.length ? `${skips.repeated.join(', ')} ${skips.repeated.length === 1 ? 'was' : 'were'} skipped more than once` : '',
+      skips.leader_skipped.length ? `${skips.leader_skipped.join(', ')} ${skips.leader_skipped.length === 1 ? 'was' : 'were'} queued by the leader and skipped` : '',
+    ].filter(Boolean);
+    const first = skips.by_code.flatMap(g => g.jobs).map(j => Date.parse(j.at)).filter(Number.isFinite);
+    alerts.push({ kind: 'skipped', lane: 'fleet', since: first.length ? new Date(Math.min(...first)).toISOString() : null,
+      detail: `In the last ${SKIP_ALERT_HOURS} hours the precheck dropped jobs that may have been wrongly skipped: ${parts.join('; ')}.`,
+      fix_hint: 'See why: phm jobs skipped.' });
   }
 
   const order = (a: PulseAlertV1) => PULSE_ALERT_KINDS.indexOf(a.kind);
@@ -207,10 +226,12 @@ async function defaultSenders(runsDir: string): Promise<PulseNoticeSenders> {
   return senders;
 }
 
-/** ASHLR_BUILD_STALE_COMMITS / ASHLR_BUILD_STALE_HOURS override the 50-commit and 24-hour limits; junk keeps the default. */
-function buildLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): BuildStaleLimits {
-  const num = (raw: string | undefined, fallback: number): number => { const n = Number(raw); return raw && Number.isFinite(n) && n >= 0 ? n : fallback; };
-  return { commits: num(env['ASHLR_BUILD_STALE_COMMITS'], BUILD_STALE_COMMITS), hours: num(env['ASHLR_BUILD_STALE_HOURS'], BUILD_STALE_HOURS) };
+/** Saved Settings limits (`fleet.buildStale`) under the ASHLR_BUILD_STALE_COMMITS / _HOURS env overrides; an unreadable config keeps the defaults. */
+async function buildLimitsFromConfig(env: NodeJS.ProcessEnv = process.env): Promise<BuildStaleLimits> {
+  let saved = savedBuildStaleLimits(undefined);
+  try { saved = savedBuildStaleLimits((await import('../config.js')).loadConfigReadOnly().fleet?.buildStale); } catch { /* defaults */ }
+  const { commits, hours } = resolveBuildStaleLimits(saved, env);
+  return { commits, hours };
 }
 
 /** Read every input once. Read-only; a reader that fails leaves its checks unknown. */
@@ -226,7 +247,8 @@ export async function readPulseAlertInputs(runsDir: string, now: number): Promis
     quiet(import('../release/cadence.js').then(m => m.readReleaseCadence({ now }))),
   ]);
   const build = await quiet(import('./build-live.js').then(m => m.readBuildLive({ now: () => now })));
-  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: buildLimitsFromEnv() };
+  return { marks: ledger === null ? null : throughputMarks(ledger, now - ALERT_LOOKBACK_H * 3_600_000, now).marks, starved, spend, releases, build, buildLimits: await buildLimitsFromConfig(),
+    skips: ledger === null ? null : summarizeSkips(ledger, now, SKIP_ALERT_HOURS) };
 }
 
 export interface ReadPulseAlertsOpts {

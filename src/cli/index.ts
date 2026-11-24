@@ -2302,6 +2302,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'today': {
+        const { cmdToday } = await import('./today.js');
+        process.exitCode = await cmdToday(rest);
+        break;
+      }
+
       case 'throughput': {
         const { cmdThroughput } = await import('./throughput.js');
         process.exitCode = await cmdThroughput(rest);
@@ -2608,6 +2614,11 @@ async function main(): Promise<void> {
       }
       case 'desktop-update': {
         process.exitCode = await (await loadDesktopUpdateCmd())(rest);
+        break;
+      }
+      case 'self-update': {
+        const { cmdSelfUpdate } = await import('./self-update.js');
+        process.exitCode = await cmdSelfUpdate(rest);
         break;
       }
       case 'self-swap': {
@@ -3374,6 +3385,27 @@ async function main(): Promise<void> {
         // V3.10: the Leader (Visionary) — show / run / tick / veto (src/cli/leader.ts).
         const cmdLeader = await loadLeaderCmd();
         process.exitCode = await cmdLeader(rest);
+        break;
+      }
+
+      case 'owner': {
+        if (rest[0] === 'reply') {
+          const { cmdOwnerReply } = await import('./owner-reply.js');
+          process.exitCode = await cmdOwnerReply(rest.slice(1));
+          break;
+        }
+        // Pair Mason's iMessage handle with one YES reply (src/cli/owner-pair.ts).
+        const { cmdOwnerPair } = await import('./owner-pair.js');
+        process.exitCode = await cmdOwnerPair(rest);
+        break;
+      }
+
+      case 'owner-live': {
+        // Why each phone channel is on or off, and the one step that changes it (src/cli/fleet-owner-live.ts).
+        const { cmdOwnerLiveStatus, cmdOwnerLiveSwitch } = await import('./fleet-owner-live.js');
+        process.exitCode = rest[0] === 'status' ? await cmdOwnerLiveStatus(rest.slice(1))
+          : rest[0] === 'enable' || rest[0] === 'disable' ? await cmdOwnerLiveSwitch(rest)
+          : (console.error('usage: phm owner-live status|enable imessage|disable imessage [--json]'), 2);
         break;
       }
 

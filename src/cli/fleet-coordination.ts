@@ -5,6 +5,7 @@ import {
 } from '../core/fleet/coordination.js';
 
 import { returnFleetClaim } from '../core/fleet/coordination-return.js';
+import { parseCoordinationInboxFilters, projectCoordinationInbox, type CoordinationInboxFilters } from '../core/fleet/coordination-inbox.js';
 import { projectCoordinationReturns } from '../core/fleet/coordination-returns-view.js';
 import { claimNoticeDir, claimNoticePaths } from '../core/fleet/claim-notice-send.js';
 import { appendClaimThreadBinding, validateClaimThreadKey } from '../core/fleet/claim-thread-binding-write.js';
@@ -19,7 +20,7 @@ export const FLEET_COORDINATION_HELP = [
   '  board [--json]',
   '  returns [--json] — RESULT receipts from coordination return, newest first; evidence, not authority.',
   '  post --from name --to name --message "text" [--id id] [--ttl-seconds 3600] [--json]',
-  '  inbox --agent name [--json]',
+  '  inbox --agent name [--from sender] [--since <15m|2h|1d|ISO|epoch>] [--before <when>] [--contains text] [--json] — filters narrow the addressed read: --from keeps posts one sender label wrote (proposals carry no sender and drop out), --since/--before keep records inside one [since, before) window on their at stamp, --contains keeps messages whose body and proposals whose repo+task carry the text (case-insensitive).',
   '  assign --repo owner/repo --task "work" --to name [--ttl-seconds 3600] [--json]',
   'Claims coordinate only. Assign proposes work and never spawns an agent.',
   'Keep the lease from claim/handoff private; it fences release and later handoffs.',
@@ -28,7 +29,7 @@ const VALUES: Record<string, string[]> = {
   claim: ['--repo', '--task', '--agent', '--ttl-seconds', '--thread'], release: ['--agent', '--lease'],
   return: ['--agent', '--lease', '--pr', '--head', '--tests', '--artifact', '--blocked', '--ttl-seconds'],
   handoff: ['--agent', '--lease', '--to', '--ttl-seconds'], board: [], returns: [],
-  post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent'],
+  post: ['--from', '--to', '--message', '--id', '--ttl-seconds'], inbox: ['--agent', '--from', '--since', '--before', '--contains'],
   assign: ['--repo', '--task', '--to', '--ttl-seconds'],
 };
 export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: string; now?: () => number } = {}): Promise<number> {
@@ -68,8 +69,16 @@ export async function cmdFleetCoordination(args: string[], deps: { runsRoot?: st
   }
   if (sub === 'board' || sub === 'inbox') {
     if (sub === 'inbox' && !value('agent')) return invalid();
-    const board = readFleetBoard({ reap: false, now: (deps.now ?? Date.now)() });
-    output(sub === 'board' ? board : { schema: board.schema, state: board.state, messages: board.messages.filter(m => m.to === value('agent') || m.to === 'all'), proposals: board.proposals.filter(p => p.to === value('agent')) });
+    const now = (deps.now ?? Date.now)();
+    let filters: CoordinationInboxFilters | undefined;
+    if (sub === 'inbox') {
+      const parsed = parseCoordinationInboxFilters({ from: values['--from'], since: values['--since'],
+        before: values['--before'], contains: values['--contains'] }, now);
+      if (!parsed.ok) return invalid();
+      filters = parsed.filters;
+    }
+    const board = readFleetBoard({ reap: false, now });
+    output(sub === 'board' ? board : projectCoordinationInbox(board, value('agent'), filters));
     return board.state === 'known' ? 0 : 1;
   }
   if (sub === 'return') {

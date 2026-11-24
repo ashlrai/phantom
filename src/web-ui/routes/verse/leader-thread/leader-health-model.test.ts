@@ -37,6 +37,20 @@ describe('sinceWords', () => {
 });
 
 describe('leaderHealthNotice', () => {
+  it('names the worker a reply box is aimed at, and says why its message waits', () => {
+    expect(leaderHealthNotice({ failures: 2, hoursSinceSuccess: 3, cause: 'spawn ENOENT' }, false, 'RQ-A')).toMatchObject({
+      state: 'down', headline: 'The Leader’s last 2 passes failed.', cause: 'spawn ENOENT',
+      detail: 'A message to RQ-A goes through the Leader, and it is not reading you. What you send is kept in its inbox until a pass succeeds.',
+    });
+    expect(leaderHealthNotice({ failures: 1, hoursSinceSuccess: 3, cause: null }, false, 'RQ-A')?.detail)
+      .toBe('A message to RQ-A goes through the Leader. What you send is kept in its inbox; the next pass may read it.');
+    expect(leaderHealthNotice({ failures: 0, hoursSinceSuccess: 0.1, cause: null }, true, 'RQ-A')?.detail).toBe('It reads what you send to RQ-A on its passes, as before.');
+    // No job: the Leader chat's own words, unchanged.
+    expect(leaderHealthNotice({ failures: 2, hoursSinceSuccess: 3, cause: null }, false, null)?.detail)
+      .toBe('It is not reading you. What you send is kept in its inbox until a pass succeeds.');
+    expect(leaderHealthNotice({ failures: 0, hoursSinceSuccess: 3, cause: null }, false, 'RQ-A')).toBeNull();
+  });
+
   it('draws nothing without a counted failure', () => {
     expect(leaderHealthNotice(undefined, false)).toBeNull();
     expect(leaderHealthNotice(null, true)).toBeNull();

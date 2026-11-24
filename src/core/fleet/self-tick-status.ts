@@ -34,7 +34,7 @@ export function readSelfTickStatus(runsDir: string, now: number): SelfTickStatus
     const steps = rec(JSON.parse(readFileSync(join(runsDir, SELF_TICK_LAST), 'utf8')))?.['steps'];
     if (Array.isArray(steps)) planner = (steps as unknown[]).map(rec).find(s => s?.['step'] === 'planner-tick')?.['report'] ?? null;
   } catch { /* hooks read as not recorded */ }
-  const hooks = view.ranState === 'busy' ? [missing('autofill'), missing('gaps'), missing('reap')] : hooksFromPlannerReport(planner, view.mode);
+  const hooks = view.ranState === 'busy' ? [missing('autofill'), missing('gaps'), missing('reap'), missing('stranded-requeue')] : hooksFromPlannerReport(planner, view.mode);
   return {
     schema: SELF_TICK_STATUS_SCHEMA, state: 'recorded', at: view.at, ageSeconds: view.ageSeconds, mode: view.mode,
     failedSteps: view.failedSteps, hooks, line: selfTickStatusLine(view.at, view.ageSeconds, view.mode, hooks),
@@ -52,7 +52,7 @@ export function gapsHookLine(h: SelfTickHook): string {
   return `gaps: ${h.count} ${h.count === 1 ? 'candidate' : 'candidates'}, ${h.items} queued${unknown}`;
 }
 
-const hookText = (h: SelfTickHook): string => h.hook === 'gaps' ? gapsHookLine(h) :
+const hookText = (h: SelfTickHook): string => h.hook === 'gaps' ? gapsHookLine(h) : h.hook === 'stranded-requeue' && h.state === 'ran' ? `stranded-requeue: ${h.note ?? `requeued=${h.items}`}` :
   `${h.hook} ${h.state === 'ran' ? `${h.items} ${h.items === 1 ? 'item' : 'items'}` : h.state === 'skipped' ? `skipped${h.note ? ` (${h.note})` : ''}` : h.state === 'failed' ? `failed (${h.note})` : 'not recorded'}`;
 
 function selfTickStatusLine(at: string, ageSeconds: number, mode: string, hooks: SelfTickHook[]): string {

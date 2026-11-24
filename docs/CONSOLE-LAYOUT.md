@@ -235,9 +235,24 @@ the chart says so. Above it a row of figures gives launched, published, merged,
 the share of finished jobs that changed nothing and the median time to merge,
 each over a line of its own hours, with the busiest hour named. Under the two
 hourly charts each lane has a card: the provider's mark, its merged count, a bar
-against the lane that merged most, its merges hour by hour and its launched,
-published, merge time and changed-nothing readings. A figure the report does
-not hold reads unknown and has no line under it.
+against the lane that merged most, a row of bars for the jobs it launched
+across the window and its launched, published, merge time and changed-nothing
+readings. A figure the report does not hold reads unknown and has no line
+under it.
+
+Under the figures the fleet's own hours are drawn as the same row of bars: a
+bar per hour, as tall as the jobs launched in it, with a mark under each bar
+that had a PR merged. Over 7 days a bar covers 7 hours, as on the Models board.
+Lane bars are drawn against the busiest bar on any lane, so the cards compare.
+These rows are one reading cursor. Point at a bar, or focus a row and press
+Left, Right, Home or End, and that stretch of time is held on the fleet row and
+on every lane card at once: the figures above become that bar's own counts, the
+line under the fleet row says when it was and what happened in it, and each
+lane card says what that lane launched, published and merged. The median is
+kept per hour only, so on a 7 hour bar that figure stays the window's and says
+so. Esc, moving the pointer off the bars or moving focus off the rows lets go.
+While no bar is held each row names its busiest bar. An hour the report holds
+no count for is hatched, and a lane with no hours read gets no bars.
 Pick 6 hours, 24 hours (the default) or 7 days; each choice
 asks the same route `phm throughput --hours 168 --json` reads, so nothing is
 summed in the browser. An unreadable metrics file shows unknown, a quiet window
@@ -261,8 +276,37 @@ its fill, the running line over the dashed target with the first and last
 sample times and the value of the top edge, and labelled readings: the last
 sample, idle, held and, only when it happened, stalled. Lanes that stalled
 come first, then the most idle. A lane with no target says "no target", not a
-percentage. The Launch gaps strip draws the window once: filled where samples
+percentage.
+
+Under its slot readings each card carries the lane's **usage window**, read
+from the lane's own row of `phm pools --json` (`GET /api/app/pools`, the read
+the Pools board and Home share): the share used, when it resets (as a
+countdown and a local time) and how old the reading is, then the bar the
+Pools board draws, with the mark for the time gone. One line under the bar
+says how the window ends at the measured burn. When usage is set to go unused
+and the lane also left slots open in the chosen window, that line names both
+figures and turns amber, for example "68% set to go unused at the reset, and
+4.5 slot-h of its slots sat open in the last 24 h." A window that runs empty
+before its reset says when. A lane with no reading, a lane `phm pools` does
+not list and a failed read all say "usage unknown" over a hatched bar and
+give the reason; a lane with nothing metered says "no usage window" and a
+credit lane gives its balance, both without a bar. A refresh that fails keeps
+the last view and labels it "last reading". The words **Usage window** open
+the Pools pane, and a key above the cards names the parts of the bar once a
+card has a measured window.
+
+The Launch gaps strip draws the window once: filled where samples
 exist, amber where a launch gap was found, hatched where nobody was watching.
+The charts share one cursor. Point at any lane's chart and the sample taken
+nearest is marked on every lane at once, on the Launch gaps strip and on the
+Workers / leaders chart: the line under each chart becomes that sample's time
+and what the lane held then (`18 of 24 running, 8 queued, held`; a lane the
+sample does not name is "not reported in this sample"), and the line above
+the cards gives the fleet at that moment (slots running of target, lanes,
+queued, lanes held, paused). Each chart is also a slider: with it focused,
+Left and Right step one sample, Page Up and Page Down a tenth of the window,
+Home and End jump to the oldest and newest, Esc lets go, and Tab to the next
+chart keeps the moment. Nothing is drawn between samples.
 Every figure is computed from the samples `GET /api/verse/runs-history`
 returned, so unwatched time is never counted as idle or as full.
 
@@ -442,7 +486,34 @@ fleet work. Choose a cell (click, or arrow keys then Enter; Home and End jump
 along the row) to draw its answer as a numbered try order. Each seat has a bar
 of the share of its binding usage window already used and that window's reset
 time; seats the router holds back are listed underneath with its reason and
-when they become eligible again. Below, the last 200 recorded routing
+when they become eligible again. The bar is the shared window bar: its fill is
+the share used and takes no status colour for a high reading.
+
+Under the try order, "Seats the router balances across" turns the same table
+on its side: one row per seat that the budget reading or any answered cell
+names, the seat that is first choice for the most kinds of work at the top. A
+row holds the provider's mark and the seat's name, a count in words (`First
+for 9 of 14, held back from 4`, out of the cells the router answered), and
+fifteen cells in five groups, one group per task reading low, medium, high. A
+filled cell is a first choice, an outlined cell with a number is a later try
+and its place in the order, a dashed cell is held back (its label and tooltip
+carry the router's reason), a faint cell is a kind of work the router
+answered without naming the seat, and a hatched cell is a kind it gave no
+answer for. Under the cells are the usage windows `GET /api/verse/budget`
+holds a percent for (session, weekly or both), each as a window bar; the one
+fleet work is measured against is marked "binds fleet work" with its reset,
+the only reset that read reports. A seat with no reading gets a hatched bar
+and "Usage unknown", a local seat "Local: no usage window". The last line is
+what the budget reading says about fleet work on the seat: open (with the
+share of the binding window it may still use when the reading has one),
+closed with the reading's reasons, or unknown when the reading does not name
+the seat. The kind of work chosen in the route table is ringed down every
+row, and choosing a cell on the board chooses that kind in the table. The
+board is one tab stop: Left and Right walk a seat's kinds of work, Up and
+Down keep the kind and change seat, Home and End jump along the row, Enter
+chooses. It adds no request.
+
+Below, the last 200 recorded routing
 decisions are counted by chosen seat and drawn over time: one row per seat,
 most chosen first, each holding a lane of 24 columns that cut the span from
 the oldest decision read to now into equal slices. A column's height is how
@@ -465,6 +536,22 @@ visible. A seat with no usage reading gets a hatched bar and the word unknown,
 a local seat says it has no usage window, an unreadable decision log reads
 unknown rather than empty, and a failed refresh labels the reading as an old
 one.
+
+Home's **Blocked** card, before Pools in Usage and delivery, answers
+"what is stopping work?". One headline counts it. Below are
+the reason launches are paused and how long nothing has
+launched, each repository hold with its reason and when it
+lifts, each lane whose jobs wait with nothing running (select
+one to open Lanes on that lane) and the parked-job count.
+**Open Lanes** is its one action. It reads the live fleet
+status and the launch-stall view the Lanes pane already uses,
+every 30 seconds while visible, and changes nothing. The card
+waits for both reads, so half an answer never says "Nothing
+is blocked". A reading that could not be made is listed as
+unknown with its reason, and the headline then says only that
+nothing is recorded as blocked. A failed refresh keeps the
+last reading and says it may be stale. `phm status --json`
+lists the same repository holds.
 
 Feed puts what the fleet did in one newest-first stream: merged PRs (title and
 repo), published releases, failures (main going red, a job failing or ending

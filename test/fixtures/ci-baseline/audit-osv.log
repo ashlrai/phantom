@@ -1,0 +1,44 @@
+##[group]Run bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json
+bash scripts/npm-audit-with-osv-fallback.sh "root full graph" package-lock.json
+shell: /usr/bin/bash -e {0}
+env:
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org
+##[endgroup]
+{"error":{"code":"EAI_AGAIN","summary":"request to https://registry.npmjs.org/-/npm/v1/security/audits/quick failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org"}}
+{"error":{"code":"EAI_AGAIN","summary":"request to https://registry.npmjs.org/-/npm/v1/security/audits/quick failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org"}}
+{"error":{"code":"EAI_AGAIN","summary":"request to https://registry.npmjs.org/-/npm/v1/security/audits/quick failed, reason: getaddrinfo EAI_AGAIN registry.npmjs.org"}}
+Scanned /home/runner/work/phantom/phantom/package-lock.json file and found 812 packages
+
+Total 2 packages affected by 2 known vulnerabilities (0 Critical, 1 High, 1 Medium, 0 Low, 0 Unknown) from 1 ecosystem.
+2 vulnerabilities can be fixed.
+
++-------------------------------------+------+-----------+----------------+---------+---------------+-------------------+
+| OSV URL                             | CVSS | Ecosystem | Package        | Version | Fixed Version | Source            |
++-------------------------------------+------+-----------+----------------+---------+---------------+-------------------+
+| https://osv.dev/GHSA-35jh-r3h4-6jhm | 7.5  | npm       | lodash         | 4.17.20 | 4.17.21       | package-lock.json |
+| https://osv.dev/CVE-2025-99999      |      |           |                |         |               |                   |
+| https://osv.dev/GHSA-xvch-5gv4-984h | 5.3  | npm       | minimist (dev) | 1.2.5   | 1.2.6         | package-lock.json |
++-------------------------------------+------+-----------+----------------+---------+---------------+-------------------+
+
+For the most comprehensive scan results, we recommend using the HTML output: `osv-scanner scan image --serve <image_name>`.
+You can also view the full vulnerability list in your terminal with: `osv-scanner scan image --format vertical <image_name>`.
+##[error]Process completed with exit code 1.
+##[group]Run bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json
+bash ../../scripts/npm-audit-with-osv-fallback.sh "Raycast full graph" package-lock.json
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+{"error":{"code":"ETIMEDOUT","summary":"request to https://registry.npmjs.org/-/npm/v1/security/audits/quick failed, reason: socket hang up"}}
+Scanned /home/runner/work/phantom/phantom/src/raycast/package-lock.json file and found 137 packages
+
+Total 1 package affected by 1 known vulnerability (0 Critical, 1 High, 0 Medium, 0 Low, 0 Unknown) from 1 ecosystem.
+1 vulnerability can be fixed.
+
++-------------------------------------+------+-----------+---------+---------+---------------+-------------------+
+| OSV URL                             | CVSS | Ecosystem | Package | Version | Fixed Version | Source            |
++-------------------------------------+------+-----------+---------+---------+---------------+-------------------+
+| https://osv.dev/GHSA-34x7-hfp2-rc4v | 8.2  | npm       | tar     | 7.5.3   | 7.5.4         | package-lock.json |
++-------------------------------------+------+-----------+---------+---------+---------------+-------------------+
+
+For the most comprehensive scan results, we recommend using the HTML output: `osv-scanner scan image --serve <image_name>`.
+You can also view the full vulnerability list in your terminal with: `osv-scanner scan image --format vertical <image_name>`.
+##[error]Process completed with exit code 1.

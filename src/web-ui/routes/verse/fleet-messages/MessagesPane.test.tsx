@@ -13,7 +13,7 @@ import './fleet-messages.pane.js';
 const now = Date.now();
 const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
 const msg = (over: Partial<AgentMessage>): AgentMessage => ({
-  id: 'x', ts: at(1), from: { name: 'claude-1', lane: 'claude' }, to: { name: 'codex-local-2', lane: 'codex-local' },
+  id: 'x', ts: at(1), priority: 'P2', from: { name: 'claude-1', lane: 'claude' }, to: { name: 'codex-local-2', lane: 'codex-local' },
   kind: 'status', summary: 'hello', conversation: 'c1', job: null, pr: null, ...over,
 });
 const messages = [

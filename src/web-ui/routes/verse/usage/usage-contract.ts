@@ -74,6 +74,7 @@ import type {
   VerseLocalRuntimeReport,
 } from '../../../../core/verse/local-models.js';
 import type { DailyUsage as CoreDailyUsage } from '../../../../core/types.js';
+import { projectPeriod, type WindowPeriod } from './window-period.js';
 
 // ---------------------------------------------------------------------------
 // Seam contract — compile-time only, zero runtime cost.
@@ -506,29 +507,9 @@ function clampPercent(value: number | null): number | null {
   return Math.max(0, Math.min(100, value));
 }
 
-/**
- * The start of a window, from the `resetProvenance` the server attaches to it.
- * `reported`: the provider gave the period's own start (Grok's billing period).
- * `weekly`: the server qualified the reset as a weekly deadline, so the window
- * began seven days before it. Any other kind, or a provenance that names a
- * different reset than the window's, has no known start.
- */
-export interface WindowPeriod { startsAt: string; basis: 'reported' | 'weekly' }
-
-const WEEK_MS = 7 * 86_400_000;
-
-function projectPeriod(raw: unknown, resetsAt: string | null): WindowPeriod | null {
-  const r = record(raw);
-  const end = resetsAt === null ? NaN : Date.parse(resetsAt);
-  const at = r ? str(r, 'at') : null;
-  if (!r || !Number.isFinite(end) || at === null || Date.parse(at) !== end) return null;
-  const kind = str(r, 'kind');
-  if (kind === 'weekly-deadline') return { startsAt: new Date(end - WEEK_MS).toISOString(), basis: 'weekly' };
-  if (kind !== 'fixed-period') return null;
-  const startsAt = str(r, 'startsAt');
-  const start = startsAt === null ? NaN : Date.parse(startsAt);
-  return Number.isFinite(start) && start < end ? { startsAt: new Date(start).toISOString(), basis: 'reported' } : null;
-}
+// The start of a window comes from the `resetProvenance` the server attaches to it; window-period.ts owns
+// the rule so the seat roster reads the same start this contract does.
+export type { WindowPeriod };
 
 function projectWindow(raw: unknown): AccountWindow | null {
   const r = record(raw);

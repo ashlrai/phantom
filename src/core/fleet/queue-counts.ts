@@ -93,7 +93,7 @@ export async function getLaneQueueCounts(
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
       row = parsed as Record<string, unknown>;
     } catch { continue; }
-    const rawEvent = row.event ?? row.type;
+    const rawEvent = row.event ?? row.type ?? row.kind;
     const event = typeof rawEvent === 'string' ? rawEvent : null;
     const outcome = typeof row.outcome === 'string' ? row.outcome.toLowerCase() : null;
     let mark: { entry: boolean; restart: boolean } | null = null;
@@ -102,8 +102,8 @@ export async function getLaneQueueCounts(
     else if (event === 'launch_failed' && row.action === 'retry') mark = { entry: true, restart: true };
     else if (event === 'task_outcome' && outcome !== null && MEMBER_RETRY_OUTCOMES.has(outcome)) mark = { entry: true, restart: true };
     if (mark === null) continue;
-    const id = row.job ?? row.job_id ?? row.jobId;
-    const raw = row.ts ?? row.timestamp ?? row.at;
+    const id = row.job ?? row.job_id ?? row.jobId ?? row.id;
+    const raw = row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt;
     const time = typeof raw === 'string' ? Date.parse(raw) : NaN;
     if (typeof id !== 'string' || !Number.isFinite(time) || time > at.getTime()) continue;
     const list = marks.get(id) ?? [];

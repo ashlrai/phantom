@@ -8,14 +8,15 @@ import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJob
 import { cmdFleetDirtyLanded, type DirtyLandedPr } from './fleet-dirty-landed.js';
 import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.js';
 import { reserveMergeRecoveryAttempt } from '../core/fleet/merge-recovery-budget.js';
+import { conflicted, type MergeAgePr } from '../core/fleet/merge-age.js';
 
 const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
 /** Mason's own holds in ashlrai/phantom (AGENTS.md hold list); never auto-acted on. */
 export const PHANTOM_PR_HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
-const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
+const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeable,mergeStateStatus,autoMergeRequest';
 const REPLACEMENT_LIMIT = 100;
-interface Pr { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
+interface Pr extends Pick<MergeAgePr, 'mergeable'> { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
 export interface MergeRecoverDeps {
   gh?: CloudGh;
   inspect?: () => Promise<DirtyLandedPr[]>;
@@ -95,11 +96,11 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
         const sourceUnchanged = async () => {
           const latest = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
           return valid(latest) && latest.number === pr.number && latest.state === 'OPEN'
-            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && latest.mergeStateStatus === 'DIRTY';
+            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && conflicted(latest);
         };
         let action = 'source-changed';
         if (current.state !== 'OPEN') action = current.state.toLowerCase();
-        else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && current.mergeStateStatus === 'DIRTY') {
+        else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && conflicted(current)) {
           const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--limit', String(REPLACEMENT_LIMIT), '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
           // A full page cannot prove there is no second replacement.
           if (!Array.isArray(matches) || matches.length >= REPLACEMENT_LIMIT || !matches.every(valid)) throw new Error('invalid');
@@ -115,8 +116,8 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
               rows.push({ pr: pr.number, action: 'replacement-changed' }); continue;
             }
             action = `replacement-${replacement.state.toLowerCase()}`;
-            if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
-            if (replacement.state === 'OPEN' && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
+            if (replacement.state === 'OPEN' && conflicted(replacement)) action = 'replacement-conflict';
+            if (replacement.state === 'OPEN' && !conflicted(replacement) && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
               if (!replacement.autoMergeRequest && !await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', false)) {
                 rows.push({ pr: pr.number, action: 'retry-limit' }); continue;

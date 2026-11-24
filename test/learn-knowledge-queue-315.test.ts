@@ -8,6 +8,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { writeCloudTask } from '../src/core/cloud/store.js';
+import type { CloudTaskV1 } from '../src/core/cloud/types.js';
+import { lessonHoldoutFraction } from '../src/core/improve/lesson-trial.js';
 import { retroFromCloud, retroFromFleet } from '../src/core/learn/retro/extract.js';
 import { knowledgeBlockFor } from '../src/core/learn/retro/inject.js';
 import { agentsMdTask, buildLessonsState, decideKnowledge, enqueueCandidates, proposeAgentsMd, recurringCauses } from '../src/core/learn/retro/knowledge.js';
@@ -20,7 +23,7 @@ import {
   recordKnowledgeHits,
   saveRetro,
 } from '../src/core/learn/retro/store.js';
-import type { RetroV1 } from '../src/core/learn/retro/types.js';
+import type { KnowledgeNoteV1, RetroV1 } from '../src/core/learn/retro/types.js';
 
 const NOW = '2026-09-27T12:00:00.000Z';
 
@@ -185,5 +188,74 @@ describe('lessons state', () => {
     expect(state.causes).toEqual([{ code: 'gate:files-over-cap', label: 'Diff too large', count: 2, bySource: { fleet: 2, cloud: 0, leader: 0 } }]);
     expect(recurringCauses([merged])).toEqual([]);
     expect(state.knowledge.capBytes).toBe(16 * 1024);
+  });
+});
+
+describe('holdout trial in lessons state', () => {
+  let taskSeq = 0;
+  function cloudTask(state: CloudTaskV1['state'], arm: 'served' | 'holdout', noteIds: string[]): CloudTaskV1 {
+    taskSeq += 1;
+    const id = `ct_20260927T1200_${String(taskSeq).padStart(6, '0')}`;
+    return {
+      v: 1, id, repo: 'ashlrai/widget', baseBranch: 'master', branch: `ashlr-cloud/${id}`,
+      title: 't', prompt: 'p', origin: 'operator', requestedBy: 'mason', seat: 'claude-a',
+      sessionId: 's', sessionUrl: null, state, stateReason: null, failure: null,
+      createdAt: NOW, launchedAt: NOW, updatedAt: NOW, pr: null, report: null,
+      lessons: { arm, noteIds }, estimatedCostUsd: 0, backlogItemId: null, needsYouId: null,
+    };
+  }
+
+  async function approvedNote(): Promise<KnowledgeNoteV1> {
+    await enqueueCandidates(refusedRetro(), NOW);
+    const [pending] = await readKnowledge();
+    const decided = await decideKnowledge({ id: pending!.id, decision: 'approve' }, NOW);
+    expect(decided).toMatchObject({ ok: true });
+    return (await readKnowledge())[0]!;
+  }
+
+  it('is absent until a finished eligible run exists, then joins per-note and overall verdicts', async () => {
+    const note = await approvedNote();
+    // No cloud tasks at all: the trial measured nothing — absent, not 0/0.
+    let state = await buildLessonsState(Date.parse(NOW));
+    expect(state.knowledge.trial).toBeUndefined();
+    expect(state.knowledge.approved[0]!.trial).toBeUndefined();
+
+    // Four served runs landed, four holdout runs did not: a clear 'helps'.
+    for (let i = 0; i < 4; i += 1) writeCloudTask(cloudTask('merged', 'served', [note.id]));
+    for (let i = 0; i < 4; i += 1) writeCloudTask(cloudTask('closed', 'holdout', [note.id]));
+    // Launch failures and unfinished runs are excluded, never counted.
+    writeCloudTask(cloudTask('failed', 'holdout', [note.id]));
+    writeCloudTask(cloudTask('running', 'served', [note.id]));
+
+    state = await buildLessonsState(Date.parse(NOW));
+    const summary = state.knowledge.trial!;
+    expect(summary.holdout).toBe(lessonHoldoutFraction());
+    expect(summary.overall).toMatchObject({
+      served: { tasks: 4, landed: 4, rate: 1 },
+      holdout: { tasks: 4, landed: 0, rate: 0 },
+      delta: 1,
+      verdict: 'helps',
+    });
+    expect(summary.excluded).toEqual({ launchFailed: 1, unfinished: 1 });
+    expect(state.knowledge.approved[0]!.trial).toMatchObject({
+      served: { tasks: 4, landed: 4 },
+      holdout: { tasks: 4, landed: 0 },
+      verdict: 'helps',
+    });
+    expect(state.knowledge.approved[0]!.trial).not.toHaveProperty('scope');
+  });
+
+  it('a note no finished eligible run carried gets no trial field, though the summary exists', async () => {
+    const note = await approvedNote();
+    // Finished runs that saw a DIFFERENT note still give the queue a summary.
+    writeCloudTask(cloudTask('merged', 'served', ['kn_0000000000000001']));
+    writeCloudTask(cloudTask('merged', 'served', ['kn_0000000000000001']));
+    writeCloudTask(cloudTask('merged', 'holdout', ['kn_0000000000000001']));
+    writeCloudTask(cloudTask('closed', 'holdout', ['kn_0000000000000001']));
+
+    const state = await buildLessonsState(Date.parse(NOW));
+    expect(state.knowledge.trial).toBeDefined();
+    expect(state.knowledge.approved[0]!.id).toBe(note.id);
+    expect(state.knowledge.approved[0]!.trial).toBeUndefined();
   });
 });

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { releaseDueLine, type ReleasesReport } from '../../../../core/release/status.js';
 import { useQuery } from '../../../data/hooks.js';
 import { releasesQuery } from '../fleet-metrics/releases-query.js';
+import { ReleaseRepoRows } from '../fleet-metrics/ReleaseRepoRows.js';
 import { Row, Section } from './ui-parts.js';
 import { SkeletonList } from './ui.js';
 
@@ -19,8 +20,8 @@ export function MobileReleasesCard() {
   const report: ReleasesReport | undefined = query.data?.schema === 'phantom.releases.v1' && Array.isArray(query.data.repos) ? query.data : undefined;
 
   return (
-    <Section title="Releases" footer="Read from local clones on your Mac. Nothing is tagged or published from here.">
-      {report ? <>
+    <Section title="Releases">
+      {report?.releaseRepos ? <ReleaseRepoRows rows={report.releaseRepos} checkedAt={report.checkedAt} /> : report ? <>
         <Row
           title={report.next ? `${name(report.next.repo)}: ${report.next.verdict}` : releaseDueLine(report)}
           subtitle={report.next ? report.next.suggestion : undefined}

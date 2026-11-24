@@ -8,6 +8,7 @@ import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { probeClaudeAccountUsage, type ClaudeAccountUsageResult } from '../resources/claude-account-usage.js';
 import type { ClaudeAccountStatusOptions } from '../resources/claude-account-status.js';
+import { readResourceLedger } from './runs-resource-ledger.js';
 import { readLaneTargets } from './runs-lane-targets.js';
 import { readClaudeQuotaReading, toClaudeQuotaReading, writeClaudeQuotaReading } from './claude-quota-reading.js';
 
@@ -25,7 +26,7 @@ export function findClaude(pathEnv = process.env.PATH ?? ''): string | null {
   return null;
 }
 
-export type PeriodicClaudeQuotaState = 'planned' | 'skipped-fresh' | 'probed' | 'unavailable';
+export type PeriodicClaudeQuotaState = 'planned' | 'skipped-fresh' | 'probed' | 'unavailable' | 'ledger';
 export interface PeriodicClaudeQuotaReport {
   state: PeriodicClaudeQuotaState;
   /** Only meaningful for 'planned' (dry-run): whether --apply would probe. */
@@ -34,6 +35,8 @@ export interface PeriodicClaudeQuotaReport {
   weeklyPct: number | null;
   observedAt: string | null;
   reason: string;
+  /** Set to 'ledger' when the reading came from the resource ledger instead of a live probe. */
+  source?: 'ledger';
 }
 
 /**
@@ -99,4 +102,20 @@ export async function refreshHeldClaudeQuota(opts: {
   } catch {
     return 'unavailable';
   }
+}
+
+/**
+ * The weekly reading `phm pools` shows for the claude lane, taken from the
+ * resource ledger. Used when the live probe could not answer: the fleet usually
+ * still has a recent reading from its own sensor, and that is the honest input.
+ * Returns null when the ledger has no claude weekly percentage. Never throws.
+ */
+export async function claudeQuotaFromLedger(opts: { runsDir: string; now: () => number }): Promise<PeriodicClaudeQuotaReport | null> {
+  try {
+    const ledger = await readResourceLedger({ runsDir: opts.runsDir, now: opts.now });
+    const lane = ledger.lanes.find(l => l.lane === 'claude');
+    if (!lane || typeof lane.usedPct !== 'number') return null;
+    return { state: 'ledger', source: 'ledger', weeklyPct: lane.usedPct, observedAt: lane.observation?.asOf ?? ledger.asOf,
+      reason: 'live probe unavailable; using the ledger reading' };
+  } catch { return null; }
 }

@@ -59,6 +59,24 @@ describe('BrandMark', () => {
     expect(mark.getAttribute('class')).toBe('c');
   });
 
+  it('sets inline before a name: on the text centre line with a gap after it, a logo or a monogram alike', () => {
+    for (const name of ['claude', 'zai']) {
+      const { container, unmount } = render(<span><BrandMark brand={name} size={14} inline />{name}</span>);
+      const mark = svgOf(container);
+      expect(mark.getAttribute('data-inline')).toBe('true');
+      expect(mark.style.verticalAlign).toBe('-0.16em');
+      expect(mark.style.marginInlineEnd).toBe('0.4em');
+      expect(mark.getAttribute('aria-hidden')).toBe('true');
+      unmount();
+    }
+    // Without it nothing is nudged, and a caller's style still wins over the inline one.
+    const plain = svgOf(render(<BrandMark brand="claude" />).container);
+    expect(plain.hasAttribute('data-inline')).toBe(false);
+    expect(plain.style.verticalAlign).toBe('');
+    const own = svgOf(render(<BrandMark brand="claude" inline style={{ marginInlineEnd: '1em' }} />).container);
+    expect(own.style.marginInlineEnd).toBe('1em');
+  });
+
   it('loads no asset over the network: inline markup only, no fetch, no image or external reference', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);

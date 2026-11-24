@@ -29,6 +29,22 @@ describe('selectChangedFiles yaml and toml coverage', () => {
     expect(selection.yamlFiles).toEqual(['.github/workflows/ci.yml', 'pnpm-workspace.yaml']);
     expect(selection.tomlFiles).toEqual(['Cargo.toml', 'agent-network.toml']);
   });
+
+  it('selects Cargo.lock at any depth for the toml check and skips near-miss names', () => {
+    const selection = selectChangedFiles(
+      [
+        'Cargo.lock', 'desktop/src-tauri/Cargo.lock', 'deep/nested/Cargo.lock',
+        'Cargo.lock.bak', 'my-Cargo.lock', 'cargo.lock', 'gone/Cargo.lock',
+      ],
+      [
+        'Cargo.lock', 'desktop/src-tauri/Cargo.lock', 'deep/nested/Cargo.lock',
+        'Cargo.lock.bak', 'my-Cargo.lock', 'cargo.lock',
+      ],
+    );
+    expect(selection.tomlFiles).toEqual([
+      'Cargo.lock', 'deep/nested/Cargo.lock', 'desktop/src-tauri/Cargo.lock',
+    ]);
+  });
 });
 
 describe('parserPackagePreflight', () => {
@@ -146,6 +162,16 @@ describe('runTomlSyntaxCheck', () => {
     } finally {
       errors.mockRestore();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('parses the committed Cargo.lock manifest when the package exists', () => {
+    if (!parserPackagePreflight(repoRoot, 'smol-toml').ok) return;
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(runTomlSyntaxCheck(repoRoot, [join(repoRoot, 'desktop/src-tauri/Cargo.lock')])).toBe(true);
+    } finally {
+      errors.mockRestore();
     }
   });
 });

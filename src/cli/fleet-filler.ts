@@ -1,6 +1,7 @@
 /** Read-only filler job activity from the bounded jobs ledger tail. */
 import { readJobsTail, type SkipsReader } from './fleet-skips.js';
 import { parseTs } from './fleet-running.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 export interface FillerGroup {
@@ -38,14 +39,14 @@ export async function fleetFiller(read: SkipsReader = readJobsTail, now = Date.n
     const match = typeof row.job === 'string' ? /^(RQ-(?:PS|PLUGIN|STACK|LOCUS|LEXICON|MD))\d+A\d+Q8$/.exec(row.job) : null;
     const at = parseTs(row.ts);
     if (!match || !Number.isFinite(at) || at < now - 24 * 3_600_000 || at > now) continue;
-    if (row.event !== 'launch' && row.event !== 'precheck_skip'
+    if (row.event !== 'launch' && !isPrecheckSkipRow(row)
       && !(row.event === 'finish' && row.empty === true)
       && !(row.event === 'outcome' && row.state === 'MERGED')) continue;
     const prefix = match[1]!;
     const group = groups.get(prefix) ?? { prefix, launches: 0, skips: 0, skips_by_code: {}, empty_finishes: 0, merged: 0 };
     groups.set(prefix, group);
     if (row.event === 'launch') group.launches++;
-    else if (row.event === 'precheck_skip') {
+    else if (isPrecheckSkipRow(row)) {
       group.skips++;
       // Codes are short machine labels, never arbitrary log text or paths.
       const code = typeof row.code === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(row.code)

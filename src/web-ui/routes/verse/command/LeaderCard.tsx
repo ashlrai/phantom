@@ -108,7 +108,7 @@ export function ActionRow({ action, actions, compact = false, approve = false, d
   );
 }
 
-export function LeaderCard({ read, loading, actions, seatNames }: { read: OptionalRead<LeaderStateV1> | undefined; loading: boolean; actions: SurfaceActions; seatNames?: ReadonlyMap<string, string> }) {
+export function LeaderCard({ read, loading, actions, seatNames, burnLine }: { burnLine?: string | null; read: OptionalRead<LeaderStateV1> | undefined; loading: boolean; actions: SurfaceActions; seatNames?: ReadonlyMap<string, string> }) {
   const state = read?.value ?? null;
   const memo = state?.latest ?? null;
   const list = memoActions(state);
@@ -183,6 +183,8 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
       )}
       {/* Server-built plain line (`phm leader seat`): where the leader runs and where it moves next. */}
       {state?.seat ? <p className={styles.muted} aria-label="Leader seat">{state.seat.line}</p> : null}
+      {/* Server-written plain sentence from `phm fleet burn`: who is spending the Claude plan and when it runs out. */}
+      {burnLine ? <p className={styles.muted} role="status">{burnLine}</p> : null}
       <LiveBuildLine className={styles.muted} />
       <ReleasesLine className={styles.muted} />
       <LeaderLine />
