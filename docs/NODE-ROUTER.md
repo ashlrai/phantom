@@ -26,6 +26,16 @@ runs on two nodes.
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
   fenced by a rejoin or departure frees the node's slot and host budget at
   once even though the job itself stays fenced until the claim expires.
+- **Handing a claim back.** A pool worker (`phm node worker`) that pulls a job
+  it will not run releases the claim at once through the pool's `release`
+  operation, so the job returns to pending instead of showing as running until
+  the lease lapses. A temporary refusal (the node is stopping, short on
+  capacity or lost the lease) stays retryable. Only a permanent one (the job
+  needs a lane or cap the node lacks, carries secrets, or has an invalid task)
+  declines the job, and that session is not offered it again. A primary too old
+  to know `release` lets the claim expire instead. `release` is not a
+  standalone `phm node` verb: a manual holder stops renewing and lets the
+  lease lapse.
 - **Local auth only.** Jobs needing `gh` go only to nodes whose own heartbeat
   reports a working GitHub CLI login (`phm node beat --probe-auth` runs
   `gh auth status` locally and reads only its exit code). Phantom never copies,
@@ -49,10 +59,6 @@ phm node pull --node box --session 1 --json
 # While working, renew; when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
-# A claim you will not run is handed back at once and the job returns to pending. Add --decline only when this
-# session can never run it (it is then not offered again); a temporary refusal omits it and stays retryable:
-phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3 [--decline]
-
 # What this owner scope can see:
 phm node status --owner acme
 ```

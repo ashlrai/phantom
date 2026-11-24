@@ -38,3 +38,5 @@
 .scopes li { display: grid; grid-template-columns: 5rem minmax(0, 1fr); align-items: center; gap: 0 var(--space-2); }
 .scopeFill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent-500); }
 .scopeLine { grid-column: 2; }
+.pace { margin: 0; overflow-wrap: anywhere; }
+.pace[data-over] { color: var(--status-danger-fg); }

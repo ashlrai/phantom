@@ -31,6 +31,8 @@ const SIGNAL_LABEL: Record<SignalName, string> = {
   'disk-trend': 'Disk trend',
   'idle-lanes': 'Idle lanes',
   'unspent-usage': 'Unspent usage',
+  'loop-hints': 'Self-awareness loop',
+  'dupcheck-gate': 'Dupcheck gate',
   vision: 'Leader vision',
   queue: 'Work queue',
   'mason-inbox': 'Mason requests',

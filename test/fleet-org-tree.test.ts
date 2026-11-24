@@ -42,9 +42,9 @@ describe('fleetOrgTree', () => {
       usage: { usedPct: 41.6, asOf: '2026-11-17T11:59:00Z', resetAt: null } });
     expect(find(tree, 'claude').jobs).toEqual([
       { id: 'RQ-A', repo: 'phantom', model: 'claude-fable-5-2', provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working in phantom',
-        startedAt: '2026-11-17T11:50:00Z', lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
+        startedAt: '2026-11-17T11:50:00Z', prUrl: null, lastEvent: { at: '2026-11-17T11:58:00Z', kind: 'PUBLISH_START' }, lastActivityAt: AT },
       // RQ-A's events never attach to RQ-AB, and its missing facts stay null.
-      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working', startedAt: null, lastEvent: null, lastActivityAt: null },
+      { id: 'RQ-AB', repo: null, model: null, provider: 'Anthropic', status: 'running', tier: null, ageSeconds: 600, goal: null, state: 'running', doing: 'Working', startedAt: null, prUrl: null, lastEvent: null, lastActivityAt: null },
     ]);
     expect(orgLive(AT, NOW)).toBe(true); expect(orgLive('2026-11-17T11:54:59Z', NOW)).toBe(false); expect(orgLive(null, NOW)).toBeNull();
     const text = renderOrgTreeText(tree, NOW);

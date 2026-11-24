@@ -1,7 +1,7 @@
 /**
- * ResourcesBar — the always-on resource bar (3.11.1): batteries show what is
- * LEFT of each account's binding window, roster order stays fixed, spent ones read
- * as empty red batteries, and the bar's on/off choice persists.
+ * ResourcesBar — the always-on resource bar (3.11.1): each row's bar shows what is
+ * USED of the account's binding window, roster order stays fixed, spent ones read
+ * as full red bars, and the bar's on/off choice persists.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -108,7 +108,7 @@ describe('saved Grok Bot resource metadata', () => {
     for (const saved of profiles) {
       const entry = view.container.querySelector(`[data-resource-id="proactive:${saved.id}"]`)!;
       expect(entry).toHaveTextContent(saved.enabled ? 'Configured · usage unknown' : 'Preference off · usage unknown');
-      expect(entry.querySelector('[data-unknown]')).toBeNull(); // No fabricated quota battery.
+      expect(entry.querySelector('[role="meter"]')).toBeNull(); // No fabricated quota bar.
       expect(entry.textContent).not.toMatch(/%|Ready|Connected/);
       const button = within(entry as HTMLElement).getByRole('button', { name: /Open Proactive agents/ });
       fireEvent.focus(button);
@@ -515,7 +515,12 @@ describe('Devin tracked exposure in the bar', () => {
     expect(within(devin).getByText('4% of tracked budget used')).toBeInTheDocument();
     fireEvent.focus(devin);
     expect(screen.getByRole('tooltip')).toHaveTextContent('2 ACUs reported usage + adjustment · 18 ACUs held exposure');
-    expect(devin.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '60%' });
+    // 2 of 50 reported used (solid), 18 held (lighter): 40% is not available, and only 4% of it is use.
+    const meter = within(devin).getByRole('meter', { name: 'Devin tracked budget used or held' });
+    expect(meter).toHaveAttribute('aria-valuenow', '40');
+    expect(meter).toHaveAttribute('aria-valuetext', '30 ACUs of 50 ACUs available, 2 ACUs reported used, 18 ACUs held');
+    expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '4%' });
+    expect(meter.querySelector('[data-part="more"]')).toHaveStyle({ width: '36%' });
   });
 
   it('shows a fully used tracked budget as 100% used', () => {
@@ -527,6 +532,10 @@ describe('Devin tracked exposure in the bar', () => {
     } } : undefined } as never));
     renderBar(<ResourcesBar expanded />);
     expect(screen.getByText('100% of tracked budget used')).toBeInTheDocument();
+    const meter = screen.getByRole('meter', { name: 'Devin tracked budget used or held' });
+    expect(meter).toHaveAttribute('data-ending', 'spent');
+    expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '100%' });
+    expect(meter.querySelector('[data-part="more"]')).toBeNull();
   });
 
   it.each(['missing', 'unavailable'])('keeps %s local Devin capacity unknown without changing provider quota', accountingState => {
@@ -540,6 +549,8 @@ describe('Devin tracked exposure in the bar', () => {
     const row = screen.getByRole('button', { name: 'Devin tracked budget capacity unknown: task evidence unavailable. Open Resources' });
     expect(row).toHaveAttribute('data-level', 'unknown');
     expect(screen.getByText('Capacity unknown')).toBeInTheDocument();
+    expect(within(row).getByRole('meter')).toHaveAttribute('data-unread');
+    expect(within(row).getByRole('meter')).not.toHaveAttribute('aria-valuenow');
     fireEvent.focus(row);
     expect(screen.getByRole('tooltip')).toHaveTextContent('Local budget capacity unknown');
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('ACUs of');
@@ -559,7 +570,12 @@ describe('Devin tracked exposure in the bar', () => {
     expect(within(devin).getByText('10 ACUs budget')).toBeInTheDocument();
     expect(within(devin).getByText('New chats paused')).toBeInTheDocument();
     expect(devin).toHaveAttribute('data-level', 'ok');
-    expect(devin.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '20%' });
+    // All 40 are held and none is reported used: the solid part stays empty, the lighter part holds 80%.
+    const meter = within(devin).getByRole('meter', { name: 'Devin tracked budget used or held' });
+    expect(meter).toHaveAttribute('aria-valuenow', '80');
+    expect(meter).toHaveAttribute('data-ending', 'open');
+    expect(meter.querySelector('[data-part="used"]')).toHaveStyle({ width: '0%' });
+    expect(meter.querySelector('[data-part="more"]')).toHaveStyle({ width: '80%' });
     fireEvent.focus(devin);
     expect(screen.getByRole('tooltip')).toHaveTextContent(`New chats paused: ${reason}`);
     expect(screen.getByRole('tooltip')).toHaveTextContent('0 ACUs reported usage + adjustment · 40 ACUs held exposure');
@@ -708,8 +724,15 @@ describe('visible Codex subscription and credit balances', () => {
     expect(personal.textContent).not.toContain('2048.4196250000');
     expect(within(cmp).getByText('63% used')).toBeInTheDocument();
     expect(within(cmp).getByText('Credits ≈$10')).toBeInTheDocument();
-    expect(personal.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '0%' });
-    expect(cmp.querySelector('[aria-hidden="true"][data-level] > [style]')).toHaveStyle({ '--fill': '37%' });
+    // Spent is a full red bar with no number; credits never change the subscription bar.
+    const spent = within(personal).getByRole('meter', { name: 'Personal Codex used' });
+    expect(spent).toHaveAttribute('data-ending', 'spent');
+    expect(spent).not.toHaveAttribute('aria-valuenow');
+    expect(spent.querySelector('[data-part="used"]')).toHaveStyle({ width: '100%' });
+    const open = within(cmp).getByRole('meter', { name: 'Cash Margin Partners used' });
+    expect(open).toHaveAttribute('aria-valuenow', '63');
+    expect(open).toHaveAttribute('data-ending', 'open');
+    expect(open.querySelector('[data-part="used"]')).toHaveStyle({ width: '63%' });
   });
 
   it('shows a spending hold beside the balance while keeping quota independent', () => {
@@ -928,7 +951,7 @@ describe('recorded Claude API promotion in the resource bar', () => {
     const button = api.getByRole('button', { name: /Claude API promotion: \$200 last recorded.*held.*Open Resources/ });
     expect(api.getByText('$200 last recorded')).toBeVisible(); expect(api.getByText('Held')).toBeVisible();
     expect(button).toHaveAttribute('title', 'Recorded balance: $200');
-    expect(apiRow(view.container).querySelector('[class*="battery"]')).toBeNull();
+    expect(apiRow(view.container).querySelector('[role="meter"]')).toBeNull();
     expect(view.container.querySelector('[data-resource-id="account:claude"]')).not.toBeNull();
     fireEvent.focus(button);
     expect(await screen.findByText('Expires 2026-10-24 UTC')).toBeVisible();
@@ -940,7 +963,7 @@ describe('recorded Claude API promotion in the resource bar', () => {
     const view = renderBar(<ResourcesBar expanded={false} />); const api = within(apiRow(view.container));
     expect(api.getByText('$200')).toBeVisible(); expect(api.getByText('Held')).toBeVisible();
     expect(apiRow(view.container)).not.toHaveTextContent('%');
-    expect(apiRow(view.container).querySelector('[class*="battery"]')).toBeNull();
+    expect(apiRow(view.container).querySelector('[role="meter"]')).toBeNull();
   });
 
   it.each([['0', '$0 last recorded'], [null, 'API promotional balance unknown']] as const)(

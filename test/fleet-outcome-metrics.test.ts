@@ -105,6 +105,23 @@ describe('fleet outcome measurement', () => {
     expect(m.byLane).toEqual([expect.objectContaining({ name: 'codex', jobs: 3, finished: 2 })]);
     expect(m.byModelTier).toEqual([expect.objectContaining({ model: 'model-a', tier: 'work', jobs: 3 })]);
   });
+  it('skips node-pool producer rows instead of minting phantom attempts', () => {
+    const m = build([
+      // fleet.session-pool.v1 rows are node-pool machinery: `job` is the
+      // per-attempt id and `jobId` the logical ready:* queue id — a
+      // launch/finish pair must not open an attempt.
+      { schema: 'fleet.session-pool.v1', ts: stamp(3), sessionId: 'sess-a', event: 'session_start', context: 0 },
+      { schema: 'fleet.session-pool.v1', ts: stamp(3), sessionId: 'sess-a', event: 'launch', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1' },
+      { schema: 'fleet.session-pool.v1', ts: stamp(2), sessionId: 'sess-a', event: 'finish', context: 0, job: 'sess-a:1', jobId: 'ready:RQ-NODE-1:1', outcome: 'completed' },
+      { schema: 'fleet.session-pool.v1', ts: stamp(1), sessionId: 'sess-a', event: 'session_stop', context: 0 },
+      // phm-node-runner.v1 finish receipts key on the per-claim id in `job`.
+      { schema: 'phm-node-runner.v1', ts: stamp(1), event: 'finish', job: 'ready:RQ-NODE-2:1:4', jobId: 'ready:RQ-NODE-2:1', node: 'muse', pack: 'shell-check', token: 4, outcome: 'succeeded' },
+      launch('A'), finish('A', 1, { wall_s: 60, empty: false }),
+    ]);
+    expect(m.totals).toMatchObject({ jobs: 1, finished: 1, finishRate: 1 });
+    expect(m.byLane).toEqual([expect.objectContaining({ name: 'codex', jobs: 1, finished: 1 })]);
+    expect(m.byModelTier).toEqual([expect.objectContaining({ model: 'model-a', tier: 'work', jobs: 1 })]);
+  });
   it('counts a requeued batch member\'s next claim as a new attempt', () => {
     const claim = (hours: number) => event('batch_claim', hours,
       { job: 'MEMBER-A', batch: 'RQ-BATCH-ABC123', lane: 'codex' });

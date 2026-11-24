@@ -29,11 +29,11 @@ describe('fleetOrgGroups', () => {
     expect(tree.duplicates).toEqual([]);
   });
 
-  it('puts a node with no known parent under "unassigned" instead of dropping it', () => {
+  it('puts a node with no known parent under "Other" instead of dropping it', () => {
     const tree = fleetOrgGroups(map(
       [node('leader', 'leader'), node('lane', 'lane:a'), node('job', 'job:orphan'), node('job', 'job:lost'), node('job', 'job:loop1'), node('job', 'job:loop2')],
       [reports('lane:a', 'leader'), reports('job:lost', 'lane:missing'), reports('job:loop1', 'job:loop2'), reports('job:loop2', 'job:loop1')]));
-    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'unassigned', parent: 'leader',
+    expect(get(tree, UNASSIGNED_GROUP)).toMatchObject({ role: 'group', label: 'Other', parent: 'leader',
       children: ['job:orphan', 'job:lost', 'job:loop1', 'job:loop2'] });
     expect(get(tree, 'job:orphan').parent).toBe(UNASSIGNED_GROUP);
     expect(get(tree, UNASSIGNED_GROUP).counts.running).toBe(4);

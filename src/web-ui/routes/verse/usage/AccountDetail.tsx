@@ -22,6 +22,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { formatDecimalMetric, formatMetric } from '../../../components/charts/format-metric.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
 import { relativePhrase } from '../context/context-model.js';
 import { ENGINE_LABEL } from '../verse-model.js';
@@ -108,7 +109,7 @@ export function AccountDetail({
         <div>
           {/* tabIndex -1: a focus target for the effect above, not a tab stop. */}
           <h4 id={headingId} ref={headingRef} tabIndex={-1} className={styles.detailTitle}>
-            {card.label}
+            <BrandMark brand={card.engine} size={16} inline />{card.label}
           </h4>
           <div className={styles.cardMeta}>
             <span>{ENGINE_LABEL[card.engine]}</span>

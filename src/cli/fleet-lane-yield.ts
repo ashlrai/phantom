@@ -1,5 +1,6 @@
 /** Read-only yield per lane from the host jobs ledger. Exit 1 when any lane is red. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet lane-yield [--hours 2] [--json]';
@@ -8,7 +9,7 @@ const RED_MIN_ROWS = 10;
 export interface LaneYieldRow {
   lane: string;
   launches: number;
-  /** precheck_skip rows keyed by their code ("none" when a row has no code). */
+  /** Precheck-decline rows (precheck_skip or code-carrying skipped_empty) keyed by their code ("none" when a row has no code). */
   skips_by_code: Record<string, number>;
   skips: number;
   empty_finishes: number;
@@ -60,7 +61,7 @@ export async function fleetLaneYield(read: TaskCheckReader = readTaskCheckJobs, 
     lanes.set(name, entry);
     entry.rows++;
     if (row.event === 'launch') entry.launches++;
-    else if (row.event === 'precheck_skip') {
+    else if (isPrecheckSkipRow(row)) {
       const code = row.code === undefined || row.code === null ? 'none' : String(row.code);
       entry.skips_by_code[code] = (entry.skips_by_code[code] ?? 0) + 1;
       entry.skips++;

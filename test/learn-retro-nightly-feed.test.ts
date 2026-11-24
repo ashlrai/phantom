@@ -164,6 +164,27 @@ describe('foldFleetJobs', () => {
     expect(byId.get('RQ-REV-OLD')).toMatchObject({ status: 'succeeded', updatedAt: '2026-10-25T22:00:00.000Z' });
   });
 
+  it('never reads a task_outcome session word as a job status', () => {
+    const member = (job: string, outcome: string, ts: string) => ({
+      event: 'task_outcome', job, batch: 'RQ-BATCH-p-1', repo: 'ashlrai/phantom',
+      lane: 'work', outcome, ts,
+    });
+    const rows = [
+      // 'failed'/'deferred'/'unreported' session words mean the member line
+      // went back to ready.tsv — bookkeeping, never a lifecycle verdict.
+      member('RQ-MEMBER-FAILED', 'failed', '2026-10-25T22:00:00.000Z'),
+      member('RQ-MEMBER-DEFERRED', 'deferred', '2026-10-25T22:05:00.000Z'),
+      member('RQ-MEMBER-DONE', 'done', '2026-10-25T22:10:00.000Z'),
+      // The retried member's own terminal row still resolves normally.
+      member('RQ-MEMBER-RETRY', 'failed', '2026-10-25T22:15:00.000Z'),
+      fleetRow({ job: 'RQ-MEMBER-RETRY', event: 'outcome', state: 'CLOSED', ts: '2026-10-25T23:00:00.000Z' }),
+    ];
+    const jobs = foldFleetJobs(rows.map((row) => JSON.stringify(row)).join('\n'), NOW);
+    expect(jobs).toEqual([
+      { v: 1, id: 'RQ-MEMBER-RETRY', repo: 'ashlrai/phantom', arm: 'work', playbook: null, status: 'failed', updatedAt: '2026-10-25T23:00:00.000Z' },
+    ]);
+  });
+
   it('derives repo from a GitHub PR URL and arm from model when no lane exists', () => {
     const jobs = foldFleetJobs(JSON.stringify(fleetRow({
       repo: undefined, lane: undefined, model: 'swe-2',

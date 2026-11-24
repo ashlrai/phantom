@@ -24,7 +24,7 @@ const iso = (hoursAgo: number) => new Date(NOW - hoursAgo * 3_600_000).toISOStri
 
 describe('gap drop file, proposer to ready row', () => {
   it('writes a file the host ingest patterns accept, then counts it at each step', async () => {
-    await seedFinishedJob('RQ-SRC', '## Remaining gaps\n- Show the queue depth in the status line\n');
+    await seedFinishedJob('RQ-SRC', '## Remaining gaps\n- Print queue depth in phm status\n');
     const report = await propose();
     const row = report.proposed![0]!;
     expect(row.queued).toBe(true);
@@ -45,7 +45,7 @@ describe('gap drop file, proposer to ready row', () => {
     await mkdir(join(runs, 'queue', 'prompts'), { recursive: true });
     await rename(join(dropDir, name!), join(runs, 'queue', 'prompts', name!));
     const at = '2026-11-19 14:00:00';
-    await writeFile(join(runs, 'leader', 'drop', 'ingested.tsv'), `${at}\t${name!.replace('.md', '')}\tclaude\tclaude\twork\tGoal: Show the queue depth in the status line\n`);
+    await writeFile(join(runs, 'leader', 'drop', 'ingested.tsv'), `${at}\t${name!.replace('.md', '')}\tclaude\tclaude\twork\tGoal: Print queue depth in phm status\n`);
     expect((await readSelfSupplyToday(runs, NOW)).line).toBe('Self-supply today: 1 proposed, 1 ingested, 0 launched');
 
     // The launcher leaves RQ-PHX-<id>.prompt in the runs dir.
@@ -59,14 +59,14 @@ describe('gap drop file, proposer to ready row', () => {
   });
 
   it('does not propose a gap again within 24 h, and does after the window', async () => {
-    await seedFinishedJob('RQ-SRC', '## Remaining gaps\n- Show the queue depth in the status line\n');
+    await seedFinishedJob('RQ-SRC', '## Remaining gaps\n- Print queue depth in phm status\n');
     expect((await propose()).proposed).toHaveLength(1);
     const again = await propose();
     expect(again.proposed).toEqual([]);
     expect(again.dropped).toMatchObject([{ reason: 'proposed-24h' }]);
     // Same gap, record older than a day: it is proposable again (the file is gone, as after ingest).
     await rm(join(runs, 'leader'), { recursive: true });
-    await writeFile(join(runs, 'metrics', 'gap-proposed.jsonl'), `${JSON.stringify({ at: iso(25), id: 'GAPOLD', title: 'Show the queue depth in the status line', repo: 'phantom' })}\n`);
+    await writeFile(join(runs, 'metrics', 'gap-proposed.jsonl'), `${JSON.stringify({ at: iso(25), id: 'GAPOLD', title: 'Print queue depth in phm status', repo: 'phantom' })}\n`);
     expect((await propose()).proposed).toMatchObject([{ queued: true }]);
   });
 

@@ -54,7 +54,7 @@ const activity = (job = 'RQ-A', brief = 'Fix the reply box.'): FleetJobActivityV
   ] as FleetJobActivityV1['entries'],
 });
 const message = (id: string, from: string, to: string, over: Partial<AgentMessage> = {}): AgentMessage => ({
-  id, ts: ago(5), from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
+  id, ts: ago(5), priority: 'P2', from: { name: from, lane: null }, to: { name: to, lane: null }, kind: 'status', summary: `${from} says ${id}`, conversation: 'c', job: null, pr: null, ...over,
 });
 const bus = (messages: AgentMessage[], source: AgentMessages['source'] = 'available'): AgentMessages => ({ schema: 'agent-messages.v1', source, messages, matched: messages.length, skipped: 0 });
 const replies = (texts: string[], sourceState: LeaderRepliesV1['sourceState'] = 'healthy'): LeaderRepliesV1 => ({
@@ -131,7 +131,7 @@ describe('buildSessionThreads', () => {
     const withFiles = (state: 'live' | 'degraded' | 'missing'): FleetJobActivityV1 => ({ ...activity(), entries: [...activity().entries, changed(state)] as FleetJobActivityV1['entries'] });
     const read = buildSessionThreads(await liveList(), { sessionsRead: true, bus: bus([]), activity: new Map<string, FleetJobActivityV1 | null>([['RQ-A', withFiles('live')], ['RQ-QUIET', null]]) }, NOW);
     const [leader, worker, quiet] = read.threads as [SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number], SessionThreadsV1['threads'][number]];
-    expect(worker.work).toEqual({ commands: 1, files: { count: 2, added: 40, removed: 3, partial: false }, step: { event: 'verify', summary: 'tests green', at: ago(4) } });
+    expect(worker.work).toEqual({ pr: null, commands: 1, files: { count: 2, added: 40, removed: 3, partial: false }, step: { event: 'verify', summary: 'tests green', at: ago(4) } });
     // The sentences and the values come from the same records.
     expect(worker.summary).toContain('1 command seen, 2 files changed (+40 −3).');
     expect(worker.summary).toContain(`Latest step: verify tests green at ${ago(4)}.`);
@@ -148,7 +148,7 @@ describe('buildSessionThreads', () => {
     expect(workOf({ ...activity(), sources: { ...activity().sources, commands: 'degraded' } })?.commands).toBeNull();
     const undated = { ...activity(), entries: [{ kind: 'event', at: 'soon', event: 'launch', summary: '' }] as FleetJobActivityV1['entries'] };
     expect(workOf(undated)?.step).toEqual({ event: 'launch', summary: '', at: null });
-    expect(workOf({ ...activity(), entries: [] })).toEqual({ commands: 1, files: null, step: null });
+    expect(workOf({ ...activity(), entries: [] })).toEqual({ pr: null, commands: 1, files: null, step: null });
     expect([workOf(null), workOf(undefined)]).toEqual([null, null]);
   });
 

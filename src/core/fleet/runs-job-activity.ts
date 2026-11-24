@@ -50,7 +50,7 @@ import {
 import { getFleetJobChanges, type FleetJobChangesV1, type FleetJobChangesOptions } from './runs-job-changes.js';
 import { getFleetJobText, type FleetJobTextV1 } from './runs-job-texts.js';
 import { readSource, type Source } from './runs-parked-queue.js';
-import { ledgerEventName } from './empty-cause.js';
+import { ledgerEventName, ledgerPhase } from './empty-cause.js';
 
 // ---------------------------------------------------------------------------
 // Wire shape — fleet.job.activity.v1
@@ -66,7 +66,12 @@ export interface FleetJobActivityEventEntry {
   event: string;
   /** Allowlisted scalar fields as `key=value` pairs, scrubbed. */
   summary: string;
+  /** What the row records became of the job's pull request. Present only on a row that says (`rowPrFate`). */
+  pr?: FleetJobPrFate;
 }
+export type FleetJobPrState = 'merged' | 'closed' | 'open';
+/** `mergeSeconds` is the row's `ttm_s` (opened to merged), null when the row carries none or the state is not merged. */
+export interface FleetJobPrFate { state: FleetJobPrState; mergeSeconds: number | null }
 
 export interface FleetJobActivityCommandEntry {
   kind: 'command';
@@ -158,7 +163,7 @@ const MAX_REPORT_TEXT_CHARS = 64 * 1024;
 /** Ledger row fields allowed into a summary — scalars only, never free text. */
 const SUMMARY_FIELDS = new Set([
   'lane', 'sublane', 'repo', 'tier', 'model', 'arm', 'ab', 'batch', 'batch_size',
-  'wall_s', 'exit_code', 'diff_files', 'diff_lines', 'empty', 'outcome', 'url',
+  'wall_s', 'exit_code', 'diff_files', 'diff_lines', 'empty', 'outcome', 'state', 'ttm_s', 'url',
   'pr_url', 'pr', 'reason', 'cost', 'pool_error', 'failure_class', 'mem_free_pct',
   'swap_gb', 'pid', 'src', 'pattern', 'until', 'count', 'auth_failures',
 ]);
@@ -261,6 +266,20 @@ function summarizeRow(row: Record<string, unknown>): string {
   return cleanField(parts.join(' '), MAX_SUMMARY_CHARS);
 }
 
+const PR_STATES: Readonly<Record<string, FleetJobPrState>> = { MERGED: 'merged', CLOSED: 'closed', OPEN: 'open' };
+
+/**
+ * What a ledger row records became of the job's pull request: an `outcome` row whose state is MERGED, CLOSED or OPEN
+ * (the outcome reconciler's spelling), or a row whose event is `merged` or `closed`. Undefined for every other row,
+ * so a finish or publish is never read as an outcome. Pure; exported for tests.
+ */
+export function rowPrFate(row: Record<string, unknown>, event: string): FleetJobPrFate | undefined {
+  const state = event === 'merged' || event === 'closed' ? event : event === 'outcome' ? PR_STATES[ledgerPhase(row) ?? ''] : undefined;
+  if (state === undefined) return undefined;
+  const took = row.ttm_s;
+  return { state, mergeSeconds: state === 'merged' && typeof took === 'number' && Number.isFinite(took) && took >= 0 ? took : null };
+}
+
 /** metrics/jobs.jsonl rows naming `job`, newest `max` kept. Pure; shared with runs-job-tail.ts. */
 export function parseJobLedgerEvents(text: string, job: string, max: number): { events: FleetJobActivityEventEntry[]; matched: number; clipped: boolean } {
   const matched: FleetJobActivityEventEntry[] = [];
@@ -274,7 +293,8 @@ export function parseJobLedgerEvents(text: string, job: string, max: number): { 
     if (rowJob(record) !== job) continue;
     const event = ledgerEventName(record);
     if (event === null) continue;
-    matched.push({ kind: 'event', at: rowAt(record), event: cleanField(event, MAX_EVENT_CHARS), summary: summarizeRow(record) });
+    const pr = rowPrFate(record, event);
+    matched.push({ kind: 'event', at: rowAt(record), event: cleanField(event, MAX_EVENT_CHARS), summary: summarizeRow(record), ...(pr ? { pr } : {}) });
   }
   const clipped = matched.length > max;
   return { events: clipped ? matched.slice(-max) : matched, matched: matched.length, clipped };

@@ -7,10 +7,21 @@
  * docs/QUEUE-STATS.md. Derived timestamps only — missing boundaries leave a
  * visit open or absent, never zero-filled; rows after `now` are ignored.
  */
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { parseLedgerTs } from '../metrics/loop.js';
-import { isQueueVisit, type QueueVisit } from './stats.js';
+import {
+  readLedgerFile, readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE,
+  type LedgerReadState, type LedgerTailRead,
+} from '../router/outcomes.js';
+import { appendQueueVisits, compactQueueVisits, queueJournalPath, readQueueVisits } from './journal.js';
+import { isQueueVisit, queueVisitKey, type QueueVisit } from './stats.js';
 
 export const VISIT_SYNC_SCHEMA = 'queue.visits-sync.v1';
+
+/** Bounded read of router-queue.md behind live READY visits; past it READY visits are skipped, never guessed. */
+export const VISIT_SYNC_QUEUE_BYTES = 4 * 1024 * 1024;
 
 const STATION_READY = 'READY';
 const STATION_CLAIMED = 'claimed';
@@ -93,7 +104,7 @@ function classifyRow(row: Record<string, unknown>, order: number, now: number): 
   return {
     kind, at, order,
     url: urlOf(row),
-    lane: str(row.lane ?? row.pool),
+    lane: str(row.lane ?? row.pool ?? row.arm),
     action: str(row.action),
     launchedFalse: row.launched === false,
   };
@@ -352,12 +363,12 @@ export function planVisitSync(visits: readonly QueueVisit[], existing: readonly 
   const latest = new Map<string, QueueVisit>();
   for (const v of existing) {
     if (!isQueueVisit(v)) continue;
-    latest.set(JSON.stringify([v.station, v.pool, v.id]), v);
+    latest.set(queueVisitKey(v), v);
   }
   const plan: VisitSyncPlan = { append: [], unchanged: 0, regression: 0 };
   for (const candidate of visits) {
     if (!isQueueVisit(candidate)) continue;
-    const key = JSON.stringify([candidate.station, candidate.pool, candidate.id]);
+    const key = queueVisitKey(candidate);
     const prior = latest.get(key);
     if (!prior) { plan.append.push(candidate); continue; }
     if (completeness(candidate) < completeness(prior)) { plan.regression++; continue; }
@@ -365,5 +376,159 @@ export function planVisitSync(visits: readonly QueueVisit[], existing: readonly 
     plan.append.push(candidate);
   }
   return plan;
+}
+
+export interface QueueVisitSyncOptions {
+  /** Fleet runs dir; defaults to ASHLR_RUNS_DIR then ~/.ashlr-runs (same as reward-feed). */
+  runsDir?: string;
+  /** Injected jobs-ledger tail text; skips the jobs.jsonl read when set. */
+  jobsText?: string;
+  /** Injected router-queue.md text; undefined reads the file, null means missing. */
+  queueText?: string | null;
+  /** Visit journal path; defaults to queueJournalPath() (~/.ashlr/queue/visits.jsonl). */
+  journalPath?: string;
+  now?: () => number;
+  signal?: AbortSignal;
+}
+
+export interface QueueVisitSyncResult {
+  /** Health of the jobs-ledger tail; only 'read' can fold visits. */
+  state: LedgerReadState | 'error';
+  jobsPath: string;
+  queuePath: string;
+  journalPath: string;
+  /** True when the jobs tail dropped older bytes — early lifecycle events of older jobs may be missing. */
+  truncated: boolean;
+  /** Health of the router-queue.md read behind live READY visits; 'not-read' when the pass never reached it. */
+  queueState: LedgerReadState | 'not-read';
+  /**
+   * Health of the visit-journal read behind the dedup plan; 'not-read' when
+   * the pass never reached it. 'read' covers a missing or empty journal —
+   * both load as an empty dedup set, which is safe to append against.
+   */
+  journalState: 'read' | 'unreadable' | 'not-read';
+  /** jobs.jsonl rows scanned this pass. */
+  rows: number;
+  ignored: number;
+  invalid: number;
+  /** Station visits derived (ledger fold plus live READY rows) before dedup. */
+  derived: number;
+  /** Snapshots appended to the journal this pass. */
+  appended: number;
+  unchanged: number;
+  /** Candidates less complete than the journal's latest snapshot; refused, never appended. */
+  regression: number;
+  /** True when this pass rewrote the journal under its byte cap (journal.ts compaction). */
+  journalCompacted: boolean;
+  /** Snapshot lines the compaction removed; 0 when no rewrite ran. */
+  journalDropped: number;
+}
+
+function visitSyncBase(
+  state: QueueVisitSyncResult['state'], jobsPath: string, queuePath: string, journalPath: string,
+): QueueVisitSyncResult {
+  return {
+    state, jobsPath, queuePath, journalPath, truncated: false,
+    queueState: 'not-read', journalState: 'not-read',
+    rows: 0, ignored: 0, invalid: 0, derived: 0, appended: 0, unchanged: 0, regression: 0,
+    journalCompacted: false, journalDropped: 0,
+  };
+}
+
+async function queueTextOrInjected(
+  injected: string | null | undefined, queuePath: string,
+): Promise<{ state: LedgerReadState; text: string | null }> {
+  if (injected !== undefined) {
+    return injected === null
+      ? { state: 'missing', text: null }
+      : { state: 'read', text: injected };
+  }
+  const read = await readLedgerFile(queuePath, VISIT_SYNC_QUEUE_BYTES);
+  return { state: read.state, text: read.state === 'read' ? read.text : null };
+}
+
+/**
+ * Refresh the queue visit journal from the fleet jobs ledger and the live
+ * router queue — the same fold `phm queue visits-sync --apply` runs, on the
+ * daemon's self-improvement cadence so `phm queue stats` and
+ * GET /api/queue/stats stay fed without a manual pass. Safe to call any
+ * time. Never throws: ledger problems come back as `state`, journal read
+ * problems skip the append as `journalState: 'unreadable'` (an unreadable
+ * dedup set must never be appended against), write problems as
+ * `state: 'error'`.
+ *
+ * Bounded like the sibling syncs: the jobs ledger contributes its newest
+ * ROUTER_OUTCOME_LEDGER_LIMIT bytes (`truncated` reports the cut) and
+ * router-queue.md at most VISIT_SYNC_QUEUE_BYTES. A cut jobs tail can leave
+ * a job's early events out of this pass's fold; planVisitSync's
+ * completeness rule refuses any candidate less complete than the journal's
+ * latest snapshot, and a later pass with the events back in view appends the
+ * fuller snapshot as a progression — missing boundaries stay absent in the
+ * meantime, never zero-filled.
+ */
+export async function syncQueueVisits(opts: QueueVisitSyncOptions = {}): Promise<QueueVisitSyncResult> {
+  const now = opts.now ?? Date.now;
+  const runsDir = opts.runsDir ?? process.env['ASHLR_RUNS_DIR'] ?? join(homedir(), '.ashlr-runs');
+  const jobsPath = join(runsDir, ROUTER_OUTCOME_LEDGER_RELATIVE);
+  const queuePath = join(runsDir, 'queue', 'router-queue.md');
+  const journalPath = opts.journalPath ?? queueJournalPath();
+  try {
+    const jobs: LedgerTailRead = opts.jobsText !== undefined
+      ? { state: 'read', text: opts.jobsText, truncated: false }
+      : await readLedgerTail(jobsPath);
+    if (jobs.state !== 'read') return visitSyncBase(jobs.state, jobsPath, queuePath, journalPath);
+    const nowMs = now();
+    const fold = queueVisitsFromJobs(jobs.text, nowMs);
+    const scanned = {
+      rows: fold.rows, ignored: fold.ignored, invalid: fold.invalid,
+      truncated: jobs.truncated,
+    };
+    if (opts.signal?.aborted) {
+      return { ...visitSyncBase('read', jobsPath, queuePath, journalPath), ...scanned };
+    }
+
+    const queue = await queueTextOrInjected(opts.queueText, queuePath);
+    if (opts.signal?.aborted) {
+      return {
+        ...visitSyncBase('read', jobsPath, queuePath, journalPath),
+        ...scanned, queueState: queue.state,
+      };
+    }
+    const readyVisits = queue.text === null ? [] : queueReadyVisits(queue.text, fold.jobs, nowMs);
+    const visits = [...fold.visits, ...readyVisits];
+
+    let existing: QueueVisit[];
+    try {
+      existing = await readQueueVisits(journalPath);
+    } catch {
+      return {
+        ...visitSyncBase('read', jobsPath, queuePath, journalPath),
+        ...scanned, queueState: queue.state, journalState: 'unreadable', derived: visits.length,
+      };
+    }
+    const plan = planVisitSync(visits, existing);
+    const result: QueueVisitSyncResult = {
+      ...visitSyncBase('read', jobsPath, queuePath, journalPath),
+      ...scanned, queueState: queue.state, journalState: 'read',
+      derived: visits.length, unchanged: plan.unchanged, regression: plan.regression,
+    };
+    if (plan.append.length > 0 && !opts.signal?.aborted) {
+      result.appended = await appendQueueVisits(plan.append, journalPath);
+    }
+    // The journal is append-only evidence, but every reader loads it whole —
+    // keep it near the live evidence window. This pass's derived visits are
+    // the keepKeys: anything still foldable from the bounded jobs tail or the
+    // live queue survives compaction, so the next pass finds the same dedup
+    // set and cannot churn dropped keys back in.
+    if (!opts.signal?.aborted) {
+      const keepKeys = new Set(visits.filter(isQueueVisit).map(queueVisitKey));
+      const compaction = await compactQueueVisits(journalPath, { now: nowMs, keepKeys });
+      result.journalCompacted = compaction.compacted;
+      result.journalDropped = compaction.dropped;
+    }
+    return result;
+  } catch {
+    return visitSyncBase('error', jobsPath, queuePath, journalPath);
+  }
 }
 

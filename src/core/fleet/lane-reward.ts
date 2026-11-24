@@ -99,9 +99,9 @@ const terminalTsMs = (row: Row, phase: string): number => {
 };
 const jobOf = (row: Row): string | null => boundedId(pickString(row, 'job', 'job_id', 'jobId', 'id'), JOB_ID);
 const laneOf = (row: Row): string | null => boundedId(pickString(row, 'lane', 'pool', 'arm'), LANE_ID);
-const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr');
+const urlOf = (row: Row): string | null => pickString(row, 'url', 'pr_url', 'prUrl', 'pr', 'html_url');
 const eventOf = (row: Row): string => (pickString(row, 'event', 'type', 'kind') ?? '').toLowerCase();
-const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status') ?? '').toUpperCase();
+const phaseOf = (row: Row): string => (pickString(row, 'state', 'outcome', 'status', 'phase', 'result', 'conclusion') ?? '').toUpperCase();
 const tokensOf = (row: Row): number | null => {
   const value = row['tokens_total'] ?? row['tokens'] ?? row['total_tokens'];
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : null;

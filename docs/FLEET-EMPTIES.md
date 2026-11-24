@@ -39,6 +39,13 @@ Only a newest empty finish is included; a later productive finish removes that i
 To see which recurring families waste launches, run `phm fleet yield`: it prints
 merged per launch for each family, most wasted tokens first, and a ready job stop
 file row for each `stop` family.
+`phm fleet yield --json` also reports `paused` and `pausedReason` on each
+`launch_families` entry. Four recent finished launches with no eligible source or
+no changes pause that exact family; letter siblings such as 800 and 800B count
+together. A newer productive finish or merge clears the streak. Drop writers and
+restock admission (including parked wakeups) skip paused families and print one
+plain reason. Unknown evidence allows work. The window is 24 hours; using the
+updated Python scripts on a live fleet still requires Security review and re-pin.
 To see which kinds of jobs are worth launching at all, run `phm jobs yield --json`.
 It gives each job kind a keep, watch or stop verdict and names the five to stop
 first; see [job yield](contracts/CONTRACT-FLEET-OUTCOME-METRICS.md#job-yield-jobsyieldv1).

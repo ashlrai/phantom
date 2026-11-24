@@ -29,7 +29,7 @@ const MISSING: HomeSummary = {
   atRisk: unknown('No resource has a fresh usage reading, a burn rate and a future reset.'), worklog: unknown('No jobs ledger has been written yet.'), needsYou: unknown('The needs-you ledger could not be read.'),
 };
 // Group order: agents and machines, then usage and delivery (HomePane.board.test.tsx covers the groups).
-const CARDS = ['Leader', 'Running jobs', 'Main', 'Pools', 'Most at risk of going unused', 'Merged PRs', 'Work log'];
+const CARDS = ['Leader', 'Running jobs', 'Main', 'Pools', 'Yield', 'Most at risk of going unused', 'Merged PRs', 'Work log'];
 let viewport: ViewportMock | null = null;
 const show = (data: unknown, width = 1440) => {
   viewport = mockViewport(width); state.data = data;
@@ -44,8 +44,8 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
     expect(screen.getByText(HEALTHY.headline).getAttribute('data-health')).toBe('healthy');
     const cards = [...view.container.querySelectorAll('section section')];
     expect(cards.map(node => node.getAttribute('aria-label'))).toEqual(CARDS);
-    // Pools is a bar of eight pool tiles above its one action.
-    for (const node of cards) expect(node.querySelectorAll('button')).toHaveLength(node.getAttribute('aria-label') === 'Pools' ? 9 : 1);
+    // Pools is a bar of eight pool tiles above its one action; Yield only reads, so it has none.
+    for (const node of cards) expect(node.querySelectorAll('button')).toHaveLength({ Pools: 9, Yield: 0 }[node.getAttribute('aria-label') ?? ''] ?? 1);
     for (const [name, text] of [['Merged PRs', /Last hour: 2/], ['Merged PRs', /Last 24 hours: 31/], ['Merged PRs', /Median time to merge: 6 minutes/], ['Main', 'locus: red'],
       ['Running jobs', 'claude: 3 of 8'], ['Running jobs', 'grok: 1'], ['Most at risk of going unused', 'claude. 50.0% will expire unused in 10.0h at current burn.'],
       ['Leader', '2 unread replies.']] as const) expect(card(name).getByText(text)).toBeTruthy();
@@ -54,7 +54,7 @@ describe.each([['desktop width', 1440], ['390 px', 390]])('Home at %s', (_name, 
   it('empty state: every card says unknown with the reason, and still opens its view', () => {
     show(MISSING, width);
     expect(screen.getByText('Unknown: The job metrics file could not be read.', { selector: 'p' })).toBeTruthy();
-    for (const name of CARDS.filter(name => name !== 'Pools')) expect(card(name).getAllByText(/^Unknown: .+\.$/).length).toBeGreaterThan(0);
+    for (const name of CARDS.filter(name => name !== 'Pools' && name !== 'Yield')) expect(card(name).getAllByText(/^Unknown: .+\.$/).length).toBeGreaterThan(0);
     expect(card('Main').getByText('Unknown: The main guardian status could not be read.')).toBeTruthy();
     expect(screen.getAllByRole('button')).toHaveLength(15);
   });

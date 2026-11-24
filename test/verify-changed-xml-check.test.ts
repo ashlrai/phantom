@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { pythonPreflight, runXmlSyntaxCheck, selectChangedFiles } from '../scripts/verify-changed.mjs';
 
 describe('selectChangedFiles xml coverage', () => {
-  it('selects existing .xml, .plist and .svg files and skips deleted or non-xml paths', () => {
+  it('selects existing .xml, .plist, .plist.in and .svg files and skips deleted or non-xml paths', () => {
     const selection = selectChangedFiles(
-      ['site/sitemap.xml', 'desktop/src-tauri/Info.plist', 'docs/brand/logo.svg', 'src/core/x.ts', 'gone.xml', 'metrics/jobs.jsonl', 'README.md'],
-      ['site/sitemap.xml', 'desktop/src-tauri/Info.plist', 'docs/brand/logo.svg', 'src/core/x.ts', 'metrics/jobs.jsonl', 'README.md'],
+      ['site/sitemap.xml', 'desktop/src-tauri/Info.plist', 'contrib/mac/com.ashlr.usage-hourly.plist.in', 'docs/brand/logo.svg', 'src/core/x.ts', 'gone.xml', 'gone.plist.in', 'metrics/jobs.jsonl', 'README.md'],
+      ['site/sitemap.xml', 'desktop/src-tauri/Info.plist', 'contrib/mac/com.ashlr.usage-hourly.plist.in', 'docs/brand/logo.svg', 'src/core/x.ts', 'metrics/jobs.jsonl', 'README.md'],
     );
-    expect(selection.xmlFiles).toEqual(['desktop/src-tauri/Info.plist', 'docs/brand/logo.svg', 'site/sitemap.xml']);
+    expect(selection.xmlFiles).toEqual(['contrib/mac/com.ashlr.usage-hourly.plist.in', 'desktop/src-tauri/Info.plist', 'docs/brand/logo.svg', 'site/sitemap.xml']);
   });
 });
 
@@ -55,14 +55,17 @@ describe('runXmlSyntaxCheck', () => {
       writeFileSync(join(root, 'ok.xml'), '<?xml version="1.0"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url/></urlset>\n');
       writeFileSync(join(root, 'ok.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>');
       writeFileSync(join(root, 'ok.plist'), '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n');
+      writeFileSync(join(root, 'ok.plist.in'), '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>com.ashlr.__SUFFIX__</string></dict></plist>\n');
       writeFileSync(join(root, 'bad.svg'), '<svg><rect></svg>');
       writeFileSync(join(root, 'bad.xml'), '{"not": "xml"}');
+      writeFileSync(join(root, 'bad.plist.in'), '<plist version="1.0"><dict><key>Label</key><string>unterminated\n');
       writeFileSync(join(root, 'empty.plist'), '');
       writeFileSync(join(root, 'ascii.plist'), '/* comment */\n{ a = 1; }\n');
       writeFileSync(join(root, 'binary.plist'), 'bplist00\x00\x01\x02not xml at all');
-      expect(runXmlSyntaxCheck(root, ['ok.xml', 'ok.svg', 'ok.plist', 'ascii.plist', 'binary.plist'])).toBe(true);
+      expect(runXmlSyntaxCheck(root, ['ok.xml', 'ok.svg', 'ok.plist', 'ok.plist.in', 'ascii.plist', 'binary.plist'])).toBe(true);
       expect(runXmlSyntaxCheck(root, ['ok.xml', 'bad.svg'])).toBe(false);
       expect(runXmlSyntaxCheck(root, ['bad.xml'])).toBe(false);
+      expect(runXmlSyntaxCheck(root, ['bad.plist.in'])).toBe(false);
       expect(runXmlSyntaxCheck(root, ['empty.plist'])).toBe(false);
     } finally {
       errors.mockRestore();

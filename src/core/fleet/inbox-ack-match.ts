@@ -18,17 +18,22 @@ export function inboxEntryTimestamp(raw: string): string | null {
 }
 
 /**
- * True when a reply written at or after the entry names its id or timestamp.
- * A reply with no readable time still counts: it cannot be shown to be earlier.
+ * The earliest dated reply written after the entry, or null. The leader answers
+ * every Mason line in one "Reply for Mason" block, so a later dated reply is the
+ * ack; naming the entry is not required. Undated replies and undated entries
+ * never count: neither can be shown to come after the other.
  */
-export function isAnsweredByReplies(entry: AckEntryRef, replies: readonly AckReply[]): boolean {
+export function answeringReply(entry: AckEntryRef, replies: readonly AckReply[]): AckReply | null {
   const stamp = inboxEntryTimestamp(entry.raw);
   const entryMs = stamp ? replyTime(stamp) : NaN;
-  return replies.some(reply => {
+  if (!Number.isFinite(entryMs)) return null;
+  let best: AckReply | null = null;
+  let bestMs = Infinity;
+  for (const reply of replies) {
     const replyMs = replyTime(reply.at);
-    if (Number.isFinite(entryMs) && Number.isFinite(replyMs) && replyMs < entryMs) return false;
-    return reply.text.includes(entry.entryId) || (stamp !== null && reply.text.includes(stamp));
-  });
+    if (Number.isFinite(replyMs) && replyMs > entryMs && replyMs < bestMs) { best = reply; bestMs = replyMs; }
+  }
+  return best;
 }
 
 /** Plain reason for an entry whose source has no way to carry an ack back. */
