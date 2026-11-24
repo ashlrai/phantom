@@ -130,24 +130,26 @@ export function deriveBusWorkItemEvidence(
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
   const request = receipts.find(row => row.envelope.id === id);
-  let verifiedCursor = -Infinity, blockerCursor = -Infinity;
+  let resultCursor = -Infinity;
   for (const row of receipts) {
     if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
     // no historical TTL. Check Date validity before reply conversion to ISO.
     if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
       !(row.receivedAt - now <= 5 * 60 * 1000)) continue;
+    if (row.cursor <= resultCursor) continue;
     const verified = replyVerifiedEvidence(row, id);
-    if (verified && row.cursor > verifiedCursor) {
-      evidence.verified = verified;
-      verifiedCursor = row.cursor;
-    }
-    // Newest blocked reply wins; a later reply without `blocked` does not
-    // clear it (no "unblocked" semantics yet).
     const blocker = replyBlockedEvidence(row, id);
-    if (blocker && row.cursor > blockerCursor) {
+    // A receipt containing both valid forms retains verification precedence.
+    // Replies without a valid result do not clear the active result.
+    if (verified) {
+      evidence.verified = verified;
+      delete evidence.blocker;
+      resultCursor = row.cursor;
+    } else if (blocker) {
       evidence.blocker = blocker;
-      blockerCursor = row.cursor;
+      delete evidence.verified;
+      resultCursor = row.cursor;
     }
   }
   if (request) {
