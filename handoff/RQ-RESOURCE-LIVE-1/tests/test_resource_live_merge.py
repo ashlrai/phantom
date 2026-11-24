@@ -16,7 +16,7 @@ def iso(offset_s):
 def reading(rid, lane, observed=-60, **over):
     row = {"id": rid, "lane": lane, "verified": True, "used": 40, "limit": 100, "unit": "percent", "used_pct": 40,
            "remaining": 60, "reset_at": iso(86400), "source": "claude-usage", "source_tier": "official",
-           "observed_at": iso(observed), "stale_after": iso(observed + 900), "reason": None}
+           "observed_at": iso(observed), "stale_after": iso(observed + 3600), "reason": None}
     row.update(over)
     return row
 
@@ -42,13 +42,26 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(live["readings"]["claude-weekly"]["observed_at"], iso(-60))
 
     def test_stale_reading_is_null_not_zero(self):
-        merged = m.merge({}, sidecar(readings=[reading("devin", "devin", observed=-3600)]), NOW)
+        merged = m.merge({}, sidecar(readings=[reading("devin", "devin", observed=-3601)]), NOW)
         row = merged["live"]["readings"]["devin"]
         self.assertFalse(row["verified"])
         self.assertEqual(row["reason"], "stale")
+        self.assertTrue(row["stale"])
+        self.assertTrue(row["stale_over_1h"])
         for key in m.VALUE_KEYS:
             self.assertIsNone(row[key])
-        self.assertEqual(row["observed_at"], iso(-3600))
+        self.assertEqual(row["observed_at"], iso(-3601))
+
+    def test_freshness_flags_distinguish_age_and_explicit_deadline(self):
+        rows = [reading("fresh", "a", observed=-3599),
+                reading("deadline", "b", observed=-20, stale_after=iso(-1)),
+                reading("unknown", "c", observed_at=None)]
+        live = m.merge({}, sidecar(readings=rows), NOW)["live"]["readings"]
+        self.assertFalse(live["fresh"]["stale"])
+        self.assertFalse(live["fresh"]["stale_over_1h"])
+        self.assertTrue(live["deadline"]["stale"])
+        self.assertFalse(live["deadline"]["stale_over_1h"])
+        self.assertIsNone(live["unknown"]["stale_over_1h"])
 
     def test_unverified_reading_keeps_its_reason(self):
         row = reading("gemini", "gemini", verified=False, used=None, limit=None, unit=None, used_pct=None, remaining=None,
@@ -58,7 +71,7 @@ class MergeTest(unittest.TestCase):
         self.assertIsNone(merged["live"]["readings"]["gemini"]["used_pct"])
 
     def test_old_plan_is_dropped(self):
-        merged = m.merge({}, sidecar(generated=-1000), NOW)
+        merged = m.merge({}, sidecar(generated=-3601), NOW)
         self.assertFalse(merged["live"]["current"])
         self.assertEqual(merged["live"]["lane_order"], [])
         self.assertEqual(m.lane_rank(merged), {})

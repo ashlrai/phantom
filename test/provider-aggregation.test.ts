@@ -52,7 +52,7 @@ describe('qualitative provider grouping and scoped observations', () => {
   });
   it('preserves freshness without promoting unknown, declared or historical readings', () => {
     const result = aggregateProviderResources([
-      resource(), resource('stale', 'provider-a', 'a', { observedAt: '2026-10-12T11:00:00.000Z' }),
+      resource(), resource('stale', 'provider-a', 'a', { observedAt: '2026-10-12T10:59:59.000Z' }),
       resource('unknown', 'provider-a', 'b', { readingState: 'unknown' }), resource('declared', 'provider-a', 'c', { readingState: 'declared' }),
       resource('missing-time', 'provider-a', 'd', { observedAt: null }), resource('future', 'provider-a', 'e', { observedAt: '2026-10-12T12:01:00.000Z' }),
     ], opts);
@@ -60,7 +60,7 @@ describe('qualitative provider grouping and scoped observations', () => {
     expect(result.coverage).toMatchObject({ resources: 6, current: 1, stale: 1, unknown: 4 });
   });
   it('uses the shared default to refuse year-old current claims, future observations and invalid calendar timestamps', () => {
-    expect(DEFAULT_RESOURCE_OBSERVATION_MAX_AGE_MS).toBe(15 * 60_000);
+    expect(DEFAULT_RESOURCE_OBSERVATION_MAX_AGE_MS).toBe(60 * 60_000);
     const result = aggregateProviderResources([resource('old', 'provider-a', 'old-account', { observedAt: '2025-10-12T11:59:30.000Z' }),
       resource('future', 'provider-a', 'future-account', { observedAt: '2027-10-12T11:59:30.000Z' })], { nowMs });
     expect(result.providers[0]?.resources.map(row => row.readingState)).toEqual(['stale', 'invalid']);

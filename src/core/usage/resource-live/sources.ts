@@ -32,6 +32,7 @@ import type { ResourceLiveTier } from './types.js';
 import type { CapacitySnapshot } from '../../routing/budget-store.js';
 import type { LiveSourcesConfig } from './config.js';
 import { capacitySource } from './capacity-source.js';
+import { statusBudgetSource, ultraReadingSource } from './fleet-sources.js';
 import { anthropicCostSource } from '../../fabric/readers/anthropic-cost.js';
 import { operatorPageSources, type OperatorUsagePageReader } from './operator-page.js';
 
@@ -76,6 +77,7 @@ function claudeWeekly(o: ResourceLiveSourceOptions): ResourceLiveSource[] {
         source: 'claude-usage', observed_at: weekly.observedAt, ...(weekly.accountId ? { account_id: weekly.accountId } : {}) };
     } },
     capacitySource('claude-weekly', o.codexSeatMap, o.readCapacity),
+    statusBudgetSource(o.runsDir, 'claude'),
     { tier: 'own-call', read: (nowMs) => {
       const row = parseClaudeSensor((o.readClaudeEvent ?? (now => readLatestClaudeRateLimitEvent({ nowMs: now })))(nowMs), nowMs);
       if (!row || row.used === null) return null;
@@ -182,8 +184,8 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     'claude-fable': claudeFable(o),
     'claude-api': [...(o.anthropicCost ? [anthropicCostSource(o.anthropicCost, o.runAnthropicCost)] : []),
       ...(o.accountsRoot ? [registry(o, 'claude-api-gift', 'official')] : [])],
-    'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
-    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), ...operator('codex-cmp')],
+    'codex-personal': [...codex(o, o.codexPersonalHome), capacitySource('codex-personal', o.codexSeatMap, o.readCapacity), statusBudgetSource(o.runsDir, 'codex-personal'), ...visible(o, 'chatgpt-codex'), ...operator('codex-personal')],
+    'codex-cmp': [...codex(o, o.codexCmpHome), capacitySource('codex-cmp', o.codexSeatMap, o.readCapacity), statusBudgetSource(o.runsDir, 'codex-cmp'), ...operator('codex-cmp')],
     devin: [registry(o, 'devin', 'official'), ...devinWeekly(o), ...visible(o, 'devin')],
     // Zero-cost SWE-2 Lightning/Flash previews the CLI lists as free, until they expire.
     'devin-flash': devinPreview(o),
@@ -194,7 +196,7 @@ export function defaultResourceLiveSources(o: ResourceLiveSourceOptions): Resour
     dot: [],
     instinct: [],
     local: local(o),
-    grok: grok(o),
+    grok: [...grok(o), ultraReadingSource(o.runsDir, 'queue/ultra.reading.json'), ultraReadingSource(o.runsDir, 'state/grok-ultra.reading.json'), statusBudgetSource(o.runsDir, 'grok')],
     cursor: [],
   };
 }

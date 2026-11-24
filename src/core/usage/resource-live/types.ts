@@ -27,7 +27,7 @@ export interface LaneHistory {
   exhaustAt: string | null; resetAt: string | null;
 }
 /** A reading older than this is not current. Same bound usage.sensors.v1 uses. */
-export const RESOURCE_LIVE_STALE_MS = 15 * 60_000;
+export const RESOURCE_LIVE_STALE_MS = 60 * 60_000;
 
 /**
  * free: no allowance to protect, spend first.

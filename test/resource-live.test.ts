@@ -304,7 +304,7 @@ describe('resource-live tick', () => {
     }) });
     const sidecar = stored(runsDir);
     expect(byId(sidecar, 'claude-weekly')).toMatchObject({ used: 33, source_tier: 'own-call' });
-    expect(byId(sidecar, 'codex-personal')).toMatchObject({ used: 20, observed_at: iso(NOW - 2 * HOUR), stale_after: iso(NOW - 2 * HOUR + 15 * 60_000) });
+    expect(byId(sidecar, 'codex-personal')).toMatchObject({ used: 20, observed_at: iso(NOW - 2 * HOUR), stale_after: iso(NOW - 2 * HOUR + HOUR) });
     // An old reading is recorded but is not a basis for pacing.
     expect(sidecar.burn_down.allowances.find(row => row.id === 'codex-personal')?.action).toBe('steady');
   });
@@ -474,7 +474,7 @@ describe('default sources', () => {
   it('reads the Claude weekly allowance from the CLI usage reading, then the rate-limit event', async () => {
     const sources = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => quota(iso(NOW - 60_000)),
       readClaudeEvent: () => ({ utilization: 0.5, resetsAt: Date.parse(WEEKLY_RESET) / 1000, capturedAt: iso(NOW - 1000) }) });
-    expect(sources['claude-weekly'].map(source => source.tier)).toEqual(['official', 'official', 'own-call']);
+    expect(sources['claude-weekly'].map(source => source.tier)).toEqual(['official', 'official', 'own-call', 'own-call']);
     expect(await sources['claude-weekly'][0]!.read(NOW)).toEqual({ used: 71, limit: 100, unit: 'percent', reset_at: WEEKLY_RESET,
       source: 'claude-usage', observed_at: iso(NOW - 60_000) });
     const none = defaultResourceLiveSources({ runsDir: tmp(), readClaudeQuota: async () => null, readClaudeEvent: () => null });
@@ -578,7 +578,7 @@ describe('feeds', () => {
     const feed = await loadResourceLiveFeed(NOW, await seeded());
     const lanes = Object.fromEntries(feed.readings.map(row => [row.lane, row]));
     expect(Object.keys(lanes).sort()).toEqual(['claude-api', 'claude-max', 'devin', 'grok-ultra', 'zai']);
-    expect(lanes['claude-max']).toEqual({ lane: 'claude-max', observedAt: iso(NOW), source: 'claude-usage', staleAfter: iso(NOW + 15 * 60_000),
+    expect(lanes['claude-max']).toEqual({ lane: 'claude-max', observedAt: iso(NOW), source: 'claude-usage', staleAfter: iso(NOW + HOUR),
       used: 42, limit: 100, unit: 'percent', resetAt: WEEKLY_RESET });
     expect(lanes['devin']).toMatchObject({ used: 100, limit: 400, unit: 'acu' });
     expect(lanes['claude-api']).toMatchObject({ used: 20, limit: 100, unit: 'percent' });
@@ -593,7 +593,7 @@ describe('feeds', () => {
     expect(claude.pacePerHour).toBe(2);
     expect(claude.requiredPacePerHour).toBeCloseTo(58 / hours, 2);
     expect(claude.runwayHours).toBe(29);
-    expect((await loadResourceLiveFeed(NOW + 16 * 60_000, runsDir)).pace).toEqual([]);
+    expect((await loadResourceLiveFeed(NOW + 60 * 60_000, runsDir)).pace).toEqual([]);
   });
 
   it('yields nothing for a missing or malformed sidecar', async () => {
@@ -611,8 +611,8 @@ describe('feeds', () => {
     expect(lane('zai')).toMatchObject({ status: 'fresh', used: 12, source: 'zai-lane-resources' });
     expect(lane('gemini')).toMatchObject({ status: 'unknown', used: null, headroom: null });
     expect(lane('gemini')).not.toHaveProperty('pacePerHour');
-    // Fifteen minutes on with no new pass, the same numbers are stale and are not headroom.
-    const later = await loadSensorReport(NOW + 16 * 60_000) as { lanes: Array<Record<string, unknown>> };
+    // One hour on with no new pass, the same numbers are stale and are not headroom.
+    const later = await loadSensorReport(NOW + 60 * 60_000) as { lanes: Array<Record<string, unknown>> };
     expect(later.lanes.find(row => row['lane'] === 'claude-max')).toMatchObject({ status: 'unknown', headroom: null, stale: true });
   });
 

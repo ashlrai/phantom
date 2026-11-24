@@ -113,8 +113,11 @@ export function laneStateChip(row: WorldLaneRow): string {
 /** Measured facts only; an unmeasured field is left out instead of printed as unknown. */
 function measuredLine(row: WorldLaneRow): string | null {
   const parts = [
+    row.billing === 'unknown' ? null : row.billing,
     row.usage === 'unknown' ? null : `Used ${row.usage}`,
+    row.limit === 'unknown' ? null : `Limit ${row.limit}`,
     row.remaining === 'unknown' ? null : `${row.remaining} left`,
+    row.reset === 'unknown' ? null : `Reset ${row.reset}`,
     row.forecast === 'unknown' ? null : row.forecastText,
   ].filter((part): part is string => part !== null);
   return parts.length ? parts.join(' · ') : null;
@@ -130,7 +133,9 @@ const LaneButton = memo(function LaneButton({ row, expanded, now }: { row: World
     <Tooltip placement="right" content={
       <div className={styles.tip}>
         <div className={styles.tipHead}><Mark engine={row.engine} /><strong>{row.label}</strong></div>
+        <div className={styles.tipLine}>Type {row.billing}</div>
         <div className={styles.tipLine}>Usage {row.usage}</div>
+        <div className={styles.tipLine}>Limit {row.limit}</div>
         <div className={styles.tipLine}>Remaining {row.remaining}</div>
         <div className={styles.tipLine}>Reset {row.reset}</div>
         <div className={styles.tipLine}>Burn {row.burn}</div>

@@ -20,12 +20,21 @@ function model(lanes: unknown[], windows?: unknown[]) {
   };
 }
 
-const CANONICAL = ['claude-max', 'claude-api', 'codex-personal', 'devin', 'dot', 'grok-ultra', 'cursor-cloud', 'local'];
+const CANONICAL = ['claude-max', 'claude-api', 'codex-personal', 'codex-cmp', 'devin', 'devin-swe-flash', 'dot', 'instinct', 'grok-ultra', 'cursor-cloud', 'local'];
 
 describe('world lane rows', () => {
+  it('renders allowlisted pool readings with billing, limits and one-hour freshness', () => {
+    const doc = { ...model([]), resourcePool: { entries: [
+      { id: 'codex-cmp', billing_type: 'subscription', usage: 31, limit: 100, unit: 'percent', measured_at: RECENT },
+      { id: 'instinct', billing_type: 'api', usage: 4, limit: 10, unit: 'usd', measured_at: new Date(NOW - 3_600_000).toISOString() },
+    ], live: { readings: [] } } };
+    const rows = worldLaneRows(doc, NOW);
+    expect(rows.find(row => row.lane === 'codex-cmp')).toMatchObject({ billing: 'subscription', usage: '31%', limit: '100%', freshness: 'fresh' });
+    expect(rows.find(row => row.lane === 'instinct')).toMatchObject({ billing: 'api', usage: 'unknown', freshness: 'stale' });
+  });
   it('uses the usage-sensor staleness window', () => {
     expect(WORLD_LANE_STALE_MS).toBe(USAGE_SENSOR_STALE_MS);
-    expect(WORLD_LANE_STALE_MS).toBe(15 * 60_000);
+    expect(WORLD_LANE_STALE_MS).toBe(60 * 60_000);
   });
 
   it('maps a fresh lane to usage, remaining, reset, burn, forecast, source and age', () => {
@@ -198,6 +207,6 @@ describe('world lane rows', () => {
   it('returns the canonical unknown rows for a document that is not a world snapshot', () => {
     expect(worldLaneRows(null, NOW).map((row) => row.lane)).toEqual(CANONICAL);
     expect(worldLaneRows({ sensors: { lanes: 'nope' } }, NOW).every((row) => row.usage === 'unknown' && row.freshness === 'unknown')).toBe(true);
-    expect(worldLaneRows({ sensors: { lanes: [{ used: field(1) }, null, { lane: '' }] } }, NOW)).toHaveLength(8);
+    expect(worldLaneRows({ sensors: { lanes: [{ used: field(1) }, null, { lane: '' }] } }, NOW)).toHaveLength(CANONICAL.length);
   });
 });

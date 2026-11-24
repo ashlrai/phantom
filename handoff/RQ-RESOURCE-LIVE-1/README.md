@@ -91,8 +91,9 @@ document = merge(document, load_json_or_none(runs / "state" / "resource-live.jso
 ```
 
 `merge` adds one key, `live`, and leaves every other key alone. A reading that
-is unverified or past its `stale_after` has null values. A plan older than 15
-minutes is dropped (`live.current` is false), so a stopped reader cannot leave
+is unverified or past its `stale_after` has null values. The `stale` and `stale_over_1h` flags distinguish an expired reading from
+one observed over an hour ago; unknown observation times produce a null age flag.
+A plan older than one hour is dropped (`live.current` is false), so a stopped reader cannot leave
 a stale spend order in force.
 
 ## Dispatcher change, for a later pin

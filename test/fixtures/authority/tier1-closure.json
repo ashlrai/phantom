@@ -1457,6 +1457,7 @@
     "src/core/usage/resource-live/config.ts",
     "src/core/usage/resource-live/engine.ts",
     "src/core/usage/resource-live/feed.ts",
+    "src/core/usage/resource-live/fleet-sources.ts",
     "src/core/usage/resource-live/history.ts",
     "src/core/usage/resource-live/operator-page.ts",
     "src/core/usage/resource-live/reset-rule.ts",

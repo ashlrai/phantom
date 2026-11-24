@@ -15,7 +15,7 @@ import { z } from 'zod';
 
 export const USAGE_SENSOR_SCHEMA = 'usage.sensors.v1' as const;
 /** Same bound routing headroom uses. A reading this old is not room. */
-export const USAGE_SENSOR_STALE_MS = 15 * 60_000;
+export const USAGE_SENSOR_STALE_MS = 60 * 60_000;
 export const SENSOR_TIMESTAMP_BASELINE = { timestamped: 9, total: 12 } as const;
 /** How many prior points the burn slope may use. */
 export const SENSOR_BURN_SAMPLES = 4;
@@ -58,6 +58,8 @@ export const USAGE_SENSOR_SOURCES = [
   'cursor-status',
   'browser-visible',
   'grok-status',
+  'dispatcher-budget',
+  'grok-ultra-reading',
   'manual',
   'local-throughput',
   'zai-lane-resources',
@@ -134,7 +136,7 @@ export function unmeasuredSensor(lane: UsageSensorLane, nowMs: number): UsageSen
 
 /**
  * True only inside the open interval [observedAt, staleAfter). A missing
- * staleAfter uses the 15 minute bound. Future, invalid or due readings are
+ * staleAfter uses the one hour bound. Future, invalid or due readings are
  * not fresh.
  */
 export function readingIsFresh(input: {

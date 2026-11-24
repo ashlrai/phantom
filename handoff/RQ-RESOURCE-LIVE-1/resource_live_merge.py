@@ -16,7 +16,7 @@ import json
 import sys
 
 SCHEMA = "resource-live.v1"
-STALE_S = 15 * 60
+STALE_S = 60 * 60
 VALUE_KEYS = ("used", "limit", "unit", "used_pct", "remaining", "reset_at")
 
 
@@ -31,10 +31,14 @@ def _epoch(value):
 
 def _reading(row, now):
     stale_at = _epoch(row.get("stale_after"))
-    current = row.get("verified") is True and stale_at is not None and now < stale_at
+    observed_at = _epoch(row.get("observed_at"))
+    stale_over_1h = None if observed_at is None or observed_at > now else now - observed_at > STALE_S
+    current = (row.get("verified") is True and stale_at is not None and now < stale_at
+               and stale_over_1h is False)
     out = {key: (row.get(key) if current else None) for key in VALUE_KEYS}
     out.update(
         id=row.get("id"), lane=row.get("lane"), verified=current,
+        stale=not current if row.get("verified") is True else None, stale_over_1h=stale_over_1h,
         # Source and observed_at stay on a stale row: they say what was last seen and when.
         source=row.get("source"), source_tier=row.get("source_tier"), observed_at=row.get("observed_at"),
         reason=row.get("reason") if row.get("verified") is not True else (None if current else "stale"),
