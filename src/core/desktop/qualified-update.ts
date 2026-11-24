@@ -8,8 +8,11 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { gunzipSync } from 'node:zlib';
 import { Header } from 'tar';
+import { decideDeploy, recordDeployDeferral } from '../authority/deploy-gate.js';
 import { evaluateStandingAuthority } from '../authority/effective-config.js';
+import { configuredDeployWindowOpen } from '../authority/grant-bounds.js';
 import { runningPackageRoot, verifyAuthoritySurfaceAt } from '../authority/surface.js';
+import { loadConfigReadOnly } from '../config.js';
 import { censusExecutionLeases } from '../sandbox/execution-leases.js';
 import { readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions } from '../local-runtime/archive.js';
 import { parseBuildIdentity } from '../build-identity.js';
@@ -31,6 +34,8 @@ export interface DesktopUpdateDependencies {
   admission(): UpdateAdmission;
   currentPackageRoot(): string | null;
   captureParent(): NativeUpdateParent | null;
+  /** Absent means the authority window is closed. */
+  authorityWindowOpen?(): boolean;
   verifyParent(parent: NativeUpdateParent, manifest: CompatibleUpdateManifest): Promise<boolean>;
   parentState(parent: NativeUpdateParent): 'same' | 'gone' | 'changed' | 'unknown';
   now(): number; sleep(ms: number): Promise<void>;
@@ -121,15 +126,19 @@ function requireNewerVersion(deps: DesktopUpdateDependencies, candidate: Compati
   const first = next.findIndex((part, i) => part !== old[i]);
   if (first < 0 || next[first]! < old[first]!) hold('candidate-not-newer');
 }
-function admissionReason(a: UpdateAdmission, surface: string): string | null {
+function admissionReason(a: UpdateAdmission, surface: string, windowOpen = false): string | null {
   if (!a.active || !a.grantId || !a.envelopeDigest || !a.surfaceDigest) return 'grant-unavailable';
-  if (a.surfaceDigest !== surface) return 'authority-reapproval-required';
+  const decision = decideDeploy({ candidateDigest: surface, grantDigest: a.surfaceDigest, windowOpen });
+  if (decision.action === 'queue') {
+    recordDeployDeferral({ grantId: a.grantId, candidateDigest: surface, grantDigest: a.surfaceDigest });
+    return 'authority-bump-queued';
+  }
   if (!a.stop) return 'stop-required';
   if (a.unknownLeases !== 0 || a.leaseCount !== 0) return 'work-active-or-unknown';
   return null;
 }
 function freshAdmission(deps: DesktopUpdateDependencies, expected: UpdateAdmission, surface: string): void {
-  const now = deps.admission(); const reason = admissionReason(now, surface);
+  const now = deps.admission(); const reason = admissionReason(now, surface, deps.authorityWindowOpen?.() ?? false);
   if (reason) hold(reason);
   if (now.grantId !== expected.grantId || now.envelopeDigest !== expected.envelopeDigest || now.surfaceDigest !== expected.surfaceDigest) hold('authority-changed');
 }
@@ -141,8 +150,10 @@ export function inspectQualifiedDesktopUpdate(stageId: string, deps: DesktopUpda
     try {bytes(join(staged.stage, 'consumer-attempt.json'), 8192); return result('blocked', version, 'update-attempt-already-recorded');}
     catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
     requireNewerVersion(deps, staged.manifest);
-    const reason = admissionReason(deps.admission(), staged.manifest.authoritySurfaceDigest);
-    return result(reason ? 'blocked' : 'ready', version, reason, reason === 'authority-reapproval-required' || reason === 'grant-unavailable');
+    const windowOpen = deps.authorityWindowOpen?.() ?? false;
+    const reason = admissionReason(deps.admission(), staged.manifest.authoritySurfaceDigest, windowOpen);
+    const reapprove = windowOpen && deps.admission().surfaceDigest !== staged.manifest.authoritySurfaceDigest;
+    return result(reason ? 'blocked' : 'ready', version, reason, reason === 'authority-bump-queued' || reason === 'grant-unavailable' || reapprove);
   } catch (error) { return result('blocked', version, error instanceof Held ? error.reason : 'verification-failed'); }
 }
 
@@ -443,8 +454,9 @@ export async function applyQualifiedDesktopUpdate(stageId: string, deps: Desktop
   let version: string | null = null; let lock: string | null = null;
   try {
     const staged = readStage(stageId, deps); version = staged.manifest.version;
-    const expected = deps.admission(); const reason = admissionReason(expected, staged.manifest.authoritySurfaceDigest);
-    if (reason) return result('blocked', version, reason, reason === 'authority-reapproval-required' || reason === 'grant-unavailable');
+    const windowOpen = deps.authorityWindowOpen?.() ?? false;
+    const expected = deps.admission(); const reason = admissionReason(expected, staged.manifest.authoritySurfaceDigest, windowOpen);
+    if (reason) return result('blocked', version, reason, reason === 'authority-bump-queued' || reason === 'grant-unavailable');
     requireNewerVersion(deps, staged.manifest);
     const parent = deps.captureParent(); if (!parent) hold('native-parent-unverified');
     const ackDeadline = deps.now() + 9000;
@@ -477,6 +489,9 @@ export function createDesktopUpdateDependencies(trust: UpdateTrust | null): Desk
   const root = runningPackageRoot();
   return {
     home: userInfo().homedir, platform: process.platform, architecture: process.arch, packageRoot: root, trust,
+    authorityWindowOpen: () => {
+      try { return configuredDeployWindowOpen(loadConfigReadOnly()); } catch { return false; }
+    },
     admission: () => {
       const evaluated = evaluateStandingAuthority({mode: 'fresh', surface: 'running'}); const leases = censusExecutionLeases();
       return {grantId: evaluated.grant?.grantId ?? null, envelopeDigest: evaluated.envelopeDigest,

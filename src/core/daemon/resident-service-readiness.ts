@@ -23,6 +23,7 @@ import {
 } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { rewriteDaemonEntrypoint } from '../authority/signer-daemon.js';
 import {
   generateServiceDefinition,
   parseExactLaunchdPrintRuntime,
@@ -1083,12 +1084,13 @@ export function observeResidentServiceDiagnostic(
   }
 
   const entrypoint = join(releaseRoot, 'bin', 'ashlr');
+  const plistEntrypoint = rewriteDaemonEntrypoint(entrypoint);
   let definition;
   try {
     definition = generateServiceDefinition({
       ...options,
       platform: 'darwin',
-      binPath: entrypoint,
+      binPath: plistEntrypoint,
       nodePath: interpreterPath,
     });
   } catch {
@@ -1108,7 +1110,7 @@ export function observeResidentServiceDiagnostic(
   const entrypointInvocationSafe = exactSafeInvocation(
     definition.launchdRuntime.arguments,
     interpreterPath,
-    entrypoint,
+    plistEntrypoint,
   );
   checks.invocationSafe = entrypointInvocationSafe;
   if (!entrypointInvocationSafe) {
@@ -1134,7 +1136,7 @@ export function observeResidentServiceDiagnostic(
       const signedInvocationSafe = exactSafeInvocation(
         payload.service.arguments,
         interpreterPath,
-        entrypoint,
+        plistEntrypoint,
       );
       checks.invocationSafe = checks.invocationSafe === true && signedInvocationSafe;
       if (!signedInvocationSafe) {

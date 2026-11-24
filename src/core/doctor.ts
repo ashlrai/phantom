@@ -5,7 +5,7 @@
  * DoctorReport. It NEVER throws — a failed probe becomes a 'fail' DoctorCheck.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -40,6 +40,7 @@ import { checkIngestDrift, INGEST_MISSING, type IngestDriftReport } from './flee
 import { describeStaleGitLocks } from './sandbox/stale-git-locks.js';
 import { evalBudget } from './observability/budget-alert.js';
 import { findDoctorExecutable } from '../doctor/executable.js';
+import { pathCopiesReady, type PathCopy } from './authority/signer-daemon.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -375,6 +376,38 @@ async function checkGit(): Promise<DoctorCheck> {
 }
 
 /** ~/.local/bin on PATH */
+async function observePathCopies(): Promise<PathCopy[]> {
+  if (process.platform === 'win32') return [];
+  const copies: PathCopy[] = [];
+  for (const name of ['phm', 'ashlr'] as const) {
+    const listed = await runCmd('which', ['-a', name]);
+    if (!listed) continue;
+    for (const line of listed.split('\n')) {
+      const path = line.trim();
+      if (!path.startsWith('/')) continue;
+      let target: string | null = null;
+      try {
+        target = realpathSync(path);
+      } catch {
+        target = null;
+      }
+      copies.push({ name, target });
+    }
+  }
+  return copies;
+}
+
+function checkPathReleases(copies: readonly PathCopy[]): DoctorCheck {
+  const verdict = pathCopiesReady(copies);
+  return check(
+    'path-release-unity',
+    'One phm release',
+    verdict.ready ? 'pass' : 'fail',
+    verdict.reason,
+    verdict.ready ? undefined : 'Point every phm and ashlr on PATH at the same release.',
+  );
+}
+
 function checkLocalBin(phm: string | null): DoctorCheck {
   const localBin = join(homedir(), '.local/bin');
   const pathDirs = (process.env['PATH'] ?? '').split(delimiter);
@@ -1534,6 +1567,7 @@ export async function runDoctor(cfg: AshlrConfig): Promise<DoctorReport> {
   checks.push(await git);
   const phm = await phmPath;
   checks.push(checkLocalBin(phm));
+  checks.push(checkPathReleases(await observePathCopies()));
   checks.push(await installed);
   checks.push(checkConfig());
   checks.push(checkIndex());

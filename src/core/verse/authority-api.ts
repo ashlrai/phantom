@@ -37,6 +37,9 @@
  */
 import { setWebsiteMode, websiteStatus } from '../website/host-release.js';
 import { lstatSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 
@@ -72,7 +75,14 @@ import {
 import { applyGrantScopeEdit, editableEngines, editableSeatPolicies, grantScopeDiff, parseGrantScopeEdit, type GrantDiffLine, type GrantScopeEdit } from '../authority/grant-scope.js';
 import type { GrantDraftEditable } from '../authority/grant-scope-types.js';
 import { probeServerEnforcementAll, type GithubGet } from '../authority/server-enforcement.js';
-import { currentHostBinding, verifyAuthoritySurface } from '../authority/surface.js';
+import { loadConfigReadOnly } from '../config.js';
+import { configuredGrantLifetimeMs, configuredLocalEnforcementMaxRisk } from '../authority/grant-bounds.js';
+import {
+  daemonPackageRootFromPlist,
+  judgeSignerDaemon,
+  type SignerDaemonJudgement,
+} from '../authority/signer-daemon.js';
+import { currentHostBinding, verifyAuthoritySurface, verifyAuthoritySurfaceAt } from '../authority/surface.js';
 import { STANDING_GRANT_TRUST_ROOTS } from '../authority/trust-roots.js';
 import { killSwitchPath, readEnrollmentRegistry } from '../sandbox/policy.js';
 import {
@@ -574,6 +584,10 @@ export interface AuthorityDraftResponse extends AuthorityGrantDraft {
   editable?: GrantDraftEditable;
   /** 3.15: the draft's ladder is the one `elite-direct` rung (elite models land on green tests, no judge). */
   eliteDirect: boolean;
+  /** Digest of the release the resident daemon plist executes, when one was read. */
+  daemonDigest: string | null;
+  /** Digest of this drafting CLI when it is a compiled release. */
+  cliDigest: string | null;
 }
 
 const DRAFT_TTL_MS = 15 * 60 * 1000;
@@ -724,13 +738,15 @@ export async function buildStandingGrantDraft(
      * signed ladder for a re-approval. Leaving elite-direct is a new grant.
      */
     eliteDirect?: boolean;
+    /** Test and caller seam. Absent reads the daemon plist and this process. */
+    signerDaemon?: () => SignerDaemonJudgement | Promise<SignerDaemonJudgement>;
   } = {},
 ): Promise<AuthorityDraftResponse> {
+  const binding = await (opts.signerDaemon ?? defaultSignerDaemonBinding)();
+  if (!binding.ok) throw new AuthorityDraftError(binding.code, binding.reason);
   const keyId = await signingKeyId();
   const hostBinding = currentHostBinding();
   if (!hostBinding) throw new AuthorityDraftError('host-unknown', "This Mac's hardware identity could not be read, so a grant cannot be bound to it.");
-  const surface = verifyAuthoritySurface(displaySurfaceTarget(), { fresh: true, nowMs });
-  if (!surface.ok) throw new AuthorityDraftError('surface-unverified', surface.reason);
   const evaluation = evaluateStandingAuthority({ mode: 'cached', surface: displaySurfaceTarget(), nowMs });
   const installed = readInstalledGrant();
   const continuable = installed.state === 'ok' && evaluation.grant !== null
@@ -751,7 +767,9 @@ export async function buildStandingGrantDraft(
     grantSeq: nextGrantSeq(),
     keyId,
     hostBinding,
-    authoritySurfaceDigest: surface.digest,
+    authoritySurfaceDigest: binding.digest,
+    lifetimeMs: draftLifetimeMs(),
+    localEnforcementMaxRisk: draftLocalRisk(),
   };
   let payload: StandingGrantV1;
   const devin = await (opts.devin ?? devinDraftChoice)();
@@ -805,6 +823,8 @@ export async function buildStandingGrantDraft(
   const digest = rememberDraft(payload, resolved);
   const summary = describeGrantScope(payload);
   if (devin.note) summary.push(devin.note);
+  summary.push(`Daemon release digest: ${binding.daemonDigest ?? 'unavailable'}`);
+  summary.push(`Drafting CLI digest: ${binding.cliDigest ?? 'unavailable'}`);
   const current = installed.state === 'ok' && evaluation.grantState !== 'none' ? installed.envelope.payload : null;
   return {
     payload,
@@ -815,7 +835,49 @@ export async function buildStandingGrantDraft(
     eliteDirect: grantHasEliteDirect(payload),
     diff: grantScopeDiff(current, payload),
     editable,
+    daemonDigest: binding.daemonDigest,
+    cliDigest: binding.cliDigest,
   };
+}
+
+function draftConfig(): ReturnType<typeof loadConfigReadOnly> | null {
+  try {
+    return loadConfigReadOnly();
+  } catch {
+    return null;
+  }
+}
+
+function draftLifetimeMs(): number {
+  return configuredGrantLifetimeMs(draftConfig());
+}
+
+function draftLocalRisk(): ReturnType<typeof configuredLocalEnforcementMaxRisk> {
+  return configuredLocalEnforcementMaxRisk(draftConfig());
+}
+
+/** Digest of the release the ai.ashlr.daemon plist executes, else this process. */
+export async function defaultSignerDaemonBinding(): Promise<SignerDaemonJudgement> {
+  const running = verifyAuthoritySurface('running', { fresh: true });
+  const display = verifyAuthoritySurface(displaySurfaceTarget(), { fresh: true });
+  let daemonDigest: string | null = null;
+  const plistPath = join(homedir(), 'Library', 'LaunchAgents', 'ai.ashlr.daemon.plist');
+  let xml: string | null = null;
+  try {
+    xml = await readFile(plistPath, 'utf8');
+  } catch {
+    xml = null;
+  }
+  const root = xml === null ? null : daemonPackageRootFromPlist(xml);
+  if (root) {
+    const verified = verifyAuthoritySurfaceAt(root, 'installed', { fresh: true });
+    daemonDigest = verified.ok ? verified.digest : null;
+  }
+  return judgeSignerDaemon({
+    cliDigest: running.ok ? running.digest : null,
+    daemonDigest,
+    fallbackDigest: display.ok ? display.digest : null,
+  });
 }
 
 /** Rollout position straight from the ledger for a grant that no longer verifies (paused / expired). */

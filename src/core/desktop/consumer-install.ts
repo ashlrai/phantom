@@ -6,6 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {userInfo} from 'node:os';
 import {dirname, join} from 'node:path';
 import {parseBuildIdentity} from '../build-identity.js';
+import {pathCopiesReady, type PathCopy} from '../authority/signer-daemon.js';
 import {runningPackageRoot, verifyAuthoritySurfaceAt} from '../authority/surface.js';
 import {canonicalJson} from '../authority/canonical-json.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
@@ -49,6 +50,8 @@ export interface ConsumerInstallDependencies {
   transaction(): Promise<ConsumerTransaction>;
   /** Exact path is verified before any --version execution; other targets remain unknown. */
   readManagedVersion(managedLauncher: string): Promise<string|null>;
+  /** PATH phm and ashlr copies. Absent skips the unity check. */
+  pathCopies?(): Promise<readonly PathCopy[]>;
   discover(managedLauncher: string): Promise<readonly ShellCliObservation[]>;
 }
 export interface ConsumerInstallResult {
@@ -163,6 +166,10 @@ export async function inspectConsumerDesktopInstall(input: ConsumerInstallDepend
     const archive=await readPinnedRuntimeArchive(pins),inspectedPackage=join(stage,'package');fs.mkdirSync(inspectedPackage,{mode:0o700});extractPinnedRuntimeArchive(archive,inspectedPackage);
     const a:Admission={deps,helper,io,manifest:m,stage,appRoot,app,files,stageParents:parents(deps.home,stage,false),pins,inspectedPackage,aliases,attempted:false};
     original(a);await packageReady(inspectedPackage,a);await absence(a);
+    if (deps.pathCopies) {
+      const copies=await deps.pathCopies();
+      if (!pathCopiesReady(copies).ready) return result('held',version,'path-release-mismatch');
+    }
     const observed=result('ready',version);admissions.set(observed,a);return observed;
   } catch(error) {return result('held',version,error instanceof Held?error.reason:'inspection-unavailable');}
 }
@@ -301,6 +308,19 @@ export function createConsumerInstallDependencies(): ConsumerInstallDependencies
           return {status:child.error?1:child.status??1,stdout:child.stdout??''};
         };return io;
       }};
+    },
+    pathCopies: async () => {
+      const shell=userInfo().shell;require(typeof shell==='string' && shell.startsWith('/'),'shell-discovery');
+      const nonce=randomBytes(16).toString('hex'),prefix=`PHANTOM_DESKTOP_${nonce}_`;
+      const probe=spawnSync(shell,['-l','-c',`printf "\\n${prefix}PHM=%s\\n${prefix}ASHLR=%s\\n" "$(command -v phm)" "$(command -v ashlr)"`],{encoding:'utf8',timeout:5000,maxBuffer:16*1024,env});
+      if(probe.error||probe.status!==0) return [];
+      const targets=parseConsumerShellTargets(probe.stdout,nonce);
+      if (!targets) return [];
+      return (['phm','ashlr'] as const).map(name => {
+        let target: string | null = null;
+        try { if (targets[name]) target = fs.realpathSync(targets[name]); } catch { target = null; }
+        return { name, target };
+      });
     },
     discover:async(managed)=> {
       const shell=userInfo().shell;require(typeof shell==='string' && shell.startsWith('/'),'shell-discovery');

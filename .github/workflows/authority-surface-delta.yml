@@ -1,0 +1,50 @@
+name: Authority surface delta
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authority-surface-delta-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  authority-surface-delta:
+    name: authority-surface-delta
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Build head and base, then post the surface delta
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          build_one() {
+            local dir="$1"
+            npm ci --ignore-scripts --no-audit --no-fund
+            npx tsc -p tsconfig.json
+            node scripts/authority-surface.mjs --out "$dir"
+          }
+          git worktree add --detach "$RUNNER_TEMP/surface-base" "$BASE_SHA"
+          build_one "$RUNNER_TEMP/head-surface.json"
+          (
+            cd "$RUNNER_TEMP/surface-base"
+            build_one "$RUNNER_TEMP/base-surface.json"
+          )
+          node scripts/authority-surface-delta.mjs "$RUNNER_TEMP/base-surface.json" "$RUNNER_TEMP/head-surface.json"

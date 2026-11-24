@@ -733,14 +733,21 @@ async function cmdGrant(parsed: Parsed, deps: AuthorityCliDeps, kind: 'new' | 'r
   } else {
     const { buildStandingGrantDraft } = await import('../core/verse/authority-api.js');
     const eliteDirect = await eliteDirectChoice(parsed, deps, !parsed.flags.has('--yes'));
-    payload = (await buildStandingGrantDraft(kind, Date.now(), {
+    const draft = await buildStandingGrantDraft(kind, Date.now(), {
       githubGet: ghGet(deps),
       scope: volumeScopeFromArgs(parsed),
       ...(eliteDirect !== undefined ? { eliteDirect } : {}),
-    })).payload;
+    });
+    payload = draft.payload;
+    deps.out(kind === 'new' ? 'You are about to sign this standing grant:' : 'You are about to re-approve (continue) this standing grant:');
+    for (const line of describeGrantScope(payload)) deps.out(`  ${line}`);
+    deps.out(`  Daemon release digest: ${draft.daemonDigest ?? 'unavailable'}`);
+    deps.out(`  Drafting CLI digest: ${draft.cliDigest ?? 'unavailable'}`);
   }
-  deps.out(kind === 'new' ? 'You are about to sign this standing grant:' : 'You are about to re-approve (continue) this standing grant:');
-  for (const line of describeGrantScope(payload)) deps.out(`  ${line}`);
+  if (file) {
+    deps.out(kind === 'new' ? 'You are about to sign this standing grant:' : 'You are about to re-approve (continue) this standing grant:');
+    for (const line of describeGrantScope(payload)) deps.out(`  ${line}`);
+  }
   if (!parsed.flags.has('--yes') && !(await deps.confirm('Sign it with Touch ID?'))) {
     deps.out('Not signed.');
     return 1;

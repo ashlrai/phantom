@@ -46,7 +46,15 @@ compiled ceilings). It is **null**, so nothing runs autonomously, whenever:
 - the switch is Off, or Stop (`~/.ashlr/KILL`) is on;
 - the ledger chain is broken;
 - the running code is not the code the grant was signed for (the
-  authority-surface digest);
+  authority-surface digest). `grant` and `re-approve` bind the digest of
+  the release the resident daemon plist executes, and refuse with
+  `signer-daemon-mismatch` when this CLI's compiled digest differs. The
+  confirmation sheet shows both digests. A same-digest desktop update
+  installs with no pause. A different digest waits for
+  `authority.deployWindowOpen` and one re-approve; each deferral is a
+  ledger note. `phm doctor` and desktop install are not ready while more
+  than one `phm` on PATH resolves to a different release, and the daemon
+  plist targets `~/.local/share/ashlr/current`;
 - this is a different Mac (`hostBinding` = sha256 of the uppercase
   `IOPlatformUUID`; the helper and the CLI compute it the same way, and
   `ashlr authority setup` checks that they agree before it asks for Touch ID);

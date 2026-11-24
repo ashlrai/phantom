@@ -1301,6 +1301,19 @@ export interface AshlrConfig {
    * `ashlr devin connect` turns it on after storing the key in the macOS
    * Keychain. The API key is NEVER read from or written to this file.
    */
+  /**
+   * Standing-grant policy the owner has not finished choosing.
+   * Absent values stay at the compiled ceilings: a 30-day lifetime and a
+   * low local-enforcement risk bound. Neither value can rise above the ceiling.
+   */
+  authority?: {
+    /** Draft lifetime in milliseconds. Absent uses the compiled ceiling. */
+    grantLifetimeMs?: number;
+    /** Local-enforcement risk bound. Absent uses the compiled ceiling. */
+    localEnforcementMaxRisk?: 'low' | 'medium';
+    /** When true, a different authority-surface digest may install in this window. */
+    deployWindowOpen?: boolean;
+  };
   devin?: {
     enabled?: boolean;
     /** Devin Review requests per local day; default 5, 0 disables reviews. */

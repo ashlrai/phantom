@@ -18,6 +18,7 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { rewriteReleasePathToCurrent } from '../authority/signer-daemon.js';
 import { buildToolPath } from '../run/tool-path.js';
 import { fsyncDirectory, type DirectoryIdentity } from '../util/durability.js';
 import {
@@ -162,8 +163,8 @@ export interface ServiceDefinition {
 export function generateServiceDefinition(opts: ServiceInstallOptions = {}): ServiceDefinition {
   const platform = (opts.platform ?? process.platform) as Platform;
   const nodePath = opts.nodePath ?? process.execPath;
-  const binPath = opts.binPath ?? resolveBinPath();
   const home = resolveHome(opts.homeDir);
+  const binPath = rewriteReleasePathToCurrent(opts.binPath ?? resolveBinPath(), home);
   const configDir = path.join(home, '.ashlr');
 
   const budget = opts.budget ?? 5;
