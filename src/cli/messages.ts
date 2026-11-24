@@ -1,8 +1,13 @@
 /** `phm messages`: thin argv layer over core/fleet/agent-messages.ts. */
-export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit <n>] [--text]
+export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit <n>] [--text]
 Agent-to-agent messages on the local agent bus, newest first: id, ts, priority,
 from, to, kind (ask, reply, handoff, status, blocker), a one-line scrubbed
-summary, and the related job or PR when known. --agent with --with shows only
+summary, and the related job or PR when known. --before keeps only messages
+received strictly before its cutoff on the same grammar --since takes — the
+exclusive upper bound composing with --since into one [since, before) window
+on the receipt time, the same rule every other bus read's --before applies,
+so "what did agents say before time T" is one filtered read of the whole
+fleet timeline; --agent with --with shows only
 what those two said to each other; --kind keeps only one classified kind;
 --priority keeps only one envelope band; --job keeps only the messages that
 name one job — its job link, a live jobState citation or the job:<id>
@@ -42,12 +47,12 @@ Damaged bus records are skipped and counted. Exit 0 read, 1 bus unreadable, 2 ba
 export async function cmdMessages(args: string[]): Promise<number> {
   if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { console.log(MESSAGES_USAGE); return 0; }
   let text = false;
-  const values: { since?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; limit?: string } = {};
+  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; limit?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--text') { text = true; continue; }
     if (arg === '--json') continue;
-    const key = arg === '--since' ? 'since' : arg === '--agent' ? 'agent' : arg === '--with' ? 'with'
+    const key = arg === '--since' ? 'since' : arg === '--before' ? 'before' : arg === '--agent' ? 'agent' : arg === '--with' ? 'with'
       : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority' : arg === '--job' ? 'job'
       : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--contains' ? 'contains'
       : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom' : arg === '--in-reply-to' ? 'inReplyTo'
