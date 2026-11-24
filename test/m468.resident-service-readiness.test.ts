@@ -34,6 +34,7 @@ const INTERPRETER_SHA = 'b'.repeat(64);
 const RELEASE_ROOT = `${HOME}/.local/share/ashlr/releases/${RELEASE_ID}`;
 const NODE = '/opt/homebrew/bin/node';
 const ENTRYPOINT = `${RELEASE_ROOT}/bin/ashlr`;
+const PLIST_BIN = `${HOME}/.local/share/ashlr/current/bin/ashlr`;
 const PLIST = `${HOME}/Library/LaunchAgents/ai.ashlr.daemon.plist`;
 const UID = Number(lstatSync(HOME, { bigint: true }).uid);
 const TARGET = `gui/${UID}/ai.ashlr.daemon`;
@@ -42,7 +43,7 @@ const NOW = Date.parse('2026-08-01T12:00:00.000Z');
 const SIGNER = generateKeyPairSync('ed25519');
 const ARGS = [
   NODE,
-  ENTRYPOINT,
+  PLIST_BIN,
   'daemon',
   'start',
   '--budget',

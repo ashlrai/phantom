@@ -52,11 +52,11 @@ If confinement fails, nothing ticks.
 
 | Limit | Value |
 |---|---|
-| Lifetime | 30 days |
+| Lifetime | 30 days compiled ceiling; `authority.grantLifetimeMs` may only shorten it |
 | Risk | medium at most (`high` is never mergeable) |
 | Legacy/default size | 10 files / 300 lines |
 | Local-authored work | low risk; legacy/default volume 4 files / 150 lines |
-| Locally enforced repos (private, free plan) | low risk; legacy/default volume 4 / 150, 4 merges a day |
+| Locally enforced repos (private, free plan) | low risk compiled ceiling (`authority.localEnforcementMaxRisk` may only tighten it); legacy/default volume 4 / 150, 4 merges a day |
 | Legacy/default merges | 24 per repo per day |
 | Class-B veto window | 30 minutes to 24 hours |
 

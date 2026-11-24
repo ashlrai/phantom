@@ -583,6 +583,13 @@ export interface GrantDraftInput {
    * ladder. Mason opts in at `ashlr authority setup` / `grant` / `re-approve`.
    */
   eliteDirect?: boolean;
+  /**
+   * Draft lifetime. Absent uses the compiled ceiling. Callers pass the
+   * configured value, which is never above that ceiling.
+   */
+  lifetimeMs?: number;
+  /** Local-enforcement risk bound. Absent uses the compiled ceiling. */
+  localEnforcementMaxRisk?: MergeRisk;
 }
 
 /**
@@ -749,7 +756,9 @@ export const LOCAL_SEAT_WILDCARD = 'local';
  */
 export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV1 {
   const issuedAt = new Date(input.nowMs).toISOString();
-  const expiresAt = new Date(input.nowMs + STANDING_GRANT_CEILINGS.maxTtlMs).toISOString();
+  const lifetimeMs = input.lifetimeMs ?? STANDING_GRANT_CEILINGS.maxTtlMs;
+  const localRisk = input.localEnforcementMaxRisk ?? STANDING_GRANT_CEILINGS.localEnforcement.maxRisk;
+  const expiresAt = new Date(input.nowMs + lifetimeMs).toISOString();
   const seen = new Set<string>();
   const planned: { repo: StandingGrantRepo; enter: number; mergeFrom: number }[] = [];
   for (const candidate of input.repos) {
@@ -760,7 +769,7 @@ export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV
     const local = candidate.visibility === 'private'
       || draftEnforcementFor(candidate.serverEnforcement ? { state: candidate.serverEnforcement } : null) === 'local';
     const canMerge = plan !== undefined && !(plan.needsVerify && candidate.hasVerify !== true);
-    const risk: MergeRisk = local ? 'low' : plan?.risk ?? 'low';
+    const risk: MergeRisk = local ? localRisk : plan?.risk ?? 'low';
     planned.push({
       repo: {
         nameWithOwner: candidate.nameWithOwner,
@@ -882,13 +891,15 @@ export function buildReapprovalGrantPayload(
 ): StandingGrantV1 {
   const from = Math.max(0, Math.min(currentStageIndex, current.rollout.stages.length - 1));
   const ceiling = STANDING_GRANT_CEILINGS.localEnforcement;
+  const localRisk = input.localEnforcementMaxRisk ?? ceiling.maxRisk;
+  const lifetimeMs = input.lifetimeMs ?? STANDING_GRANT_CEILINGS.maxTtlMs;
   const repos = current.repos.map((repo) => {
     const state = input.serverEnforcement?.get(repo.nameWithOwner.toLowerCase());
     if (repo.enforcement !== 'server' || !reapprovalDowngrades(state === undefined ? null : { state })) return structuredClone(repo);
     return {
       ...repo,
       enforcement: 'local' as const,
-      maxRisk: MERGE_RISK_RANK[repo.maxRisk] > MERGE_RISK_RANK[ceiling.maxRisk] ? ceiling.maxRisk : repo.maxRisk,
+      maxRisk: MERGE_RISK_RANK[repo.maxRisk] > MERGE_RISK_RANK[localRisk] ? localRisk : repo.maxRisk,
       maxMergesPerDay: current.merge.volumePolicy === 'operator-signed' ? repo.maxMergesPerDay : Math.min(repo.maxMergesPerDay, ceiling.maxMergesPerDay),
     };
   });
@@ -899,7 +910,7 @@ export function buildReapprovalGrantPayload(
     grantSeq: input.grantSeq,
     keyId: input.keyId,
     issuedAt: new Date(input.nowMs).toISOString(),
-    expiresAt: new Date(input.nowMs + STANDING_GRANT_CEILINGS.maxTtlMs).toISOString(),
+    expiresAt: new Date(input.nowMs + lifetimeMs).toISOString(),
     hostBinding: input.hostBinding,
     authoritySurfaceDigest: input.authoritySurfaceDigest,
     rollout: { stages: structuredClone(current.rollout.stages.slice(from)), autoAdvance: true },

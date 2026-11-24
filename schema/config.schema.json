@@ -1410,6 +1410,27 @@
         }
       }
     },
+    "authority": {
+      "type": "object",
+      "description": "Standing-grant policy. Absent values stay at the compiled ceilings. A lifetime or local-enforcement risk above the ceiling is ignored.",
+      "additionalProperties": false,
+      "properties": {
+        "grantLifetimeMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Draft grant lifetime in milliseconds. Absent uses the compiled ceiling."
+        },
+        "localEnforcementMaxRisk": {
+          "type": "string",
+          "enum": ["low", "medium"],
+          "description": "Local-enforcement risk bound. Absent uses the compiled ceiling."
+        },
+        "deployWindowOpen": {
+          "type": "boolean",
+          "description": "When true, a candidate with a different authority-surface digest may install. Absent or false queues it."
+        }
+      }
+    },
     "devin": {
       "type": "object",
       "description": "3.15 Devin lane (src/core/devin/). Off unless enabled is exactly true; `ashlr devin connect` turns it on after storing the API key in the macOS Keychain. The key is never read from or written to this file.",

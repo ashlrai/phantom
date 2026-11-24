@@ -38,6 +38,7 @@ import {
 } from '../fleet/fleet-types.js';
 import type { AshlrConfig } from '../types.js';
 import { readClamp, minSwitch, setAutonomySwitch, type SwitchChangeResult } from './clamp.js';
+import { configuredLocalEnforcementMaxRisk } from './grant-bounds.js';
 import {
   appendLedger,
   ledgerPath,
@@ -205,6 +206,7 @@ export function computeEffectivePolicy(input: EffectivePolicyInput): EffectivePo
   if (!stage || stage.id !== position.stageId) throw new Error('rollout position does not match the grant');
   const cfg = configConstraints(input.config);
   const ceilings = STANDING_GRANT_CEILINGS;
+  const localRisk = configuredLocalEnforcementMaxRisk(input.config);
   const operatorVolumes = grant.merge.volumePolicy === 'operator-signed';
   const switchStage: RepoStage = input.switch === 'autonomous' ? 'merge' : 'propose';
   const configStage: RepoStage = cfg.mergeDisabled ? 'propose' : 'merge';
@@ -225,7 +227,7 @@ export function computeEffectivePolicy(input: EffectivePolicyInput): EffectivePo
       ...(operatorVolumes ? { volumePolicy: 'operator-signed' as const } : {}),
       stage: repoStage,
       enforcement: granted.enforcement,
-      maxRisk: minRisk(granted.maxRisk, stage.maxRisk, ceilings.maxRisk, local ? ceilings.localEnforcement.maxRisk : undefined, cfg.maxRisk),
+      maxRisk: minRisk(granted.maxRisk, stage.maxRisk, ceilings.maxRisk, local ? localRisk : undefined, cfg.maxRisk),
       maxFiles: minDefined(mergeMaxFiles, local && !operatorVolumes ? ceilings.localEnforcement.maxFiles : undefined),
       maxLines: minDefined(mergeMaxLines, local && !operatorVolumes ? ceilings.localEnforcement.maxLines : undefined),
       maxMergesPerDay: minDefined(

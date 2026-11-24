@@ -6,9 +6,10 @@ import { applyQualifiedDesktopUpdate, createDesktopUpdateDependencies, inspectQu
 const USAGE = `usage: phm desktop-update inspect|apply --stage <32 lowercase hex> --json
 
 Inspect a publisher-signed paired app/CLI stage or apply it after normal native
-exit, prior Stop/drain and a fresh equal-surface grant. No URL, path, shell,
-credential operation, Stop release or resident restart is accepted.
-Changed authority requires the existing manual update and approval flow.
+exit, prior Stop/drain and the deploy gate. An equal authority-surface digest
+installs with no pause. A different digest waits for the authority window,
+which carries one re-approve. No URL, path, shell, credential operation, Stop
+release or resident restart is accepted.
 `;
 export function parseDesktopUpdateArgs(args: string[]): {verb: 'inspect'|'apply'; stage: string} | null {
   if (!args.length || args.length === 1 && ['help', '--help', '-h'].includes(args[0]!)) return null;

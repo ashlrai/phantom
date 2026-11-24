@@ -4,7 +4,11 @@ import {randomBytes} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {basename, join} from 'node:path';
 import {canonicalJson} from '../authority/canonical-json.js';
+import {decideDeploy, recordDeployDeferral} from '../authority/deploy-gate.js';
+import {configuredDeployWindowOpen} from '../authority/grant-bounds.js';
+import {readInstalledGrant} from '../authority/standing-grant.js';
 import {verifyAuthoritySurfaceAt} from '../authority/surface.js';
+import {loadConfigReadOnly} from '../config.js';
 import {readPinnedRuntimeArchive, extractPinnedRuntimeArchive, type PinnedRuntimeArchiveOptions} from '../local-runtime/archive.js';
 import {fsyncDirectory} from '../util/durability.js';
 import {ConsumerInstallHeld, createConsumerInstallDependencies, directory, parents, owned, regular, write, sha, ioRead, packageReady,
@@ -67,9 +71,27 @@ async function quiescence(a:Pick<Admission,'helper'|'io'|'deps'>,r:ConsumerUpgra
   try {await a.helper.requireLocalQuiescence(a.io);r.stop.drained=true;r.stop.reason=null;return true;}
   catch {r.stop.drained=false;r.stop.reason=r.stop.engaged?'drain-required':'stop-required';return false;}
 }
+function deployWindowOpen(): boolean {
+  try { return configuredDeployWindowOpen(loadConfigReadOnly()); } catch { return false; }
+}
+function enforceGrantDeployGate(candidateDigest: string, r: ConsumerUpgradeResult): void {
+  const installed = readInstalledGrant();
+  if (installed.state !== 'ok') return;
+  const grantDigest = installed.envelope.payload.authoritySurfaceDigest;
+  const decision = decideDeploy({ candidateDigest, grantDigest, windowOpen: deployWindowOpen() });
+  if (decision.action === 'queue') {
+    recordDeployDeferral({ grantId: installed.envelope.payload.grantId, candidateDigest, grantDigest });
+    throw new Held('authority-bump-queued');
+  }
+  if (!decision.reapprove) {
+    r.daemon.restart.touchId = false;
+    r.daemon.restart.reason = null;
+  }
+}
 function touchId(r:ConsumerUpgradeResult,root:string,digest:string):void {
   try {const old=verifyAuthoritySurfaceAt(root,'installed',{fresh:true});if(old.ok)r.daemon.restart.touchId=old.digest!==digest;}catch { /* Unknown remains unknown. */ }
   r.daemon.restart.reason=r.daemon.restart.touchId===true?'authority-surface-changed: standing grant is surface-bound; run phm authority grant (Touch ID) before resident start':null;
+  enforceGrantDeployGate(digest, r);
 }
 /** Inspection writes only private staged public artifacts. Admission cannot be serialized or replayed. */
 export async function inspectConsumerDesktopUpgrade(input:ConsumerUpgradeDependencies,options:ConsumerUpgradeOptions):Promise<ConsumerUpgradeResult> {
