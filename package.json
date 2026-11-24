@@ -164,6 +164,7 @@
     "release:canary": "node scripts/run-signed-release-canary.mjs",
     "verify:local-production": "node scripts/run-local-production-gate.mjs",
     "build:web": "vite build --config vite.config.web.ts",
+    "setup": "bash scripts/dev-setup.sh",
     "dev": "tsx src/cli/index.ts",
     "dev:web": "vite --config vite.config.web.ts",
     "test": "vitest run",

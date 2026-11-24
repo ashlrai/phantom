@@ -143,11 +143,19 @@ list in a guide.
 
 ## Setup
 
+On a clean macOS or Linux checkout, one command installs dependencies, builds,
+and smokes the in-repo CLI (`node bin/ashlr --version` and `--help`). It does
+not write to your PATH; use `./install.sh` if you want `phm` and `ashlr` in
+`~/.local/bin`.
+
 ```sh
 git clone https://github.com/ashlrai/phantom.git
 cd phantom
-npm ci                    # single clone; also what CI and release packaging use
+npm run setup             # runs scripts/dev-setup.sh: npm ci, build, CLI smoke
 ```
+
+A [Dev Container](.devcontainer/devcontainer.json) runs the same setup after
+the container is created.
 
 Keep the upstream repository as `origin`: `node scripts/verify-changed.mjs`
 diffs against `origin/master`. Add your fork as a second remote to push to.
