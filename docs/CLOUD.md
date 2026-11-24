@@ -761,14 +761,40 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   off-contract rows drop like the writer's own contract, truncated
   tails are stated as lower bounds, and rows emit only for the
   fleet's own repository since the proposer and its dedupe are this
-  install's machinery.
+  install's machinery,
+  and the merge-bottleneck recut loop's own journals, the {at, pr, id,
+  headSha, baseSha?, file} rows `recutLoopTick` in
+  `src/core/fleet/recut-loop.ts` appends to `queue/recut-loop.jsonl`
+  under the fleet runs directory for every published recut job, plus
+  the pre-publication reservations it appends to
+  `queue/recut-loop-leases.jsonl` before each publish attempt
+  (otherwise only visible through the in-tick dedupe guards — the
+  24-hour same-head window, the in-flight scan, the empty-yield streak
+  and the caps — and the last-tick outcome kept in module state for the
+  health endpoint and the Verse recut-loop model, so a PR the loop
+  keeps re-cutting and reservations that never produced their
+  published-job row never became work). A PR number becomes an item
+  only while its recorded publishes reach the recurring bars of three
+  writes across two distinct UTC days inside the 7-day window, each
+  cell joined to the minted RQ-PHX-RECUT<pr>L<k> jobs' launches,
+  finishes, publishes and resolved outcomes in metrics/jobs.jsonl;
+  expired reservations whose (pr, id, headSha) triple never appears as
+  a same-tick write become one fleet-level item only while the write
+  tail is whole — a truncated write journal could hide the matching
+  row — and only once the orphans reach the same recurring bars, a
+  withheld jobs ledger degrades the tallies to unknown rather than
+  suppressing the journal evidence or zero-filling it, truncated tails
+  are stated as lower bounds, and items emit only for the fleet's own
+  repository since the loop is hardcoded to this install's
+  repository.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
-  incident-gate, jev-decisions, worktree-reap and gap-proposal items carry priority 3;
+  incident-gate, jev-decisions, worktree-reap, gap-proposal and
+  recut-loop items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
