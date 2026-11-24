@@ -3,6 +3,7 @@
  * GET /api/verse/shipped?days=7 — the weekly "what shipped" report, the same one `phm shipped --json` prints.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readFleetShipped } from '../fleet/shipped.js';
 import { sendJson } from '../web/api.js';
 import { packageRoot, readInstalledChangelog, WHATS_NEW_VERSION } from './changelog-read.js';
 import { buildShipped, gitShippedSource, type ShippedReport, type ShippedSource } from '../release/shipped.js';
@@ -41,9 +42,17 @@ export async function handleShippedApi(
   req: IncomingMessage,
   res: ServerResponse,
   method: string,
-  deps: { source?: ShippedSource; now?: () => number } = {},
+  deps: { source?: ShippedSource; now?: () => number; fleet?: typeof readFleetShipped } = {},
 ): Promise<boolean> {
   if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+  const params = new URL(req.url ?? VERSE_SHIPPED_PATH, 'http://localhost').searchParams;
+  if (params.has('since')) {
+    if (params.get('since') !== '24h' || [...params.keys()].some(key => key !== 'since')) {
+      sendJson(res, 400, { error: 'use since=24h for the fleet feed' }); return true;
+    }
+    sendJson(res, 200, await (deps.fleet ?? readFleetShipped)({ now: (deps.now ?? Date.now)() }));
+    return true;
+  }
   let raw: string | null = null;
   try { raw = new URL(req.url ?? VERSE_SHIPPED_PATH, 'http://localhost').searchParams.get('days'); } catch { /* 400 below */ }
   const days = raw === null ? 7 : /^\d{1,3}$/.test(raw) ? Number(raw) : NaN;

@@ -72,9 +72,9 @@ it('serves the recorded board from the in-closure leader-journal module and rend
     const envelope = fleetBoardResponse(read, Date.parse('2026-11-09T12:02:30Z'));
     expect(envelope).toMatchObject({ schema: 'fleet.leader-board.v1', status: 'ok', ageSeconds: 150 });
 
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe('/api/fleet/board');
-      return new Response(JSON.stringify(envelope), { status: 200 });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method ?? 'GET').toBe('GET');
+      return String(input) === '/api/fleet/board' ? Response.json(envelope) : Response.json({}, { status: 404 });
     });
     vi.stubGlobal('fetch', fetchMock);
     render(<FleetBoardPane {...PROPS} />);
@@ -85,7 +85,12 @@ it('serves the recorded board from the in-closure leader-journal module and rend
     expect(screen.getByText('approve the staging deploy')).toBeInTheDocument();
     // claude's unmeasured mergesLastHour prints 'unknown', never 0.
     expect(screen.getAllByText('unknown').length).toBeGreaterThanOrEqual(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.map(([input]) => String(input)).sort()).toEqual([
+      '/api/fleet/board', '/api/verse/fleet/comms-status', '/api/verse/fleet/coordination-claims',
+      '/api/verse/fleet/coordination-claims/returns', '/api/verse/fleet/recheck', '/api/verse/fleet/recheck?history=20',
+      '/api/verse/fleet/runtime-identity', '/api/verse/fleet/runtime-identity/claim-execution',
+      '/api/verse/fleet/work-board/orders', '/api/verse/fleet/work-board/review-pick', '/api/verse/fleet/work-board?limit=20',
+    ].sort());
   });
 });
 

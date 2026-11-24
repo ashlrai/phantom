@@ -6,26 +6,47 @@
 
 Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets.
 
-Package: `@ashlr/phantom` v3.30.39.
-Node.js floor: >=22.15.0.
+## Mission
+
+Phantom is chasing open-source RSI (recursive self-improvement): an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute.
+Agents run the factory and the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the owner sets direction and is needed only for passwords, 2FA, device approvals and payments.
+
+- [Strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials
+- [How agents work on Phantom](https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims
+- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): the agent constitution
+
+## Ecosystem
+
+Companions install separately; each has its own capabilities and authorization boundaries.
+
+- [Phantom](https://github.com/ashlrai/phantom): the factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work (this package)
+- [Phantom Secrets](https://github.com/ashlrai/phantom-secrets): local vault, placeholders and a proxy for supported API credential use
+- [Locus](https://github.com/ashlrai/locus): account and tenant bindings for agent tools
+- [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin): compact tool results and a local usage ledger
+- [Lexicon](https://github.com/ashlrai/lexicon): correct recurring speech-to-text errors before agents read them
+- [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
+- [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
+
+Package: `@ashlr/phantom` v3.30.72.
+Node.js floor: 22.15.0 or newer.
 
 ## Install
 
 ```sh
 npm install -g @ashlr/phantom
-ashlr --version
-ashlr verse
+phm --version
+phm verse
 ```
 
-ashlr verse prints a read token and a mutation token; the server listens on
+phm verse prints a read token and a mutation token; the server listens on
 `127.0.0.1` only. Neither token is written to disk.
 
 ## Commands
 
-- `ashlr --help`: top-level command list
-- `ashlr verse`: serve the console
-- `ashlr docs --agent`: agent cheat sheet (plain text)
-- `ashlr docs --agent --json`: command registry as JSON
+- `phm --help`: top-level command list
+- `phm verse`: serve the console
+- `phm docs --agent`: agent cheat sheet (plain text)
+- `phm docs --agent --json`: command registry as JSON
 
 ## Use-case guides
 
@@ -54,6 +75,7 @@ Phantom autonomy ships dormant and runs only inside a standing grant you sign wi
 - [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview
 - [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map
 - [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
+- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge
 - [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations
 - [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries
 - [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn
@@ -65,4 +87,4 @@ Phantom autonomy ships dormant and runs only inside a standing grant you sign wi
 - [llms.txt](https://verse.ashlr.ai/llms.txt): concise agent index
 - [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index
 - [server.json](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config
-- [Agent docs command](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): `ashlr docs --agent --json`
+- [Agent docs command](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): `phm docs --agent --json`

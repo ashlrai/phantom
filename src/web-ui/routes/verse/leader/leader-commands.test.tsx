@@ -83,9 +83,9 @@ describe('⌘K', () => {
   });
 });
 
-function LeaderCardHarness({ seatNames, state = leaderState('live') }: { seatNames?: ReadonlyMap<string, string>; state?: ReturnType<typeof leaderState> } = {}) {
+function LeaderCardHarness({ seatNames, state = leaderState('live'), burnLine }: { seatNames?: ReadonlyMap<string, string>; state?: ReturnType<typeof leaderState>; burnLine?: string } = {}) {
   const actions = useSurfaceActions();
-  return <LeaderCard read={{ value: state, available: true, reason: null }} loading={false} actions={actions} seatNames={seatNames} />;
+  return <LeaderCard read={{ value: state, available: true, reason: null }} loading={false} actions={actions} seatNames={seatNames} burnLine={burnLine} />;
 }
 
 describe('Command’s Leader card', () => {
@@ -101,6 +101,16 @@ describe('Command’s Leader card', () => {
     expect(JSON.stringify(state)).toBe(raw);
   });
 
+  it('shows the Claude burn sentence under the seat, and nothing when there is none', () => {
+    stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] } } });
+    const sentence = 'Claude is at 63%, spending about 6 points an hour; empty about 9 AM today, 6 days before its reset.';
+    render(<LeaderCardHarness burnLine={sentence} />);
+    expect(screen.getByText(sentence)).toBeInTheDocument();
+    cleanup();
+    render(<LeaderCardHarness />);
+    expect(screen.queryByText(/Claude is at/)).toBeNull();
+  });
+
   it('shows the current seat and its fallback, and nothing when the seat is unknown', () => {
     stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] } } });
     const state = leaderState('live');
@@ -111,6 +121,18 @@ describe('Command’s Leader card', () => {
       next: { pool: 'codex-personal', model: 'gpt-6.1-sol', cli: 'codex' } };
     render(<LeaderCardHarness state={state} />);
     expect(screen.getByLabelText('Leader seat')).toHaveTextContent('Leader: Opus 5.5 on Claude, next: GPT-6.1 Sol on Codex');
+  });
+
+  it('says whether the live build is current, how far behind it is, or unknown', async () => {
+    const supply = (build?: unknown) => ({ schema: 'doctor.supply.v1', verdict: 'v', ingested: { state: 'known', path: 'p', sources: [] }, rejected: { state: 'known', path: 'p', total24h: 0, byReason: {} },
+      selfSupply: { landed24h: 0, lastLanded: null }, hook: {}, ...(build ? { build } : {}) });
+    const known = (count: number, since: string | null) => ({ commit: { state: 'known', sha: 'abc1234', source: 'git' }, behind: { state: 'known', count, ref: 'origin/master', since } });
+    for (const [build, line] of [[known(0, null), 'Live build: current'], [known(644, '2026-11-12T08:00:00.000Z'), 'Live build: 644 behind (since Nov 12)'], [undefined, 'Live build: unknown']] as const) {
+      stubSurfaceFetch({ routes: { '/api/verse/leader/thread': { messages: [] }, '/api/verse/supply': supply(build) } });
+      render(<LeaderCardHarness />);
+      expect(await screen.findByLabelText('Live build')).toHaveTextContent(line);
+      cleanup(); evictAll();
+    }
   });
 
   it('previews the Leader’s latest message and opens the composer on Mind', async () => {

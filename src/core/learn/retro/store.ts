@@ -28,7 +28,7 @@ import { join } from 'node:path';
 import { scrubPrivateText } from '../../util/scrub.js';
 import { acquireLocalStoreLock, ownsLocalStoreLock, releaseLocalStoreLock } from '../../fleet/local-store-lock.js';
 import { writePrivateFileAtomicallyAsync } from '../../util/private-file-write.js';
-import type { NightlyState } from './nightly-types.js';
+import type { NightlyLesson, NightlyPrior, NightlyProposal, NightlyState } from './nightly-types.js';
 import {
   KNOWLEDGE_EVIDENCE_MAX,
   KNOWLEDGE_NOTE_MAX_CHARS,
@@ -90,7 +90,7 @@ async function inspectNightlyDirectory(input: boolean, create = false): Promise<
 }
 
 /** Bounded stable read. Missing, torn, replaced and oversized sources are not empty evidence. */
-async function readNightlyFile(path: string, input: boolean): Promise<string> {
+export async function readNightlyFile(path: string, input: boolean): Promise<string> {
   await inspectNightlyDirectory(input);
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
@@ -170,6 +170,106 @@ export async function updateNightlyState(
     });
     return 'completed';
   } finally { releaseLocalStoreLock(lock); }
+}
+
+// ---------------------------------------------------------------------------
+// Nightly report (read-only projection of retro-proposals.json)
+// ---------------------------------------------------------------------------
+
+export const NIGHTLY_REPORT_SCHEMA = 'learn.nightly-report.v1';
+/** Per-section item cap; counts always report the exact retained totals. */
+export const NIGHTLY_REPORT_LIST_LIMIT = 200;
+
+export interface NightlyReportCounts {
+  jobs: number;
+  reviews: number;
+  priors: number;
+  lessons: number;
+  proposals: number;
+}
+
+/**
+ * Read-side fold of the nightly ONE-TEAM state for `phm improve nightly`.
+ * 'read' is the only state with trustworthy content: 'missing' means no
+ * completed nightly state exists (first run); 'unreadable' means the file was
+ * unsafe, corrupt, oversized or changed during read. Counts and items stay
+ * null/empty unless state==='read' — unknown stays unknown, never zero-filled.
+ * Proposals remain advisory; this report never writes, attests or dispatches.
+ */
+export interface NightlyReport {
+  schema: typeof NIGHTLY_REPORT_SCHEMA;
+  state: 'read' | 'missing' | 'unreadable';
+  /** Absolute path of the state file this report was folded from. */
+  path: string;
+  /** UTC night (YYYY-MM-DD) the retained state completed; null unless state==='read'. */
+  completedNight: string | null;
+  /** Exact retained row counts per section; null unless state==='read'. */
+  counts: NightlyReportCounts | null;
+  /** Items per section are capped at `limit`; compare against counts for the exact total. */
+  limit: number;
+  /** Advisory Beta posteriors per (repo, arm). */
+  priors: NightlyPrior[];
+  /** Pending lessons awaiting a proposal or human review. */
+  lessons: NightlyLesson[];
+  /** Proposed improvement jobs; advisory only. */
+  proposals: NightlyProposal[];
+}
+
+function nightlyReportLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return NIGHTLY_REPORT_LIST_LIMIT;
+  return Math.max(1, Math.min(Math.floor(limit), NIGHTLY_REPORT_LIST_LIMIT));
+}
+
+function unreadNightlyReport(state: 'missing' | 'unreadable', path: string, limit: number): NightlyReport {
+  return {
+    schema: NIGHTLY_REPORT_SCHEMA,
+    state,
+    path,
+    completedNight: null,
+    counts: null,
+    limit: nightlyReportLimit(limit),
+    priors: [],
+    lessons: [],
+    proposals: [],
+  };
+}
+
+/** Pure fold of a validated NightlyState into the report shape. */
+export function buildNightlyReport(state: NightlyState, limit = NIGHTLY_REPORT_LIST_LIMIT): NightlyReport {
+  const cap = nightlyReportLimit(limit);
+  return {
+    schema: NIGHTLY_REPORT_SCHEMA,
+    state: 'read',
+    path: nightlyProposalsPath(),
+    completedNight: state.completedNight,
+    counts: {
+      jobs: state.jobs.length,
+      reviews: state.reviews.length,
+      priors: state.priors.length,
+      lessons: state.lessons.length,
+      proposals: state.proposals.length,
+    },
+    limit: cap,
+    priors: state.priors.slice(0, cap),
+    lessons: state.lessons.slice(0, cap),
+    proposals: state.proposals.slice(0, cap),
+  };
+}
+
+/**
+ * Read and fold the nightly state. Missing output reports state='missing';
+ * unsafe, corrupt or raced output reports state='unreadable' — never throws,
+ * so a degraded private file cannot take down the caller.
+ */
+export async function readNightlyReport(limit = NIGHTLY_REPORT_LIST_LIMIT): Promise<NightlyReport> {
+  const path = nightlyProposalsPath();
+  let state: NightlyState | null;
+  try {
+    state = await readNightlyState();
+  } catch (error) {
+    return unreadNightlyReport((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable', path, limit);
+  }
+  return state === null ? unreadNightlyReport('missing', path, limit) : buildNightlyReport(state, limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +585,131 @@ async function compactHits(): Promise<void> {
   try {
     await writeFile(tmp, lines ? `${lines}\n` : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
     await rename(tmp, knowledgeHitsPath());
+  } catch {
+    await unlink(tmp).catch(() => undefined);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Injection runs (trajectory correlation)
+// ---------------------------------------------------------------------------
+//
+// knowledge-hits.jsonl counts injections for ranking; it carries no join key,
+// so "which run saw this note, and how did that run end" was unanswerable.
+// knowledge-runs.jsonl records one row per real injection — the trajectory id
+// the dispatch minted (`run:<attemptId>`, the same key trajectory-records
+// joins on) plus the note ids that reached its prompt — so a later read can
+// attribute each note's served runs to terminal/realized trajectory outcomes.
+// Cloud tasks keep their own attribution (cloud task `lessons` + the holdout
+// trial) and never write here.
+
+export function knowledgeRunsPath(): string {
+  return join(learnHome(), 'knowledge-runs.jsonl');
+}
+
+/** Bounded opaque trajectory id — the `kind:body` shape trajectory records use. */
+const RUN_ID_PATTERN = /^[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9][A-Za-z0-9_.-]{0,220}$/;
+/** Newest rows kept when the log compacts; the join window is far smaller. */
+const RUNS_KEEP_ROWS = 2048;
+/** Compact once the log passes this size (well under the kept-rows footprint). */
+const RUNS_COMPACT_BYTES = 512 * 1024;
+/** Tail bytes a read inspects; older rows are outside every join window. */
+const RUNS_READ_BYTES = 2 * 1024 * 1024;
+const RUNS_MAX_ROWS = 20_000;
+
+/**
+ * Append one injection-run row: the trajectory a note set was injected into.
+ * Fire-and-forget safe: never rejects; a lost row is a lost correlation, never
+ * a lost note. Invalid ids are dropped rather than recorded raw.
+ */
+export async function recordKnowledgeRuns(
+  trajectoryId: string,
+  ids: readonly string[],
+  at: string = new Date().toISOString(),
+): Promise<void> {
+  const clean = [...new Set(ids.filter((id) => /^kn_[0-9a-f]{16}$/.test(id)))].sort();
+  if (!RUN_ID_PATTERN.test(trajectoryId) || clean.length === 0) return;
+  try {
+    await ensurePrivateDir(learnHome());
+    await appendFile(knowledgeRunsPath(), `${JSON.stringify({ trajectoryId, ids: clean, at })}\n`, { encoding: 'utf8', mode: 0o600 });
+    const size = (await stat(knowledgeRunsPath())).size;
+    if (size > RUNS_COMPACT_BYTES) await compactRuns();
+  } catch {
+    /* a lost run row is a lost correlation, never a lost lesson */
+  }
+}
+
+export interface KnowledgeRunsRead {
+  /** 'missing' = no correlated injections recorded yet; 'degraded' = unsafe/unreadable. */
+  state: 'read' | 'missing' | 'degraded';
+  /** note id → distinct trajectory ids the note was injected into (retained tail). */
+  byNote: Map<string, Set<string>>;
+  /** The retained tail dropped older bytes — per-note run counts are a floor, not a total. */
+  truncated: boolean;
+}
+
+/** Bounded tail read of the runs log; malformed lines are skipped, never fatal. */
+export async function readKnowledgeRuns(): Promise<KnowledgeRunsRead> {
+  const out: KnowledgeRunsRead = { state: 'read', byNote: new Map(), truncated: false };
+  const file = knowledgeRunsPath();
+  let raw: string;
+  try {
+    const size = (await stat(file)).size;
+    if (size > RUNS_READ_BYTES) {
+      out.truncated = true;
+      const handle = await open(file, 'r');
+      try {
+        const buf = Buffer.alloc(RUNS_READ_BYTES);
+        const { bytesRead } = await handle.read(buf, 0, RUNS_READ_BYTES, size - RUNS_READ_BYTES);
+        raw = buf.subarray(0, bytesRead).toString('utf8');
+        const nl = raw.indexOf('\n');
+        if (nl >= 0) raw = raw.slice(nl + 1); // drop the partial first line
+      } finally {
+        await handle.close();
+      }
+    } else {
+      raw = await readFile(file, 'utf8');
+    }
+  } catch (error) {
+    out.state = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'degraded';
+    return out;
+  }
+  let rows = 0;
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    if (++rows > RUNS_MAX_ROWS) { out.truncated = true; break; }
+    try {
+      const row = JSON.parse(line) as { trajectoryId?: unknown; ids?: unknown };
+      if (typeof row.trajectoryId !== 'string' || !RUN_ID_PATTERN.test(row.trajectoryId) ||
+        !Array.isArray(row.ids)) continue;
+      for (const id of row.ids) {
+        if (typeof id !== 'string' || !/^kn_[0-9a-f]{16}$/.test(id)) continue;
+        const set = out.byNote.get(id) ?? new Set<string>();
+        set.add(row.trajectoryId);
+        out.byNote.set(id, set);
+      }
+    } catch {
+      /* skip a torn line */
+    }
+  }
+  return out;
+}
+
+/** Rewrite the runs log as its newest RUNS_KEEP_ROWS rows. */
+async function compactRuns(): Promise<void> {
+  const file = knowledgeRunsPath();
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch {
+    return;
+  }
+  const lines = raw.split('\n').filter((line) => line.trim());
+  const kept = lines.slice(-RUNS_KEEP_ROWS);
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, kept.length ? `${kept.join('\n')}\n` : '', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await rename(tmp, file);
   } catch {
     await unlink(tmp).catch(() => undefined);
   }

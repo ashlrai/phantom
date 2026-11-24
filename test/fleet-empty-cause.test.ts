@@ -64,6 +64,37 @@ describe('emptyFinishes', () => {
       { id: 'RQ-C1', lane: 'unknown', wallSeconds: null },
     ]);
   });
+
+  it('reads the jobs-ledger field dialect: alias stamps, job_id ids, pool lanes', () => {
+    const ledger = [
+      JSON.stringify({ event: 'finish', job_id: 'RQ-D1', pool: 'claude', wall_s: 40, empty: true, timestamp: ts(1) }),
+      JSON.stringify({ event: 'finish', jobId: 'RQ-D2', lane: 'codex', wall_s: 30, empty: true, recordedAt: ts(2) }),
+      // A terminal row stamped only by mergedAt still lands in the window.
+      JSON.stringify({ event: 'outcome', job: 'RQ-D3', state: 'MERGED', empty: true, mergedAt: ts(1) }),
+      JSON.stringify({ event: 'outcome', job: 'RQ-D4', outcome: 'EMPTY_DONE', updatedAt: ts(3) }),
+    ].join('\n');
+    expect(emptyFinishes(ledger, NOW, 24)).toEqual([
+      { id: 'RQ-D1', lane: 'claude', wallSeconds: 40 },
+      { id: 'RQ-D2', lane: 'codex', wallSeconds: 30 },
+      { id: 'RQ-D3', lane: 'unknown', wallSeconds: null },
+      { id: 'RQ-D4', lane: 'unknown', wallSeconds: null },
+    ]);
+  });
+
+  it('reads the event and phase field dialect: type/kind events, EMPTY_DONE in any state field', () => {
+    const ledger = [
+      // Event spelled 'type'; the empty marker sits in a phase alias.
+      JSON.stringify({ type: 'outcome', job_id: 'RQ-E1', phase: 'EMPTY_DONE', timestamp: ts(1) }),
+      // Event spelled 'kind'; the marker sits in 'result'.
+      JSON.stringify({ kind: 'finish', job: 'RQ-E2', result: 'EMPTY_DONE', at: ts(2) }),
+      // A non-empty finish spelled 'type' with empty:false is not an empty finish.
+      JSON.stringify({ type: 'finish', job: 'RQ-E3', lane: 'claude', empty: false, conclusion: 'MERGED', ts: ts(1) }),
+    ].join('\n');
+    expect(emptyFinishes(ledger, NOW, 24)).toEqual([
+      { id: 'RQ-E1', lane: 'unknown', wallSeconds: null },
+      { id: 'RQ-E2', lane: 'unknown', wallSeconds: null },
+    ]);
+  });
 });
 
 describe('summarizeEmptyCauses', () => {
@@ -126,13 +157,13 @@ describe('readEmptyCauses, fleet empties and fleet vitals', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     expect(await cmdFleetEmpties(['--since', '24h', '--runs-dir', root, '--json'], undefined, NOW)).toBe(0);
     const json = JSON.parse(String(log.mock.calls.at(-1)![0]));
-    expect(json).toMatchObject({ schema: 'fleet.empties.v1', known: true, causes: { total: LOGS.length + 3 } });
-    expect(json.causes.groups[0]).toMatchObject({ lane: 'claude', cause: 'sandbox_denied', count: 3, median_wall_seconds: 61 });
+    expect(json).toMatchObject({ schema: 'fleet.empties.v2', known: true, total: LOGS.length + 3 });
+    expect(json.byCause).toMatchObject({ unknown: LOGS.length + 1, 'too-fast-to-have-worked': 2 }); // Logs are not cause evidence.
     log.mockClear();
-    expect(await cmdFleetEmpties(['--runs-dir', root], undefined, NOW)).toBe(0);
+    expect(await cmdFleetEmpties(['--runs-dir', root, '--human'], undefined, NOW)).toBe(0);
     const text = String(log.mock.calls[0]![0]).split('\n');
-    expect(text[0]).toBe(`${LOGS.length + 3} jobs ended empty in the last 24 hours (3 without a readable log)`);
-    expect(text[1]).toBe('claude: 3 jobs ended empty because gh or a file was blocked in the sandbox');
+    expect(text[0]).toContain(`${LOGS.length + 3} empty finishes; empty rate`);
+    expect(text[1]).toBe('Skipped 0 malformed rows; 0 result notes unavailable.');
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdFleetEmpties(['--runs-dir'], undefined, NOW)).toBe(2);
     expect(await cmdFleetEmpties(['--runs-dir', root, '--runs-dir', root], undefined, NOW)).toBe(2);

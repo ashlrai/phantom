@@ -57,7 +57,7 @@ it('replays a rejected delivery after its tick waiter has stopped', async () => 
       const binding = { claimId: claim.id, repo: claim.repo, threadKey: threads[index]!,
         pr: index + 7, head: index === 0 ? 'abcdef1234567' : '1234567abcdef' };
       expect(appendClaimThreadBinding(paths.bindings, binding, now).ok).toBe(true);
-      return { claim, binding, key: JSON.stringify(['ASSIGNED', claim.id, binding.head]) };
+      return { claim, binding, key: JSON.stringify(['ASSIGNED', claim.repo, claim.id, claim.agent, claim.claimedAt, binding.head]) };
     });
     const ownership = [readFileSync(ledger), readFileSync(paths.bindings)];
     const firstTick = tick();

@@ -32,6 +32,9 @@ export type { MeterProps, MeterTone } from './Meter.js';
 
 export { RefreshIndicator } from './RefreshIndicator.js';
 
+export { WindowBar, WindowBarSwatch } from './WindowBar.js';
+export type { WindowBarPart, WindowBarProps } from './WindowBar.js';
+
 export { Segmented } from './Segmented.js';
 export type { SegmentedOption, SegmentedProps } from './Segmented.js';
 

@@ -94,7 +94,7 @@ async function checkOne(gh: Gh, row: { claimId: string; repo: string; pr: number
   const invalidResponse = invalidTimestamp
     || (row.head !== null && !validHead(row.head))
     || ('head' in raw && (raw['head'] === null || typeof raw['head'] !== 'object' || Array.isArray(raw['head'])))
-    || ('sha' in head && !validHead(head['sha']))
+    || ('sha' in head && (typeof head['sha'] !== 'string' || !/^[a-f0-9]{40}$/i.test(head['sha'])))
     || ('merged' in raw && typeof raw['merged'] !== 'boolean')
     || ('state' in raw && raw['state'] !== 'open' && raw['state'] !== 'closed')
     || (raw['merged'] === false && mergedAt !== null)
@@ -156,7 +156,7 @@ export async function checkReturnPrs(
       timer = setTimeout(() => resolve(null), remaining);
     });
     const result = await Promise.race([checkOne(gh, row), timeout]).finally(() => clearTimeout(timer));
-    if (result === null) {
+    if (result === null || now() >= deadline) {
       expired = true;
       checked.push({ ...row, verdict: 'unknown', observedHead: null, mergedAt: null, reason: 'deadline' });
     } else {

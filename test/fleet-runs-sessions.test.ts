@@ -214,6 +214,29 @@ describe('parseSessionMetrics', () => {
     expect(f.prUrl).toBe('https://github.com/ashlrai/phantom/pull/77');
     expect(malformed).toBe(1); // only the unparseable line
   });
+  it('reads lifecycle rows through the jobs-ledger field dialect', () => {
+    const text = [
+      JSON.stringify({ jobId: 'J2', type: 'enqueue', timestamp: metricTs(ANCHOR - 900 * S) }),
+      JSON.stringify({ id: 'J2', kind: 'claim', at: metricTs(ANCHOR - 800 * S) }),
+      JSON.stringify({ job_id: 'J2', event: 'launch', time: metricTs(ANCHOR - 790 * S), model: 'gpt-5.3-codex' }),
+      JSON.stringify({ job: 'J2', type: 'finish', recordedAt: metricTs(ANCHOR - 100 * S), tokens_total: 7, wall_s: 12.5, diff_lines: 3, exit_code: 0, empty: true }),
+      JSON.stringify({ jobId: 'J2', kind: 'published', updatedAt: metricTs(ANCHOR - 90 * S), pr_url: 'https://github.com/ashlrai/phantom/pull/88' }),
+    ].join('\n');
+    const { facts, malformed } = parseSessionMetrics(text);
+    const f = facts.get('J2')!;
+    expect(f.enqueueTsMs).toBe(Date.parse(metricTs(ANCHOR - 900 * S)));
+    expect(f.claimTsMs).toBe(Date.parse(metricTs(ANCHOR - 800 * S)));
+    expect(f.launchTsMs).toBe(Date.parse(metricTs(ANCHOR - 790 * S)));
+    expect(f.launchModel).toBe('gpt-5.3-codex');
+    expect(f.tokensTotal).toBe(7);
+    expect(f.wallSeconds).toBe(12);
+    expect(f.diffLines).toBe(3);
+    expect(f.exitCode).toBe(0);
+    expect(f.empty).toBe(true);
+    expect(f.publishTsMs).toBe(Date.parse(metricTs(ANCHOR - 90 * S)));
+    expect(f.prUrl).toBe('https://github.com/ashlrai/phantom/pull/88');
+    expect(malformed).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

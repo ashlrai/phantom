@@ -17,6 +17,35 @@ export interface CliReferenceReport {
   formatting: boolean;
 }
 
+/** Placeholder the generator writes when a fleet verb's source has no one-line help. */
+export const NO_HELP_TEXT = (verb: string): string => `Summary not registered; run phm ${verb} --help for details.`;
+/** The command groups whose every verb must appear on the page, with a JSON form. */
+export const VERB_GROUPS = ['fleet', 'leader', 'host'] as const;
+export interface RegisteredVerb { group: string; verb: string; cmd: string; help: boolean }
+
+/** Each verb named by a registered usage: `leader say|thread [--json]` names say and thread. */
+export function registeredVerbs(rows: readonly CommandRow[]): RegisteredVerb[] {
+  const result: RegisteredVerb[] = [];
+  for (const { cmd, desc } of rows) {
+    const [group, name] = clean(cmd).split(' ');
+    if (!VERB_GROUPS.includes(group as never) || !name) continue;
+    for (const verb of name.split('|')) {
+      if (/^[a-z][a-z0-9-]*$/.test(verb)) result.push({ group: group!, verb, cmd, help: !desc.startsWith('Summary not registered') });
+    }
+  }
+  return result;
+}
+
+/** Registered verbs in the three groups that have no row on the page; one plain line each. */
+export function verbsMissingFromReference(rows: readonly CommandRow[], page: string): string[] {
+  const documented = new Set<string>();
+  for (const match of page.matchAll(/^\| <code>phm (.*?)<\/code> \|/gm)) {
+    for (const entry of registeredVerbs([{ cmd: decode(match[1]!), desc: '' }])) documented.add(`${entry.group} ${entry.verb}`);
+  }
+  return [...new Set(registeredVerbs(rows).map(entry => `${entry.group} ${entry.verb}`))].filter(name => !documented.has(name))
+    .sort().map(name => `phm ${name} is a registered command but is missing from ${CLI_REFERENCE_PATH}. Run: phm docs cli`);
+}
+
 const clean = (text: string): string => stripVTControlCharacters(text).replace(/\s+/g, ' ').replace(/\u2014/g, '-').trim();
 const cell = (text: string): string => clean(text).replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/\|/g, '&#124;').replace(/`/g, '&#96;');
@@ -28,9 +57,13 @@ const decode = (text: string): string => text.replace(/&(amp|lt|gt|#124|#96);/g,
 export function renderCliReference(rows: readonly CommandRow[]): string {
   const lines = rows.map(({ cmd, desc }) => {
     const flags = [...new Set(cmd.match(/--[a-z][a-z0-9-]*\b|(?<=\s|\[)-[a-zA-Z]\b/g) ?? [])].sort();
-    const example = flags.includes('--json') ? code(`phm ${cmd.replace(/\[--json(?:\s*\|\s*--text)?\]/g, '--json')}`) : '-';
+    const grouped = VERB_GROUPS.includes(clean(cmd).split(' ')[0] as never);
+    const example = flags.includes('--json') ? code(`phm ${cmd.replace(/\[--json(?:\s*\|\s*--text)?\]/g, '--json')}`) : grouped ? 'unknown (not in the registered usage)' : '-';
     return `| ${code(`phm ${cmd}`)} | ${cell(desc)} | ${flags.map(code).join(', ') || '-'} | ${example} |`;
   }).sort();
+  const missing = registeredVerbs(rows).filter(entry => !entry.help)
+    .filter((entry, index, all) => all.findIndex(other => other.group === entry.group && other.verb === entry.verb) === index)
+    .sort((a, b) => `${a.group} ${a.verb}`.localeCompare(`${b.group} ${b.verb}`));
   return [
     '# CLI reference', '',
     'Generated from `HELP_ENTRIES` in `src/cli/help.ts` (the `phm commands` catalog) and `FLEET_SUBCOMMAND_LOADERS`, using the metadata reader behind `phm fleet verbs`. Do not edit by hand.', '',
@@ -41,6 +74,9 @@ export function renderCliReference(rows: readonly CommandRow[]): string {
     '| Command | Summary | Flags | JSON example |',
     '| --- | --- | --- | --- |',
     ...lines, '',
+    '## Fleet, leader and host verbs without help text', '',
+    'These registered verbs have no one-line help in their source yet. Their rows above say so; the gap is shown, not guessed.', '',
+    ...(missing.length ? missing.map(entry => `- <code>phm ${entry.group} ${entry.verb}</code>`) : ['None.']), '',
   ].join('\n');
 }
 

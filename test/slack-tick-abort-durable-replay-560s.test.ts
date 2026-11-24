@@ -52,8 +52,8 @@ it('keeps a pending assignment through an aborted tick and replays only it after
   const bindB = { claimId: b.claim.id, repo: 'fake/beta', threadKey: threadB, pr: 9, head: '1234567abcdef' };
   expect(appendClaimThreadBinding(paths.bindings, bindA, now).ok).toBe(true);
   expect(appendClaimThreadBinding(paths.bindings, bindB, now).ok).toBe(true);
-  const keyA = JSON.stringify(['ASSIGNED', a.claim.id, bindA.head]);
-  const keyB = JSON.stringify(['ASSIGNED', b.claim.id, bindB.head]);
+  const keyA = JSON.stringify(['ASSIGNED', a.claim.repo, a.claim.id, a.claim.agent, a.claim.claimedAt, bindA.head]);
+  const keyB = JSON.stringify(['ASSIGNED', b.claim.repo, b.claim.id, b.claim.agent, b.claim.claimedAt, bindB.head]);
 
   let underlying: Promise<unknown> = Promise.resolve();
   const tick = createClaimNoticeTick({ intervalMs: 30_000, now: () => tickNow.t, killed: () => false,

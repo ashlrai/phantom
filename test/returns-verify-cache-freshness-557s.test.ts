@@ -5,6 +5,7 @@ import type { VerseApiContext } from '../src/core/verse/verse-api.js';
 import { createFleetCoordinationReturnsVerifyApi, VERSE_FLEET_COORDINATION_RETURNS_VERIFY_PATH as PATH } from '../src/core/verse/fleet-coordination-returns-verify-api.js';
 
 const T = Date.parse('2026-11-14T18:00:00Z');
+const FULL_HEAD = 'a'.repeat(40);
 function setup() {
   let ms = T, unreadable = false;
   const receipt = (claim = 'fake', head = 'aaaaaaa', repo = 'fake/example') => ({
@@ -12,7 +13,7 @@ function setup() {
     body: `RESULT VERIFIED ${repo} claim ${claim} task "fake": pr #1 head ${head}`,
   });
   const board: FleetBoard = { schema: 'fleet.coordination.v1', state: 'known', expiredClaims: 0, proposals: [], claims: [], messages: [receipt()] };
-  const gh = vi.fn(async (_args: string[]) => JSON.stringify({ state: 'closed', merged: true, merged_at: '2026-11-14T17:00:00Z', head: { sha: 'aaaaaaa0000000' } }));
+  const gh = vi.fn(async (_args: string[]) => JSON.stringify({ state: 'closed', merged: true, merged_at: '2026-11-14T17:00:00Z', head: { sha: FULL_HEAD } }));
   const read = vi.fn(() => { if (unreadable) throw Error('private-reader-error'); return board; });
   const route = createFleetCoordinationReturnsVerifyApi({ read, gh, now: () => new Date(ms) });
   const get = async () => {
@@ -61,7 +62,7 @@ it('coalesces matching inputs while isolating a changed ledger during an outstan
   s.board.messages = [s.receipt('new', 'bbbbbbb')];
   const changed = await s.get();
   expect(changed).toMatchObject({ complete: false, checked: [expect.objectContaining({ claimId: 'new', verdict: 'merged-other-head' })] });
-  release(JSON.stringify({ merged: true, head: { sha: 'aaaaaaa0000000' } }));
+  release(JSON.stringify({ merged: true, head: { sha: FULL_HEAD } }));
   const [a, b] = await Promise.all([old, same]);
   expect(a).toEqual(b);
   expect(a).toMatchObject({ complete: true, checked: [expect.objectContaining({ claimId: 'fake' })] });

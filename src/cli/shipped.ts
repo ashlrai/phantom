@@ -1,4 +1,6 @@
 /** `phm shipped`: thin handler. Parses argv and prints the report built in core/release/shipped.ts. */
+import { hourShippedText, readHourShipped } from '../core/fleet/shipped-hour.js';
+import { readFleetShipped } from '../core/fleet/shipped.js';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -7,10 +9,12 @@ import { SHIPPED_SITE_ITEMS, SHIPPED_SITE_JSON, SHIPPED_SITE_PAGE, shippedPage }
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = `Usage: phm shipped [--since 7d] [--repo <name>] [--from <file>] [--json|--md|--site]
+  phm shipped --since 1h [--json]   last hour from local git clones
+  phm shipped --since 24h [--json]  fleet-wide merged PR feed (read-only GitHub + local metrics)
 What shipped, in plain words: merged changes grouped by product area (desktop app, mobile, CLI,
 fleet, channels, plugins, docs), opening with one top line. Tests, chores, fixups and reverts are
 counted as maintenance and not listed; pull requests on the same feature fold into one line.
-Reads this repository's local git history unless --from is given; no network.
+Day-based reports read local git history or --from; the 24h feed reads GitHub.
   --since <n>d   days to cover, 1d to 90d, default 7d
   --repo <name>  only this repository, as owner/name or just name
   --from <file>  read merged pull requests from a JSON list instead of git, for several repositories at once
@@ -21,7 +25,7 @@ Reads this repository's local git history unless --from is given; no network.
 Anything that could not be read prints as "unknown" (text) or null (JSON), never as zero.
 Exit 0 ok, 1 when the source could not be read, 2 usage.`;
 
-export interface ShippedDeps { now?: () => number; out?: (line: string) => void; err?: (line: string) => void; root?: string; source?: ShippedSource }
+export interface ShippedDeps { now?: () => number; out?: (line: string) => void; err?: (line: string) => void; root?: string; source?: ShippedSource; fleet?: typeof readFleetShipped; hour?: typeof readHourShipped }
 
 function repoRoot(): string {
   const run = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
@@ -32,6 +36,23 @@ export async function cmdShipped(args: string[], deps: ShippedDeps = {}): Promis
   const out = deps.out ?? console.log;
   const err = deps.err ?? console.error;
   if (args.includes('--help') || args.includes('-h')) { out(usage); return 0; }
+  if (args.includes('1h')) {
+    if (!['--since 1h', '--since 1h --json', '--json --since 1h'].includes(args.join(' '))) { err(usage); return 2; }
+    const report = await (deps.hour ?? readHourShipped)({ now: (deps.now ?? Date.now)() });
+    out(args.includes('--json') ? JSON.stringify(report) : hourShippedText(report).join('\n'));
+    return report.complete ? 0 : 1;
+  }
+  if (args.includes('24h')) {
+    const allArgs = args.join(" ");
+    const valid24hArgs = ["--since 24h", "--since 24h --json", "--json --since 24h", "--since 24h --repo", "--since 24h --repo --json", "--json --since 24h --repo"];
+    if (!valid24hArgs.includes(allArgs)) { err(usage); return 2; }
+    const report = await (deps.fleet ?? readFleetShipped)({ now: (deps.now ?? Date.now)() });
+    out(args.includes('--json') ? JSON.stringify(report) : [
+      report.complete ? `${report.totals.merged} merged in the last 24 hours · ${report.totals.mergedPerHour} per hour · median open to merge: ${report.totals.medianOpenToMergeSeconds ?? 'unknown'} seconds` : 'Shipped is incomplete; totals are unknown.',
+      ...report.items.map(pr => `${pr.repo} #${pr.number}: ${pr.title} · ${pr.jobId ?? 'unknown job'} · ${pr.lane ?? 'unknown lane'} · ${pr.openToMergeSeconds ?? 'unknown'} seconds · ${pr.url}`),
+    ].join('\n'));
+    return report.complete ? 0 : 1;
+  }
   type Format = 'text' | 'json' | 'md' | 'site';
   let days = 7, format: Format = 'text', repo: string | null = null, from: string | null = null;
   for (let i = 0; i < args.length; i++) {

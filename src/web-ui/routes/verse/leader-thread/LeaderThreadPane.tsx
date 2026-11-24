@@ -20,7 +20,6 @@ import { agentBusMissing, agentBusPageQuery, agentBusStatusQuery } from '../flee
 import { ordersTraceQuery } from '../fleet-inbox/fleet-inbox-queries.js';
 import { narrowOrderTrace, type OrderTraceV1 } from '../fleet-inbox/order-trace-model.js';
 import { readMerges, type Merged, type Pending } from '../fleet-merges/fleet-merges-model.js';
-import { JobRefs } from '../fleet/JobRefs.js';
 import { narrowWorkers, validJob } from '../fleet/workers-card-model.js';
 import { jobDetailQuery } from '../fleet/workers-card-queries.js';
 import { DirectivesStrip } from '../leader/DirectivesStrip.js';
@@ -39,24 +38,42 @@ import { appendLaneLog, laneEventItems, laneTransitions, loadLaneLog, type LaneE
 import { fleetInbox, fleetOutbox, lineChannel, lineSourceLabel, mergeThread } from './thread-merge-model.js';
 import { canSend, scrollTargetIndex, trimReply } from './thread-reply-model.js';
 import { stepMatch, threadMatches, type ThreadFindItem } from './thread-find-model.js';
+import { LeaderCatchUp } from './LeaderCatchUp.js';
 import { mentionedRefs } from './thread-refs.js';
+import { MentionedSessions } from './MentionedSessions.js';
 import { splitScreenshotMarkers } from './thread-screenshots.js';
 import { ThreadScreenshot } from './ThreadScreenshot.js';
+import { ReplyAttachment } from './ReplyAttachment.js';
 import { leaderCeoSummary } from './leader-ceo-model.js';
 import { LeaderOfficeStrip } from './LeaderOfficeStrip.js';
 import { DeliveryReceipt } from './DeliveryReceipt.js';
+import { AsksCard } from '../mobile/AsksCard.js';
+import { LeaderAsks } from './LeaderAsks.js';
+import { openLeaderAsks } from './leader-asks-model.js';
 import { OwnerChannelsStrip } from './OwnerChannelsStrip.js';
 import { leaderOfficeQuery } from './leader-office-data.js';
 import { mergeOwnerLines, ownerThreadLines, type LabeledLine } from './owner-thread-lines.js';
 import { NO_OWNER_THREAD, ownerThreadQuery } from './owner-thread-queries.js';
+import { LeaderHealth } from './LeaderHealth.js';
+import { LeaderPresence } from './LeaderPresence.js';
 import { fetchLeaderStatusNow } from './leader-status-now.js';
 import { sendLeaderInboxMessage, sendLeaderThreadMessage } from './leader-inbox-data.js';
 import { subscribeLeaderDraft, takeLeaderDraft } from './leader-draft-store.js';
+import { ReplyDraft } from './ReplyDraft.js';
 import { COMMS_CONFIRM_LINE, COMMS_TOML_PATH, INBOX_HELD_SENTENCE, inboxHeld } from './inbox-held-model.js';
 import { CopyPill } from '../apps/CopyPill.js';
 import { commandHints, completeCommand, parseComposerDraft } from './composer-commands.js';
 import { commandGate, liveComposerDeps, runComposerCommand, type ComposerCommand } from './composer-command-run.js';
 import { steerTargetId, steerTargetOutcome, type SteerTargetJobFacts } from './steer-target-outcome.js';
+import { OrderRouting } from './OrderRouting.js';
+import { inboxAtForLine, lineRouting, routingInFlight, type LineRouting } from './thread-routing-model.js';
+import { openConversationFromLeader } from './leader-reading.js';
+import { useComposerAssist } from './ComposerAssist.js';
+import { recallable } from './composer-assist-model.js';
+import { EarlierMessages, useEarlierMessages } from './LeaderEarlier.js';
+import { ComposerResultLine } from './ComposerResultLine.js';
+import { AppActionRunView, useThreadAppActions } from './AppActionRun.js';
+import { conversationActions, runCountWords, weaveAppActions } from './thread-app-actions.js';
 
 /** Shared 'verse-fleet-runs' key so the pane rides the same cache and SSE invalidation as the other fleet panes. */
 const fleetRunsQuery: QueryDef<unknown> = {
@@ -105,9 +122,7 @@ function LineView({ line, match, current }: { line: LabeledLine; match?: boolean
             ? <div className={leaderStyles.leaderText}>
               <div className={leaderStyles.prose}><MessageMarkdown text={line.text} /></div>
               {line.receipt ? <DeliveryReceipt items={line.receipt} /> : null}
-              {refs.length ? <div className={styles.refs} aria-label="Mentioned">Mentioned: {refs.map((ref, index) => <span key={ref}>
-                {index ? ' ' : null}<JobRefs text={ref.replace(/([^#])#/, '$1 #')} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} />
-              </span>)}</div> : null}
+              <MentionedSessions refs={refs} onOpenLog={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }} onOpenConversation={openConversationFromLeader} />
             </div>
             : <div className={leaderStyles.masonItem}>
               {splitScreenshotMarkers(line.text).map((segment, index) => segment.kind === 'shot'
@@ -179,6 +194,7 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const busPageQuery = useMemo(() => agentBusPageQuery(after, 100), [after]);
   const busPage = useQuery(busPageQuery, { enabled: visible && busStatus.data?.source === 'available' && !agentBusMissing(), freshMs: 10_000 });
   const orders = useQuery(ordersTraceQuery, { enabled: visible, freshMs: 10_000 });
+  const apps = useThreadAppActions(visible);
   const refetchThread = useRefetch(leaderThreadQuery);
   const refetchRuns = useRefetch(fleetRunsQuery);
   const refetchTargets = useRefetch(laneTargetsQuery);
@@ -252,8 +268,10 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   }, [laneTargets.data]);
 
   const read = thread.data;
-  const messages = read?.value?.messages ?? NO_MESSAGES;
+  const { messages, control: earlier } = useEarlierMessages(read?.value?.messages ?? NO_MESSAGES);
   const inbox = useMemo(() => fleetInbox(runs.data), [runs.data]);
+  const asks = useMemo(() => openLeaderAsks(messages), [messages]);
+  const openAsks = asks.length;
   const outbox = useMemo(() => fleetOutbox(runs.data), [runs.data]);
   const laneItems = useMemo(() => laneEventItems(laneEvents), [laneEvents]);
   const merged = useMemo(() => mergeThread(messages, inbox, now, runs.data, outbox, laneItems), [messages, inbox, outbox, laneItems, now, runs.data]);
@@ -267,13 +285,17 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
   const bottleneck = summary.bottleneck ?? leader.data?.value?.latest?.bottleneck?.statement ?? null;
   const health = useMemo(() => fleet.data?.value ? computeLaneHealth(fleet.data.value) : null, [fleet.data]);
 
+  // The conversation's lines and bus replies, then the Mac's app actions placed between them by time.
+  const spoken = useMemo(() => mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows), [merged, ownerLines, busRows]);
+  const appActions = useMemo(() => conversationActions(apps.report, spoken), [apps.report, spoken]);
+
   // One row per line, keeping the conversation's day separators; undated lines go last.
   const items = useMemo(() => {
     const out: ThreadFindItem[] = [];
     let day = '';
-    for (const item of mergeByTime([...mergeOwnerLines(merged.lines, ownerLines), ...merged.undated], busRows)) {
+    for (const item of weaveAppActions(spoken, appActions)) {
       if (needsYouOnly && (item.type !== 'line' || !((item.line.source === 'outbox' && (item.line.kind === 'decision' || item.line.kind === 'alert')) || (item.line.who === 'mason' && !item.line.quiet && item.line.ack?.state === 'waiting')))) continue;
-      const at = item.type === 'line' ? item.line.at : Date.parse(item.row.at);
+      const at = item.type === 'line' ? item.line.at : item.type === 'app' ? item.run.atMs : Date.parse(item.row.at);
       if (Number.isFinite(at)) {
         const d = new Date(at);
         const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -282,10 +304,23 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
           out.push({ type: 'day', key: `day-${key}`, label: dayLabel(d.toISOString(), now) });
         }
       }
-      out.push(item.type === 'line' ? { ...item, key: item.line.id } : { ...item, key: item.row.key });
+      out.push(item.type === 'line' ? { ...item, key: item.line.id } : item.type === 'app' ? { ...item, key: item.run.key } : { ...item, key: item.row.key });
     }
     return out;
-  }, [merged, ownerLines, busRows, now, needsYouOnly]);
+  }, [spoken, appActions, now, needsYouOnly]);
+
+  // Where each of Mason's inbox messages went: the jobs citing it, by lane and stage.
+  const routings = useMemo(() => {
+    const out = new Map<string, LineRouting>();
+    for (const item of items) {
+      if (item.type !== 'line' || item.line.who !== 'mason') continue;
+      const routing = lineRouting(trace, inboxAtForLine(item.line, inbox), { lineAtMs: item.line.at, nowMs: now, skipJob: steerTargetId(item.line.text), quiet: item.line.quiet !== undefined });
+      if (routing) out.set(item.key, routing);
+    }
+    return out;
+  }, [items, trace, inbox, now]);
+  const routedInFlight = useMemo(() => routingInFlight([...routings.values()]), [routings]);
+  const routingUnavailable = trace === null && (orders.error !== undefined || orders.data !== undefined);
 
   const matches = useMemo(() => threadMatches(items, findQuery), [items, findQuery]);
   const currentIndex = matches.length ? findIndex % matches.length : 0;
@@ -401,7 +436,12 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     void send();
   }
 
+  // Typing @ lists the running sessions to aim at; Up in an empty box recalls what Mason already said here.
+  const sentTexts = useMemo(() => recallable(merged.lines.filter(line => line.who === 'mason' && line.source !== 'system' && !line.quiet).map(line => line.text)), [merged.lines]);
+  const assist = useComposerAssist({ draft, setDraft, inputRef, enabled: visible && !actions.readOnly, sent: sentTexts });
+
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (assist.onKeyDown(event)) return;
     if (event.key === 'Tab' && !event.shiftKey) {
       const completed = completeCommand(draft);
       if (completed !== null) { event.preventDefault(); setDraft(completed); }
@@ -435,23 +475,30 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     body = threadMissing && !needsYouOnly
       ? <p className={leaderStyles.placeholder} data-tone="unknown">{read!.reason ?? 'The Leader conversation did not answer.'}</p>
       : <div className={leaderStyles.empty}>
-        <p className={leaderStyles.emptyTitle}>{needsYouOnly ? 'Nothing needs you right now.' : 'All quiet'}</p>
+        {/* An open question is answered in the tray under the conversation, so the filtered view must not read as all clear. */}
+        <p className={leaderStyles.emptyTitle}>{!needsYouOnly ? 'All quiet' : openAsks === 0 ? 'Nothing needs you right now.' : `The Leader is asking you ${openAsks === 1 ? 'a question' : `${openAsks} questions`}, below.`}</p>
         {needsYouOnly ? null : <p className={leaderStyles.emptyBody}>No conversation or interjections yet — reply below or post to the inbox from any channel.</p>}
       </div>;
   } else {
     body = items.map(item => {
       if (item.type === 'day') return <div key={item.key} className={leaderStyles.day} role="separator" aria-label={item.label}><span>{item.label}</span></div>;
+      if (item.type === 'app') return <AppActionRunView key={item.key} run={item.run} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} onOpenHost={() => openDockPane('fleet-host')} />;
       if (item.type !== 'line') return <BusReplyView key={item.key} row={item.row} now={now} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />;
       const target = item.line.who === 'mason' ? steerTargetId(item.line.text) : null;
+      const routing = routings.get(item.key);
       return <Fragment key={item.key}>
         <LineView line={item.line} match={findOpen && matches.includes(item.key)} current={findOpen && item.key === currentKey} />
         {target !== null ? <SteerTargetLine id={target} text={item.line.text} trace={trace} merges={merges} liveByJob={liveByJob} now={now} /> : null}
+        {routing ? <OrderRouting routing={routing} onOpenJob={job => { requestWorkerLogJob(job); openDockPane('worker-log'); }}
+          onOpenConversation={openConversationFromLeader} /> : null}
       </Fragment>;
     });
   }
 
   return <div className={styles.root}>
     <ActionStatus actions={actions} />
+    {/* The ask ledger at the very top: the open things only Mason can answer, one tap each (same card as the phone). */}
+    <AsksCard />
     <section className={styles.overview} aria-label="Leader overview">
       <h2>Engineering leader</h2>
       {summary.lines.length ? <ul className={styles.summary} aria-label="CEO summary">{summary.lines.map((line, index) => <li key={index}>{line}</li>)}</ul>
@@ -471,9 +518,15 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       <DotReplyAge visible={visible} />
       <button type="button" className={styles.tool} disabled={checkingStatus} aria-busy={checkingStatus || undefined} onClick={() => void checkStatus()}>{checkingStatus ? 'Checking…' : 'Status now'}</button>
       <button type="button" className={styles.tool} aria-pressed={needsYouOnly} onClick={() => setNeedsYouOnly(value => !value)}>Needs you only</button>
+      <button type="button" className={styles.tool} aria-pressed={apps.show} onClick={() => apps.setShow(!apps.show)}
+        title={apps.show ? 'Hide what Phantom opened, focused, quit or restarted on this Mac' : 'Show what Phantom opened, focused, quit or restarted on this Mac, where it happened in the conversation'}>App actions</button>
       <button type="button" className={styles.tool} onClick={() => setFindOpen(true)}>Find</button>
       <span className={styles.toolbarMeta}>
+        {routingUnavailable ? <span data-tone="unknown" title="The order trace did not answer, so messages show no routing.">Routing unavailable</span>
+          : routedInFlight > 0 ? <span title="Jobs from the messages below that are queued, launched or awaiting merge">{routedInFlight} routed {routedInFlight === 1 ? 'job' : 'jobs'} in flight</span> : null}
         <span>{busRows.length} bus replies</span>
+        {apps.unknown ? <span role="status" data-tone="unknown" title="The app action log did not answer, so the conversation shows no app actions. It is read again every 30 seconds.">App actions unknown</span>
+          : appActions.length > 0 ? <span title="Actions Phantom took on this Mac's apps since the first message shown">{runCountWords(appActions.length)}</span> : null}
         {busUnavailable ? <span role="status" data-tone="unknown">Durable bus unavailable</span> : null}
       </span>
     </header>
@@ -490,6 +543,8 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
     </div> : null}
     {statusNow !== null ? <section className={styles.statusNow} aria-label="Status now" role="status"><p>{statusNow}</p><button type="button" className={styles.tool} onClick={() => setStatusNow(null)}>Dismiss</button></section> : null}
     <OwnerChannelsStrip channels={ownerRead.channels} paused={ownerRead.paused} replyGap={ownerRead.replyGap} />
+    {/* What arrived while the pane was off screen, with a jump to the first new line. */}
+    <LeaderCatchUp visible={visible} lines={merged.lines} ownerLines={ownerLines} busRows={busRows} merged={runs.data === undefined ? null : merges.merged} asks={asks} logRef={logRef} />
     <div ref={logRef} className={leaderStyles.log} role="log" aria-label="Conversation with the Leader" aria-live="polite" aria-relevant="additions" tabIndex={0}
       onScroll={() => {
         const el = logRef.current;
@@ -497,29 +552,43 @@ export function LeaderThreadPane({ visible }: Pick<PaneProps, 'visible'>) {
       }}>
       <div className={leaderStyles.logInner}>
         {ownerRead.paused ? <p className={leaderStyles.system}>Owner channels paused</p> : null}
+        <EarlierMessages control={earlier} />
         {body}
         {merged.hiddenNoise > 0 ? <p className={styles.note}>{merged.hiddenNoise} stray command {merged.hiddenNoise === 1 ? 'line' : 'lines'} hidden</p> : null}
-        {commandLines.map(line => <LineView key={line.id} line={line} />)}
+        {/* A command's answer; the jobs it names open as conversations. */}
+        {commandLines.map(line => <ComposerResultLine key={line.id} text={line.text} at={line.at}
+          onOpenConversation={openConversationFromLeader} />)}
       </div>
     </div>
+    {/* What the Leader is waiting on Mason for, answerable without scrolling back. */}
+    <LeaderAsks visible={visible} readOnly={actions.readOnly} />
+    {/* Said where Mason writes: the Leader's own passes are failing, so these words will wait. */}
+    <LeaderHealth visible={visible} />
     {note ? <p className={styles.note} role="note">{note}</p> : null}
     <form className={styles.reply} onSubmit={onSubmit}>
+      {assist.panel}
       <div className={styles.replyRow}>
         <textarea ref={inputRef} aria-label="Reply to the Leader" placeholder="Reply to the Leader…" value={draft} maxLength={6000}
-          disabled={sending || actions.readOnly} onChange={event => setDraft(event.target.value)} onKeyDown={onKeyDown} />
+          disabled={sending || actions.readOnly} {...assist.inputProps} onKeyDown={onKeyDown} />
         <button type="submit" className={styles.send} disabled={!canSend(draft, sending) || actions.readOnly}>Send</button>
       </div>
       {hints.length ? <ul className={styles.note} aria-label="Composer commands">
         {hints.map(hint => <li key={hint.name}><code>{hint.usage}</code> {hint.summary}</li>)}
       </ul> : null}
+      {/* The unsent draft is kept on this computer and put back after a reload. */}
+      <ReplyDraft draft={draft} onDraft={setDraft} />
       {held ? <div className={styles.note} role="status">
         <p>{INBOX_HELD_SENTENCE} Only Mason edits this file.</p>
         <CopyPill text={COMMS_TOML_PATH} what="the comms.toml path" />
         <CopyPill text={COMMS_CONFIRM_LINE} what="the comms.toml confirmation line" />
         <button type="button" className={styles.tool} disabled={!canSend(draft, sending) || actions.readOnly} onClick={() => void sendToThread()}>Send to the Leader thread instead</button>
       </div> : null}
+      {/* Paste, drop or pick a screenshot: its line joins the draft and shows here as a chip. */}
+      <ReplyAttachment draft={draft} onDraft={setDraft} disabled={sending || actions.readOnly} />
       {failure ? <p className={styles.replyFailure} role="alert">{failure}</p> : null}
     </form>
+    {/* Under the reply box: when the Leader last read the inbox and when it reads next. */}
+    <LeaderPresence visible={visible} />
     <MutationTokenDialog open={unlockOpen} onClose={() => setUnlockOpen(false)} onUnlocked={() => void send()}
       reason="Messaging the Leader requires the dispatch token." tokenHelp="the mutation token ashlr verse printed" />
     {actions.dialogs}

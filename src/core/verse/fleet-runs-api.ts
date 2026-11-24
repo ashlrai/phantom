@@ -1,8 +1,15 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
+import { readWhyIdle } from '../fleet/why-idle-read.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
+import { defaultLoopReaders, readLoopReleasesCached, type LoopReleases } from '../metrics/loop-collect.js';
+import { LOOP_STAGES_DEFAULT_SINCE_MS, parseSince } from '../metrics/loop-stages.js';
 import { readThroughput, throughputOptions } from '../fleet/throughput.js';
+import { launchRateHours, readLaunchRate } from '../fleet/launch-rate.js';
+import { readScoreboard, scoreboardDays } from '../fleet/scoreboard.js';
+import { sanitizePublicJson } from '../util/public-json.js';
 import { readPluginsPanel, readSkillsPanel } from '../fleet/installed-panels.js';
+import { INVENTORY_KINDS, INVENTORY_PATH, parseInventoryKind, type Inventory } from '../fleet/inventory-schema.js';
 import { applyOrderStatus, OrderStatusError } from './fleet-order-status.js';
 import { readOrdersView } from './fleet-orders-view.js';
 import { readInboxAckStates, type InboxAckState } from '../fleet/inbox-ack-state.js';
@@ -28,10 +35,13 @@ import { loadAppsRecoveryIncident } from '../fleet/apps-recovery-glance.js';
 import { readOperatorGlance } from '../fleet/operator-glance-read.js';
 import { FLEET_RUNS_INBOX_MAX_CHARS, VERSE_FLEET_RUNS_PATH, VERSE_FLEET_RUNS_GLANCE_PATH, VERSE_FLEET_RUNS_INBOX_PATH, type FleetRunsV1 } from './fleet-runs-types.js';
 import type { SupersededReadV1 } from '../fleet/superseded-read.js';
+import type { SelfDriftV1 } from '../release/drift-shape.js';
 import type { WorktreesReport } from '../fleet/worktrees.js';
 import { VERSE_FLEET_RUNS_STOP_PATH, stopJob, type JobStopResult, type StopJobOptions } from '../fleet/job-stop.js';
 import { STRAY_ID_PATTERN } from '../fleet/stray-slots.js';
 import { VERSE_FLEET_RUNS_CONTROL_PATH, isJobControlAction } from '../fleet/job-control-types.js';
+import { VERSE_FLEET_RUNS_NOTES_PATH } from '../fleet/job-notes-types.js';
+import type { readJobNotes, sayToJob } from '../fleet/job-notes.js';
 import type { requestJobControl } from '../fleet/job-control.js';
 import { laneMedians, overrunOf } from '../fleet/job-overrun.js';
 import type { reassignQueuedJobs } from '../fleet/runs-reassign.js';
@@ -110,9 +120,17 @@ const VERSE_FLEET_SUPERSEDED_PATH: typeof import('../fleet/superseded-read.js').
   '/api/verse/fleet/runs/superseded';
 
 export interface FleetRunsApiDeps {
+  /** Metrics pane: the release list for merged to released; default is the 10-minute cached GitHub read `phm metrics loop` uses. */
+  loopReleases?: (now: number) => Promise<LoopReleases>;
   laneModels?: () => Promise<LaneModelSnapshot>;
+  /** Inventory pane; default is readInventory from core/fleet/inventory. */
+  readInventory?: () => Promise<Inventory>;
   /** Home's Disk card; default is readWorktrees('list') from core/fleet/worktrees. */
   readWorktrees?: () => Promise<WorktreesReport>;
+  /** Home's Running build line; default is readSelfDrift() from core/release/drift (`phm self drift --json`). */
+  readDrift?: () => Promise<SelfDriftV1>;
+  /** Home's red alert row; default is readPulseAlerts from core/fleet/pulse-alerts (`phm fleet pulse --alerts --json`). */
+  readPulseAlerts?: (opts: { runsDir?: string; now: number; notify: boolean }) => Promise<unknown>;
   readRunsDir?: () => Promise<unknown>;
   listWorkers?: () => Promise<unknown>;
   readHostLoad?: () => unknown;
@@ -142,6 +160,10 @@ export interface FleetRunsApiDeps {
   queueSteer?: typeof steerQueue;
   /** Pause, resume, stop or move one job behind POST .../runs/control. Default: fleet/job-control.ts. */
   jobControl?: typeof requestJobControl;
+  /** Send a note to one job behind POST .../runs/notes. Default: fleet/job-notes.ts. */
+  jobSay?: typeof sayToJob;
+  /** The notes sent to one job behind GET .../runs/notes?id=. Default: fleet/job-notes.ts. */
+  jobNotes?: typeof readJobNotes;
   /** Briefing behind GET .../runs/mission. Default reads the runs directory. */
   readMission?: () => Promise<MissionControlV1>;
   /** Owner-thread mirror roots (tests); default is the fixed owner dirs. */
@@ -190,6 +212,7 @@ const workersShape: Shape = {
 };
 const claimsShape: Shape = [{ job: 'string', lane: 'string', tier: 'string', at: 'string' }];
 const dropShape: Shape = { pending: [{ lane: 'string', file: 'string' }], done: 'number' };
+const notRunningShape: Shape = [{ job_or_lane: 'string', kind: 'string', reason: 'string', since: 'string?', unblock: 'string' }];
 const codexShape: Shape = { usedPct: 'number?', resetsAt: 'string?', asOf: 'string?' };
 const mergesShape: Shape = {
   count: 'number?', perHour: 'number?', medianOpenToMergeMs: 'number?',
@@ -381,7 +404,10 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         // Validate the optional drop projection before applying any runs fields.
         const drop = key === 'runsDir' && record(raw) && raw.drop != null ? project(raw.drop, dropShape) : null;
         const claimed = key === 'runsDir' && record(raw) && raw.claimed != null ? project(raw.claimed, claimsShape) : [];
+        // Older injected readers predate this list; absent means none reported.
+        const notRunning = key === 'runsDir' && record(raw) && raw.notRunning != null ? project(raw.notRunning, notRunningShape) : [];
         if (key === 'runsDir' || key === 'workers') Object.assign(result, value);
+        if (key === 'runsDir') result.notRunning = notRunning as FleetRunsV1['notRunning'];
         if (key === 'runsDir') result.claimed = claimed as FleetRunsV1['claimed'];
         if (key === 'runsDir') result.drop = drop as FleetRunsV1['drop'];
         if (key === 'inbox') {
@@ -435,6 +461,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         await mod.noteMergeSnapshot(result.mergesLastHour.items, deps.runsDir ?? defaultRunsDir(), new Date(now()).toISOString());
       } catch { /* Private ledger failures must not affect the snapshot. */ }
     }
+    result.whyIdle = await readWhyIdle(deps.runsDir ?? defaultRunsDir(), now());
     return result;
   }
   // Lane-median duration evidence is a slow statistic: refresh at most once a
@@ -443,6 +470,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
   // ledger yields an empty map — workers then carry no overrun field and the
   // composite read still succeeds.
   let worktreesRead: { at: number; read: Promise<WorktreesReport> } | null = null;
+  let driftRead: { at: number; read: Promise<SelfDriftV1> } | null = null;
   let overrunCache: { at: number; medians: ReadonlyMap<string, number> } | undefined;
   let overrunFlight: Promise<ReadonlyMap<string, number>> | undefined;
   function overrunMedians(): Promise<ReadonlyMap<string, number>> {
@@ -515,7 +543,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     }
     if (path === '/api/verse/fleet/runs/metrics') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
-      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir()));
+      // ?since=24h|7d is the card's one window control; the same values as `phm metrics loop --since`.
+      const since = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since');
+      const sinceMs = since === null ? LOOP_STAGES_DEFAULT_SINCE_MS : parseSince(since);
+      if (sinceMs === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'since takes a window like 24h or 7d (1 minute to 30 days)' }); return true; }
+      // A caller-supplied runs dir is a sandbox, so it never reaches GitHub unless a reader is injected.
+      const releases = deps.loopReleases ?? (deps.runsDir ? undefined : (at: number) => readLoopReleasesCached(defaultLoopReaders().gh, at));
+      sendJson(res, 200, await readMetricsPanel(deps.runsDir ?? defaultRunsDir(), deps.now?.(), undefined, { sinceMs, releases }));
       return true;
     }
     // The Throughput pane reads the same report as `phm throughput`.
@@ -526,6 +560,24 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (!options) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes 1 to 168 and by takes lane, repo or tier' }); return true; }
       const runsDir = deps.runsDir ?? defaultRunsDir();
       sendJson(res, 200, await readThroughput({ ...options, runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), now: now() }));
+      return true;
+    }
+    // The Fleet view's start-rate card reads the same report as `phm fleet launches --json`.
+    if (path === '/api/verse/fleet/runs/launches') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const hours = launchRateHours(new URL(req.url ?? '/', 'http://localhost').searchParams.get('hours'));
+      if (hours === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'hours takes a whole number from 1 to 168' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readLaunchRate({ runsDir, metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours, now: now() })));
+      return true;
+    }
+    // The Scoreboard view reads the same report as `phm fleet score --json`.
+    if (path === '/api/verse/fleet/runs/scoreboard') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const days = scoreboardDays(new URL(req.url ?? '/', 'http://localhost').searchParams.get('days'));
+      if (days === null) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'days takes a whole number from 1 to 30' }); return true; }
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      sendJson(res, 200, sanitizePublicJson(await readScoreboard({ metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), days, now: now() })));
       return true;
     }
     // The desktop Home view reads the same summary as `phm home`; leaderSeen is the reader's last-read time in epoch ms.
@@ -546,11 +598,62 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, await readLeaderReplies({ limit, planLog }));
       return true;
     }
+    // The Leader panel's "Phone updates" row reads the same owner-live.status.v1 as `phm owner-live status --json`. Read only.
+    if (path === '/api/verse/fleet/runs/owner-live') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { ownerThreadOptions } = await import('../../cli/comms-owner-thread.js');
+      const { cmdOwnerLiveStatus } = await import('../../cli/fleet-owner-live.js');
+      let body = '';
+      await cmdOwnerLiveStatus(['--json'], { options: ownerThreadOptions(), output: text => { body = text; } });
+      sendJson(res, 200, JSON.parse(body));
+      return true;
+    }
+    // The phone's four tiles read the same fleet.brief.v1 as `phm status --brief --json`.
+    if (path === '/api/verse/fleet/runs/brief') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readFleetBrief } = await import('../fleet/status-brief.js');
+      sendJson(res, 200, await readFleetBrief({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
     // Home's Pulse card reads the same fleet.pulse.v1 as `phm fleet pulse --json`.
     if (path === '/api/verse/fleet/runs/pulse') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       const { readPulse } = await import('../fleet/pulse.js');
       sendJson(res, 200, await readPulse({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
+    // Home's Pulse strip reads the same fleet.pulse.lanes.v1 as `phm fleet pulse --lanes --json`.
+    if (path === '/api/verse/fleet/runs/pulse/lanes') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readPulseLanes } = await import('../fleet/pulse-lanes.js');
+      sendJson(res, 200, await readPulseLanes({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
+    // Home's red alert row reads the same fleet.pulse.alerts.v1 as `phm fleet pulse --alerts --json`. Each new alert is also sent once an hour.
+    if (path === '/api/verse/fleet/runs/pulse/alerts') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const read = deps.readPulseAlerts ?? (await import('../fleet/pulse-alerts.js')).readPulseAlerts;
+      sendJson(res, 200, await read({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), notify: true }));
+      return true;
+    }
+    // The Goals view's Skipped count reads the same jobs.skipped.v1 as `phm jobs skipped --json`.
+    if (path === '/api/verse/fleet/runs/skipped') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readSkippedJobs } = await import('../fleet/skipped-jobs.js');
+      sendJson(res, 200, await readSkippedJobs({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
+      return true;
+    }
+    // Home's Running build line reads the same report as `phm self drift --json`.
+    if (path === '/api/verse/fleet/runs/drift') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      // One read per 10 minutes at most: each read runs the installed CLI once per fleet capability.
+      if (!driftRead || now() - driftRead.at > 600_000) {
+        const read = deps.readDrift ? deps.readDrift() : import('../release/drift.js').then(m => m.readSelfDrift());
+        driftRead = { at: now(), read };
+        read.catch(() => { if (driftRead?.read === read) driftRead = null; });
+      }
+      try { sendJson(res, 200, await driftRead.read); }
+      catch { sendJson(res, 503, { code: 'DRIFT_UNAVAILABLE' }); }
       return true;
     }
     // Home's Disk card reads the same report as `phm worktrees --json`; read-only (removal stays in the CLI).
@@ -571,6 +674,17 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
     if (path === '/api/verse/fleet/runs/plugins' || path === '/api/verse/fleet/runs/skills') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       sendJson(res, 200, path.endsWith('/plugins') ? readPluginsPanel() : readSkillsPanel());
+      return true;
+    }
+    // The Inventory pane reads the same data as `phm inventory --json`; ?kind= narrows to one kind. Read-only.
+    if (path === INVENTORY_PATH) {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('kind');
+      const kind = asked === null ? null : parseInventoryKind(asked);
+      if (asked !== null && !kind) { sendJson(res, 400, { code: 'INVENTORY_KIND', error: `kind must be one of: ${INVENTORY_KINDS.join(', ')}` }); return true; }
+      const { filterInventory, readInventory } = await import('../fleet/inventory.js');
+      const inventory = await (deps.readInventory ?? (() => readInventory({ now: () => new Date(now()), ...(deps.runsDir ? { runsDir: deps.runsDir } : {}) })))();
+      sendJson(res, 200, kind ? filterInventory(inventory, kind) : inventory);
       return true;
     }
     // The Tools pane reads the same data as `phm tools --json` and, under /parity, `phm tools parity --json`. Read-only.
@@ -780,6 +894,36 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         if (!receipt.dryRun && receipt.status === 'applied') { generation++; cached = undefined; }
         sendJson(res, 200, receipt);
       } catch { sendJson(res, 503, { code: 'JOB_CONTROL_UNAVAILABLE' }); }
+      return true;
+    }
+    if (path === VERSE_FLEET_RUNS_NOTES_PATH) {
+      const runsDir = deps.runsDir ?? defaultRunsDir();
+      if (method === 'GET') {
+        const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('id') ?? '';
+        if (!STRAY_ID_PATTERN.test(id)) { sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid job id' }); return true; }
+        try { sendJson(res, 200, await (deps.jobNotes ?? (await import('../fleet/job-notes.js')).readJobNotes)(id, { runsDir })); }
+        catch { sendJson(res, 503, { code: 'JOB_NOTES_UNAVAILABLE' }); }
+        return true;
+      }
+      if (method !== 'POST') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      if (!ctx.allowDispatch) { sendJson(res, 404, { error: 'not found' }); return true; }
+      if (!passesMutationGate(req, res, ctx.token)) return true;
+      let body: unknown;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!record(body) || Object.keys(body).some(k => !['id', 'text', 'dryRun'].includes(k)) ||
+        typeof body.id !== 'string' || !STRAY_ID_PATTERN.test(body.id) || typeof body.text !== 'string' ||
+        (body.dryRun !== undefined && typeof body.dryRun !== 'boolean')) {
+        sendJson(res, 400, { code: 'VERSE_INVALID', error: 'invalid job note body' }); return true;
+      }
+      try {
+        // A refusal is an answer, not a transport failure: every receipt is a 200.
+        const say = deps.jobSay ?? (await import('../fleet/job-notes.js')).sayToJob;
+        sendJson(res, 200, await say(body.id, body.text, { runsDir, dryRun: body.dryRun === true, by: req.headers['x-ashlr-channel'] === 'mobile' ? 'mobile' : 'desktop' }));
+      } catch (error) {
+        // Empty or too-long text is the sender's to fix: say why. Anything else is unavailable.
+        if (error instanceof TypeError) sendJson(res, 400, { code: 'VERSE_INVALID', error: error.message });
+        else sendJson(res, 503, { code: 'JOB_NOTES_UNAVAILABLE' });
+      }
       return true;
     }
     if (path === VERSE_FLEET_RUNS_STOP_PATH) {

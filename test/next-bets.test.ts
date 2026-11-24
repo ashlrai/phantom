@@ -13,7 +13,7 @@ const NONE: BetInputs = { lanes: null, pace: null, yield: null, mains: null, rel
 const lane = (name: string, running: number, target: number, queued = 0, held = false): FleetRunsLane =>
   ({ lane: name, running, target, queued, held, floor: null, ceiling: null, heldReason: null, tokensLastHour: null, merged24h: null, mergeRate24h: null });
 const row = (name: string, launches: number, empty: number, merged = 0): YieldRow =>
-  ({ name, launches, empty, merged, prs: merged, aborted: 0, finished: launches, median_run_s: null, tokens: null, tokens_measured: 0, merged_per_launch: merged / launches, tokens_per_merged: null, verdict: '' });
+  ({ name, launches, empty, merged, reverted: 0, prs: merged, aborted: 0, finished: launches, median_run_s: null, tokens: null, tokens_measured: 0, merged_per_launch: merged / launches, tokens_per_merged: null, verdict: '' });
 const yields = (families: YieldRow[], tiers: YieldRow[] = []): YieldReport =>
   ({ schema: 'fleet.yield.v1', window_hours: 24, known: true, launches: 0, families, lanes: [], tiers });
 const red = (repo: string, fixJobs: string[] = [], emptyAttempts = 0): FleetMainHealthRepo =>
@@ -35,6 +35,16 @@ describe('suggestBets', () => {
       goal: 'Give claude work: 5 of 8 slots free and nothing queued', numbers: { running: 3, target: 8, queued: 0, freeSlots: 5, unusedPercent: null, hoursToReset: null } });
     expect(first!.terms).toEqual([{ input: 'idleSlot', value: 5, weight: 40, points: 200 }]);
     expect(report.signals.filter(signal => signal.status === 'ok').map(signal => signal.name)).toEqual(['lanes']);
+  });
+
+  it('counts free slots against the shed launch target, not the configured target', () => {
+    const shed: FleetRunsLane = { ...lane('claude', 3, 8), effectiveTarget: 4 };
+    const report = suggestBets({ ...NONE, lanes: [shed, lane('zai', 0, 2)], mains: [red('ashlrai/phantom')] }, NOW);
+    const idle = report.suggestions.find(bet => bet.id === 'idle-lane:claude')!;
+    expect(idle.goal).toBe('Give claude work: 1 of 4 slots free and nothing queued');
+    expect(idle.numbers).toMatchObject({ running: 3, target: 8, effectiveTarget: 4, freeSlots: 1 });
+    // The shed lane is no longer the roomiest pick for repo work.
+    expect(report.suggestions.find(bet => bet.id === 'red-main:ashlrai-phantom')!.lane).toBe('zai');
   });
 
   it('adds usage that will expire unused, and suggests a pool with no free slot on that alone', () => {
@@ -132,7 +142,7 @@ describe('phm bets suggest and explain', () => {
     expect(text.out.split('\n')).toEqual([
       'idle-lane:claude: Give claude work: 2 of 2 slots free and nothing queued',
       'Lane claude, tier work, repo any, job family leader.',
-      'Inputs: running=0, target=2, queued=0, freeSlots=2, unusedPercent=unknown, hoursToReset=unknown',
+      'Inputs: running=0, target=2, effectiveTarget=unknown, queued=0, freeSlots=2, unusedPercent=unknown, hoursToReset=unknown',
       '  idleSlot: 2 x 40 = 80', 'Score: 80',
       'Queue line: - READY RQ-NEXT-IDLE-LANE-CLAUDE (P1, pool=claude, tier=work, src=bets): Give claude work: 2 of 2 slots free and nothing queued',
     ]);

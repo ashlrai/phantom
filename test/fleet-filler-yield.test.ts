@@ -47,6 +47,19 @@ it('filler-yield is red only when skips are over half of 10 or more rows', async
   expect(r.red).toBe(true);
 });
 
+it('counts the live code-13 spellings: skipped_empty+code and precheck_parked', async () => {
+  const r = await fleetFillerYield(read(
+    row('skipped_empty', J(1), 1, { repo: 'phantom', code: 13 }),
+    row('precheck_parked', J(2), 1, { repo: 'phantom', code: 13, retry_at: 1, attempt: 1 }),
+    row('skipped_empty', J(3), 1, { repo: 'phantom', code: 10 }),
+    row('skipped_empty', J(4), 1, { repo: 'phantom', reason: 'task_empty_repeat_24h' }),
+    row('precheck_parked', J(5), 1, { repo: 'phantom', code: 12 }),
+    row('launch', J(6), 1, { repo: 'phantom' }),
+  ), 6, now);
+  expect(r.repos).toEqual([
+    { repo: 'phantom', launches: 1, skips: 2, empty_finishes: 0, merged: 0, rows: 6, yield: 0, red: false },
+  ]);
+});
 it('filler-yield reports unknown when the ledger is unreadable or throws', async () => {
   for (const reader of [async () => null, async () => { throw new Error('boom'); }]) {
     expect(await fleetFillerYield(reader, 6, now)).toMatchObject({ known: false, red: false, repos: [] });

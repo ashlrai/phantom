@@ -33,6 +33,18 @@ export function publishGroupPresence(input: {
     body: { kind: 'group.presence', state: input.state } }, options);
 }
 
+/**
+ * A `group.presence` body is an observation with its own read (`groupPresence`),
+ * never mail or a work-board request: the curated agent-facing projections
+ * (inbox, conversations, messages-on-map, fleet edges, work board) exclude it
+ * while the raw retained reads — `subscribeGroup`, `comms bus group read`,
+ * `bus show`, `phm messages` — keep it.
+ */
+export function isGroupPresenceBody(body: unknown): boolean {
+  return body !== null && typeof body === 'object' && !Array.isArray(body) &&
+    (body as Record<string, unknown>).kind === 'group.presence';
+}
+
 /** One page of a subscription. Advance using nextCursor even when no rows match. */
 export function subscribeGroup(room: string, topic: string, after: number, limit: number, options: BusInboxOptions = {}) {
   let address: string;

@@ -128,6 +128,26 @@ it('removes a URL-linked merged job once and does not reuse an earlier attempt',
   }
 });
 
+it('marks work merged through eventless and publish-shaped reconciler rows', async () => {
+  const urlA = 'https://github.com/ashlrai/locus/pull/201';
+  const urlB = 'https://github.com/ashlrai/locus/pull/202';
+  const { deps } = setup({ 'RQ-EVENTLESS': 5, 'RQ-PUBSHAPED': 5, 'RQ-UNSOURCED': 5 }, [
+    row('RQ-EVENTLESS', 6),
+    JSON.stringify({ jobId: 'RQ-EVENTLESS', prUrl: urlA, outcome: 'PUBLISHED' }),
+    JSON.stringify({ jobId: 'RQ-EVENTLESS', prUrl: urlA, outcome: 'MERGED', mergedAt: new Date(NOW - 5 * H).toISOString(), source: 'metrics-outcomes-reconciler' }),
+    row('RQ-PUBSHAPED', 6),
+    JSON.stringify({ event: 'publish', jobId: 'RQ-PUBSHAPED', prUrl: urlB, outcome: 'PUBLISHED' }),
+    JSON.stringify({ event: 'publish', jobId: 'RQ-PUBSHAPED', prUrl: urlB, outcome: 'MERGED', mergedAt: new Date(NOW - 5 * H).toISOString(), source: 'metrics-outcomes-reconciler' }),
+    // A publish claim carrying a phase but no reconciler source is not merge evidence.
+    row('RQ-UNSOURCED', 6),
+    JSON.stringify({ event: 'publish', job: 'RQ-UNSOURCED', url: 'https://github.com/ashlrai/locus/pull/203', state: 'MERGED' }),
+  ]);
+  const { view } = await run([], deps);
+  expect(view.stale.map((s: { job: string; reason: string }) => [s.job, s.reason])).toEqual([
+    ['RQ-EVENTLESS', 'merged'], ['RQ-PUBSHAPED', 'merged'],
+  ]);
+});
+
 it('does not remove a retry when an older PR merges after the new launch', async () => {
   const oldUrl = 'https://github.com/ashlrai/locus/pull/101';
   const { deps, git } = setup({ 'RQ-RETRY': 1 }, [

@@ -44,11 +44,45 @@ describe('fleet runs api', () => {
     const api = createFleetRunsApi(deps({ runsDir }));
     const { status, wire } = await request(api, { path: '/api/verse/fleet/runs/goal-scorecard' });
     expect(status).toBe(200);
-    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v2', version: 2, generatedAt: new Date(NOW).toISOString() });
-    const goals = (wire as unknown as { goals: { status: string; value: unknown }[] }).goals;
-    expect(goals.length).toBe(5);
-    expect(goals.every(g => g.status === 'unknown' && g.value === null)).toBe(true);
+    expect(wire).toMatchObject({ schema: 'fleet.goal-scorecard.v3', version: 3, generatedAt: new Date(NOW).toISOString() });
+    const goals = (wire as unknown as { goals: { status: string; current: unknown }[] }).goals;
+    expect(goals.length).toBe(6);
+    expect(goals.every(g => g.status === 'unknown' && g.current === null)).toBe(true);
     expect((await request(api, { path: '/api/verse/fleet/runs/goal-scorecard', method: 'POST' })).status).toBe(405);
+  });
+  it('serves the inventory read-only: every kind, one kind with ?kind=, 400 for an unknown kind', async () => {
+    const { buildInventory, INVENTORY_PATH } = await import('../src/core/fleet/inventory.js');
+    const inventory = buildInventory({
+      now: new Date(NOW), channels: null, plugins: null, skills: null, tools: null, registry: [], roster: ['claude'],
+      connectors: [{ id: 'docs', kind: 'mcp-stdio', description: null, lanes: ['claude'], credentials: 1, availability: 'available' }],
+    });
+    const readInventory = vi.fn(async () => inventory);
+    const api = createFleetRunsApi(deps({ readInventory }));
+    const all = await request(api, { path: INVENTORY_PATH });
+    expect(all.status).toBe(200);
+    expect(all.wire).toEqual(JSON.parse(JSON.stringify(inventory)));
+    expect(all.wire).toMatchObject({ schema: 'phantom.inventory.v1', version: 1, kind: null, parity: { compared: 1, widestGap: 0 } });
+    const one = (await request(api, { path: `${INVENTORY_PATH}?kind=connectors` })).wire as unknown as typeof inventory;
+    expect(one).toMatchObject({ kind: 'connector', counts: { ready: 1, unknown: 0 }, kinds: [{ kind: 'connector', total: 1 }] });
+    expect(one.items.map(i => i.id)).toEqual(['connector:docs']);
+    expect(one.parity).toEqual(inventory.parity);
+    const bad = await request(api, { path: `${INVENTORY_PATH}?kind=secrets` });
+    expect(bad.status).toBe(400);
+    expect(bad.wire).toEqual({ code: 'INVENTORY_KIND', error: 'kind must be one of: channel, connector, plugin, skill, tool' });
+    expect(readInventory).toHaveBeenCalledTimes(2);
+    expect((await request(api, { path: INVENTORY_PATH, method: 'POST' })).status).toBe(405);
+  });
+  it('reads the real inventory sources by default and never throws on an empty machine', async () => {
+    const { INVENTORY_PATH } = await import('../src/core/fleet/inventory.js');
+    const runsDir = mkdtempSync(join(tmpdir(), 'inventory-'));
+    const { status, wire } = await request(createFleetRunsApi(deps({ runsDir })), { path: `${INVENTORY_PATH}?kind=tool` });
+    expect(status).toBe(200);
+    expect(wire).toMatchObject({ schema: 'phantom.inventory.v1', kind: 'tool', at: new Date(NOW).toISOString() });
+    // No lane-tools.json: only the router's built-in declarations are known, the rest stay unknown.
+    const items = (wire as unknown as { items: { id: string; state: string }[] }).items;
+    expect(items.find(i => i.id === 'tool:shell')).toMatchObject({ state: 'unknown' });
+    // The router declares that claude workers have no gh, so no known lane has it.
+    expect(items.find(i => i.id === 'tool:github-read')).toMatchObject({ state: 'needs setup' });
   });
   it('serves the Tools matrix read-only, one lane with ?lane=, 404 for an unknown lane', async () => {
     const runsDir = mkdtempSync(join(tmpdir(), 'tools-matrix-'));
@@ -101,6 +135,15 @@ describe('fleet runs api', () => {
     expect(good.wire).toMatchObject({ claimed: [claim], sources: { runsDir: 'healthy' } });
     expect(JSON.stringify(good.wire)).not.toContain('private');
     const bad = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, claimed: [{ ...claim, job: '/Users/private' }] }) })), { path: PATH });
+    expect(bad.wire).toMatchObject({ sources: { runsDir: 'degraded' }, lanes: [] });
+  });
+  it('carries the not actually running list, empty for older readers, and rejects malformed rows', async () => {
+    const row = { job_or_lane: 'grok-one', kind: 'held_launch', reason: 'ultra reading older than 8h', since: null, unblock: 'Record a current Grok usage percent' };
+    const good = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, notRunning: [{ ...row, prompt: 'private' }] }) })), { path: PATH });
+    expect(good.wire).toMatchObject({ notRunning: [row], sources: { runsDir: 'healthy' } });
+    expect(JSON.stringify(good.wire)).not.toContain('private');
+    expect((await request(createFleetRunsApi(deps()), { path: PATH })).wire).toMatchObject({ notRunning: [], sources: { runsDir: 'healthy' } });
+    const bad = await request(createFleetRunsApi(deps({ readRunsDir: async () => ({ ...runs, notRunning: [{ ...row, unblock: 7 }] }) })), { path: PATH });
     expect(bad.wire).toMatchObject({ sources: { runsDir: 'degraded' }, lanes: [] });
   });
   it('rejects malformed nested rows and private paths without partially applying runs', async () => {
@@ -164,6 +207,25 @@ describe('fleet runs api', () => {
       expect(result.status).toBe(status);
       expect(result.wire!.code).toBe(status === 422 ? 'INBOX_REFUSED' : 'INBOX_UNAVAILABLE');
     }
+  });
+});
+
+describe('drift route (Home Running build line)', () => {
+  const DRIFT = '/api/verse/fleet/runs/drift';
+  const report = { schema: 'phantom.self-drift.v1', version: 1, behindReleases: 2, line: '2 releases behind, 0 fleet features not live yet' };
+  it('serves the phm self drift report, reads at most once per 10 minutes, retries after a failure and is GET only', async () => {
+    let tick = NOW;
+    const read = vi.fn().mockRejectedValueOnce(new Error('/private/path')).mockResolvedValue(report);
+    const api = createFleetRunsApi(deps({ now: () => tick, readDrift: read }));
+    expect(await request(api, { path: DRIFT })).toMatchObject({ status: 503, wire: { code: 'DRIFT_UNAVAILABLE' } });
+    expect(await request(api, { path: DRIFT })).toMatchObject({ handled: true, status: 200, wire: report });
+    tick += 300_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(2);
+    tick += 301_000;
+    await request(api, { path: DRIFT });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect((await request(api, { path: DRIFT, method: 'POST', body: {} })).status).toBe(405);
   });
 });
 

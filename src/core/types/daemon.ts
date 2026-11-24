@@ -379,6 +379,8 @@ export interface DaemonTick {
     postMergeCreditReleased?: number;
     postMergeCreditSkipped?: number;
     postMergeCreditSourceComplete?: boolean;
+    /** Eligibility-reason counts from the credit sweep (release funnel). */
+    postMergeCreditSkippedByReason?: Record<string, number>;
     skippedByCadence?: boolean;
     nextAfter?: string;
   };

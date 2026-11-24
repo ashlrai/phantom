@@ -7,6 +7,7 @@ import type { NodeRow, NodesView } from '../src/core/fleet/nodes-view.js';
 import type { FleetRunsDirState } from '../src/core/fleet/runs-dir-state.js';
 import type { ResourceLedgerV1 } from '../src/core/fleet/runs-resource-ledger.js';
 import type { FleetSessionsV1 } from '../src/core/fleet/runs-sessions.js';
+import type { LiveJob, LiveJobsReport } from '../src/core/fleet/live-jobs.js';
 
 const mocks = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock('../src/core/verse/fleet-live-map-api.js', async importOriginal => ({
@@ -38,6 +39,50 @@ const usage = { v: 1, generatedAt: AT, asOf: AT, sources: { status: 'healthy', a
 ] } as unknown as ResourceLedgerV1;
 const ids = (map: FleetLiveMap, kind: string) => map.nodes.filter(node => node.kind === kind).map(node => node.id);
 const edge = (map: FleetLiveMap, id: string) => map.edges.find(row => row.id === id);
+const liveJob = (id: string, lane: string, extra: Partial<LiveJob> = {}): LiveJob => ({ id, lane, repo: 'phantom', started: AT,
+  elapsed: 180, lastLogWrite: AT, lastLine: 'working', status: 'moving', processLive: true, ...extra });
+const liveJobs = (jobs: LiveJob[]): LiveJobsReport => ({ schema: 'jobs.live.v1', generatedAt: AT, known: true, jobs });
+
+it('uses current live jobs under their lanes and providers instead of old sessions or computer claims', () => {
+  const map = buildFleetLiveMap({ now: NOW, org: org([session('old', 'claude')]),
+    computers: computers([computer('desk', { jobsRunning: ['old', 'alpha'] })]),
+    jobs: liveJobs([liveJob('alpha', 'codex-personal'), liveJob('beta', 'claude'), liveJob('gamma', 'codex-local'), liveJob('delta', 'devin')]) });
+  expect(ids(map, 'job')).toEqual(['job:alpha', 'job:beta', 'job:delta', 'job:gamma']);
+  for (const [id, lane, provider] of [['alpha', 'codex-personal', 'OpenAI'], ['beta', 'claude', 'Anthropic'],
+    ['gamma', 'codex-local', 'Local'], ['delta', 'devin', 'Cognition']]) {
+    expect(map.nodes.find(n => n.id === `job:${id}`)).toMatchObject({ lane, provider, repo: 'phantom', detail: 'phantom · 3 min running', state: 'running', ageMinutes: 3 });
+    expect(edge(map, `reports-to:job:${id}->lane:${lane}`)).toBeDefined();
+    expect(map.nodes.find(n => n.id === `lane:${lane}`)?.detail).toBe('1 running');
+  }
+  expect(map.edges.some(e => e.from === 'job:old')).toBe(false);
+  expect(map.sources.jobs).toBe('available');
+});
+
+it('hides only jobs older than 48 hours with evidence of no live process, even if a computer still claims them', () => {
+  const old = new Date(NOW - 49 * 3_600_000).toISOString();
+  const jobs = liveJobs([liveJob('gone', 'claude', { started: old, processLive: false }), liveJob('alive', 'claude', { started: old }),
+    liveJob('edge', 'claude', { started: new Date(NOW - 48 * 3_600_000).toISOString(), processLive: false }),
+    liveJob('unknown', 'claude', { started: 'unknown', elapsed: 'unknown', processLive: false }),
+    liveJob('unseen', 'claude', { started: old, processLive: undefined })]);
+  const map = buildFleetLiveMap({ now: NOW, jobs, computers: computers([computer('desk', { jobsRunning: ['gone'] })]) });
+  expect(ids(map, 'job')).toEqual(['job:alive', 'job:edge', 'job:unknown', 'job:unseen']);
+  expect(map.nodes.find(n => n.id === 'job:unknown')?.detail).toContain('time unknown');
+  expect(map.nodes.find(n => n.id === 'job:unknown')?.ageMinutes).toBeNull();
+  expect(map.edges.some(e => e.from === 'job:gone')).toBe(false);
+});
+
+it('shows a known empty live fleet plainly and never substitutes old sessions for unavailable live jobs', () => {
+  const old = org([session('old', 'claude')]);
+  const empty = buildFleetLiveMap({ now: NOW, org: old, jobs: liveJobs([]) });
+  expect(empty.counts.jobs).toBe(0);
+  expect(renderFleetLiveMapText(empty)).toContain('Nothing running right now');
+  for (const jobs of [null, { ...liveJobs([]), known: false }]) {
+    const unknown = buildFleetLiveMap({ now: NOW, org: old, jobs });
+    expect(unknown.counts.jobs).toBe(0); expect(unknown.sources.jobs).toBe('unknown');
+    expect(unknown.nodes.find(n => n.id === 'lane:claude')?.detail).toBe('running unknown');
+    expect(renderFleetLiveMapText(unknown)).not.toContain('Nothing running right now');
+  }
+});
 
 describe('buildFleetLiveMap', () => {
   it('an empty fleet is the leader alone, with every missing source unknown and listed', () => {
@@ -115,8 +160,11 @@ describe('buildFleetLiveMap', () => {
     const b = buildFleetLiveMap({ now: NOW, usage: { ...usage, lanes: [...usage.lanes].reverse() }, org: org([session('RQ-B', 'claude'), session('RQ-A', 'claude')], [...receipts].reverse()),
       computers: computers([computer('node-b', { jobsRunning: ['RQ-B'] }), computer('node-a', { isSelf: true })]) });
     expect(JSON.stringify(b)).toBe(JSON.stringify(a));
-    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps']);
-    expect(a.nodes.every(node => Object.keys(node).join() === 'id,kind,level,label,provider,status,detail,live')).toBe(true);
+    expect(Object.keys(a)).toEqual(['schema', 'generatedAt', 'windowMinutes', 'pulseSeconds', 'nodes', 'edges', 'counts', 'sources', 'unmappedMessages', 'gaps', 'planners', 'orgLayout']);
+    expect(a.planners?.map(row => row.id)).toEqual(['executor', 'orchestrator', 'guardian', 'comms']);
+    expect(a.nodes.every(node => Object.keys(node).join() === `id,kind,level,label,provider,status,detail,live${node.kind === 'resource' ? ',usedPct' : node.kind === 'job' ? ',lane,repo,state' : node.kind === 'computer' && node.id !== 'computer:node-a' ? ',remote' : ''}`)).toBe(true);
+    expect(a.nodes.filter(node => node.kind === 'computer').map(node => [node.id, node.remote])).toEqual([['computer:node-a', undefined], ['computer:node-b', true]]);
+    expect(a.nodes.filter(node => node.kind === 'resource').every(node => node.usedPct === null || typeof node.usedPct === 'number')).toBe(true);
     expect(a.edges.every(row => Object.keys(row).join() === 'id,kind,from,to,messages,lastMessageAt,pulse')).toBe(true);
     expect(a.nodes.map(node => node.level)).toEqual([...a.nodes.map(node => node.level)].sort((x, y) => x - y));
     expect(new Set(a.nodes.map(node => node.id)).size).toBe(a.nodes.length);

@@ -29,6 +29,8 @@ it('lists workers, selects the oldest, and renders the ordered tail and PR', asy
   expect(screen.getByRole('log').textContent).toBe('… earlier lines not shown\nfirst line\nsecond line');
   expect(screen.getByRole('link', { name: 'PR #1234' })).toHaveAttribute('rel', 'noreferrer');
   expect(spy).toHaveBeenCalledWith('/api/fleet/job?id=RQ-OLD', undefined);
+  expect(within(screen.getByRole('region', { name: 'Job window' })).getByRole('status')).toHaveTextContent('Running now.');
+  expect(spy).toHaveBeenCalledWith('/api/fleet/job/window?id=RQ-OLD&lines=1', undefined);
 });
 it('does not fetch an invalid typed ID and toggles Follow', async () => {
   serve(); render(<WorkerLogPane visible />);

@@ -5,7 +5,7 @@
  * THE ENVIRONMENT CONTRACT (not enforced here against the orchestrator — the
  * ingest on the host is the authority; this module mirrors it exactly):
  *   - the sweep reads `<runsDir>/leader/drop/claude/RQ-PHX-<id>.md`;
- *   - line 1 is exactly `#job repo=phantom lane=<lane> tier=<tier>`;
+ *   - line 1 is exactly `#job repo=<repo> lane=<lane> tier=<tier>` (repo defaults to phantom);
  *   - lane ∈ {claude, codex-personal, devin, codex-local},
  *     tier ∈ {frontier, work, mid, fast}, id ∈ [A-Z0-9]{3,40};
  *   - files over 8000 bytes, ids already used, and bodies naming protected
@@ -32,6 +32,7 @@ import { link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/pro
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 
 // ---------------------------------------------------------------------------
 // Contract constants
@@ -58,7 +59,18 @@ const TITLE_CHARS = 120;
 /** Listing reads at most this much of a job file for its header and title. */
 const LIST_READ_BYTES = 16 * 1024;
 
-const HEADER_LINE = /^#job repo=phantom lane=(\S+) tier=(\S+)$/;
+/** Repos a drop job may name in its header. `phantom` is the default. */
+export const DROP_JOB_REPOS: readonly string[] = ['phantom', 'phantom-secrets', 'ashlr-plugin', 'ashlr-stack', 'locus', 'lexicon', 'ashlr-md'];
+export const DROP_JOB_DEFAULT_REPO = 'phantom';
+const HEADER_LINE = /^#job repo=(\S+) lane=(\S+) tier=(\S+)$/;
+/**
+ * The host ingest's own patterns (orch-ingest.py), copied verbatim as the one
+ * fixture-able statement of the contract. validateDropJob proves every job it
+ * accepts also matches these, so a writer cannot emit what the ingest drops.
+ */
+export const INGEST_JOB_ID = /^RQ-PHX-[A-Z0-9]{3,40}$/;
+export const INGEST_JOB_FILE = /^RQ-PHX-[A-Z0-9]{3,40}\.md$/;
+export const INGEST_JOB_HEADER = /^#job repo=(phantom|phantom-secrets|ashlr-plugin|ashlr-stack|locus|lexicon|ashlr-md) lane=(\S+) tier=(\S+)\s*$/;
 /** The denied-body tokens the ingest rejects on, spelled out once. */
 const DENIED_TOKENS = ['.github/', '/.codex', 'auth.json', 'CODEOWNERS'] as const;
 const DENIED_CONTENT = new RegExp(
@@ -73,6 +85,8 @@ const CONTROL_BESIDES_NL_TAB = /(?![\n\t])\p{Cc}/u;
 
 export interface DropJobInput {
   id: string;
+  /** Repo named in the header; one of DROP_JOB_REPOS. Defaults to phantom. */
+  repo?: string;
   lane: string;
   tier: string;
   body: string;
@@ -184,24 +198,25 @@ async function realInside(root: string, ...segments: string[]): Promise<string> 
 // Validation
 // ---------------------------------------------------------------------------
 
-/** `#job repo=phantom lane=<lane> tier=<tier>` — ingest demands this as line 1. */
-export function dropJobHeader(lane: string, tier: string): string {
-  return `#job repo=phantom lane=${lane} tier=${tier}`;
+/** `#job repo=<repo> lane=<lane> tier=<tier>` — ingest demands this as line 1. */
+export function dropJobHeader(lane: string, tier: string, repo: string = DROP_JOB_DEFAULT_REPO): string {
+  return `#job repo=${repo} lane=${lane} tier=${tier}`;
 }
 
 /** Header line, blank line, body, trailing newline — the on-disk shape. */
-export function composeDropJobFile(input: Pick<DropJobInput, 'lane' | 'tier' | 'body'>): string {
-  return `${dropJobHeader(input.lane, input.tier)}\n\n${input.body}\n`;
+export function composeDropJobFile(input: Pick<DropJobInput, 'lane' | 'tier' | 'body' | 'repo'>): string {
+  return `${dropJobHeader(input.lane, input.tier, input.repo)}\n\n${input.body}\n`;
 }
 
 /**
  * Mirrors the ingest's accept list. Every failure names a machine reason:
  * `id-shape`, `lane`, `tier`, `empty-body`, `control-characters`,
- * `denied-content`, `too-large`.
+ * `denied-content`, `too-large`, `repo` (not one of DROP_JOB_REPOS).
  */
-export function validateDropJob(input: { id: unknown; lane: unknown; tier: unknown; body: unknown }): DropJobValidation {
+export function validateDropJob(input: { id: unknown; repo?: unknown; lane: unknown; tier: unknown; body: unknown }): DropJobValidation {
   const reasons: string[] = [];
   if (typeof input.id !== 'string' || !DROP_JOB_ID.test(input.id)) reasons.push('id-shape');
+  if (input.repo !== undefined && (typeof input.repo !== 'string' || !DROP_JOB_REPOS.includes(input.repo))) reasons.push('repo');
   if (typeof input.lane !== 'string' || !LANES.has(input.lane)) reasons.push('lane');
   if (typeof input.tier !== 'string' || !TIERS.has(input.tier)) reasons.push('tier');
   const body = input.body;
@@ -211,11 +226,41 @@ export function validateDropJob(input: { id: unknown; lane: unknown; tier: unkno
     if (CONTROL_BESIDES_NL_TAB.test(body)) reasons.push('control-characters');
     if (DENIED_CONTENT.test(body)) reasons.push('denied-content');
   }
+  // Shape of what would land on disk, checked against the ingest's own patterns.
+  if (typeof input.id === 'string' && DROP_JOB_ID.test(input.id)) {
+    const name = `${DROP_JOB_FILE_PREFIX}${input.id}.md`;
+    if (!INGEST_JOB_ID.test(`${DROP_JOB_FILE_PREFIX}${input.id}`) || !INGEST_JOB_FILE.test(name)) reasons.push('file-name');
+  }
+  if (typeof input.lane === 'string' && typeof input.tier === 'string') {
+    const header = dropJobHeader(input.lane, input.tier, typeof input.repo === 'string' ? input.repo : undefined);
+    const parsed = INGEST_JOB_HEADER.exec(header);
+    if (!parsed || !LANES.has(parsed[2]!) || !TIERS.has(parsed[3]!)) {
+      if (!reasons.some((r) => r === 'repo' || r === 'lane' || r === 'tier')) reasons.push('header');
+    }
+  }
   if (typeof input.lane === 'string' && typeof input.tier === 'string' && typeof body === 'string'
-    && Buffer.byteLength(composeDropJobFile({ lane: input.lane, tier: input.tier, body }), 'utf8') > DROP_JOB_MAX_FILE_BYTES) {
+    && Buffer.byteLength(composeDropJobFile({ lane: input.lane, tier: input.tier, body, repo: typeof input.repo === 'string' ? input.repo : undefined }), 'utf8') > DROP_JOB_MAX_FILE_BYTES) {
     reasons.push('too-large');
   }
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
+const REASON_WORDS: Record<string, string> = {
+  'id-shape': 'the job id must be 3 to 40 capital letters or digits after RQ-PHX-',
+  repo: `the repo must be one of ${DROP_JOB_REPOS.join(', ')}`,
+  lane: `the lane must be one of ${DROP_JOB_LANES.join(', ')}`,
+  tier: `the tier must be one of ${DROP_JOB_TIERS.join(', ')}`,
+  'file-name': 'the file name must be RQ-PHX-<id>.md',
+  header: 'the first line must be "#job repo=<repo> lane=<lane> tier=<tier>"',
+  'empty-body': 'the job body is empty',
+  'control-characters': 'the job body has control characters',
+  'denied-content': 'the job body names a protected path',
+  'too-large': `the job is over ${DROP_JOB_MAX_FILE_BYTES} bytes`,
+};
+
+/** Plain-words refusal for a failed validation: one sentence an operator can act on. */
+export function explainDropJobReasons(reasons: readonly string[]): string {
+  return `refused: ${reasons.map((r) => REASON_WORDS[r] ?? r).join('; ')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +336,10 @@ export async function writeDropJob(
 ): Promise<DropJobWritten> {
   const validation = validateDropJob(input);
   if (!validation.ok) throw new DropJobValidationError(validation.reasons);
+  if (/(?:LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN)/.test(input.id)
+    && pausedFamily(await readLaunchFamilies(root, now().getTime()), `${DROP_JOB_FILE_PREFIX}${input.id}`)) {
+    throw new DropJobValidationError(['family paused: recent workers found no source or made no changes']);
+  }
   const name = `${DROP_JOB_FILE_PREFIX}${input.id}.md`;
   const dir = await realInside(root, 'leader', 'drop', 'claude');
   await mkdir(dir, { recursive: true });
@@ -372,8 +421,8 @@ export async function listDropJobs(root: string, now: () => number = Date.now): 
         const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n');
         const header = HEADER_LINE.exec(lines[0] ?? '');
         if (header) {
-          lane = header[1]!;
-          tier = header[2]!;
+          lane = header[2]!;
+          tier = header[3]!;
         }
         // Line 1 is the header only when it parses — otherwise it is content.
         const firstBody = lines.slice(header ? 1 : 0).find((line) => line.trim() !== '');

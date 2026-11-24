@@ -49,6 +49,7 @@ export function DiskCard({ visible = true }: { visible?: boolean }) {
         <li key={state}>{label}: {counts[state]}</li>)}</ul>
       <p>Safe to remove: {counts.safe} ({bytesText(report.reclaimableBytes)}{report.reclaimableComplete ? '' : ' or more'}).</p>
       {!report.sourcesOk && <p data-unknown>Some records could not be read, so nothing is marked safe.</p>}
+      {over && <p>To list the removal commands, run <code className={styles.command}>phm worktrees --reap --plan</code></p>}
       {counts.safe > 0 && <p>To remove them, run <code className={styles.command}>phm worktrees --reap --apply</code></p>}
     </>;
   }

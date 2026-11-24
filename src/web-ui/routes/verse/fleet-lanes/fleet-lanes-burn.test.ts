@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fleetRunsFixture, withLane } from '../fleet/fleet-runs-fixtures.test-support.js';
-import { burnLine, burnTotals, formatTokens, laneBars } from './fleet-lanes-model.js';
+import { burnLine, burnTotals, formatTokens } from './fleet-lanes-model.js';
+import { laneCard } from './lanes-board-model.js';
 
 describe('lane burn', () => {
   it.each([
@@ -12,7 +13,7 @@ describe('lane burn', () => {
 
   it('totals reported values independently and preserves lane values', () => {
     const runs = withLane(fleetRunsFixture(), { lane: 'codex-personal', tokensLastHour: 1_300_000, merged24h: 9 });
-    expect(laneBars(runs)[0]).toMatchObject({ tokensLastHour: 1_300_000, merged24h: 9 });
+    expect(laneCard(runs.lanes[0], false)).toMatchObject({ tokensLastHour: 1_300_000, merged24h: 9 });
     expect(burnTotals(runs)).toEqual({ tokensLastHour: 1_300_000, reportingLanes: 1, merged24h: 14 });
     expect(burnLine(burnTotals(runs))).toBe('1.3M tokens in the last hour across 1 reporting lane');
     const both = withLane(runs, { lane: 'devin', tokensLastHour: 0, merged24h: null });
