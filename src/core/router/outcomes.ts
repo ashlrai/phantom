@@ -3,6 +3,7 @@ import { open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { ashlrHome } from '../cloud/store.js';
 import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 
 // Read-only recorded job outcomes from the newest ROUTER_OUTCOME_LEDGER_LIMIT
@@ -20,7 +21,13 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // the market's recorded routing verdict as market_lane/market_preferred/
 // market_override/market_reasons — decision-side intent and reason codes
 // (no_runnable_lane, hysteresis_*, global_admission) distinct from the
-// claim rows' launch record. The ledgers are append-only and unbounded, so each
+// claim rows' launch record. jobs.jsonl queue rows also carry the
+// dispatcher's recorded repo cell (`repo` — a bare fleet name or an
+// owner/repo pair), which folds as `repo` newest-explicit-wins in the
+// bounded repo-label shape: the repo the job targeted reaches
+// router.outcome.v1 instead of stopping at the ledger, so per-repo
+// outcome mixes can be read beside the per-lane and per-class ones. The
+// ledgers are append-only and unbounded, so each
 // read retains a tail window: an oversized ledger reports truncated:true (or
 // spend_truncated/market_truncated for the joined sources) and folds only
 // the retained rows, never a refused read. jobs.jsonl finish rows carry
@@ -41,7 +48,15 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // per-attempt id and `jobId` the logical queue id, so only `jobId` keys an
 // outcome — the attempt id never mints a phantom outcome, and a queue
 // job's launch/finish rows fold together whether one session or a later
-// retry ran them. Finish rows also carry dispatchd's job_usage block
+// retry ran them. Node-runner finish rows (phm-node-runner.v1) carry the
+// same dual-id contract — `job` is the per-claim id (<jobId>:<token>)
+// and `jobId` the logical node-queue id the claim worked — so only
+// `jobId` keys their outcome either, and the runner's recorded verdict
+// folds as node_outcome/node_id/node_pack: the fleet's recorded
+// succeeded/fenced/failed word for the offloaded pack job plus the node
+// and pack that ran it — the node pool's execution evidence reaching
+// router.outcome.v1 instead of stopping at the attempt-scoped id.
+// Finish rows also carry dispatchd's job_usage block
 // (acus — the Devin lane's billed spend, the token breakdown, and the
 // usage_source/usage_missing provenance labels) plus job_diff_metrics'
 // diff_files/diff_lines: the fold keeps each recorded figure
@@ -85,8 +100,8 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // in aggregate. jobs.jsonl `session_handoff_advisory` rows — dispatchd's
 // session-failover.v1 provider-wall receipts (rate-limit verdicts land
 // here through metric(); the producer's quota-exhausted verdicts land in
-// work-market.jsonl through market_metric(), where the same decision's
-// rejection evidence already folds through the route_decision joins) —
+// work-market.jsonl through market_metric(), where the read joins them
+// back newest-ts-wins against the standing jobs-ledger advisory) —
 // fold as
 // handoff_trigger/handoff_lane/handoff_target: the fleet's recorded
 // verdict that a run attempt died on a usage-limit wall or that a
@@ -146,7 +161,65 @@ import { readLaneScores, type LaneScoresRead } from '../eval/passk.js';
 // router.outcome.v1 instead of stopping at the merge-latency report.
 // Rows for PRs no jobs outcome claims unambiguously join nothing, and
 // a missing or cut merge-events tail leaves every merge_queue null —
-// unknown, never a guessed queue history.
+// unknown, never a guessed queue history. The same check record also
+// resolves `ci_first_pass` fill-only when no jobs row recorded a
+// verdict: any recorded check failure reads false, a `checks_passed`
+// boundary or a recorded merge beside observed check activity reads
+// true, and anything else stays null.
+// `merged`, `ttm_s`, `ci_wall_s`, `cost_usd`, `repo` and the new
+// `pool_pct_used` additionally join a sixth ledger,
+// <ashlr>/metrics/reward-signals.jsonl — the reward-signal substrate
+// (`v:1` rows the daemon's reward-sync feed and supervising bridges
+// append: resolved merge verdicts, dispatch-to-merge and CI-wall
+// milliseconds, metered pool cost) that persists resolved per-job
+// outcome evidence far longer than the bounded jobs tail. The join
+// fills only fields the jobs fold left null — a recorded jobs-ledger
+// verdict or measurement always wins, and ttm_s fills only while the
+// standing merge verdict is a merge — so the substrate recovers
+// verdicts and cost evidence the retained window dropped without ever
+// contradicting the ledger. `pool_pct_used` is the row's recorded
+// subscription-pool percentage points consumed (cost.pctUsedDelta) —
+// the only per-job subscription-quota cost figure, since subscription
+// lanes record no cost_usd and acus covers only the Devin lane's ACU
+// spend; it is a different unit than either and never summed with
+// them. A missing, unreadable or cut reward tail degrades the same
+// way the other side ledgers do: reward_state reports its health and
+// every joined field stays at its jobs-ledger value — unknown, never
+// a guessed outcome.
+// A seventh ledger joins under the same runs dir —
+// <runs>/metrics/launch-cost.jsonl, the bounded append-only
+// fleet.launch-cost.v1 journal (src/core/fleet/launch-cost.ts; the
+// contrib/mac/launch_cost.py producer): the fleet's recorded
+// first-minute process/CPU probe per launch attempt. `foldLaunchCosts`
+// validates each row under the producer's closed contract and the read
+// joins it as launch_cost_status/launch_peak_processes/
+// launch_mean_cpu_pct/launch_peak_cpu_pct — the only per-attempt
+// resource-cost evidence subscription lanes record, since their
+// finish rows carry no cost_usd. The producer keys measured rows by
+// `<job>-<12 lowercase hex claim hash>` (one row per attempt) and
+// unknown probes by the bare job id, so the join resolves each
+// launchId against the folded job window: a launchId that is itself a
+// folded job id keys itself (a job id may legitimately end in a
+// 12-hex segment), a measured/partial row's `-<12hex>` suffix strips
+// to the job it measured, and an unknown-status row prefers an exact
+// job-id match before trying the stripped prefix. Rows resolving
+// outside the jobs window join nothing and never create outcomes;
+// several attempts for one job leave the last appended row standing.
+// `launch_cost_state` reports the ledger's health and
+// `launch_cost_truncated` marks a cut tail; anything but 'read' leaves
+// every launch_cost_* field null — unknown, never a zeroed or guessed
+// resource figure.
+// An eighth ledger joins under the ASHLR home root —
+// <ashlr>/fleet/cross-review.jsonl, the audit journal
+// src/core/fleet/cross-review-run.ts appends each recorded cross-model
+// review verdict and merge decision to. `foldCrossReviews` keeps the
+// `kind:'review'` rows' per-PR verdicts (approve/reject/failed/skipped)
+// and the fold joins each outcome's `cross_review` through the job's
+// unambiguous canonical PR claim — the same claim rule merge_queue and
+// the revert joins use — carrying the verdict and its `at` timestamp.
+// `cross_review_state` reports the ledger's health and
+// `cross_review_truncated` marks a cut tail; anything but 'read' leaves
+// every cross_review null — unknown, never a guessed review.
 
 /** Newest-bytes bound retained from the append-only jobs ledger. */
 export const ROUTER_OUTCOME_LEDGER_LIMIT = 16 * 1024 * 1024;
@@ -155,6 +228,31 @@ export const ROUTER_SPEND_LEDGER_RELATIVE = join('metrics', 'api-spend.jsonl');
 export const ROUTER_MARKET_LEDGER_RELATIVE = join('metrics', 'work-market.jsonl');
 export const ROUTER_EMPTY_TAGS_LEDGER_RELATIVE = join('metrics', 'empty-tags.jsonl');
 export const ROUTER_MERGE_EVENTS_LEDGER_RELATIVE = join('metrics', 'merge-events.jsonl');
+/**
+ * The reward-signal ledger's path relative to the ASHLR home root —
+ * `<ashlr>/metrics/reward-signals.jsonl`, the same root the eval
+ * passk projection resolves under (ASHLR_HOME honored). Unlike the
+ * runs-dir ledgers it is not joined under runsDir.
+ */
+export const ROUTER_REWARD_LEDGER_RELATIVE = join('metrics', 'reward-signals.jsonl');
+/**
+ * The launch-cost ledger's path relative to the runs dir —
+ * `<runs>/metrics/launch-cost.jsonl`, the bounded append-only
+ * fleet.launch-cost.v1 journal src/core/fleet/launch-cost.ts reads for
+ * fleet vitals. Like the other runs-dir side ledgers it is not joined
+ * under the ASHLR home root.
+ */
+export const ROUTER_LAUNCH_COST_LEDGER_RELATIVE = join('metrics', 'launch-cost.jsonl');
+/**
+ * The cross-review ledger's path relative to the ASHLR home root —
+ * `<ashlr>/fleet/cross-review.jsonl`, the audit journal
+ * src/core/fleet/cross-review-run.ts appends each recorded cross-model
+ * review verdict and merge decision to (the same root the eval passk
+ * projection and reward-signals ledger resolve under, ASHLR_HOME
+ * honored). Unlike the runs-dir side ledgers it is not joined under
+ * runsDir.
+ */
+export const ROUTER_CROSS_REVIEW_LEDGER_RELATIVE = join('fleet', 'cross-review.jsonl');
 
 export interface RouterOutcome {
   schema: 'router.outcome.v1';
@@ -168,6 +266,21 @@ export interface RouterOutcome {
    * ledger recorded one — unknown stays null, never derived.
    */
   work_class: string | null;
+  /**
+   * The repo the job targeted, recorded on jobs.jsonl rows as `repo` —
+   * dispatchd writes the ready line's repo cell on its queue rows
+   * (enqueue/claim/launch/skip/defer/outcome/task_outcome alike). The
+   * value joins only in the bounded repo-label shape — a bare fleet
+   * name (`phantom`, `lexicon`, `ashlr-md`) or an `owner/repo` pair —
+   * and the newest recognized value wins like lane/model/tier: a row
+   * without `repo` or with a value outside the shape leaves the
+   * standing record, so absolute paths, whitespace and deeper paths
+   * are skipped, never recorded raw, and never guessed from the job
+   * id or PR URL. Null when no retained row recorded a bounded repo —
+   * unknown, not "no repo". The reward-signal ledger's recorded `repo`
+   * fills it when the jobs fold left it null (same bounded shape).
+   */
+  repo: string | null;
   /**
    * The dispatch claim's recorded lane override — the pair a `claim` or
    * `batch_claim` row writes when the launch left its hinted lane.
@@ -199,7 +312,13 @@ export interface RouterOutcome {
    * when no phase field resolves — or merged:true; false on CLOSED evidence
    * likewise or merged:false; else null. A resolved phase stays
    * authoritative over the event name, and mergedAt/closedAt stay the
-   * preferred stamps on terminal rows.
+   * preferred stamps on terminal rows. The reward-signal ledger's
+   * resolved verdict fills it when the jobs fold recorded none — the
+   * substrate persists resolved merge evidence the bounded tail drops;
+   * a recorded jobs-ledger verdict always wins, and the reward row's
+   * merged:false covers its closed-unmerged and reverted resolutions
+   * alike (the v1 schema has no revert dimension — `reverted` still
+   * joins independently).
    */
   merged: boolean | null;
   /**
@@ -211,16 +330,38 @@ export interface RouterOutcome {
    * recorded revert is never contradicted by a later reverted:false.
    */
   reverted: boolean | null;
+  /**
+   * The job's recorded CI first-pass verdict — a jobs-row boolean wins;
+   * otherwise the joined merge-queue check record resolves it fill-only
+   * (any recorded check failure reads false, a `checks_passed` boundary
+   * or a recorded merge beside observed check activity reads true, and
+   * everything else stays null — unknown, never guessed).
+   */
   ci_first_pass: boolean | null;
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
   /**
    * USD cost recorded for the job: an explicit cost field on a jobs.jsonl row
    * (cost_usd|usd|cost) wins; otherwise the sum of api-spend.jsonl call costs
-   * naming the job. Null when neither source reported a cost — a job whose
-   * calls carried no cost is unknown, never zero. May include
-   * collector-estimated costs (cost_estimated rows still report a USD figure).
+   * naming the job; the reward-signal row's recorded `cost.costUsd` is the
+   * last resort when neither reported one. Null when no source reported a
+   * cost — a job whose calls carried no cost is unknown, never zero. May
+   * include collector-estimated costs (cost_estimated rows still report a
+   * USD figure).
    */
   cost_usd: number | null;
+  /**
+   * Recorded subscription-pool percentage points the job consumed — the
+   * reward-signal row's `cost.pctUsedDelta`, the only per-job
+   * subscription-quota cost figure: subscription lanes record no
+   * cost_usd and acus covers only the Devin lane's ACU spend. Joins
+   * only from <ashlr>/metrics/reward-signals.jsonl in the bounded
+   * [0, 100] percentage-point shape; null when the reward ledger was
+   * not read, no row named the job, or the row's pool window reset or
+   * readings were missing (the producer leaves the delta null —
+   * unknown stays unknown, never zero). A different unit than
+   * cost_usd and acus: never summed with either.
+   */
+  pool_pct_used: number | null;
   wall_s: number | null;
   /**
    * Recorded usage total in tokens — the finish row's `tokens_total`/
@@ -259,8 +400,13 @@ export interface RouterOutcome {
    * merge verdict (the same newest-timestamp rule `merged` uses), only when
    * that verdict is a merge, and a later winning verdict replaces it
    * wholesale — a close clears it and a newer merge row without the field
-   * leaves it null rather than keeping a stale figure. Null when no
-   * standing merge recorded one; never derived from wall_s or timestamps.
+   * leaves it null rather than keeping a stale figure. The
+   * reward-signal row's recorded `timeToMergeMs` fills it when the
+   * jobs fold recorded none and the standing merge verdict is a merge
+   * — the feed's mergedAt−dispatchedAt, the same dispatch-to-merge
+   * measure eval-report derives when the ledger lacks ttm_s. Null
+   * when no standing merge recorded one; never derived from wall_s
+   * or timestamps.
    */
   ttm_s: number | null;
   /**
@@ -289,7 +435,11 @@ export interface RouterOutcome {
    * complete stamp must not precede the start. Anything else — a missing
    * boundary, reversed stamps or repeated pairs — leaves the job absent
    * here so its outcome keeps null: unknown stays unknown, never a
-   * partial guess and never another phase's duration.
+   * partial guess and never another phase's duration. The
+   * reward-signal row's recorded `ciWallMs` fills it when the jobs
+   * fold recorded none — the feed computes it under the same
+   * exactly-one-boundary-pair rule, so a persisted row carries the
+   * same evidence the retained tail may have dropped.
    */
   ci_wall_s: number | null;
   /**
@@ -643,12 +793,20 @@ export interface RouterOutcome {
    * produce nothing publishable; and `quota-exhausted`, the
    * pending-job verdict dispatchd writes through `market_metric()` to
    * metrics/work-market.jsonl when the job's lane measured zero quota,
-   * carrying the market's chosen lane as `target` — that market-side
-   * copy is a different ledger's row (the same decision's rejection
-   * evidence already folds through the route_decision joins), while
-   * this fold keeps the producer's full vocabulary so a
-   * quota-exhausted row that lands in the jobs window still joins
-   * under the same rules. `handoff_trigger` joins only in the producer's closed
+   * carrying the market's chosen lane as `target`. That market-side
+   * copy lives in a different ledger, so `readRouterOutcomes` joins it
+   * back under the same `market_state` health as the route_decision
+   * verdicts: `foldMarketHandoffAdvisories` collapses the market
+   * tail's advisory rows to each job's newest recorded verdict, and a
+   * market advisory supersedes the jobs-ledger triple only when its
+   * recorded `ts` is strictly newer than the standing jobs-ledger
+   * advisory's — no jobs advisory means the market verdict fills the
+   * triple, an unorderable jobs advisory (no parseable `ts`) leaves
+   * the jobs verdict standing, and market rows naming jobs outside
+   * the jobs window join nothing. This fold keeps the producer's
+   * full vocabulary so a quota-exhausted row that lands in the jobs
+   * window still joins under the same rules. `handoff_trigger` joins
+   * only in the producer's closed
    * vocabulary (`rate-limit`, `quota-exhausted`); `handoff_lane` the
    * advisory's lane in the bounded lane-id shape and `handoff_target`
    * its target lane when one was recorded (the market's chosen lane
@@ -730,6 +888,35 @@ export interface RouterOutcome {
   pool_mem_free_pct: number | null;
   pool_swap_gb: number | null;
   /**
+   * The node runner's recorded execution verdict for the job — a
+   * `phm-node-runner.v1` finish row's `outcome` word in the producer's
+   * closed three-value vocabulary (src/core/drive/nodes/runner.ts):
+   * `succeeded` (the pack completed and staged its result artifact),
+   * `fenced` (the claim's lease was lost mid-run — renewal failed,
+   * expiry passed or the node was demoted) and `failed` (the pack
+   * errored or its result could not be staged). This is the offloaded
+   * node-pack job's terminal execution verdict — the node pool's
+   * answer to "did the work run" — distinct from every merge and
+   * launch-decision field: node-pack jobs produce result artifacts,
+   * not pull requests, so none of the three words is a terminal merge
+   * phase and `merged` stays null. The row counts only on
+   * the `phm-node-runner.v1` schema with an `outcome` inside the
+   * vocabulary; the newest recognized finish row replaces the triple
+   * wholesale and every other row leaves it alone. `node_id` joins the
+   * row's `node` — the machine that ran the pack — and `node_pack`
+   * its `pack` reference, each only in the bounded identifier shape
+   * the producer's validId alphabet allows (a malformed value drops
+   * to null without discarding the recorded verdict, and is never
+   * recorded raw). Claim and leader fencing tokens on the same rows
+   * are machinery, never outcome evidence, and never join. All three
+   * stay null when no recognized runner row named the job — the
+   * retained window recorded no node execution verdict, which is
+   * unknown, not "never ran on a node".
+   */
+  node_outcome: string | null;
+  node_id: string | null;
+  node_pack: string | null;
+  /**
    * The job's recorded merge-queue evidence — the merge-events.jsonl
    * observations for the job's newest unambiguous canonical PR claim
    * (`owner/repo#n`, the same prKey the authority revert join uses),
@@ -743,6 +930,59 @@ export interface RouterOutcome {
    * verdict follows.
    */
   merge_queue: MergeQueueEvidence | null;
+  /**
+   * The job's standing pull request's newest recorded cross-model review
+   * verdict — the `kind:'review'` rows of the cross-review ledger
+   * (`<ashlr>/fleet/cross-review.jsonl`, the audit journal
+   * src/core/fleet/cross-review-run.ts appends), joined by
+   * readRouterOutcomes under `cross_review_state` through the job's
+   * newest unambiguous canonical PR claim (`owner/repo#n`, the same
+   * prKey the merge-queue and authority revert joins use). `outcome` is
+   * the review record's verdict in the producer's closed vocabulary —
+   * `approve`/`reject` are the independent reviewer's recorded verdicts,
+   * `failed`/`skipped` the recorded non-verdicts (the reviewer could not
+   * run, or the change escalated before a model was asked) — and `at`
+   * the review record's own timestamp for staleness judgment (`null`
+   * when the row's `at` was not a parseable timestamp). The newest
+   * appended review row for the PR stands, matching the ledger's own
+   * newest-wins rule; `kind:'decision'` rows are merge-action evidence,
+   * never review verdicts, and never join. Null when the cross-review
+   * ledger was not read, the job never claimed a canonical github.com
+   * pull URL unambiguously, or no review row named that PR — unknown,
+   * never a guessed review. A verdict binds to the head the reviewer
+   * saw (`reviewedHeadSha`); the outcome carries no current-head field
+   * to compare it against, so `at` is the staleness signal a consumer
+   * judges.
+   */
+  cross_review: CrossReviewEvidence | null;
+  /**
+   * The fleet's recorded first-minute launch resource probe for the
+   * job — metrics/launch-cost.jsonl's fleet.launch-cost.v1 rows
+   * (the contrib/mac/launch_cost.py producer, read for fleet vitals by
+   * src/core/fleet/launch-cost.ts), joined by readRouterOutcomes under
+   * `launch_cost_state`. The producer keys measured rows by
+   * `<job>-<12 lowercase hex claim hash>` — one row per launch
+   * attempt — and unknown probes by the bare job id; the read resolves
+   * each launchId against the folded job window (see the module
+   * comment) and the last appended row for a resolved job stands.
+   * `launch_cost_status` is the standing row's recorded probe verdict —
+   * `measured` (nearly-full 60-second window, at least 12 samples),
+   * `partial` (shorter recorded coverage) or `unknown` (the probe ran
+   * but recorded no metrics — missing custody, an invalid claim or
+   * unavailable process data) — the only per-attempt resource-cost
+   * evidence subscription lanes record, since their finish rows carry
+   * no cost_usd. `launch_peak_processes`, `launch_mean_cpu_pct` and
+   * `launch_peak_cpu_pct` are the row's recorded first-minute figures
+   * (peak process count; mean and peak CPU as percent of one core),
+   * each null unless the standing row recorded it — an `unknown` row
+   * carries none by contract. All four stay null when no launch-cost
+   * row resolved to the job or the ledger was not read — unknown,
+   * never a zeroed or guessed resource figure.
+   */
+  launch_cost_status: 'measured' | 'partial' | 'unknown' | null;
+  launch_peak_processes: number | null;
+  launch_mean_cpu_pct: number | null;
+  launch_peak_cpu_pct: number | null;
   /** The lane+model's pass^k (passPowK) from the latest eval.lane-scores.v1 projection; null when unknown. */
   passk: number | null;
 }
@@ -889,6 +1129,19 @@ const usageLabel = (r: Row, ...keys: string[]): string | null => {
 };
 
 /**
+ * The recorded repo label — a bare fleet name or an `owner/repo` pair,
+ * each segment a bounded identifier (`phantom`, `ashlr-md`,
+ * `ashlrai/phantom` all fit; absolute paths, whitespace and deeper
+ * paths do not). dispatchd's repo cell is a repo name, not a path, so
+ * anything outside the shape is skipped rather than recorded raw.
+ */
+const REPO_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$/;
+const repoLabel = (r: Row): string | null => {
+  const v = str(r, 'repo');
+  return v !== null && REPO_LABEL.test(v) ? v : null;
+};
+
+/**
  * The finish row's recorded empty-diff classification. dispatchd writes
  * `empty_class` from launch_precheck.classify_empty — a closed three-value
  * vocabulary (EMPTY_NO_DIFF/EMPTY_ERROR/EMPTY_UNKNOWN), so unlike
@@ -928,6 +1181,40 @@ const BATCH_SESSION_PREFIX = 'RQ-BATCH-';
  * just-pulled task's ids like `launch`/`finish` do.
  */
 const SESSION_POOL_SCHEMA = 'fleet.session-pool.v1';
+/**
+ * The node runner's ledger schema (src/core/drive/nodes/runner.ts —
+ * the multi-Mac node pool's pack executor). Its finish rows carry the
+ * same dual-id contract the session pool uses: `job` is the unique
+ * per-claim id (`<jobId>:<token>` — the claim's fencing token makes
+ * every attempt distinct) and `jobId` the logical node-queue id the
+ * claim worked (`ready:<job>:<attempt>`, the node bridge's
+ * routerJobId). Only `jobId` may key an outcome: the standard dialect
+ * would otherwise mint one phantom outcome per claim token and never
+ * attach the finish rows to the queue job they actually ran, and a
+ * retried claim's rows fold into the same outcome like the session
+ * pool's. The row's `outcome` is the runner's closed terminal verdict
+ * vocabulary — `succeeded` (the pack completed and staged its result
+ * artifact), `fenced` (the lease was lost mid-run — renewal failed,
+ * expiry passed or the node was demoted) and `failed` (the pack errored
+ * or its result could not be staged) — an execution verdict, never a
+ * merge phase: node-pack jobs produce result artifacts, not pull
+ * requests, so none of the three words resolves a merge verdict and
+ * `merged` stays null. The producer writes exactly one row shape
+ * (`event: 'finish'`); the fold keys the verdict on the schema plus
+ * the bounded outcome word and lets `node`/`pack` join independently
+ * in the producer's id shape.
+ */
+const NODE_RUNNER_SCHEMA = 'phm-node-runner.v1';
+const NODE_RUNNER_OUTCOMES: ReadonlySet<string> = new Set(['succeeded', 'fenced', 'failed']);
+/**
+ * Bounded identifier shape for the runner's `node` and `pack` fields —
+ * the producer validates both through drive/nodes/state.ts's validId
+ * (`[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}`); the fold keeps the same
+ * alphabet at the 63-character bound the file's other id fields use.
+ * A malformed value drops to null rather than skipping the recorded
+ * verdict, and anything outside the shape is never recorded raw.
+ */
+const NODE_RUNNER_ID = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,63}$/;
 
 /**
  * The batch member's recorded end-of-session word — the `task_outcome`
@@ -1151,6 +1438,30 @@ const HANDOFF_EVENT = 'session_handoff_advisory';
 const HANDOFF_TRIGGERS: ReadonlySet<string> = new Set(['rate-limit', 'quota-exhausted']);
 
 /**
+ * One validated session-handoff advisory row's recorded verdict. The
+ * producer's closed trigger vocabulary gates the whole row — a
+ * malformed trigger skips it entirely — while lane and target join
+ * independently in the bounded lane-id shape, so a malformed value
+ * drops to null rather than discarding the recorded trigger. Shared
+ * by the jobs-ledger fold, the market-ledger advisory fold and the
+ * jobs-side ordering scan so all three apply the producer's contract
+ * identically.
+ */
+const handoffAdvisory = (r: Row): { trigger: string; lane: string | null; target: string | null } | null => {
+  if (r['schema'] !== HANDOFF_SCHEMA) return null;
+  if (str(r, ...EVENT_NAME_KEYS)?.toLowerCase() !== HANDOFF_EVENT) return null;
+  const trigger = str(r, 'trigger');
+  if (trigger === null || !HANDOFF_TRIGGERS.has(trigger)) return null;
+  const lane = str(r, 'lane');
+  const target = str(r, 'target');
+  return {
+    trigger,
+    lane: lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null,
+    target: target !== null && LANE_BLOCKED_HINT.test(target) ? target : null,
+  };
+};
+
+/**
  * The autobackoff lane-hold receipt's event name and the producer's
  * pattern-id tables, mirrored from contrib/mac/dispatchd.py: the
  * usage/quota scanner's `AB_RX` ids classify `usage-limit` walls and
@@ -1355,10 +1666,25 @@ export interface RouterOutcomeFoldOptions {
    * `foldMergeEvents` over metrics/merge-events.jsonl. The fold joins each
    * outcome's newest unambiguous canonical PR claim (the same claim rule
    * `revertedPrKeys` applies) to its summary as `merge_queue`; a job with
-   * no unambiguous claim or no recorded events keeps null. Absent means no
-   * merge-events join — every merge_queue stays null.
+   * no unambiguous claim or no recorded events keeps null. The joined
+   * check record also resolves `ci_first_pass` fill-only — any recorded
+   * check failure reads false, a `checks_passed` boundary or a recorded
+   * merge beside observed check activity reads true, anything else
+   * stays null. Absent means no merge-events join — every merge_queue
+   * stays null and ci_first_pass keeps its jobs-row value.
    */
   mergeEvents?: ReadonlyMap<string, MergeQueueEvidence>;
+  /**
+   * `owner/repo#n` (lowercase repo) → the PR's newest recorded cross-model
+   * review verdict, e.g. `foldCrossReviews` over
+   * <ashlr>/fleet/cross-review.jsonl. The fold joins each outcome's
+   * newest unambiguous canonical PR claim (the same claim rule
+   * `mergeEvents` and `revertedPrKeys` apply) to its summary as
+   * `cross_review`; a job with no unambiguous claim or no recorded review
+   * keeps null. Absent means no cross-review join — every cross_review
+   * stays null.
+   */
+  crossReviews?: ReadonlyMap<string, CrossReviewEvidence>;
 }
 
 /** Folds JSONL text into one outcome per job. Explicit fields only; nothing inferred. */
@@ -1375,10 +1701,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       malformed++;
     }
   }
-  // fleet.session-pool.v1 rows resolve their job identity differently:
-  // `job` is the per-attempt id and `jobId` the logical queue id, so the
-  // attempt id must never key an outcome (see SESSION_POOL_SCHEMA).
-  const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA
+  // fleet.session-pool.v1 and phm-node-runner.v1 rows resolve their job
+  // identity differently: `job` is the per-attempt id and `jobId` the
+  // logical queue id, so the attempt id must never key an outcome (see
+  // SESSION_POOL_SCHEMA and NODE_RUNNER_SCHEMA).
+  const jobId = (r: Row) => r['schema'] === SESSION_POOL_SCHEMA || r['schema'] === NODE_RUNNER_SCHEMA
     ? str(r, 'jobId')
     : str(r, 'job', 'job_id', 'jobId', 'id');
   const prUrl = (r: Row) => str(r, 'url', 'pr_url', 'prUrl', 'pr');
@@ -1511,8 +1838,9 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     }
     const o: RouterOutcome = outcomes.get(j) ?? {
       schema: 'router.outcome.v1', job_id: j, lane: null, model: null, tier: null, work_class: null,
+      repo: null,
       lane_hint: null, lane_override: null,
-      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+      merged: null, reverted: null, ci_first_pass: null, review_findings: null, cost_usd: null, pool_pct_used: null, wall_s: null,
       tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
       tokens_cache_read: null, tokens_cache_write: null,
       usage_source: null, usage_missing: null,
@@ -1529,13 +1857,16 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       handoff_trigger: null, handoff_lane: null, handoff_target: null,
       provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
       pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
-      merge_queue: null,
+      node_outcome: null, node_id: null, node_pack: null,
+      merge_queue: null, cross_review: null,
+      launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
       passk: null,
     };
     o.lane = str(r, 'lane', 'pool', 'arm') ?? o.lane;
     o.model = str(r, 'model') ?? o.model;
     o.tier = str(r, 'tier') ?? o.tier;
     o.work_class = str(r, 'work_class') ?? o.work_class;
+    o.repo = repoLabel(r) ?? o.repo;
     // The claim rows are the job's routing decisions: the newest one
     // stands, so a later claim that ran on its hint clears an earlier
     // override, and every non-claim row leaves the pair alone. A
@@ -1733,16 +2064,11 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
     // independently in the bounded lane-id shape, so a malformed value
     // drops to null rather than skipping the recorded trigger, and a
     // malformed trigger skips the row entirely — never recorded raw.
-    if (r['schema'] === HANDOFF_SCHEMA &&
-        str(r, ...EVENT_NAME_KEYS)?.toLowerCase() === HANDOFF_EVENT) {
-      const trigger = str(r, 'trigger');
-      if (trigger !== null && HANDOFF_TRIGGERS.has(trigger)) {
-        const lane = str(r, 'lane');
-        const target = str(r, 'target');
-        o.handoff_trigger = trigger;
-        o.handoff_lane = lane !== null && LANE_BLOCKED_HINT.test(lane) ? lane : null;
-        o.handoff_target = target !== null && LANE_BLOCKED_HINT.test(target) ? target : null;
-      }
+    const advisory = handoffAdvisory(r);
+    if (advisory !== null) {
+      o.handoff_trigger = advisory.trigger;
+      o.handoff_lane = advisory.lane;
+      o.handoff_target = advisory.target;
     }
     // The autobackoff lane-hold receipt is the fleet's confirmed
     // provider-wall verdict for the job — the usage/quota and auth
@@ -1790,6 +2116,29 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
         o.pool_swap_gb = num(r['swap_gb']);
       }
     }
+    // The node runner's finish receipt is the fleet's recorded
+    // execution verdict for an offloaded node-pack job — attempt
+    // evidence like the market and pool joins, not a launch or merge
+    // decision, so it competes with nothing: the newest recognized
+    // runner row replaces the triple wholesale and every other row
+    // leaves it alone. The row counts only on the
+    // phm-node-runner.v1 schema with an `outcome` inside the
+    // producer's closed vocabulary — succeeded/fenced/failed; a word
+    // outside it skips the row entirely, never recorded raw — while
+    // `node` and `pack` join independently in the bounded id shape,
+    // so a malformed value drops to null without discarding the
+    // recorded verdict. The row's `job`/`token`/`leaderToken` fields
+    // are claim machinery and never join.
+    if (r['schema'] === NODE_RUNNER_SCHEMA) {
+      const verdict = str(r, 'outcome');
+      if (verdict !== null && NODE_RUNNER_OUTCOMES.has(verdict)) {
+        const node = str(r, 'node');
+        const pack = str(r, 'pack');
+        o.node_outcome = verdict;
+        o.node_id = node !== null && NODE_RUNNER_ID.test(node) ? node : null;
+        o.node_pack = pack !== null && NODE_RUNNER_ID.test(pack) ? pack : null;
+      }
+    }
     outcomes.set(j, o);
   }
   if (opts.passkFor || opts.workClassFor) {
@@ -1804,13 +2153,27 @@ export function foldRouterOutcomes(text: string, opts: RouterOutcomeFoldOptions 
       }
     }
   }
-  if (opts.mergeEvents !== undefined) {
+  if (opts.mergeEvents !== undefined || opts.crossReviews !== undefined) {
     for (const o of outcomes.values()) {
       const prKey = jobPrKeys.get(o.job_id);
       if (prKey === undefined) continue;
-      const evidence = opts.mergeEvents.get(prKey);
-      if (evidence === undefined) continue;
-      o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+      if (opts.mergeEvents !== undefined) {
+        const evidence = opts.mergeEvents.get(prKey);
+        if (evidence !== undefined) {
+          o.merge_queue = { ...evidence, blocked_reasons: [...evidence.blocked_reasons] };
+          // Fill-only: a jobs-row ci_first_pass verdict always wins; the
+          // merge-queue check record resolves what the jobs rows left
+          // unknown. merged is the fold-time jobs verdict — reward-signal
+          // fills landing later get the same pass in readRouterOutcomes.
+          if (o.ci_first_pass === null) {
+            o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
+          }
+        }
+      }
+      if (opts.crossReviews !== undefined) {
+        const review = opts.crossReviews.get(prKey);
+        if (review !== undefined) o.cross_review = { ...review };
+      }
     }
   }
   return {
@@ -2037,6 +2400,95 @@ export function foldRouteDecisions(text: string): Map<string, MarketRouteDecisio
 }
 
 /**
+ * One job's newest recorded market-side session-handoff advisory —
+ * dispatchd's `quota-exhausted` verdicts, which `market_metric()`
+ * appends to work-market.jsonl beside the route decisions (the
+ * rate-limit verdicts take the jobs.jsonl `metric()` path instead).
+ * `ts` is the advisory row's recorded epoch-seconds timestamp,
+ * carried only so the read can order it against the jobs-ledger
+ * advisory's own timestamp — it never becomes an outcome field.
+ */
+export interface MarketHandoffAdvisory {
+  trigger: string;
+  lane: string | null;
+  target: string | null;
+  ts: number;
+}
+
+/**
+ * Folds work-market.jsonl `session_handoff_advisory` rows into each
+ * job's newest recorded advisory verdict. The dispatcher re-evaluates
+ * every waiting job's quota each tick, so rows collapse to the newest
+ * timestamp per job under the same latest-decision rule
+ * foldRouteDecisions applies. Row recognition, trigger vocabulary and
+ * lane/target bounding are the producer contract `handoffAdvisory`
+ * mirrors — shared with the jobs-ledger fold so the two ledgers can
+ * never disagree on what counts as a recorded advisory. Rows with a
+ * missing or non-finite `ts`, a wrong schema/event, an out-of-vocabulary
+ * trigger, or a malformed job id are skipped, never guessed; a job
+ * absent from the map keeps whatever the jobs-ledger fold recorded.
+ */
+export function foldMarketHandoffAdvisories(text: string): Map<string, MarketHandoffAdvisory> {
+  const latest = new Map<string, { ts: number; advisory: MarketHandoffAdvisory }>();
+  for (const line of text.split('\n')) {
+    // Cheap prefilter: the advisory value string appears under whichever
+    // event-alias key the row carries.
+    if (!line.includes('"session_handoff_advisory"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    const job = row['job'];
+    if (typeof job !== 'string' || job.length === 0 || job.length > 200) continue;
+    const ts = row['ts'];
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    const advisory = handoffAdvisory(row);
+    if (advisory === null) continue;
+    const prev = latest.get(job);
+    if (prev !== undefined && prev.ts >= ts) continue;
+    latest.set(job, { ts, advisory: { ...advisory, ts } });
+  }
+  return new Map([...latest].map(([job, entry]) => [job, entry.advisory]));
+}
+
+/**
+ * The parseable timestamp of each job's standing jobs-ledger
+ * session-handoff advisory — the last recognized advisory row in
+ * append order, the same row the fold's wholesale-replace rule keeps,
+ * with its `ts` read through the shared ledger timestamp keys. The
+ * market-side advisory join orders against this: a market advisory
+ * supersedes the jobs-ledger triple only when its recorded ts is
+ * strictly newer. A job whose standing advisory carries no parseable
+ * timestamp maps to null — ordering evidence that does not exist —
+ * and the jobs-ledger verdict then stands rather than a guessed
+ * ordering. A job absent from the map recorded no advisory at all.
+ */
+function latestJobsHandoffAdvisoryMs(text: string): Map<string, number | null> {
+  const latest = new Map<string, number | null>();
+  for (const line of text.split('\n')) {
+    if (!line.includes('"session_handoff_advisory"')) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (handoffAdvisory(row) === null) continue;
+    const job = str(row, 'job', 'job_id', 'jobId', 'id');
+    if (job === null) continue;
+    const at = Date.parse(str(row, ...LEDGER_TS_KEYS) ?? '');
+    latest.set(job, Number.isFinite(at) ? at : null);
+  }
+  return latest;
+}
+
+/**
  * The empty-tags ledger's row schema and closed tag vocabulary, mirrored
  * from the producer (src/core/fleet/empty-tags.ts): `phm jobs empty
  * --record` appends `job.empty-tag.v1` rows — { schema, job, lane, tag } —
@@ -2113,6 +2565,20 @@ export interface MergeQueueEvidence {
   /** Of those, rows recorded `required: true`. */
   required_check_failures: number;
   /**
+   * Recorded `checks_passed` rows — the observer's boundary verdict
+   * that every required check is known to have passed (the
+   * merge-latency queue-to-merge stage boundary). Counts rows, not
+   * distinct heads.
+   */
+  checks_passed: number;
+  /**
+   * Recorded `check_observed` rows of any conclusion — the observer's
+   * check coverage for the PR. `check_failures` counts the failure
+   * subset of this set; pending and success observations count only
+   * here.
+   */
+  check_observations: number;
+  /**
    * Distinct recorded `retry_requested` rows — deduplicated by
    * `at`+`head_sha` exactly like the merge-latency reader's retry
    * verdict, so a replayed append counts once.
@@ -2176,9 +2642,12 @@ const MERGE_UNTIMED_TYPES: ReadonlySet<string> = new Set([
  * recorded shapes — anything else is skipped, never guessed. `blocked`
  * reasons join distinct in first-seen order; retry rows dedupe by
  * `at`+`head_sha` like the sibling's retry verdict; `auto_merge` is the
- * last recorded toggle in append order. Rows for PRs no jobs outcome
- * claims unambiguously join nothing — the map itself never creates
- * outcomes.
+ * last recorded toggle in append order. `checks_passed` counts the
+ * recorded all-required-green boundary rows and `check_observations`
+ * the recorded `check_observed` rows of any conclusion — the coverage
+ * `check_failures` counts the failure subset of. Rows for PRs no jobs
+ * outcome claims unambiguously join nothing — the map itself never
+ * creates outcomes.
  */
 export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
   interface Acc {
@@ -2188,6 +2657,8 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     conflicts: number;
     checkFailures: number;
     requiredCheckFailures: number;
+    checkObservations: number;
+    checksPassed: number;
     retryKeys: Set<string>;
     retryFailedKeys: Set<string>;
     recuts: number;
@@ -2232,7 +2703,8 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     const key = `${repo.toLowerCase()}#${pr}`;
     const acc = prs.get(key) ?? {
       events: 0, blocked: [], blockedSeen: new Set<string>(), conflicts: 0,
-      checkFailures: 0, requiredCheckFailures: 0,
+      checkFailures: 0, requiredCheckFailures: 0, checkObservations: 0,
+      checksPassed: 0,
       retryKeys: new Set<string>(), retryFailedKeys: new Set<string>(),
       recuts: 0, autoMerge: null,
     };
@@ -2242,10 +2714,12 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
       acc.blocked.push(reason);
     }
     if (type === 'conflict') acc.conflicts++;
+    if (conclusion !== null) acc.checkObservations++;
     if (conclusion === 'failure') {
       acc.checkFailures++;
       if (required) acc.requiredCheckFailures++;
     }
+    if (type === 'checks_passed') acc.checksPassed++;
     if (type === 'retry_requested' || type === 'retry_failed') {
       const head = typeof row['head_sha'] === 'string' ? row['head_sha'].toLowerCase() : '';
       const dedupe = `${at}|${head}`;
@@ -2263,11 +2737,274 @@ export function foldMergeEvents(text: string): Map<string, MergeQueueEvidence> {
     conflicts: a.conflicts,
     check_failures: a.checkFailures,
     required_check_failures: a.requiredCheckFailures,
+    checks_passed: a.checksPassed,
+    check_observations: a.checkObservations,
     retries: a.retryKeys.size,
     retry_failures: a.retryFailedKeys.size,
     recuts: a.recuts,
     auto_merge: a.autoMerge,
   }]));
+}
+
+/**
+ * The recorded CI first-pass verdict merge-queue evidence supports —
+ * fill-only for outcomes whose jobs rows recorded none. Any recorded
+ * `check_observed` failure means CI was observed red at least once, so
+ * the verdict is false even when a later `checks_passed` boundary or a
+ * merge stands — a rerun or a new head got it green, which is not a
+ * first pass. With zero recorded failures, a `checks_passed` boundary
+ * is the observer's own all-required-checks-green verdict, and a
+ * recorded merge beside observed check activity is the ledger's proof
+ * the checks reached green — either reads true. Pending-only
+ * observations, no check rows at all, and unmerged PRs without the
+ * boundary carry no verdict: unknown stays null, never guessed from
+ * absent evidence. `merged` is the outcome's standing merge verdict at
+ * call time — the fold passes its jobs-ledger verdict and
+ * readRouterOutcomes reruns the same fill-only pass after the
+ * reward-signal join so a reward-only merge verdict reaches the
+ * fallback too.
+ */
+function mergeQueueCiFirstPass(evidence: MergeQueueEvidence, merged: boolean): boolean | null {
+  if (evidence.check_failures > 0) return false;
+  if (evidence.checks_passed > 0 || (merged && evidence.check_observations > 0)) return true;
+  return null;
+}
+
+/**
+ * The per-job evidence one reward-signal row contributes to an outcome —
+ * the resolved merge verdict plus the recorded measurements the jobs fold
+ * may have lost to tail truncation. Every figure stays null when the row
+ * did not record it; nothing here is derived.
+ */
+export interface RewardOutcomeEvidence {
+  /** The row's resolved merge verdict — reward-signal v1 requires the boolean. */
+  merged: boolean;
+  /** Recorded dispatch-to-merge seconds (timeToMergeMs/1000); null unless merged with a recorded span. */
+  ttm_s: number | null;
+  /** Recorded CI wall seconds (ciWallMs/1000); null when unrecorded. */
+  ci_wall_s: number | null;
+  /** Recorded USD estimate (cost.costUsd); null when unrecorded. */
+  cost_usd: number | null;
+  /** Recorded repo in the bounded repo-label shape; null when absent or outside it. */
+  repo: string | null;
+  /**
+   * Recorded subscription-pool percentage points consumed across the job
+   * window (cost.pctUsedDelta), bounded to the [0, 100] percentage-point
+   * shape; null when the pool window reset, readings were missing, or
+   * the recorded value was malformed — unknown stays unknown, never 0.
+   */
+  pool_pct_used: number | null;
+}
+
+/** Same job-id alphabet the reward writer accepts (JOB_ID in metrics/reward-signal.ts). */
+const REWARD_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+/** Percentage points consumed can never exceed the [0, 100] pool reading range. */
+const rewardPctUsed = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null;
+
+/**
+ * Folds reward-signals.jsonl text into per-job evidence, last appended row
+ * winning a repeat (the ledger is first-write-wins per jobId, so repeats are
+ * rare). A row counts only as reward-signal v1 evidence: `v:1`, a bounded
+ * `jobId`, a boolean `merged` verdict and the row's `dispatchedAt`/
+ * `recordedAt` stamps — the fields every producer row carries. Consumed
+ * fields join under their own bounded shapes: milliseconds become seconds,
+ * `costUsd`/`pctUsedDelta`/`repo` keep their recorded-value-or-null rule,
+ * and malformed values drop to null without discarding the row. Malformed
+ * JSON, other schemas and rows missing the identity fields are skipped —
+ * never recorded raw, never guessed.
+ */
+export function foldRewardSignals(text: string): Map<string, RewardOutcomeEvidence> {
+  const rewards = new Map<string, RewardOutcomeEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const jobId = str(r, 'jobId');
+    const dispatchedAt = r['dispatchedAt'];
+    const recordedAt = r['recordedAt'];
+    if (r['v'] !== 1 || jobId === null || !REWARD_JOB_ID.test(jobId) ||
+        typeof r['merged'] !== 'boolean' ||
+        typeof dispatchedAt !== 'string' || !Number.isFinite(Date.parse(dispatchedAt)) ||
+        typeof recordedAt !== 'string' || !Number.isFinite(Date.parse(recordedAt))) continue;
+    const cost = r['cost'];
+    const costRow = cost !== null && typeof cost === 'object' && !Array.isArray(cost) ? cost as Row : null;
+    const ttmMs = num(r['timeToMergeMs']);
+    const ciWallMs = num(r['ciWallMs']);
+    const repo = str(r, 'repo');
+    rewards.set(jobId, {
+      merged: r['merged'],
+      ttm_s: ttmMs === null ? null : ttmMs / 1000,
+      ci_wall_s: ciWallMs === null ? null : ciWallMs / 1000,
+      cost_usd: costRow === null ? null : num(costRow['costUsd']),
+      repo: repo !== null && REPO_LABEL.test(repo) ? repo : null,
+      pool_pct_used: costRow === null ? null : rewardPctUsed(costRow['pctUsedDelta']),
+    });
+  }
+  return rewards;
+}
+
+/**
+ * The per-launch evidence one fleet.launch-cost.v1 row contributes to an
+ * outcome — the producer's recorded probe verdict plus its first-minute
+ * resource figures. Every figure stays null when the row did not record
+ * it; nothing here is derived.
+ */
+export interface LaunchCostEvidence {
+  /** The row's recorded probe verdict — the producer's closed status vocabulary. */
+  status: 'measured' | 'partial' | 'unknown';
+  /** Recorded first-minute peak process count; null on unknown rows. */
+  peakProcesses: number | null;
+  /** Recorded mean CPU as percent of one core; null on unknown rows. */
+  meanCpuPct: number | null;
+  /** Recorded peak CPU as percent of one core; null on unknown rows. */
+  peakCpuPct: number | null;
+}
+
+/** Same bounded identifier alphabet the producer's lane/launchId fields use (launch-cost.ts id()). */
+const LAUNCH_COST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/** The producer's per-attempt launchId suffix — `<job>-<12 lowercase hex claim hash>` (contrib/mac/launch_cost.py). */
+const LAUNCH_ATTEMPT_SUFFIX = /-[0-9a-f]{12}$/;
+const LAUNCH_COST_STATUSES: ReadonlySet<string> = new Set(['measured', 'partial', 'unknown']);
+const launchCostCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/**
+ * Folds launch-cost.jsonl text into per-launchId evidence, last appended
+ * row winning a repeat (the ledger is append-only, one row per launch
+ * attempt). A row counts only as fleet.launch-cost.v1 evidence under the
+ * same closed validation src/core/fleet/launch-cost.ts applies: the exact
+ * schema, bounded lane and launchId identifiers, a null-or-parseable
+ * startedAt, windowSeconds 60, bounded sampledSeconds/samples, an
+ * in-vocabulary status, metric figures inside their recorded shapes —
+ * `unknown` rows carry no metrics, `measured`/`partial` rows carry all
+ * three plus a startedAt and at least one sample and peak process,
+ * `measured` rows require nearly-full 60-second coverage with at least
+ * 12 samples, and mean CPU never exceeds peak. Malformed JSON, other
+ * schemas and rows failing any check are skipped — never recorded raw,
+ * never guessed. The map keys on the row's recorded launchId; resolving
+ * it to a job id is the reader's job-window-aware step.
+ */
+export function foldLaunchCosts(text: string): Map<string, LaunchCostEvidence> {
+  const costs = new Map<string, LaunchCostEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const r = value as Row;
+    const lane = str(r, 'lane');
+    const launchId = str(r, 'launchId');
+    const startedAt = r['startedAt'];
+    const sampledSeconds = launchCostCount(r['sampledSeconds']) ? r['sampledSeconds'] as number : null;
+    const samples = r['samples'];
+    const status = str(r, 'status');
+    const metrics = [r['peakProcesses'], r['meanCpuPercentOneCore'], r['peakCpuPercentOneCore']];
+    if (r['schema'] !== 'fleet.launch-cost.v1' || lane === null || !LAUNCH_COST_ID.test(lane) ||
+        launchId === null || !LAUNCH_COST_ID.test(launchId) ||
+        (startedAt !== null && (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt)))) ||
+        r['windowSeconds'] !== 60 || sampledSeconds === null || sampledSeconds > 60 ||
+        !Number.isSafeInteger(samples) || (samples as number) < 0 ||
+        status === null || !LAUNCH_COST_STATUSES.has(status) ||
+        metrics.some(v => v !== null && !launchCostCount(v)) ||
+        (r['peakProcesses'] !== null && !Number.isSafeInteger(r['peakProcesses'])) ||
+        (status === 'unknown' && metrics.some(v => v !== null)) ||
+        (status !== 'unknown' && (startedAt === null || metrics.some(v => v === null) || (samples as number) < 1 || (r['peakProcesses'] as number) < 1)) ||
+        (status === 'measured' && (sampledSeconds < 59 || (samples as number) < 12)) ||
+        (launchCostCount(r['meanCpuPercentOneCore']) && launchCostCount(r['peakCpuPercentOneCore']) &&
+          (r['meanCpuPercentOneCore'] as number) > (r['peakCpuPercentOneCore'] as number))) continue;
+    costs.set(launchId, {
+      status: status as LaunchCostEvidence['status'],
+      peakProcesses: r['peakProcesses'] === null ? null : r['peakProcesses'] as number,
+      meanCpuPct: r['meanCpuPercentOneCore'] === null ? null : r['meanCpuPercentOneCore'] as number,
+      peakCpuPct: r['peakCpuPercentOneCore'] === null ? null : r['peakCpuPercentOneCore'] as number,
+    });
+  }
+  return costs;
+}
+
+/**
+ * The cross-model review verdict vocabulary — the producer's closed
+ * ReviewOutcome set (src/core/fleet/cross-review.ts). Kept as a local
+ * copy for the same reason the merge-event vocabulary is: a producer-side
+ * rename can never leak an unbounded verdict word into router.outcome.v1.
+ * `approve`/`reject` are the independent reviewer's recorded verdicts;
+ * `failed`/`skipped` are the recorded non-verdicts.
+ */
+export type CrossReviewVerdict = 'approve' | 'reject' | 'failed' | 'skipped';
+
+const CROSS_REVIEW_VERDICTS: ReadonlySet<string> = new Set(['approve', 'reject', 'failed', 'skipped']);
+/** The cross-review ledger's schema version — a local copy of CROSS_REVIEW_SCHEMA_VERSION. */
+const CROSS_REVIEW_SCHEMA = 1;
+
+/**
+ * The per-PR cross-model review evidence one outcome's `cross_review`
+ * carries — the newest `kind:'review'` row's recorded verdict for the
+ * job's standing pull request. Every figure is the row's own recorded
+ * value; nothing is derived.
+ */
+export interface CrossReviewEvidence {
+  /** The review record's verdict in the closed approve/reject/failed/skipped vocabulary. */
+  outcome: CrossReviewVerdict;
+  /**
+   * The review record's `at` timestamp — when the verdict was recorded,
+   * the staleness signal a consumer judges since the outcome carries no
+   * current-head field to compare `reviewedHeadSha` against. Null when
+   * the row's `at` was not a parseable timestamp.
+   */
+  at: string | null;
+}
+
+/**
+ * Folds cross-review.jsonl text into per-PR review evidence keyed
+ * `owner/repo#n` (lowercase repo — the same prKey shape pullRequestKey
+ * and foldMergeEvents produce, so the outcome join needs no second
+ * canonicalization). Only `kind:'review'` rows under the producer's
+ * schema version count — `kind:'decision'` rows are merge-action
+ * evidence, never review verdicts, and foreign or version-mismatched
+ * rows are skipped. A row counts only with a bounded `owner/repo` repo
+ * label, a safe-integer `pr` >= 1 and an in-vocabulary `outcome`;
+ * anything else is skipped, never recorded raw, never guessed. The last
+ * appended review row for a PR wins — the ledger's own append order is
+ * its chronology, matching latestCrossReview's newest-wins rule. Rows
+ * for PRs no jobs outcome claims unambiguously join nothing — the map
+ * itself never creates outcomes.
+ */
+export function foldCrossReviews(text: string): Map<string, CrossReviewEvidence> {
+  const reviews = new Map<string, CrossReviewEvidence>();
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Row;
+    if (row['schemaVersion'] !== CROSS_REVIEW_SCHEMA || row['kind'] !== 'review') continue;
+    const repo = row['repo'];
+    const pr = row['pr'];
+    const outcome = row['outcome'];
+    if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
+        typeof outcome !== 'string' || !CROSS_REVIEW_VERDICTS.has(outcome)) continue;
+    const at = row['at'];
+    reviews.set(`${repo.toLowerCase()}#${pr}`, {
+      outcome: outcome as CrossReviewVerdict,
+      at: typeof at === 'string' && Number.isFinite(Date.parse(at)) ? at : null,
+    });
+  }
+  return reviews;
 }
 
 export interface RouterOutcomeRead extends RouterOutcomeFold {
@@ -2321,6 +3058,56 @@ export interface RouterOutcomeRead extends RouterOutcomeFold {
    */
   merge_events_truncated: boolean;
   /**
+   * Health of the improve/revert-outcomes.jsonl ledger behind the
+   * scan-detected revert join (`phm fleet reverts --record` detections of
+   * fleet PRs reverted in git history). Anything but 'read' means no
+   * recorded scan reverts were joined — outcomes keep only jobs-ledger,
+   * authority-ledger and explicit revert evidence; 'too-large' means the
+   * ledger exceeded its bound and was refused whole rather than partially
+   * trusted.
+   */
+  revert_ledger_state: LedgerReadState;
+  /**
+   * Health of the reward-signals.jsonl tail under the ASHLR home root
+   * behind the reward-signal joins (`merged`/`ttm_s`/`ci_wall_s`/
+   * `cost_usd`/`repo` fills and `pool_pct_used`). Anything but 'read'
+   * means no reward rows joined — outcomes keep their jobs-ledger
+   * values, never a guessed verdict or cost.
+   */
+  reward_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the reward-signals tail exceeded the retained bound:
+   * joined evidence covers only the newest bytes — still real
+   * recorded rows, just a partial window.
+   */
+  reward_truncated: boolean;
+  /**
+   * Health of the launch-cost.jsonl tail behind the launch_cost_*
+   * joins. Anything but 'read' means no launch-cost rows joined —
+   * outcomes keep every launch_cost_* field null, never a guessed or
+   * zeroed resource figure.
+   */
+  launch_cost_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the launch-cost tail exceeded the retained bound: joined
+   * evidence covers only the newest bytes, so older launches read
+   * unprobed.
+   */
+  launch_cost_truncated: boolean;
+  /**
+   * Health of the cross-review.jsonl tail under the ASHLR home root
+   * behind cross_review joins. Anything but 'read' means no review
+   * verdicts were joined — outcomes keep cross_review null, never a
+   * guessed review.
+   */
+  cross_review_state: Exclude<LedgerReadState, 'too-large'>;
+  /**
+   * True when the cross-review tail exceeded the retained bound: joined
+   * verdicts cover only the newest bytes, so older reviews read
+   * unreviewed.
+   */
+  cross_review_truncated: boolean;
+  /**
    * True when the ledger exceeded the retained tail: the fold, and so every
    * count on this read, covers only the newest ROUTER_OUTCOME_LEDGER_LIMIT
    * bytes — a lower bound on the full history, never a claimed total.
@@ -2363,6 +3150,36 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
 }
 
 /**
+ * Recorded `phm fleet reverts --record` detections behind the second revert
+ * join — reverts of fleet PRs that only git history proves, invisible to
+ * the jobs ledger and the authority index. Read lazily like the authority
+ * evidence so fold-only consumers never load the ledger module; the file's
+ * own health is reported on the read, and anything but a fully intact
+ * ledger contributes no keys — corrupt evidence never marks a merge
+ * reverted.
+ */
+async function liveRevertOutcomeKeys(rootDir: string | undefined): Promise<{ state: LedgerReadState; keys: ReadonlySet<string> }> {
+  try {
+    const { readRevertOutcomeRecords, revertOutcomesLedgerPath, standingRevertKeys } = await import('../improve/revert-ledger.js');
+    const read = readRevertOutcomeRecords(revertOutcomesLedgerPath(rootDir));
+    const state: LedgerReadState = read.state === 'missing' ? 'missing'
+      : read.state === 'read' ? 'read'
+      : read.reasons.includes('ledger-too-large') ? 'too-large' : 'unreadable';
+    return { state, keys: state === 'read' ? standingRevertKeys(read.records) : new Set<string>() };
+  } catch {
+    return { state: 'unreadable', keys: new Set<string>() };
+  }
+}
+
+/** Union the authority-ledger and scan-ledger revert key sets; undefined only when neither source produced keys. */
+function unionRevertKeys(authority: ReadonlySet<string> | undefined, scan: ReadonlySet<string>): ReadonlySet<string> | undefined {
+  if (authority === undefined && scan.size === 0) return undefined;
+  const keys = new Set<string>(authority);
+  for (const key of scan) keys.add(key);
+  return keys;
+}
+
+/**
  * Reads the newest ROUTER_OUTCOME_LEDGER_LIMIT bytes of
  * <runsDir>/metrics/jobs.jsonl plus the same bound of
  * <runsDir>/metrics/api-spend.jsonl, <runsDir>/metrics/work-market.jsonl,
@@ -2386,7 +3203,16 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * market_rejected verdict fields under the same market_state health
  * and newest-decision rule
  * work_class follows — decision rows naming jobs outside the jobs
- * window never create outcomes. The merge-events tail folds through
+ * window never create outcomes. The market ledger's
+ * session_handoff_advisory rows join the same way through
+ * `foldMarketHandoffAdvisories`: each job's newest recorded advisory
+ * supersedes the jobs-ledger handoff_trigger/handoff_lane/
+ * handoff_target triple only when its recorded `ts` is strictly newer
+ * than the standing jobs-ledger advisory's parseable timestamp — a
+ * market advisory fills the triple when no jobs advisory exists, an
+ * unorderable jobs advisory leaves the jobs verdict standing, and
+ * advisory rows naming jobs outside the jobs window join nothing.
+ * The merge-events tail folds through
  * `foldMergeEvents` into per-PR `owner/repo#n` evidence and joins each
  * outcome's `merge_queue` through the job's newest unambiguous
  * canonical PR claim under the same claim rule the authority revert
@@ -2397,6 +3223,65 @@ async function liveAuthorityEvidence(): Promise<readonly RouterOutcomeEvidenceRo
  * evidence index (`authorityRevertedPrKeys`): a fleet merge the ledger
  * records as reverted marks its outcome through the job's unambiguous PR
  * URL claim, so held-merge tallies see reverts jobs.jsonl never writes.
+ * The same claim rule joins the second revert source —
+ * `improve/revert-outcomes.jsonl`, the detections `phm fleet reverts
+ * --record` appends — whose newest-record-per-PR resolution clears a key
+ * when a later scan finds the revert itself was reverted;
+ * `revert_ledger_state` reports that ledger's health and anything but
+ * 'read' contributes no keys. The scan join is independent of the
+ * `authorityEvidence` option: `null` skips only the authority read.
+ * A sixth ledger joins under the ASHLR home root — the same root
+ * `ashlarDir` resolves for the eval passk projection (ASHLR_HOME
+ * honored): `<ashlr>/metrics/reward-signals.jsonl`, the reward-signal
+ * substrate's per-job resolved-outcome rows. `foldRewardSignals`
+ * collapses them to each job's recorded verdict and measurements, and
+ * the read fills only fields the jobs fold left null — `merged`,
+ * `ttm_s` (only while the standing verdict is a merge), `ci_wall_s`,
+ * `cost_usd` (after the api-spend join), `repo` and `pool_pct_used`,
+ * the row's recorded subscription-pool percentage points consumed —
+ * so persisted reward evidence recovers verdicts and cost figures the
+ * bounded jobs tail dropped without ever overriding a recorded
+ * jobs-ledger value. Reward rows naming jobs outside the jobs window
+ * never create outcomes. `reward_state` reports the ledger's health
+ * and `reward_truncated` marks a cut tail; anything but 'read' leaves
+ * every joined field at its jobs-ledger value.
+ * A seventh ledger joins under the runs dir —
+ * <runsDir>/metrics/launch-cost.jsonl, the bounded fleet.launch-cost.v1
+ * journal: `foldLaunchCosts` validates each row under the producer's
+ * closed contract and the read resolves each launchId to a folded job
+ * id — a launchId that is itself a job id keys itself, a
+ * measured/partial row's `-<12hex>` attempt suffix strips to the job
+ * it measured, and an unknown-status row prefers an exact job-id
+ * match before the stripped prefix — then fills launch_cost_status,
+ * launch_peak_processes, launch_mean_cpu_pct and launch_peak_cpu_pct,
+ * fields no jobs-ledger row supplies. Rows resolving outside the jobs
+ * window join nothing and never create outcomes; the last appended
+ * row for a resolved job stands. `launch_cost_state` reports the
+ * ledger's health and `launch_cost_truncated` marks a cut tail;
+ * anything but 'read' leaves every launch_cost_* field null —
+ * unknown, never a zeroed or guessed resource figure.
+ * An eighth ledger joins under the ASHLR home root — the same root
+ * `ashlarDir` resolves for the eval passk projection and the
+ * reward-signals ledger (ASHLR_HOME honored):
+ * `<ashlr>/fleet/cross-review.jsonl`, the audit journal
+ * src/core/fleet/cross-review-run.ts appends each recorded cross-model
+ * review verdict and merge decision to. `foldCrossReviews` collapses
+ * the tail to per-PR `owner/repo#n` evidence — the same prKey shape
+ * `pullRequestKey` produces — keeping only `kind:'review'` rows under
+ * the producer's schema version with a bounded repo label, a
+ * safe-integer `pr` and an in-vocabulary `outcome`
+ * (`approve`/`reject`/`failed`/`skipped`); `kind:'decision'` rows are
+ * merge-action evidence and never join, and the last appended review
+ * row for a PR stands. The fold's `crossReviews` option joins each
+ * outcome's `cross_review` through the job's newest unambiguous
+ * canonical PR claim — the same claim rule `mergeEvents` and
+ * `revertedPrKeys` apply, so a contested or foreign URL never resolves
+ * — carrying the verdict and the review record's `at` timestamp.
+ * Review rows for PRs no outcome claims unambiguously join nothing and
+ * never create outcomes. `cross_review_state` reports the ledger's
+ * health and `cross_review_truncated` marks a cut tail; anything but
+ * 'read' leaves every `cross_review` null — unknown, never a guessed
+ * review.
  */
 export async function readRouterOutcomes(opts: {
   runsDir?: string;
@@ -2404,7 +3289,8 @@ export async function readRouterOutcomes(opts: {
   ashlarDir?: string;
   /**
    * Authority-ledger evidence rows behind the revert join. Absent reads the
-   * live `ledgerSnapshot('cached')` verified index; `null` skips the join;
+   * live `ledgerSnapshot('cached')` verified index; `null` skips the
+   * authority join only — the revert-outcomes ledger join is independent;
    * an explicit array is used as given (tests). Only hash-verified rows ever
    * contribute, so a broken chain still marks only authentic reverts.
    */
@@ -2429,12 +3315,33 @@ export async function readRouterOutcomes(opts: {
   const mergeEventsRead = await readLedgerTail(join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE));
   const mergeEventsState = mergeEventsRead.state;
   const mergeEventsTruncated = mergeEventsRead.state === 'read' ? mergeEventsRead.truncated : false;
+  // The reward ledger lives under the ASHLR home root, not runsDir —
+  // resolved exactly like passk's lane-scores projection so both
+  // ashlarDir-rooted reads agree on the root (ASHLR_HOME honored).
+  const ashlarRoot = opts.ashlarDir ?? ashlrHome();
+  const rewardRead = await readLedgerTail(join(ashlarRoot, ROUTER_REWARD_LEDGER_RELATIVE));
+  const rewardState = rewardRead.state;
+  const rewardTruncated = rewardRead.state === 'read' ? rewardRead.truncated : false;
+  const launchCostRead = await readLedgerTail(join(runsDir, ROUTER_LAUNCH_COST_LEDGER_RELATIVE));
+  const launchCostState = launchCostRead.state;
+  const launchCostTruncated = launchCostRead.state === 'read' ? launchCostRead.truncated : false;
+  // The cross-review ledger lives under the ASHLR home root, not runsDir —
+  // the same root ashlarRoot resolves for the eval passk projection and
+  // the reward-signals ledger (ASHLR_HOME honored).
+  const crossReviewRead = await readLedgerTail(join(ashlarRoot, ROUTER_CROSS_REVIEW_LEDGER_RELATIVE));
+  const crossReviewState = crossReviewRead.state;
+  const crossReviewTruncated = crossReviewRead.state === 'read' ? crossReviewRead.truncated : false;
+  const revertLedger = await liveRevertOutcomeKeys(opts.ashlarDir);
   if (read.state !== 'read') {
     return { ...empty, state: read.state, path, eval_state: laneScores.state,
       spend_state: spendState, spend_truncated: spendTruncated,
       market_state: marketState, market_truncated: marketTruncated,
       empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
-      merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated, truncated: false };
+      merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
+      revert_ledger_state: revertLedger.state,
+      reward_state: rewardState, reward_truncated: rewardTruncated,
+      launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
+      cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated, truncated: false };
   }
   const workClasses = marketRead.state === 'read'
     ? foldRouteDecisionWorkClasses(marketRead.text)
@@ -2445,8 +3352,11 @@ export async function readRouterOutcomes(opts: {
   const folded = foldRouterOutcomes(read.text, {
     passkFor: laneScoreLookup(laneScores),
     workClassFor: (jobId) => workClasses.get(jobId) ?? null,
-    revertedPrKeys: authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+    revertedPrKeys: unionRevertKeys(
+      authorityEvidence === null ? undefined : authorityRevertedPrKeys(authorityEvidence),
+      revertLedger.keys),
     mergeEvents: mergeEventsRead.state === 'read' ? foldMergeEvents(mergeEventsRead.text) : undefined,
+    crossReviews: crossReviewRead.state === 'read' ? foldCrossReviews(crossReviewRead.text) : undefined,
   });
   if (spendRead.state === 'read') {
     const costs = foldSpendCosts(spendRead.text);
@@ -2456,6 +3366,32 @@ export async function readRouterOutcomes(opts: {
       if (sum !== undefined) o.cost_usd = sum;
     }
   }
+  if (rewardRead.state === 'read') {
+    const rewards = foldRewardSignals(rewardRead.text);
+    for (const o of folded.outcomes) {
+      const reward = rewards.get(o.job_id);
+      if (reward === undefined) continue;
+      // Fill-only join: a recorded jobs-ledger verdict or measurement
+      // always wins; the reward row's resolved evidence fills what the
+      // fold left unknown. ttm_s is merge evidence, so it fills only
+      // while the standing verdict is a merge — the same gate the
+      // jobs-ledger dialect applies.
+      if (o.merged === null) o.merged = reward.merged;
+      if (o.merged === true && o.ttm_s === null) o.ttm_s = reward.ttm_s;
+      if (o.ci_wall_s === null) o.ci_wall_s = reward.ci_wall_s;
+      if (o.cost_usd === null) o.cost_usd = reward.cost_usd;
+      if (o.repo === null) o.repo = reward.repo;
+      o.pool_pct_used = reward.pool_pct_used;
+    }
+    // The reward fill can resolve merged after the fold's merge-queue
+    // pass already ran — rerun the same fill-only ci_first_pass
+    // derivation so a reward-only merge verdict reaches the fallback.
+    for (const o of folded.outcomes) {
+      if (o.ci_first_pass === null && o.merge_queue !== null) {
+        o.ci_first_pass = mergeQueueCiFirstPass(o.merge_queue, o.merged === true);
+      }
+    }
+  }
   if (emptyTagRead.state === 'read') {
     const tags = foldEmptyTags(emptyTagRead.text);
     for (const o of folded.outcomes) {
@@ -2463,16 +3399,66 @@ export async function readRouterOutcomes(opts: {
       if (tag !== undefined) o.empty_tag = tag;
     }
   }
+  if (launchCostRead.state === 'read') {
+    const costs = foldLaunchCosts(launchCostRead.text);
+    // launchId → job resolution against the folded job window. The
+    // producer keys measured/partial rows `<job>-<12-hex claim hash>`
+    // and unknown probes by the bare job id (its exception path can
+    // leave a suffixed id on an unknown row too). A launchId that is
+    // itself a folded job id keys itself — a job id may legitimately
+    // end in a 12-hex segment — so an unknown-status row prefers the
+    // exact match; a measured/partial row always strips its attempt
+    // suffix to the job it measured. Rows resolving outside the jobs
+    // window key on an id no outcome carries and join nothing.
+    const jobIds = new Set(folded.outcomes.map(o => o.job_id));
+    const byJob = new Map<string, LaunchCostEvidence>();
+    for (const [launchId, ev] of costs) {
+      const stripped = launchId.replace(LAUNCH_ATTEMPT_SUFFIX, '');
+      let job = launchId;
+      if (stripped !== launchId) {
+        job = ev.status === 'unknown'
+          ? (jobIds.has(launchId) ? launchId : jobIds.has(stripped) ? stripped : launchId)
+          : stripped;
+      }
+      byJob.set(job, ev);
+    }
+    for (const o of folded.outcomes) {
+      const ev = byJob.get(o.job_id);
+      if (ev === undefined) continue;
+      o.launch_cost_status = ev.status;
+      o.launch_peak_processes = ev.peakProcesses;
+      o.launch_mean_cpu_pct = ev.meanCpuPct;
+      o.launch_peak_cpu_pct = ev.peakCpuPct;
+    }
+  }
   if (marketRead.state === 'read') {
     const decisions = foldRouteDecisions(marketRead.text);
+    const advisories = foldMarketHandoffAdvisories(marketRead.text);
+    const jobsAdvisoryAt = latestJobsHandoffAdvisoryMs(read.text);
     for (const o of folded.outcomes) {
       const decision = decisions.get(o.job_id);
-      if (decision === undefined) continue;
-      o.market_lane = decision.lane;
-      o.market_preferred = decision.preferred;
-      o.market_override = decision.override;
-      o.market_reasons = decision.reasons;
-      o.market_rejected = decision.rejected;
+      if (decision !== undefined) {
+        o.market_lane = decision.lane;
+        o.market_preferred = decision.preferred;
+        o.market_override = decision.override;
+        o.market_reasons = decision.reasons;
+        o.market_rejected = decision.rejected;
+      }
+      // The market-side session-handoff advisory is the same recorded
+      // verdict stream's quota-exhausted copy: it supersedes the
+      // jobs-ledger triple only when its recorded ts is strictly newer
+      // than the standing jobs-ledger advisory's — a market advisory
+      // for a job with no jobs-ledger advisory fills the triple, one
+      // that cannot be ordered against a standing jobs verdict (no
+      // parseable jobs ts) leaves the jobs verdict standing, and rows
+      // naming jobs outside the jobs window join nothing.
+      const advisory = advisories.get(o.job_id);
+      if (advisory === undefined) continue;
+      const jobsAt = jobsAdvisoryAt.get(o.job_id);
+      if (jobsAt === null || (jobsAt !== undefined && advisory.ts * 1000 <= jobsAt)) continue;
+      o.handoff_trigger = advisory.trigger;
+      o.handoff_lane = advisory.lane;
+      o.handoff_target = advisory.target;
     }
   }
   const outcomes = opts.lane === undefined ? folded.outcomes : folded.outcomes.filter(o => o.lane === opts.lane);
@@ -2481,5 +3467,9 @@ export async function readRouterOutcomes(opts: {
     market_state: marketState, market_truncated: marketTruncated,
     empty_tag_state: emptyTagState, empty_tag_truncated: emptyTagTruncated,
     merge_events_state: mergeEventsState, merge_events_truncated: mergeEventsTruncated,
+    revert_ledger_state: revertLedger.state,
+    reward_state: rewardState, reward_truncated: rewardTruncated,
+    launch_cost_state: launchCostState, launch_cost_truncated: launchCostTruncated,
+    cross_review_state: crossReviewState, cross_review_truncated: crossReviewTruncated,
     truncated: read.truncated };
 }

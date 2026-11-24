@@ -132,9 +132,12 @@ phm channels status --json
 `phm comms setup-telegram` still discovers the chat id. `status` reports each
 channel's `configured`/`credential`/`paired` state plus `received`,
 `pendingOutbound`, and `lastSeenAt` — measured numbers, or `"unknown"` when a
-source cannot be read. `cli`, `desktop`, and `page` need no setup and always
-report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway file
-([REMOTE-PHONE.md](REMOTE-PHONE.md)).
+source cannot be read. Pairing stores follow the same rule: a missing
+`queue/telegram-pair.json` or `queue/email-paired.json` is a measured
+unpaired/zero, while an unreadable or malformed record reports `"unknown"` —
+never a guessed "not paired". `cli`, `desktop`, and `page` need no setup and
+always report ready; `mobile` needs the `~/.ashlr/verse-remote.json` gateway
+file ([REMOTE-PHONE.md](REMOTE-PHONE.md)).
 
 ## Where to watch it
 
@@ -215,7 +218,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -260,7 +263,10 @@ live `worker-handoff` envelopes (`isWorkerHandoffBody`, the exact contract
 until its TTL ends or the addressee answers it, claims are evidence only,
 never a gate; an assignment the recipient already answered drops out once a
 live reply routed recipient -> sender cites the handoff id through
-`inReplyTo`/`replyTo`, the same durable evidence `agents conversations`
+`inReplyTo`/`replyTo` — resolved through the identity registry, so any
+label of the two identities (or a member of the addressed channel) counts,
+with an unreadable registry keeping literal-label matching —
+the same durable evidence `agents conversations`
 credits when it marks the thread answered), and
 open agent-bus v2 work-feed jobs (queued or rescheduled
 `work.post` announcements with at least one claim key not fully held, plus
@@ -300,8 +306,9 @@ EVERY peer (`phm bus thread`/`task`/`board`,
 [docs/BUS-THREADS.md](BUS-THREADS.md)): the fleet-wide
 `BusBoard.pendingAll` digest — the same locked snapshot and queue read
 `pendingFor` serves per label set, where `work mine`'s board section still
-needs the agent's labels ahead of time and `phm bus board pending` takes
-one `--peer` at a time — lists every unacknowledged delivery (board mail
+needs the agent's labels ahead of time and `phm bus board pending` reads
+one `--peer`'s view or, with `--all`, this same fleet-wide digest — lists
+every unacknowledged delivery (board mail
 awaiting `thread ack`; the wire TTL bounds live observers only, so `since`
 is the delivery's recorded `createdAt` and `expiresAt` stays null) and
 every task whose observed hold is not `held` — `open` is claimable work,
@@ -318,7 +325,7 @@ conversation threads still needing a person — the same `waiting` and
 `blocked` threads the one shared conversations projection computes,
 fleet-wide: a waiting item names who must answer, how long it has waited
 and deep-links `phm agents conversations`, `phm agents bus show` and a
-`phm agents bus post --thread` reply template; a blocked item names who
+`phm agents bus post --thread`/`--reply-to` reply template; a blocked item names who
 reported the block, who was told and how long it has stood, with the same
 deep links. A thread whose latest message is already a pending bus item or
 whose `job:` thread the feed already lists stays under the bus source, one
@@ -326,6 +333,18 @@ pending thing one item — plus bot seats whose projected handoff plan still has
 move (the same `planSeatHandoffs` read `phm bots handoffs` serves; only
 eligible seats with pending, not yet journaled, handoff records list, each
 item deep-linking `phm bots handoff --seat` and `phm bots handoffs`) — plus
+unpublished peer work-dispatch results (the private
+`agentnet/work-dispatch.json` journal's `work.result` receipts whose latest
+recorded outcome was never confirmed sent to the proposing peer — the same
+`sent !== outcome` rule `phm agentnet peers dispatch`'s publish pass and the
+peer-bus admission check apply, so a peer cannot see a result the journal
+does not prove this host published; the dispatch feed page reports only the
+current proposals, so this backlog had no surface until now — each warn item
+names the peer, outcome, consumer and receipt with `since`/`expiresAt` null
+because the journal stamps receipt creation, not the last outcome move, and
+deep-links `phm agentnet peers dispatch --apply`; an absent journal is
+`missing`, an unreadable one `unavailable`, never an empty backlog passed off
+as fact) — plus
 Gmail archive-plan overages, LinkedIn messages saved as
 JSON files under `<runsDir>/comms/linkedin/inbox/` (answered when a file of the
 same id exists in `.../linkedin/answered/`; replies stay drafts) and live
@@ -384,7 +403,7 @@ imessage-tasks dispatch --apply`, `phm fleet imessage-tasks list`, `phm comms th
 `phm drafts approve`, `phm comms-agent drafts`,
 `phm fleet bus-claim acquire`, `phm agents bus claim acquire`,
 `phm fleet handoff-receive`, `phm agents conversations`,
-`phm bots handoff`, `phm agents bus post`, `phm comms email-cycle`,
+`phm bots handoff`, `phm agentnet peers dispatch`, `phm agents bus post`, `phm comms email-cycle`,
 `phm fleet email-outbox`,
 `phm bus inbox`, `phm bus ack`, `phm bus thread pending`, `phm bus thread
 ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
@@ -393,17 +412,27 @@ ack`, `phm bus task claim`, `phm bus task list`, `phm bus board pending`,
 that cannot be read reports `missing`, `degraded`, or `unavailable` in
 `sources` instead of pretending to be empty, and the list is capped at 200
 items with the remainder counted in `omitted`. The bare view also narrows:
-`--source <name>` keeps one source's items, `--severity <info|warn|high>` one
+`--source <name>` keeps one source's items, `--kind <name>` one item kind —
+the item's own classification, finer than `--source` where one source emits
+several kinds (the `bus` source's `bus-work`/`bus-handoff` split, the
+`board` source's `board-delivery`/`board-task` split) — `--severity
+<info|warn|high>` one
 severity band, `--blocking` only items that block, `--job <id>` only items
 that provably name that job — a bus or mailbox body's `busBodyJobMatch`
 citation, a feed job's id, a board task's fleet item or a delivery on a
-job-carrying thread, a conversation thread's jobs, a teammate task's job or a
-seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) —
+job-carrying thread, a conversation thread's jobs, a teammate task's job, a
+seat's `node-job` handoff (a `bus-claim` ref is a claim key, never a job) or a
+peer-dispatch receipt's job —
 and `--since <15m|2h|1d|ISO>` only items whose recorded `since` appearance
 time reaches the cutoff, the same inclusive `>=` match every bus read
-`--since` applies; an item whose store keeps no timestamp (`since` null) or
+`--since` applies; `--before <15m|2h|1d|ISO>` is the exclusive upper bound
+keeping only items whose recorded appearance time is strictly before its
+cutoff, the same `<` match every bus read `--before` applies — the two
+compose into one `[since, before)` window and an item exactly on either
+boundary stays out of the excluded side; an item whose store keeps no
+timestamp (`since` null) or
 whose recorded time cannot be parsed never matches, so unknown never counts
-as new; and `--contains <text>` only items whose scrubbed `title` or
+as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
@@ -412,7 +441,15 @@ describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
 could not be read, never a fabricated 0 — a filtered view never
-reports a busy or degraded source as empty. `phm comms inbox read` and
+reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
+the desktop and agent read of the same report — accepts the same dimensions
+as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
+`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
+50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
+comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
+`filter` on the response exactly like
+`fleet_comms_inbox` does; an unknown, repeated or malformed parameter is a
+400, never a silently ignored filter. `phm comms inbox read` and
 `post` keep their original meaning for Mason's local inbox file.
 
 ## Gmail triage building block

@@ -43,6 +43,10 @@ export interface RouterWeightEvidence {
   review_findings_known: number;
   /** Summed fixed/rejected/ignored across those outcomes; null when none recorded. */
   review_findings: { fixed: number; rejected: number; ignored: number } | null;
+  /** Group outcomes carrying a joined cross_review verdict. */
+  cross_review_known: number;
+  /** Newest recorded cross-review verdict counts across those outcomes; null when none recorded. */
+  cross_review: { approve: number; reject: number; failed: number; skipped: number } | null;
   /** Group outcomes with a recorded cost_usd. */
   cost_known: number;
   /** Mean cost_usd over cost_known; null when no outcome recorded a cost. */
@@ -98,6 +102,36 @@ export interface RouterWeightEvidence {
   acus_known: number;
   /** Mean recorded acus over acus_known; null when none recorded. */
   acus_mean: number | null;
+  /**
+   * Group outcomes with a recorded subscription-pool percentage-point
+   * figure — the reward-signals ledger's `cost.pctUsedDelta`, the only
+   * per-job subscription-quota cost evidence (subscription lanes record
+   * no cost_usd and acus covers only the Devin lane's ACU spend). A
+   * different unit than both: the three means never mix.
+   */
+  pool_pct_used_known: number;
+  /** Mean recorded pool_pct_used over pool_pct_used_known; null when none recorded. */
+  pool_pct_used_mean: number | null;
+  /**
+   * Group outcomes carrying a recorded launch-cost probe verdict —
+   * launch-cost.jsonl's fleet.launch-cost.v1 rows joined as
+   * `launch_cost_status`: the fleet's first-minute process/CPU
+   * measurement for the job's launch attempt (`measured` full window,
+   * `partial` shorter coverage, `unknown` probe ran but recorded
+   * nothing). `launch_cost_measured` counts the `measured` rows inside
+   * the same cohort — the subset whose figures are full-window
+   * evidence rather than partial coverage. `launch_peak_processes_mean`,
+   * `launch_cpu_pct_mean` and `launch_cpu_pct_peak_mean` are the mean
+   * recorded first-minute peak process count and mean/peak CPU
+   * (percent of one core) over the outcomes that recorded each figure;
+   * null when none did — a different unit than cost_usd, acus and
+   * pool_pct_used, never summed with them.
+   */
+  launch_cost_known: number;
+  launch_cost_measured: number;
+  launch_peak_processes_mean: number | null;
+  launch_cpu_pct_mean: number | null;
+  launch_cpu_pct_peak_mean: number | null;
   /** Group outcomes with a recorded finish-row `diff_files` count. */
   diff_files_known: number;
   /** Mean recorded diff_files over diff_files_known; null when none recorded. */
@@ -214,6 +248,33 @@ export interface RouterWeightEvidence {
   merge_queue_conflicts_known: number;
   merge_queue_retries_known: number;
   merge_queue_recuts_known: number;
+  /**
+   * Group outcomes (the known cohort) carrying a recorded `repo` — the
+   * repo the job targeted, joined by the outcome fold in the bounded
+   * repo-label shape. `repos` tallies the recorded repo labels over the
+   * same cohort, most jobs first — a group's merge rate built wholly on
+   * one repo reads differently than one spread across the fleet, so the
+   * repo mix behind the held-merge figure shows here as advisory
+   * context. Null when no outcome recorded a repo — never zero-filled.
+   */
+  repos_known: number;
+  repos: { repo: string; jobs: number }[] | null;
+  /**
+   * Group outcomes (the known cohort) carrying the node runner's
+   * recorded execution verdict — `phm-node-runner.v1` finish rows
+   * joined as `node_outcome`: the offloaded node-pack job's terminal
+   * verdict (`succeeded` pack completed and staged its result
+   * artifact, `fenced` claim lease lost mid-run, `failed` pack
+   * errored). Node-pack jobs produce result artifacts, not pull
+   * requests, so a recorded verdict here means the job reached its
+   * merge verdict through another path after a node attempt — the
+   * tally shows how much of the group's held-merge evidence survived
+   * node-pool execution. `node_verdicts` tallies the recorded verdict
+   * words over the same cohort, most jobs first. Null when no outcome
+   * recorded a verdict — never zero-filled.
+   */
+  node_outcomes_known: number;
+  node_verdicts: { verdict: string; jobs: number }[] | null;
 }
 
 export interface RouterWeightProposalOptions {
@@ -301,7 +362,12 @@ export interface RouterWeightProposalSet {
    * the market was or was not routing the job (`no_runnable_lane`,
    * `global_admission`, `hysteresis_*`, `preferred_lane`/
    * `healthy_capacity`), never a launch decision and never a reduction
-   * of `unknown_unresolved`. `unknown_unresolved`
+   * of `unknown_unresolved`. `unknown_node_outcomes` counts jobs
+   * carrying the node runner's recorded terminal execution verdict —
+   * node-pack jobs produce artifacts, not pull requests, so the
+   * verdict is the job's own answer to "did the work run" and explains
+   * the missing merge verdict the same way — and `unknown_node_verdicts`
+   * tallies the recorded verdict words. `unknown_unresolved`
    * is the remainder with no recorded failure signal — finished cleanly and
    * awaiting a merge verdict, still in flight, or only transient launch
    * receipts; the ledger simply records no terminal productivity outcome
@@ -465,6 +531,38 @@ export interface RouterWeightProposalSet {
   unknown_merge_queue_conflicts: number;
   unknown_merge_queue_retries: number;
   unknown_merge_queue_recuts: number;
+  /**
+   * Jobs inside the unknown cohort carrying the node runner's recorded
+   * execution verdict — `phm-node-runner.v1` finish rows joined as
+   * `node_outcome`: the offloaded node-pack job's terminal verdict
+   * (`succeeded`/`fenced`/`failed`). Node-pack jobs produce result
+   * artifacts, not pull requests, so the verdict is the job's own
+   * answer to "did the work run" — like a failure classification it
+   * explains the missing merge verdict, so these jobs leave
+   * `unknown_unresolved` for all three verdict words: a `failed` or
+   * `fenced` attempt is the recorded failure signal, and a
+   * `succeeded` attempt is the recorded terminal success the node
+   * path was built to produce. `unknown_node_verdicts` tallies the
+   * recorded verdict words, most jobs first. Reads jobs-ledger rows
+   * only, so the tallies are real whenever the jobs read succeeded.
+   */
+  unknown_node_outcomes: number;
+  unknown_node_verdicts: { verdict: string; jobs: number }[];
+  /**
+   * Jobs inside the unknown cohort carrying the standing PR's newest
+   * recorded cross-model review verdict — `cross_review` joined from
+   * <ashlr>/fleet/cross-review.jsonl through the job's unambiguous
+   * canonical PR claim. Review-gate context like the merge-queue join:
+   * a `reject` is the recorded reason the PR may never merge, so it
+   * explains the missing merge verdict without ever reducing
+   * `unknown_unresolved` (a review verdict is not a merge verdict).
+   * `unknown_cross_review_verdicts` tallies the recorded verdict words
+   * (`approve`/`reject`/`failed`/`skipped`), most jobs first. Reads the
+   * cross-review side ledger, so the tallies are real only when that
+   * tail was read.
+   */
+  unknown_cross_reviews: number;
+  unknown_cross_review_verdicts: { verdict: string; jobs: number }[];
   unknown_unresolved: number;
   /**
    * Top recorded `usage_missing` labels across every folded outcome —
@@ -486,12 +584,23 @@ export interface RouterWeightProposalSet {
    * usage_missing.
    */
   usage_sources: { usage_source: string; jobs: number }[];
+  /**
+   * Top recorded `repo` labels across every folded outcome — known,
+   * unknown and unclassified alike, since repo identity is not merge
+   * evidence (the same scope rule usage_missing/usage_sources follow).
+   * Each entry is the repo the job targeted in the outcome fold's
+   * bounded repo-label shape, so an operator sees which repos the
+   * retained window's outcomes came from. Empty when no outcome
+   * recorded one; counts cover the retained window.
+   */
+  repos: { repo: string; jobs: number }[];
 }
 
 /** Running tallies for the outcome-quality signals; every count starts at zero and means stay sums until emitted. */
 interface WeightEvidenceTally {
   ciPass: number; ciKnown: number;
   reviewFixed: number; reviewRejected: number; reviewIgnored: number; reviewKnown: number;
+  crossApprove: number; crossReject: number; crossFailed: number; crossSkipped: number; crossReviewKnown: number;
   costSum: number; costKnown: number;
   wallSum: number; wallKnown: number;
   ttmSum: number; ttmKnown: number;
@@ -502,6 +611,11 @@ interface WeightEvidenceTally {
   tokensSum: number; tokensKnown: number;
   passkSum: number; passkKnown: number;
   acusSum: number; acusKnown: number;
+  poolPctSum: number; poolPctKnown: number;
+  launchCost: number; launchCostMeasured: number;
+  launchPeakSum: number; launchPeakKnown: number;
+  launchCpuSum: number; launchCpuKnown: number;
+  launchCpuPeakSum: number; launchCpuPeakKnown: number;
   diffFilesSum: number; diffFilesKnown: number;
   diffLinesSum: number; diffLinesKnown: number;
   usageMissingKnown: number;
@@ -522,17 +636,25 @@ interface WeightEvidenceTally {
   mergeQueueConflicts: number;
   mergeQueueRetries: number;
   mergeQueueRecuts: number;
+  repos: number;
+  repoLabels: Map<string, number>;
+  nodeOutcomes: number;
+  nodeVerdicts: Map<string, number>;
 }
 
 const freshTally = (): WeightEvidenceTally => ({
   ciPass: 0, ciKnown: 0, reviewFixed: 0, reviewRejected: 0, reviewIgnored: 0, reviewKnown: 0,
+  crossApprove: 0, crossReject: 0, crossFailed: 0, crossSkipped: 0, crossReviewKnown: 0,
   costSum: 0, costKnown: 0, wallSum: 0, wallKnown: 0, ttmSum: 0, ttmKnown: 0,
   queueWaitSum: 0, queueWaitKnown: 0, ciWallSum: 0, ciWallKnown: 0,
   publishWaitSum: 0, publishWaitKnown: 0,
   laneBlocked: 0, blockedReasons: new Map(),
   tokensSum: 0, tokensKnown: 0, passkSum: 0, passkKnown: 0,
-  acusSum: 0, acusKnown: 0, diffFilesSum: 0, diffFilesKnown: 0,
-  diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
+  acusSum: 0, acusKnown: 0, poolPctSum: 0, poolPctKnown: 0,
+  launchCost: 0, launchCostMeasured: 0,
+  launchPeakSum: 0, launchPeakKnown: 0, launchCpuSum: 0, launchCpuKnown: 0,
+  launchCpuPeakSum: 0, launchCpuPeakKnown: 0,
+  diffFilesSum: 0, diffFilesKnown: 0, diffLinesSum: 0, diffLinesKnown: 0, usageMissingKnown: 0,
   laneOverrides: 0, overrideReasons: new Map(),
   marketRejected: 0, rejectedReasons: new Map(),
   handoff: 0, handoffTriggers: new Map(),
@@ -540,7 +662,8 @@ const freshTally = (): WeightEvidenceTally => ({
   pool: 0, poolKinds: new Map(),
   mergeQueue: 0, mergeQueueBlocked: 0, mergeQueueBlockedReasons: new Map(),
   mergeQueueCheckFailures: 0, mergeQueueConflicts: 0, mergeQueueRetries: 0,
-  mergeQueueRecuts: 0,
+  mergeQueueRecuts: 0, repos: 0, repoLabels: new Map(),
+  nodeOutcomes: 0, nodeVerdicts: new Map(),
 });
 
 /** Top recorded lane-hint blocking codes kept per group, most jobs first. */
@@ -565,6 +688,12 @@ const MAX_HANDOFF_TRIGGERS = 8;
 const MAX_PROVIDER_WALL_TRIGGERS = 8;
 /** Top recorded pool throttle classes kept per group and in the unknown cohort, most jobs first. */
 const MAX_POOL_KINDS = 8;
+/** Top recorded repo labels kept per group and at set level, most jobs first. */
+const MAX_REPOS = 8;
+/** Top recorded node-runner verdict words kept per group and in the unknown cohort, most jobs first. */
+const MAX_NODE_VERDICTS = 8;
+/** Top recorded cross-review verdict words kept in the unknown cohort, most jobs first. */
+const MAX_CROSS_REVIEW_VERDICTS = 8;
 
 const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   ci_first_pass_known: t.ciKnown,
@@ -572,6 +701,9 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   review_findings_known: t.reviewKnown,
   review_findings: t.reviewKnown === 0 ? null
     : { fixed: t.reviewFixed, rejected: t.reviewRejected, ignored: t.reviewIgnored },
+  cross_review_known: t.crossReviewKnown,
+  cross_review: t.crossReviewKnown === 0 ? null
+    : { approve: t.crossApprove, reject: t.crossReject, failed: t.crossFailed, skipped: t.crossSkipped },
   cost_known: t.costKnown,
   cost_usd_mean: t.costKnown === 0 ? null : round6(t.costSum / t.costKnown),
   wall_known: t.wallKnown,
@@ -596,6 +728,13 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   passk_mean: t.passkKnown === 0 ? null : round6(t.passkSum / t.passkKnown),
   acus_known: t.acusKnown,
   acus_mean: t.acusKnown === 0 ? null : round6(t.acusSum / t.acusKnown),
+  pool_pct_used_known: t.poolPctKnown,
+  pool_pct_used_mean: t.poolPctKnown === 0 ? null : round6(t.poolPctSum / t.poolPctKnown),
+  launch_cost_known: t.launchCost,
+  launch_cost_measured: t.launchCostMeasured,
+  launch_peak_processes_mean: t.launchPeakKnown === 0 ? null : round6(t.launchPeakSum / t.launchPeakKnown),
+  launch_cpu_pct_mean: t.launchCpuKnown === 0 ? null : round6(t.launchCpuSum / t.launchCpuKnown),
+  launch_cpu_pct_peak_mean: t.launchCpuPeakKnown === 0 ? null : round6(t.launchCpuPeakSum / t.launchCpuPeakKnown),
   diff_files_known: t.diffFilesKnown,
   diff_files_mean: t.diffFilesKnown === 0 ? null : round6(t.diffFilesSum / t.diffFilesKnown),
   diff_lines_known: t.diffLinesKnown,
@@ -642,6 +781,18 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
   merge_queue_conflicts_known: t.mergeQueueConflicts,
   merge_queue_retries_known: t.mergeQueueRetries,
   merge_queue_recuts_known: t.mergeQueueRecuts,
+  repos_known: t.repos,
+  repos: t.repos === 0 ? null
+    : [...t.repoLabels.entries()]
+        .map(([repo, jobs]) => ({ repo, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
+        .slice(0, MAX_REPOS),
+  node_outcomes_known: t.nodeOutcomes,
+  node_verdicts: t.nodeOutcomes === 0 ? null
+    : [...t.nodeVerdicts.entries()]
+        .map(([verdict, jobs]) => ({ verdict, jobs }))
+        .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
+        .slice(0, MAX_NODE_VERDICTS),
 });
 
 /**
@@ -653,8 +804,9 @@ const evidenceOf = (t: WeightEvidenceTally): RouterWeightEvidence => ({
  * time, merge latency, queue-admission wait, CI wall, publish-station
  * wait, pass^k, dispatch lane
  * overrides, lane-hint blocking codes, session-handoff advisories,
- * provider-wall lane holds, slot-throttle detections and
- * merge-queue friction)
+ * provider-wall lane holds, slot-throttle detections, node-runner
+ * execution verdicts, merge-queue
+ * friction and the recorded repo mix)
  * as advisory evidence over
  * the same known cohort. Recorded lane-hint blocking codes
  * (`lane_hint_blocked_by`) tally per group as
@@ -698,9 +850,12 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   const handoffTriggersUnknown = new Map<string, number>();
   const providerWallTriggersUnknown = new Map<string, number>();
   const poolKindsUnknown = new Map<string, number>();
+  const nodeVerdictsUnknown = new Map<string, number>();
+  const crossReviewVerdictsUnknown = new Map<string, number>();
   const mergeQueueBlockedReasonsUnknown = new Map<string, number>();
   const usageMissing = new Map<string, number>();
   const usageSources = new Map<string, number>();
+  const repos = new Map<string, number>();
   let unknownSkipped = 0;
   let unknownDeferred = 0;
   let unknownNoop = 0;
@@ -708,6 +863,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
   let unknownHandoffs = 0;
   let unknownProviderWalls = 0;
   let unknownPoolThrottles = 0;
+  let unknownNodeOutcomes = 0;
+  let unknownCrossReviews = 0;
   let unknownMergeQueue = 0;
   let unknownMergeQueueBlocked = 0;
   let unknownMergeQueueCheckFailures = 0;
@@ -719,6 +876,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     // outcome tallies its recorded labels — classified or not.
     if (o.usage_missing !== null) usageMissing.set(o.usage_missing, (usageMissing.get(o.usage_missing) ?? 0) + 1);
     if (o.usage_source !== null) usageSources.set(o.usage_source, (usageSources.get(o.usage_source) ?? 0) + 1);
+    // Repo identity is capture evidence like usage provenance, not merge
+    // evidence: every folded outcome tallies its recorded repo —
+    // classified or not.
+    if (o.repo !== null) repos.set(o.repo, (repos.get(o.repo) ?? 0) + 1);
     if (!isRouteId(o.work_class) || !isRouteId(o.lane)) { unclassified++; continue; }
     if (o.merged === null) {
       unknown++;
@@ -836,6 +997,19 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         unknownPoolThrottles++;
         poolKindsUnknown.set(o.pool_kind, (poolKindsUnknown.get(o.pool_kind) ?? 0) + 1);
       }
+      // The node runner's finish row is the offloaded job's recorded
+      // terminal execution verdict — node-pack jobs produce result
+      // artifacts, not pull requests, so `merged` stays null however
+      // the pack ended. All three verdict words are the fleet's
+      // recorded answer to "did the work run": `failed`/`fenced` are
+      // the attempt's recorded failure signal and `succeeded` is the
+      // terminal success the node path exists to produce — each
+      // explains the missing merge verdict the same way a failure
+      // classification does, so every one leaves unknown_unresolved.
+      if (o.node_outcome !== null) {
+        unknownNodeOutcomes++;
+        nodeVerdictsUnknown.set(o.node_outcome, (nodeVerdictsUnknown.get(o.node_outcome) ?? 0) + 1);
+      }
       // The merge-queue join is queue-side diagnostic like the market
       // verdicts: each job's standing PR carried recorded merge-events
       // observations — blocked reasons, check failures, conflicts,
@@ -856,7 +1030,19 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
         if (o.merge_queue.retries > 0) unknownMergeQueueRetries++;
         if (o.merge_queue.recuts > 0) unknownMergeQueueRecuts++;
       }
-      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit' && o.provider_wall_pattern === null) unknownUnresolved++;
+      // The cross-review join is review-gate context like the merge-queue
+      // join: the standing PR's newest recorded cross-model verdict
+      // (approve/reject the reviewer's answers, failed/skipped the
+      // recorded non-verdicts) explains what the review gate saw while
+      // the merge verdict stayed unrecorded — a `reject` is the recorded
+      // reason the PR may never merge. It never feeds the unresolved
+      // remainder: a review verdict is not a merge verdict, so the job
+      // stays unresolved however the reviewer ruled.
+      if (o.cross_review !== null) {
+        unknownCrossReviews++;
+        crossReviewVerdictsUnknown.set(o.cross_review.outcome, (crossReviewVerdictsUnknown.get(o.cross_review.outcome) ?? 0) + 1);
+      }
+      if (!empty && !nonzeroExit && o.failure_class === null && !requeued && !declined && !deferred && !noop && o.handoff_trigger !== 'rate-limit' && o.provider_wall_pattern === null && o.node_outcome === null) unknownUnresolved++;
       continue;
     }
     const key = JSON.stringify([o.work_class, o.lane]);
@@ -874,6 +1060,17 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       t.reviewRejected += o.review_findings.rejected;
       t.reviewIgnored += o.review_findings.ignored;
     }
+    // The cross-review join is the standing PR's newest recorded
+    // cross-model verdict — approve/reject are the reviewer's answers,
+    // failed/skipped the recorded non-verdicts. Advisory context like
+    // review_findings: it tallies the verdict mix, never the weight.
+    if (o.cross_review !== null) {
+      t.crossReviewKnown++;
+      if (o.cross_review.outcome === 'approve') t.crossApprove++;
+      else if (o.cross_review.outcome === 'reject') t.crossReject++;
+      else if (o.cross_review.outcome === 'failed') t.crossFailed++;
+      else t.crossSkipped++;
+    }
     if (o.cost_usd !== null) { t.costKnown++; t.costSum += o.cost_usd; }
     if (o.wall_s !== null) { t.wallKnown++; t.wallSum += o.wall_s; }
     if (o.ttm_s !== null) { t.ttmKnown++; t.ttmSum += o.ttm_s; }
@@ -889,6 +1086,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     if (o.tokens_total !== null) { t.tokensKnown++; t.tokensSum += o.tokens_total; }
     if (o.passk !== null) { t.passkKnown++; t.passkSum += o.passk; }
     if (o.acus !== null) { t.acusKnown++; t.acusSum += o.acus; }
+    if (o.pool_pct_used !== null) { t.poolPctKnown++; t.poolPctSum += o.pool_pct_used; }
+    if (o.launch_cost_status !== null) {
+      t.launchCost++;
+      if (o.launch_cost_status === 'measured') t.launchCostMeasured++;
+      if (o.launch_peak_processes !== null) { t.launchPeakKnown++; t.launchPeakSum += o.launch_peak_processes; }
+      if (o.launch_mean_cpu_pct !== null) { t.launchCpuKnown++; t.launchCpuSum += o.launch_mean_cpu_pct; }
+      if (o.launch_peak_cpu_pct !== null) { t.launchCpuPeakKnown++; t.launchCpuPeakSum += o.launch_peak_cpu_pct; }
+    }
     if (o.diff_files !== null) { t.diffFilesKnown++; t.diffFilesSum += o.diff_files; }
     if (o.diff_lines !== null) { t.diffLinesKnown++; t.diffLinesSum += o.diff_lines; }
     if (o.usage_missing !== null) t.usageMissingKnown++;
@@ -921,6 +1126,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       t.pool++;
       t.poolKinds.set(o.pool_kind, (t.poolKinds.get(o.pool_kind) ?? 0) + 1);
     }
+    if (o.node_outcome !== null) {
+      t.nodeOutcomes++;
+      t.nodeVerdicts.set(o.node_outcome, (t.nodeVerdicts.get(o.node_outcome) ?? 0) + 1);
+    }
     if (o.merge_queue !== null) {
       t.mergeQueue++;
       if (o.merge_queue.blocked_reasons.length > 0) {
@@ -933,6 +1142,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
       if (o.merge_queue.conflicts > 0) t.mergeQueueConflicts++;
       if (o.merge_queue.retries > 0) t.mergeQueueRetries++;
       if (o.merge_queue.recuts > 0) t.mergeQueueRecuts++;
+    }
+    if (o.repo !== null) {
+      t.repos++;
+      t.repoLabels.set(o.repo, (t.repoLabels.get(o.repo) ?? 0) + 1);
     }
     groups.set(key, g);
     known++;
@@ -996,6 +1209,14 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([kind, jobs]) => ({ kind, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.kind.localeCompare(b.kind))
     .slice(0, MAX_POOL_KINDS);
+  const topNodeVerdicts = [...nodeVerdictsUnknown.entries()]
+    .map(([verdict, jobs]) => ({ verdict, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
+    .slice(0, MAX_NODE_VERDICTS);
+  const topCrossReviewVerdicts = [...crossReviewVerdictsUnknown.entries()]
+    .map(([verdict, jobs]) => ({ verdict, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.verdict.localeCompare(b.verdict))
+    .slice(0, MAX_CROSS_REVIEW_VERDICTS);
   const topMergeQueueBlockedReasons = [...mergeQueueBlockedReasonsUnknown.entries()]
     .map(([reason, jobs]) => ({ reason, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.reason.localeCompare(b.reason))
@@ -1008,6 +1229,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     .map(([usage_source, jobs]) => ({ usage_source, jobs }))
     .sort((a, b) => b.jobs - a.jobs || a.usage_source.localeCompare(b.usage_source))
     .slice(0, 10);
+  const topRepos = [...repos.entries()]
+    .map(([repo, jobs]) => ({ repo, jobs }))
+    .sort((a, b) => b.jobs - a.jobs || a.repo.localeCompare(b.repo))
+    .slice(0, MAX_REPOS);
   return { proposals, known_outcomes: known, unknown_outcomes: unknown, unclassified_outcomes: unclassified,
     unknown_empty: unknownEmpty, unknown_nonzero_exit: unknownNonzeroExit,
     unknown_failure_classes: topFailureClasses, unknown_empty_classes: topEmptyClasses,
@@ -1024,6 +1249,10 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_provider_wall_triggers: topProviderWallTriggers,
     unknown_pool_throttles: unknownPoolThrottles,
     unknown_pool_kinds: topPoolKinds,
+    unknown_node_outcomes: unknownNodeOutcomes,
+    unknown_node_verdicts: topNodeVerdicts,
+    unknown_cross_reviews: unknownCrossReviews,
+    unknown_cross_review_verdicts: topCrossReviewVerdicts,
     unknown_merge_queue: unknownMergeQueue,
     unknown_merge_queue_blocked: unknownMergeQueueBlocked,
     unknown_merge_queue_blocked_reasons: topMergeQueueBlockedReasons,
@@ -1032,7 +1261,8 @@ export function proposeRouterWeights(outcomes: readonly RouterOutcome[], opts: R
     unknown_merge_queue_retries: unknownMergeQueueRetries,
     unknown_merge_queue_recuts: unknownMergeQueueRecuts,
     unknown_unresolved: unknownUnresolved,
-    usage_missing: topUsageMissing, usage_sources: topUsageSources };
+    usage_missing: topUsageMissing, usage_sources: topUsageSources,
+    repos: topRepos };
 }
 
 export interface RouterWeightProposalReport {
@@ -1071,6 +1301,43 @@ export interface RouterWeightProposalReport {
   merge_events_state: RouterOutcomeRead['merge_events_state'];
   /** True when the merge-events tail was cut; joined evidence covers only the newest bytes. */
   merge_events_truncated: boolean;
+  /**
+   * Health of the revert-outcomes.jsonl ledger behind scan-detected
+   * revert joins. Anything but 'read' means no `phm fleet reverts
+   * --record` detections joined — held-merge tallies then see only
+   * jobs-ledger, authority-ledger and explicit revert evidence.
+   */
+  revert_ledger_state: RouterOutcomeRead['revert_ledger_state'];
+  /**
+   * Health of the reward-signals.jsonl tail behind the reward-signal
+   * joins — resolved merge verdicts recovered for jobs the bounded
+   * jobs tail dropped plus pool_pct_used evidence. Anything but
+   * 'read' means no reward rows joined; pool_pct_used then reads null
+   * for every group, never a zeroed figure.
+   */
+  reward_state: RouterOutcomeRead['reward_state'];
+  /** True when the reward tail was cut; joined evidence covers only the newest bytes. */
+  reward_truncated: boolean;
+  /**
+   * Health of the launch-cost.jsonl tail behind the launch_cost_*
+   * outcome joins and the per-group launch-cost evidence. Anything but
+   * 'read' means no launch-cost rows joined — every group's
+   * launch_cost_known reads 0 and the means stay null, never a
+   * zeroed or guessed resource figure.
+   */
+  launch_cost_state: RouterOutcomeRead['launch_cost_state'];
+  /** True when the launch-cost tail was cut; joined evidence covers only the newest bytes. */
+  launch_cost_truncated: boolean;
+  /**
+   * Health of the cross-review.jsonl tail under the ASHLR home root
+   * behind cross_review joins and the cross_review/unknown_cross_review_*
+   * tallies. Anything but 'read' means no review verdicts joined — the
+   * tallies then read 0/null, never an empty list claiming no reviews
+   * were recorded.
+   */
+  cross_review_state: RouterOutcomeRead['cross_review_state'];
+  /** True when the cross-review tail was cut; joined verdicts cover only the newest bytes. */
+  cross_review_truncated: boolean;
   /** 'unavailable' when the ledger was not read; counts are then null, never zero. */
   status: 'proposed' | 'insufficient-evidence' | 'unavailable';
   bounds: { min_samples: number; max_shift: number };
@@ -1219,6 +1486,40 @@ export interface RouterWeightProposalReport {
    */
   unknown_pool_kinds: { kind: string; jobs: number }[] | null;
   /**
+   * Jobs inside the unknown cohort carrying the node runner's recorded
+   * execution verdict — see RouterWeightProposalSet. The node-pack job's
+   * terminal verdict (`succeeded`/`fenced`/`failed`) is its own answer
+   * to "did the work run", so these jobs leave unknown_unresolved.
+   * Reads jobs-ledger rows only, so the tally is real whenever the jobs
+   * read succeeded. Null when the ledger was not read; 0 is a real
+   * measurement.
+   */
+  unknown_node_outcomes: number | null;
+  /**
+   * Top recorded node-runner verdict words inside the unknown cohort,
+   * by jobs — `succeeded`/`fenced`/`failed` (see
+   * RouterWeightProposalSet). Null when the ledger was not read; empty
+   * when none recorded.
+   */
+  unknown_node_verdicts: { verdict: string; jobs: number }[] | null;
+  /**
+   * Jobs inside the unknown cohort carrying the standing PR's newest
+   * recorded cross-model review verdict — see RouterWeightProposalSet.
+   * Review-gate context only; never reduces unknown_unresolved. Null
+   * when the ledger was not read or the cross-review ledger was not
+   * read (review coverage unknown); 0 is a real measurement when the
+   * tail was read.
+   */
+  unknown_cross_reviews: number | null;
+  /**
+   * Top recorded cross-review verdict words inside the unknown cohort,
+   * by jobs — `approve`/`reject`/`failed`/`skipped` (see
+   * RouterWeightProposalSet). Null when the ledger was not read or
+   * cross-review was not read; empty when read but no unknown-cohort
+   * outcome carried a verdict.
+   */
+  unknown_cross_review_verdicts: { verdict: string; jobs: number }[] | null;
+  /**
    * Jobs inside the unknown cohort carrying recorded merge-queue
    * evidence — see RouterWeightProposalSet. Queue-side diagnostic
    * context only; never reduces unknown_unresolved. Null when the
@@ -1258,6 +1559,12 @@ export interface RouterWeightProposalReport {
    */
   usage_sources: { usage_source: string; jobs: number }[] | null;
   /**
+   * Top recorded `repo` labels across every folded outcome — see
+   * RouterWeightProposalSet. Null when the ledger was not read; empty
+   * when read but no outcome recorded a repo.
+   */
+  repos: { repo: string; jobs: number }[] | null;
+  /**
    * Health of the fleet controller's recorded lane-quality verdicts
    * (`route.quality.v1` receipts in `queue/fleet-controller.json`, read via
    * controller-quality.ts). 'unreported' means the caller supplied no read —
@@ -1287,6 +1594,10 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     market_state: read.market_state, market_truncated: read.market_truncated,
     empty_tag_state: read.empty_tag_state, empty_tag_truncated: read.empty_tag_truncated,
     merge_events_state: read.merge_events_state, merge_events_truncated: read.merge_events_truncated,
+    revert_ledger_state: read.revert_ledger_state,
+    reward_state: read.reward_state, reward_truncated: read.reward_truncated,
+    launch_cost_state: read.launch_cost_state, launch_cost_truncated: read.launch_cost_truncated,
+    cross_review_state: read.cross_review_state, cross_review_truncated: read.cross_review_truncated,
     controller_quality_state: (controller?.state ?? 'unreported') as RouterWeightProposalReport['controller_quality_state'],
     controller_quality: controller?.state === 'read' ? controller.receipts : null,
     controller_quality_invalid_rows: controller?.state === 'read' ? controller.invalid_rows : null,
@@ -1301,12 +1612,14 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
       unknown_handoffs: null, unknown_handoff_triggers: null,
       unknown_provider_walls: null, unknown_provider_wall_triggers: null,
       unknown_pool_throttles: null, unknown_pool_kinds: null,
+      unknown_node_outcomes: null, unknown_node_verdicts: null,
+      unknown_cross_reviews: null, unknown_cross_review_verdicts: null,
       unknown_merge_queue: null, unknown_merge_queue_blocked: null,
       unknown_merge_queue_blocked_reasons: null,
       unknown_merge_queue_check_failures: null, unknown_merge_queue_conflicts: null,
       unknown_merge_queue_retries: null, unknown_merge_queue_recuts: null,
       unknown_unresolved: null,
-      usage_missing: null, usage_sources: null, proposals: [] };
+      usage_missing: null, usage_sources: null, repos: null, proposals: [] };
   }
   const set = proposeRouterWeights(read.outcomes, { ...opts, minSamples: bounds.min_samples, maxShift: bounds.max_shift });
   const status = set.proposals.some(p => p.status === 'proposed') ? 'proposed' : 'insufficient-evidence';
@@ -1346,6 +1659,19 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     // so the tallies are real whenever the jobs read succeeded.
     unknown_pool_throttles: set.unknown_pool_throttles,
     unknown_pool_kinds: set.unknown_pool_kinds,
+    // Node-runner finish rows are jobs-ledger rows like the skip,
+    // keep-queued, no-op, handoff, provider-wall and pool verdicts —
+    // no side-ledger join — so the tallies are real whenever the jobs
+    // read succeeded.
+    unknown_node_outcomes: set.unknown_node_outcomes,
+    unknown_node_verdicts: set.unknown_node_verdicts,
+    // Cross-review evidence joins through the same bounded
+    // cross-review.jsonl tail under the ASHLR home root: anything but
+    // 'read' means no review verdicts joined, so the tallies would
+    // claim "no reviews recorded" when they only know "cross-review
+    // unread" — report null, the same rule unknown_merge_queue uses.
+    unknown_cross_reviews: read.cross_review_state === 'read' ? set.unknown_cross_reviews : null,
+    unknown_cross_review_verdicts: read.cross_review_state === 'read' ? set.unknown_cross_review_verdicts : null,
     // Merge-queue evidence joins through the same bounded
     // merge-events.jsonl tail: anything but 'read' means no merge_queue
     // joined, so the tallies would claim "no merge friction recorded"
@@ -1360,5 +1686,6 @@ export function buildRouterWeightProposalReport(read: RouterOutcomeRead, asOf: s
     unknown_merge_queue_recuts: read.merge_events_state === 'read' ? set.unknown_merge_queue_recuts : null,
     unknown_unresolved: set.unknown_unresolved,
     usage_missing: set.usage_missing, usage_sources: set.usage_sources,
+    repos: set.repos,
     proposals: set.proposals };
 }

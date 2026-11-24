@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { compactBriefLines, LEADER_COMPACT_FILE, readCompactBrief } from '../src/core/fleet/leader-compact-brief.js';
+import { compactBriefLines, LEADER_COMPACT_FILE, readCompactBrief, writeCompactBrief } from '../src/core/fleet/leader-compact-brief.js';
 import { runSelfTick, SELF_TICK_STEP_ORDER, type SelfTickSteps } from '../src/core/fleet/self-tick.js';
 import { cmdLeaderBrief } from '../src/cli/leader-brief.js';
 import { groupHostFamilies } from '../src/core/fleet/host-families.js';
@@ -29,6 +29,20 @@ it.each([50, 51])('shows leftover load only above fifty percent: %s', async cpu 
   expect(compactBriefLines(brief).some(line => line.includes('leftover processes from finished jobs'))).toBe(cpu > 50);
   expect(JSON.stringify(brief.hostLoad)).not.toContain('"items"');
 });
+it('carries I/O wait names into the typed brief, saved JSON and plain output', async () => {
+  const table = `PID PPID %CPU RSS STAT ELAPSED ${'COMM'.padEnd(32)} COMMAND\n` +
+    `10 1 1 1024 U 00:01 ${''.padEnd(32)} /usr/libexec/fseventsd hiddenword`;
+  const host = groupHostFamilies(table, undefined, { load1: 77, cores: 18 });
+  const brief = await readCompactBrief(dir, now, async () => host);
+  expect(brief.hostLoad.ioWait).toEqual([{ name: 'fseventsd', processes: 1 }]);
+  expect(compactBriefLines(brief)).toContain('io-wait: fseventsd 1');
+  expect(compactBriefLines(brief)).toContain('load1 77 on 18 cores: load is mostly I/O wait (fseventsd 1)');
+  vi.mocked(hostFamilies.readHostFamilies).mockResolvedValue(host);
+  await writeCompactBrief(dir, now);
+  const saved = await readFile(join(dir, LEADER_COMPACT_FILE), 'utf8');
+  expect(JSON.parse(saved).hostLoad.ioWait).toEqual(brief.hostLoad.ioWait);
+  expect(saved).not.toMatch(/hiddenword|\/usr\/libexec|unnamed/);
+});
 it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and ready rows', async () => {
   const rows: object[] = [];
   for (let i = 0; i < 500; i++) {
@@ -52,7 +66,7 @@ it('bounds 500 jobs, ranks zero PRs in six launches first, and reads status and 
   expect(b.lanes[0]).toMatchObject({ running: 2, queued: 1, target: 4, held: false, emptyRate: 0 });
   expect(b.pools.find(p => p.pool === 'local')).toMatchObject({ usedPct: 40, burnPerHour: 2, safeBurn: 6, verdict: 'ok' });
   expect(b.stopped[0]).toMatchObject({ until: now / 1000 + 60 }); expect(b.omitted).toBeGreaterThan(0);
-  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(16);
+  expect(compactBriefLines(b).length).toBeGreaterThanOrEqual(10); expect(compactBriefLines(b).length).toBeLessThanOrEqual(19);
 });
 it('returns no data on an empty directory and writes a private snapshot each tick', async () => {
   expect(await readCompactBrief(dir, now)).toMatchObject({ state: 'no data', lanes: [], medianOpenToMergeSeconds: null });
@@ -76,7 +90,7 @@ it('shows active automatic stops in plain words and carries them in the self-tic
 });
 it('uses actual merge times and keeps only the five oldest stuck jobs', async () => {
   await writeFile(join(dir, 'metrics/jobs.jsonl'), JSON.stringify({ event: 'outcome', job: 'old', state: 'MERGED', ts: at, url: 'https://github.com/ashlrai/phantom/pull/7', createdAt: '2026-11-21T10:00:00Z', mergedAt: at }));
-  await writeFile(join(dir, 'queue/live-jobs.json'), JSON.stringify({ jobs: Array.from({ length: 8 }, (_, i) => ({ id: `job-${i}`, lane: 'local', status: i === 7 ? 'quiet' : 'stuck', elapsed: i })) }));
+  await writeFile(join(dir, 'queue/live-jobs.json'), JSON.stringify({ known: true, running: Array.from({ length: 8 }, (_, i) => ({ id: `job-${i}`, lane: 'local', state: i === 7 ? 'quiet' : 'stuck', elapsed: i })) }));
   const b = await readCompactBrief(dir, now);
   expect(b.medianOpenToMergeSeconds).toBe(7200); expect(b.attention.map(j => j.id)).toEqual(['job-6', 'job-5', 'job-4', 'job-3', 'job-2']);
   expect(b.families[0]).toMatchObject({ family: 'old', launches: 0, merges: 1 });
@@ -128,4 +142,52 @@ it('explains degraded sources and refuses merge observations without mergedAt', 
   expect(b.sources['metrics/jobs.jsonl']).toMatchObject({ state: 'degraded', why: expect.stringContaining('invalid') });
   expect(Object.values(b.sources).every(s => s.why.length > 0)).toBe(true);
   expect(b.medianOpenToMergeSeconds).toBeNull(); expect(b.mergeLatencyWhy).toContain('no publications paired');
+});
+
+it.each([
+  [45, 36, 1, false, 0, true], [36, 36, 1, false, 0, false], [20, 36, 1, false, 0, false],
+  [45, 36, 100, false, 0, false], [45, 36, 101, false, 0, false], [45, 36, 1, true, 0, false],
+  [45, 36, 1, false, 120_000, false],
+])('shows external load slowing starts only with fresh enabled load-gate evidence (%s, %s, %s)', async (load1, load_max, fleet, disabled, age, visible) => {
+  await writeFile(join(dir, 'queue/status.json'), JSON.stringify({ last_tick: new Date(now - age).toISOString(), admission: { load1, load_max, disabled } }));
+  const host = groupHostFamilies(`10 1 ${fleet} 1024 00:01 worker /repo/wt/plain\n20 1 60 1024 00:01 docker\n30 1 40 1024 00:01 chrome`);
+  const brief = await readCompactBrief(dir, now, async () => host);
+  if (visible) {
+    expect(brief.hostLoadWarning).toBe('Mac busy with docker and chrome (load 45, fleet about 0, CPU-share estimate): starts slowed');
+    expect(compactBriefLines(brief)[1]).toBe(brief.hostLoadWarning);
+  } else {
+    expect(brief.hostLoadWarning).toBeNull(); expect(compactBriefLines(brief).join('\n')).not.toContain('starts slowed');
+  }
+});
+
+it('ranks 24-hour EMPTY token waste and preserves unknown usage', async () => {
+  const rows = [
+    { job: 'alpha-1', tokens_total: 100 }, { job: 'alpha-2', tokens_total: 50 },
+    { job: 'alpha-3' }, { job: 'beta-1', tokens: 80 }, { job: 'gamma-1', total_tokens: 0 },
+    { job: 'delta-1' },
+  ].map(row => ({ ...row, event: 'finish', empty: true, ts: at }));
+  rows.push({ job: 'beta-2', tokens_total: 900, event: 'finish', empty: true, ts: new Date(now - 25 * 3600_000).toISOString() });
+  await writeFile(join(dir, 'metrics/jobs.jsonl'), rows.map(r => JSON.stringify(r)).join('\n'));
+  const brief = await readCompactBrief(dir, now);
+  expect(brief.emptyTokenFamilies).toEqual([
+    { family: 'alpha-*', tokens: 150, unknownJobs: 1, jobs: 3 },
+    { family: 'beta-*', tokens: 80, unknownJobs: 0, jobs: 1 },
+    { family: 'gamma-*', tokens: 0, unknownJobs: 0, jobs: 1 },
+    { family: 'delta-*', tokens: null, unknownJobs: 1, jobs: 1 },
+  ]);
+  expect(compactBriefLines(brief)).toEqual(expect.arrayContaining([
+    'alpha-*: 150 EMPTY tokens (24h), 1 jobs with unknown usage',
+    'beta-*: 80 EMPTY tokens (24h), 0 jobs with unknown usage',
+    'gamma-*: 0 EMPTY tokens (24h), 0 jobs with unknown usage',
+  ]));
+});
+it('reads produced open PR counts and reports a failed refresh as unknown', async () => {
+  const { refreshOpenPrs } = await import('../src/core/fleet/open-prs.js');
+  const run = async () => ({ stdout: '[{"number":7}]', stderr: '', code: 0, timedOut: false, truncated: false, missing: false });
+  await refreshOpenPrs(dir, 'ashlrai/phantom', now, run);
+  const b = await readCompactBrief(dir, now);
+  expect(b.openPrs).toBe(1); expect(compactBriefLines(b)).toContain('Open PRs: 1');
+  await refreshOpenPrs(dir, 'ashlrai/phantom', now, async () => ({ ...await run(), code: 1 }));
+  const failed = await readCompactBrief(dir, now);
+  expect(failed.openPrs).toBeNull(); expect(compactBriefLines(failed)).toContain('Open PRs: unknown');
 });

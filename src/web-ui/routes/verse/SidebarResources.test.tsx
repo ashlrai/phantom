@@ -3,13 +3,20 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import type { HostSummary } from '../../../core/web/host-summary.js';
 import { evictAll } from '../../data/cache.js';
-import { installFetch, json } from './context/context-fixtures.test-support.js';
+import { installFetch as installRawFetch, json } from './context/context-fixtures.test-support.js';
 import { getVerseUiState, resetVerseUi, setVerseSection } from './verse-ui-store.js';
 import { SidebarResources } from './SidebarResources.js';
 
 // The Dot row and Spend down section make their own reads; these suites count the sidebar's other reads (see SidebarResources.dot.test.tsx).
 vi.mock('./resources/DotResourceRow.js', () => ({ DotResourceRow: () => null }));
 vi.mock('./resources/SpendDown.js', () => ({ SpendDown: () => null }));
+
+const runtimePath = '/api/verse/fleet/runtime-identity/snapshot';
+function installFetch(handler: Parameters<typeof installRawFetch>[0]) {
+  return installRawFetch(call => call.path === runtimePath
+    ? json({ v: 1, snapshot: { host: 'fixture-host', installedVersion: '1.0.0', asOf: new Date().toISOString() } })
+    : handler(call));
+}
 
 function observation(state: HostSummary['killSwitch']['state'] = 'inactive'): HostSummary {
   return {
@@ -32,7 +39,7 @@ afterEach(() => {
 });
 
 describe('sidebar resources', () => {
-  it('shows three groups and navigates to the existing sections without any server calls', async () => {
+  it('navigates to the existing sections with only the runtime identity read', async () => {
     const { calls } = installFetch(() => json({ error: 'unexpected read' }, 500));
     const user = userEvent.setup();
     render(<SidebarResources />);
@@ -45,7 +52,7 @@ describe('sidebar resources', () => {
     expect(getVerseUiState().section).toBe('agents');
     await user.click(screen.getByRole('button', { name: 'View routines' }));
     expect(getVerseUiState().section).toBe('automations');
-    expect(calls).toHaveLength(0);
+    expect(calls.map(({ path, method }) => ({ path, method }))).toEqual([{ path: runtimePath, method: 'GET' }]);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -65,7 +72,7 @@ describe('sidebar resources', () => {
     const { calls } = installFetch(() => json(observation(state)));
     const user = userEvent.setup();
     render(<SidebarResources />);
-    expect(calls).toHaveLength(0);
+    expect(calls.map(({ path }) => path)).toEqual([runtimePath]);
     await user.click(screen.getByRole('button', { name: 'This machine' }));
     const dialog = await screen.findByRole('dialog', { name: 'This machine' });
     await within(dialog).findByText('http://127.0.0.1:4321');
@@ -74,7 +81,9 @@ describe('sidebar resources', () => {
     expect(marker.nextElementSibling).toHaveTextContent(label);
     expect(within(dialog).getByText('Local inference bind (configured)')).toBeVisible();
     expect(within(dialog).getByText(/does not indicate a running model/)).toBeVisible();
-    expect(calls.map(({ path, method }) => ({ path, method }))).toEqual([{ path: '/api/host', method: 'GET' }]);
+    expect(calls.map(({ path, method }) => ({ path, method }))).toEqual([
+      { path: runtimePath, method: 'GET' }, { path: '/api/host', method: 'GET' },
+    ]);
     expect(getVerseUiState().section).toBe('chat');
   });
 
@@ -109,7 +118,8 @@ describe('sidebar resources', () => {
     state = 'inactive';
     await user.keyboard('{Enter}');
     await screen.findByText('Absent — Stop not engaged');
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
+    expect(calls.filter(({ path }) => path === '/api/host')).toHaveLength(3);
     expect(calls.every(({ method }) => method === 'GET')).toBe(true);
   });
 
@@ -134,7 +144,7 @@ describe('sidebar resources', () => {
 
   it('withholds the previous clear Stop while a reopened summary waits for its new response', async () => {
     let resolve!: (value: Response) => void;
-    const { calls } = installFetch(() => calls.length === 1 ? json(observation())
+    const { calls } = installFetch(() => calls.filter(({ path }) => path === '/api/host').length === 1 ? json(observation())
       : new Promise<Response>((done) => { resolve = done; }));
     const user = userEvent.setup();
     render(<SidebarResources />);
@@ -159,20 +169,20 @@ describe('sidebar resources', () => {
     state = 'active';
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(screen.getByText('Present — Stop engaged')).toBeVisible();
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(({ path }) => path === '/api/host')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(({ path }) => path === '/api/host')).toHaveLength(2);
   });
 
   it('cancels a closed opening and ignores its late response after reopening', async () => {
     let finishOldRead!: (value: Response) => void;
-    const { calls, fetch } = installFetch(() => calls.length === 1
+    const { calls, fetch } = installFetch(() => calls.filter(({ path }) => path === '/api/host').length === 1
       ? new Promise<Response>((done) => { finishOldRead = done; }) : json(observation('active')));
     const user = userEvent.setup();
     render(<SidebarResources />);
     await user.click(screen.getByRole('button', { name: 'This machine' }));
-    const signal = fetch.mock.calls[0]![1]?.signal;
+    const signal = fetch.mock.calls.find(([path]) => path === '/api/host')![1]?.signal;
     await user.click(screen.getByRole('button', { name: 'Close' }));
     expect(signal?.aborted).toBe(true);
     await user.click(screen.getByRole('button', { name: 'This machine' }));
@@ -180,7 +190,7 @@ describe('sidebar resources', () => {
     await act(async () => { finishOldRead(json(observation('inactive'))); });
     expect(screen.getByText('Present — Stop engaged')).toBeVisible();
     expect(screen.queryByText('Absent — Stop not engaged')).toBeNull();
-    expect(calls).toHaveLength(2);
+    expect(calls.filter(({ path }) => path === '/api/host')).toHaveLength(2);
   });
 
   it('shows loading without claiming Stop is clear before the first response', async () => {
@@ -189,10 +199,11 @@ describe('sidebar resources', () => {
     const user = userEvent.setup();
     render(<SidebarResources />);
     await user.click(screen.getByRole('button', { name: 'This machine' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Reading machine status');
+    const dialog = within(screen.getByRole('dialog', { name: 'This machine' }));
+    expect(dialog.getByRole('status')).toHaveTextContent('Reading machine status');
     expect(screen.getByText('Stop marker (~/.ashlr/KILL)').nextElementSibling).toHaveTextContent('Unknown');
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
     resolve(json(observation()));
-    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    await waitFor(() => expect(dialog.queryByRole('status')).toBeNull());
   });
 });

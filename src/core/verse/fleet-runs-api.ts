@@ -1,5 +1,6 @@
 import { readGoals } from '../fleet/goals.js';
 import { readGoalScorecard } from '../fleet/goal-scorecard.js';
+import { readWhyIdle } from '../fleet/why-idle-read.js';
 import { readMetricsPanel } from '../fleet/metrics-panel.js';
 import { defaultLoopReaders, readLoopReleasesCached, type LoopReleases } from '../metrics/loop-collect.js';
 import { LOOP_STAGES_DEFAULT_SINCE_MS, parseSince } from '../metrics/loop-stages.js';
@@ -460,6 +461,7 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
         await mod.noteMergeSnapshot(result.mergesLastHour.items, deps.runsDir ?? defaultRunsDir(), new Date(now()).toISOString());
       } catch { /* Private ledger failures must not affect the snapshot. */ }
     }
+    result.whyIdle = await readWhyIdle(deps.runsDir ?? defaultRunsDir(), now());
     return result;
   }
   // Lane-median duration evidence is a slow statistic: refresh at most once a
@@ -632,6 +634,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
       const read = deps.readPulseAlerts ?? (await import('../fleet/pulse-alerts.js')).readPulseAlerts;
       sendJson(res, 200, await read({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now(), notify: true }));
+      return true;
+    }
+    // The Goals view's Skipped count reads the same jobs.skipped.v1 as `phm jobs skipped --json`.
+    if (path === '/api/verse/fleet/runs/skipped') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readSkippedJobs } = await import('../fleet/skipped-jobs.js');
+      sendJson(res, 200, await readSkippedJobs({ ...(deps.runsDir ? { runsDir: deps.runsDir } : {}), now: now() }));
       return true;
     }
     // Home's Running build line reads the same report as `phm self drift --json`.

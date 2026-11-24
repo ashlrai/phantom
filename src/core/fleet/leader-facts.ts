@@ -1,15 +1,17 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { defaultCloudGh } from '../cloud/tracker.js';
 import type { CloudGh } from '../cloud/pr-actions.js';
+import { readLandedFromGit, type LandedFromGitOptions } from './landed-from-git.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPrUrl } from './empty-cause.js';
 
 type Row = Record<string, unknown>;
 export interface LeaderFacts {
   schema: 'leader.facts.v1'; generated_at: string;
   sources: { queue: 'ok' | 'unknown'; jobs: 'ok' | 'unknown' | 'partial'; github: 'ok' | 'partial' };
-  jobs: { id: string; repo: string | null; publish_result: string | null; pr_url: string | null; pr_state: 'open' | 'merged' | 'closed' | null; merged_at: string | null }[];
+  jobs: { id: string; repo: string | null; publish_result: string | null; pr_url: string | null; pr_state: 'open' | 'merged' | 'closed' | null; merged_at: string | null; source?: 'git' }[];
   repos: { repo: string; merged_24h: number | null; latest_release_tag: string | null }[];
 }
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -30,7 +32,7 @@ async function api(gh: CloudGh, args: string[]): Promise<unknown> {
 }
 
 /** Refresh the snapshot from local evidence and read-only GitHub queries. Null means unobserved. */
-export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudGh, now = Date.now()): Promise<LeaderFacts> {
+export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudGh, now = Date.now(), gitOptions: Pick<LandedFromGitOptions, 'git' | 'cwd'> = {}): Promise<LeaderFacts> {
   const read = async (path: string) => { try { return await readFile(join(root, path), 'utf8'); } catch { return null; } };
   const [queue, ledger] = await Promise.all([read('queue/router-queue.md'), read('metrics/jobs.jsonl')]);
   const candidates = new Map<string, string | null>();
@@ -93,6 +95,33 @@ export async function writeLeaderFacts(root: string, gh: CloudGh = defaultCloudG
     }
     if (result.items.length < 100) break;
     if (page === 10) github = 'partial';
+  }
+  // Preserve GitHub's authoritative open/closed answers. Git can only fill unknowns.
+  const undecided = jobs.filter(job => job.pr_state === null && job.pr_url !== null);
+  if (undecided.length) {
+    const cwd = gitOptions.cwd ?? process.env.ASHLR_LANDED_REPO ?? process.cwd();
+    const git = gitOptions.git ?? ((args: string[], dir?: string) => execFileSync('git', args, {
+      cwd: dir ?? cwd, encoding: 'utf8', timeout: 60_000,
+      maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+    }));
+    try {
+      // Bind the reader's repo label to the checkout's origin, never to a job's claimed repo.
+      const remote = git(['remote', 'get-url', 'origin'], cwd).trim();
+      const repo = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(remote)?.[1];
+      if (repo) {
+        const landed = readLandedFromGit({ git, cwd, repo, sinceHours: 72, now });
+        if (landed.ok && landed.repos.some(reading => reading.repo === repo && reading.ok)) {
+          for (const job of undecided) {
+            const jobRepo = job.repo ?? urlPattern.exec(job.pr_url!)?.[1];
+            const hit = landed.jobs.find(hit => hit.id === job.id && hit.repo === jobRepo);
+            if (hit && /^[a-f0-9]{40}$/i.test(hit.sha) && Number.isFinite(date(hit.at))
+              && date(hit.at) <= now && date(hit.at) >= now - 72 * 3600000) {
+              job.pr_state = 'merged'; job.merged_at = hit.at; job.source = 'git';
+            }
+          }
+        }
+      }
+    } catch { /* Missing or failed git evidence leaves the state unknown. */ }
   }
   const repos: LeaderFacts['repos'] = [];
   for (const repo of [...new Set(jobs.map(j => j.repo).filter((r): r is string => r !== null))].sort()) {

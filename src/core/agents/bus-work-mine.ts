@@ -3,7 +3,8 @@
  * the live claims it holds under any of its labels — message-id leases
  * resolved to the live envelope they cover — the open work-feed jobs it
  * could still claim, the work-feed jobs it announced that have not finished —
- * each with the live claim coverage of its declared keys —
+ * each with the live claim coverage of its declared keys and the shown hold
+ * rows naming who holds each blocked key and until when —
  * the claimable work envelopes and worker-handoff
  * assignments addressed to it — under any of its labels or to a channel it
  * belongs to — in `bus next` order, the conversation threads waiting on its
@@ -28,23 +29,23 @@ import { coordinationRowBlocks, listCoordination } from './claim-store.js';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
-import { agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
+import { agentChannelNameSchema, agentLabels, agentPendingAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
 import { parseClaimKey } from './bus-v2-schema.js';
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
-import { conversationScope, readAgentConversations, type AgentConversations, type ConversationScope } from '../fleet/agent-conversations.js';
+import { conversationScope, readAgentConversations, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
-import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedOwnerMatcher, busWorkFeedToMatcher,
-  busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
+import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
+  busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHold, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobIds, busBodyJobId, busBodyJobMatch,
-  busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
+  busBodySummary, busInboxJobMarker, busReadContains, busReadContainsMatch, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { BUS_PROTOCOL_KEY, BUS_PRIORITIES, isClaimableWork,
   type BusPriority } from '../fleet/bus-envelope.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
-import { busReplyCitations, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
-import { createBusMailbox } from '../fleet/bus-mailbox.js';
+import { busReplyCitations, handoffAnswerScope, isWorkerHandoffBody, workerHandoffAnswered, type BusReplyCitation } from '../fleet/handoff-body.js';
+import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
 import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { BusBoard, busBoardStoragePaths, type BusBoardPendingThread, type BusBoardTaskHold } from '../fleet/bus-board.js';
@@ -93,6 +94,99 @@ export interface BusWorkMineOptions {
    * comes back empty under a job filter; every section's count stays the
    * filtered total, never the unfiltered one. */
   job?: string;
+  /** Keep only pending items whose displayed descriptive text carries this
+   * search string — the same case-insensitive substring rule every other
+   * bus read's `--contains` applies, matched over each section's scrubbed
+   * one-line display text (feed job title/detail/dispatch, body and thread
+   * summaries, board post text and titles, claim-blocked job titles and
+   * leased-message summaries, seat handoff work refs) and never over ids,
+   * claim keys as keys, statuses or routing labels, which keep their own
+   * filters. `channels` is registry context, not pending work, and stays
+   * unfiltered like it does under `job`. Every section's count stays the
+   * filtered total, never the unfiltered one. */
+  contains?: string;
+  /** Keep only pending items whose recorded appearance or last-activity
+   * time reaches this epoch-ms cutoff — the same `--since` grammar and
+   * inclusive `>=` match every bus read applies (the wakes read keeps its
+   * own strictly-after boundary, which the section inherits), so "what is
+   * new for me since my last check" is one filtered digest instead of a
+   * full re-read. Each section
+   * keys on the timestamp its own store keeps: claims on the lease's
+   * `started`, feed jobs on `updatedAt`, pending work and mail on the
+   * envelope receipt, mailbox rows on acceptance, conversation threads on
+   * the latest message, wake hints on their queue time, board deliveries on
+   * `createdAt`. An item
+   * whose store keeps no timestamp — a claim with `started:null`, a board
+   * task — never matches, the same "unknown stays out" rule the unified
+   * inbox's `--since` applies; `channels` is registry context and stays
+   * unfiltered like it does under `job`/`contains`, and `seats` stays
+   * unfiltered because a pending handoff record's `createdAt` stamps the
+   * plan read instant, not the held work's age — no per-record recency
+   * exists to filter on. Every section's count
+   * stays the filtered total, never the unfiltered one. */
+  since?: number;
+  /** Keep only pending items whose recorded appearance or last-activity
+   * time is strictly before this epoch-ms cutoff — the exclusive upper
+   * bound every bus read's `--before` applies, composing with `since`
+   * into one `[since, before)` window — the wakes section's inherited
+   * `since` keeps its strictly-after boundary, so its own window is
+   * `(since, before)` — so "what was pending before time T" is one
+   * filtered digest instead of a full re-read paged down to T. Each
+   * section keys on the same timestamp its `since` rule uses: claims on
+   * the lease's `started`, feed jobs on `updatedAt`, pending work and
+   * mail on the envelope receipt, mailbox rows on acceptance, the three
+   * thread sections on the shared conversations read's `lastAt` bound,
+   * board deliveries on `createdAt`. An item stamped exactly at the
+   * cutoff never matches — the bound is exclusive — and an item whose
+   * store keeps no timestamp never matches, the same "unknown stays out"
+   * rule `since` applies. `inbox` and `wakes` delegate both bounds to their
+   * shared reads — `readAgentInbox`'s `before` on `receivedAt` and
+   * `readAgentWakes`' `filter.before` on the hint's queue time, each the
+   * same exclusive `receivedAt < before`/`at < before` match every other
+   * bus read's `--before` applies — so the cutoff reaches them like every
+   * other section; `channels` and `seats` stay unfiltered like they do
+   * under `since`, and every section's count stays the filtered total,
+   * never the unfiltered one. */
+  before?: number;
+  /** Keep only pending items stamped with this exact P0..P3 band — the same
+   * `--priority` match every other bus read applies — on the sections whose
+   * items carry a wire band: `next` and `handoffs` keep envelopes of that
+   * priority, `inbox` and `mailbox` keep mail of that band, `wakes` keeps
+   * hints whose resolved referent reports that band (the wakes read's own
+   * rule: `unresolved`/`unknown` referents never match), and `claims` keep
+   * only message claims whose resolved leased envelope reports that band —
+   * a claim with no resolved message (a scope-key claim, an unresolvable or
+   * unreadable-message lease) names no provable band and never lists, the
+   * same "unknown stays out" rule the job filter applies. `jobs`,
+   * `announced`, the three thread sections, `board`, `channels` and `seats`
+   * carry no per-item band in their projections and stay unfiltered, like
+   * `channels` does under every filter. Every section's count stays the
+   * filtered total, never the unfiltered one. */
+  priority?: BusPriority;
+  /** Keep only pending items provably addressed to `group:<name>:*` of one
+   * bus channel — the same room prefix every bus read's `--channel` matches,
+   * decided on each section's own address evidence: feed jobs and announced
+   * jobs keep announcements whose `to` carries the prefix (the feed
+   * `--channel` rule), `next`/`handoffs`/`mailbox` keep envelopes whose `to`
+   * carries it, claims keep only message claims whose resolved leased
+   * envelope's `to` carries it (a claim naming no resolved message — a
+   * scope-key claim, an unresolvable or unreadable lease — names no provable
+   * room and never lists, the same "unknown stays out" rule `priority`
+   * applies), the three thread sections keep threads whose latest message —
+   * the wait's own evidence for waiting threads, the block report for
+   * blocked ones — is addressed to the room, `wakes` and `inbox` pass the
+   * name to their own reads' channel filters (the wakes read's raw `to`
+   * prefix and the inbox read's member-channel rule), and `board`,
+   * `channels` and `seats` carry no per-item room in their projections and
+   * stay unfiltered, like they do under `priority`. The value takes the
+   * strict channel-name grammar every other bus `--channel` read validates;
+   * matching is a raw `group:<name>:` prefix on the routing label, so it
+   * needs no registry and never widens on unknown state — a room the agent
+   * does not belong to simply has no member-scoped mail or hints to show,
+   * while label-addressed sections still answer the raw-prefix question.
+   * Every section's count stays the filtered total, never the unfiltered
+   * one. */
+  channel?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -100,9 +194,21 @@ export interface BusWorkMineOptions {
 /** How completely the coordination holds behind the feed are known. */
 export type BusWorkMineHoldCoverage = BusWorkFeedHoldCoverage;
 
+/** One live coordination hold on a feed job's declared claim key, as the claims join shows it. */
+export interface BusWorkMineJobHold {
+  /** The job's declared claim key the hold blocks. */
+  claimKey: string;
+  /** Routing label of the claim's owner — a label, never authenticated identity. */
+  owner: string;
+  /** ISO-free epoch-ms lease expiry the coordination row reports. */
+  leaseUntil: number;
+  /** The claim class the hold came from — resource, message, team, board or queue. */
+  origin: BusWorkFeedHold['origin'];
+}
+
 /** An open feed job plus its per-key hold state; a null field means unknown, never none. */
 export interface BusWorkMineJob extends BusWorkFeedJob {
-  /** True when the announcement `to` label resolves to this agent's identity; false keeps exact-label misses honest. */
+  /** True when the announcement is pending work addressed to this agent — the `work feed --to` rule: any label of its identity or a member `group:<channel>:<topic>` address, minus its own posts; false keeps exact-label misses honest. */
   addressed: boolean;
   /** True when the job's `owner` (announcer) label resolves to this agent's identity — the agent posted it and owns its status reports; false keeps exact-label misses honest. */
   announced: boolean;
@@ -112,6 +218,13 @@ export interface BusWorkMineJob extends BusWorkFeedJob {
   heldKeys: string[] | null;
   /** true: a declared key is provably free; false: every declared key is provably held; null: coverage incomplete. */
   claimable: boolean | null;
+  /** The shown live holds on this job's declared keys — who holds each blocked
+   * key and until when, so "is this a live worker or a stale lease" answers
+   * inside the digest instead of a `claim list --jobs` read. Null when hold
+   * coverage is `unknown` (the table could not be read); under `truncated`
+   * coverage the list is the shown lower bound, the same honesty `heldKeys`
+   * keeps. Fencing tokens and lease source ids never leave the store. */
+  holders: BusWorkMineJobHold[] | null;
 }
 
 export interface BusWorkMineAgent {
@@ -192,6 +305,11 @@ export interface BusWorkMineAnnouncedJob extends BusWorkFeedJob {
   heldKeys: string[] | null;
   /** Declared keys with no shown live hold — proven only under complete coverage; null otherwise. */
   freeKeys: string[] | null;
+  /** The shown live holds on this job's declared keys — who holds each blocked
+   * key and until when, so the announcer can tell a live worker from a stale
+   * lease without a `claim list --jobs` read. Null when hold coverage is
+   * `unknown`; under `truncated` the list is the shown lower bound. */
+  holders: BusWorkMineJobHold[] | null;
 }
 
 /** The feed jobs the agent announced that have not reached a terminal state. */
@@ -540,6 +658,16 @@ export type BusWorkMineResult =
   | { status: 'ok'; agent: BusWorkMineAgent; asOf: string;
       /** The job filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       job?: string;
+      /** The text filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      contains?: string;
+      /** The time filter the read applied, echoed as ISO for JSON consumers; absent on an unfiltered read. */
+      since?: string;
+      /** The exclusive upper time bound the read applied, echoed as ISO for JSON consumers; absent on an unfiltered read. */
+      before?: string;
+      /** The band filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      priority?: BusPriority;
+      /** The room filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      channel?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -585,9 +713,10 @@ const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
  */
 export function busWorkMineJobAnnotation(
   job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
-  addressed: boolean, announced = false,
+  addressed: boolean, announced = false, holds?: readonly BusWorkFeedHold[],
 ): BusWorkMineJob {
-  return { ...job, addressed, announced, ...busWorkFeedJobHold(job, held, coverage) };
+  return { ...job, addressed, announced, ...busWorkFeedJobHold(job, held, coverage),
+    holders: busWorkMineHolders(holds, coverage) };
 }
 
 /**
@@ -603,6 +732,7 @@ export function busWorkMineJobAnnotation(
  */
 export function busWorkMineAnnouncedAnnotation(
   job: BusWorkFeedJob, held: ReadonlySet<string> | undefined, coverage: BusWorkMineHoldCoverage,
+  holds?: readonly BusWorkFeedHold[],
 ): BusWorkMineAnnouncedJob {
   // The feed annotates open jobs with `claimable`; announced items report the
   // `held` tri-state instead, so the feed-level field does not leak through.
@@ -612,7 +742,22 @@ export function busWorkMineAnnouncedAnnotation(
     : heldKeys !== null && heldKeys.length > 0 ? true
     : coverage === 'unknown' || coverage === 'truncated' ? null
     : false;
-  return { ...rest, held: heldState, heldKeys, freeKeys };
+  return { ...rest, held: heldState, heldKeys, freeKeys,
+    holders: busWorkMineHolders(holds, coverage) };
+}
+
+/**
+ * The shown hold rows of one job as digest entries: claim key, owner label,
+ * lease expiry and claim class — never the fencing token or lease source id.
+ * `unknown` coverage means the coordination table could not be read, so the
+ * list is null rather than an empty one; `truncated` keeps the shown rows as
+ * the same lower bound `heldKeys` reports.
+ */
+function busWorkMineHolders(holds: readonly BusWorkFeedHold[] | undefined,
+  coverage: BusWorkMineHoldCoverage): BusWorkMineJobHold[] | null {
+  if (coverage === 'unknown') return null;
+  return (holds ?? []).map(hold => ({ claimKey: hold.claimKey, owner: hold.owner,
+    leaseUntil: hold.leaseUntil, origin: hold.origin }));
 }
 
 /**
@@ -624,27 +769,37 @@ export function busWorkMineAnnouncedAnnotation(
 function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): {
   coverage: BusWorkMineHoldCoverage;
   heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+  holdsByJob: ReadonlyMap<string, readonly BusWorkFeedHold[]>;
 } {
   return busWorkFeedHoldIndex(feed.claims);
 }
 
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
-  jobId?: string): BusWorkMineJobs {
+  jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
-  const { coverage, heldByJob } = feedHoldIndex(feed);
+  const { coverage, heldByJob, holdsByJob } = feedHoldIndex(feed);
   const open = feed.jobs
     .filter(job => BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0 &&
-      (jobId === undefined || job.id === jobId))
+      (jobId === undefined || job.id === jobId) &&
+      (contains === undefined || busWorkFeedJobSearchText(job).includes(contains)) &&
+      (sinceMs === undefined || job.updatedAt >= sinceMs) &&
+      (beforeMs === undefined || job.updatedAt < beforeMs) &&
+      (channelPrefix === undefined || job.to.startsWith(channelPrefix)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  const toMatch = busWorkFeedToMatcher(agent, { root });
+  // `addressed` is the pending-work rule the feed `--to` filter and the
+  // next/handoffs sections share: identity labels plus member `group:`
+  // channel addresses, minus the agent's own posts — so a job `work feed
+  // --to <agent>` lists never reads addressed:false here.
+  const toMatch = busWorkFeedPendingToMatcher(agent, { root });
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
   return {
     status: 'ok', holds: coverage, open: open.length, receipts: feed.receipts,
     truncated: open.length > WORK_MINE_JOBS_MAX,
     jobs: open.slice(0, WORK_MINE_JOBS_MAX).map(job =>
-      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to), ownerMatch(job.owner))),
+      busWorkMineJobAnnotation(job, heldByJob.get(job.id), coverage, toMatch(job.to, job.owner),
+        ownerMatch(job.owner), holdsByJob.get(job.id))),
   };
 }
 
@@ -671,19 +826,24 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  * non-ok feed reports its own state, never an empty list.
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
-  jobId?: string): BusWorkMineAnnounced {
+  jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
   const ownerMatch = busWorkFeedOwnerMatcher(agent, { root });
-  const { coverage, heldByJob } = feedHoldIndex(feed);
+  const { coverage, heldByJob, holdsByJob } = feedHoldIndex(feed);
   const live = feed.jobs
     .filter(job => !ANNOUNCED_DONE.has(job.status) && ownerMatch(job.owner) &&
-      (jobId === undefined || job.id === jobId))
+      (jobId === undefined || job.id === jobId) &&
+      (contains === undefined || busWorkFeedJobSearchText(job).includes(contains)) &&
+      (sinceMs === undefined || job.updatedAt >= sinceMs) &&
+      (beforeMs === undefined || job.updatedAt < beforeMs) &&
+      (channelPrefix === undefined || job.to.startsWith(channelPrefix)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
     items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
-      .map(job => busWorkMineAnnouncedAnnotation(job, heldByJob.get(job.id), coverage)),
+      .map(job => busWorkMineAnnouncedAnnotation(job, heldByJob.get(job.id), coverage,
+        holdsByJob.get(job.id))),
     truncated: live.length > WORK_MINE_ANNOUNCED_MAX };
 }
 
@@ -699,9 +859,15 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
  * resumes strictly before it and `agents bus inbox --after` redelivers nothing
  * shown and skips nothing pending.
  */
-function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number): BusWorkMineInbox {
+function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
+  contains?: string): BusWorkMineInbox {
   const page = readAgentInbox(agent, { limit: WORK_MINE_INBOX_MAX + 1, matched: true,
-    ...(options.job === undefined ? {} : { job: options.job }) },
+    ...(options.job === undefined ? {} : { job: options.job }),
+    ...(options.since === undefined ? {} : { since: options.since }),
+    ...(options.before === undefined ? {} : { before: options.before }),
+    ...(options.priority === undefined ? {} : { priority: options.priority }),
+    ...(options.channel === undefined ? {} : { channel: options.channel }),
+    ...(contains === undefined ? {} : { contains }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
   let shown = page.messages, nextCursor = page.nextCursor, truncated = false;
@@ -744,14 +910,26 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number)
  * unreadable one reports `unavailable`, never an empty list passed off as fact.
  */
 function mailboxSection(agent: string, identity: AgentIdentity | undefined,
-  options: BusWorkMineOptions, nowMs: number): BusWorkMineMailbox {
+  options: BusWorkMineOptions, nowMs: number, contains?: string): BusWorkMineMailbox {
   const home = options.mailboxHome ?? (options.root === undefined ? undefined : dirname(options.root));
   const job = options.job;
+  const since = options.since;
+  const before = options.before;
+  const priority = options.priority;
+  const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
+  const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
+      priority === undefined && channelPrefix === undefined ? undefined
+    : (message: BusMailboxPendingMessage) =>
+      (job === undefined || busBodyJobMatch(message.envelope.body, job)) &&
+      (since === undefined || message.acceptedAt >= since) &&
+      (before === undefined || message.acceptedAt < before) &&
+      (priority === undefined || message.envelope.priority === priority) &&
+      (channelPrefix === undefined || message.envelope.to.startsWith(channelPrefix)) &&
+      (contains === undefined || busReadContainsMatch(message.envelope.body, contains));
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
     read = createBusMailbox(home, () => nowMs)
-      .pendingFor(identity === undefined ? [agent] : agentLabels(identity), WORK_MINE_MAILBOX_MAX,
-        job === undefined ? undefined : message => busBodyJobMatch(message.envelope.body, job));
+      .pendingFor(identity === undefined ? [agent] : agentLabels(identity), WORK_MINE_MAILBOX_MAX, match);
   } catch {
     return { status: 'unavailable', reason: 'mailbox-unreadable' };
   }
@@ -791,7 +969,7 @@ function boardText(text: string): string {
  * as fact.
  */
 function boardSection(agent: string, identity: AgentIdentity | undefined,
-  options: BusWorkMineOptions, nowMs: number): BusWorkMineBoard {
+  options: BusWorkMineOptions, nowMs: number, contains?: string): BusWorkMineBoard {
   const unavailable: BusWorkMineBoard = { status: 'unavailable', reason: 'board-unreadable' };
   if ((options.board?.root !== undefined && !isAbsolute(options.board.root)) ||
       (options.board?.queueRoot !== undefined && !isAbsolute(options.board.queueRoot))) {
@@ -817,7 +995,8 @@ function boardSection(agent: string, identity: AgentIdentity | undefined,
   }
   try {
     const labels = identity === undefined ? [agent] : agentLabels(identity);
-    const digest = new BusBoard({ root: boardRoot, fleet, cfg }).pendingFor(labels, nowMs, options.job);
+    const digest = new BusBoard({ root: boardRoot, fleet, cfg })
+      .pendingFor(labels, nowMs, options.job, contains, options.since, options.before);
     return {
       status: 'ok', peers: digest.peers, claims: digest.claims, threads: digest.threads,
       deliveries: {
@@ -895,13 +1074,21 @@ type PendingWorkScanFail = { status: 'unavailable' | 'retryable' | 'invalid'; re
  * no claims, no mutations.
  */
 function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: number,
-  registry: AgentRegistry | undefined): { next: BusWorkMineNext; handoffs: BusWorkMineHandoffs } {
+  registry: AgentRegistry | undefined, contains?: string): { next: BusWorkMineNext; handoffs: BusWorkMineHandoffs } {
   const scanFail = (result: PendingWorkScanFail) => ({ next: result, handoffs: result });
   // "Addressed to this agent" is the shared pending-work rule `bus next`
   // claims by: any label of the resolved identity or a member channel's
   // `group:<name>:` address, minus the agent's own channel posts — never
   // widened on an unreadable registry or unresolvable ref.
   const pendingAddress = agentPendingAddressMatcher(agent, registry);
+  // The answered check resolves reply labels through the same registry the
+  // pending rule reads; an unreadable registry keeps literal-label matching.
+  const answerScope = handoffAnswerScope(registry);
+  // A room filter keeps only envelopes whose `to` carries `group:<name>:` —
+  // the same raw prefix the feed `--channel` rule and every other bus read's
+  // channel filter match, registry-free so unknown channel state never
+  // widens it.
+  const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
   const nextCandidates: NextCandidate[] = [];
   const handoffCandidates: HandoffCandidate[] = [];
   // Live reply citations collected across the same walk — a handoff's answer
@@ -930,8 +1117,24 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       // `busBodyJobMatch` citation rule `agents bus inbox --job` applies. It
       // runs after replyCites so a job-filtered handoff still sees its answer;
       // claimable work receipts name no job citation, so `next` comes back
-      // empty under `--job` while handoffs keep their `taskId` hits.
+      // empty under `--job` while handoffs keep their `taskId` hits. A
+      // contains filter keeps only envelopes whose scrubbed one-line summary
+      // carries the needle — the same `busReadContainsMatch` rule `agents
+      // bus inbox --contains` applies — for both kinds alike. A since filter
+      // keeps only receipts at or after the cutoff — the same
+      // `receivedAt >= since` rule `agents bus inbox --since` applies — and
+      // runs in the same place so a since-filtered handoff still sees its
+      // answer in replyCites. A priority filter keeps only envelopes of that
+      // band — the same exact P0..P3 match `agents bus inbox --priority`
+      // applies — for both kinds alike. A channel filter keeps only
+      // envelopes addressed under `group:<name>:*` — the same room prefix
+      // every bus read's `--channel` matches — for both kinds alike.
       if (options.job !== undefined && !busBodyJobMatch(envelope.body, options.job)) continue;
+      if (contains !== undefined && !busReadContainsMatch(envelope.body, contains)) continue;
+      if (options.since !== undefined && row.receivedAt < options.since) continue;
+      if (options.before !== undefined && row.receivedAt >= options.before) continue;
+      if (options.priority !== undefined && envelope.priority !== options.priority) continue;
+      if (channelPrefix !== undefined && !envelope.to.startsWith(channelPrefix)) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -966,8 +1169,10 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
   // A handoff the addressee already answered is not pending work: a live reply
   // routed recipient -> sender and citing the handoff id is the same durable
   // evidence the conversation projection credits when it marks the thread
-  // answered. Only live envelopes were scanned, matching that window.
-  const openHandoffs = handoffCandidates.filter(candidate => !workerHandoffAnswered(candidate, replyCites));
+  // answered — under any label of either identity, or from a member of the
+  // addressed channel. Only live envelopes were scanned, matching that
+  // window.
+  const openHandoffs = handoffCandidates.filter(candidate => !workerHandoffAnswered(candidate, replyCites, answerScope));
 
   const claimsRead = inspectBusWorkClaims(options.root);
   const coordination = listCoordination(options.root, nowMs);
@@ -1164,6 +1369,21 @@ function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineO
 }
 
 /**
+ * The `--channel` verdict for one conversation thread, decided on the same
+ * address evidence the thread sections report: the thread's latest message
+ * — the wait's own recipient for waiting threads (`waiting.on` is that
+ * message's `to`), the block report's recipient for blocked ones — must
+ * carry `group:<name>:*`, the same room prefix every other section matches.
+ * A thread whose latest word was addressed to a label or another room names
+ * no provable room traffic and never matches; earlier room posts do not
+ * pull a now-DM wait back into the room's pending set.
+ */
+function threadInChannel(thread: Conversation, channelPrefix: string | undefined): boolean {
+  return channelPrefix === undefined ||
+    thread.messages[thread.messages.length - 1]!.to.startsWith(channelPrefix);
+}
+
+/**
  * The conversation threads whose latest message still wants this agent's
  * answer — the same thread state `agents conversations --waiting`
  * computes, narrowed to waits the agent (or a channel it belongs to) owes.
@@ -1177,13 +1397,15 @@ function annotateClaimMessages(claims: BusWorkMineClaim[], options: BusWorkMineO
  * `unavailable` and a missing one is a verified-empty `ok`, and `skipped`
  * keeps the damaged-row count honest.
  */
-function threadsSection(conversations: AgentConversations, scope: ConversationScope): BusWorkMineThreads {
+function threadsSection(conversations: AgentConversations, scope: ConversationScope,
+  channelPrefix?: string): BusWorkMineThreads {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
-    scope.denotes(thread.waiting.on) && !scope.isSelf(thread.messages[thread.messages.length - 1]!.from));
+    scope.denotes(thread.waiting.on) && !scope.isSelf(thread.messages[thread.messages.length - 1]!.from) &&
+    threadInChannel(thread, channelPrefix));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
       const last = thread.messages[thread.messages.length - 1]!;
@@ -1213,13 +1435,15 @@ function threadsSection(conversations: AgentConversations, scope: ConversationSc
  * sections are mutually exclusive on every thread (one needs the agent's
  * label off the waiting message, the other on it).
  */
-function awaitingSection(conversations: AgentConversations, scope: ConversationScope): BusWorkMineAwaiting {
+function awaitingSection(conversations: AgentConversations, scope: ConversationScope,
+  channelPrefix?: string): BusWorkMineAwaiting {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations.filter(thread => thread.waiting !== null &&
-    scope.isSelf(thread.messages[thread.messages.length - 1]!.from) && !scope.isSelf(thread.waiting.on));
+    scope.isSelf(thread.messages[thread.messages.length - 1]!.from) && !scope.isSelf(thread.waiting.on) &&
+    threadInChannel(thread, channelPrefix));
   return { status: 'ok', source, matched: matched.length,
     items: matched.slice(0, WORK_MINE_THREADS_MAX).map(thread => {
       const last = thread.messages[thread.messages.length - 1]!;
@@ -1248,14 +1472,16 @@ function awaitingSection(conversations: AgentConversations, scope: ConversationS
  * Longest-standing block first; same caps, ordering honesty and
  * unreadable-store rule as the other thread sections.
  */
-function blockedSection(conversations: AgentConversations, scope: ConversationScope, nowMs: number): BusWorkMineBlocked {
+function blockedSection(conversations: AgentConversations, scope: ConversationScope, nowMs: number,
+  channelPrefix?: string): BusWorkMineBlocked {
   const source = conversations.source;
   if (source === 'unavailable' || conversations.conversations === null) {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const matched = conversations.conversations
     .filter(thread => thread.state === 'blocked' &&
-      thread.participants.some(participant => scope.denotes(participant.name)))
+      thread.participants.some(participant => scope.denotes(participant.name)) &&
+      threadInChannel(thread, channelPrefix))
     .map(thread => ({ thread, blockedMs: Math.max(0, nowMs - Date.parse(thread.lastAt)) }))
     .sort((a, b) => b.blockedMs - a.blockedMs ||
       (a.thread.id < b.thread.id ? -1 : a.thread.id > b.thread.id ? 1 : 0));
@@ -1270,6 +1496,24 @@ function blockedSection(conversations: AgentConversations, scope: ConversationSc
       };
     }),
     truncated: matched.length > WORK_MINE_BLOCKED_MAX, skipped: conversations.skipped };
+}
+
+/**
+ * The `--contains` verdict for one claim row, decided on the same displayed
+ * evidence the digest renders: a blocked announced job's title or newest
+ * status detail (`claim.jobs`, the feed projection `claim list --jobs`
+ * shares — present only on an ok feed) or the resolved leased message's
+ * scrubbed summary. The claim key, owner, origin and source id are
+ * structured fields with their own filters, never search text; a claim
+ * whose evidence cannot be read names no provable text and never matches.
+ */
+function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
+  const jobHit = claim.jobs?.some(ref =>
+    scrubSecrets(`${ref.title} ${ref.detail ?? ''}`)
+      .toLowerCase().replace(/\s+/g, ' ').includes(needle)) === true;
+  if (jobHit) return true;
+  return claim.message?.status === 'resolved' &&
+    claim.message.summary.toLowerCase().replace(/\s+/g, ' ').includes(needle);
 }
 
 /**
@@ -1293,7 +1537,77 @@ function blockedSection(conversations: AgentConversations, scope: ConversationSc
  * jobs match by id, claims by declared-key overlap with an announced job
  * or a leased body's job citations, pending work and mail by body
  * citation, threads/wakes/inbox by their own job filters, and board work
- * by the job-carrying-thread rule `BusBoard.pendingFor` applies. Counts
+ * by the job-carrying-thread rule `BusBoard.pendingFor` applies.
+ * `options.contains` applies the text-search rule every `--contains` bus
+ * read shares across the same sections: feed jobs and announced jobs match
+ * the feed's own job search text, claims match a blocked job's title/detail
+ * or a resolved leased message's summary, next/handoffs/mailbox match the
+ * body summary, threads/awaiting/blocked match member-message subjects
+ * through the shared conversations read, wakes match the resolved
+ * referent's summary or citing status detail, inbox matches the inbox
+ * read's own contains rule, the board matches delivery post text and
+ * task/thread titles inside `BusBoard.pendingFor`, and seats match the
+ * handoff's held-work ref and citations — the only text a seat record
+ * carries. `options.since` applies the time rule every bus read's `--since`
+ * shares across the same sections: claims match the lease's recorded
+ * `started` (a null start never matches), feed jobs and announced jobs
+ * match `updatedAt`, next/handoffs/inbox match the envelope receipt the
+ * shared reads already filter on, mailbox matches acceptance, the three
+ * thread sections and wakes inherit their own reads' `since`/`sinceAt`
+ * rules on the latest activity, board deliveries match `createdAt` while
+ * board tasks — which keep no timestamp — never match, and seats stay
+ * unfiltered — a pending handoff record's `createdAt` stamps the plan
+ * read instant, not the held work's age, so no per-record recency exists
+ * to filter on; a since-filtered handoff still sees its
+ * answer in the shared reply scan, and `channels` stays unfiltered under
+ * all three filters. `options.before` applies the exclusive upper bound
+ * every bus read's `--before` shares across the same sections on the same
+ * per-store timestamps `since` keys on: claims match the lease's recorded
+ * `started` strictly below the cutoff (a null start never matches),
+ * `jobs`/`announced` match `updatedAt`, `next`/`handoffs` match the
+ * envelope receipt inside the shared pending-work walk (a before-filtered
+ * handoff still sees its answer in the reply scan), `threads`/`awaiting`/
+ * `blocked` pass `before` into the one shared conversations read (thread
+ * `lastAt`, the same query `agents conversations --before` serves),
+ * `mailbox` ANDs `acceptedAt < before` into `BusMailbox.pendingFor`'s
+ * `match` predicate, and `board` passes it to `BusBoard.pendingFor`
+ * (deliveries match `createdAt`, tasks never match for want of a recorded
+ * time). `inbox` and `wakes` delegate both bounds to their shared reads —
+ * `readAgentInbox`'s `before` on `receivedAt` and `readAgentWakes`'s
+ * `filter.before` on the hint's queue time — each the same exclusive
+ * upper bound every other bus read's `--before` applies, so the cutoff
+ * reaches them like every other section; `channels` and `seats` stay
+ * unfiltered under every filter as before. `since`/`before`
+ * compose into one `[since, before)` window — the lower bound inclusive,
+ * the upper exclusive, an item stamped exactly at either bound excluded
+ * from the excluded side — except the wakes section, whose inherited
+ * `since` keeps the strictly-after boundary and so reads its own
+ * `(since, before)` window — so "what was pending before time T" and
+ * "what changed in the window" are one filtered digest. Every count
+ * stays the
+ * filtered total; a section that cannot prove the relation reports its
+ * own read state, never a padded match.
+ * `options.priority` applies the band rule every bus
+ * read's `--priority` shares across the sections whose items carry a wire
+ * band: next/handoffs keep envelopes of that priority, inbox and mailbox
+ * keep mail of that band, wakes keep hints whose resolved referent reports
+ * it (unresolved or unknown referents never match), and claims keep only
+ * message claims whose resolved leased envelope reports that band — a
+ * claim naming no provable band never lists. Feed jobs, announced jobs,
+ * the three thread sections, board rows, channels and seats carry no
+ * per-item band and stay unfiltered. `options.channel` applies the room
+ * rule every bus read's `--channel` shares across the sections whose items
+ * provably carry an address: feed jobs and announced jobs keep
+ * announcements whose `to` starts with `group:<name>:` (the feed
+ * `--channel` rule), next/handoffs/mailbox keep envelopes whose `to`
+ * carries the prefix, claims keep only message claims whose resolved
+ * leased envelope's `to` carries it — a claim naming no resolved message
+ * never lists — the three thread sections keep threads whose latest
+ * message is addressed to the room, and wakes/inbox delegate to their own
+ * reads' channel filters (the wakes read's raw `to` prefix, the inbox
+ * read's member-channel rule). `board`, `channels` and `seats` carry no
+ * per-item room and stay unfiltered. `channels` is registry context, not
+ * pending work, and stays unfiltered under any filter. Counts
  * stay filtered totals; a section that cannot prove the relation reports
  * its own read state, never a padded match.
  */
@@ -1301,6 +1615,35 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   if (!AGENT_REF.test(agent)) return { status: 'invalid', reason: 'invalid-agent' };
   // The same printable-label rule every `--job` read surface applies.
   if (options.job !== undefined && !AGENT_REF.test(options.job)) return { status: 'invalid', reason: 'invalid-job' };
+  // The same bounded free-text rule every `--contains` bus read applies;
+  // the normalized needle is what every section matches against.
+  const contains = busReadContains(options.contains);
+  if (contains === null) return { status: 'invalid', reason: 'invalid-contains' };
+  // The same epoch-ms bound every bus read's `--since` validates: a safe
+  // non-negative integer, parsed by the caller from the shared time grammar.
+  if (options.since !== undefined && (!Number.isSafeInteger(options.since) || options.since < 0)) {
+    return { status: 'invalid', reason: 'invalid-since' };
+  }
+  // The same epoch-ms bound every bus read's `--before` validates: a safe
+  // non-negative integer under the same shared time grammar, exclusive at
+  // the match sites like every other bus read's upper bound.
+  if (options.before !== undefined && (!Number.isSafeInteger(options.before) || options.before < 0)) {
+    return { status: 'invalid', reason: 'invalid-before' };
+  }
+  // The same P0..P3 band every bus read's `--priority` validates.
+  if (options.priority !== undefined && !BUS_PRIORITIES.includes(options.priority)) {
+    return { status: 'invalid', reason: 'invalid-priority' };
+  }
+  // The same strict channel-name grammar every bus read's `--channel`
+  // validates; matching itself is a raw `group:<name>:` prefix, so an
+  // unknown or unregistered room name is an honest empty match, never an
+  // error and never a widened one.
+  if (options.channel !== undefined && !agentChannelNameSchema.safeParse(options.channel).success) {
+    return { status: 'invalid', reason: 'invalid-channel' };
+  }
+  const sinceMs = options.since;
+  const beforeMs = options.before;
+  const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
   const nowMs = (options.now ?? Date.now)();
   const asOf = new Date(nowMs).toISOString();
 
@@ -1316,21 +1659,26 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
         owner: claimsRead.owner ?? { ref: agent, identity: null, registry: who.registry } };
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
-  const jobs = jobsSection(feed, agent, options.root, options.job);
-  const announced = announcedSection(feed, agent, options.root, options.job);
-  const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry);
+  const jobs = jobsSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix);
+  const announced = announcedSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix);
+  const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry, contains);
   // One conversations read backs all three thread views: waits the agent
   // owes, its own unanswered asks and blocked threads it is a party to.
   // A job filter narrows the shared projection to threads naming the job —
   // the same `job` query `agents conversations --job` applies — so all
-  // three sections stay consistent at the frozen instant.
+  // three sections stay consistent at the frozen instant; a contains
+  // filter applies the same member-subject text search
+  // `agents conversations --contains` serves.
   const conversations = readAgentConversations(
-    options.job === undefined ? {} : { job: options.job },
+    { ...(options.job === undefined ? {} : { job: options.job }),
+      ...(contains === undefined ? {} : { contains }),
+      ...(sinceMs === undefined ? {} : { since: sinceMs }),
+      ...(beforeMs === undefined ? {} : { before: beforeMs }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
-  const threads = threadsSection(conversations, scope);
-  const awaiting = awaitingSection(conversations, scope);
-  const blocked = blockedSection(conversations, scope, nowMs);
+  const threads = threadsSection(conversations, scope, channelPrefix);
+  const awaiting = awaitingSection(conversations, scope, channelPrefix);
+  const blocked = blockedSection(conversations, scope, nowMs, channelPrefix);
 
   if (claims.status === 'ok') {
     if (feed.status === 'ok') {
@@ -1355,20 +1703,73 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
         claim.jobs?.some(ref => ref.id === job) === true ||
         (claim.message?.status === 'resolved' && claim.message.jobIds?.includes(job) === true));
     }
+    if (contains !== undefined) {
+      // A claim lists under a text filter only when its displayed evidence
+      // carries the needle: a blocked announced job's title or newest status
+      // detail (`claim.jobs`, present only on an ok feed) or the resolved
+      // leased message's scrubbed summary. A claim with neither — a bare
+      // scope key, an unreadable feed, an unresolvable message — names no
+      // provable text and never lists, the same "unknown stays out" rule
+      // the job filter applies; the claim key itself is a structured field,
+      // never search text.
+      claims.claims = claims.claims.filter(claim => claimContainsMatch(claim, contains));
+    }
+    if (sinceMs !== undefined) {
+      // A claim lists under a time filter only when its recorded start
+      // reaches the cutoff — `started` is the lease's ISO acquisition time,
+      // and a null start is unknown, never a match: the same "unknown stays
+      // out" rule every other section's missing timestamp follows. A claim
+      // first taken before the cutoff stays pending but is not new.
+      claims.claims = claims.claims.filter(claim =>
+        claim.started !== null && Date.parse(claim.started) >= sinceMs);
+    }
+    if (beforeMs !== undefined) {
+      // The exclusive upper bound on the same lease `started` timestamp:
+      // a claim first taken at or after the cutoff is not part of the
+      // window, and a null start is unknown and never matches — the same
+      // "unknown stays out" rule `since` applies. A claim still held but
+      // started inside the window stays listed.
+      claims.claims = claims.claims.filter(claim =>
+        claim.started !== null && Date.parse(claim.started) < beforeMs);
+    }
+    if (options.priority !== undefined) {
+      // A claim lists under a band filter only when its leased envelope
+      // provably reports that band — the resolved message's own priority,
+      // the same evidence `message.priority` carries. A claim with no
+      // resolved message — a scope-key claim, an unresolvable or unreadable
+      // lease — names no provable band and never lists, the same "unknown
+      // stays out" rule the job filter applies.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.priority === options.priority);
+    }
+    if (channelPrefix !== undefined) {
+      // A claim lists under a room filter only when its leased envelope
+      // provably sits in that room — the resolved message's raw `to`
+      // carrying `group:<name>:`, the same prefix every other section
+      // matches. A claim with no resolved message names no provable room
+      // and never lists, the same "unknown stays out" rule the band filter
+      // applies.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.to.startsWith(channelPrefix));
+    }
   }
 
-  const page = readAgentWakes(agent, undefined,
+  const page = readAgentWakes(agent, sinceMs,
     { root: options.root, runsRoot: options.runsRoot, now: () => nowMs },
-    options.job === undefined ? {} : { job: options.job });
+    { ...(options.job === undefined ? {} : { job: options.job }),
+      ...(contains === undefined ? {} : { contains }),
+      ...(options.priority === undefined ? {} : { priority: options.priority }),
+      ...(options.channel === undefined ? {} : { channel: options.channel }),
+      ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
         truncated: page.truncated || page.matched > WORK_MINE_WAKES_MAX,
         wakes: page.wakes.slice(-WORK_MINE_WAKES_MAX) }
     : { status: page.status, reason: page.reason };
 
-  const inbox = inboxSection(agent, options, nowMs);
-  const mailbox = mailboxSection(agent, identity, options, nowMs);
-  const board = boardSection(agent, identity, options, nowMs);
+  const inbox = inboxSection(agent, options, nowMs, contains);
+  const mailbox = mailboxSection(agent, identity, options, nowMs, contains);
+  const board = boardSection(agent, identity, options, nowMs, contains);
   // Channel memberships come from the same registry read the other sections
   // resolve addressing through — no second store walk. A `missing` registry
   // is verified-empty; `unavailable` stays unknown, never an empty list. An
@@ -1383,6 +1784,11 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   return { status: 'ok', agent: who, asOf,
     ...(options.job === undefined ? {} : { job: options.job }),
+    ...(options.contains === undefined ? {} : { contains: options.contains }),
+    ...(sinceMs === undefined ? {} : { since: new Date(sinceMs).toISOString() }),
+    ...(beforeMs === undefined ? {} : { before: new Date(beforeMs).toISOString() }),
+    ...(options.priority === undefined ? {} : { priority: options.priority }),
+    ...(options.channel === undefined ? {} : { channel: options.channel }),
     claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     channels };
 }
@@ -1406,6 +1812,14 @@ function mineField(value: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+/** `holders=` display field: '-' when the hold set is unknown, 'none' when coverage shows no holds, else `key>owner@until/origin` entries. */
+function mineHolders(list: BusWorkMineJobHold[] | null): string {
+  if (list === null) return '-';
+  if (list.length === 0) return 'none';
+  return mineField(list.map(hold => `${hold.claimKey}>${hold.owner}@` +
+    `${new Date(hold.leaseUntil).toISOString()}/${hold.origin}`).join(','), 600);
+}
+
 /** Human lines for `agents bus work mine`; JSON carries the full projection. */
 export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   if (result.status !== 'ok') return [`${result.status}: ${result.reason}`];
@@ -1413,7 +1827,12 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
   const who = result.agent;
   lines.push(`agent=${who.handle ?? who.ref} ref=${who.ref} identity=${who.identity ?? '-'} ` +
     `registry=${who.registry} as-of=${result.asOf}` +
-    (result.job === undefined ? '' : ` job=${result.job}`));
+    (result.job === undefined ? '' : ` job=${result.job}`) +
+    (result.contains === undefined ? '' : ` contains="${result.contains}"`) +
+    (result.since === undefined ? '' : ` since=${result.since}`) +
+    (result.before === undefined ? '' : ` before=${result.before}`) +
+    (result.priority === undefined ? '' : ` priority=${result.priority}`) +
+    (result.channel === undefined ? '' : ` channel=${result.channel}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {
@@ -1446,7 +1865,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `claimable=${claimable} addressed=${job.addressed} announced=${job.announced} owner=${job.owner} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} ` +
-        `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} post=${job.postId}` +
+        `free=${keys(job.freeKeys)} held=${keys(job.heldKeys)} holders=${mineHolders(job.holders)} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}${busWorkJobResultSuffix(job)}`);
     }
   }
@@ -1468,7 +1887,7 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
       lines.push(`  ${job.id} ${job.status}${title === '' ? '' : ` "${title}"`}` +
         `${detail === '' ? '' : ` detail="${detail}"`} ` +
         `owner=${job.owner} to=${job.to} provider=${job.provider} repo=${job.repo}${busWorkJobDispatch(job.dispatch)} keys=${keys} ` +
-        `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} ` +
+        `held=${held} free=${keyList(job.freeKeys)} heldkeys=${keyList(job.heldKeys)} holders=${mineHolders(job.holders)} ` +
         `updated=${new Date(job.updatedAt).toISOString()} post=${job.postId}` +
         `${job.statusId === null ? '' : ` status=${job.statusId}`}${busWorkJobResultSuffix(job)}`);
     }

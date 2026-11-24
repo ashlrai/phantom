@@ -363,6 +363,133 @@ describe('bus work feed reader and CLI', { timeout: 60_000 }, () => {
     expect(error).toHaveBeenCalledTimes(4);
   });
 
+  it('filters jobs by --before on last activity and refuses bad cutoffs', async () => {
+    const appendLive = (body: unknown, cursor: number) => {
+      expect(appendBusInbox({ id: `fake-live-${cursor}`, from: 'fake-agent', to: 'leaders',
+        priority: 'P2', ttl: 86_400_000, body }, { root, now: () => now }).status).toBe('posted');
+    };
+    appendLive(post, 1);                            // fake-job announced at now
+    const first = now;
+    now += 120_000;
+    appendLive({ ...post, jobId: 'fake-new' }, 2);  // fake-new announced two minutes later
+    const log = output();
+    // An epoch-ms cutoff between the two announcement times keeps only the older job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(now - 60_000)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=2 feed=ok');
+    log.mockClear();
+    // The shared grammar resolves the same way: 1m back still drops the newer job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', '1m'])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    log.mockClear();
+    // The bound is exclusive: the older job's own updatedAt drops it out too.
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(first)])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=2 feed=ok');
+    log.mockClear();
+    // since/before read one [since, before) window — the older job alone sits inside.
+    expect(await cmdFleetWorkFeed(['--root', root, '--since', String(first), '--before', String(now)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} queued`))).toBe(true);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(false);
+    log.mockClear();
+    // A status moves the older job's last activity past the bound — only the
+    // never-statused job stays under it.
+    now += 10_000;
+    appendLive({ kind: 'work.status', jobId: post.jobId, status: 'running' }, 3);
+    expect(await cmdFleetWorkFeed(['--root', root, '--before', String(now - 5_000)])).toBe(0);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith(`${post.jobId} running`))).toBe(false);
+    expect(log.mock.calls.some(call => String(call[0]).startsWith('fake-new queued'))).toBe(true);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=3 feed=ok');
+    // Unparseable and duplicate cutoffs are usage errors, never silently widened.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--before', 'bogus'], ['--root', root, '--before', '1m', '--before', '2m'],
+      ['--root', root, '--before'], ['--root', root, '--before', '--json']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(4);
+  });
+
+  it('pages the feed with --limit and reports matched/omitted honestly', async () => {
+    append(post);                                   // fake-job announced first
+    now += 10;
+    append({ ...post, jobId: 'fake-second' }, 2);
+    now += 10;
+    append({ ...post, jobId: 'fake-third' }, 3);
+    const log = output();
+    // Newest first: the page keeps the view's order and counts the rest.
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '2', '--json'])).toBe(0);
+    const wire = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+      jobs: { id: string }[]; matched: number; omitted: number };
+    expect(wire.jobs.map(job => job.id)).toEqual(['fake-third', 'fake-second']);
+    expect(wire).toMatchObject({ matched: 3, omitted: 1 });
+    log.mockClear();
+    // The human footer names the page; holds would regroup under shown jobs too.
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '2', '--claims'])).toBe(0);
+    const footer = String(log.mock.calls.at(-1)?.[0]);
+    expect(footer).toContain('jobs=2 receipts=3 feed=ok');
+    expect(footer).toContain('matched=3 omitted=1');
+    // A page wider than the match reports zero omitted; no --limit pages nothing.
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--limit', '200'])).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain('matched=3 omitted=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root])).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).not.toContain('matched=');
+    // Out-of-range, malformed and duplicate limits are usage errors, never a silent widen.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--limit', '0'], ['--root', root, '--limit', '201'],
+      ['--root', root, '--limit', 'abc'], ['--root', root, '--limit', '1.5'], ['--root', root, '--limit', '-1'],
+      ['--root', root, '--limit', '2', '--limit', '3'], ['--root', root, '--limit']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
+  });
+
+  it('filters jobs by --contains over title, status detail and dispatch text', async () => {
+    append({ ...post, jobId: 'fake-drain', title: 'Drain the queue',
+      dispatch: { tier: 'work', scope: 'Migrate the drain path', acceptance: 'Drain lands green' } }, 1);
+    append({ ...post, jobId: 'fake-polish', title: 'Polish the docs' }, 2);
+    now += 10;
+    append({ kind: 'work.status', jobId: 'fake-polish', status: 'running', detail: 'waiting on drain review' }, 3);
+    const log = output();
+    // 'drain' matches the first job's title and dispatch and the second's
+    // newest status detail — every descriptive field the job line renders.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', 'DRAIN'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'))).toEqual([
+      expect.stringContaining('fake-polish running'),
+      expect.stringContaining('fake-drain queued'),
+    ]);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=2 receipts=3 feed=ok');
+    log.mockClear();
+    // A phrase only the dispatch scope carries narrows to that one job.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', 'drain path', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', jobs: [{ id: 'fake-drain' }], receipts: 3 });
+    log.mockClear();
+    // Whitespace collapses on both sides like every other --contains read.
+    expect(await cmdFleetWorkFeed(['--root', root, '--contains', '  drain\n  lands  '])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'))).toEqual([
+      expect.stringContaining('fake-drain queued'),
+    ]);
+    log.mockClear();
+    // A needle nothing carries is an honest empty view; ids, keys, statuses
+    // and labels are structured fields, never search text.
+    for (const needle of ['bogus-needle', 'fake-drain', 'running', 'repo:fake/repo', 'leaders', 'devin']) {
+      expect(await cmdFleetWorkFeed(['--root', root, '--contains', needle])).toBe(0);
+      expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=3 feed=ok');
+      log.mockClear();
+    }
+    // Blank, duplicate and overlong needles are usage errors, never a silent widen.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--contains', ''], ['--root', root, '--contains', '   '],
+      ['--root', root, '--contains', 'x'.repeat(513)], ['--root', root, '--contains', 'a', '--contains', 'b'],
+      ['--root', root, '--contains']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(5);
+  });
+
   it('filters to jobs still open for a worker with --open and implies the claims join', async () => {
     const hold = (key: string, sourceId: string) => {
       expect(acquireCoordination({ root, origin: 'resource', key, owner: 'fake-holder',
@@ -555,6 +682,54 @@ describe('work-feed --to announcement-address filter', () => {
   });
 });
 
+describe('work-feed --channel room filter', () => {
+  it('keeps only jobs announced to group:<channel>:* under every topic', async () => {
+    append(post, 1, 'fake-agent', 'group:release:general');
+    now += 10;
+    append({ ...post, jobId: 'fake-room-topic' }, 2, 'fake-agent', 'group:release:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-other-room' }, 3, 'fake-agent', 'group:ops:deploy');
+    now += 10;
+    append({ ...post, jobId: 'fake-direct' }, 4, 'fake-agent', 'agent:worker-bot');
+    now += 10;
+    append({ ...post, jobId: 'fake-sink' }, 5, 'fake-agent', 'leaders');
+    const result = readBusWorkFeed({ root });
+    expect(result).toMatchObject({ status: 'ok', receipts: 5 });
+    const log = output();
+    // The room's whole traffic under every topic — the same group:<name>:
+    // prefix agents bus inbox --channel and channel read match.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+      status: 'ok', receipts: 5, jobs: [{ id: 'fake-room-topic' }, { id: 'fake-job' }] });
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ops'])).toBe(0);
+    expect(log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-')))
+      .toEqual([expect.stringContaining('fake-other-room')]);
+    log.mockClear();
+    // A room nothing was announced to is an honest empty view, not an error.
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'ghost'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0 receipts=5 feed=ok');
+    // The prefix needs the topic separator: lookalike labels never match.
+    now += 10;
+    append({ ...post, jobId: 'fake-lookalike' }, 6, 'fake-agent', 'group:release2:x');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--channel', 'release', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0])).jobs.map((job: { id: string }) => job.id))
+      .toEqual(['fake-room-topic', 'fake-job']);
+  });
+
+  it('rejects channel names outside the bus channel grammar', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--root', root, '--channel', 'Has Space'], ['--root', root, '--channel', 'UPPER'],
+      ['--root', root, '--channel', ''], ['--root', root, '--channel', 'x'.repeat(33)],
+      ['--root', root, '--channel', 'a:b'], ['--root', root, '--channel', 'release', '--channel', 'ops'],
+      ['--root', root, '--channel']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(error).toHaveBeenCalledTimes(7);
+  });
+});
+
 describe('work-feed --job and --owner filters', () => {
   it('keeps one job id and jobs announced by an agent label in text and JSON', async () => {
     append(post, 1, 'fake-agent');
@@ -681,6 +856,44 @@ describe('work-feed --repo, --provider and --claimable filters', () => {
     }
     expect(log).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledTimes(9);
+  });
+});
+
+describe('work-feed --tier filter', () => {
+  it('keeps jobs by declared dispatch tier, in text and JSON', async () => {
+    append({ ...post, jobId: 'fake-fast', dispatch: { tier: 'fast', scope: 's', acceptance: 'a' } }, 1);
+    append({ ...post, jobId: 'fake-work', dispatch: { tier: 'work', scope: 's', acceptance: 'a' } }, 2);
+    append({ ...post, jobId: 'fake-plain' }, 3);
+    const log = output();
+    const jobLines = () => log.mock.calls.map(call => String(call[0])).filter(line => line.startsWith('fake-'));
+    // --tier keeps only jobs whose work.post declared that dispatch tier.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'fast'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining('fake-fast queued')]);
+    expect(String(log.mock.calls[0]?.[0])).toContain('tier=fast');
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=1 receipts=3 feed=ok');
+    log.mockClear();
+    // A job carrying no dispatch spec declares no tier and never matches.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'mid', '--json'])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ status: 'ok', jobs: [], receipts: 3 });
+    log.mockClear();
+    // The filter composes with the other structured filters.
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'work', '--provider', 'claude'])).toBe(0);
+    expect(log.mock.calls.at(-1)?.[0]).toContain('jobs=0');
+    log.mockClear();
+    expect(await cmdFleetWorkFeed(['--root', root, '--tier', 'work', '--repo', 'fake/repo', '--status', 'queued'])).toBe(0);
+    expect(jobLines()).toEqual([expect.stringContaining('fake-work queued')]);
+  });
+
+  it('rejects bad --tier values with usage on stderr and exit 2', async () => {
+    const log = output();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const args of [['--tier'], ['--tier', 'bogus'], ['--tier', 'x', '--tier', 'y'],
+      ['--tier', 'fast', '--tier', 'mid'], ['--root', root, '--tier', 'FAST']]) {
+      expect(await cmdFleetWorkFeed(args)).toBe(2);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(5);
+    expect(error.mock.calls[0]?.[0]).toContain('Usage: ashlr fleet work-feed');
   });
 });
 

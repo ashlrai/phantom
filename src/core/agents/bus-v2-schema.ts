@@ -19,6 +19,8 @@ export const PARTICIPANT_STATUSES = ['active', 'idle', 'offline', 'disabled'] as
 export const WORK_STATUSES = [
   'queued', 'running', 'idle', 'rescheduled', 'blocked', 'done', 'failed', 'terminated',
 ] as const;
+/** The dispatch tiers a `work.post` may declare, lightest first — the same values the queue tiers use. */
+export const WORK_TIERS = ['fast', 'mid', 'work', 'frontier'] as const;
 export const BODY_KINDS = [
   'note', 'context', 'work.post', 'work.claim', 'work.status', 'work.result', 'work.release', 'wake',
 ] as const;
@@ -84,9 +86,11 @@ export function parseClaimKey(key: string): ParsedClaimKey | undefined {
 
 export const claimKeySchema = z.string().refine((k) => parseClaimKey(k) !== undefined, 'invalid claim key');
 
-/** Literal prefix of a glob: everything before the first wildcard character. */
+/** Literal prefix of a glob: everything before the first wildcard character.
+ * `globMatches` treats only `*` and `?` as wildcards — `[`, `{` and the rest
+ * are literal, so they never end the prefix. */
 export function literalPrefix(glob: string): string {
-  const i = glob.search(/[*?[{]/);
+  const i = glob.search(/[*?]/);
   return i === -1 ? glob : glob.slice(0, i);
 }
 
@@ -244,15 +248,25 @@ export function mayMutateClaim(claim: Claim, presentedToken: string, now: number
 const refs = z.array(z.string().min(1).max(256)).max(32);
 const jobId = label;
 
+/**
+ * `inReplyTo` cites the envelope id a conversational body answers — the same
+ * citation `postBusReply`, `comms bus post --reply-to` and the fleet reply
+ * verbs stamp, which `busReplyCitations`, the conversation projection and the
+ * pending-work sections already credit. It is a routing label, never proof
+ * the cited message existed or was received.
+ */
+const replyCitation = { inReplyTo: label.optional() } as const;
 export const noteBodySchema = z.object({
   kind: z.literal('note'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
 export const contextBodySchema = z.object({
   kind: z.literal('context'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
 /** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
 export const workDispatchSchema = z.object({
-  tier: z.enum(['fast', 'mid', 'work', 'frontier']),
+  tier: z.enum(WORK_TIERS),
   scope: text.max(4000), acceptance: text.max(2000),
 }).strict();
 export type WorkDispatch = z.infer<typeof workDispatchSchema>;
@@ -344,6 +358,7 @@ export function busV2ContractSummary() {
     wakeKinds: [...WAKE_KINDS],
     bodyKinds: [...BODY_KINDS],
     workStatuses: [...WORK_STATUSES],
+    workTiers: [...WORK_TIERS],
     claimKeyForms: ['repo:<owner/name>', 'path:<owner/name>:<glob>', 'queue:<queue id>', 'pr:<owner/name>#<n>'],
     claimLeaseMs: { min: CLAIM_MIN_LEASE_MS, max: CLAIM_MAX_LEASE_MS },
     claimsGrantExecutionAuthority: false,

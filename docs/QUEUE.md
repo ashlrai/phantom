@@ -364,7 +364,11 @@ and a stale or untimestamped snapshot is still reported — flagged, never
 hidden — as the dispatcher's last published state. Text output prints the same
 caveat after the utilization summary.
 It exits 1 when any lane is unfed now and 2 when status.json is unreadable. It
-is read-only: no writes, no child processes, no network.
+is read-only: no writes, no child processes, no network. The isolated fleet
+MCP server's `fleet_unfed` tool serves the same `fleet.unfed.v1` assembly —
+the same `readUnfedReport` read this command and the tool share — with
+`windowHours` taking the `--window` bound; see
+[the fleet tool catalog](MCP-TOOLS.md#phantom-fleet--isolated-fleet-server-phm-mcp-fleet).
 
 ## Dispatch-neutral queue snapshot
 
@@ -595,11 +599,21 @@ interval, so never add them to obtain total wait. Blockers start at zero in
 each timing window; old state files start measuring on their next successful read.
 `checks` reflects the reported head check rollup, not merge-group check results.
 `stale` means GitHub reports BEHIND, not that a queued PR needs rebasing.
-These observations do not alter recut, retry, ownership or required-check gates.
+After an hour continuously observed as queued, `repos[].stalled` lists the
+entry. The cycle refreshes its head, holds, ownership, reviews and check status
+before using GitHub's `dequeuePullRequest` and the same head-pinned auto-merge
+path to restart eligible entries. `repos[].recovered` records successful
+re-enrollment requests, not completed merges. Recovery shares enqueue retry
+budgets; a failed re-enrollment is retried on a later cycle. New heads, failed
+reads and backward clocks reset the observation window. Dry runs only report.
+The typed `MergeQueueOptions.stalledMs` controls the timeout; required checks
+and reviews remain enforced by GitHub. Dequeueing loses the entry's position
+and restarts its merge-group checks, so the timeout is deliberately long.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
-are left alone and auto-merge stays armed. The offline scheduling fixture in
+keep auto-merge armed unless eligible for timed recovery. The offline scheduling
+fixture in
 `test/merge-queue-loop.test.ts` models a 60-second update and a 90-second
 conflict resolution: two ready PRs enroll after 0.1 and 0.2 seconds instead
 of 150.1 and 150.2 seconds, including when the update fails. These are fixture
@@ -703,6 +717,53 @@ a whole old or new snapshot. Files use mode 0600 and newly created directories
 use 0700. The existing dispatchd directory's permissions are not changed.
 Corrupt snapshots fail closed instead of becoming empty queues.
 
+## Check ready work against free slots
+
+Use these read-only reports when a lane has room but jobs are not starting:
+
+```sh
+phm fleet lane-starve
+phm fleet lane-starve --json
+phm fleet launchable
+phm fleet launchable --json
+```
+
+`lane-starve` lists lanes below their launch target with queued work. Its
+`ready` count splits into `filler` and `real` rows. Parked rows are excluded
+whether the `PARKED` marker is in the first column or the lane column.
+`queued` comes from the status snapshot, so it can differ from `ready`.
+
+`launchable` compares each lane's `free` slots with ready rows whose prompt
+file exists. It also excludes parked rows, jobs marked `drop` or `defer` in
+`skipped-empty.tsv`, and filler while `FILLER_HOLD` exists. Both commands use
+the launch target described below and read `~/.ashlr-runs/queue`; set
+`ASHLR_RUNS_DIR` to inspect another runs directory.
+
+`lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
+any lane has more free slots than launchable rows. Both exit 0 otherwise and
+2 for invalid arguments or unreadable required data. Their JSON schemas are
+`fleet.lane-starve.v1` and `fleet.launchable.v1`. Neither report launches work
+or removes a hold.
+
+## Inspect the processes using this computer
+
+```sh
+phm fleet hostload
+phm fleet hostload --json
+```
+
+This read-only report shows up to eight process families, ordered by CPU,
+with child builds and tests counted with their parent job. It also lists up
+to five unrecognized executable names with process counts, CPU and RSS memory;
+command arguments stay private. JSON includes `families`, `unknownCommands`,
+`fleetCpuPercent` and `totalCpuPercent`. CPU uses the process convention where
+100% is one core, so totals can exceed 100% on a multicore computer.
+
+An unknown executable is a classification gap, not proof that it belongs to
+the fleet. If process data cannot be read, `state` is `unknown` and the command
+exits 1; a known reading exits 0. Use the admission report below to see whether
+load is blocking new jobs.
+
 ## Load-aware admission
 
 `phm pool admission [--json]` is a read-only report of the dispatchd load gate:
@@ -717,7 +778,20 @@ off before they run out. The report shows it as `adaptiveCap`. An operator
 change batches related ready tasks into one agent session. See
 [adaptive concurrency and batching](../contrib/mac/README.md#adaptive-concurrency-and-batching).
 
-`ashlr fleet admission [--json]` reads that stored verdict from `queue/status.json`
+`ashlr fleet admission` shows one line explaining job starts from
+`~/.ashlr-runs/queue/admission-ctl.json`. The Fleet overview's **Job starts** card
+uses the same reader through `GET /api/verse/fleet/admission`. `--json` returns
+the typed measurements, `nextStartSeconds` and `startsPerHourCap` (`3600 / settle_s`;
+null for zero settle, which imposes no pacing cap). Missing, invalid or older-than-five-minute
+observations are unknown. Host blocks show the pacing window separately: its
+expiry does not promise a launch while the host remains busy. Exit codes are
+0 open, 1 blocked or settling, 2 unknown or bad arguments.
+`ASHLR_ADMISSION_CTL_PATH` overrides the admission file; `ASHLR_RUNS_DIR`
+overrides its default runs directory. This is a read-only observation of the
+launch guard; lane holds and other dispatcher gates can still prevent work.
+
+`ashlr fleet admission --details [--json]` preserves the earlier lane report
+and JSON shape. It reads that stored verdict from `queue/status.json`
 and says why each lane is waiting: held, at target, admission closed (the
 dispatcher is not admitting — load gate tripped or paused), blocked by the global
 cap, or ok. `global.closed` is the fleet verdict (cap, gate or pause) and
@@ -730,7 +804,7 @@ These lane reports count availability against the **launch target**: the lane's
 configured `target` tightened by the `effective_target` the fleet controller
 publishes after load shedding (`min(target, effective_target)`, the configured
 target when the shed is absent or unreadable). A lane running at its shed ceiling
-has no phantom room, so `fleet admission`, `fleet lane-idle`, `fleet lane-share`,
+has no phantom room, so `fleet admission --details`, `fleet lane-idle`, `fleet lane-share`,
 `fleet lane-starve`, `fleet starved`, `fleet launchable`, `fleet idle-lanes`,
 `fleet trim` and the idle-lane checks in `fleet doctor` and the bottleneck ideas
 all measure "under target", "full" and "starved" against it. `fleet trim`'s
@@ -898,7 +972,9 @@ Run `phm queue dedupe --json` to preview repeated READY jobs in the local router
 
 Run `phm queue dupcheck <job-id|prompt-file> [--json]` before launching a job to see whether its work is already on master. It pulls the commands (`phm foo bar`), flags, file paths and panel names out of the goal and looks each up in the CLI command list, `docs/CLI-REFERENCE.md`, the file tree and the pull requests merged in the last 7 days in `metrics/jobs.jsonl`. It prints `likely_done`, `partial`, `new` or `unknown` (the goal names nothing to look up) with the matching file or PR; a job id is read from `queue/ready.tsv`. `--json` carries `schema: "queue.dupcheck.v1"`. Read-only; the dispatcher can call `dupcheckJob` from `src/core/queue/dupcheck.ts`. An existing file alone never proves the work is done.
 
-The dispatcher runs the same check as a gate before it claims a row: `phm queue dupcheck <prompt-file> --gate --json` (schema `queue.dupcheck-gate.v1`). High confidence (this job id already merged, or every named command, flag and file is there and a named flag exists) means `skip`: the row is dropped as `DONE-NOOP`, never launched, and the reason and evidence (matching file, command or merged job) are recorded. Medium confidence (`likely_done` without that proof) means `warn`: the row launches and `contrib/mac/launch_precheck.py` adds one `Check this first:` line to its prompt. Everything else launches as before. Each decision is one row in `metrics/dupcheck.jsonl`; `phm jobs empty --record` adds an `outcome` row when a launched or warned job ends EMPTY `already_done`. `phm queue dupcheck --stats [--json]` (schema `queue.dupcheck-stats.v1`) shows skips, warned and plain launches, launches that ended `already_done`, and false skips (a skipped job that was launched later). The gate fails open: if `phm` is missing, slow or answers anything unexpected, the row launches.
+The dispatcher runs the same check as a gate before it claims a row: `phm queue dupcheck <prompt-file> --gate --json` (schema `queue.dupcheck-gate.v1`). High confidence (this job id already merged, or every named command, flag and file is there and a named flag exists) means `skip`: the row is dropped as `DONE-NOOP`, never launched, and the reason and evidence (matching file, command or merged job) are recorded. Medium confidence (`likely_done` without that proof) means `warn`: the row launches and `contrib/mac/launch_precheck.py` adds one `Check this first:` line to its prompt. Everything else launches as before. Each decision is one row in `metrics/dupcheck.jsonl`; the daemon's `empty-tag-sync` job and `phm jobs empty --record` add an `outcome` row when a launched or warned job ends EMPTY `already_done`. `phm queue dupcheck --stats [--json]` (schema `queue.dupcheck-stats.v1`) shows skips, warned and plain launches, launches that ended `already_done`, and false skips (a skipped job that was launched later). The gate fails open: if `phm` is missing, slow or answers anything unexpected, the row launches.
+
+`phm ideas list` reads the same ledger as its `dupcheck-gate` signal: two or more skipped jobs that were launched later become a `dupcheck-gate:false-skips` idea, and jobs the gate let through (launch or warn) that still ended `already_done` become a `dupcheck-gate:missed-duplicates` idea once at least 3 did so and they are at least 10% of let-through decisions. A missing or unreadable ledger leaves the signal unknown.
 
 Run `phm queue autofill --lane <lane> [--min <n>]` to keep a lane from running dry. When the lane has fewer than `--min` ready jobs (default: its slot target) it drafts the gap in this order: open items from `phm ideas` (`source: "idea"`), then "Not built:" / "Gaps:" lines from the logs of jobs that ended empty in the last 72 hours (`"follow-up"`), then `phm bets propose` (`"bet"`). It skips anything already queued, running or shipped, and any job family that `phm jobs empty --by-family` marks `stop` for the lane. Every queued prompt starts with "Step 0: search master, deliver only the delta; end with no change if it already exists." and the ship-partial rule. It prints `{schema: "queue.autofill.v1", lane, running, target, queued, drafted: [{id, source, goal, prompt, ...}], skipped}`. A source that cannot be read adds nothing. It is a dry run; `--apply` adds each draft as a READY job through the normal queue add path. A full lane prints "Lane is full."; counts that cannot be read stay `null` and nothing is drafted.
 

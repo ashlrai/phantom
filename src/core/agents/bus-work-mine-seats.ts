@@ -17,30 +17,55 @@
  * bare synchronous result rather than reporting a section it never read.
  */
 import { agentLabels, readAgentRegistry, resolveAgent } from './bus-identity.js';
-import { planSeatHandoffs, type SeatHandoffsPlan, type SeatOptions } from '../bots/seats.js';
+import { planSeatHandoffs, type SeatHandoff, type SeatHandoffsPlan, type SeatOptions } from '../bots/seats.js';
+import { scrubSecrets } from '../util/scrub.js';
 import { readBusWorkMine, type BusWorkMineOptions, type BusWorkMineResult, type BusWorkMineSeat, type BusWorkMineSeats } from './bus-work-mine.js';
 
 /** Seats with pending handoffs a digest shows; `matched` keeps the true total. */
 const WORK_MINE_SEATS_MAX = 20;
 
 /**
+ * The `--contains` verdict for one pending seat handoff, decided on the only
+ * descriptive fields the record carries — the held work's ref, branch and
+ * pull request, scrubbed and normalized like every other bus `--contains`
+ * haystack. Seat id, participant, state and handoff id are routing labels,
+ * statuses and record ids, never search text; a handoff whose fields name
+ * no match drops out and `matched` recounts, so every count stays the
+ * filtered total.
+ */
+function seatHandoffContainsMatch(handoff: SeatHandoff, needle: string): boolean {
+  return scrubSecrets(`${handoff.work.ref} ${handoff.branch ?? ''} ${handoff.pr ?? ''}`)
+    .toLowerCase().replace(/\s+/g, ' ').includes(needle);
+}
+
+/**
  * Shape one seat-handoff plan into the digest section. `denotes` is the
  * caller's seat-membership predicate over `{seatId, participantId}`; under a
  * `job` filter only `node-job` records whose ref is the job id survive — a
  * `bus-claim` ref is a coordination claim key, not a job id, matching the
- * unified inbox's job-citation rule. Seats left with no records drop out and
- * `matched` recounts, so every count stays the filtered total.
+ * unified inbox's job-citation rule — and under a `contains` filter only
+ * records whose held-work text carries the needle survive. Seats left with
+ * no records drop out and `matched` recounts, so every count stays the
+ * filtered total. The section takes no `since`, `priority` or `channel`:
+ * a pending handoff record's `createdAt` stamps the plan read instant, not
+ * the held work's age, so no per-record recency exists to filter on, the
+ * record carries no wire band, and seat work has no per-record room —
+ * every listed record is current evidence and the section stays whole
+ * like `channels`.
  */
 export function busWorkMineSeatsFromPlan(
   plan: SeatHandoffsPlan,
   denotes: (seat: { seatId: string; participantId: string }) => boolean,
   job?: string,
+  contains?: string,
 ): BusWorkMineSeats {
+  const needle = contains?.toLowerCase().replace(/\s+/g, ' ').trim();
   const matched: BusWorkMineSeat[] = [];
   for (const entry of plan.seats) {
     if (!entry.eligible || entry.handoffs.length === 0 || !denotes(entry)) continue;
-    const handoffs = job === undefined ? entry.handoffs
-      : entry.handoffs.filter(h => h.work.kind === 'node-job' && h.work.ref === job);
+    const handoffs = entry.handoffs
+      .filter(h => job === undefined || (h.work.kind === 'node-job' && h.work.ref === job))
+      .filter(h => needle === undefined || needle === '' || seatHandoffContainsMatch(h, needle));
     if (handoffs.length === 0) continue;
     matched.push({ seatId: entry.seatId, participantId: entry.participantId, state: entry.state,
       handoffs: handoffs.map(h => ({ handoffId: h.handoffId, work: { kind: h.work.kind, ref: h.work.ref },
@@ -75,7 +100,7 @@ export async function readBusWorkMineSeats(agent: string, options: BusWorkMineOp
   const identity = registry === undefined ? undefined : resolveAgent(registry, agent);
   const labels = identity === undefined ? [agent] : agentLabels(identity);
   return busWorkMineSeatsFromPlan(plan,
-    seat => seat.seatId === agent || labels.includes(seat.participantId), options.job);
+    seat => seat.seatId === agent || labels.includes(seat.participantId), options.job, options.contains);
 }
 
 /**

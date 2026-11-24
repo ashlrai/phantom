@@ -1,4 +1,6 @@
 /** Offline attempt-cohort metrics. No clock, filesystem, pricing or routing side effects. */
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
+
 export interface OutcomeGroup {
   name: string;
   model: string | null;
@@ -126,6 +128,10 @@ export function buildOutcomeMetrics(input: OutcomeMetricsInput): OutcomeMetrics 
   for (const [i, value] of (input.events ?? []).entries()) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) { ignoredRows++; continue; }
     const row = value as Row;
+    // Node-pool machinery rows are a different producer dialect — `job` is
+    // a per-attempt id and no row carries attempt fields, so a
+    // session-pool `launch`/`finish` pair would mint a phantom attempt.
+    if (isNodePoolLedgerRow(row)) continue;
     const kind = label(row.event ?? row.type ?? row.kind) ?? (row.source === 'metrics-outcomes-reconciler' ? 'outcome' : null);
     if (!kind || !KINDS.has(kind)) continue;
     const at = eventTs(row);

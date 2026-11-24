@@ -39,6 +39,17 @@ it('posts once and receives a concurrently produced durable reply', async () => 
   expect(h.rows()).toHaveLength(2);
 }, 30000);
 
+it('counts a replyTo-alias citation as the reply, the same citation every answered surface credits', async () => {
+  const h = setup();
+  const append: typeof appendBusInbox = (input, options) => {
+    const posted = appendBusInbox(input, options);
+    appendBusInbox(reply('alias-reply', { replyTo: request.id, text: 'answered under the alias' }), options);
+    return posted;
+  };
+  const result = await requestBusRoundtrip(request, 5000, 100, h.options, { append });
+  expect(result).toMatchObject({ outcome: 'replied', reply: { envelope: { id: 'alias-reply' } } });
+}, 30000);
+
 it('captures replies written during append and resumes duplicates from retained history', async () => {
   const h = setup();
   const append: typeof appendBusInbox = (input, options) => {
@@ -63,7 +74,8 @@ it('ignores unrelated, wrong-routing and expired replies, without refreshing a d
   const h = setup(); let now = 100;
   const options: BusInboxOptions = { ...h.options, now: () => now };
   expect(appendBusInbox(request, options).status).toBe('posted');
-  for (const item of [reply('unrelated', { inReplyTo: 'other' }), reply('wrong-from', undefined, { from: 'other' }),
+  for (const item of [reply('unrelated', { inReplyTo: 'other' }), reply('alias-unrelated', { replyTo: 'other' }),
+    reply('wrong-from', undefined, { from: 'other' }),
     reply('wrong-to', undefined, { to: 'other' }), reply('nested', { nested: { inReplyTo: request.id } }),
     reply('expired', undefined, { ttl: 10 })]) expect(appendBusInbox(item, options).status).toBe('posted');
   now = 120;

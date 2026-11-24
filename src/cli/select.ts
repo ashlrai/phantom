@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { collectFrictionTop, frictionLedgerPath, type FrictionItem } from '../core/fleet/friction-ledger.js';
 import { censorFromConfig, learnFleetOutcomes } from '../core/routing/outcome-learning.js';
+import { readStandingRevertKeys } from '../core/improve/revert-ledger.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
 import {
   DEFAULT_FUND_COUNT, fundedIds, parseCandidates, pickRecords, rankCandidates, readyLine,
@@ -132,7 +133,7 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
   candidates.push(...top.map(frictionCandidate).filter((c) => !candidates.some((f) => f.id === c.id)));
   const now = (deps.now ?? (() => new Date()))();
   const { loadConfigReadOnly } = await import('../core/config.js');
-  const learning = learnFleetOutcomes(events, ledger, censorFromConfig(loadConfigReadOnly().router, now.getTime()));
+  const learning = learnFleetOutcomes(events, ledger, censorFromConfig(loadConfigReadOnly().router, now.getTime()), readStandingRevertKeys());
   const result: SelectorResult = rankCandidates(candidates, learning, {
     count: parsed.top, rejected, exclude: fundedIds(await readCapped(picksPath) ?? ''),
   });

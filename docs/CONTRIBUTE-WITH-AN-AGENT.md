@@ -130,15 +130,19 @@ exit code is non-zero if any of them failed.
 | Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
 | Perl syntax check | A `.pl` file or an extensionless script with a `perl` shebang changed | Fix the compile error `perl -c` reports; `perl -c` compiles the script without running its body — the same check CI's secret-shape job applies to `scrub.pl`. With no working `perl` the step prints `SKIP`. |
 | Node syntax check | An extensionless script with a `node` shebang changed | Fix the parse error `node --check` reports; launchers like `bin/ashlr` carry no extension, so the shebang decides. The check runs under the same node runtime, so it never prints `SKIP`. |
-| JSON syntax check | A `.json` or `.webmanifest` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json` or `.webmanifest` file. |
+| Detached script syntax check | A script file under `src/raycast/` or `examples/universe-site/` changed | Fix the `path:line:column` parse error the bundled `typescript` parser reports; those trees own their toolchains, so ESLint and the root type check never read them. With no installed `typescript` package the step prints `SKIP`. |
+| JSON syntax check | A `.json`, `.webmanifest` or `.tsbuildinfo` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json`, `.webmanifest` or `.tsbuildinfo` file. |
+| JSONL syntax check | A `.jsonl` file changed | Fix the parse error `JSON.parse` reports on the named `file:line`; each non-blank line must be one complete JSON value and blank lines carry no record. The check needs no external tool, so it never prints `SKIP`. |
 | XML syntax check | A `.xml`, `.plist`, `.plist.in` or `.svg` file changed | Fix the parse error `xml.etree.ElementTree` reports. Binary and ASCII `.plist` encodings skip the parser (`.plist.in` launchd templates always parse); with no working `python3` the step prints `SKIP`. |
 | Rust syntax check | A `.rs` file changed | Fix the parse error `rustfmt` reports; with no working `rustfmt` the step prints `SKIP`. |
 | Swift syntax check | A `.swift` file changed | Fix the parse error `swiftc -parse` reports; with no working `swiftc` the step prints `SKIP`. |
 | YAML syntax check | A `.yml` or `.yaml` file changed | Fix the parse error the bundled `yaml` package reports; every document of a multi-document file is checked and duplicate keys are errors. With no installed `yaml` package the step prints `SKIP`. |
-| TOML syntax check | A `.toml` file changed | Fix the parse error the bundled `smol-toml` package reports. With no installed `smol-toml` package the step prints `SKIP`. |
+| TOML syntax check | A `.toml` file or a `Cargo.lock` manifest at any depth changed | Fix the parse error the bundled `smol-toml` package reports; `Cargo.lock` is TOML, e.g. `desktop/src-tauri/Cargo.lock`. With no installed `smol-toml` package the step prints `SKIP`. |
 | CSS syntax check | A `.css` file changed | Fix the `path:line:column` parse error `lightningcss` reports; it is the CSS parser Vite bundles for the web-ui build, so it applies the grammar the build does. When vite or `lightningcss` cannot be resolved under `node_modules`, the step prints `SKIP`. |
 | Snapshot syntax check | A Vitest `.snap` file changed | Fix the `path:line` parse error node's script parser reports, often a hand edit or a leftover merge-conflict marker; ESLint and the type check never read `.snap` files. The parser runs in-process, so the step never prints `SKIP`. |
 | Patch syntax check | A `.patch` or `.diff` file changed | Fix the parse error `git apply --stat` reports; it checks the unified-diff grammar without requiring the patch to apply in this checkout, so staged proposals against other revisions still verify. Git is already required to collect the changed set, so the step never prints `SKIP`. |
+| HTML payload syntax check | A `.html` or `.htm` file outside `test/fixtures/` changed | Fix the parse error reported for the named file and embedded block — an inline `<script>` (classic or `type="module"`), a JSON script type (`ld+json`, `importmap`, `speculationrules`, `+json`) or a `<style>` rule. External `src` scripts, inert `type` values, empty bodies and `<noscript>` scripts are skipped and `<template>` content is checked. With no installed `jsdom` package the step prints `SKIP`; `<style>` payloads warn-skip when `lightningcss` cannot be resolved through vite. |
+| Conflict marker check | Any changed file still on disk | A `path:line: <marker>` hit means a line starts with a git conflict marker (`<<<<<<<`, `|||||||` or `>>>>>>>`); finish the resolution and delete the leftover marker lines. Only column 0 counts — markers inside strings, comments, docstrings or indented examples are content, not leftovers — and binary files plus `test/fixtures/` payloads (which may legitimately embed marker text as test input) are exempt. The check needs no external tool, so it never prints `SKIP`. |
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
@@ -146,6 +150,9 @@ exit code is non-zero if any of them failed.
 
 `SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
 install is incomplete; run `npm ci` and then `node scripts/verify-changed.mjs --force`.
+Do not rely on the "Merge Gate lints on CI" hint in that line: on a pull
+request Merge Gate runs no ESLint (see step 6), so a skipped local lint means
+the change merges unlinted.
 
 ### Skipping a flaky test
 
@@ -178,7 +185,8 @@ what changed, the exact commands you ran, and anything you skipped. Nobody
 pushes directly to `master`. Pull requests land as squash commits, so your pull
 request title becomes the commit subject on `master`; give it a conventional
 type prefix such as `fix:` or `docs:` so release-please files it under the
-right `CHANGELOG.md` section.
+right `CHANGELOG.md` section (see
+[Commit style](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#commit-style)).
 
 Fleet agents push only to forks as well. Their publisher pushes a
 `codex-bridge/<job>` branch, opens the pull request titled
@@ -205,7 +213,8 @@ when these jobs succeed:
 
 Quick typecheck and `Check authority drift (hermetic)` also run but are
 advisory. The full backend, Windows and macOS
-suites do not run on pull requests; they run on the six-hour scheduled
+suites, `npm run lint` and `npm run check:docs` do not run on pull requests;
+they run on the six-hour scheduled
 `master` run, and failures there are fixed forward. Read the actual check run
 for your commit; a workflow file is not evidence that it passed. GitHub may
 ask a maintainer to approve workflow runs for a first-time contributor.

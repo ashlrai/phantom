@@ -6,6 +6,7 @@
  * and folds their parsed reports into one run report. Only one self-tick runs
  * per runs dir; a step that fails or throws never stops the later ones.
  */
+import { takeLoadSnapshot } from '../core/fleet/load-history.js';
 import { isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { cmdFleetResetRelease } from './fleet-reset-release.js';
@@ -80,6 +81,8 @@ interface Dependencies {
   error?: (text: string) => void;
   /** Per-step overrides for tests; unlisted steps run the real verbs. */
   steps?: Partial<SelfTickSteps>;
+  /** Best-effort, rate-limited host-load evidence after an applied tick. */
+  loadSnapshot?: (runsDir: string) => Promise<unknown>;
   /** Lock seam forwarded to runSelfTick. */
   acquireLock?: RunSelfTickOptions['acquireLock'];
   /** planner-tick spawn seam; tests fake it, never a shell. */
@@ -105,6 +108,7 @@ interface Dependencies {
   claudeFindCommand?: () => string | null;
   /** Autofill seams for tests (lane read, kill switch, fill); production reads the real lanes and config. */
   autofill?: Partial<Pick<import('../core/fleet/autofill-run.js').AutofillTickOptions, 'readLanes' | 'readOff' | 'fill'>>;
+  masonDigest?: Partial<Pick<import('../core/comms/mason-digest.js').MasonDigestTickOptions, 'readOff' | 'readers' | 'post' | 'owner'>>;
   /** Terminal seam for the PHM_SELF_TICK_APPLY rule; production reads process.stdout.isTTY. */
   isTty?: boolean;
   /** Environment seam for tests; production reads process.env. */
@@ -174,7 +178,8 @@ function summary(step: string, report: unknown): string {
   }
   if (step === 'order-notices') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
-    return `sent=${n(row['sent'])} planned=${count(row['notices'])}`;
+    const digest = row['masonDigest'] as Record<string, unknown> | undefined;
+    return `sent=${n(row['sent'])} planned=${count(row['notices'])}${typeof digest?.['state'] === 'string' ? ` digest=${digest['state']}` : ''}`;
   }
   if (step === 'board-notify') {
     const n = (value: unknown): number => typeof value === 'number' ? value : 0;
@@ -329,6 +334,23 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now(), ghSlots: readGhLaneSlots, landed: () => readLandedFromGit({ sinceHours: 168, repos: landedReposFromEnv() }) });
     } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
   };
+  const runMasonDigestStage = async (): Promise<unknown> => {
+    // The owner thread lives on the real account root; a sandbox runs dir never posts unless a test injects the seams.
+    if (!deps.masonDigest && root !== join(homedir(), '.ashlr-runs')) return { reason: 'custom-runs-dir-no-owner-thread' };
+    try {
+      const { tickMasonDigest } = await import('../core/comms/mason-digest.js');
+      const { fixedOwnerConfigDir, loadOwnerThreadSettings } = await import('../core/comms/owner-channel.js');
+      const at = now();
+      const report = await tickMasonDigest({
+        runsDir: root, now: at, apply,
+        owner: { runsDir: root, now: () => at, settings: loadOwnerThreadSettings(fixedOwnerConfigDir()) },
+        ...deps.masonDigest,
+      });
+      return { ...report, digest: report.digest === null ? null : { has_news: report.digest.has_news, lines: report.digest.lines } };
+    } catch (error) {
+      return { reason: `mason digest failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+    }
+  };
   const defaults: SelfTickSteps = {
     // The quota refresh runs first inside this step, so the reading reset-release
     // plans from is current. It is a sub-stage rather than a new step name so the
@@ -415,7 +437,17 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return bind(cmdFleetOwnerLive,
         deps.ownerOptions === undefined ? {} : { options: deps.ownerOptions })(argv);
     },
-    'order-notices': bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders }),
+    'order-notices': async (argv) => {
+      const run = await bind(cmdFleetOrderNotices, { now, senders: deps.noticeSenders })(argv);
+      const masonDigest = await runMasonDigestStage();
+      try {
+        const parsed: unknown = JSON.parse(run.output);
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { ...run, output: JSON.stringify({ ...parsed, masonDigest }) };
+        }
+      } catch { /* the verb's own output stands untouched */ }
+      return run;
+    },
     'board-notify': async () => {
       // The verb prints with console.log and has no output seam, so capture
       // its stdout here. Steps run one at a time under the run lock.
@@ -497,6 +529,9 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     steps,
     ...(deps.acquireLock === undefined ? {} : { acquireLock: deps.acquireLock }),
   }).finally(() => hold?.release());
+  if (apply && report.state === 'ran') {
+    try { await (deps.loadSnapshot ?? ((dir: string) => takeLoadSnapshot(dir, { now })))(root); } catch { /* Best-effort. */ }
+  }
   if (json) {
     output(JSON.stringify(sanitizePublicJson({ ...report, logCap: { state: logCap.state } })));
   } else if (report.state === 'busy') {

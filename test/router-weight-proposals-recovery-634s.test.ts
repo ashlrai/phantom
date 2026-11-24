@@ -46,6 +46,45 @@ const emptyTagsPath = (): string => join(runs, 'metrics', 'empty-tags.jsonl');
 const writeEmptyTags = (rows: object[]): void => writeFileSync(emptyTagsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
 const mergeEventsPath = (): string => join(runs, 'metrics', 'merge-events.jsonl');
 const writeMergeEvents = (rows: object[]): void => writeFileSync(mergeEventsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const rewardSignalsPath = (): string => join(root, 'ashlr', 'metrics', 'reward-signals.jsonl');
+const writeRewardSignals = (rows: object[]): void => {
+  mkdirSync(join(root, 'ashlr', 'metrics'), { recursive: true });
+  writeFileSync(rewardSignalsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+};
+const launchCostsPath = (): string => join(runs, 'metrics', 'launch-cost.jsonl');
+const writeLaunchCosts = (rows: object[]): void => writeFileSync(launchCostsPath(), rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+const crossReviewsPath = (): string => join(root, 'ashlr', 'fleet', 'cross-review.jsonl');
+const writeCrossReviews = (rows: (object | string)[]): void => {
+  mkdirSync(join(root, 'ashlr', 'fleet'), { recursive: true });
+  writeFileSync(crossReviewsPath(), rows.map(r => typeof r === 'string' ? r : JSON.stringify(r)).join('\n') + '\n');
+};
+/** A cross-review.jsonl kind:'review' row in the shape cross-review-run.ts appends (src/core/fleet/cross-review.ts). */
+const crossReview = (pr: number, outcome: string, extra: Record<string, unknown> = {}): object => ({
+  schemaVersion: 1, kind: 'review', at: '2026-11-21T00:00:00.000Z',
+  repo: 'ashlrai/phantom', pr,
+  prUrl: `https://github.com/ashlrai/phantom/pull/${pr}`,
+  reviewedHeadSha: 'a'.repeat(40), diffSha256: 'b'.repeat(64),
+  producerPool: 'mac-a', producerFamily: 'openai',
+  reviewerPool: 'mac-b', reviewerFamily: 'claude',
+  outcome, reasons: [], failure: null, skippedFor: [], ...extra,
+});
+/** A fleet.launch-cost.v1 row in the shape contrib/mac/launch_cost.py appends (src/core/fleet/launch-cost.ts). */
+const launchCostRow = (launchId: string, status: 'measured' | 'partial' | 'unknown', extra: Record<string, unknown> = {}): object => ({
+  schema: 'fleet.launch-cost.v1', lane: 'alpha', launchId, startedAt: '2026-11-01T00:00:00Z',
+  windowSeconds: 60, sampledSeconds: status === 'measured' ? 60 : 30, samples: status === 'measured' ? 60 : 6,
+  peakProcesses: status === 'unknown' ? null : 4,
+  meanCpuPercentOneCore: status === 'unknown' ? null : 12.5,
+  peakCpuPercentOneCore: status === 'unknown' ? null : 40,
+  status, ...extra,
+});
+/** A reward-signals.jsonl v1 row in the shape the reward-sync feed appends. */
+const rewardRow = (jobId: string, merged: boolean, pctUsedDelta: number | null): object => ({
+  v: 1, jobId, pool: 'codex-cmp', repo: 'ashlrai/phantom', merged,
+  dispatchedAt: '2026-11-01T00:00:00.000Z', mergedAt: merged ? '2026-11-01T01:00:00.000Z' : null,
+  timeToMergeMs: merged ? 3_600_000 : null, ciWallMs: 600_000,
+  cost: { pool: 'codex-cmp', pctUsedStart: 10, pctUsedEnd: pctUsedDelta === null ? null : 10 + pctUsedDelta, pctUsedDelta, costUsd: null },
+  recordedAt: '2026-11-01T02:00:00.000Z',
+});
 
 /** A merge-events.jsonl observation row in the fleet merge-latency shape (repo#pr keyed). */
 const mergeEvent = (pr: number, type: string, extra: Record<string, unknown> = {}): object => ({
@@ -340,6 +379,8 @@ describe('outcome-quality evidence', () => {
       ci_first_pass_rate: 0.8,
       review_findings_known: 10,
       review_findings: { fixed: 20, rejected: 10, ignored: 0 },
+      cross_review_known: 0,
+      cross_review: null,
       cost_known: 10,
       cost_usd_mean: 1.5,
       wall_known: 10,
@@ -360,6 +401,13 @@ describe('outcome-quality evidence', () => {
       passk_mean: 0.71,
       acus_known: 0,
       acus_mean: null,
+      pool_pct_used_known: 0,
+      pool_pct_used_mean: null,
+      launch_cost_known: 0,
+      launch_cost_measured: 0,
+      launch_peak_processes_mean: null,
+      launch_cpu_pct_mean: null,
+      launch_cpu_pct_peak_mean: null,
       diff_files_known: 0,
       diff_files_mean: null,
       diff_lines_known: 0,
@@ -382,6 +430,10 @@ describe('outcome-quality evidence', () => {
       merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0,
       merge_queue_recuts_known: 0,
+      repos_known: 0,
+      repos: null,
+      node_outcomes_known: 0,
+      node_verdicts: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).toContain('evidence ci_first_pass=0.8(10)');
@@ -391,6 +443,50 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('ttm_s=245(10)');
     expect(out).toContain('tokens_total=1450(10)');
     expect(out).toContain('passk=0.71(20)');
+  });
+
+  it('folds joined cross-review verdicts into group evidence as advisory tallies', async () => {
+    // cross-review.jsonl verdicts join outcomes through each job's newest
+    // unambiguous canonical PR claim — the same join merge_queue uses. The
+    // tally is advisory review-gate context: it never feeds the held-merge
+    // weight, and a job with no recorded verdict keeps cross_review_known at
+    // its real coverage rather than counting as a non-verdict.
+    const claim = (i: number, pr: number | null): object =>
+      event(`synthetic-xr-${i}`, 'alpha', 'code', 'MERGED',
+        pr === null ? {} : { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
+    writeLedger([
+      claim(0, 100), claim(1, 101), claim(2, 102), claim(3, 103),
+      claim(4, 130), claim(5, 130),   // two jobs contest PR 130 -> ambiguous, joins nothing
+      claim(6, 106),                  // claimed PR with no recorded review
+      claim(7, null),                 // no PR claim at all
+      ...merged(12).map((r, i) => event(`synthetic-xr-f-${i}`, 'alpha', 'code', 'MERGED')),
+    ]);
+    writeCrossReviews([
+      crossReview(100, 'approve'),
+      crossReview(101, 'reject'),
+      crossReview(102, 'failed'),
+      crossReview(103, 'skipped'),
+      crossReview(130, 'approve'),    // ambiguous claim: joins neither job
+      // A decision row is merge-action evidence, never a review verdict.
+      { ...crossReview(104, 'approve'), kind: 'decision', action: 'enable-auto-merge' },
+      'not json',                     // malformed rows never count
+      crossReview(999, 'approve'),    // no outcome claims PR 999: joins nothing
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      cross_review_state: 'read', cross_review_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 0,
+    });
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ status: 'proposed', proposed_weight: 0.6, known_n: 20 });
+    expect(p.evidence).toMatchObject({
+      cross_review_known: 4,
+      cross_review: { approve: 1, reject: 1, failed: 1, skipped: 1 },
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('cross_review=4(4)(approve:1,reject:1,failed:1,skipped:1)');
+    expect(out).toContain('cross_review=read');
   });
 
   it('folds queue-admission wait into group evidence with coverage counts', async () => {
@@ -526,6 +622,7 @@ describe('outcome-quality evidence', () => {
     expect(report.proposals[0].evidence).toEqual({
       ci_first_pass_known: 0, ci_first_pass_rate: null,
       review_findings_known: 0, review_findings: null,
+      cross_review_known: 0, cross_review: null,
       cost_known: 0, cost_usd_mean: null,
       wall_known: 0, wall_s_mean: null,
       ttm_known: 0, ttm_s_mean: null,
@@ -536,6 +633,9 @@ describe('outcome-quality evidence', () => {
       tokens_known: 0, tokens_total_mean: null,
       passk_known: 0, passk_mean: null,
       acus_known: 0, acus_mean: null,
+      pool_pct_used_known: 0, pool_pct_used_mean: null,
+      launch_cost_known: 0, launch_cost_measured: 0,
+      launch_peak_processes_mean: null, launch_cpu_pct_mean: null, launch_cpu_pct_peak_mean: null,
       diff_files_known: 0, diff_files_mean: null,
       diff_lines_known: 0, diff_lines_mean: null,
       usage_missing_known: 0,
@@ -547,6 +647,8 @@ describe('outcome-quality evidence', () => {
       merge_queue_known: 0, merge_queue_blocked_known: 0, merge_queue_blocked_reasons: null,
       merge_queue_check_failures_known: 0, merge_queue_conflicts_known: 0,
       merge_queue_retries_known: 0, merge_queue_recuts_known: 0,
+      repos_known: 0, repos: null,
+      node_outcomes_known: 0, node_verdicts: null,
     });
     const { out } = await run(['--runs-dir', runs]);
     expect(out).not.toContain('ci_first_pass=');
@@ -680,10 +782,46 @@ describe('outcome-quality evidence', () => {
     expect(out).toContain('lane_blocked=7(quota_exhausted:5,saturated:5,held:2)');
   });
 
+  it('folds recorded repo labels into group evidence and set tallies', async () => {
+    // dispatchd's queue rows carry the ready line's repo cell; the fold
+    // keeps the newest bounded value per job. Repo identity tallies like
+    // usage provenance — every folded outcome counts at set level, while
+    // the per-group evidence covers the known cohort only.
+    const repoRow = (job: string, lane: string, workClass: string | null, phase: string | null, repo: string): object =>
+      ({ job, lane, model: 'synthetic-model', tier: 'work', ...(workClass === null ? {} : { work_class: workClass }), ...(phase === null ? {} : { phase }), repo });
+    writeLedger([
+      ...Array.from({ length: 15 }, (_, i) => repoRow(`synthetic-repo-a-${i}`, 'alpha', 'code', 'MERGED', 'phantom')),
+      ...Array.from({ length: 5 }, (_, i) => repoRow(`synthetic-repo-b-${i}`, 'alpha', 'code', 'MERGED', 'ashlrai/lexicon')),
+      // An unclassified outcome (no recorded class) still tallies its repo.
+      { job: 'synthetic-repo-unc', lane: 'alpha', phase: 'MERGED', repo: 'phantom' },
+      // An unknown-cohort outcome tallies the same way — repo is not merge evidence.
+      repoRow('synthetic-repo-unq', 'alpha', 'code', 'VERIFIED', 'locus'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ known_outcomes: 20, unknown_outcomes: 1, unclassified_outcomes: 1 });
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20 });
+    expect(p.evidence.repos_known).toBe(20);
+    expect(p.evidence.repos).toEqual([
+      { repo: 'phantom', jobs: 15 },
+      { repo: 'ashlrai/lexicon', jobs: 5 },
+    ]);
+    // Set-level repos tally every folded outcome: 15+1 phantom, 5 lexicon, 1 locus.
+    expect(report.repos).toEqual([
+      { repo: 'phantom', jobs: 16 },
+      { repo: 'ashlrai/lexicon', jobs: 5 },
+      { repo: 'locus', jobs: 1 },
+    ]);
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('repos=20(phantom:15,ashlrai/lexicon:5)');
+    expect(out).toContain('repo mix: phantom:16,ashlrai/lexicon:5,locus:1');
+  });
+
   it('reports null usage tallies when the ledger was not read', async () => {
     const { code, report } = await runJson();
     expect(code).toBe(1);
-    expect(report).toMatchObject({ usage_missing: null, usage_sources: null });
+    expect(report).toMatchObject({ usage_missing: null, usage_sources: null, repos: null });
   });
 });
 
@@ -717,7 +855,7 @@ describe('unknown-outcome resolution', () => {
       ],
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 handoffs=0 provider_walls=0 unresolved=4');
+    expect(out).toContain('unknown resolution: empty=3 nonzero_exit=5 skipped=0 deferred=0 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=4');
     expect(out).toContain('failure_classes=quota:3,authentication:1');
   });
 
@@ -967,7 +1105,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 4,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=3 deferred=0 noop=0 handoffs=0 provider_walls=0 unresolved=4');
+    expect(out).toContain('skipped=3 deferred=0 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=4');
     expect(out).toContain('skip_reasons=prompt_empty_same_base_24h:2,code:13:1');
   });
 
@@ -1055,7 +1193,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('deferred=4 noop=0 handoffs=0 provider_walls=0 unresolved=3');
+    expect(out).toContain('deferred=4 noop=0 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=3');
     expect(out).toContain('defer_reasons=duplicate-request:2,files_and_tests_exist:1,recut-in-flight:1');
   });
 
@@ -1122,7 +1260,7 @@ describe('unknown-outcome resolution', () => {
       unknown_unresolved: 3,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('skipped=1 deferred=1 noop=6 handoffs=0 provider_walls=0 unresolved=3');
+    expect(out).toContain('skipped=1 deferred=1 noop=6 handoffs=0 provider_walls=0 node_outcomes=0 unresolved=3');
     expect(out).toContain('noop_reasons=already-merged:1,recut-already-merged:1,target_pr_closed:1,target_pr_conflicts_resolved:1,target_pr_merged:1,unlabeled:1');
   });
 
@@ -1231,6 +1369,70 @@ describe('unknown-outcome resolution', () => {
     expect(out).not.toContain('market_reasons=');
     expect(out).not.toContain('market_rejected=');
   });
+
+  it('tallies joined cross-review verdicts inside the unknown cohort without resolving them', async () => {
+    // The review join is queue-side diagnostic context like the market and
+    // merge-queue joins: the standing PR's newest recorded cross-model
+    // verdict explains what the review gate saw while the merge verdict
+    // stayed unrecorded. A `reject` is the recorded reason the PR may never
+    // merge — but a review verdict is not a merge verdict, so every joined
+    // job stays in the unresolved remainder and weight math is untouched.
+    const claim = (job: string, pr: number | null): object =>
+      event(job, 'alpha', 'code', 'VERIFIED',
+        pr === null ? {} : { pr_url: `https://github.com/ashlrai/phantom/pull/${pr}` });
+    writeLedger([
+      ...merged(20),
+      claim('synthetic-xru-0', 200), claim('synthetic-xru-1', 201),
+      claim('synthetic-xru-2', 202), claim('synthetic-xru-3', 203),
+      claim('synthetic-xru-4', null),
+    ]);
+    writeCrossReviews([
+      crossReview(200, 'approve'),
+      crossReview(201, 'reject'),
+      crossReview(202, 'approve'),
+      // PR 203 has no recorded review; a decision row is never a verdict.
+      { ...crossReview(204, 'approve'), kind: 'decision', action: 'enable-auto-merge' },
+      'not json',
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      cross_review_state: 'read', cross_review_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 5,
+      unknown_cross_reviews: 3,
+      unknown_cross_review_verdicts: [
+        { verdict: 'approve', jobs: 2 },
+        { verdict: 'reject', jobs: 1 },
+      ],
+      // Review verdicts never resolve the merge question: all five
+      // unmerged unknowns stay unresolved however the reviewer ruled.
+      unknown_unresolved: 5,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('cross_reviews=3(approve:2,reject:1)');
+    expect(out).toContain('unresolved=5');
+    expect(out).toContain('cross_review=read');
+  });
+
+  it('reports unknown_cross_reviews null when the review ledger was not read', async () => {
+    // No cross-review.jsonl: verdict coverage is unknown, so both tallies
+    // are null — never an empty list claiming no reviews were recorded.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-xru-open', 'alpha', 'code', 'VERIFIED',
+        { pr_url: 'https://github.com/ashlrai/phantom/pull/300' }),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      status: 'proposed', cross_review_state: 'missing', cross_review_truncated: false,
+      unknown_cross_reviews: null,
+      unknown_cross_review_verdicts: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).not.toContain('cross_reviews=');
+    expect(out).toContain('cross-review coverage: cross-review.jsonl missing; no review verdicts joined');
+  });
 });
 
 describe('session-handoff advisory evidence', () => {
@@ -1302,7 +1504,7 @@ describe('session-handoff advisory evidence', () => {
       unknown_unresolved: 2,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('handoffs=2 provider_walls=0 unresolved=2 handoff_triggers=rate-limit:2,quota-exhausted:1');
+    expect(out).toContain('handoffs=2 provider_walls=0 node_outcomes=0 unresolved=2 handoff_triggers=rate-limit:2,quota-exhausted:1');
   });
 
   it('keeps handoff tallies real whenever the jobs read succeeded and null when it did not', async () => {
@@ -1391,7 +1593,7 @@ describe('provider-wall hold evidence', () => {
       unknown_unresolved: 1,
     });
     const { out } = await run(['--runs-dir', runs]);
-    expect(out).toContain('provider_walls=3 unresolved=1');
+    expect(out).toContain('provider_walls=3 node_outcomes=0 unresolved=1');
     expect(out).toContain('provider_wall_triggers=auth-failure:1,usage-limit:1');
   });
 
@@ -1500,6 +1702,126 @@ describe('slot-throttle (pool) evidence', () => {
     expect(missing.code).toBe(1);
     expect(missing.report).toMatchObject({
       unknown_pool_throttles: null, unknown_pool_kinds: null, unknown_unresolved: null,
+    });
+  });
+});
+
+describe('node-runner verdict evidence', () => {
+  /** A phm-node-runner.v1 finish row in the producer's own shape
+   *  (src/core/drive/nodes/runner.ts): `job` is the per-claim id
+   *  (<jobId>:<token>) and `jobId` the logical queue id the fold keys —
+   *  the attempt id must never mint an outcome of its own. */
+  const nodeRow = (jobId: string, outcome: string, extra: Record<string, unknown> = {}): object => ({
+    schema: 'phm-node-runner.v1', event: 'finish',
+    job: `${jobId}:tok-1`, jobId, node: 'node-a', pack: 'shell-check',
+    outcome, ...extra,
+  });
+
+  it('treats the recorded node verdict as the offloaded job\'s terminal execution verdict', async () => {
+    // Node-pack jobs produce result artifacts, not pull requests, so
+    // merged stays null however the pack ended — but the runner's
+    // finish row is the fleet's recorded answer to "did the work run".
+    // All three verdict words explain the missing merge verdict: a
+    // failed/fenced attempt is the recorded failure signal and a
+    // succeeded attempt is the terminal success the node path exists
+    // to produce, so every one leaves unknown_unresolved.
+    writeLedger([
+      ...merged(20),
+      event('synthetic-node-ok', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-ok', 'succeeded'),
+      event('synthetic-node-err', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-err', 'failed'),
+      event('synthetic-node-fence', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-fence', 'fenced'),
+      // A plain in-flight job with no verdict stays unresolved.
+      event('synthetic-node-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4, unclassified_outcomes: 0,
+      unknown_node_outcomes: 3,
+      unknown_node_verdicts: [
+        { verdict: 'failed', jobs: 1 },
+        { verdict: 'fenced', jobs: 1 },
+        { verdict: 'succeeded', jobs: 1 },
+      ],
+      unknown_unresolved: 1,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('node_outcomes=3 unresolved=1');
+    expect(out).toContain('node_verdicts=failed:1,fenced:1,succeeded:1');
+  });
+
+  it('tallies node verdicts per known group as advisory evidence without touching weight math', async () => {
+    // A merged job can still carry a node verdict — the job was
+    // attempted on the node pool, then reached its merge verdict
+    // through another path. The evidence shows how much of the
+    // group's held-merge cohort survived node execution; the weight
+    // math still moves on held-merge rate alone.
+    const jobs = Array.from({ length: 20 }, (_, i) => `synthetic-node-k-${i}`);
+    writeLedger(jobs.flatMap((job, i) => [
+      event(job, 'alpha', 'code', 'MERGED'),
+      ...(i < 2 ? [nodeRow(job, 'failed')] : []),
+      ...(i === 2 ? [nodeRow(job, 'succeeded')] : []),
+    ]));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    const p = report.proposals[0];
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      node_outcomes_known: 3,
+      node_verdicts: [
+        { verdict: 'failed', jobs: 2 },
+        { verdict: 'succeeded', jobs: 1 },
+      ],
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('node=3(failed:2,succeeded:1)');
+  });
+
+  it('keeps node tallies real whenever the jobs read succeeded and null when it did not', async () => {
+    // Jobs-ledger rows need no side-ledger join: a readable jobs ledger
+    // with no runner rows reports zero tallies, while an unreadable one
+    // reports null — never an empty list claiming no verdicts recorded.
+    writeLedger(merged(20));
+    const { report } = await runJson();
+    expect(report).toMatchObject({
+      unknown_node_outcomes: 0, unknown_node_verdicts: [], unknown_unresolved: 0,
+    });
+    expect(report.proposals[0].evidence).toMatchObject({ node_outcomes_known: 0, node_verdicts: null });
+
+    rmSync(ledgerPath());
+    const missing = await runJson();
+    expect(missing.code).toBe(1);
+    expect(missing.report).toMatchObject({
+      unknown_node_outcomes: null, unknown_node_verdicts: null, unknown_unresolved: null,
+    });
+  });
+
+  it('never mints a node tally from wrong-schema rows, out-of-vocabulary verdicts or orphan jobIds', async () => {
+    writeLedger([
+      ...merged(20),
+      event('synthetic-node-bad-1', 'alpha', 'code', 'VERIFIED'),
+      // A plain finish row's outcome word is a merge-phase spelling,
+      // never a node verdict — only the phm-node-runner.v1 schema joins.
+      { job: 'synthetic-node-bad-1', lane: 'alpha', work_class: 'code', event: 'finish', outcome: 'succeeded' },
+      event('synthetic-node-bad-2', 'alpha', 'code', 'VERIFIED'),
+      nodeRow('synthetic-node-bad-2', 'completed'),
+      event('synthetic-node-bad-3', 'alpha', 'code', 'VERIFIED'),
+      // A runner row naming a jobId no outcome claims joins nothing —
+      // the per-attempt `job` id never keys an outcome either.
+      nodeRow('synthetic-node-ghost', 'succeeded'),
+      event('synthetic-node-open', 'alpha', 'code', 'VERIFIED'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      known_outcomes: 20, unknown_outcomes: 4,
+      // The orphan runner row folds as its own unclassified outcome.
+      unclassified_outcomes: 1,
+      unknown_node_outcomes: 0, unknown_node_verdicts: [],
+      unknown_unresolved: 4,
     });
   });
 });
@@ -1631,6 +1953,114 @@ describe('merge-queue evidence', () => {
     expect(out).toContain('merge_events=missing');
     expect(out).toContain('merge-event coverage: merge-events.jsonl missing');
     expect(out).not.toContain('merge_queue=');
+  });
+});
+
+describe('reward-signal evidence', () => {
+  it('lets reward rows resolve merge verdicts the jobs window dropped and supplies pool_pct_used', async () => {
+    // 15 jobs-ledger merges plus 5 jobs whose terminal verdicts only the
+    // reward substrate still records — the retained jobs tail dropped
+    // their outcome rows, the reward ledger persisted them.
+    writeLedger([...merged(15), ...unknown(5)]);
+    writeRewardSignals([
+      rewardRow('synthetic-VERIFIED-alpha-code-0', true, 1),
+      rewardRow('synthetic-VERIFIED-alpha-code-1', true, 2),
+      rewardRow('synthetic-VERIFIED-alpha-code-2', true, 3),
+      rewardRow('synthetic-VERIFIED-alpha-code-3', false, 4),
+      rewardRow('synthetic-VERIFIED-alpha-code-4', false, null),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      reward_state: 'read', reward_truncated: false,
+      known_outcomes: 20, unknown_outcomes: 0, unclassified_outcomes: 0,
+    });
+    expect(report.proposals).toHaveLength(1);
+    const p = report.proposals[0];
+    // 18 held merges of 20 known: the reward verdicts moved five jobs
+    // out of the unknown cohort and into real merge evidence.
+    expect(p).toMatchObject({ work_class: 'code', lane: 'alpha', known_n: 20, status: 'proposed', proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({
+      pool_pct_used_known: 4, pool_pct_used_mean: 2.5,
+      ttm_known: 3, ttm_s_mean: 3600,
+      ci_wall_known: 5, ci_wall_s_mean: 600,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('reward=read');
+    expect(out).toContain('pool_pct_used=2.5(4)');
+  });
+
+  it('keeps the jobs-ledger verdict over a contradicting reward row while its pool figure still joins', async () => {
+    writeLedger(merged(20));
+    writeRewardSignals([rewardRow('synthetic-MERGED-alpha-code-0', false, 5)]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ reward_state: 'read', reward_truncated: false, known_outcomes: 20 });
+    const p = report.proposals[0];
+    // The recorded jobs merge stands: still 20 held merges, still the cap.
+    expect(p).toMatchObject({ known_n: 20, proposed_weight: 0.6 });
+    expect(p.evidence).toMatchObject({ pool_pct_used_known: 1, pool_pct_used_mean: 5 });
+  });
+
+  it('reports reward coverage missing and pool_pct evidence null when the ledger was not read', async () => {
+    writeLedger(merged(20));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ reward_state: 'missing', reward_truncated: false });
+    expect(report.proposals[0].evidence).toMatchObject({ pool_pct_used_known: 0, pool_pct_used_mean: null });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('reward=missing');
+    expect(out).toContain('reward coverage: reward-signals.jsonl missing');
+  });
+});
+
+describe('launch-cost evidence', () => {
+  it('folds the recorded launch probe into per-group evidence with status and metric coverage', async () => {
+    writeLedger(merged(20));
+    writeLaunchCosts([
+      // The producer keys measured/partial rows <job>-<12-hex claim hash>.
+      launchCostRow('synthetic-MERGED-alpha-code-0-aaaabbbbcccc', 'measured'),
+      launchCostRow('synthetic-MERGED-alpha-code-1-aaaabbbbcccd', 'measured', { peakProcesses: 6, meanCpuPercentOneCore: 20, peakCpuPercentOneCore: 50 }),
+      launchCostRow('synthetic-MERGED-alpha-code-2-aaaabbbbccce', 'partial', { peakProcesses: 8, meanCpuPercentOneCore: 30, peakCpuPercentOneCore: 60 }),
+      // Unknown probes key the bare job id and record no figures.
+      launchCostRow('synthetic-MERGED-alpha-code-3', 'unknown'),
+      launchCostRow('synthetic-MERGED-alpha-code-4-aaaabbbbcccf', 'measured', { peakProcesses: 2, meanCpuPercentOneCore: 5, peakCpuPercentOneCore: 10 }),
+      // A row for a job outside the jobs window joins nothing.
+      launchCostRow('synthetic-elsewhere-aaaabbbbcccg', 'measured'),
+    ]);
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({
+      launch_cost_state: 'read', launch_cost_truncated: false,
+      known_outcomes: 20,
+    });
+    expect(report.proposals).toHaveLength(1);
+    expect(report.proposals[0].evidence).toMatchObject({
+      // Five jobs carry a recorded probe verdict; three of them measured.
+      launch_cost_known: 5, launch_cost_measured: 3,
+      // Metric means cover only the rows that recorded figures — the
+      // unknown probe contributes its status, never a zeroed reading.
+      launch_peak_processes_mean: 5,
+      launch_cpu_pct_mean: 16.875,
+      launch_cpu_pct_peak_mean: 40,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('launch_cost=read');
+    expect(out).toContain('launch_cost=5(measured:3,peak_processes:5,cpu_pct_mean:16.875,cpu_pct_peak:40)');
+  });
+
+  it('reports launch-cost coverage missing and evidence nulls when the ledger was not read', async () => {
+    writeLedger(merged(20));
+    const { code, report } = await runJson();
+    expect(code).toBe(0);
+    expect(report).toMatchObject({ launch_cost_state: 'missing', launch_cost_truncated: false });
+    expect(report.proposals[0].evidence).toMatchObject({
+      launch_cost_known: 0, launch_cost_measured: 0,
+      launch_peak_processes_mean: null, launch_cpu_pct_mean: null, launch_cpu_pct_peak_mean: null,
+    });
+    const { out } = await run(['--runs-dir', runs]);
+    expect(out).toContain('launch_cost=missing');
+    expect(out).toContain('launch-cost coverage: launch-cost.jsonl missing');
   });
 });
 

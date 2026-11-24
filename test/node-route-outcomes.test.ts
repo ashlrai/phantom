@@ -9,9 +9,9 @@ import type { RouterOutcome } from '../src/core/router/outcomes.js';
 const GIB = 1024 ** 3, MIB = 1024 ** 2;
 
 const outcome = (job: string, lane: string | null, merged: boolean | null, reverted: boolean | null = null): RouterOutcome => ({
-  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null,
+  schema: 'router.outcome.v1', job_id: job, lane, model: null, tier: null, work_class: null, repo: null,
   lane_hint: null, lane_override: null,
-  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, wall_s: null,
+  merged, reverted, ci_first_pass: null, review_findings: null, cost_usd: null, pool_pct_used: null, wall_s: null,
   tokens_total: null, acus: null, tokens_in: null, tokens_out: null,
   tokens_cache_read: null, tokens_cache_write: null,
   usage_source: null, usage_missing: null,
@@ -26,7 +26,9 @@ const outcome = (job: string, lane: string | null, merged: boolean | null, rever
   handoff_trigger: null, handoff_lane: null, handoff_target: null,
   provider_wall_trigger: null, provider_wall_pattern: null, provider_wall_lane: null,
   pool_kind: null, pool_mem_free_pct: null, pool_swap_gb: null,
-  merge_queue: null,
+  node_outcome: null, node_id: null, node_pack: null,
+  merge_queue: null, cross_review: null,
+  launch_cost_status: null, launch_peak_processes: null, launch_mean_cpu_pct: null, launch_peak_cpu_pct: null,
   passk: null,
 });
 

@@ -60,7 +60,7 @@ async function fixture(contents: unknown) {
 async function run(contents: unknown, args: string[]) {
   const file = await fixture(contents);
   const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const code = await cmdFleetAdmission(args, file.reader);
+  const code = await cmdFleetAdmission([...args, '--details'], file.reader);
   expect(file.reader.mock.calls.map(([path]) => path)).toEqual(['queue/status.json', 'queue/admission-ctl.json', 'metrics/fleet-controller.jsonl'].map(path => join(homedir(), '.ashlr-runs', path)));
   expect(await readFile(file.path, 'utf8')).toBe(file.text);
   const printed = String(output.mock.calls[0]?.[0] ?? '');
@@ -291,13 +291,13 @@ describe('ashlr fleet admission', () => {
     ];
     for (const contents of samples) {
       const file = await fixture(contents);
-      expect(await cmdFleetAdmission(['--json'], file.reader)).toBe(2);
+      expect(await cmdFleetAdmission(['--details', '--json'], file.reader)).toBe(2);
       const body = JSON.parse(String(output.mock.calls.at(-1)![0]));
       expect(body).toEqual({ schema: FLEET_ADMISSION_SCHEMA, readOnly: true, error: 'Queue status is unreadable or invalid.' });
       expect(JSON.stringify(body)).not.toContain(SECRET);
       expect(await readFile(file.path, 'utf8')).toBe(file.text);
     }
-    expect(await cmdFleetAdmission([], async () => { throw new Error(SECRET); })).toBe(2);
+    expect(await cmdFleetAdmission(['--details'], async () => { throw new Error(SECRET); })).toBe(2);
     expect(output.mock.calls.at(-1)![0]).toBe('Queue status is unreadable or invalid.');
   });
 
@@ -356,12 +356,12 @@ describe('settle advice from recorded load', () => {
     const before = [...files];
     const output = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const reader = async (path: string) => files.get(path.split('/').at(-1)!)!;
-    expect(await cmdFleetAdmission(['--json'], reader, now)).toBe(1);
+    expect(await cmdFleetAdmission(['--details', '--json'], reader, now)).toBe(1);
     const report = JSON.parse(String(output.mock.calls.at(-1)![0]));
     expect(report).toMatchObject({ readOnly: true, global: { cap: 8 }, launchGuard: {
       state: 'waiting', why: 'settle after launch', settleSeconds: 300, load1: 40, ownedLoad1: 2,
     }, lanes: [{ reason: 'admission closed', status: 'red' }], settleAdvice: { recommendedSeconds: 165 } });
-    expect(await cmdFleetAdmission([], reader, now)).toBe(1);
+    expect(await cmdFleetAdmission(['--details'], reader, now)).toBe(1);
     const plain = String(output.mock.calls.at(-1)![0]);
     expect(plain).toContain('reason: settle after launch; settle: 300 seconds; host load: 40; owned load: 2');
     expect(plain).toContain('Suggested settle: 165 seconds (24/24 hours observed)');

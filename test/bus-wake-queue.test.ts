@@ -77,6 +77,25 @@ it('reports matched totals and truncation instead of silently capping the page',
   expect(readBusWakes({ ...opts, sinceAt: 7, match: row => row.to === 'leaders' }))
     .toMatchObject({ matched: 0, truncated: false, wakes: [] });
 });
+it('bounds the page by beforeAt — exclusive, composing with sinceAt into (since, before)', () => {
+  let tick = 0;
+  const opts = { root: root(), now: () => ++tick };
+  for (const [id, to] of [['b-1', 'leaders'], ['b-2', 'agent:nova'], ['b-3', 'leaders'], ['b-4', 'agent:nova']] as const) {
+    enqueueBusWake({ kind: 'bus.send', id, from: 'mason', to }, opts);
+  }
+  // at runs 1..4 in enqueue order; beforeAt is exclusive — a row stamped
+  // exactly at it never matches, the mirror of sinceAt's lower bound.
+  const page = readBusWakes({ ...opts, beforeAt: 3 });
+  expect(page).toMatchObject({ state: 'ok', matched: 2, truncated: false });
+  expect(page.wakes.map(row => row.id)).toEqual(['b-1', 'b-2']);
+  // The pair reads one (sinceAt, beforeAt) window on the hint's queue time.
+  const window = readBusWakes({ ...opts, sinceAt: 1, beforeAt: 4 });
+  expect(window).toMatchObject({ state: 'ok', matched: 2 });
+  expect(window.wakes.map(row => row.id)).toEqual(['b-2', 'b-3']);
+  // matched counts accepted rows before the row cap, same as sinceAt.
+  expect(readBusWakes({ ...opts, beforeAt: 4, limit: 1, match: row => row.to === 'leaders' }))
+    .toMatchObject({ state: 'ok', matched: 2, truncated: true });
+});
 it('marks the read truncated when older bytes sit beyond the bounded tail window', () => {
   const directory = root();
   enqueueBusWake(request, { root: directory, now: () => 1 });

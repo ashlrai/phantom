@@ -106,6 +106,57 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     expect(() => listWorkBoard({ root: gone, now })).not.toThrow();
     expect(listWorkBoard({ root: gone, now }).items).toEqual([]);
   });
+
+  it('filters by classified state and reports the true matched total', () => {
+    // One item per state: a live claim runs, a blocked reply blocks, a
+    // verified reply verifies, and two plain requests stay RECEIVED.
+    post(slackRequest('req-running', REF_A));
+    now += 1_000;
+    post(slackRequest('req-blocked', REF_B));
+    now += 1_000;
+    post(busRequest('req-verified'));
+    now += 1_000;
+    post(busRequest('req-received-1'));
+    now += 1_000;
+    post(busRequest('req-received-2'));
+    now += 1_000;
+    expect(mutateBusWorkClaim({ action: 'acquire', id: 'req-running', owner: 'fake-owner',
+      leaseMs: 600_000, root }).status).toBe('acquired');
+    expect(postBusReply('req-blocked', 'reply-blocked', { blocked: { dependency: 'fake-dep' } },
+      { root, now: () => now }).outcome).toBe('posted');
+    expect(postBusReply('req-verified', 'reply-verified', { verified: { pr: 12, head: 'abc1234' } },
+      { root, now: () => now }).outcome).toBe('posted');
+
+    const blocked = listWorkBoard({ root, now, state: 'BLOCKED' });
+    expect(blocked.state).toBe('BLOCKED');
+    expect(blocked.matched).toBe(1);
+    expect(blocked.truncated).toBe(false);
+    expect(blocked.items.map(item => item.id)).toEqual(['req-blocked']);
+    expect(blocked.items[0]!.result).toEqual({ kind: 'blocked', dependency: 'fake-dep' });
+
+    // matched counts every RECEIVED request, so a limit-1 board is a slice.
+    const received = listWorkBoard({ root, now, state: 'RECEIVED', limit: 1 });
+    expect(received.state).toBe('RECEIVED');
+    expect(received.matched).toBe(2);
+    expect(received.truncated).toBe(true);
+    expect(received.items.map(item => item.id)).toEqual(['req-received-2']);
+
+    // state composes with channelRef: REF_A holds only the RUNNING item.
+    const scoped = listWorkBoard({ root, now, channelRef: REF_A, state: 'RECEIVED' });
+    expect(scoped.items).toEqual([]);
+    expect(scoped.matched).toBe(0);
+    expect(scoped.state).toBe('RECEIVED');
+
+    // An unmatched state is an honest zero; the unfiltered board is unchanged.
+    const none = listWorkBoard({ root, now, state: 'ASSIGNED' });
+    expect(none.items).toEqual([]);
+    expect(none.matched).toBe(0);
+    expect(none.state).toBe('ASSIGNED');
+    const all = listWorkBoard({ root, now });
+    expect(all.state).toBeUndefined();
+    expect(all.matched).toBeUndefined();
+    expect(all.items).toHaveLength(5);
+  });
 });
 
 describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
@@ -155,6 +206,21 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     } finally { rmSync(empty, { recursive: true, force: true }); }
   });
 
+  it('--state filters items and the footer reports the true matched total', async () => {
+    seed();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await cmdFleetWorkBoard(['--root', root, '--state', 'RUNNING'])).toBe(0);
+    const lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('slack-request-a RUNNING');
+    expect(lines[1]).toBe(`items=1 state=RUNNING matched=1 truncated=no inbox=ok as-of=${iso(now)}`);
+    expect(await cmdFleetWorkBoard(['--root', root, '--state', 'RECEIVED', '--limit', '1', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ state: 'RECEIVED', matched: 2, truncated: true, inbox: 'ok' });
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0].id).toBe('bus-request-c');
+  });
+
   it('exits 2 on bad or duplicate flags and prints nothing on stdout', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -165,6 +231,10 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkBoard(['--root', 'relative/path'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--bogus'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--thread', REF_A, '--thread', REF_B])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--state', 'bogus'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--state', 'running'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--state'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--state', 'RUNNING', '--state', 'BLOCKED'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--json', '--json'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--root', root, '--root', root])).toBe(2);
     expect(log).not.toHaveBeenCalled();

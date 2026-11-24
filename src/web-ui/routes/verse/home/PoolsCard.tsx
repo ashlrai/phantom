@@ -11,6 +11,7 @@ import type { QueryDef } from '../../../data/queries.js';
 import { JOB_ID_RE } from '../fleet-job-log/job-id.js';
 import { fleetRunsQuery } from '../mobile/runs-queries.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
+import { PoolSpendRows } from './PoolSpendRows.js';
 import { PoolEndingBar, PoolEndingKey } from './PoolEndingBar.js';
 import { endingSummary, poolEnding, poolHours as hours } from './pool-ending-model.js';
 import ending from './pool-ending.module.css';
@@ -104,14 +105,14 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
   usePollWhileVisible(refreshJobs, 15_000, { enabled: visible && selected !== null });
   const snapshot = read.status !== 'error' && isRunwaySnapshot(read.data) ? read.data : null;
   const rows: PoolName[] = [...POOLS, ...(snapshot?.pools.filter(row => !POOLS.some(([pool]) => pool === row.pool)).map(row => [row.pool, row.pool] as const) ?? [])];
-  const selectedName = rows.find(([pool]) => pool === selected)?.[1] ?? null;
+  const selectedName = rows.find(([pool]) => pool === selected)?.[1] ?? snapshot?.shares?.pools.find(row => row.pool === selected)?.pool ?? null;
   const workers = jobs.data?.workers?.filter(worker => worker.lane === selected) ?? [];
   // The runway's own sentence for the open pool. Local has no window, so there is none to give.
   const advice = selected === null || selected === LOCAL ? '' : snapshot?.pools.find(row => row.pool === selected)?.advice ?? '';
   return <section className={styles.card} aria-label="Pools"><h3>Pools</h3>
-    {snapshot ? <div className={bar.summary}>{poolsSummary(snapshot, rows).map(part => <span key={part}>{part}</span>)}</div> : null}
+    {snapshot && !snapshot.shares ? <div className={bar.summary}>{poolsSummary(snapshot, rows).map(part => <span key={part}>{part}</span>)}</div> : null}
     {read.status === 'error' ? <p role="status">Pool readings unavailable; usage and times are unknown.</p> : null}
-    <ul className={bar.tiles}>{rows.map(([pool, name]) => {
+    {!snapshot?.shares ? <ul className={bar.tiles}>{rows.map(([pool, name]) => {
       const local = pool === LOCAL;
       const reading = snapshot?.pools.find(row => row.pool === pool);
       const parts = poolParts(reading);
@@ -133,8 +134,9 @@ export function PoolsCard({ visible = true, onOpenJob, onOpenPools }: {
         </button>
         {local ? null : <PoolEndingBar name={name} ending={end} />}
       </li>;
-    })}</ul>
-    {snapshot ? <PoolEndingKey summary={endingSummary(rows.filter(([pool]) => pool !== LOCAL).map(([pool]) => snapshot.pools.find(row => row.pool === pool)))} /> : null}
+    })}</ul> : null}
+    {snapshot?.shares ? <PoolSpendRows data={snapshot.shares} selected={selected} regionId={`${id}-jobs`} select={pool => select(selected === pool ? null : pool)} /> : null}
+    {snapshot && !snapshot.shares ? <PoolEndingKey summary={endingSummary(rows.filter(([pool]) => pool !== LOCAL).map(([pool]) => snapshot.pools.find(row => row.pool === pool)))} /> : null}
     {selected !== null && selectedName !== null ? <div id={`${id}-jobs`} role="region" aria-label={`${selectedName} running jobs`} className={bar.jobs}>
       {advice ? <p className={ending.advice}>Runway advice: {advice}</p> : null}
       <span className={bar.jobsTitle}>Running on {selectedName}</span>

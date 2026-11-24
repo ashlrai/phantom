@@ -22,7 +22,9 @@
  */
 
 import { parseLedgerTs } from '../metrics/loop.js';
+import { isNodePoolLedgerRow } from './jobs-ledger-dialect.js';
 import type { JobsEmptyWhy } from './jobs-empty-why.js';
+import { classifyYieldEmpty, type YieldEmptyReason } from './empty-why-classify.js';
 export const YIELD_MIN_LAUNCHES = 5;
 
 /**
@@ -159,10 +161,13 @@ interface Run {
   /** `at` is the launch time; `last` the newest timestamped row for the run (epoch ms). */
   job: string; lane: string; tier: string; repo: string; /** From the launch row; null when it named none. */ model: string | null; at: number; last: number;
   finished: boolean; empty: boolean; aborted: boolean;
+  empty_reason?: YieldEmptyReason;
   wall: number | null; tokens: number | null;
   prs: Set<string>; merged: boolean; reverted: boolean;
   /** Epoch ms of the credited merge; null when its timestamp is unusable. */
   mergedAt: number | null;
+  /** PR URL carried by the credited merge observation, when recorded. */
+  mergedPr?: string;
   /** Launch source tag, falling back to producer. */
   src: string | null;
 }
@@ -393,12 +398,12 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
   if (!Number.isFinite(hours) || hours <= 0) throw new RangeError('Hours must be positive.');
   const start = now - hours * 3_600_000;
   const byJob = new Map<string, Run[]>();
-  const outcomes = new Map<string, { state: string; at: number | null }>();
+  const outcomes = new Map<string, { state: string; at: number | null; pr: string | null }>();
   const revertedJobs = new Set<string>();
   const skips = new Map<string, { repo: string; rows: number }>();
   /** Credit each resolved job once. Safe to repeat. A recorded revert is never a held merge. */
   const settle = (): Run[] => {
-    for (const [job, { state, at }] of outcomes) {
+    for (const [job, { state, at, pr }] of outcomes) {
       const runs = byJob.get(job)!;
       const withPr = runs.filter(r => r.prs.size > 0);
       const run = withPr[withPr.length - 1] ?? runs[runs.length - 1]!;
@@ -407,6 +412,7 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         else {
           run.merged = true;
           run.mergedAt = at !== null && at >= run.at && at <= now ? at : null;
+          if (pr !== null) run.mergedPr = pr;
         }
       } else if (REVERT_OUTCOMES.has(state)) run.reverted = true;
     }
@@ -420,6 +426,10 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!value || typeof value !== 'object' || Array.isArray(value)) return;
         row = value as Record<string, unknown>;
       } catch { return; }
+      // Node-pool machinery rows are a different producer dialect —
+      // `job` is a per-attempt id, never a dispatchd launch. Without the
+      // schema gate a session-pool `launch` would mint a phantom run.
+      if (isNodePoolLedgerRow(row)) return;
       const job = word(firstString(row, JOB_KEYS));
       if (job === 'unknown') return;
       const phase = phaseOf(row);
@@ -454,6 +464,8 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         if (!run) return;
         run.finished = true;
         run.empty ||= row.empty === true;
+        run.empty_reason = typeof row.exit_code === 'number' && row.exit_code !== 0 ? 'worker_error'
+          : classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
         run.wall = count(row.wall_s);
         run.tokens = count(row.tokens_total);
       } else if (event === 'publish') {
@@ -462,11 +474,15 @@ export function yieldTally(now: number, hours: number): { add(line: string): voi
         // eventless PUBLISHED spelling carries `prUrl` and no `class` at all.
         const url = firstString(row, URL_KEYS);
         if (kind === 'pr' || (kind === 'unknown' && url !== null)) run.prs.add(url ?? `pr:${run.prs.size}`);
-        else if (kind === 'empty') run.empty = true;
+        else if (kind === 'empty') {
+          run.empty = true;
+          const reason = classifyYieldEmpty([row.empty_reason, row.reason, row.summary].filter(v => typeof v === 'string').join('\n'));
+          if (reason !== 'unknown' && run.empty_reason !== 'worker_error') run.empty_reason = reason;
+        }
         else if (kind.startsWith('abort')) run.aborted = true;
       }
       const state = outcomeState(row, event, phase);
-      if (state !== null) outcomes.set(job, { state, at });
+      if (state !== null) outcomes.set(job, { state, at, pr: firstString(row, URL_KEYS) });
     },
     runs: settle,
     jobYield: () => jobYieldParts(settle(), skips, hours).report,

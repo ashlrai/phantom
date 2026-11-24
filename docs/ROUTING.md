@@ -271,6 +271,27 @@ No live dispatcher is installed by this change. Installation follows the
 existing [dispatcher review and pin workflow](../contrib/mac/README.md#installing-the-dispatcher).
 `phm route explain --json` adds the optional job `decision` to its hysteresis report.
 
+The same journal now feeds the report's `typed_decisions` field: a bounded
+`route.typed-decisions.v1` digest (`src/core/router/typed-decisions.ts`)
+folds the newest `TYPED_DECISIONS_LEDGER_LIMIT` (8 MiB) of
+`metrics/route.explain.jsonl` — `readTypedDecisions({runsDir?, limit?})` for
+the file read, `foldTypedDecisions(text, path, truncated)` for the pure
+fold. Rows count only under the exact producer contract (schema
+`route.explain.v1`, the `route.explain` event, advisory `true`, a finite
+epoch-second `ts`, and `status` `observed`/`unavailable`); an observed row
+must also carry a decision inside the producer's own allowlist, so a row
+the dispatcher could not have written counts as `invalid_rows`, never a
+partial pick. The digest reports `records`, `observed`/`unavailable`
+counts, top lane/model/reason-code tallies (each capped at eight), mean
+and max for the recorded `duration_ms`, `attempts` and `candidate_count`
+metrics, and the `oldest_ts`/`newest_ts` window. Malformed metric values
+stay unrecorded (`known` counts only well-formed figures; means stay null
+when none exist), a missing journal is `state: missing`, and a cut tail
+reports `truncated: true`. The rows carry no job identity, so the digest is
+fleet-level service evidence only — it describes what the typed layer
+decided and how the call behaved, never which job it decided for, and it
+routes, weights and applies nothing.
+
 ### Advisory lead/sidekick pairing
 
 The report's `pairing` field is a typed `route.pairing.v1` advisory decision,
@@ -302,8 +323,12 @@ reads the newest bounded tail of `<runs-dir>/metrics/jobs.jsonl` (default
 `ASHLR_RUNS_DIR`, then `~/.ashlr-runs`; 16 MiB retained) joined with the
 same bound of `<runs-dir>/metrics/api-spend.jsonl`,
 `<runs-dir>/metrics/work-market.jsonl`,
-`<runs-dir>/metrics/empty-tags.jsonl` and
-`<runs-dir>/metrics/merge-events.jsonl`, and reports one
+`<runs-dir>/metrics/empty-tags.jsonl`,
+`<runs-dir>/metrics/merge-events.jsonl` and
+`<runs-dir>/metrics/launch-cost.jsonl`, plus the reward-signal
+substrate under the ASHLR home root
+(`<ashlr>/metrics/reward-signals.jsonl`, `ASHLR_HOME` honored), and
+reports one
 `router.outcome.v1` record per job in that window, newest
 first: merge and revert state, CI first pass, review findings, cost, wall
 time, recorded merge latency (`ttm_s` — the jobs-ledger `ttm_s`/`ttmS`
@@ -319,7 +344,13 @@ it), the token breakdown `tokens_in`/`tokens_out`/`tokens_cache_read`/
 capture-gap reason) — plus the finish row's recorded diff size
 (`diff_files`/`diff_lines`; `diff_lines` stays `null` when untracked
 files made the line total unmeasurable),
-`work_class`, the finish-row productivity verdicts (`empty`,
+`work_class`, the recorded repo cell (`repo` — the dispatcher's
+repo name on its queue rows, joining only in the bounded
+bare-name-or-`owner/repo` shape with the newest recognized value
+winning like `lane`/`model`/`tier`; absolute paths, whitespace and
+deeper paths are skipped, never recorded raw, and the field stays
+`null` when no retained row recorded one), the finish-row
+productivity verdicts (`empty`,
 `exit_code`, `failure_class` — the recorded failure
 classification, resolved `failure_class` → `failure_reason` →
 `pool_error` on a finish row so non-devin lanes' causes join too, or
@@ -354,7 +385,15 @@ attempt worked, so only `jobId` keys an outcome — the attempt id never
 mints a phantom outcome, `session_start`/`session_stop` carry no job
 fields and stay unattached, and a queue job's `session_rotate`/`launch`/
 `finish` rows fold into one outcome whether one session or a later
-retry ran them. `work_class` is the class a jobs row recorded when
+retry ran them. Node-runner finish rows (`phm-node-runner.v1`, the
+multi-Mac node pool's pack executor) carry the same dual-id contract —
+`job` is the per-claim id (`<jobId>:<token>`) and `jobId` the logical
+node-queue id — so only `jobId` keys an outcome, and the runner's
+recorded verdict folds as `node_outcome`/`node_id`/`node_pack`: the
+producer's closed `succeeded`/`fenced`/`failed` execution word for the
+offloaded pack job (result artifacts, never pull requests, so `merged`
+stays `null`) plus the node and pack that ran it in the bounded id
+shape. `work_class` is the class a jobs row recorded when
 one exists; otherwise it is the job's newest `work-market.v1`
 `route_decision` class — the market's own classification of the job,
 written for every evaluated job — and stays `null` when neither ledger
@@ -477,11 +516,17 @@ own exit/empty measures since a walled run can exit cleanly and
 still produce nothing publishable — and `quota-exhausted`, the
 pending-job verdict dispatchd writes to work-market.jsonl when the
 job's lane measured zero quota, carrying the market's chosen lane as
-`target` (that market-side copy is a different ledger's row — the
-same decision's rejection evidence already folds through the
-route_decision joins — while this fold keeps the producer's full
-vocabulary so a quota-exhausted row landing in the jobs window still
-joins under the same rules). The row counts only on the exact
+`target`. That market-side copy joins back through the
+`foldMarketHandoffAdvisories` read under the `market_state` health:
+each job's newest recorded advisory supersedes the jobs-ledger
+triple only when its recorded `ts` is strictly newer than the
+standing jobs-ledger advisory's parseable timestamp — no jobs
+advisory means the market verdict fills the triple, an unorderable
+jobs advisory leaves the jobs verdict standing, and market rows
+naming jobs outside the jobs window join nothing. This fold keeps
+the producer's full vocabulary so a quota-exhausted row landing in
+the jobs window still joins under the same rules. The row counts
+only on the exact
 schema and event name (the `event`/`type`/`kind` alias set) with a
 `trigger` inside the producer's closed vocabulary; lane and target
 join independently in the bounded lane-identifier shape — a
@@ -545,10 +590,30 @@ so rows of every other event leave it standing. All three stay
 `null` when no pool row named the job — the retained window
 recorded no throttle detection, which is unknown, not "no throttle
 ever".
+`node_outcome`/`node_id`/`node_pack` carry the node runner's recorded
+execution verdict — `phm-node-runner.v1` finish rows, the multi-Mac
+node pool's pack executor receipts (src/core/drive/nodes/runner.ts).
+The row counts only on the schema with an `outcome` inside the
+producer's closed vocabulary (`succeeded` — the pack completed and
+staged its result artifact; `fenced` — the claim's lease was lost
+mid-run; `failed` — the pack errored or its result could not be
+staged); the newest recognized finish row replaces the triple
+wholesale and every other row leaves it standing. The verdict is the
+offloaded node-pack job's terminal execution evidence — result
+artifacts, never pull requests, so `merged` stays `null` — while
+`node_id` joins the row's `node` (the machine that ran the pack) and
+`node_pack` its `pack` reference, each only in the bounded identifier
+shape (a malformed value drops to `null` without discarding the
+recorded verdict). Claim and leader fencing tokens on the same rows
+are machinery and never join. All three stay `null` when no
+recognized runner row named the job — the retained window recorded
+no node execution verdict, which is unknown, not "never ran on a
+node".
 `empty_tag` is the fleet's recorded WHY for a job that
-ended empty — the `job.empty-tag.v1` rows `phm jobs empty --record`
-appends to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
-(src/core/fleet/empty-tags.ts): the closed
+ended empty — the `job.empty-tag.v1` rows the daemon's
+`empty-tag-sync` off-tick job and `phm jobs empty --record`
+append to `metrics/empty-tags.jsonl` from empty-final-reason's verdict
+(src/core/fleet/empty-tags.ts, src/core/fleet/empty-tag-sync.ts): the closed
 `already_done`/`pool_cap`/`blocked`/`no_change_needed`/`unknown`
 vocabulary. The newest tag row for the job stands (the recorder dedups
 by job id); the tag attaches regardless of the standing finish verdict —
@@ -580,11 +645,23 @@ collapses them per PR to `events` (qualifying row count),
 `blocked_reasons` (distinct recorded blockers in first-seen order),
 `conflicts`, `check_failures` and `required_check_failures` (failed
 check observations split on recorded `required: true`),
+`checks_passed` (recorded all-required-green boundary rows) and
+`check_observations` (recorded check observations of any conclusion —
+the coverage `check_failures` counts the failure subset of),
 `retries`/`retry_failures` (distinct `at`+`head_sha` pairs, so a
 replayed append counts once), `recuts` and `auto_merge` (the last
 recorded toggle in append order). The evidence is post-publish
 queue-side context — it never replaces the jobs ledger's merge
-verdict and never feeds routing by itself. The read degrades
+verdict and never feeds routing by itself. The same joined check
+record also resolves `ci_first_pass`
+fill-only when no jobs row recorded a verdict: any recorded check
+failure — required or unrelated — reads `false` even beside a later
+`checks_passed` boundary or a merge (a rerun or a new head got it
+green, which is not a first pass); with zero recorded failures a
+`checks_passed` boundary or a recorded merge beside observed check
+activity reads `true`; pending-only observations, no check rows at
+all and unmerged PRs without the boundary stay `null` — unknown,
+never guessed from absent evidence. The read degrades
 independently like the other side ledgers: the report's
 `merge_events_state` mirrors the jobs `state` vocabulary and
 `merge_events_truncated` marks a cut merge-events tail, in which case
@@ -600,7 +677,98 @@ evidence; a job whose calls reported no cost stays `null` — unknown,
 never zero — and `cost_estimated` calls still count because they report a
 USD figure. The spend read degrades independently: the report's
 `spend_state` mirrors the jobs `state` vocabulary and `spend_truncated`
-marks a cut spend tail, in which case joined costs are lower bounds. `reverted`
+marks a cut spend tail, in which case joined costs are lower bounds.
+The reward-signal ledger joins under the ASHLR home root — the same
+root the eval passk projection resolves — because it persists resolved
+per-job outcome evidence far longer than the bounded jobs tail: the
+daemon's reward-sync feed and supervising bridges append one `v:1` row
+per terminal job (`jobId`, resolved `merged` verdict,
+`dispatchedAt`/`mergedAt`/`recordedAt` stamps, derived
+`timeToMergeMs`, `ciWallMs`, and a `cost` block carrying the metered
+pool readings). `foldRewardSignals` collapses the bounded tail to
+each job's recorded evidence and the read fills only what the jobs
+fold left null — `merged`, `ttm_s` (only while the standing verdict is
+a merge, the same gate the jobs-ledger dialect applies), `ci_wall_s`,
+`cost_usd` (after the api-spend join) and `repo` — so verdicts and
+cost figures the retained jobs window dropped rejoin from the
+substrate without ever contradicting a recorded jobs-ledger value;
+the reward row's `merged:false` covers its closed-unmerged and
+reverted resolutions alike (the v1 schema has no revert dimension —
+`reverted` still joins independently). `pool_pct_used` is the row's
+recorded subscription-pool percentage points consumed
+(`cost.pctUsedDelta`) — the only per-job subscription-quota cost
+figure, since subscription lanes record no `cost_usd` and `acus`
+covers only the Devin lane's ACU spend; it is a different unit than
+either and never summed with them, and it stays `null` when the pool
+window reset or readings were missing (the producer leaves the delta
+null — unknown stays unknown, never 0). Only rows with `v:1`, a
+bounded `jobId`, a boolean `merged` verdict and parseable
+`dispatchedAt`/`recordedAt` stamps count; consumed fields join under
+their own bounded shapes and malformed values drop to `null` without
+discarding the row. The read degrades independently like the other
+side ledgers: the report's `reward_state` mirrors the jobs `state`
+vocabulary and `reward_truncated` marks a cut tail, in which case
+joined evidence covers only the newest bytes; anything but `read`
+leaves every joined field at its jobs-ledger value — unknown, never
+a guessed verdict or cost — and reward rows naming jobs outside the
+jobs window never create outcomes. The launch-cost ledger joins under
+the runs dir — `<runs>/metrics/launch-cost.jsonl`, the bounded
+append-only `fleet.launch-cost.v1` journal the `launch_cost.py`
+producer appends and `src/core/fleet/launch-cost.ts` reads for fleet
+vitals: the fleet's recorded first-minute process/CPU probe per launch
+attempt. `foldLaunchCosts` validates each row under the producer's
+closed contract (exact schema, bounded lane/launchId identifiers, the
+recorded status vocabulary, metric figures inside their shapes —
+`unknown` rows carry none, `measured` rows require nearly-full
+60-second coverage with at least 12 samples, and mean CPU never
+exceeds peak) and the read resolves each `launchId` to a folded job
+id: the producer keys measured rows `<job>-<12 lowercase hex claim
+hash>` — one row per attempt — and unknown probes by the bare job id,
+so a launchId that is itself a folded job id keys itself (a job id may
+legitimately end in a 12-hex segment), a measured/partial row's suffix
+strips to the job it measured, and an unknown-status row prefers an
+exact job-id match before the stripped prefix. The join fills
+`launch_cost_status` (`measured`/`partial`/`unknown` — the probe ran
+but recorded nothing on `unknown`), `launch_peak_processes`,
+`launch_mean_cpu_pct` and `launch_peak_cpu_pct`, the only per-attempt
+resource-cost evidence subscription lanes record since their finish
+rows carry no `cost_usd`; the last appended row for a resolved job
+stands and rows resolving outside the jobs window join nothing and
+never create outcomes. The report's `launch_cost_state` mirrors the
+jobs `state` vocabulary and `launch_cost_truncated` marks a cut
+tail; anything but `read` leaves every `launch_cost_*` field null —
+unknown, never a zeroed or guessed resource figure. `cross_review` is
+the cross-provider review gate's recorded verdict for the job's
+standing pull request — the bounded append-only
+`fleet/cross-review.jsonl` audit journal under the ASHLR home root
+(the same root the eval passk projection and reward ledger resolve;
+`CROSS_REVIEW_SCHEMA_VERSION` 1 rows written by
+`src/core/fleet/cross-review-run.ts`). The journal carries `review`
+records — one per cross-model review of a standing PR, keyed
+`repo`+`pr` — and `decision` records recording the merge-action the
+review informed; `foldCrossReviews` keeps only `kind:'review'` rows
+under the producer's closed contract (`schemaVersion` 1, an
+`owner/repo`-shaped `repo`, a positive integral `pr`, the
+`approve`/`reject`/`failed`/`skipped` outcome vocabulary and a
+bounded `at` stamp) and collapses them to each PR's newest verdict —
+decision rows, wrong-schema rows, malformed rows and foreign kinds
+are skipped, never counted, and the reviewer's pool/family, reasons
+and semantic detail stay audit-side rather than joining. The join
+resolves each outcome's `cross_review` through the job's newest
+unambiguous canonical github.com pull URL claim — the same claim rule
+the merge-queue join applies, so a contested or foreign URL never
+resolves and a PR no outcome claims unambiguously joins nothing
+(cross-review rows never create outcomes). The evidence is
+review-gate context like `merge_queue`: a `reject` is the recorded
+reason the PR may never merge, but a review verdict is not a merge
+verdict — the join never feeds routing, ranking, admission or weight
+math. The read degrades independently like the other side ledgers:
+the report's `cross_review_state` mirrors the jobs `state`
+vocabulary and `cross_review_truncated` marks a cut tail, in which
+case joined verdicts cover only the newest bytes; anything but
+`read` leaves every `cross_review` `null` — unknown, never a guessed
+verdict — while an empty readable ledger means zero recorded joins.
+`reverted`
 folds explicit revert evidence — a `reverted` boolean, a revert event name
 or terminal REVERT/REVERTED state, or a parseable `reverted_at`/`revertedAt`
 stamp — plus the authority ledger's verified evidence index: a
@@ -609,7 +777,16 @@ outcome reverted when the job's own canonical github.com pull URL claim is
 unambiguous (ambiguous, foreign or non-canonical claims never mark). The
 index join reads `ledgerSnapshot('cached')` lazily, contributes only
 hash-verified rows — a broken chain still marks only its verified prefix —
-and degrades to no join on any read failure. Evidence is sticky-true like
+and degrades to no join on any read failure. A second, independent revert
+source joins under the same claim rule:
+`$ASHLR_HOME/improve/revert-outcomes.jsonl`, the bounded append-only
+ledger `phm fleet reverts --record` writes from its 72h-window
+git-history scan — reverts of fleet PRs that no jobs-ledger or
+authority row ever named. Its newest record per `owner/repo#n` key
+decides, so a later detection whose `relandedBy` is set clears the key,
+and `revert_ledger_state` reports that ledger's health (`read`/`missing`/
+`unreadable`/`too-large`); anything but `read` contributes no keys —
+corrupt evidence never marks a merge reverted. Evidence is sticky-true like
 metrics-ingest, so a recorded revert is never
 contradicted by a later `reverted:false`; it stays `null` when neither
 source records anything either way. It is read-only; a missing
@@ -667,7 +844,8 @@ and `unknown_skip_reasons` tallies their recorded reason labels (the
 empty-gate vocabulary, bounded `code` strings and `code:<n>`
 gate-code-only declines, top entries first) — `unknown_empty_tags`
 tallies the fleet's recorded empty tags inside the same cohort (the
-`job.empty-tag.v1` rows `phm jobs empty --record` stores in
+`job.empty-tag.v1` rows the daemon's `empty-tag-sync` job and
+`phm jobs empty --record` store in
 metrics/empty-tags.jsonl, so an empty finish reads with its recorded
 cause — work already on master, quota exhausted, blocked on a missing
 tool, genuinely no change needed, or the fleet's own unknown — instead
@@ -725,7 +903,19 @@ vocabulary) and `unknown_pool_kinds` tallies the recorded classes
 over the same cohort — scan-time diagnostic context like
 `unknown_market_reasons`, never a reduction of the remainder since
 the detector fires on a log-tail match for any job whose `.base`
-still stands and says nothing about the run's terminal state — and
+still stands and says nothing about the run's terminal state —
+`unknown_node_outcomes` counts the unknown-cohort jobs carrying the
+node runner's recorded execution verdict (`phm-node-runner.v1`
+finish rows joined as `node_outcome` — the offloaded node-pack job's
+terminal verdict in the closed `succeeded`/`fenced`/`failed`
+vocabulary; node-pack jobs produce result artifacts, not pull
+requests, so `merged` stays null however the pack ended and the
+verdict is the job's own answer to "did the work run" — a
+`failed`/`fenced` attempt is the recorded failure signal and a
+`succeeded` attempt is the terminal success the node path exists to
+produce, so all three explain the missing merge verdict) and
+`unknown_node_verdicts` tallies the recorded verdict words over the
+same cohort (most jobs first) — and
 `unknown_handoff_triggers` tallies every
 recorded advisory trigger in the cohort (`rate-limit` attempt kills
 and `quota-exhausted` pending-lane verdicts — the producer's other
@@ -745,12 +935,22 @@ most jobs first), and `unknown_merge_queue_check_failures`,
 `unknown_merge_queue_recuts` count the same cohort's jobs whose PR
 recorded at least one of each — queue-side diagnostic context for
 what the merge queue was doing with the PR while its merge verdict
-stayed unrecorded, never a reduction of the remainder — and
+stayed unrecorded, never a reduction of the remainder —
+`unknown_cross_reviews` counts the unknown-cohort jobs whose standing
+PR carried a recorded cross-model review verdict (joined as
+`cross_review` — the review gate's `approve`/`reject`/`failed`/
+`skipped` answer for the job's pull request) with
+`unknown_cross_review_verdicts` tallying the recorded verdict words
+over the same cohort (most jobs first) — review-gate context like the
+merge-queue join: a `reject` is the recorded reason the PR may never
+merge, but a review verdict is not a merge verdict, so it never
+reduces the remainder — and
 `unknown_unresolved` is
 the remainder with no
 recorded failure signal, no requeue word, no standing skip
-decline, keep-queued verdict, terminal no-op verdict or
-rate-limit handoff verdict (finished
+decline, keep-queued verdict, terminal no-op verdict,
+rate-limit handoff verdict or node-runner execution verdict
+(finished
 cleanly awaiting a
 verdict, still in flight, or carrying only transient launch receipts). These are counts over the retained window; when the ledger was
 not read they are `null`, never zero — and `unknown_empty_tags` is
@@ -758,16 +958,23 @@ not read they are `null`, never zero — and `unknown_empty_tags` is
 absent tag journal means tag coverage is unknown rather than zero;
 `unknown_market_reasons`, `unknown_market_rejected` and
 `unknown_market_rejected_reasons` are `null` the same way whenever the
-market ledger itself was not read, and the `unknown_merge_queue*`
+market ledger itself was not read, the `unknown_merge_queue*`
 tallies are `null` whenever the merge-events ledger itself was not
-read (`unknown_noop`/
-`unknown_noop_reasons` and the handoff tallies read jobs-ledger rows
+read, `unknown_cross_reviews`/`unknown_cross_review_verdicts` are
+`null` whenever the cross-review ledger itself was not read
+(`unknown_noop`/`unknown_noop_reasons` and the handoff,
+provider-wall, pool-throttle
+and node-runner tallies read jobs-ledger rows
 only, so they are real
 whenever the jobs read succeeded). When the ledger exceeds the retained tail the
 report carries `truncated: true` and every count covers the newest bytes
 only; `market_state`/`market_truncated` report the decision journal's
-health, `empty_tag_state`/`empty_tag_truncated` the tags journal's and
+health, `empty_tag_state`/`empty_tag_truncated` the tags journal's,
 `merge_events_state`/`merge_events_truncated` the merge-events
+journal's, `revert_ledger_state` the scan-detected revert ledger's,
+`reward_state`/`reward_truncated` the reward-signal substrate's,
+`launch_cost_state`/`launch_cost_truncated` the launch-cost journal's
+and `cross_review_state`/`cross_review_truncated` the cross-review
 journal's
 the same way. The report also carries the fleet controller's own recorded
 lane-quality verdicts: `controller_quality_state` reports the health of
@@ -785,7 +992,18 @@ here as advisory context only — the weight math still moves on
 held-merge rate alone and nothing in the report applies them. Each proposal also carries an `evidence` block folded
 from the same known cohort: the group's CI first-pass rate, summed review
 findings, mean `cost_usd`, mean recorded `acus` (the Devin lane's billed
-spend — a different unit, never mixed with USD), mean `wall_s`, mean
+spend — a different unit, never mixed with USD), mean recorded
+`pool_pct_used` (the reward-signal ledger's subscription-pool
+percentage points consumed — the only per-job subscription-quota cost
+figure, a third unit never mixed with either), the launch-cost probe
+evidence — `launch_cost_known` counts the known-cohort outcomes
+carrying a recorded `launch_cost_status`, `launch_cost_measured`
+counts the `measured` rows inside that cohort (full-window coverage,
+not `partial`), and `launch_peak_processes_mean`,
+`launch_cpu_pct_mean`/`launch_cpu_pct_peak_mean` report the mean
+recorded first-minute peak process count and mean/peak CPU (percent
+of one core) — a fourth unit never mixed with the cost figures —
+mean `wall_s`, mean
 recorded `ttm_s` (merge latency), mean recorded `queue_wait_s` (the
 job's queue-admission wait from its arrival stamp to first dispatch —
 the same boundaries job-latency's queue_wait phase pairs), mean
@@ -802,7 +1020,11 @@ recorded
 `tokens_total` (token
 usage), mean recorded `diff_files`/`diff_lines` (change size), the count
 of outcomes carrying a `usage_missing` capture-gap label, mean
-advisory `passk`, and the dispatch lane-override tally —
+advisory `passk`, the recorded repo mix — `repos_known` counts the
+known-cohort outcomes carrying a recorded `repo` and `repos` breaks
+the count down by repo label (most jobs first), so a group's merge
+rate built wholly on one repo reads differently than one spread
+across the fleet — and the dispatch lane-override tally —
 `lane_overrides_known` counts the known-cohort outcomes whose newest
 claim left its recorded lane hint and `lane_override_reasons` breaks
 the count down by recorded reason (`resource_fit`,
@@ -813,10 +1035,13 @@ figure with its own coverage count, and `null` (never zero) when the ledger
 recorded nothing for that signal. The report also tallies usage
 provenance across every folded outcome — known, unknown and
 unclassified alike, since capture completeness is not merge evidence:
-`usage_missing` lists the top recorded capture-gap reasons and
-`usage_sources` the top recorded measurement paths, so an operator sees
-where usage telemetry is actually broken rather than only that token
-coverage is thin. Each proposal's evidence block also tallies the
+`usage_missing` lists the top recorded capture-gap reasons,
+`usage_sources` the top recorded measurement paths and `repos` the
+top recorded repo labels — all across every folded outcome, known,
+unknown and unclassified alike, since capture completeness and repo
+identity are not merge evidence — so an operator sees where usage
+telemetry is actually broken and which repos the retained window's
+outcomes came from rather than only that token coverage is thin. Each proposal's evidence block also tallies the
 dispatch lane-hint blocking codes — `lane_blocked_known` counts the
 known-cohort outcomes whose standing claim recorded a non-empty
 `lane_hint_blocked_by` (the market's recorded `[]` "nothing blocked
@@ -854,6 +1079,14 @@ so a lane whose outcomes rest partly on provider-throttle-hit runs
 shows the recorded exposure (the `pool` receipts — the per-tick
 `ratelimited()` scan's scan-time detection, covering runs the
 outcome-confirmed hold never sees). The same evidence
+block also tallies the node runner's recorded execution verdicts —
+`node_outcomes_known` counts the known-cohort outcomes carrying a
+`node_outcome` and `node_verdicts` breaks the count down by recorded
+verdict word (`succeeded`/`fenced`/`failed` — the
+`phm-node-runner.v1` finish rows; a verdict here means the job
+reached its merge verdict through another path after a node attempt,
+so the tally shows how much of the group's held-merge evidence
+survived node-pool execution). The same evidence
 block also tallies the merge queue's recorded per-PR history —
 `merge_queue_known` counts the known-cohort outcomes whose standing PR
 carried merge-events observations and `merge_queue_blocked_known`/
@@ -865,7 +1098,15 @@ reason once, most jobs first), while `merge_queue_check_failures_known`,
 `merge_queue_recuts_known` count the same cohort's outcomes whose PR
 recorded at least one failed check observation, merge conflict,
 merge-retry request or recut request — post-publish queue-side
-friction behind a lane's merge latency. The weight math
+friction behind a lane's merge latency. The same evidence
+block also tallies the review gate's recorded cross-model verdicts —
+`cross_review_known` counts the known-cohort outcomes whose standing
+PR carried a joined `cross_review` verdict and `cross_review` breaks
+the count down by recorded outcome (`approve`/`reject`/`failed`/
+`skipped` — the cross-provider review's answer for the job's pull
+request, advisory context like `review_findings`: a `reject` is the
+recorded reason the PR may never merge, but a review verdict is not a
+merge verdict and never feeds the weight). The weight math
 still moves on
 held-merge rate alone; the evidence is context for whoever applies a
 proposal, and text output renders it as `name=value(known)` suffixes only
@@ -891,4 +1132,17 @@ reverts landed outside the scanned history, are not claimed. Rows missing a
 PR identity or merge commit are skipped and counted, unreadable exports and
 duplicate PRs are counted rather than guessed, and a checkout or ref git
 cannot read marks the report `degraded` instead of implying a clean scan.
-Read-only; it writes nothing and changes no routing by itself.
+Read-only by default; it writes nothing and changes no routing by itself.
+`--record` is the opt-in write: detected `RevertOutcomeRecord`s append to
+`$ASHLR_HOME/improve/revert-outcomes.jsonl` (deduplicated, fail-closed on a
+corrupt ledger). Recorded detections then reach both revert-evidence
+consumers under their usual unambiguous-PR-claim rule:
+`revertedPrKeys` — the set that withholds knowledge notes whose every
+cited PR was reverted — and `readRouterOutcomes`'s `reverted` join, so
+held-merge tallies in `phm fleet router-weights` and `phm node route`
+see reverts that only git history proves. The ledger resolves
+newest-record-per-PR, so a later scan that finds the revert itself was
+reverted clears the key; a non-intact ledger contributes nothing rather
+than marking merges reverted or withholding on corrupt evidence, and
+`RouterOutcomeRead.revert_ledger_state` / the weight report's
+`revert_ledger_state` report its health.

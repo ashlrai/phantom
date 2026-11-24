@@ -14,21 +14,52 @@ execution authority. The leader inbox handoff is `createLeaderMailbox` in
 phm comms status --json
 phm comms thread --json
 phm comms thread --channel telegram --since 2h --json
+phm comms thread --since 4h --before-at 2h --json
+phm comms thread --direction inbound --json
+phm comms thread --contains "deploy window" --json
+phm comms thread --reply-to telegram-msg-1 --json
 phm comms send-owner --text "Synthetic reply" --json
 ```
 
-MCP tools: `ashlr_comms_thread` (read; optional `channel` and `since` narrow
-the same view) and `ashlr_comms_send_owner` (append;
-KILL refuses it). `ashlr_comms` includes the same adapter rollup as
-`phm comms status --json`.
+MCP tools: `ashlr_comms_thread` (read; optional `channel`, `direction`,
+`since`, `beforeAt`, `contains` and `replyTo` narrow the same view),
+`ashlr_comms_send_owner`
+(append; KILL refuses it), `fleet_comms_thread` on the isolated fleet
+server (the same read with `limit` plus the same six filters) and
+`fleet_owner_history` there too (the archived pages `fleet_comms_thread`
+cannot see, with `before`/`limit` plus the same view slice). `ashlr_comms`
+includes the same adapter rollup as `phm comms status --json`, and
+`fleet_comms_status`/`fleet_comms_inbox` serve the status and pending-item
+projections of this thread.
 
-The thread read takes `--channel <desktop|telegram|email|imessage|slack>` and
-`--since <15m|2h|1d|ISO|epoch-ms>` (the same grammar `phm messages --since`
-uses) to keep one channel's slice or only messages at or after the time. The
-receipt join and the `awaitingReply` mark follow the same slice, so a filtered
-view never reports marks for rows it hid; an unreadable thread still answers
-`unavailable` with `awaitingReply: null` whatever the filter. The desktop
-owner-thread API accepts the same `channel` and `since` query parameters.
+The thread read takes `--channel <desktop|telegram|email|imessage|slack>`,
+`--direction <inbound|outbound>` (only what the owner sent, or only what we
+answered — the awaiting-reply mark only ever applies to inbound rows, so an
+outbound slice reports none), `--since <15m|2h|1d|ISO|epoch-ms>` and
+`--before-at <15m|2h|1d|ISO|epoch-ms>` (the same
+grammar `phm messages --since` uses; `since` keeps messages at or after the
+time, `before-at` keeps messages strictly before it — together they form the
+`[since, before)` window every other comms and bus read applies. The ceiling
+is `--before-at`, not `--before`, because `phm fleet owner-history` already
+spends `--before` on its sequence cursor) and `--contains <text>` (a
+case-insensitive substring over the stored message text, whitespace
+collapsed, at most 512 characters — the same `--contains` rule every other
+comms and bus read applies) and `--reply-to <key>` (one message's
+idempotency key — the same key `send-owner --reply-to` cites — keeps the
+exchange rooted at it: the message carrying that key plus every recorded
+reply whose `replyTo` cites it, across every channel the reply fanned out
+to; an outbound key matches only the message carrying it, and a key
+nothing carries is an honest empty slice) to keep one channel's slice, one
+direction's
+lines, only messages inside the time window, only messages that carry the
+text, or only one reply exchange. `contains` is the only text search the thread offers:
+iMessage bodies are redacted on the bus mirror, so this private read is the
+one place they can be found. The receipt join and the `awaitingReply` mark
+follow the same slice, so a filtered view never reports marks for rows it
+hid; an unreadable thread still answers `unavailable` with
+`awaitingReply: null` whatever the filter. The desktop owner-thread API
+accepts the same `channel`, `direction`, `since`, `beforeAt`, `contains`
+and `replyTo` query parameters.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`
@@ -78,6 +109,21 @@ still dedupe replays.
 phm fleet owner-history --limit 50 --json   # read-only; page back with --before <seq>
 phm fleet owner-pull --channel telegram     # pull remote channels into the thread
 ```
+
+Archived pages take the same view slice `phm comms thread` does —
+`--channel`, `--direction`, `--since`, `--before-at`, `--contains` and
+`--reply-to` —
+applied through
+the shared predicate, so "what did the owner say about X on Telegram
+before the live window" is one filtered call, not manual paging. There
+`--before-at` is the recorded-time ceiling while `--before <seq>` stays
+the sequence cursor.
+
+The isolated fleet MCP server serves the same projection as
+`fleet_owner_history` (`before`/`limit` plus the same
+`channel`/`direction`/`since`/`beforeAt`/`contains`/`replyTo` slice, same bounds) — the only
+MCP read that reaches the archives `fleet_comms_thread`'s live window
+cannot see.
 
 `owner-pull` skips a channel that is not configured and enabled, and does
 nothing while `~/.ashlr/KILL` or the comms pause is set.

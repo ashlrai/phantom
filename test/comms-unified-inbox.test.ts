@@ -25,6 +25,7 @@ import { markTeammateTextsAnswered, recordTeammateText } from '../src/core/comms
 import { writeEmailDropConfig, type EmailDropConfig } from '../src/core/comms/email-drop-config.js';
 import { EMAIL_OUTBOX_MAX_BYTES } from '../src/core/comms/email-outbox.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { createAgentChannel, registerAgentIdentity } from '../src/core/agents/bus-identity.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../src/core/fleet/bus-mailbox.js';
 import { BusBoard, type BusBoardPendingPeers, type BusBoardPendingTask, type BusBoardTaskHold } from '../src/core/fleet/bus-board.js';
 import type { BusBoardDelivery } from '../src/core/fleet/bus-delivery.js';
@@ -33,6 +34,7 @@ import type { AshlrConfig } from '../src/core/types.js';
 import type { AgentConversations } from '../src/core/fleet/agent-conversations.js';
 import type { SlackJournalRead, SlackObservation } from '../src/core/agents/slack-journal.js';
 import type { BusEnvelope, BusJsonValue } from '../src/core/fleet/bus-envelope.js';
+import type { AgentWakeRow, AllWakesPage } from '../src/core/agents/bus-unified.js';
 import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
 import { listNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import { writeDelivery } from '../src/core/fleet/needs-mason-reply-delivery.js';
@@ -124,7 +126,9 @@ describe('readUnifiedInbox sources', () => {
         mailbox: { state: 'missing', pending: 0 },
         board: { state: 'missing', pending: 0 },
         conversations: { state: 'missing', pending: 0 },
+        wakes: { state: 'healthy', pending: 0 },
         seats: { state: 'missing', pending: 0 },
+        'peer-dispatch': { state: 'missing', pending: 0 },
         'email-inbox': { state: 'missing', pending: 0 },
         'email-outbox': { state: 'missing', pending: 0 },
         'team-approvals': { state: 'healthy', pending: 0 },
@@ -773,6 +777,43 @@ describe('worker-handoff assignments in the bus source', () => {
     const inbox = await read();
     expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${id}`]);
   });
+
+  it('drops a handoff answered under another label of the same identities', async () => {
+    registerAgentIdentity({ handle: 'worker-9', aliases: ['w9-lane'] }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer', aliases: ['peer-alias'] }, { root: busRoot });
+    const id = postV2Body(handoff('RQ-HANDOFF-9', 'fake alias-answered handoff'), { to: 'agent:worker-9' });
+    expect((await read()).items.map(i => i.id)).toContain(`bus-handoff:${id}`);
+    // The assignee's lane alias answers the assigner's alias — the same two
+    // identities under different routing labels, still recipient -> sender.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'done on the lane' },
+      { from: 'w9-lane', to: 'peer-alias' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    expect(inbox.sources.bus).toEqual({ state: 'healthy', pending: 0 });
+  });
+
+  it('drops a channel-addressed handoff a channel member answered', async () => {
+    registerAgentIdentity({ handle: 'worker-9' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'peer' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'member-1' }, { root: busRoot });
+    registerAgentIdentity({ handle: 'outsider' }, { root: busRoot });
+    expect(createAgentChannel({ name: 'ops', createdBy: 'peer', members: ['worker-9', 'member-1'] },
+      { root: busRoot }).status).toBe('created');
+    const id = postV2Body(handoff('RQ-HANDOFF-10', 'fake room handoff'), { to: 'group:ops:general' });
+    // member-1 — a room member, not the assigner — answers under its own
+    // label routed to the assigner: the room is the assignee set.
+    postV2Body({ kind: 'note', inReplyTo: id, text: 'room took it' },
+      { from: 'agent:member-1', to: 'agent:peer' });
+    const answered = await read();
+    expect(answered.items.filter(i => i.source === 'bus')).toHaveLength(0);
+    // A registered non-member's citation is no answer: the next room handoff
+    // stays pending.
+    const second = postV2Body(handoff('RQ-HANDOFF-11', 'fake room handoff two'), { to: 'group:ops:general' });
+    postV2Body({ kind: 'note', inReplyTo: second, text: 'not mine to answer' },
+      { from: 'agent:outsider', to: 'agent:peer' });
+    const inbox = await read();
+    expect(inbox.items.filter(i => i.source === 'bus').map(i => i.id)).toEqual([`bus-handoff:${second}`]);
+  });
 });
 
 describe('agent conversation threads in the unified inbox', () => {
@@ -922,6 +963,98 @@ describe('agent conversation threads in the unified inbox', () => {
     const throwing = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
       readConversations: () => { throw new Error('boom'); } });
     expect(throwing.sources.conversations).toEqual({ state: 'unavailable', pending: null });
+  });
+});
+
+describe('wake hints in the unified inbox', () => {
+  const wakeRow = (id: string, to: string, at: number, extra: Partial<AgentWakeRow> = {}): AgentWakeRow =>
+    ({ id, from: 'agent:peer', to, kind: 'bus.send', at, ...extra });
+  const wakesPage = (wakes: AgentWakeRow[]): AllWakesPage =>
+    ({ status: 'ok', scope: 'fleet', wakes, matched: wakes.length, truncated: false });
+  const resolvedMsg = (summary: string, jobId?: string): AgentWakeRow['message'] => ({
+    status: 'resolved', id: 'env-1', ts: new Date(now).toISOString(), priority: 'P2',
+    from: 'agent:peer', to: 'agent:helper', channel: null, fromAgent: null, summary,
+    ...(jobId === undefined ? {} : { job: { jobId, feed: 'ok' as const, job: null } }),
+  });
+
+  it('groups pending wake hints by addressee into one warn item each', async () => {
+    registerAgentIdentity({ handle: 'helper', aliases: ['helper-alias'] }, { root: busRoot });
+    const inbox = await read({
+      readWakes: () => wakesPage([
+        wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('review the diff') }),
+        wakeRow('m-2', 'helper', now - 3_600_000, { message: resolvedMsg('check the feed') }),
+        wakeRow('m-3', 'helper-alias', now - 1_800_000),
+        wakeRow('m-4', 'worker-9', now - 900_000),
+      ]),
+    });
+    const items = inbox.items.filter(i => i.source === 'wakes');
+    // helper's three label spellings merge into one identity group; the
+    // unregistered worker-9 stays a literal-label group.
+    expect(items).toHaveLength(2);
+    const helper = items.find(i => i.title.includes('helper'))!;
+    expect(helper).toMatchObject({
+      kind: 'wake-hint', severity: 'warn', blocking: false,
+      title: '3 pending wake hints for helper',
+      since: new Date(now - 1_800_000).toISOString(), expiresAt: null,
+    });
+    expect(helper.detail).toContain('"review the diff"');
+    expect(helper.act).toEqual(['phm agents bus wakes helper', 'phm agents bus wakes --all']);
+    const worker = items.find(i => i.title.includes('worker-9'))!;
+    expect(worker).toMatchObject({ title: '1 pending wake hint for worker-9', kind: 'wake-hint' });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 2 });
+  });
+
+  it('carries provable job citations so --job finds the hint', async () => {
+    const page = wakesPage([
+      wakeRow('wh-1', 'agent:helper', now - 3_600_000, {
+        claimHolder: { statusId: 'st-1', jobId: 'RQ-WAKE-1', status: 'done', priority: 'P2' } }),
+      wakeRow('m-2', 'agent:helper', now - 1_800_000, { message: resolvedMsg('feed says ship', 'RQ-WAKE-2') }),
+      wakeRow('m-3', 'agent:helper', now - 900_000, { message: resolvedMsg('no job here') }),
+    ]);
+    const inbox = await read({ readWakes: () => page });
+    const item = inbox.items.find(i => i.source === 'wakes')!;
+    expect(item.jobIds).toEqual(['RQ-WAKE-1', 'RQ-WAKE-2']);
+    const byJob = await readUnifiedInbox({ runsDir, busRoot, now: () => now,
+      readRequests: () => ({ status: 'missing', requests: [] }),
+      readWakes: () => page, filter: { job: 'RQ-WAKE-1' } });
+    expect(byJob.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    expect(byJob.items.find(i => i.source === 'wakes')!.jobIds).toContain('RQ-WAKE-1');
+  });
+
+  it('reports the wakes source unavailable when the fleet read cannot resolve', async () => {
+    const inbox = await read({ readWakes: () => ({ status: 'unavailable', reason: 'registry unreadable' }) });
+    expect(inbox.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const throwing = await read({ readWakes: () => { throw new Error('boom'); } });
+    expect(throwing.sources.wakes).toEqual({ state: 'unavailable', pending: null });
+  });
+
+  it('reports a readable empty wake queue as healthy with nothing pending', async () => {
+    const inbox = await read({ readWakes: () => wakesPage([]) });
+    expect(inbox.sources.wakes).toEqual({ state: 'healthy', pending: 0 });
+    expect(inbox.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+  });
+
+  it('honors source, kind, since and contains filters on wake items', async () => {
+    const page = wakesPage([
+      wakeRow('m-1', 'agent:helper', now - 7_200_000, { message: resolvedMsg('old ping') }),
+      wakeRow('m-2', 'agent:helper', now - 900_000, { message: resolvedMsg('fresh ping about the release') }),
+    ]);
+    const readWakes = () => page;
+    const base = { runsDir, busRoot, now: () => now, readRequests: () => ({ status: 'missing' as const, requests: [] }), readWakes };
+    const bySource = await readUnifiedInbox({ ...base, filter: { source: 'wakes' } });
+    expect(bySource.items.every(i => i.source === 'wakes')).toBe(true);
+    expect(bySource.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const byKind = await readUnifiedInbox({ ...base, filter: { kind: 'wake-hint' } });
+    expect(byKind.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const bySince = await readUnifiedInbox({ ...base, filter: { since: now - 1_000_000 } });
+    expect(bySince.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const tooNew = await readUnifiedInbox({ ...base, filter: { since: now - 500_000 } });
+    expect(tooNew.items.filter(i => i.source === 'wakes')).toHaveLength(0);
+    const byContains = await readUnifiedInbox({ ...base, filter: { contains: 'release' } });
+    expect(byContains.items.filter(i => i.source === 'wakes')).toHaveLength(1);
+    const missContains = await readUnifiedInbox({ ...base, filter: { contains: 'nonexistent-needle' } });
+    expect(missContains.items.filter(i => i.source === 'wakes')).toHaveLength(0);
   });
 });
 
@@ -1808,6 +1941,104 @@ describe('readUnifiedInbox slack requests', () => {
   });
 });
 
+describe('readUnifiedInbox peer dispatch', () => {
+  const queueId = (c: string) => `peer-work-${c.repeat(32)}`;
+  const receiptId = (c: string) => `pw-${c.repeat(32)}`;
+  const receipt = (over: Record<string, unknown> = {}) => ({
+    kind: 'work.result', jobId: 'RQ-PEER-1', claimKey: `queue:${queueId('a')}`,
+    queueId: queueId('a'), receiptId: receiptId('b'), outcome: 'admitted',
+    peer: 'peer-a', consumer: 'dispatch', digest: 'c'.repeat(64),
+    at: now - 3_600_000, ...over,
+  });
+  /** The journal `consumePeerWork` writes under `<busRoot>/agentnet/` — the default reader's real path. */
+  const writeJournal = (receipts: unknown[]) => {
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), JSON.stringify({ version: 1, receipts }), { mode: 0o600 });
+  };
+
+  it('lists receipts whose latest outcome was never confirmed sent, and keeps sent ones out', async () => {
+    writeJournal([
+      // sent trails outcome — the peer still waits on the newer result.
+      receipt({ sent: 'reserved' }),
+      // sent absent entirely — never published.
+      receipt({ outcome: 'complete', queueId: queueId('d'), receiptId: receiptId('e'), claimKey: `queue:${queueId('d')}` }),
+      // Latest outcome already published — history, not pending.
+      receipt({ outcome: 'failed', reason: 'repo-denied', sent: 'failed', queueId: queueId('f'), receiptId: receiptId('0'), claimKey: `queue:${queueId('f')}` }),
+      // Outcome and sent agree — nothing owed.
+      receipt({ outcome: 'reserved', sent: 'reserved', queueId: queueId('1'), receiptId: receiptId('2'), claimKey: `queue:${queueId('1')}` }),
+    ]);
+    const inbox = await read();
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 2 });
+    const items = inbox.items.filter(i => i.source === 'peer-dispatch');
+    expect(items).toHaveLength(2);
+    const byId = new Map(items.map(i => [i.id, i]));
+    expect(byId.get(`peer-dispatch:${receiptId('b')}`)).toMatchObject({
+      kind: 'peer-dispatch-result',
+      severity: 'warn', blocking: false,
+      title: 'peer peer-a awaits admitted result for RQ-PEER-1',
+      detail: `consumer dispatch · queue ${queueId('a')} · receipt ${receiptId('b')} · last sent reserved`,
+      since: null, expiresAt: null, jobIds: ['RQ-PEER-1'],
+      act: ['phm agentnet peers dispatch --apply'],
+    });
+    expect(byId.get(`peer-dispatch:${receiptId('e')}`)).toMatchObject({
+      title: 'peer peer-a awaits complete result for RQ-PEER-1',
+      detail: `consumer dispatch · queue ${queueId('d')} · receipt ${receiptId('e')} · last sent none`,
+    });
+    // Journal fields are callsigns, ids and outcome codes — never message text.
+    expect(JSON.stringify(items)).not.toContain('fake work');
+  });
+
+  it('keeps one item per receipt id even if a hand-edited journal repeats one', async () => {
+    writeJournal([receipt({ sent: 'reserved' }), receipt({ sent: 'reserved' })]);
+    const inbox = await read();
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 1 });
+    expect(inbox.items.filter(i => i.source === 'peer-dispatch')).toHaveLength(1);
+  });
+
+  it('reports the journal state honestly: missing, unreadable, throwing seam', async () => {
+    const missing = await read();
+    expect(missing.sources['peer-dispatch']).toEqual({ state: 'missing', pending: 0 });
+
+    const dir = join(busRoot, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'work-dispatch.json'), '{not json', { mode: 0o600 });
+    const degraded = await read();
+    expect(degraded.sources['peer-dispatch']).toEqual({ state: 'unavailable', pending: null });
+    expect(degraded.items.filter(i => i.source === 'peer-dispatch')).toHaveLength(0);
+
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+    rmSync(join(dir, 'work-dispatch.json'));
+    const throwing = await read({
+      readPeerDispatch: () => { throw new Error('boom'); },
+    });
+    expect(throwing.sources['peer-dispatch']).toEqual({ state: 'unavailable', pending: null });
+    expect(throwing.items.filter(i => i.source === 'needs-you')).toHaveLength(1);
+  });
+
+  it('filters by source, kind, job citation and contains like every other source', async () => {
+    writeJournal([
+      receipt({ sent: 'reserved' }),
+      receipt({ jobId: 'RQ-OTHER', sent: 'reserved', queueId: queueId('3'), receiptId: receiptId('4'), claimKey: `queue:${queueId('3')}` }),
+    ]);
+    const inbox = await read({ filter: { source: 'peer-dispatch' } });
+    expect(inbox.total).toBe(2);
+    expect(inbox.items.every(i => i.source === 'peer-dispatch' && i.kind === 'peer-dispatch-result')).toBe(true);
+    expect(inbox.sources['peer-dispatch']).toEqual({ state: 'healthy', pending: 2 });
+
+    const byJob = await read({ filter: { job: 'RQ-PEER-1' } });
+    expect(byJob.items.map(i => i.id)).toEqual([`peer-dispatch:${receiptId('b')}`]);
+    expect(byJob.items[0]!.jobIds).toEqual(['RQ-PEER-1']);
+
+    const byKind = await read({ filter: { kind: 'peer-dispatch-result', source: 'peer-dispatch' } });
+    expect(byKind.total).toBe(2);
+    const byText = await read({ filter: { contains: 'awaits complete' } });
+    expect(byText.items).toEqual([]);
+    const byPeer = await read({ filter: { contains: 'peer peer-a' } });
+    expect(byPeer.items.map(i => i.id).sort()).toEqual([`peer-dispatch:${receiptId('4')}`, `peer-dispatch:${receiptId('b')}`].sort());
+  });
+});
+
 describe('readUnifiedInbox teammate tasks', () => {
   const ledgerDir = () => join(runsDir, 'imessage');
   let taskSeq = 0;
@@ -2281,6 +2512,84 @@ describe('readUnifiedInbox view filters', () => {
   });
 });
 
+describe('readUnifiedInbox kind filter', () => {
+  // The same board store the board describe derives: boardRoot = busRoot here.
+  const boardStore = () => new BusBoard({
+    root: busRoot,
+    fleet: new SharedStore(join(busRoot, 'bus-queue'), 60_000),
+    cfg: { foundry: {} } as AshlrConfig,
+  });
+  const seedKinds = async () => {
+    postWork('kind-work');                                                        // bus / bus-work
+    const handoffId = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-KIND-H', prompt: 'fake handoff' },
+      { to: 'agent:worker-9' });                                                  // bus / bus-handoff
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');    // needs-you / needs-you
+    const store = boardStore();
+    const threadId = store.createThread('alice', 'Rollout').id;
+    store.joinThread('bob', threadId);
+    await store.post('alice', threadId, 'fake board post');                       // board / board-delivery x2
+    store.createTask('alice', threadId, 'item-kind', 'Fake kind task');           // board / board-task
+    return { handoffId };
+  };
+
+  it('keeps only items of the filtered kind while source reports stay unfiltered', async () => {
+    const { handoffId } = await seedKinds();
+    const all = await read();
+    expect(new Set(all.items.map(i => i.kind)))
+      .toEqual(new Set(['bus-work', 'bus-handoff', 'needs-you', 'board-delivery', 'board-task']));
+
+    // The bus source's own split: work and handoffs are one source but two kinds.
+    const handoffs = await read({ filter: { kind: 'bus-handoff' } });
+    expect(handoffs.filter).toEqual({ kind: 'bus-handoff' });
+    expect(handoffs.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    expect(handoffs.items[0]!.source).toBe('bus');
+    // Per-source reports stay the unfiltered store truth.
+    expect(handoffs.sources.bus.pending).toBe(2);
+    expect(handoffs.sources.board.pending).toBe(3);
+    expect(handoffs.sources['needs-you'].pending).toBe(1);
+
+    const work = await read({ filter: { kind: 'bus-work' } });
+    expect(work.items.map(i => i.id)).toEqual(['bus:kind-work']);
+
+    // The board source's own split: deliveries and tasks are one source but two kinds.
+    const tasks = await read({ filter: { kind: 'board-task' } });
+    expect(tasks.items.map(i => i.kind)).toEqual(['board-task']);
+    expect(tasks.sources.board.pending).toBe(3);
+    const deliveries = await read({ filter: { kind: 'board-delivery' } });
+    expect(deliveries.items).toHaveLength(2);
+    expect(deliveries.items.every(i => i.kind === 'board-delivery')).toBe(true);
+
+    // A 1:1 kind filters across sources exactly like its source does.
+    const needs = await read({ filter: { kind: 'needs-you' } });
+    expect(needs.items.map(i => i.kind)).toEqual(['needs-you']);
+    expect(needs.sources.bus.pending).toBe(2);
+  });
+
+  it('ANDs kind with the other view dimensions', async () => {
+    const { handoffId } = await seedKinds();
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+
+    // kind + agreeing source keeps the rows; disagreeing is an honest empty.
+    const busHandoffs = await read({ filter: { kind: 'bus-handoff', source: 'bus' } });
+    expect(busHandoffs.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    const none = await read({ filter: { kind: 'bus-handoff', source: 'needs-you' } });
+    expect(none.total).toBe(0);
+    expect(none.items).toEqual([]);
+    expect(none.sources.bus.pending).toBe(2);
+
+    // kind + severity: the P2 handoff is info; the P0 sibling check stays exact.
+    const info = await read({ filter: { kind: 'bus-handoff', severity: 'info' } });
+    expect(info.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    const high = await read({ filter: { kind: 'bus-handoff', severity: 'high' } });
+    expect(high.total).toBe(0);
+
+    // kind + blocking: the hard-limit needs-you line is the only blocking item of its kind.
+    const blockingNeeds = await read({ filter: { kind: 'needs-you', blocking: true } });
+    expect(blockingNeeds.items).toHaveLength(1);
+    expect(blockingNeeds.items[0]!.blocking).toBe(true);
+  });
+});
+
 describe('readUnifiedInbox job filter', () => {
   const jobNote = (text: string, thread: string) =>
     postV2Body({ kind: 'note', text, thread }, { from: 'agent:asker', to: 'agent:reviewer' });
@@ -2528,6 +2837,76 @@ describe('readUnifiedInbox since filter', () => {
   });
 });
 
+describe('readUnifiedInbox before filter', () => {
+  it('keeps only items whose recorded since is strictly before the cutoff; undated items never match', async () => {
+    postWork('flt-before-oldest', { at: now - 4 * 3_600_000 });
+    postWork('flt-before-edge', { at: now - 2 * 3_600_000 });
+    postWork('flt-before-new', { at: now - 30 * 60_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    // A now-2h cutoff keeps only the 4h-old envelope: the item exactly on the
+    // cutoff, the fresher one and the undated needs-you line all stay out —
+    // before is exclusive where since is inclusive, and unknown never counts
+    // as old.
+    const older = await read({ filter: { before: now - 2 * 3_600_000 } });
+    expect(older.filter).toEqual({ before: now - 2 * 3_600_000 });
+    expect(older.items.map(i => i.id)).toEqual(['bus:flt-before-oldest']);
+    // Per-source reports stay the unfiltered store truth.
+    expect(older.sources.bus.pending).toBe(3);
+    expect(older.sources['needs-you'].pending).toBe(1);
+
+    // since and before compose into one [since, before) window: the 2h-old
+    // envelope sits inside, the 4h-old one before the lower bound and the
+    // 30m-old one at or after the upper bound.
+    const window = await read({ filter: { since: now - 3 * 3_600_000, before: now - 90 * 60_000 } });
+    expect(window.filter).toEqual({ since: now - 3 * 3_600_000, before: now - 90 * 60_000 });
+    expect(window.items.map(i => i.id)).toEqual(['bus:flt-before-edge']);
+
+    // A window that admits nothing — inverted or empty — is an honest empty
+    // match, not an error and not the unfiltered list.
+    const inverted = await read({ filter: { since: now - 3_600_000, before: now - 7_200_000 } });
+    expect(inverted.total).toBe(0);
+    expect(inverted.items).toEqual([]);
+    const empty = await read({ filter: { since: now - 2 * 3_600_000, before: now - 2 * 3_600_000 } });
+    expect(empty.total).toBe(0);
+    expect(empty.items).toEqual([]);
+
+    // A cutoff after every dated item still excludes the undated needs-you
+    // line — unknown never counts as old.
+    const everything = await read({ filter: { before: now + 3_600_000 } });
+    expect(everything.items.map(i => i.id).sort())
+      .toEqual(['bus:flt-before-edge', 'bus:flt-before-new', 'bus:flt-before-oldest']);
+    expect(everything.items.some(i => i.source === 'needs-you')).toBe(false);
+    expect(everything.total).toBe(3);
+  });
+
+  it('ANDs the upper bound with the other view dimensions', async () => {
+    postWork('flt-b2-old', { at: now - 3 * 3_600_000 });
+    postWork('flt-b2-new');
+    postJob('RQ-B2', { at: now - 5 * 3_600_000 });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    const busOnly = await read({ filter: { before: now - 2 * 3_600_000, source: 'bus' } });
+    expect(busOnly.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+
+    // before ANDs with source: the undated needs-you line can never satisfy it.
+    const undated = await read({ filter: { before: now - 2 * 3_600_000, source: 'needs-you' } });
+    expect(undated.total).toBe(0);
+    expect(undated.items).toEqual([]);
+
+    // before ANDs with kind the same way since does.
+    const kind = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-work' } });
+    expect(kind.items.map(i => i.id).sort()).toEqual(['bus-feed:RQ-B2', 'bus:flt-b2-old']);
+    const handoff = await read({ filter: { before: now - 2 * 3_600_000, kind: 'bus-handoff' } });
+    expect(handoff.total).toBe(0);
+    expect(handoff.items).toEqual([]);
+  });
+});
+
 describe('readUnifiedInbox contains filter', () => {
   it('keeps only items whose scrubbed title or detail carries the needle', async () => {
     postWork('flt-c1');                        // bus title 'fake work flt-c1'
@@ -2633,7 +3012,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -2736,6 +3115,50 @@ describe('phm comms inbox cli', () => {
     expect(report.items).toEqual([]);
   });
 
+  it('filters the unified JSON view by --before', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-before-old', { at: now - 3_600_000 });
+    postWork('cli-before-new');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    // --before keeps only items whose appearance time is strictly before the
+    // cutoff: the hour-old envelope, never the fresh one or the undated
+    // needs-you line — unknown never counts as old.
+    expect(await command(['--before', '15m', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(report.sources['needs-you'].pending).toBe(1);
+    expect(report.sources.bus.pending).toBe(2);
+
+    // The bound is exclusive and takes every parseSince spelling: the old
+    // envelope sits exactly on this cutoff and stays out.
+    expect(await command(['--before', String(now - 3_600_000), '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+    expect(await command(['--before', '2026-11-07T11:30:00Z', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+
+    // --since and --before compose into one [since, before) window.
+    expect(await command(['--since', '2h', '--before', '15m', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ since: now - 2 * 3_600_000, before: now - 15 * 60_000 });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-before-old']);
+    expect(await command(['--since', '15m', '--before', '2h', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --before ANDs with the other view filters.
+    expect(await command(['--before', '15m', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ before: now - 15 * 60_000, source: 'needs-you' });
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
   it('filters the unified JSON view by --contains text', async () => {
     const { command, json } = setupCli();
     postWork('cli-contains-bus');
@@ -2770,6 +3193,39 @@ describe('phm comms inbox cli', () => {
     expect(report.items).toEqual([]);
   });
 
+  it('filters the unified JSON view by --kind', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-kind-work');
+    const handoffId = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-CLI-K', prompt: 'fake handoff' },
+      { to: 'agent:worker-9' });
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
+
+    expect(await command(['--kind', 'bus-handoff', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ kind: 'bus-handoff' });
+    expect(report.items.map(i => i.id)).toEqual([`bus-handoff:${handoffId}`]);
+    expect(report.items[0]!.source).toBe('bus');
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(2);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    // --kind ANDs with --source: agreeing keeps the rows, disagreeing is an honest empty.
+    expect(await command(['--kind', 'bus-work', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ kind: 'bus-work', source: 'bus' });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-kind-work']);
+    expect(await command(['--kind', 'bus-handoff', '--source', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // A kind that is also a source name is not a kind — sources and kinds are distinct dimensions.
+    expect(await command(['--kind', 'bus', '--json'])).toBe(2);
+    expect(await command(['--kind', 'needs-you', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -2787,6 +3243,11 @@ describe('phm comms inbox cli', () => {
     expect(lines().join('\n')).toContain('1 pending matching job=RQ-CLI-H');
     expect(await command(['--job', 'RQ-NOPE'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching job=RQ-NOPE.');
+    // --kind labels the kind verbatim in the same footer slot.
+    expect(await command(['--kind', 'bus-work'])).toBe(0);
+    expect(lines().join('\n')).toContain('2 pending matching kind=bus-work');
+    expect(await command(['--kind', 'bus-handoff'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching kind=bus-handoff.');
     // --contains labels the needle verbatim in the same footer slot; the
     // feed job's title carries the job id, so it is the one match.
     expect(await command(['--contains', 'RQ-CLI-H'])).toBe(0);
@@ -2801,6 +3262,10 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--since', String(now + 60_000)])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching since=' +
       `${new Date(now + 60_000).toISOString()}.`);
+    // --before labels the resolved cutoff the same way; nothing here predates it.
+    expect(await command(['--before', '15m'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching before=' +
+      `${new Date(now - 15 * 60_000).toISOString()}.`);
   });
 
   it('refuses malformed unified filter invocations', async () => {
@@ -2816,6 +3281,11 @@ describe('phm comms inbox cli', () => {
       ['--since'], ['--since', '--json'], ['--since', 'bogus'], ['--since', '-5m'],
       ['--since', '15m', '--since', '15m'], ['--json', '--since'],
       ['--since', '15m', '--job'],
+      ['--before'], ['--before', '--json'], ['--before', 'bogus'], ['--before', '-5m'],
+      ['--before', '15m', '--before', '15m'], ['--json', '--before'],
+      ['--before', '15m', '--job'], ['--before', '15m', '--since'],
+      ['--kind'], ['--kind', 'bogus'], ['--kind', 'bus'], ['--kind', 'bus-work', '--kind', 'bus-handoff'],
+      ['--kind', '--json'], ['--json', '--kind'], ['--kind', 'read'],
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],

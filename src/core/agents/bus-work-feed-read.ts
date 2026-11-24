@@ -3,7 +3,7 @@ import { BUS_INBOX_MAX_MESSAGES, listBusInboxAfter, type BusInboxReceipt } from 
 import { coordinationRowBlocks, listCoordination, type CoordinationOrigin } from './claim-store.js';
 import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor, type WorkFeedRefusalReceipt,
   type WorkFeedResult, type WorkFeedResultCitation } from './bus-work-feed.js';
-import { agentAddressMatcher, agentIdentityKeys, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
+import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
 import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
@@ -90,24 +90,32 @@ export function busWorkFeedJobHold(
 
 /**
  * The hold evidence behind one claims join, shared by the feed annotation
- * and the `work mine` digest: the coverage state plus the shown holds grouped
- * by job id. `unknown` means the coordination table could not be read;
- * `truncated` means shown holds are real but later ones are unseen.
+ * and the `work mine` digest: the coverage state, the shown held keys grouped
+ * by job id (`heldByJob`) and the shown hold rows themselves grouped the same
+ * way (`holdsByJob`) so a per-job read can name who holds each blocked key.
+ * `unknown` means the coordination table could not be read; `truncated` means
+ * shown holds are real but later ones are unseen — both maps are then
+ * lower bounds, never the full hold set.
  */
 export function busWorkFeedHoldIndex(claims: BusWorkFeedClaims | undefined): {
   coverage: BusWorkFeedHoldCoverage;
   heldByJob: ReadonlyMap<string, ReadonlySet<string>>;
+  holdsByJob: ReadonlyMap<string, readonly BusWorkFeedHold[]>;
 } {
   const coverage: BusWorkFeedHoldCoverage =
     claims === undefined || claims.source === 'unavailable' ? 'unknown'
     : claims.truncated ? 'truncated' : 'complete';
   const heldByJob = new Map<string, Set<string>>();
+  const holdsByJob = new Map<string, BusWorkFeedHold[]>();
   for (const hold of claims?.holds ?? []) {
     const set = heldByJob.get(hold.jobId) ?? new Set<string>();
     set.add(hold.claimKey);
     heldByJob.set(hold.jobId, set);
+    const rows = holdsByJob.get(hold.jobId) ?? [];
+    rows.push(hold);
+    holdsByJob.set(hold.jobId, rows);
   }
-  return { coverage, heldByJob };
+  return { coverage, heldByJob, holdsByJob };
 }
 
 export type BusWorkFeedReadResult =
@@ -121,6 +129,41 @@ const HOLDS_MAX = 1024;
 
 /** Feed statuses that still mean "open for a worker": queued or rescheduled. Progress reports and terminal states are not claimable. */
 export const BUS_FEED_OPEN_STATUSES: ReadonlySet<WorkJob['status']> = new Set(['queued', 'rescheduled']);
+
+/** Longest `--contains` needle the work-feed view accepts; the job text it matches is already bounded far shorter. */
+export const BUS_WORK_FEED_CONTAINS_MAX = 512;
+
+/** Largest `limit` page the feed surfaces accept — the same item bound `fleet_comms_inbox` applies. */
+export const BUS_WORK_FEED_LIMIT_MAX = 200;
+
+/**
+ * The ok feed view after a `limit` page: `matched` counts every job the
+ * filters kept before the slice and `omitted` the jobs beyond the shown
+ * page — the same honest-truncation pair the other bounded fleet reads
+ * report. `jobs` stays newest-first (the view already sorts), and claims
+ * holds regroup under the shown jobs only, so a hold never names a hidden
+ * job. Non-ok results pass through untouched: a refused or unavailable feed
+ * fabricates no page and no counts. `limit` must be an integer in
+ * 1..BUS_WORK_FEED_LIMIT_MAX; every caller validates before slicing.
+ */
+export type BusWorkFeedPaged = Extract<BusWorkFeedReadResult, { status: 'ok' }> & {
+  /** Jobs the filters kept before the page slice. */
+  matched: number;
+  /** Matched jobs beyond the shown page. */
+  omitted: number;
+};
+
+export function sliceBusWorkFeedView(result: BusWorkFeedReadResult, limit: number): BusWorkFeedReadResult | BusWorkFeedPaged {
+  if (result.status !== 'ok') return result;
+  const matched = result.jobs.length;
+  const jobs = result.jobs.slice(0, limit);
+  const shown = new Set(jobs.map(job => job.id));
+  const view: BusWorkFeedPaged = { ...result, jobs, matched, omitted: matched - jobs.length };
+  if (result.claims !== undefined) {
+    view.claims = { ...result.claims, holds: result.claims.holds.filter(hold => shown.has(hold.jobId)) };
+  }
+  return view;
+}
 
 /** Provider of the identity's most recently seen runtime; undefined when it has none. */
 export function runtimeProvider(identity: AgentIdentity): Participant['provider'] | undefined {
@@ -236,17 +279,30 @@ export function readBusWorkFeed(options: BusWorkFeedReadOptions = {}): BusWorkFe
  * never widens the filter.
  */
 function feedLabelMatcher(ref: string, options: { root?: string }): (label: string) => boolean {
-  return agentAddressMatcher(agentIdentityKeys({ root: options.root }), ref);
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(ref, read.status === 'ok' ? read.registry : undefined);
 }
 
-/** Announcement-address matcher for a job's `to` label. */
-export function busWorkFeedToMatcher(to: string, options: { root?: string } = {}): (label: string) => boolean {
-  return feedLabelMatcher(to, options);
-}
-
-/** Announcer matcher for a job's `owner` label — the same identity contract `to` uses. */
+/** Announcer matcher for a job's `owner` label — the same identity contract the addressed surfaces share. */
 export function busWorkFeedOwnerMatcher(owner: string, options: { root?: string } = {}): (label: string) => boolean {
   return feedLabelMatcher(owner, options);
+}
+
+/**
+ * The feed `--to` filter's addressed-to-agent matcher under the pending-work
+ * rule every other addressed surface shares — `bus next`, the `work mine`
+ * digest's jobs/next/handoffs/wakes/inbox sections and `agents bus inbox`:
+ * the literal label, every label of the identity it resolves to, and
+ * `group:<channel>:<topic>` addresses of registry channels that identity
+ * belongs to, minus channel posts the identity sent itself (`owner` is the
+ * announcement's sender label). A `to` ref that resolves to no identity, or
+ * an unreadable registry, keeps exact-label matching, so unknown identity
+ * state never widens the filter. The returned predicate takes a job's `to`
+ * address and its `owner` (the announcement sender) label.
+ */
+export function busWorkFeedPendingToMatcher(to: string, options: { root?: string } = {}): (address: string, owner: string) => boolean {
+  const read = readAgentRegistry({ root: options.root });
+  return agentPendingAddressMatcher(to, read.status === 'ok' ? read.registry : undefined);
 }
 
 /**
@@ -269,6 +325,8 @@ export interface BusWorkFeedViewFilters {
   repo?: string;
   /** Keep only jobs announced for this provider. */
   provider?: Participant['provider'];
+  /** Keep only jobs whose announcement declared this dispatch tier; a job with no dispatch spec declares none and never matches. */
+  tier?: WorkDispatch['tier'];
   /** Keep only open jobs whose declared claim keys provably include a free key; needs the claims join to mean anything. */
   claimable?: true;
   /** Open-status candidates with declared keys; incomplete hold coverage keeps candidates visible. */
@@ -280,20 +338,55 @@ export interface BusWorkFeedViewFilters {
    * same inclusive `>=` rule every `--since` bus read applies.
    */
   since?: number;
-  /** Announcement-address predicate from `busWorkFeedToMatcher`. */
-  toMatch?: (to: string) => boolean;
+  /**
+   * Keep only jobs whose last activity is strictly before this epoch-ms
+   * cutoff — the same `job.updatedAt` field `since` bounds inclusively
+   * below, so `since`/`before` read one closed [since, before) window and
+   * adjacent windows never double-count a boundary job. It is also the
+   * paging bound: the view sorts newest-first under a `--limit` cap, so
+   * `--before` at the oldest shown job's `updatedAt` reaches the jobs an
+   * unbounded newest page can never show once more than the cap match.
+   */
+  before?: number;
+  /** Announcement-address predicate from `busWorkFeedPendingToMatcher`; called with the job's `to` address and `owner` (announcement sender) label. */
+  toMatch?: (to: string, owner: string) => boolean;
   /** Announcer predicate over `job.owner` from `busWorkFeedOwnerMatcher`. */
   ownerMatch?: (owner: string) => boolean;
+  /**
+   * Keep only jobs whose descriptive text carries the needle as a
+   * case-insensitive substring — the announcement title, the newest status
+   * detail and the declared dispatch scope/acceptance, each scrubbed,
+   * single-lined and clipped at the same bounds `formatBusWorkFeedJob`
+   * renders, with whitespace collapsed on both sides: the same `--contains`
+   * rule every other bus read applies, so "which announced jobs mention X"
+   * is one filtered read and a secret-shaped value stays unfindable. Ids,
+   * claim keys, statuses and routing labels are structured fields with
+   * their own filters, never search text.
+   */
+  contains?: string;
+  /**
+   * Keep only jobs whose announcement `to` carries `group:<channel>:` — the
+   * room's whole traffic under every topic, the same address prefix
+   * `phm messages --channel`, `agents bus inbox --channel` and `channel read`
+   * match. The value is the strict channel-name grammar; matching is a raw
+   * prefix on the routing label, so it needs no registry and never widens on
+   * unknown state.
+   */
+  channel?: string;
 }
 
 /**
- * Client-side `--status`/`--job`/`--repo`/`--provider`/`--claimable`/`--since`/
- * `--to`/`--owner` filters and newest-first ordering shared by the feed CLIs;
- * the matchers are the `busWorkFeedToMatcher`/`busWorkFeedOwnerMatcher`
+ * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
+ * `--to`/`--owner`/`--contains`/`--channel` filters and newest-first ordering shared by
+ * the feed CLIs;
+ * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
  * receipt time, or the announcement's while no status has moved the job —
  * reaches the cutoff, so "which jobs moved lately" is one filtered read
- * instead of paging terminal jobs that have sat unchanged.
+ * instead of paging terminal jobs that have sat unchanged; `before` is the
+ * exclusive upper bound on the same field, so the pair reads one
+ * [since, before) window and older pages stay reachable past the
+ * newest-first `--limit` cap.
  * With claims, holds regroup under the jobs still shown so a filtered view
  * never lists a hold for a hidden job. `--claimable` keeps only jobs whose
  * tri-state `claimable` is provably true — unknown coverage never counts as
@@ -306,17 +399,26 @@ export interface BusWorkFeedViewFilters {
 export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: BusWorkFeedViewFilters = {}): BusWorkFeedReadResult {
   if (result.status !== 'ok') return result;
   const { coverage, heldByJob } = busWorkFeedHoldIndex(result.claims);
+  // The needle normalizes once — lowercase, whitespace collapsed, trimmed —
+  // so a phrase typed with stray spacing still finds its job; a blank
+  // needle is the empty substring and narrows nothing.
+  const containsNeedle = filters.contains === undefined ? undefined
+    : filters.contains.toLowerCase().replace(/\s+/g, ' ').trim();
   const jobs = result.jobs
     .filter(job => (filters.status === undefined || job.status === filters.status)
       && (filters.jobId === undefined || job.id === filters.jobId)
       && (filters.repo === undefined || job.repo.toLowerCase() === filters.repo)
       && (filters.provider === undefined || job.provider === filters.provider)
+      && (filters.tier === undefined || job.dispatch?.tier === filters.tier)
       && (filters.claimable !== true || job.claimable === true)
       && (filters.open !== true || (BUS_FEED_OPEN_STATUSES.has(job.status) && job.claimKeys.length > 0
         && (coverage !== 'complete' || job.claimKeys.some(key => !heldByJob.get(job.id)?.has(key)))))
       && (filters.since === undefined || job.updatedAt >= filters.since)
-      && (filters.toMatch === undefined || filters.toMatch(job.to))
-      && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner)))
+      && (filters.before === undefined || job.updatedAt < filters.before)
+      && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
+      && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
+      && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
+      && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };
   if (result.claims !== undefined) {
@@ -342,6 +444,24 @@ function feedField(value: string, max: number): string {
   // eslint-disable-next-line no-control-regex
   const flat = scrubSecrets(value).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/**
+ * The descriptive text a feed job's `--contains` filter searches: the
+ * announcement title, the newest status detail and the declared dispatch
+ * scope/acceptance — each through the same `feedField` scrub, single-line
+ * and display clip the job line renders, joined and normalized like every
+ * other `--contains` haystack. A match is therefore always visible in the
+ * row it selects, and a secret-shaped value is scrubbed before the match
+ * even though the stored envelope keeps it.
+ */
+export function busWorkFeedJobSearchText(job: BusWorkFeedJob): string {
+  return [
+    feedField(job.title, FEED_TITLE_MAX),
+    job.detail === undefined ? '' : feedField(job.detail, FEED_DETAIL_MAX),
+    job.dispatch === undefined ? '' : feedField(job.dispatch.scope, DISPATCH_SCOPE_MAX),
+    job.dispatch === undefined ? '' : feedField(job.dispatch.acceptance, DISPATCH_ACCEPTANCE_MAX),
+  ].join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -400,7 +520,7 @@ export function formatBusWorkFeedJob(job: BusWorkFeedJob): string {
 }
 
 /** Human-readable feed lines shared by `fleet work-feed` and `agents bus work feed`. */
-export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
+export function formatBusWorkFeed(result: BusWorkFeedReadResult | BusWorkFeedPaged): string[] {
   const lines: string[] = [];
   if (result.status === 'ok') {
     for (const job of result.jobs) {
@@ -416,6 +536,7 @@ export function formatBusWorkFeed(result: BusWorkFeedReadResult): string[] {
   const claimsNote = result.status === 'ok' && result.claims
     ? ` claims=${result.claims.source}${result.claims.truncated ? ':truncated' : ''}` : '';
   const receiptNote = result.status === 'refused' && result.receipt !== undefined ? ` receipt=${result.receipt.id}` : '';
-  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed}${receiptNote} as-of=${result.asOf}${claimsNote}`);
+  const pageNote = result.status === 'ok' && 'matched' in result ? ` matched=${result.matched} omitted=${result.omitted}` : '';
+  lines.push(`jobs=${result.status === 'ok' ? result.jobs.length : 'unknown'} receipts=${'receipts' in result ? result.receipts : 'unknown'} feed=${feed}${receiptNote} as-of=${result.asOf}${claimsNote}${pageNote}`);
   return lines;
 }
