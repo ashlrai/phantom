@@ -100,6 +100,8 @@ describe('fleet_comms_thread argument parsing', () => {
     expect(parseFleetCommsThreadArgs({ direction: 'outbound' })).toEqual({ limit: 50, filter: { direction: 'outbound' } });
     expect(parseFleetCommsThreadArgs({ contains: 'deploy window' })).toEqual({ limit: 50, filter: { contains: 'deploy window' } });
     expect(parseFleetCommsThreadArgs({ replyTo: 'inbound-key-1' })).toEqual({ limit: 50, filter: { replyTo: 'inbound-key-1' } });
+    expect(parseFleetCommsThreadArgs({ awaiting: true })).toEqual({ limit: 50, filter: { awaiting: true } });
+    expect(parseFleetCommsThreadArgs({ awaiting: false })).toEqual({ limit: 50 });
     const withSince = parseFleetCommsThreadArgs({ since: '2h' });
     expect(withSince?.limit).toBe(50);
     expect(typeof withSince?.filter?.since).toBe('number');
@@ -125,6 +127,7 @@ describe('fleet_comms_thread argument parsing', () => {
       { beforeAt: 'bogus' }, { beforeAt: 1700000000000 }, { beforeAt: null }, { beforeAt: '-1' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { replyTo: 'has space' }, { replyTo: 'short' }, { replyTo: 'x'.repeat(81) }, { replyTo: 42 }, { replyTo: null },
+      { awaiting: 'true' }, { awaiting: 1 }, { awaiting: null },
       { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp/x' }, { configDir: '/tmp/x' },
       { extra: 1 }, { json: true },
     ]) expect(parseFleetCommsThreadArgs(bad)).toBeNull();

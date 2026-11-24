@@ -18,14 +18,16 @@ phm comms thread --since 4h --before-at 2h --json
 phm comms thread --direction inbound --json
 phm comms thread --contains "deploy window" --json
 phm comms thread --reply-to telegram-msg-1 --json
+phm comms thread --awaiting --json
 phm comms send-owner --text "Synthetic reply" --json
 ```
 
 MCP tools: `ashlr_comms_thread` (read; optional `channel`, `direction`,
-`since`, `beforeAt`, `contains` and `replyTo` narrow the same view),
+`since`, `beforeAt`, `contains`, `replyTo` and `awaiting` narrow the same
+view),
 `ashlr_comms_send_owner`
 (append; KILL refuses it), `fleet_comms_thread` on the isolated fleet
-server (the same read with `limit` plus the same six filters) and
+server (the same read with `limit` plus the same seven filters) and
 `fleet_owner_history` there too (the archived pages `fleet_comms_thread`
 cannot see, with `before`/`limit` plus the same view slice). `ashlr_comms`
 includes the same adapter rollup as `phm comms status --json`, and
@@ -49,17 +51,23 @@ idempotency key — the same key `send-owner --reply-to` cites — keeps the
 exchange rooted at it: the message carrying that key plus every recorded
 reply whose `replyTo` cites it, across every channel the reply fanned out
 to; an outbound key matches only the message carrying it, and a key
-nothing carries is an honest empty slice) to keep one channel's slice, one
+nothing carries is an honest empty slice) and `--awaiting` (keep only the
+live inbound messages the awaiting-reply mark names — the same set
+`awaitingReply` reports, sliced into the view itself, so "what is the owner
+still waiting on" is one filtered read composing with every other
+dimension; it is inherently inbound-only and live-window-only, so an
+outbound slice or an archived-history page answers it honestly empty) to
+keep one channel's slice, one
 direction's
 lines, only messages inside the time window, only messages that carry the
-text, or only one reply exchange. `contains` is the only text search the thread offers:
+text, only one reply exchange, or only what still needs an answer. `contains` is the only text search the thread offers:
 iMessage bodies are redacted on the bus mirror, so this private read is the
 one place they can be found. The receipt join and the `awaitingReply` mark
 follow the same slice, so a filtered view never reports marks for rows it
 hid; an unreadable thread still answers `unavailable` with
 `awaitingReply: null` whatever the filter. The desktop owner-thread API
-accepts the same `channel`, `direction`, `since`, `beforeAt`, `contains`
-and `replyTo` query parameters.
+accepts the same `channel`, `direction`, `since`, `beforeAt`, `contains`,
+`replyTo` and `awaiting` (`true`/`false`) query parameters.
 
 The thread read joins the per-channel delivery receipts written at send time:
 `receipts` maps each outbound message id to `{ channel: { state, reason? } }`
@@ -117,7 +125,9 @@ applied through
 the shared predicate, so "what did the owner say about X on Telegram
 before the live window" is one filtered call, not manual paging. There
 `--before-at` is the recorded-time ceiling while `--before <seq>` stays
-the sequence cursor.
+the sequence cursor. `--awaiting` stays live-window only: the awaiting
+mark never covers archived messages, so an awaiting archive page is
+honestly empty rather than archived rows passed off as still waiting.
 
 The isolated fleet MCP server serves the same projection as
 `fleet_owner_history` (`before`/`limit` plus the same

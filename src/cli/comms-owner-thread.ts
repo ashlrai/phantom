@@ -18,7 +18,7 @@ import {
   type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--awaiting] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -128,7 +128,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--awaiting'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
@@ -142,7 +142,12 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       console.error(THREAD_USAGE);
       return 2;
     }
-    const view = readOwnerThread(options, limit, parsed.filter);
+    // --awaiting is a live-window slice the archive read never takes, so it
+    // stays out of the shared filter parser `phm fleet owner-history` runs.
+    const filter = args.includes('--awaiting')
+      ? { ...(parsed.filter ?? {}), awaiting: true as const }
+      : parsed.filter;
+    const view = readOwnerThread(options, limit, filter);
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);
     emit(json, view, view.messages.map(message => {
