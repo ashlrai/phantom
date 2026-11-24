@@ -613,6 +613,26 @@
  *     spawn totals but never emit, truncated tails are stated as lower
  *     bounds, and rows emit only for the fleet's own repository since
  *     the ledger carries no repo column;
+ *   - the launch-cost probe journal's silent, coverage and storm cells:
+ *     the fleet.launch-cost.v1 rows contrib/mac/launch_cost.py appends
+ *     to <runs>/metrics/launch-cost.jsonl — the fleet's only per-attempt
+ *     first-minute process/CPU probe and the only resource-cost
+ *     evidence subscription lanes record — until now read only by
+ *     `phm fleet vitals`, `phm router outcomes` and `phm fleet
+ *     router-weights`, reports that never queued work
+ *     (launchCostBacklogItems below). A silent cell emits when the jobs
+ *     ledger proves launches inside the window while the probe file
+ *     yields zero in-window valid rows (the producer exists and is
+ *     tested but nothing in the launch path invokes it); per-lane
+ *     coverage cells emit when non-measured rows ('unknown'/'partial' —
+ *     the probe ran but could not fully measure) recur at the
+ *     distinct-rows/distinct-UTC-days bars, with undated-ledger
+ *     recurrence stated honestly; per-lane cost cells emit when
+ *     measured launches keep crossing the feed's documented storm bar.
+ *     Dated rows window on startedAt; undated rows join only by append
+ *     order after the window's first dated row, truncated tails are
+ *     stated as lower bounds, and items emit only for the fleet's own
+ *     repository since the probe is this install's machinery;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -699,6 +719,7 @@ import { asksLedgerBacklogItems } from './asks-backlog.js';
 import { queueVisitBacklogItems } from './queue-visit-backlog.js';
 import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { custodyBacklogItems } from './custody-backlog.js';
+import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1639,6 +1660,29 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // since the ledger describes this install's spawn machinery and
   // carries no repository column.
   items.push(...await custodyBacklogItems({ repo }));
+
+  // Launch-cost probe journal (metrics/launch-cost.jsonl under the runs
+  // dir): the fleet.launch-cost.v1 rows contrib/mac/launch_cost.py
+  // appends per launch attempt — the fleet's only per-attempt
+  // first-minute process/CPU probe, and the only resource-cost
+  // evidence subscription lanes record since their finish rows carry
+  // no cost_usd — become backlog items too. Until now the ledger's only
+  // readers were `phm fleet vitals`, `phm router outcomes` and `phm
+  // fleet router-weights`, reports someone had to run and read, so a
+  // probe that never ran (nothing in the launch path invokes the
+  // producer), that runs but cannot verify a lane's launches, or that
+  // keeps recording storm-level first-minute figures never became
+  // work. A silent cell emits when jobs.jsonl proves launches inside
+  // the window while the probe file yields zero in-window valid rows;
+  // per-lane coverage cells emit when non-measured rows recur at the
+  // distinct-rows/distinct-UTC-days bars — undated-ledger recurrence
+  // stated honestly — and per-lane cost cells emit when measured
+  // launches keep crossing the feed's documented storm bar. Dated rows
+  // window on startedAt; undated rows join only by append order after
+  // the window's first dated row, truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the probe is this install's launch machinery.
+  items.push(...await launchCostBacklogItems({ repo }));
   return { items, errors };
 }
 
