@@ -42,3 +42,10 @@
 <!-- Anything reviewers should know: trade-offs, follow-ups, deliberately-deferred items.
      A diff that touches a CODEOWNERS path waits for the owner even after
      Merge Gate passes: https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner -->
+
+## Agent used (optional)
+
+<!-- Helps us learn which coding tools contribute. Leave blank for a fully human PR.
+     Examples: Codex, Claude Code, Cursor, GitHub Copilot, Gemini CLI, Grok, Devin, Aider, Windsurf, local model (name it). -->
+
+Agent used:
