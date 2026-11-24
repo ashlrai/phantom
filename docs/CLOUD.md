@@ -1127,7 +1127,38 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   read at the writer's compaction bound is stated as a lower bound
   when it truncates, and rows emit only for the fleet's own
   repository since the journal describes this install's Claude runs
-  and carries no repository column.
+  and carries no repository column,
+  and the queue-visit journal's recurring saturation and parked
+  visits, the per-attempt {id, station, pool, arrivedAt, startedAt?,
+  completedAt?} snapshots the daemon's visit-sync off-tick job
+  (syncQueueVisits in src/core/queue/visit-sync.ts) appends to
+  queue/visits.jsonl under the Ashlr home — each a job attempt's
+  (<job>:a<attempt>) recorded dwell through a pipeline station, READY
+  queue wait, claimed worker service, publish slot, pr-ci CI dwell,
+  merge-queue dwell and the zero-dwell merged marker — folded from
+  metrics/jobs.jsonl and the live `- READY` rows of
+  queue/router-queue.md (otherwise only visible through
+  point-in-time reports — `phm queue stats` and GET /api/queue/stats,
+  the Fleet Dashboard's station graph — that rate only the windows
+  asked for, so a station that kept rating red or visits that kept
+  parking open week after week looked like ordinary current-state
+  numbers, never work). A cell — a (station|pool, name) group —
+  becomes an item only while its in-window evidence reaches the
+  recurring bars: 'saturated' needs the same estimateQueueStats fold
+  the dashboard runs to rate the cell's rho at or above 0.9, the
+  documented red band, on at least two distinct UTC days inside the
+  7-day window with at least three in-window arrivals, and 'stuck'
+  needs at least two distinct latest snapshots with no completedAt
+  aged at least 24h at the clock spanning two distinct UTC days;
+  rows count only under the writer's own contract (isQueueVisit —
+  non-empty id/station/pool, finite arrivedAt, startedAt >= arrivedAt
+  and completedAt >= startedAt when present — with the last appended
+  snapshot per (station, pool, id) winning, the same dedup the
+  journal's own compaction applies), a bounded no-follow tail read at
+  twice the writer's 4 MiB compaction bound is stated as a lower
+  bound when it truncates, and rows emit only for the fleet's own
+  repository since the journal is this install's dispatch record and
+  carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1137,8 +1168,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh, mcp-gateway, routines and rate-limit items carry
-  priority 3;
+  catalog-refresh, mcp-gateway, routines, rate-limit and queue-visit
+  items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1426,7 +1457,21 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   no-change escape for a rolled-forward window, a planned burst or
   owner-pinned plan limits, and emit only for the fleet's own
   repository since the journal describes this install's Claude runs
-  and carries no repository column. They
+  and carries no repository column. Queue-visit items name the
+  visits journal, `src/core/queue/visit-sync.ts`,
+  `src/core/queue/stats.ts` and the `phm queue stats` / Fleet
+  Dashboard station-graph readers, keep the
+  capacity-versus-arrival-versus-parked-work framing per cell — a
+  station whose service rate is genuinely the binding constraint
+  (worker concurrency, CI runner capacity, publisher or merge
+  throughput), a lane absorbing work shaped for other lanes, or
+  visits parked because the boundary that should close the dwell is
+  never recorded upstream — with the same owner-side no-change escape
+  for deliberately held jobs (KILL, park, foreign-owner rows), a
+  planned capacity push the later days recovered from, or a producer
+  that stopped feeding leaving stale residue, and emit only for the
+  fleet's own repository since the journal is this install's dispatch
+  record and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
