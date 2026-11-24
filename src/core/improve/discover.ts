@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -430,6 +430,23 @@
  *     newest-eight list — point-in-time surfaces someone had to run —
  *     so an action a gate kept refusing or machinery kept failing
  *     never became work;
+ *   - the repair-handoff journals' recurring adverse evidence: the
+ *     per-handoff observations recordRepairHandoffs appends to
+ *     ~/.ashlr/fleet/repair-handoffs.jsonl (schemaVersion 1) and
+ *     repair-handoffs-v2.jsonl (schemaVersion 2) under the account
+ *     home on every dispatch production event whose parent proposal
+ *     finished 'empty-diff', 'proposal-capture-error' or
+ *     'gate-blocked' — each row already a minted repair child —
+ *     folded per (repo checkout basename, parentOutcome,
+ *     parentBackend) cell across distinct parentItemIds and UTC days
+ *     inside the 7-day window (repairHandoffBacklogItems below). Until
+ *     now the journals' only readers were the fleet status repair
+ *     summary, the generated-repair lifecycle fold and proposal-repair
+ *     work admission — lifecycle and status surfaces answering whether
+ *     a handoff is still live, never whether its failure class keeps
+ *     recurring — so a backend whose parents keep finishing empty, a
+ *     capture path that keeps erroring, or a gate that keeps blocking
+ *     proposals into repair children never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -503,6 +520,7 @@ import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
+import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1188,6 +1206,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's console and carries no repository column.
   items.push(...await desktopErrorBacklogItems({ repo }));
+
+  // Repair-handoff journals: the daemon tick's own record of every
+  // repair child it mints — parent proposals that finished
+  // 'empty-diff', 'proposal-capture-error' or 'gate-blocked', each row
+  // already adverse evidence — recurring per (repo checkout basename,
+  // parentOutcome, parentBackend) cell across distinct parentItemIds
+  // and UTC days inside the window — become backlog items too. Until
+  // now the journals' only readers were the fleet status repair
+  // summary, the generated-repair lifecycle fold and proposal-repair
+  // work admission, lifecycle and status surfaces that never folded a
+  // recurrence. Same bounded no-follow tail reads at a generous byte
+  // bound; rows count only under the writer's contract (closed
+  // kind/outcome vocabularies with their pairing, the all-or-none
+  // provenance trio, bounded identity fields), a cell emits only at
+  // the recurring bars of distinct parent items across distinct UTC
+  // days inside the 7-day window, repo attribution is the canonical
+  // checkout path's basename matched to the target's repository name
+  // — a checkout enrolled under a differently-named directory is
+  // conservatively unmatched rather than misattributed — truncated
+  // tails are stated as lower bounds, and every journal string is
+  // scrubbed before it reaches a prompt.
+  items.push(...await repairHandoffBacklogItems({ repo }));
   return { items, errors };
 }
 

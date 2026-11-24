@@ -957,7 +957,37 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rows drop like the writer's contract, a truncated ledger tail is
   stated as a lower bound, and rows emit only for the fleet's own
   repository since the journal describes this install's console and
-  carries no repository column.
+  carries no repository column,
+  and the repair-handoff journals' recurring adverse evidence, the
+  per-handoff observations recordRepairHandoffs in
+  `src/core/fleet/repair-handoff-journal.ts` appends to
+  `~/.ashlr/fleet/repair-handoffs.jsonl` (schemaVersion 1) and
+  `repair-handoffs-v2.jsonl` (schemaVersion 2) under the account home
+  on every dispatch production event whose parent proposal finished
+  'empty-diff', 'proposal-capture-error' or 'gate-blocked' — each row
+  already a minted repair child — fed by the daemon loop in
+  src/core/daemon/loop.ts while foundry.proposalRepair stays enabled
+  (otherwise only visible through readRepairHandoffs' fleet status
+  repair summary, the generated-repair lifecycle fold and
+  proposal-repair work admission — lifecycle and status surfaces
+  answering whether a handoff is still live, never whether its
+  failure class keeps recurring — so a backend whose parents keep
+  finishing empty, a capture path that keeps erroring, or a gate that
+  keeps blocking proposals into repair children never became work).
+  A cell — one (repo checkout basename, parentOutcome, parentBackend)
+  group — becomes an item only while its in-window rows name at least
+  three distinct parentItemIds across two distinct UTC days inside
+  the 7-day window; units count distinct parent items, not rows, so a
+  retry storm on one item never recurs, rows without provenance fold
+  under an unrecorded backend, malformed lines and off-contract rows
+  drop like the writer's record contract (the semantic hash
+  derivations stay the canonical reader's job), both journal files are
+  read through bounded no-follow tails whose truncation is stated as a
+  lower bound, repo attribution is the canonical checkout path's
+  basename matched to the discovery target's repository name — a
+  checkout enrolled under a differently-named directory is
+  conservatively unmatched — and a full path is never quoted since it
+  would carry the account's home directory into a prompt.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -966,7 +996,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
-  audit-trail, desktop-console and fleet-self-tick items carry priority 3;
+  audit-trail, desktop-console, fleet-self-tick and repair-handoff items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1181,7 +1211,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   no-change escape for a rolled-forward window or pinned ops
   machinery, and emit only for the fleet's own repository since the
   journal records this install's console and carries no repository
-  column. They
+  column. Repair-handoff items name the two journals,
+  readRepairHandoffs and the daemon loop's repair wiring in
+  src/core/fleet and src/core/daemon, keep the
+  producer-quality-versus-repair-coverage-versus-correctly-blocked
+  framing per outcome cell — the proposal pipeline and work-item
+  scoping that feeds unworkable parents, the reslice and capture
+  repair treatments, or gate thresholds that misfire — with the same
+  owner-side no-change escape for legitimately unworkable items,
+  pinned ops machinery or a rolled-forward window, and emit only for
+  the fleet's own repository or a checkout whose canonical path ends
+  in the discovery target's repository name, since the journals
+  record this install's repair handoffs. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

@@ -630,6 +630,7 @@
 /test/improve-proposal-outcome-backlog.test.ts @masonwyatt23
 /test/improve-recheck-backlog.test.ts @masonwyatt23
 /test/improve-recut-loop-backlog.test.ts @masonwyatt23
+/test/improve-repair-handoff-backlog.test.ts @masonwyatt23
 /test/improve-revert-ledger.test.ts @masonwyatt23
 /test/improve-revert-scan.test.ts @masonwyatt23
 /test/improve-reverted.test.ts @masonwyatt23
