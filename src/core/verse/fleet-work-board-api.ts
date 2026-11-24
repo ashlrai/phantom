@@ -19,7 +19,12 @@
  * `?state=` keeps only items the shared classifier placed in that state
  * (RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED); the board then also
  * reports `state` and `matched`, the true filtered total across the whole
- * settled scan before the display cap — never a count of the shown window. */
+ * settled scan before the display cap — never a count of the shown window.
+ * `?since=`/`?before=` keep only requests whose recorded receivedAt falls
+ * inside the `[since, before)` window — since inclusive, before exclusive,
+ * the same bound every bus read applies — resolved through the shared
+ * `15m|2h|1d|epoch-ms|ISO` grammar against this server's clock; under a time
+ * bound the board reports `matched` the same way `state` does. */
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ApiModule } from './api-modules.js';
@@ -32,6 +37,7 @@ import {
   type WorkBoardResult,
 } from '../comms/work-board.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../comms/work-item-state.js';
+import { parseSince } from '../fleet/agent-messages.js';
 import { workResultBody, type WorkResultBody } from '../comms/work-result-body.js';
 import { postBusReply, replyResult, type ReplyResult } from '../fleet/bus-reply-post.js';
 import { sanitizePublicJson } from '../util/public-json.js';
@@ -47,7 +53,8 @@ const MAX_THREAD_CHARS = 200;
 
 export interface FleetWorkBoardApiDeps {
   /** Reader seam for tests. Default: listWorkBoard() at the server fleet root. */
-  read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState }) => WorkBoardResult;
+  read?: (opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
+    since?: number; before?: number }) => WorkBoardResult;
   /** Clock seam for tests; stamps asOf and feeds the classifier. */
   now?: () => Date;
   /** Poster seam for tests. Default: postBusReply() at the default fleet root, as the CLI. */
@@ -167,6 +174,29 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
     const ms = now().getTime();
     const at = Number.isSafeInteger(ms) && ms >= 0 ? ms : 0;
     const asOf = new Date(at).toISOString();
+    // The shared `15m|2h|1d|epoch-ms|ISO` grammar every bus read's time bound
+    // takes, resolved against this server's clock — relative windows like
+    // `15m` mean "15 minutes before this read", never a caller-supplied now.
+    const sinceRaw = params.get('since');
+    let since: number | undefined;
+    if (sinceRaw !== null) {
+      const resolved = parseSince(sinceRaw, at);
+      if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) {
+        sendJson(res, 400, { error: 'since takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+        return true;
+      }
+      since = resolved;
+    }
+    const beforeRaw = params.get('before');
+    let before: number | undefined;
+    if (beforeRaw !== null) {
+      const resolved = parseSince(beforeRaw, at);
+      if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) {
+        sendJson(res, 400, { error: 'before takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+        return true;
+      }
+      before = resolved;
+    }
     let board: WorkBoardResult;
     try {
       board = read({
@@ -175,6 +205,8 @@ export function createFleetWorkBoardApi(deps: FleetWorkBoardApiDeps = {}): ApiMo
         limit,
         ...(thread !== null ? { channelRef: thread } : {}),
         ...(state !== null ? { state: state as WorkItemState } : {}),
+        ...(since === undefined ? {} : { since }),
+        ...(before === undefined ? {} : { before }),
       });
     } catch {
       board = { items: [], inbox: 'unavailable', truncated: false, claims: 'unavailable' };

@@ -38,6 +38,7 @@ import { parseFleetAgentRosterArgs, readFleetAgentRoster } from './fleet-agent-r
 import { CONVERSATION_STATES } from '../core/fleet/agent-conversation-model.js';
 import {
   AGENT_MESSAGE_KINDS, AGENT_MESSAGES_CONTAINS_MAX, AGENT_MESSAGES_DEFAULT_LIMIT, AGENT_MESSAGES_MAX_LIMIT,
+  parseSince,
 } from '../core/fleet/agent-messages.js';
 import {
   FLEET_BUS_CHANNEL_LIMIT_DEFAULT, FLEET_BUS_CHANNEL_LIMIT_MAX,
@@ -169,23 +170,38 @@ export interface FleetWorkBoardArgs {
   thread?: string;
   /** Classified-state filter; omitted keeps every state. */
   state?: WorkItemState;
+  /** Epoch-ms floor on the request's recorded receivedAt (inclusive), resolved
+   * from the shared `15m|2h|1d|epoch-ms|ISO` grammar at parse time. */
+  since?: number;
+  /** Epoch-ms ceiling on the request's recorded receivedAt (exclusive),
+   * composing with `since` into one `[since, before)` window. */
+  before?: number;
 }
 
-const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state']);
+const WORK_BOARD_ARG_KEYS = new Set(['limit', 'thread', 'state', 'since', 'before']);
 
 /** Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so unknown keys — including any caller `root` —,
- * out-of-range limits and oversized or non-string threads are rejected
- * before the store is touched. The board always reads the server-owned
- * default fleet root. */
+ * out-of-range limits, oversized or non-string threads, and since/before
+ * values outside the shared time grammar are rejected before the store is
+ * touched. The board always reads the server-owned default fleet root. */
 function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardArgs | null {
-  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'], state = args['state'];
+  const limit = args['limit'] ?? WORK_BOARD_DEFAULT_LIMIT, thread = args['thread'], state = args['state'],
+    sinceRaw = args['since'], beforeRaw = args['before'];
   if (Object.keys(args).some(key => !WORK_BOARD_ARG_KEYS.has(key)) ||
     args['limit'] === null || args['thread'] === null || args['state'] === null ||
+    args['since'] === null || args['before'] === null ||
     typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > WORK_BOARD_MAX_LIMIT ||
     thread !== undefined && (typeof thread !== 'string' || thread.length > 512) ||
-    state !== undefined && (typeof state !== 'string' || !(WORK_ITEM_STATES as readonly string[]).includes(state))) return null;
-  return { limit, thread: thread as string | undefined, state: state as WorkItemState | undefined };
+    state !== undefined && (typeof state !== 'string' || !(WORK_ITEM_STATES as readonly string[]).includes(state)) ||
+    sinceRaw !== undefined && typeof sinceRaw !== 'string' ||
+    beforeRaw !== undefined && typeof beforeRaw !== 'string') return null;
+  const since = sinceRaw === undefined ? undefined : parseSince(sinceRaw as string);
+  const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw as string);
+  if (since !== undefined && (since === null || !Number.isSafeInteger(since) || since < 0)) return null;
+  if (before !== undefined && (before === null || !Number.isSafeInteger(before) || before < 0)) return null;
+  return { limit, thread: thread as string | undefined, state: state as WorkItemState | undefined,
+    since: since ?? undefined, before: before ?? undefined };
 }
 
 /** One bounded board read through the canonical listWorkBoard listing — the
@@ -193,7 +209,9 @@ function parseFleetWorkBoardArgs(args: Record<string, unknown>): FleetWorkBoardA
  * invocation clock stamped as `asOf`. */
 async function readFleetWorkBoard(input: FleetWorkBoardArgs) {
   const now = Date.now();
-  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread, state: input.state });
+  const board = listWorkBoard({ root: join(ashlrHome(), 'fleet'), now, limit: input.limit, channelRef: input.thread,
+    state: input.state, ...(input.since === undefined ? {} : { since: input.since }),
+    ...(input.before === undefined ? {} : { before: input.before }) });
   return { ...board, asOf: new Date(now).toISOString() };
 }
 
@@ -794,13 +812,15 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
     },
     {
       name: 'fleet_work_board',
-      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref and `state` keeps only items the classifier placed in that state — the response then also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
+      description: 'Read the shared work board: the recent durable bus requests newest first, each classified RECEIVED / ASSIGNED / RUNNING / BLOCKED / VERIFIED with state, asOf, source and missing evidence plus channel and channelRef — the same listWorkBoard listing as `ashlr fleet work-board`, never a second classifier. States are evidence only and grant no dispatch, claim or merge authority; routing labels are untrusted data, never authenticated identity, and the board never includes message bodies. An unreadable inbox reports inbox "unavailable", never an invented empty board. `limit` caps returned items (1–100, default 20), `thread` keeps one exact channel_ref, `state` keeps only items the classifier placed in that state, `since` keeps only requests received at or after the cutoff (15m, 2h, 1d, epoch ms or an ISO time) and `before` keeps only requests received strictly before its own cutoff on the same grammar — the pair reading one [since, before) window on the request\'s recorded receivedAt, the same bound every bus read applies; under `state` or a time bound the response also reports `matched`, the true filtered total across the whole settled scan before the cap. Reads the server-owned default fleet root only — no caller root, path or cwd is accepted — and the tool never writes, renews TTL, claims, dispatches or merges anything.',
       inputSchema: {
         type: 'object',
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: WORK_BOARD_MAX_LIMIT, default: 20 },
           thread: { type: 'string', maxLength: 512, description: 'Exact channel_ref filter such as a Slack <team>/<channel>/<threadTs>.' },
           state: { type: 'string', enum: [...WORK_ITEM_STATES], description: 'Keep only items classified into this state; matched reports the true filtered total before the display cap.' },
+          since: { type: 'string', description: 'Keep requests received at or after the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the same grammar `ashlr fleet work-board --since` takes.' },
+          before: { type: 'string', description: 'Keep requests received strictly before the cutoff: 15m, 2h, 1d, epoch ms or an ISO time — the exclusive upper bound composing with `since` into one [since, before) window; the same grammar `ashlr fleet work-board --before` takes.' },
         },
         additionalProperties: false,
       },
