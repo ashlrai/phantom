@@ -86,8 +86,13 @@ export function judgeRequiredChecks(
     let seenIncomplete = false;
     let seenFailure = false;
     for (const run of matched) {
-      if (run.status !== 'completed') seenIncomplete = true;
-      else if (run.conclusion === 'success') seenSuccess = true;
+      // A check run left at in_progress with a non-success conclusion already
+      // written is settled red (GitHub ghost state seen on release PR #8367).
+      // A success conclusion on an unsettled row stays pending, never green.
+      if (run.status !== 'completed') {
+        if (typeof run.conclusion === 'string' && run.conclusion !== '' && run.conclusion !== 'success') seenFailure = true;
+        else seenIncomplete = true;
+      } else if (run.conclusion === 'success') seenSuccess = true;
       else seenFailure = true;
     }
     if (seenIncomplete) pending = true;

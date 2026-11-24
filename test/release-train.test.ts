@@ -139,6 +139,15 @@ describe('release train', () => {
     expect(diverged.state.reason).toContain('compare_not_ahead: diverged');
   });
 
+  it('treats an in_progress check run that already carries a failure conclusion as settled red', () => {
+    const gate = (status: string, conclusion: string | null) => (
+      { name: 'Merge Gate', status, conclusion, appId: 15368 }
+    );
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('in_progress', 'failure')])).toBe('red');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('in_progress', 'success')])).toBe('pending');
+    expect(judgeRequiredChecks(['Merge Gate'], [gate('in_progress', null)])).toBe('pending');
+  });
+
   it('judges only named required checks and does not treat pending or later suites as red', () => {
     const gate = (status: string, conclusion: string | null) => (
       { name: 'Merge Gate', status, conclusion, appId: 15368 }

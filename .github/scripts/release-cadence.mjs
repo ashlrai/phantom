@@ -128,8 +128,16 @@ function judgeRequiredChecks(names, runs) {
     if (matched.length === 0) { pending = true; continue; }
     let seenSuccess = false, seenIncomplete = false, seenFailure = false;
     for (const run of matched) {
-      if (run.status !== 'completed') seenIncomplete = true;
-      else if (run.conclusion === 'success') seenSuccess = true;
+      // GitHub can leave a job's check run at status in_progress after its
+      // workflow run completed, with a non-success conclusion already set
+      // (observed on release PR #8367: Merge Gate stuck in_progress/failure
+      // for 27 hours). A conclusion is only written at completion, so a
+      // non-success conclusion is settled, the same as a completed failure.
+      // A success conclusion on an unsettled row stays pending.
+      if (run.status !== 'completed') {
+        if (typeof run.conclusion === 'string' && run.conclusion !== '' && run.conclusion !== 'success') seenFailure = true;
+        else seenIncomplete = true;
+      } else if (run.conclusion === 'success') seenSuccess = true;
       else seenFailure = true;
     }
     if (seenIncomplete) pending = true;
