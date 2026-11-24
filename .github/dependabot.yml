@@ -77,3 +77,20 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+
+  # Keeps the SHA pins on third-party actions current. Limit 0 matches the
+  # capacity hold above: version PRs stay off, Dependabot security updates
+  # for actions still open. Raise to 1 when the hold lifts.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:17"
+      timezone: America/New_York
+    open-pull-requests-limit: 0
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
