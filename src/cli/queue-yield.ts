@@ -16,8 +16,10 @@ export async function cmdQueueYield(args: string[]): Promise<number> {
   if (json) console.log(JSON.stringify(report));
   else if (!report.known) console.log('Generator yield: unknown (job metrics unavailable).');
   else {
-    console.log('Generator\tJobs\tPRs\tMerged\tEmpty rate\tMedian diff lines\tTokens per merged PR');
-    for (const r of report.generators) console.log(`${r.generator}\t${r.jobs}\t${r.prs}\t${r.merged}\t${r.emptyRate === null ? 'unknown' : `${(r.emptyRate * 100).toFixed(1)}%`}\t${r.medianDiffLines ?? 'unknown'}\t${r.tokensPerMergedPr ?? 'unknown'}`);
+    if (!report.generationKnown) console.log('Draft and rejection evidence unavailable.');
+    if (!report.jobsKnown) console.log('Launch and PR evidence unavailable.');
+    console.log('Generator\tDrafted\tRejected\tLaunched\tJobs\tPRs\tMerged\tEmpty rate\tMedian diff lines\tTokens per merged PR');
+    for (const r of report.generators) console.log(`${r.generator}\t${r.drafted}\t${r.rejected}\t${r.launched}\t${r.jobs}\t${r.prs}\t${r.merged}\t${r.emptyRate === null ? 'unknown' : `${(r.emptyRate * 100).toFixed(1)}%`}\t${r.medianDiffLines ?? 'unknown'}\t${r.tokensPerMergedPr ?? 'unknown'}`);
     console.log(`Malformed lines skipped: ${report.malformedLines}`);
   }
   return 0;

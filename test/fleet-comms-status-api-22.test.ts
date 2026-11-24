@@ -40,6 +40,89 @@ const absentTeammate = {
   sourceState: 'missing',
 };
 
+// These projections were added after the original route contract in #4493, #5026, #5460 and #5549.
+const defaultStatusExtensions = {
+  cutover: {
+    overall: {
+      blockers: [
+        'emailOutbox',
+        'ownerImessageIntake',
+        'ownerImessageDelivery',
+        'teammateImessageIntake',
+        'teammateImessageDelivery',
+        'gmailInboxTriage',
+        'linkedin',
+      ],
+      state: 'incomplete',
+    },
+    capabilities: {
+      emailOutbox: { nextStep: 'phm fleet email-outbox --json', reason: 'email-outbox-stuck-replies', state: 'blocked' },
+      emailPolling: { nextStep: 'phm comms diagnose --json', reason: 'email-polling-enabled', state: 'ready' },
+      gmailInboxTriage: { nextStep: 'phm fleet gmail-triage', reason: 'gmail-triage-evidence-missing', state: 'unverified' },
+      linkedin: { nextStep: 'phm comms diagnose --json', reason: 'no-local-evidence-for-linkedin', state: 'unverified' },
+      ownerImessageDelivery: { nextStep: 'phm imessage doctor --json', reason: 'OWNER_DELIVERY_NOT_VERIFIED', state: 'unverified' },
+      ownerImessageIntake: { nextStep: 'phm imessage doctor --json', reason: 'PLATFORM_UNSUPPORTED', state: 'unsupported' },
+      teammateImessageDelivery: { nextStep: 'phm comms diagnose --json', reason: 'SELF_ONLY_TRANSPORT', state: 'unsupported' },
+      teammateImessageIntake: { nextStep: 'phm comms diagnose --json', reason: 'VERIFIED_OWNER_ONLY', state: 'unsupported' },
+    },
+  },
+  sendPolicy: { channels: [], confirmed: false, teamIdentities: 0 },
+  slackReplies: {
+    answered: 0,
+    busFailed: 0,
+    busFailedSample: [],
+    oldestUnansweredAt: null,
+    sample: [],
+    state: 'missing',
+    uncertainRequests: 0,
+    uncertainSends: 0,
+    unanswered: 0,
+    unverified: 0,
+  },
+  channelHealth: {
+    asOf: NOW.toISOString(),
+    channels: [
+      {
+        asOf: NOW.toISOString(),
+        channel: 'slack',
+        configured: false,
+        lastInboundAt: null,
+        lastReplyAt: null,
+        missing: ['slack agent-network config not configured'],
+        processAlive: 'unknown',
+        proof: { futureDatedCount: 0, requestCoverage: 'idle' },
+        runtimeHost: null,
+        state: 'BLOCKED',
+        unansweredCount: 0,
+      },
+      {
+        asOf: NOW.toISOString(),
+        channel: 'imessage',
+        configured: false,
+        lastInboundAt: null,
+        lastReplyAt: null,
+        missing: ['imessage comms configuration not configured'],
+        processAlive: 'unknown',
+        proof: { futureDatedCount: 0, requestCoverage: 'idle' },
+        runtimeHost: null,
+        state: 'BLOCKED',
+        unansweredCount: 0,
+      },
+    ],
+    schemaVersion: 1,
+  },
+};
+
+const expectedSources = (emailOutbox: 'healthy' | 'missing') => ({
+  drafts: 'healthy',
+  emailOutbox,
+  imessage: 'healthy',
+  teammate: 'missing',
+  cutover: 'healthy',
+  sendPolicy: 'healthy',
+  slackReplies: 'healthy',
+});
+
 async function call(api: ApiModule, url = PATH, method = 'GET', allowDispatch = true) {
   let status = 404, text = '';
   const req = Object.assign(new PassThrough(), { url, method }) as IncomingMessage;
@@ -90,7 +173,8 @@ describe('fleet comms status route', () => {
       }),
       imessage: absentImessage,
       teammate: absentTeammate,
-      sources: { drafts: 'healthy', emailOutbox: 'healthy', imessage: 'healthy', teammate: 'missing' },
+      ...defaultStatusExtensions,
+      sources: expectedSources('healthy'),
     });
     // Counts only: no body, subject, address, file name or path crosses the wire.
     for (const secret of ['person@example.test', 'subject', 'reply.eml', runsDir, outbox, drop]) {
@@ -105,7 +189,7 @@ describe('fleet comms status route', () => {
     const result = await call(createFleetCommsStatusApi({ runsDir, outboxDir: outbox, now: () => NOW }));
     expect(result.status).toBe(200);
     expect(result.body.emailOutbox).toEqual({ configured: true, queued: 1, drafted: 0, sent: 0, stuck: 0, stuckReasons: {} });
-    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'healthy', imessage: 'healthy', teammate: 'missing' });
+    expect(result.body.sources).toEqual(expectedSources('healthy'));
     expect(result.body.imessage).toEqual(absentImessage);
     expect(result.body.teammate).toEqual(absentTeammate);
   });
@@ -118,7 +202,7 @@ describe('fleet comms status route', () => {
     expect(result.body.emailOutbox).toEqual({ configured: false, queued: 0, drafted: 0, sent: 0, stuck: 0, stuckReasons: {} });
     expect(result.body.drafts.pending).toBe(1);
     expect(Number.isNaN(Date.parse(result.body.drafts.oldestPendingAt))).toBe(false);
-    expect(result.body.sources).toEqual({ drafts: 'healthy', emailOutbox: 'missing', imessage: 'healthy', teammate: 'missing' });
+    expect(result.body.sources).toEqual(expectedSources('missing'));
     expect(result.body.imessage).toEqual(absentImessage);
     expect(result.body.teammate).toEqual(absentTeammate);
   });

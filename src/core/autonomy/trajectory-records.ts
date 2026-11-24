@@ -69,6 +69,7 @@ const DEFAULT_WINDOW_HOURS = 24;
 const DEFAULT_LIMIT = 200;
 const MAX_TRACE_EVENTS = 8;
 export const MIN_SKILL_OBSERVED_TRAJECTORIES = 3;
+const MAX_SKILL_OUTCOME_ROWS = 64;
 
 export type TrajectoryTimelineKind = 'dispatch' | 'proposal' | 'evidence' | 'decision' | 'post-merge' | 'agent-action';
 export type TrajectoryTerminalOutcome =
@@ -199,6 +200,33 @@ export interface TrajectorySkillObservationSummary {
   stageCounts?: Record<SkillUseStage, number>;
 }
 
+/** Outcome attribution for one skill revision across joined trajectories. */
+export interface TrajectorySkillOutcomeRow {
+  /** Bounded opaque skill identifier; never card content. */
+  skillId: string;
+  skillRevision: number;
+  /** Distinct trajectories where this skill revision was observed in use. */
+  selections: number;
+  /** Terminal outcomes of those trajectories (sparse: observed keys only). */
+  outcomes: Partial<Record<TrajectoryTerminalOutcome, number>>;
+  /** Deterministic post-merge outcomes observed on merged selections. */
+  realized?: Partial<Record<TrajectoryRealizedOutcome, number>>;
+}
+
+/**
+ * Per-skill outcome attribution for shadow skill observations. Present only
+ * when the skill-observation sample gate passes (`sampleState: 'observed'`);
+ * withheld otherwise so small samples never publish exact per-skill counts.
+ */
+export interface TrajectorySkillOutcomeSummary {
+  /** Distinct skill ids with at least one joined selection observation. */
+  skills: number;
+  /** Total skill-trajectory selection observations. */
+  selections: number;
+  /** Bounded per-skill rows, most selections first. */
+  perSkill: TrajectorySkillOutcomeRow[];
+}
+
 export interface TrajectoryRouteDiagnosticSummary {
   trajectories: number;
   reasonCounts: Record<GeneratedRepairRouteReason, number>;
@@ -260,8 +288,9 @@ export function suppressDegradedSkillObservation(
   eventState: 'none' | 'present',
 ): TrajectoryLearningStatus {
   const { skillUse: _skillUseCoverage, ...coverage } = status.coverage;
+  const { skillOutcomes: _skillOutcomes, ...rest } = status;
   return {
-    ...status,
+    ...rest,
     coverage,
     skillObservation: { eventState, sampleState: 'unavailable' },
     ...(status.recent ? { recent: status.recent.map((record) => {
@@ -302,6 +331,8 @@ export interface TrajectoryLearningStatus {
   routeDiagnostics?: TrajectoryRouteDiagnosticSummary;
   /** Observational skill telemetry, sample-gated separately from outcome eligibility. */
   skillObservation: TrajectorySkillObservationSummary;
+  /** Per-skill outcome attribution; emitted only at the observed sample gate. */
+  skillOutcomes?: TrajectorySkillOutcomeSummary;
   /** Capped, opaque, metadata-only route-to-outcome traces for operators. */
   traces: TrajectoryTraceSummary;
   gaps: Array<{ kind: keyof TrajectoryRecordCoverage; count: number; sampleRefs: string[] }>;
@@ -395,9 +426,18 @@ interface SkillObservationCounts {
   stageCounts: Record<SkillUseStage, number>;
 }
 
+/** A skill revision observed in use on one trajectory, with its resolved outcome. */
+interface TrajectorySkillSelectionOutcome {
+  skillId: string;
+  skillRevision: number;
+  terminalOutcome: TrajectoryTerminalOutcome;
+  realizedOutcome?: TrajectoryRealizedOutcome;
+}
+
 const skillObservationByRecords = new WeakMap<TrajectoryRecord[], SkillObservationCounts>();
 const dispatchTraceReadStateByRecords = new WeakMap<TrajectoryRecord[], TrajectoryTraceSummary['state']>();
 const skillObservationByRecord = new WeakMap<TrajectoryRecord, SkillObservationCounts>();
+const skillSelectionOutcomesByRecord = new WeakMap<TrajectoryRecord, TrajectorySkillSelectionOutcome[]>();
 const skillObservationDiagnosticsByRecord = new WeakMap<
   TrajectoryRecord,
   Pick<SkillObservationCounts, 'unjoined' | 'conflicting'>
@@ -1637,6 +1677,7 @@ function listTrajectoryRecordsAt(
   const skillObservation = emptySkillObservationCounts();
   const selectionKeysByRecord = new Map<string, Set<string>>();
   const skillObservationByRecordId = new Map<string, SkillObservationCounts>();
+  const skillSelectionsByRecordId = new Map<string, Map<string, { skillId: string; skillRevision: number }>>();
   for (const event of skillUses) {
     const aliases = aliasesFromIds({
       trajectoryId: cleanId(event.trajectoryId, 240),
@@ -1676,6 +1717,14 @@ function listTrajectoryRecordsAt(
     recordObservation.modeCounts[event.mode]++;
     recordObservation.stageCounts[event.stage]++;
     skillObservationByRecordId.set(record.id, recordObservation);
+    // One selection observation per trajectory per skill revision: lifecycle
+    // stages (selected/injected/applied/outcome) of the same use collapse.
+    const selectionKey = JSON.stringify([event.skillId, event.skillRevision]);
+    const selections = skillSelectionsByRecordId.get(record.id) ?? new Map<string, { skillId: string; skillRevision: number }>();
+    if (!selections.has(selectionKey)) {
+      selections.set(selectionKey, { skillId: event.skillId, skillRevision: event.skillRevision });
+      skillSelectionsByRecordId.set(record.id, selections);
+    }
   }
 
   const result = includedRecords
@@ -1700,6 +1749,17 @@ function listTrajectoryRecordsAt(
         resultRecord,
         skillObservationByRecordId.get(record.id) ?? emptySkillObservationCounts(),
       );
+      const selections = skillSelectionsByRecordId.get(record.id);
+      if (selections && selections.size > 0) {
+        skillSelectionOutcomesByRecord.set(
+          resultRecord,
+          [...selections.values()].map((selection) => ({
+            ...selection,
+            terminalOutcome: resultRecord.terminalOutcome,
+            ...(resultRecord.realizedOutcome ? { realizedOutcome: resultRecord.realizedOutcome } : {}),
+          })),
+        );
+      }
       skillObservationDiagnosticsByRecord.set(resultRecord, {
         unjoined: skillObservation.unjoined,
         conflicting: skillObservation.conflicting,
@@ -2271,6 +2331,41 @@ export function summarizeTrajectoryLearning(
     routeReasonCounts[generatedRepairRouteReason(record.routeSnapshot?.reason)]++;
   }
 
+  const skillOutcomeRows = new Map<string, {
+    skillId: string;
+    skillRevision: number;
+    selections: number;
+    outcomes: Partial<Record<TrajectoryTerminalOutcome, number>>;
+    realized: Partial<Record<TrajectoryRealizedOutcome, number>>;
+  }>();
+  const skillOutcomeSkillIds = new Set<string>();
+  let skillOutcomeSelections = 0;
+  if (publishSkillMetrics) {
+    for (const record of productionRecords) {
+      for (const selection of skillSelectionOutcomesByRecord.get(record) ?? []) {
+        const key = JSON.stringify([selection.skillId, selection.skillRevision]);
+        let row = skillOutcomeRows.get(key);
+        if (!row) {
+          row = {
+            skillId: selection.skillId,
+            skillRevision: selection.skillRevision,
+            selections: 0,
+            outcomes: {},
+            realized: {},
+          };
+          skillOutcomeRows.set(key, row);
+        }
+        row.selections += 1;
+        skillOutcomeSelections += 1;
+        skillOutcomeSkillIds.add(selection.skillId);
+        row.outcomes[selection.terminalOutcome] = (row.outcomes[selection.terminalOutcome] ?? 0) + 1;
+        if (selection.realizedOutcome) {
+          row.realized[selection.realizedOutcome] = (row.realized[selection.realizedOutcome] ?? 0) + 1;
+        }
+      }
+    }
+  }
+
   return {
     version: 1,
     windowHours,
@@ -2304,6 +2399,22 @@ export function summarizeTrajectoryLearning(
           sampleState,
         }
       : { eventState, sampleState },
+    ...(publishSkillMetrics ? {
+      skillOutcomes: {
+        skills: skillOutcomeSkillIds.size,
+        selections: skillOutcomeSelections,
+        perSkill: [...skillOutcomeRows.values()]
+          .sort((a, b) => b.selections - a.selections || a.skillId.localeCompare(b.skillId) || a.skillRevision - b.skillRevision)
+          .slice(0, MAX_SKILL_OUTCOME_ROWS)
+          .map((row) => ({
+            skillId: row.skillId,
+            skillRevision: row.skillRevision,
+            selections: row.selections,
+            outcomes: { ...row.outcomes },
+            ...(Object.keys(row.realized).length > 0 ? { realized: { ...row.realized } } : {}),
+          })),
+      },
+    } : {}),
     traces: projectTrajectoryTraces(records),
     gaps,
     recent: productionRecords.slice(0, 8).map((record) => ({

@@ -46,6 +46,7 @@ describe('readUsageSpend original preservation', () => {
     expect(spend.pools.find(row => row.pool === 'codex-personal')).toEqual({
       pool: 'codex-personal', reason: null, usedPercent: 100, resetAt: iso(NOW + 10 * HOUR_MS),
       hoursLeft: 10, burnPerHour: 0, projectedUnusedPercent: 0,
+      unit: 'percent', projectedUsedPercent: 100, remainingUsd: null, projectedUnusedUsd: null, verdict: 'used-up', status: 'exhausted', summary: 'used up', resetsIn: '10h 0m',
     });
     expect(spend.pools.filter(row => row.pool !== 'codex-personal')
       .every(row => row.reason !== null && row.usedPercent === null)).toBe(true);
@@ -63,6 +64,7 @@ describe('readUsageSpend original preservation', () => {
     expect(spend.pools.find(row => row.pool === 'claude')).toEqual({
       pool: 'claude', reason: null, usedPercent: 20, resetAt: iso(NOW + 10 * HOUR_MS),
       hoursLeft: 10, burnPerHour: 3, projectedUnusedPercent: 50,
+      unit: 'percent', projectedUsedPercent: 50, remainingUsd: null, projectedUnusedUsd: null, verdict: 'behind', status: 'behind', summary: 'behind: 50% would go unused', resetsIn: '10h 0m',
     });
     expect(spend.pools.find(row => row.pool === 'gemini'))
       .toMatchObject({ reason: 'reading incomplete or reset passed', ...unknownRow });
@@ -93,5 +95,14 @@ describe('readUsageSpend original preservation', () => {
       expect(spend.pools.length).toBeGreaterThan(0);
       expect(spend.pools.every(row => row.reason === 'status missing or stale' && row.usedPercent === null)).toBe(true);
     }
+  });
+
+  it('withholds an oversized ledger even when its JSON is valid', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const path = await statusFile(status({ claude: measured(20, iso(NOW + HOUR_MS), 3) }) + ' '.repeat(1024 * 1024));
+    const spend = await readUsageSpend(path);
+    expect(spend.asOf).toBeNull();
+    expect(spend.pools.every(row => row.usedPercent === null && row.burnPerHour === null)).toBe(true);
   });
 });

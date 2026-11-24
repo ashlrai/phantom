@@ -46,3 +46,10 @@ describe('companion tools block', () => {
     expect(block).toContain('never call `stack_add` or `stack_apply`');
   });
 });
+
+describe('context7 guidance', () => {
+  it('is named only when declared and forbids sending code or secrets', () => {
+    expect(companionToolsBlock(['context7'])).toContain('never code, secrets or task text');
+    expect(companionToolsBlock(['locus'])).not.toContain('context7');
+  });
+});

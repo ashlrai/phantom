@@ -64,6 +64,11 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(a['reason'])
         self.assertNotIn('LOADGATE', events(home))
 
+    def test_live_worktree_limit_scales_with_cores(self):
+        # 18 cores: max(GATE_WORKTREES_MAX 40, 4 x 18) = 72; a 4-core host keeps the 40 floor.
+        self.assertEqual(admission(self._case({'LOADGATE_NCPU': '18'}))['worktrees_max'], 72)
+        self.assertEqual(admission(self._case({'LOADGATE_NCPU': '4', 'LOADGATE_LOADAVG': '1.0'}))['worktrees_max'], 40)
+
     def test_load_over_twice_ncpu_stops_new_claims(self):
         # RQ-BATCH-SESSIONS-2: the host measured load1 352 on 18 cores; that must back off, not halve.
         home = self._case({'LOADGATE_NCPU': '18', 'LOADGATE_LOADAVG': '64'}, n=4,
@@ -124,7 +129,8 @@ class GateTests(unittest.TestCase):
             seed_cap(home, 64)   # an earlier tick already raised the adaptive cap past the 41 live sessions
         capacity = {'slot': devin_slot(target=64, ceiling=64, hard_cap=64, last_change=int(1e15)),
                     'top': {'hard_cap': 64}}
-        home = self._case({'LOADGATE_NCPU': '64'}, prep=prep, **capacity)
+        # GATE_WORKTREES_PER_CPU 0.5 x 64 cores = 32 keeps the 40 floor in force for this host.
+        home = self._case({'LOADGATE_NCPU': '64', 'GATE_WORKTREES_PER_CPU': '0.5'}, prep=prep, **capacity)
         self.assertEqual(launched(home), ['RQ-GATE-0'])
         self.assertEqual(admission(home)['worktrees'], 41)
         self.assertIn('worktrees 41 > 40', admission(home)['warnings'])
@@ -132,7 +138,7 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(admission(home)['reason'])
         self.assertIn('LOADGATE warn (non-tripping): worktrees 41 > 40', events(home))
         # 40 worktrees is the limit, not over it; they sit on the held claude lane so only the gate decides.
-        home = self._case({'LOADGATE_NCPU': '64'}, prep=lambda h: prep(h, 40), **capacity)
+        home = self._case({'LOADGATE_NCPU': '64', 'GATE_WORKTREES_PER_CPU': '0.5'}, prep=lambda h: prep(h, 40), **capacity)
         self.assertEqual(admission(home)['worktrees'], 40)
         self.assertEqual(admission(home)['warnings'], [])
 

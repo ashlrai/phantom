@@ -13,6 +13,9 @@ import {
 } from '../sensor-reading.js';
 import { parseResourceLiveSidecar, readResourceLiveFile } from './store.js';
 import { RESOURCE_LIVE_ALLOWANCES, type ResourceLiveReading } from './types.js';
+import { projectLaneHistory } from './history.js';
+import { readResourceHistoryFile } from './store.js';
+import type { LaneHistory } from './types.js';
 
 /** Pacing keys the world model reads from a sensor row. */
 export interface ResourceLivePaceRow {
@@ -23,6 +26,7 @@ export interface ResourceLivePaceRow {
 }
 
 export interface ResourceLiveFeed {
+  history?: Record<string, LaneHistory>;
   readings: UsageSensorReading[];
   pace: ResourceLivePaceRow[];
 }
@@ -48,7 +52,7 @@ function sensorRow(reading: ResourceLiveReading): UsageSensorReading | null {
     lane,
     observedAt: reading.observed_at,
     source: SENSOR_SOURCE[reading.source] ?? reading.source,
-    staleAfter: new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
+    staleAfter: reading.stale_after ?? new Date(Date.parse(reading.observed_at) + USAGE_SENSOR_STALE_MS).toISOString(),
     used: Math.round(reading.used * factor * 1000) / 1000,
     limit: Math.round(reading.limit * factor * 1000) / 1000,
     unit: reading.unit === 'acu' ? 'acu' : 'percent',
@@ -98,6 +102,7 @@ export function defaultResourceLiveRunsDir(): string {
 
 /** Live sensor rows and pacing from the sidecar. Never throws. */
 export async function loadResourceLiveFeed(nowMs: number, runsDir = defaultResourceLiveRunsDir()): Promise<ResourceLiveFeed> {
-  try { return projectResourceLiveFeed(await readResourceLiveFile(runsDir), nowMs); }
+  try { return { ...projectResourceLiveFeed(await readResourceLiveFile(runsDir), nowMs),
+    history: projectLaneHistory(await readResourceHistoryFile(runsDir), nowMs) }; }
   catch { return { readings: [], pace: [] }; }
 }

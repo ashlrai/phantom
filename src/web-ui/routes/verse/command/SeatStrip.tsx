@@ -19,7 +19,7 @@
 import { useCallback, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 import type { VerseHealthResponse } from '../../../../core/verse/health-types.js';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { getQuerySnapshot, subscribeQuery } from '../../../data/cache.js';
 import type { VerseSeat } from '../../../data/api-types.js';
@@ -46,7 +46,7 @@ function SeatTip({ item }: { item: SeatStripItem }) {
   return (
     <div className={styles.tip}>
       <div className={styles.tipHead}>
-        <ProviderLogo engine={item.engine} size={14} />
+        <BrandMark brand={item.engine} size={14} />
         <strong>{item.name}</strong>
       </div>
       <div>{item.status}{item.note && item.note !== item.status ? ` · ${item.note}` : ''}</div>
@@ -75,7 +75,7 @@ function SeatItem({ item }: { item: SeatStripItem }) {
         onClick={() => openResources()}
       >
         <span className={styles.head}>
-          <ProviderLogo engine={item.engine} size={14} className={styles.logo} />
+          <BrandMark brand={item.engine} size={14} className={styles.logo} />
           <span className={styles.name}>{item.name}</span>
           <span className={styles.value}>{item.value}</span>
         </span>

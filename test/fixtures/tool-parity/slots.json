@@ -1,0 +1,1 @@
+{ "claude": { "target": 8, "floor": 0, "ceiling": 12 }, "codex-cmp": { "target": 4, "floor": 0, "ceiling": 8 }, "codex-local": { "target": 4, "floor": 0, "ceiling": 8 }, "hard_cap": 40 }

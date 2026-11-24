@@ -30,6 +30,49 @@ async function publish(root: string, batch: ReturnType<typeof manifest>, job: st
 }
 
 describe('per-line batch session evidence', () => {
+  it('reports the top five 24h empty finish prefixes through queue JSON, independent of batch evidence', async () => {
+    const home = await fixture(), root = join(home, '.ashlr-runs'); vi.stubEnv('HOME', home);
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    const path = join(root, 'metrics', 'jobs.jsonl'), now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const row = (job: string, fields = {}) => JSON.stringify({ job, event: 'finish', empty: true, ts: new Date(now - 1000).toISOString(), ...fields });
+    const rows = [row('INC-d-codex-personal-3a2517a4'), row('INC-d-codex-personal-eeeeeeee'),
+      row('RQ-TESTA123456Q8'), row('RQ-TESTA654321Q8'), ...['C', 'D', 'E', 'F'].map(p => row(`RQ-${p}-1`)),
+      row('RQ-NONEMPTY', { empty: false }), row('RQ-NOOP', { event: 'outcome', state: 'DONE-NOOP' }),
+      row('RQ-OLD', { ts: new Date(now - 86400001).toISOString() }), row('RQ-FUTURE', { ts: new Date(now + 60000).toISOString() })];
+    await writeFile(path, rows.join('\n'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdQueue(['--json'])).toBe(0);
+    const report = JSON.parse(String(log.mock.calls[0][0]));
+    expect(report.evidence).toBe('unknown'); // No batch directory; metrics remain usable.
+    expect(report.emptyPrefixes).toEqual({ windowHours: 24, evidence: 'available', total: 8, malformedLines: 0,
+      top: [{ prefix: 'INC-d-codex-personal', count: 2 }, { prefix: 'RQ-TESTA', count: 2 },
+        ...['C', 'D', 'E'].map(p => ({ prefix: `RQ-${p}`, count: 1 }))] });
+    await writeFile(path, [...rows, rows[0], '{bad', row('../unsafe'), row('RQ-UNKNOWN', { empty: null }), row('RQ-NOZONE', { ts: '2026-11-16T12:00:00' })].join('\n'));
+    expect((await readQueueBatches(root)).emptyPrefixes).toMatchObject({ evidence: 'partial', total: 9, malformedLines: 4 });
+    await writeFile(path, ' '.repeat(16 * 1024 * 1024 + 1));
+    expect((await readQueueBatches(root)).emptyPrefixes.evidence).toBe('unknown');
+    await rm(path);
+    expect((await readQueueBatches(root)).emptyPrefixes).toMatchObject({ evidence: 'unknown', total: null, top: [] });
+    await writeFile(join(root, 'other.jsonl'), rows.join('\n'));
+    await symlink(join(root, 'other.jsonl'), path);
+    expect((await readQueueBatches(root)).emptyPrefixes.evidence).toBe('unknown');
+  });
+
+  it('counts empty finish rows across the jobs-ledger field dialect', async () => {
+    const home = await fixture(), root = join(home, '.ashlr-runs');
+    await mkdir(join(root, 'metrics'), { recursive: true });
+    const now = Date.now(), iso = (ms: number) => new Date(now + ms).toISOString();
+    await writeFile(join(root, 'metrics', 'jobs.jsonl'), [
+      JSON.stringify({ job_id: 'RQ-DIA-1', type: 'finish', empty: true, timestamp: iso(-1000) }),
+      JSON.stringify({ id: 'RQ-DIA-2', kind: 'finish', empty: true, at: iso(-2000) }),
+      JSON.stringify({ job: 'RQ-DIA-3', event: 'finish', empty: true, time: iso(-3000) }),
+      JSON.stringify({ job: 'RQ-DIA-9', event: 'outcome', state: 'MERGED', mergedAt: iso(-4000) }),
+    ].join('\n'));
+    expect((await readQueueBatches(root)).emptyPrefixes).toMatchObject({ evidence: 'available', total: 3, malformedLines: 0,
+      top: [{ prefix: 'RQ-DIA', count: 3 }] });
+  });
+
   it('exposes admission reasons through queue JSON and keeps stale or invalid evidence unknown', async () => {
     const root = await fixture(), runs = join(root, '.ashlr-runs'), path = join(runs, 'queue', 'ranking.json');
     await mkdir(join(runs, 'queue'), { recursive: true }); vi.stubEnv('HOME', root);
@@ -44,6 +87,15 @@ describe('per-line batch session evidence', () => {
       await writeFile(path, JSON.stringify(invalid));
       expect((await readQueueBatches(runs)).ranking).toBeNull();
     }
+  });
+
+  it('accepts the already-merged admission reason without degrading ranking to unknown', async () => {
+    const root = await fixture(), runs = join(root, '.ashlr-runs'), path = join(runs, 'queue', 'ranking.json');
+    await mkdir(join(runs, 'queue'), { recursive: true });
+    const ranking = { at: Date.now() / 1000, decisions: [{ job: 'RQ-A', mergeRate: null, sampledLaunches: 0,
+      unknownLaunches: 1, score: 1, reason: 'already-merged', outcome: 'DONE-NOOP' }] };
+    await writeFile(path, JSON.stringify(ranking));
+    expect((await readQueueBatches(runs)).ranking).toEqual(ranking);
   });
 
   it('reports 12 outcomes in 3 sessions, isolates failure and preserves empty reasons and auto-merge evidence', async () => {

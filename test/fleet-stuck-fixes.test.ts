@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cmdFleetStuckFixes } from '../src/cli/fleet-stuck-fixes.js';
+import { findStuckFixes } from '../src/core/fleet/stuck-fixes.js';
 
 const now = '2026-11-02T12:00:00.000Z';
 const pub = (job: string, url: string, ts: string, extra: Record<string, unknown> = {}) =>
@@ -48,6 +49,22 @@ async function run(argv: string[], present: Record<string, string> = files) {
 const base = ['--jobs', '/jobs', '--json'];
 
 describe('fleet stuck-fixes', () => {
+  it('reads jobs-ledger dialect spellings for stamps, phases and PR links', () => {
+    const nowMs = Date.parse(now);
+    // A conclusion-stamped MERGED outcome still resolves the job; without the
+    // dialect keys the outcome is invisible and the publish looks stuck.
+    const resolved = findStuckFixes([
+      pub('FIXUP-MAIN-phantom-a1f206c', PR_OLD, '2026-11-02T11:00:00Z'),
+      JSON.stringify({ event: 'outcome', job: 'FIXUP-MAIN-phantom-a1f206c', conclusion: 'MERGED', updatedAt: '2026-11-02T11:30:00Z' }),
+    ].join('\n'), nowMs);
+    expect(resolved.stuck).toEqual([]);
+    // html_url + recordedAt carry the same publish evidence as url + ts.
+    const stuck = findStuckFixes([
+      JSON.stringify({ event: 'publish', class: 'pr', job: 'FIXUP-MAIN-lexicon-e5f6a7b', html_url: PR_STALE, recordedAt: '2026-11-02T11:18:00Z' }),
+    ].join('\n'), nowMs);
+    expect(stuck.stuck.map(s => s.job)).toEqual(['FIXUP-MAIN-lexicon-e5f6a7b']);
+    expect(stuck.stuck[0]!.prUrl).toBe(PR_STALE);
+  });
   it('lists FIXUP-MAIN jobs with a PR url, no MERGED/CLOSED outcome and age over 20 min', async () => {
     const { code, report } = await run(base);
     expect(code).toBe(0);

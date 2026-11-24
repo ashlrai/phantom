@@ -9,6 +9,7 @@ import { readFleetSlackEvidence } from '../src/mcp/fleet-slack-evidence.js';
 
 const thread = '1731000000.000100';
 const channelId = 'C0FAKE0001';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 const messageTs = '1731000010.000100';
 const sibling = '1731000020.000100';
 const privateSentinel = 'private-fixture-sentinel';
@@ -31,10 +32,10 @@ describe('fleet_slack_evidence real disk loss over MCP', () => {
     mkdirSync(stateRoot);
     const journalBody = [messageTs, sibling].map((ts, i) => JSON.stringify({
       at: `2024-11-07T12:00:0${i}.000Z`, decision: 'ingested', bus: 'posted',
-      channelId, threadTs: thread, messageTs: ts, reason: privateSentinel,
+      channelId, threadTs: thread, messageTs: ts, reason: privateSentinel, requestId: fakeRequestId(`470s:${ts}`),
     })).join('\n') + '\n';
     const sendsBody = JSON.stringify({ version: 1, messages: {
-      fake: { channel: channelId, thread, state: 'sent', ts: '1731002390.000100', clientId: privateSentinel },
+      [replyKey(fakeRequestId(`470s:${messageTs}`))]: { channel: channelId, thread, state: 'sent', ts: '1731002390.000100', clientId: privateSentinel },
     } });
     const restore = (path: string, body: string) => {
       rmSync(path, { recursive: true, force: true });

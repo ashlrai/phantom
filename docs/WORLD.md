@@ -30,6 +30,8 @@ phm claim release repo:ashlrai/phantom --lane claude --reason merge --json
 
 A path that is not in the snapshot returns `{ "path", "freshness": "unknown", "value": null }`.
 
+`sensors.lanes[].history` optionally carries hourly measured allowance points (with gap flags), measured burn, exhaustion and reset times; the Fable lane is unchanged.
+
 ```sh
 HOME=$(mktemp -d) npm run test:ci -- test/world-model.test.ts
 ```

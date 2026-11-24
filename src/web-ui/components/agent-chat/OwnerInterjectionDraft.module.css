@@ -1,0 +1,14 @@
+.card { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-surface); color: var(--text-primary); min-width: 0; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.heading h3 { margin: 0; font-size: var(--text-sm-size); }
+.badge { border: 1px solid var(--border-subtle); border-radius: 999px; padding: var(--space-1) var(--space-2); color: var(--text-secondary); white-space: nowrap; font-size: var(--text-xs-size); }
+.scope, .hint { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: var(--text-xs-size); line-height: var(--text-xs-line-relaxed); }
+.scope strong { color: var(--text-primary); font-weight: 500; }
+.label { font-size: var(--text-sm-size); font-weight: 500; }
+.card textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: calc(var(--control-h) * 3); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-input); color: inherit; font: inherit; line-height: 1.5; }
+.card textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.preview { min-width: 0; font-size: var(--text-xs-size); }
+.preview summary { cursor: pointer; color: var(--text-secondary); }
+.preview pre { padding: var(--space-3); background: var(--bg-code); border-radius: var(--radius-md); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); }
+@media (max-width: 420px) { .heading { align-items: flex-start; } .card { padding: var(--space-3); } }

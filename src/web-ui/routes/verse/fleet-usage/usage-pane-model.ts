@@ -10,7 +10,7 @@
  * field-by-field (like fleet-events-model) so a drifted or partial body
  * degrades to nothing rather than throwing at render time.
  */
-import type { Account, AccountCredits, AccountProvider, AccountsSnapshot } from '../usage/usage-contract.js';
+import type { Account, AccountCredits, AccountProvider, AccountsSnapshot, WindowPeriod } from '../usage/usage-contract.js';
 import { visibleWindows, windowNote } from '../usage/provider-windows.js';
 import { formatRelative } from '../autonomy/format.js';
 import { usedPercentText } from '../percent-text.js';
@@ -30,6 +30,8 @@ export interface UsageWindowRow {
   resetDescription: string | null;
   limitReached: boolean;
   measured: boolean;
+  /** When the window began, where the accounts read says (usage-contract WindowPeriod); absent = not known. */
+  period?: WindowPeriod | null;
 }
 
 export interface UsageRow {
@@ -73,6 +75,7 @@ export function rowsFromAccounts(snapshot: AccountsSnapshot | null): UsageRow[] 
         resetDescription: w.resetDescription,
         limitReached: w.limitReached,
         measured: w.measured,
+        ...(w.period ? { period: w.period } : {}),
       })),
       note: windowNote(account.provider),
       observedAt: account.observedAt,

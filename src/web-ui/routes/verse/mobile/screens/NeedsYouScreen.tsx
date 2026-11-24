@@ -43,6 +43,7 @@ import { useQuery, useRefetch } from '../../../../data/hooks.js';
 import type { QuestionFormStore } from '../../leader/LeaderQuestionForm.js';
 const TypedQuestionForm = lazy(() => import('../../leader/LeaderQuestionForm.js'));
 
+import { AsksCard } from '../AsksCard.js';
 import { MobileComposer } from '../MobileComposer.js';
 import { answerLeaderQuestion } from '../../leader/thread-data.js';
 import { needsYouQuestionText, questionIdOfNeedsYouItem } from '../../leader/question-id.js';
@@ -690,6 +691,7 @@ export function NeedsYouScreen() {
         <Banner>Can’t reach your Mac. Showing what was waiting ({sinceText(activity.updatedAt).toLowerCase()}); actions are off until it answers.</Banner>
       ) : null}
       {!canAct && permissions.actReason ? <Banner tone="info">{permissions.actReason}</Banner> : null}
+      <AsksCard />
 
       {data ? (
         <div className={cx(ui.chips, styles.splits)} role="group" aria-label="Filter">

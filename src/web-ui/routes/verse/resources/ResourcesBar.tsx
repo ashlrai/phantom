@@ -3,8 +3,9 @@
  * rail foot (3.11.1).
  *
  * One row per resource the operator runs on — each paid account (provider
- * mark + a battery showing how much of its binding window is LEFT), the local
- * models, and recorded credit grants. Supporting session logs, estimates and
+ * mark + the shared WindowBar showing how much of its binding window is USED,
+ * with the reserve and the time gone where they are known), the local
+ * models (a readiness dot: they are not metered), and recorded credit grants. Supporting session logs, estimates and
  * tracked budgets are available under their own disclosure. Hover (or keyboard focus) shows the detail: every
  * window with its reset, the reserve kept for Mason, the account's state.
  * Native and credit rows open the Resources drawer; saved Bot profiles open
@@ -19,9 +20,12 @@
  */
 import { codexCreditsAvailable } from '../../../../core/resources/codex-credits.js';
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle } from './codex-credit-value.js';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { WindowBar } from '../../../components/primitives/WindowBar.js';
+import { elapsedWords, leadWords, windowPace } from '../fleet-usage/window-pace-model.js';
+import { railBar, railMetered, type RailBar, type RailLevel } from './rail-bar.js';
 import { formatMetric } from '../../../components/charts/format-metric.js';
-import { ProviderLogo } from '../../../components/primitives/ProviderLogo.js';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { IconChevronDown, IconChevronUp } from '../../../components/primitives/icons.js';
 import { Tooltip } from '../../../components/primitives/Tooltip.js';
 import { getQuerySnapshot, subscribeQuery } from '../../../data/cache.js';
@@ -61,7 +65,7 @@ import { LazyProviderResourceGroups } from './useResourceDisplayClock.js';
 import { firstReadSession, markFirstReadAttempted, shouldAutoCheck } from './first-read.js';
 import { refreshAccountReading } from '../useSeatsRefresh.js';
 
-type Level = 'ok' | 'low' | 'out' | 'idle' | 'unknown';
+type Level = RailLevel;
 
 // Match the Codex seat's binding-window thresholds for a measured percentage.
 function personalLevel(left: number | null): Level {
@@ -83,6 +87,8 @@ export interface BarRow {
   /** Raw provider reading retained here; display metadata formats it at render. */
   exactCreditBalance?: string;
   display?: ResourceDisplayView;
+  /** The binding window's reserve and time gone, only from a current reading; absent = neither is known. */
+  window?: { kept: number | null; elapsed: number | null; pace: string | null };
   /** Spoken + hover summary. */
   summary: string;
   detail: string[];
@@ -142,7 +148,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
         engine: 'local',
         name: row.localCount > 1 ? `Local models (${formatMetric(row.localCount)})` : 'Local model',
         leftPercent: null,
-        // An unread runtime is not "ready": the battery must say what the
+        // An unread runtime is not "ready": the readiness dot must say what the
         // hover summary does ("readiness not reported"), as Command's strip does.
         level: opts.localReadFailed ? 'unknown' : row.cls === 'blocked' ? 'out' : row.cls === 'unread' ? 'unknown' : 'idle',
         value: row.cls === 'unread' ? 'not reported' : `${opts.localReadFailed ? 'last ' : ''}${row.cls === 'blocked' ? 'offline' : 'ready'}`,
@@ -213,7 +219,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     const subscriptionValue = subscriptionUsed !== null && subscriptionUsed !== undefined
       ? `${usedPercentText(subscriptionUsed)} used${binding?.limitReached && subscriptionUsed < 100 ? ' · limit reached' : ''}`
       : binding?.limitReached ? 'limit reached' : null;
-    // Credit availability/holds do not change the subscription battery's state.
+    // Credit availability/holds do not change the subscription bar's state.
     const level = row.kind === 'subscription' && !display.usage.current && !row.signedOut ? 'unknown' : row.engine === 'codex' && !row.lastReading && !row.signedOut
       ? left === null ? 'unknown' : left === 0 ? 'out' : left < 20 ? 'low' : 'ok' : LEVEL_OF_STATUS[status.kind] ?? 'unknown';
     const value = !display.usage.current && subscriptionValue !== null && !row.signedOut ? `${subscriptionValue} · last` : row.engine === 'codex' && subscriptionValue !== null && !row.signedOut
@@ -231,6 +237,11 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
     if (row.windows.length === 0) detail.push('Usage is not reported by this resource.');
     if (row.lastReading) detail.push('Last known usage · latest check failed.');
     if (row.reserve) detail.push(row.reserve.label);
+    // Time gone is read only against a current reading: a retained one may describe an earlier window.
+    const pace = binding && display.usage.current ? windowPace({ usedPercent: binding.usedPercent, resetsAt: binding.resetsAt, limitReached: binding.limitReached, measured: binding.usedPercent !== null, period: binding.period }, opts.now) : null;
+    const paceText = pace ? [elapsedWords(pace), leadWords(pace)].filter(Boolean).join(' · ') : null;
+    if (paceText) detail.push(`${binding!.label.charAt(0).toUpperCase()}${binding!.label.slice(1)}: ${paceText}`);
+    const kept = binding?.binding && row.reserve?.percent ? row.reserve.percent : null;
     if (row.quotaCurrent === false) detail.push('Last known usage · current usage and resets unconfirmed.');
     if (status.usableAgain) detail.push(`Usable again ${status.usableAgain}`);
     out.push({
@@ -240,6 +251,7 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
       leftPercent: row.signedOut ? null : row.engine === 'codex' ? left : row.windows.some((w) => w.binding && w.limitReached) || status.kind === 'spent' ? 0 : left,
       level: left === null && level === 'ok' ? 'unknown' : level,
       value,
+      ...(pace || kept !== null ? { window: { kept, elapsed: pace?.elapsedPct ?? null, pace: paceText } } : {}),
       ...(creditLabel === undefined ? {} : { creditLabel, creditHeld }),
         ...(exactCreditBalance === undefined ? {} : { exactCreditBalance }),
       summary: `${row.label}${surfaceLabel}: ${status.label}${status.detail ? ` · ${status.detail}` : ''}${row.engine === 'codex' ? ` · subscription ${value}` : ''}${creditSummary}${creditValue !== null ? ` · estimated credit value ${creditValue}` : ''}`,
@@ -265,21 +277,24 @@ export function barRows(rows: readonly CapacityRow[], opts: { healthRead: boolea
   });
 }
 
-function Battery({ left, level, vertical }: { left: number | null; level: Level; vertical: boolean }) {
-  const fill = left === null ? (level === 'idle' ? 100 : 0) : Math.max(left > 0 ? 6 : 0, left);
-  return (
-    <span className={styles.battery} data-level={level} data-unknown={left === null && level !== 'idle' || undefined} data-vertical={vertical || undefined} aria-hidden="true">
-      <span className={styles.cell} style={{ '--fill': `${fill}%` } as CSSProperties} />
-      <span className={styles.nub} />
-    </span>
-  );
+/** One row's usage on the shared bar: a full bar beside the value in the labelled rail, a hairline under the mark when collapsed. */
+function RailMeter({ label, text, bar, expanded }: { label: string; text: string; bar: RailBar; expanded: boolean }) {
+  return <WindowBar className={styles.meter} label={label} valueText={text} valueNow={bar.valueNow} used={bar.used} more={bar.more}
+    kept={bar.kept} elapsed={expanded ? bar.elapsed : null} size={expanded ? 'bar' : 'edge'} ending={bar.ending} />;
+}
+
+/** An account row: its binding window on the bar, or a readiness dot for a resource that is not metered. */
+function AccountMeter({ row, expanded }: { row: BarRow; expanded: boolean }) {
+  if (!railMetered(row.engine)) return <i className={styles.ready} data-ready={row.level} aria-hidden="true" />;
+  const bar = railBar({ left: row.leftPercent, level: row.level, current: row.display?.usage.current !== false, kept: row.window?.kept, elapsed: row.window?.elapsed });
+  return <RailMeter label={`${row.name} used`} text={bar.ending !== 'unread' && row.window?.pace ? `${row.value}, ${row.window.pace}` : row.value} bar={bar} expanded={expanded} />;
 }
 
 function RowTip({ row }: { row: BarRow }) {
   return (
     <div className={styles.tip}>
       <div className={styles.tipHead}>
-        <ProviderLogo engine={row.engine} size={14} />
+        <BrandMark brand={row.engine} size={14} />
         <strong>{row.name}</strong>
       </div>
       <div className={styles.tipSummary} title={nativeCreditBalanceTitle(row.exactCreditBalance) ?? undefined}>{row.summary.slice(row.name.length + 2)}</div>
@@ -293,7 +308,7 @@ function RowTip({ row }: { row: BarRow }) {
 
 export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; now?: number }) {
   // With the budget view, like the drawer: for seats like Claude and Grok the
-  // window readings arrive through it, so without it the batteries read empty.
+  // window readings arrive through it, so without it the bars read as no reading.
   const data = useCapacityData();
   const cloudRead = useQuery(cloudCreditsQuery);
   const devinRead = useQuery(devinQuery);
@@ -324,6 +339,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const proactiveRead = useQuery(proactiveProfilesQuery, { enabled: resources.bar });
   const creditRead = useQuery(creditPoolsQuery, { enabled: resources.bar, freshMs: 15_000 });
   const observeRead = useQuery(observeQuery, { enabled: resources.bar, freshMs: 60_000 });
+  const usageWindows = observeRead.data?.usage?.windows;
+  const observationsAvailable = Array.isArray(usageWindows) && usageWindows.every(window => window && typeof window.lane === 'string');
   const refreshCredits = useRefetch(creditPoolsQuery);
   const devin = devinRead.data?.value ?? null;
   const [coldStartedAt] = useState(() => Date.now());
@@ -374,12 +391,14 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     void drainFirstReadQueue();
   }, [capacityRows, data.loading, documentVisible]);
   const rows = useMemo(
-    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observeRead.data?.usage.windows ?? null),
-    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observeRead.data],
+    () => applySensorHeadroom(barRows(capacityRows, { healthRead: data.health !== null, now, maxAgeMs: data.budget?.readingMaxAgeMs, localReadFailed: data.localReadFailed, pendingSeatIds: data.pendingSeatIds, devinConsumption: devin?.consumption }), observationsAvailable ? usageWindows : null),
+    [capacityRows, data.health, data.budget, data.localReadFailed, data.pendingSeatIds, now, devin?.consumption, observationsAvailable, usageWindows],
   );
   const cloud = cloudRead.data?.credits ?? null;
   const cloudLeft = cloud && cloud.totalUsd > 0 ? (cloud.remainingUsd / cloud.totalUsd) * 100 : null;
   const cloudLevel: Level = !cloud ? 'unknown' : cloud.remainingUsd <= 0 ? 'out' : (cloudLeft ?? 0) < 20 ? 'low' : 'ok';
+  const cloudBar = railBar({ left: cloudLeft, level: cloudLevel });
+  const cloudText = cloud ? `about ${formatUsd(cloud.remainingUsd)} of ${formatUsd(cloud.totalUsd)} left, an estimate` : 'no estimate';
   // 3.15: Devin joins the bar only once it is connected and turned on.
   const devinShown = devin !== null && devin.status.enabled && devin.status.connected;
   const devinAccountingKnown = devin !== null && (devin.budget.accountingState === undefined || devin.budget.accountingState === 'ready');
@@ -391,6 +410,13 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const devinUsed = devinAccountingKnown && devin && Number.isFinite(devinReported) && devinReported !== undefined && devin.budget.acuBudgetTotal > 0
     ? Math.min(100, Math.max(0, devinReported / devin.budget.acuBudgetTotal * 100)) : null;
   const devinLevel: Level = !devinAccountingKnown ? 'unknown' : devin.budget.paused || devinAvailable <= 0 ? 'out' : (devinLeft ?? 0) < 20 ? 'low' : 'ok';
+  // On the bar the held exposure is drawn lighter after the reported use; it is never added to it.
+  const devinHeld = devinAccountingKnown && devin && devinUsage && devin.budget.acuBudgetTotal > 0 ? devinUsage.held / devin.budget.acuBudgetTotal * 100 : null;
+  const devinBar = railBar({ left: devinLeft, level: devinLevel, held: devinHeld });
+  const devinBarLabel = `Devin tracked budget used${devinUsage ? ' or held' : ''}`;
+  const devinBarText = devinAccountingKnown && devin
+    ? `${formatAcu(devinAvailable)} of ${formatAcu(devin.budget.acuBudgetTotal)} ${devinUsage ? `available, ${formatAcu(devinUsage.reported)} reported used, ${formatAcu(devinUsage.held)} held` : 'left'}`
+    : 'capacity unknown';
   // Admission is separate from tracked capacity and from provider quota readings.
   const devinNewChatPause = devin?.budget.canLaunch?.ok === false
     ? devin.budget.canLaunch.reason ?? 'The Devin budget refused another session.' : null;
@@ -414,11 +440,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <ProviderLogo engine={row.engine} size={14} className={styles.logo} />
+                  <BrandMark brand={row.engine} size={14} className={styles.logo} />
                   <span className={styles.name}>{row.engine === 'grok' && row.name === 'Grok' ? 'Grok Build' : row.name}</span>
                 </span>
                 <span className={styles.line}>
-                  <Battery left={row.leftPercent} level={row.level} vertical={false} />
+                  <AccountMeter row={row} expanded />
                   <span className={styles.value}>{row.value}</span>
                 </span>
                 {row.display ? <span id={`usage-stamp-${row.key}`} className={styles.usageStamp}>{row.display.usage.label}
@@ -430,8 +456,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
               </>
             ) : (
               <>
-                <ProviderLogo engine={row.engine} size={14} className={styles.logo} />
-                <Battery left={row.leftPercent} level={row.level} vertical />
+                <BrandMark brand={row.engine} size={14} className={styles.logo} />
+                <AccountMeter row={row} expanded={false} />
               </>
             )}
           </button>
@@ -463,9 +489,9 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     <Tooltip content={<RowTip row={personalRow} />} placement="right">
       <button type="button" className={styles.row} data-level={personalRow.level}
         aria-label={`${personalRow.summary}. Open Resources`} onClick={() => openResources()}>
-        <span className={styles.line}><ProviderLogo engine="codex" size={14} className={styles.logo} />
+        <span className={styles.line}><BrandMark brand="codex" size={14} className={styles.logo} />
           {expanded ? <span className={styles.name}>{personalRow.name}</span> : null}</span>
-        <span className={styles.line}><Battery left={personalLeft} level={personalRow.level} vertical={!expanded} />
+        <span className={styles.line}><RailMeter label="Codex personal weekly used" text={personalRow.value} bar={railBar({ left: personalLeft, level: personalRow.level, current: personalCurrent })} expanded={expanded} />
           {expanded ? <span className={styles.value}>{personalRow.value}</span> : null}</span>
       </button>
     </Tooltip>
@@ -479,7 +505,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     entries.push({ key: `proactive:${profile.id}`, name, content: (
       <Tooltip placement="right" content={
         <div className={styles.tip}>
-          <div className={styles.tipHead}><ProviderLogo engine="grok" size={14} /><strong>{name}</strong></div>
+          <div className={styles.tipHead}><BrandMark brand="grok" size={14} /><strong>{name}</strong></div>
           <div className={styles.tipSummary}>{preference} · usage unknown</div>
           <div className={styles.tipLine}>Weekly Bot allowance and reset unknown. Separate from Grok Build and xAI API credits.</div>
           <div className={styles.tipLine}>Saved account: {profile.identity.accountId} · agent: {profile.identity.agentId}. Provider binding unverified.</div>
@@ -491,7 +517,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           aria-label={`${name}: ${preference.toLowerCase()}, usage and reset unknown. Open Proactive agents`}
           onClick={() => { closeResources(); setVerseSection('agents', 'proactive-agents'); }}>
           <span className={styles.line}>
-            <ProviderLogo engine="grok" size={14} className={styles.logo} />
+            <BrandMark brand="grok" size={14} className={styles.logo} />
             {expanded ? <span className={styles.name}>{name}</span> : null}
           </span>
           {expanded ? <span className={styles.credits}>{resources.compact ? 'Unknown' : `${preference} · usage unknown`}</span> : null}
@@ -512,7 +538,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
     entries.push({ key: 'budget:claude-api-promotions', name: 'Claude API promotion', content: (
       <Tooltip placement="right" content={
         <div className={styles.tip}>
-          <div className={styles.tipHead}><ProviderLogo engine="claude" size={14} /><strong>Claude API promotion</strong></div>
+          <div className={styles.tipHead}><BrandMark brand="claude" size={14} /><strong>Claude API promotion</strong></div>
           {apiGrants.map((grant, index) => {
             const display = apiGrantDisplay(grant);
             return <div key={index}>
@@ -529,7 +555,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
           aria-label={`Claude API promotion: ${amount}. Automatic use held. Open Resources`}
           title={recordedTitle} onClick={() => openResources()}>
           <span className={styles.line}>
-            <ProviderLogo engine="claude" size={14} className={styles.logo} />
+            <BrandMark brand="claude" size={14} className={styles.logo} />
             {expanded ? <span className={styles.name}>Claude API promotion</span> : null}
           </span>
           <span className={styles.credits}>
@@ -543,7 +569,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <Tooltip
           content={
             <div className={styles.tip}>
-              <div className={styles.tipHead}><ProviderLogo engine="claude" size={14} /><strong>Cloud estimate</strong></div>
+              <div className={styles.tipHead}><BrandMark brand="claude" size={14} /><strong>Cloud estimate</strong></div>
               <div className={styles.tipSummary}>{formatUsd(cloud.remainingUsd)} of {formatUsd(cloud.totalUsd)} left · estimate</div>
               <div className={styles.tipLine}>{formatMetric(cloud.running)} running · {formatMetric(cloud.sessionsToday)} today</div>
               <div className={styles.tipHint}>Click for Resources · ⌘.</div>
@@ -561,18 +587,18 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <span className={styles.cloudLogo}><ProviderLogo engine="claude" size={14} className={styles.logo} /></span>
+                  <span className={styles.cloudLogo}><BrandMark brand="claude" size={14} className={styles.logo} /></span>
                   <span className={styles.name}>Cloud estimate</span>
                 </span>
                 <span className={styles.line}>
-                  <Battery left={cloudLeft} level={cloudLevel} vertical={false} />
+                  <RailMeter label="Cloud estimate spent" text={cloudText} bar={cloudBar} expanded />
                   <span className={styles.value}>{formatUsd(cloud.remainingUsd)} est.</span>
                 </span>
               </>
             ) : (
               <>
-                <span className={styles.cloudLogo}><ProviderLogo engine="claude" size={14} className={styles.logo} /></span>
-                <Battery left={cloudLeft} level={cloudLevel} vertical />
+                <span className={styles.cloudLogo}><BrandMark brand="claude" size={14} className={styles.logo} /></span>
+                <RailMeter label="Cloud estimate spent" text={cloudText} bar={cloudBar} expanded={false} />
               </>
             )}
           </button>
@@ -582,7 +608,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         <Tooltip
           content={
             <div className={styles.tip}>
-              <div className={styles.tipHead}><ProviderLogo engine="devin" size={14} className={styles.logo} /><strong>Devin budget</strong></div>
+              <div className={styles.tipHead}><BrandMark brand="devin" size={14} className={styles.logo} /><strong>Devin budget</strong></div>
               <div className={styles.tipSummary}>{devinAccountingKnown ? <>{formatAcu(devinAvailable)} of {formatAcu(devin.budget.acuBudgetTotal)} {devinUsage ? 'available' : 'left'} · tracked budget{devin.budget.paused ? ' · paused' : ''}</> : 'Local budget capacity unknown · task evidence unavailable'}</div>
               {devinUsage ? <div className={styles.tipLine}>{formatAcu(devinUsage.reported)} reported usage + adjustment · {formatAcu(devinUsage.held)} held exposure</div> : null}
               {devinAccountingKnown ? <div className={styles.tipLine}>{formatMetric(devin.budget.running)} running · {formatMetric(devin.budget.sessionsToday)} today</div> : null}
@@ -603,11 +629,11 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
             {expanded ? (
               <>
                 <span className={styles.line}>
-                  <ProviderLogo engine="devin" size={14} className={styles.logo} />
+                  <BrandMark brand="devin" size={14} className={styles.logo} />
                   <span className={styles.name}>Devin budget</span>
                 </span>
                 <span className={styles.line}>
-                  <Battery left={devinLeft} level={devinLevel} vertical={false} />
+                  <RailMeter label={devinBarLabel} text={devinBarText} bar={devinBar} expanded />
                   <span className={styles.value}>{devinAccountingKnown ? `${formatAcu(devinAvailable)} budget` : 'Capacity unknown'}</span>
                 </span>
                 {devinUsed !== null ? <span className={styles.line}><span className={styles.value}>{usedPercentText(devinUsed)} of tracked budget used</span></span> : null}
@@ -615,8 +641,8 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
               </>
             ) : (
               <>
-                <ProviderLogo engine="devin" size={14} className={styles.logo} />
-                <Battery left={devinLeft} level={devinLevel} vertical />
+                <BrandMark brand="devin" size={14} className={styles.logo} />
+                <RailMeter label={devinBarLabel} text={devinBarText} bar={devinBar} expanded={false} />
               </>
             )}
           </button>
@@ -628,7 +654,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
   const primaryIds = new Set(rows.map(row => `account:${row.key}`));
   // Recorded API funding is a distinct resource, unlike a session-log view or estimate.
   primaryIds.add('budget:claude-api-promotions');
-  // Once the world snapshot is in hand, subscription batteries are evidence.
+  // Once the world snapshot is in hand, subscription bars are evidence.
   // The glance is one world-model lane per row.
   const demotedAccount = (key: string) => worldLive && key.startsWith('account:');
   const evidenceCount = ordered.filter(entry => demotedAccount(entry.key) || !primaryIds.has(entry.key)).length;
@@ -697,6 +723,7 @@ export function ResourcesBar({ expanded, now: fixedNow }: { expanded: boolean; n
         {providerView ? 'Show account view' : 'Group by provider'}
       </button> : null}
       <span className={styles.visuallyHidden} role="status">{announcement}</span>
+      {(observeRead.data !== undefined || observeRead.error) && !observationsAvailable ? <span role="status">Usage observations unavailable.</span> : null}
       <WorldLaneRows expanded={expanded} enabled={resources.bar} now={fixedNow} onLive={onWorldLive} />
       <NodeProfileRows enabled={resources.bar} />
       {providerView && expanded ? <Suspense fallback={null}>

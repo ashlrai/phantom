@@ -1,16 +1,19 @@
-import { readGoals } from '../core/fleet/goals.js';
+/**
+ * `phm goals [--json]`: the fleet scorecard. Plain words by default, behind
+ * first; `--json` prints the versioned `fleet.goal-scorecard.v3` object for
+ * agents (`--text` is kept as an alias of the default). Thin:
+ * core/fleet/goal-scorecard.ts reads and judges. Exit 0 even when signals are
+ * unknown; unknown is an answer, not a failure.
+ */
+import { readGoalScorecard, renderGoalScorecard, type ReadGoalScorecardOptions } from '../core/fleet/goal-scorecard.js';
 
-export async function cmdGoals(args: string[]): Promise<number> {
-  const usage = 'Usage: phm goals [--json]';
-  if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { console.log(usage); return 0; }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(usage); return 2; }
-  const goals = await readGoals();
-  if (args.includes('--json')) console.log(JSON.stringify(goals));
-  else {
-    console.log('Goals — jobs launched in the last 24 hours');
-    if (!goals.available) console.log('Dispatcher status is unknown.');
-    for (const row of goals.lanes) console.log(`${row.lane}: ${row.mergesPerHour ?? 'unknown'} merges/hour · median ${row.medianOpenToMergeSeconds ?? 'unknown'} seconds · empty rate ${row.emptyRate === null ? 'unknown' : `${row.emptyRate * 100}%`}`);
-    for (const row of goals.pools) console.log(`${row.pool}: ${row.usedPercent === null ? 'unknown' : `${row.usedPercent}% used`} · reset ${row.resetAt ?? 'unknown'}`);
-  }
-  return goals.available ? 0 : 1;
+const USAGE = 'Usage: phm goals [--json]';
+
+export async function cmdGoals(args: string[], opts: ReadGoalScorecardOptions = {}): Promise<number> {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) { console.log(USAGE); return 0; }
+  const json = args.includes('--json');
+  if (args.some(arg => arg !== '--json' && arg !== '--text') || (json && args.includes('--text'))) { console.error(USAGE); return 2; }
+  const card = await readGoalScorecard(opts);
+  console.log(json ? JSON.stringify(card, null, 2) : renderGoalScorecard(card));
+  return 0;
 }

@@ -1,0 +1,5 @@
+##[group]Run set -euo pipefail
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+current launcher digest 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 is missing from the canonical launcher digest list
+##[error]Process completed with exit code 1.

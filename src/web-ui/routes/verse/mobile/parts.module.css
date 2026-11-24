@@ -48,6 +48,11 @@
   min-width: 0;
 }
 
+/* Compact density tightens padding only; min-height keeps the 44px touch target. */
+:global(:root[data-density='compact']) .row {
+  padding-block: var(--space-2);
+}
+
 .row + .row::before {
   content: '';
   position: absolute;

@@ -2,6 +2,12 @@
  * `phm channels` — one obvious path to bring a channel up or check it.
  *
  * Subcommands:
+ *   (none) [--json]                            One row per channel: connected, not
+ *                                              set up, failing or unknown; last
+ *                                              inbound/outbound, 24 h messages,
+ *                                              verified senders, masked address and
+ *                                              the one next step. Schema
+ *                                              phantom.channels.v1.
  *   add telegram <chat-id>                     Write comms.telegram config. The bot
  *                                              token stays in existing custody —
  *                                              TELEGRAM_BOT_TOKEN or
@@ -29,13 +35,16 @@ import {
   type ChannelAddResult,
   type ChannelStatusRow,
 } from '../core/fleet/channels.js';
+import { readChannelsOverview, type ChannelOverviewState, type ChannelsReader } from '../core/fleet/channels-overview.js';
 import { INBOUND_CHANNELS, type InboundChannel } from '../core/fleet/channel-envelope.js';
 import { rejectUnknownOptions } from './args.js';
 
-const USAGE = `usage: phm channels status [--json]
+const USAGE = `usage: phm channels [--json]
+       phm channels status [--json]
        phm channels add telegram <chat-id> [--json]
        phm channels add email <inboxDir> --from <address> [--from <address> ...] [--outbox <dir>] [--processed <dir>] [--json]
        phm channels add <mobile|cli|desktop|page> [--json]
+       phm channels reply-state <request-id> [--json]
        phm channels slack status [--json]
        phm channels slack map [--topic <topic>] [--snapshot <file>] [--json]
        phm channels slack probe [--json]
@@ -73,6 +82,53 @@ function printStatusTable(rows: ChannelStatusRow[]): void {
   for (const row of rows) {
     if (row.next) console.log(`  ${row.kind}: ${row.next}`);
   }
+}
+
+function when(value: string | null | 'unknown', now: number): string {
+  if (value === null) return 'never';
+  if (value === 'unknown') return 'unknown';
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return 'unknown';
+  const mins = Math.max(0, Math.round((now - ms) / 60_000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
+
+const STATE_WORDS: Record<ChannelOverviewState, string> = {
+  connected: 'connected', 'not-set-up': 'not set up', failing: 'failing', unknown: 'unknown',
+};
+
+/** `phm channels [--json]` — the overview; reader injectable for tests. */
+export async function cmdChannelsOverview(args: string[], reader?: ChannelsReader): Promise<number> {
+  const bad = rejectUnknownOptions(args, { flags: ['--json'] });
+  if (bad) return badUsage(bad.message);
+  const overview = await readChannelsOverview(reader);
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(overview, null, 2));
+    return 0;
+  }
+  const now = Date.parse(overview.at);
+  const head = ['channel', 'state', 'last in', 'last out', '24h', 'verified', 'address'];
+  const body = overview.channels.map((row) => [
+    row.label,
+    row.state === 'unknown' && row.reason ? `unknown: ${row.reason}` : STATE_WORDS[row.state],
+    when(row.lastInboundAt, now),
+    when(row.lastOutboundAt, now),
+    cell(row.messages24h),
+    row.verifiedSenders === null ? '-' : cell(row.verifiedSenders),
+    row.address ?? '-',
+  ]);
+  const widths = head.map((h, i) => Math.max(h.length, ...body.map((r) => r[i]!.length)));
+  const line = (cols: string[]): string => cols.map((c, i) => c.padEnd(widths[i]!)).join('  ').trimEnd();
+  console.log(line(head));
+  for (const cols of body) console.log(line(cols));
+  for (const row of overview.channels) {
+    if (row.state === 'failing' && row.reason) console.log(`  ${row.label}: ${row.reason}`);
+    if (row.next) console.log(`  ${row.label} next: ${row.next}`);
+  }
+  return 0;
 }
 
 async function cmdStatus(args: string[]): Promise<number> {
@@ -145,7 +201,8 @@ async function cmdAdd(args: string[]): Promise<number> {
 
 export async function cmdChannels(args: string[]): Promise<number> {
   const sub = args[0];
-  if (sub === '--help' || sub === '-h' || sub === 'help' || sub === undefined) {
+  if (sub === undefined || sub === '--json') return cmdChannelsOverview(args);
+  if (sub === '--help' || sub === '-h' || sub === 'help') {
     console.log(USAGE);
     console.log('');
     console.log('  Config only. Credentials stay in their existing custody and are');
@@ -154,6 +211,7 @@ export async function cmdChannels(args: string[]): Promise<number> {
   }
   if (sub === 'status') return cmdStatus(args.slice(1));
   if (sub === 'add') return cmdAdd(args.slice(1));
+  if (sub === 'reply-state') return (await import('./channels-reply-state.js')).cmdChannelsReplyState(args.slice(1));
   if (sub === 'slack' || sub === 'map' || sub === 'probe' || sub === 'run') {
     const { cmdChannelsSlack } = await import('./channels-slack.js');
     return cmdChannelsSlack(sub === 'slack' ? args.slice(1) : args);

@@ -1,0 +1,28 @@
+/* Usage pace in the Resources drawer: which pool takes the next job. A headline, one strip for how new work is
+   split, then a row per pool in the scheduler's rank order. Each row's bar is components/primitives/WindowBar;
+   nothing here draws a usage share. */
+.section { display: grid; gap: var(--space-2); min-width: 0; margin: var(--space-3) 0; }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-1) var(--space-2); }
+.top h3 { margin: 0; font-size: var(--text-sm-size); }
+.asOf, .note, .key, .facts { margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.headline { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-medium); }
+.section[data-pace='stale'] .headline, .section[data-pace='none'] .headline { color: var(--text-secondary); font-weight: var(--font-weight-regular); }
+
+/* The split of new work: one strip, a part per pool, widths the scheduler's suggested shares. */
+.split { display: flex; gap: 2px; width: 100%; height: 0.5rem; overflow: hidden; border-radius: var(--radius-full); }
+.split i { display: block; flex: none; min-width: 2px; height: 100%; transition: width var(--duration-slow) var(--ease-standard); }
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); }
+.key > span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.dot { display: inline-block; flex: none; width: 0.5rem; height: 0.5rem; border-radius: var(--radius-sm); }
+
+.rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.row { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); overflow-wrap: anywhere; }
+/* The pool that takes the next job is the one row to find first. */
+.row[data-next] { border-color: var(--border-strong); }
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; }
+.name { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-primary); font-size: var(--text-sm-size); font-weight: var(--font-weight-semibold); }
+/* The figure is the reading: it sits at the row's far edge in tabular figures so a column of rows compares by eye. */
+.figure { display: inline-flex; align-items: center; gap: var(--space-1); margin-inline-start: auto; color: var(--text-primary); font-size: var(--text-sm-size); font-variant-numeric: tabular-nums; }
+.row[data-state='unknown'] .figure, .row[data-state='starving'] .figure { color: var(--text-secondary); }
+
+@media (prefers-reduced-motion: reduce) { .split i { transition: none; } }

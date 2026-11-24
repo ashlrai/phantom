@@ -2,6 +2,60 @@
 
 # Devin in Phantom
 
+See [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) for provider-neutral bot metadata and routing.
+See [external bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) for quota-driven handoffs and the advisory
+Devin Bot adapter: the documented v3 API has no Bot messaging/status endpoints.
+
+## Devin Review
+
+`phm devin review https://github.com/owner/repo/pull/123 --json` plans a
+manual review without contacting Devin. A local reference also works:
+`phm devin review '#123' --repo owner/repo --head <sha> --apply --json`.
+Without `--head`, apply reads the live PR head from GitHub. `--apply` and
+`--dry-run` are mutually exclusive; dry run is the default.
+The service user needs UseReviewManual to trigger and ViewReview to read the
+latest provider review. The API key stays in the Authorization header;
+plans display only its Keychain handle name.
+
+Reviews require an enabled Devin lane and proven included weekly allowance.
+There is **no paid fallback** when plan headroom is unknown or exhausted.
+Set `devin.review.maxPerDay` to cap requests per local day (default 5;
+0 turns reviews off). The private append-only `pr-reviews.jsonl` in the
+Devin home reserves each lowercased repo/PR/head-SHA key under a lock before
+contact. Even ambiguous network failures consume that key and daily slot;
+a new commit gets a new key. Quota errors stop requests for the local day.
+
+Refusal codes: `disabled`, `invalid-pr`, `duplicate`, `daily-cap`,
+`missing-auth`, `unknown-plan`, `quota-exhausted`, `request-failed`.
+CLI exits 0 for a plan or triggered review, 1 for refusal, 2 for usage errors.
+Fleet reviews run only for verified fleet-bot PR heads outside held, moved,
+closed and unknown classes. Findings from `devin-ai-integration[bot]` are
+untrusted advisory evidence: they never change merge classification or gates,
+never merge or dismiss anything, and only supplement red-required fixup tasks.
+Fleet dry runs show a planned signal without network or journal writes.
+
+## Headless ACP seat client
+
+The core `agents/acp-client.ts` runner supports generic ACP v1 agents over
+newline-delimited JSON-RPC stdio, independent of Verse transcripts. Callers
+must qualify an explicit model before any process starts; there is no paid
+fallback. Generic model configuration requires an exact offered id unless the
+caller supplies a model-step planner. Planning is bounded to four configuration
+sets and refuses unplannable targets before prompting.
+The `devin/acp-seat.ts` wrapper invokes the CLI's ACP subcommand with the exact
+model flag and accepts only free, non-lightning ids from a fresh native model
+listing (`source: cli`), never cached or fallback catalogs or aliases. The listing
+timestamp must be parseable, not in the future, and no older than six hours.
+The wrapper plans the CLI's family-default model, thought level and speed selects
+to reach the requested id (for example SWE-2 Medium). Without model controls it
+retains the launch-time model flag; it never substitutes another model.
+
+Permissions default to read-only (read/search/fetch/think only); other tool
+kinds are rejected. Unsupported client requests, including filesystem access,
+receive method-not-found. Stderr is discarded, output buffers are bounded,
+and timeout or abort cancels the session and kills the child. This is a core
+API, not a change to the existing fleet lane or an authorization to spend.
+
 Phantom works with **Devin** (Cognition's hosted coding agent) in three places:
 
 - **Two chat seats.** **Devin (cloud)** runs a Devin session per chat; **Devin
@@ -323,6 +377,62 @@ PRs, so there is no Land or Close; the item expires after 7 days.
 
   `launch` defaults `--repo` to the folder's GitHub origin and `--base` to the
   repository's default branch. Exit codes: 0 ok, 1 error or refused, 2 usage.
+- **Automatic landing.** `phm devin autoland [--apply] [--cap N] [--json]`
+  scans at most five pages of 100 sessions, retaining only the connected key's
+  service-user sessions (or PAT user's sessions). Exit, suspended, and running
+  sessions marked finished/waiting_for_user/waiting_for_approval need a Devin
+  `.bundle` and `.pr.md` attachment. The last bundle in attachment order wins.
+  Dry runs compute commits above the merge base without writing files; apply
+  uses the same fork-only publisher and auto-merge policy as manual landing,
+  then terminates if needed and archives. The default attempt cap is 3, maximum 10.
+  `phm devin autoland pause` and `phm devin autoland resume` control the private
+  `autoland.paused` sentinel; global KILL also stops passes.
+  The resident daemon schedules its first pass after one minute and subsequent
+  passes ten minutes after completion, outside dispatch ticks. Missing publisher
+  or disconnected Devin skips silently. Passes are single-flight; a nine-minute
+  deadline never frees a still-running operation's slot.
+  Apply decisions are appended to `devin/autoland.jsonl`. Reason codes include
+  killed, paused, no-identity, scanned (aggregate counts for not-ours,
+  already-archived and not-finished),
+  missing-attachments, already-landed, backoff, gave-up, cap-reached, would-land,
+  landed, land-failed, would-archive, archived, archive-failed, superseded,
+  close-failed, session-failed and pass-failed. Failures back off from 15 minutes
+  exponentially to 24 hours; five failures wait for a new bundle attachment ID.
+  A manual landing or the same recorded bundle is not landed twice (cleanup is
+  retried). Archived sessions with a prior landing become candidates again when
+  resumed; archived sessions still in exit status are only counted in scanned.
+  A later bundle uses job suffix `-r<N>` and, after success, closes the
+  previous PR with a comment linking the replacement. Archive or close failures
+  do not undo the new PR. Retries append `-a<attempt>` after any revision suffix
+  to avoid stale job records. Failure errors retain scrubbed one-line diagnostics
+  capped at 300 characters. JSON exits 0 for ok, 1 for failed/refused passes.
+- **Land a session that could not push.** Devin sessions cannot push upstream,
+  so a session attaches `<slug>.bundle` (`git bundle create <slug>.bundle
+  origin/master..HEAD`) and `<slug>.pr.md` (first line title, rest body).
+  `land` publishes that work through the pinned, fork-only
+  `~/.ashlr-runs/bin/publish.sh`:
+
+  ```sh
+  ashlr devin land --session devin-… [--repo phantom] [--json]          # dry run: the plan and the session's commits
+  ashlr devin land --session devin-… [--repo phantom] --apply [--json]  # act
+  ```
+
+  It reads both attachments through the Devin API with the key in the existing
+  custody, runs `git bundle verify`, and takes the session's own commits as
+  `merge-base(origin/<base>, bundle tip)..tip` (linear, at most 100). With
+  `--apply` it fetches origin, adds `~/Projects/ashlrai/wt/<J>` on
+  `codex-bridge/<J>` (`<J>` defaults to `DEVIN-<id prefix>`; `--job` overrides),
+  rebases those commits onto `origin/<base>`, writes `queue/run/<J>.line`
+  (`J, repo, devin, frontier, prompt`), `<J>.base`, `<J>.body.md`, `<J>.prompt`
+  and the worktree's `BRIDGE_NOTES.md`, then runs `publish.sh <J>` unchanged and
+  reads its `RESULT PR <url>` line. publish.sh squashes the commits into one,
+  scrubs and opens the PR; when it withheld auto-merge (sensitive paths, judge,
+  red CI, deferral) `land` leaves it off, and otherwise runs
+  `gh pr merge --auto --squash`. Each apply appends a line to
+  `~/.ashlr/devin/landings.jsonl` and, when the session is a tracked task, sets
+  its PR. Repos outside publish.sh's allowlist, an existing job record, worktree
+  or branch, and a rebase conflict are refused (the worktree is removed). A
+  dry run writes nothing.
 - **Playbooks.** A launch whose text contains a `!macro`, or that names a
   playbook, carries that playbook's text ahead of the delivery contract and
   records its version on the task. A named playbook that does not exist

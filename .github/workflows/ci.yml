@@ -24,7 +24,9 @@ on:
   # Release-gate runs (Desktop release smoke + Release suites) are started by
   # release-prep.yml once per master sha and by Auto-tag on a tag, both via
   # workflow_dispatch release_gate=true. The old half-hour schedule duplicated
-  # that and is gone (CI-PHANTOM-CRON-30MIN).
+  # that and is gone (CI-PHANTOM-CRON-30MIN). After both jobs succeed on
+  # master, release-gate-autotag dispatches Auto-tag with this exact SHA:
+  # GITHUB_TOKEN dispatches do not produce a workflow_run event.
   # Mac/win waiver (Mason, Oct 26 2026): macOS lanes never run on PR or merge_group.
   # The scheduled run rotates the Mac exhaustive work over seven daily slices
   # (.github/scripts/ci-mac-rotation.mjs); dispatch defaults to the complete set.
@@ -147,6 +149,20 @@ jobs:
         run: |
           node --test .github/tests/ci-mcp-selection.test.mjs
           node .github/scripts/ci-mcp-selection.mjs
+      # Only the release-please PR may change the release version. A hand bump
+      # still gets a tag and draft from auto-tag, but the release train refuses
+      # it (release_message_mismatch) and it is never published (#4098, #4735).
+      # PR-only: the merge queue admits a PR after its PR checks pass.
+      - name: Require release-please provenance for version bumps
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          node --test .github/tests/release-version-provenance.test.mjs
+          node .github/scripts/release-version-provenance.mjs
       - name: Set up Node.js 22
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -156,6 +172,16 @@ jobs:
       # blocking check, so Quick skips its duplicate and only runs the selected
       # MCP output contract test. Master pushes still typecheck here and
       # publish the compiler state fast-gate restores (CI-PHANTOM-QUICK-DUP).
+      # The sparse checkout above carries only config files. The master-push
+      # typecheck and the selected MCP contract test read src/ and test/, so
+      # materialize the full tree first, exactly as fast-gate does. Without
+      # this, tsgo fails with TS18003 (no inputs) on every master push.
+      - name: Materialize the full tree
+        if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
+        run: |
+          if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
+            git sparse-checkout disable
+          fi
       - name: Install dependencies
         if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -301,6 +327,8 @@ jobs:
           if node .github/scripts/ci-green-reuse.mjs verify --job clean-tree --hash "$RECEIPT_HASH" --receipt "$RUNNER_TEMP/ci-green/clean-tree.json"; then
             echo "reused a prior green generated-files result"
           else
+            node scripts/canonical-launcher-digests.mjs --check
+            node --test .github/tests/canonical-launcher-digests.test.mjs
             node scripts/generate-docs-llms.mjs
             status="$(git status --porcelain --untracked-files=normal)"
             if [ -n "$status" ]; then
@@ -327,10 +355,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Keep blobs local so expanding the sparse tree needs no lazy fetch.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          filter: blob:none
           fetch-depth: 1
           sparse-checkout: .github
           sparse-checkout-cone-mode: false
@@ -401,10 +429,10 @@ jobs:
       ASHLR_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       ASHLR_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
     steps:
+      # Keep blobs local for dependency-graph reads and full-tree expansion.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          filter: blob:none
           fetch-depth: 1
           sparse-checkout: |
             .github
@@ -1975,3 +2003,21 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build, release contracts, signing path, release scripts
         run: node .github/scripts/ci-release-suites.mjs
+
+  release-gate-autotag:
+    name: Dispatch Auto-tag for green release-gate SHA
+    needs: [release-build, release-suites]
+    if: github.event_name == 'workflow_dispatch' && inputs.release_gate == true && github.ref == 'refs/heads/master' && needs['release-build'].result == 'success' && needs['release-suites'].result == 'success'
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Dispatch Auto-tag for exact release-gate SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/auto-tag.yml/dispatches" --input - <<EOF
+          {"ref":"master","inputs":{"sha":"${GITHUB_SHA}"}}
+          EOF

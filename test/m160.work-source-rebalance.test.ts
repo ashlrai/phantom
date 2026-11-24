@@ -71,8 +71,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 let _listIssuesImpl: ReturnType<typeof vi.fn>;
 
 vi.mock('../src/core/integrations/github.js', () => ({
-  listIssues: (...args: unknown[]) => _listIssuesImpl(...args),
-  githubStatus: vi.fn(() => ({ isRepo: false, ci: 'unknown' })),
+  listIssuesAsync: async (...args: unknown[]) => _listIssuesImpl(...args),
+  githubCiStatusAsync: vi.fn(async () => ({ isRepo: false, ci: 'unknown' })),
 }));
 
 vi.mock('../src/core/sandbox/policy.js', () => ({

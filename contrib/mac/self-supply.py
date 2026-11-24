@@ -5,8 +5,8 @@ Reads queue/status.json: for every unheld lane whose (target - running - queued)
 count is positive, each feed script beside this one (recut-feed.py, and
 salvage-feed.py when present) is asked for up to that many READY lines with
 --pool=<lane>. Lines whose job id is already in the router queue or the claimed
-rows are dropped, every kept line carries pool=<lane>, the run is capped at
---cap lines total, and --apply appends them to the router queue under
+rows are dropped, a kept line that declares no lane gets pool=<lane> as its
+hint (a self-declared lane stays), the run is capped at --cap lines total, and --apply appends them to the router queue under
 queue/ready.lock while logging SELF_SUPPLY <lane> free=<n> added=<m> to
 dispatch-events.log. --dry-run is the default and prints the plan as JSON.
 """
@@ -95,12 +95,19 @@ def job_id(line):
 
 
 def stamp_pool(line, lane):
-    """Force the line's pool= attr to the lane; feeds may leave it open or stale."""
+    """Give an open line the idle lane as its hint; a lane the line declares for itself stays.
+
+    The dispatcher's shared market treats pool= as a preference, so a self-declared
+    lane never strands the line: it still runs wherever capacity is.
+    """
     match = ATTRS.match(line)
     if not match:
         return line
     attrs = match.group(2)
-    attrs = (POOL.sub('pool=' + lane, attrs, count=1) if POOL.search(attrs)
+    declared = POOL.search(attrs)
+    if declared and declared.group() != 'pool=any':
+        return line
+    attrs = (POOL.sub('pool=' + lane, attrs, count=1) if declared
              else attrs.rstrip() + (', ' if attrs.strip() else '') + 'pool=' + lane)
     return match.group(1) + attrs + ')' + match.group(3)
 

@@ -8,6 +8,25 @@ import { ingestFeedback, type FeedbackSnapshot } from './feedback-ingest.js';
 import { feedbackJobId, triageFeedback, type FeedbackCoverage } from './feedback-triage.js';
 
 export const FEEDBACK_CYCLE_LIMIT = 5;
+/**
+ * jobs.jsonl field dialects: job|job_id|jobId|id, url|prUrl|pr_url|pr|html_url,
+ * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
+ * event|type|kind and phase|state|outcome|status|result|conclusion —
+ * the aliases dispatchd `_vc_*` and the fleet metrics readers accept.
+ * `first` keeps `??`-chain semantics: the first non-null spelling wins.
+ */
+const first = (r: Record<string, unknown>, keys: readonly string[]): unknown => {
+  for (const key of keys) {
+    const v = r[key];
+    if (v !== undefined && v !== null) return v;
+  }
+  return undefined;
+};
+const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
+const PR_KEYS = ['url', 'prUrl', 'pr_url', 'pr', 'html_url'] as const;
+const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
+const EVENT_KEYS = ['event', 'type', 'kind'] as const;
+const PHASE_KEYS = ['phase', 'state', 'outcome', 'status', 'result', 'conclusion'] as const;
 export interface FeedbackOptions { command: 'scan' | 'digest'; apply: boolean; days: number; runsDir?: string; now?: number }
 export interface FeedbackCycleDeps {
   ingest: typeof ingestFeedback;
@@ -32,7 +51,7 @@ export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: 
       const r = JSON.parse(line);
       if (!r || typeof r !== 'object' || Array.isArray(r)) throw new Error();
       records.push(r);
-      const id = r.job ?? r.job_id ?? r.jobId, pr = r.url ?? r.prUrl;
+      const id = first(r, JOB_KEYS), pr = first(r, PR_KEYS);
       if (typeof id !== 'string') continue;
       if (typeof r.repo === 'string') {
         const repo = r.repo.replace(/^ashlrai\//, '');
@@ -43,12 +62,12 @@ export function feedbackDigest(snapshot: FeedbackSnapshot, ledger: string, now: 
   }
   for (const r of records) {
     try {
-      const id = r.job ?? r.job_id ?? r.jobId ?? jobsByPR.get(String(r.url ?? r.prUrl));
+      const id = first(r, JOB_KEYS) ?? jobsByPR.get(String(first(r, PR_KEYS)));
       if (typeof id !== 'string' || repos.get(id) !== 'phantom') continue;
-      const raw = r.ts ?? r.timestamp ?? r.at, at = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : typeof raw === 'string' ? Date.parse(raw) : NaN;
+      const raw = first(r, TS_KEYS), at = typeof raw === 'number' ? (raw < 1e12 ? raw * 1000 : raw) : typeof raw === 'string' ? Date.parse(raw) : NaN;
       if (!/^[A-Za-z0-9-]{1,100}$/.test(id) || scrubSecrets(id) !== id || !Number.isFinite(at)) { invalidRows++; continue; }
       if (at > now || at < (latest.get(id)?.at ?? 0)) continue;
-      const event = String(r.event ?? '').toLowerCase(), state = String(r.state ?? r.outcome ?? r.status ?? r.result ?? '').toUpperCase();
+      const event = String(first(r, EVENT_KEYS) ?? '').toLowerCase(), state = String(first(r, PHASE_KEYS) ?? '').toUpperCase();
       if (!['launch', 'start', 'finish', 'complete', 'outcome', 'result', 'merged', 'failure', 'publish'].includes(event)) continue;
       const previous = latest.get(id);
       if (previous?.at === at && (previous.state === 'MERGED' || previous.event === 'merged' || (!['launch', 'start'].includes(previous.event) && ['launch', 'start'].includes(event)))) continue;

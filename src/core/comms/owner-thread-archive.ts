@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { OWNER_THREAD_ID, isOwnerChannel } from './leader-mailbox.js';
-import type { OwnerThreadMessage } from './owner-thread.js';
+import { ownerThreadViewPredicate, type OwnerThreadMessage, type OwnerThreadReadFilter } from './owner-thread.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 
@@ -50,7 +50,24 @@ function canonicalKey(message: OwnerThreadMessage): string {
   ]);
 }
 
-export function readOwnerThreadHistory(options: { runsDir: string }, page: { before?: number; limit?: number } = {}) {
+/**
+ * The page `readOwnerThreadHistory` serves: seq paging (`before`, `limit`)
+ * plus the same `channel`/`direction`/`since`/`beforeAt`/`contains` slice
+ * `readOwnerThread` applies — one `OwnerThreadReadFilter` vocabulary, so
+ * `phm fleet owner-history` and `fleet_owner_history` can slice archived
+ * cross-channel history exactly the way `phm comms thread` slices the live
+ * window. Filters match the stored scrubbed text and keep `archives` /
+ * `skipped` honest: they describe discovery, not how many rows matched.
+ */
+export interface OwnerThreadHistoryPage extends OwnerThreadReadFilter {
+  /** Keep only archived messages with seq below this sequence number. */
+  before?: number;
+  /** Cap on returned archived messages; the read itself clamps at 500. */
+  limit?: number;
+}
+
+export function readOwnerThreadHistory(options: { runsDir: string }, page: OwnerThreadHistoryPage = {}) {
+  const inView = ownerThreadViewPredicate(page);
   const archives = listOwnerThreadArchives(options);
   const limit = Number.isSafeInteger(page.limit) && page.limit! > 0 ? Math.min(page.limit!, 500) : 50;
   let remainingBytes = TOTAL_BYTES; let skipped = 0;
@@ -78,6 +95,7 @@ export function readOwnerThreadHistory(options: { runsDir: string }, page: { bef
           !record.messages.every(message => validMessage(message, archive))) throw new Error('invalid archive');
       for (const message of record.messages as OwnerThreadMessage[]) {
         if (page.before !== undefined && message.seq >= page.before) continue;
+        if (!inView(message)) continue;
         const key = canonicalKey(message);
         if (seen.has(key)) continue;
         seen.add(key);
