@@ -736,14 +736,39 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
   than suppressing the reap evidence, truncated tails stated as lower
   bounds, and rows emitting only for the fleet's own repository since
-  the reap is this install's machinery.
+  the reap is this install's machinery,
+  and the gap proposer's own queue-write journal, the {at, id, title,
+  repo} rows `phm jobs gaps --propose` — run by the fleet self-tick's
+  autofill harvest (autofill-run.ts harvestGaps → readJobGaps) —
+  appends to metrics/gap-proposed.jsonl under the fleet runs
+  directory for every successful drop-job write, where id is the
+  deterministic content key gapJobId = 'GAP' + the first ten hex chars
+  of sha256(normalizeTitle(title)), uppercased, and the minted queue
+  job id is RQ-PHX-<id>
+  (otherwise only visible through the proposer's own 24-hour dedupe
+  and `phm doctor supply`'s proposed count — a report someone had to
+  run, so a gap whose attempts keep finishing without the work
+  holding, and which the narrow dedupe windows let through again on
+  later ticks, never became work). A gap id becomes an item only
+  while its recorded queue writes reach the recurring bars of three
+  proposals across two distinct UTC days inside the 7-day window,
+  with each cell joined to the same gap job's launches, finishes,
+  publishes and resolved outcomes in metrics/jobs.jsonl so the prompt
+  quotes what the earlier attempts actually did; a missing or
+  unreadable proposal journal emits nothing, a withheld jobs ledger
+  degrades the tallies to unknown rather than suppressing the
+  proposal evidence or zero-filling it, malformed lines and
+  off-contract rows drop like the writer's own contract, truncated
+  tails are stated as lower bounds, and rows emit only for the
+  fleet's own repository since the proposer and its dedupe are this
+  install's machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
-  incident-gate, jev-decisions and worktree-reap items carry priority 3;
+  incident-gate, jev-decisions, worktree-reap and gap-proposal items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -897,7 +922,16 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   the publish path dropped, or dirty worktrees the finish path left —
   with the same owner-side no-change escape, and emit only for the
   fleet's own repository since the reap is this install's machinery.
-  They
+  Gap-proposal items name the proposal
+  journal, `phm jobs gaps`, the `phm jobs yield`/`phm jobs empty`
+  folds and the gap extraction and dedupe sources, keep the
+  find-why-this-gap-keeps-coming-back-unsatisfied framing per gap id —
+  gap extraction minting work master already has versus failed or
+  aborted attempts versus launches that never happened versus a dedupe
+  leg that cannot see the landing — with the same owner-side
+  no-change escape for legitimate re-discovery of a recurring gap, and
+  emit only for the fleet's own repository since the proposer and its
+  dedupe are this install's machinery. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

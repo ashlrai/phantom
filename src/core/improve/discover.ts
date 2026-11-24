@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-seven sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -319,6 +319,18 @@
  *     and read — so a reap whose removals keep failing, whose unsafe
  *     paths keep recurring, or whose safety holds keep accumulating
  *     un-reapable worktrees never became work;
+ *   - the gap proposer's own queue-write journal: the {at, id, title,
+ *     repo} rows `phm jobs gaps --propose` — run by the fleet self-tick's
+ *     autofill harvest — appends to metrics/gap-proposed.jsonl for every
+ *     successful drop-job write, folded per deterministic gap id across
+ *     distinct UTC days inside the 7-day window and joined to the same
+ *     gap job's launches, finishes, publishes and resolved outcomes in
+ *     metrics/jobs.jsonl (gapProposalBacklogItems below). Until now the
+ *     journal's only readers were the proposer's own 24-hour dedupe and
+ *     `phm doctor supply`'s proposed count — so a gap whose attempts
+ *     keep finishing without the work holding, and which the narrow
+ *     dedupe windows let through again on later ticks, never became
+ *     work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -382,6 +394,7 @@ import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
 import { incidentGateBacklogItems } from './incident-gate-backlog.js';
 import { jevBacklogItems } from './jev-backlog.js';
 import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
+import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -882,6 +895,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the reap is this install's
   // machinery.
   items.push(...await worktreeReapBacklogItems({ repo }));
+
+  // Gap-proposal journal: the self-supply proposer's own record of what
+  // it queued — gap ids `phm jobs gaps --propose` keeps re-writing to
+  // the drop queue across distinct UTC days inside the window, joined
+  // to each RQ-PHX-GAP* job's launches, finishes, publishes and resolved
+  // outcomes in metrics/jobs.jsonl — become backlog items too. Until
+  // now the journal's only readers were the proposer's own 24-hour
+  // dedupe and `phm doctor supply`'s proposed count, so a gap whose
+  // attempts keep not holding — and which the narrow dedupe windows let
+  // through again on later ticks — never became work. Same bounded tail
+  // reads; a gap id emits only at the recurring bars of recorded queue
+  // writes across distinct UTC days, the jobs-ledger join degrades to
+  // unknown rather than suppressing the proposal evidence or
+  // zero-filling it, truncated tails are stated as lower bounds, and
+  // only the fleet's own repository inherits the items since the
+  // proposer and its dedupe are this install's machinery.
+  items.push(...await gapProposalBacklogItems({ repo }));
   return { items, errors };
 }
 
