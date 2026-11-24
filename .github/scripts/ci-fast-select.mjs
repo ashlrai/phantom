@@ -19,7 +19,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { changedPaths } from './ci-changed-paths.mjs';
-import { SCHEMA as GRAPH_SCHEMA } from './ci-dep-graph.mjs';
+import { RESOLVER, SCHEMA as GRAPH_SCHEMA } from './ci-dep-graph.mjs';
 import { DOCS_ONLY_PATH_PATTERNS } from './ci-site-lane.mjs';
 import { REAL_IO_TEST_FILES } from '../../test/config/realio-lane-membership.mjs';
 import { SERIAL_CPU_TEST_FILES } from '../../test/config/serial-cpu-lane-membership.mjs';
@@ -209,14 +209,16 @@ function blobHash(cwd, path) {
   return git(cwd, ['rev-parse', `HEAD:${path}`]).trim();
 }
 
-// A graph is fresh when it parses, names the commit it was built from, and
-// that commit is HEAD or an ancestor of the PR base, and every changed
-// source's blob hash matches HEAD. Anything else fails closed.
+// A graph is fresh when it parses as phantom-dep-graph.v1, names the commit
+// it was built from, carries resolver 2, that commit is HEAD or an ancestor
+// of the PR base, and every changed source's blob hash matches HEAD.
+// Anything else fails closed.
 export function assessGraph({ cwd, graph, base, sources }) {
   if (!graph) return { ok: false, reason: 'dependency graph missing' };
   if (graph.schema !== GRAPH_SCHEMA || !graph.files || typeof graph.files !== 'object' || Array.isArray(graph.files)) {
     return { ok: false, reason: 'dependency graph unparsable' };
   }
+  if (graph.resolver !== RESOLVER) return { ok: false, reason: 'dependency graph unparsable' };
   const commit = typeof graph.commit === 'string' && /^[0-9a-f]{40}$/.test(graph.commit) ? graph.commit : '';
   if (!commit) return { ok: false, reason: 'dependency graph unparsable' };
   let head = '';

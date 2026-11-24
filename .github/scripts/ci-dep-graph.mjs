@@ -55,7 +55,11 @@ function commitOf(value) {
   return typeof value === 'string' && COMMIT.test(value) ? value : '';
 }
 
-/** Exact HEAD pin with a non-empty file map from the current resolver. */
+/**
+ * Exact HEAD pin, non-empty file map, current resolver. A #8574 cache file
+ * has the commit pin and the hashes but not resolver 2, so it is rebuilt
+ * once; the file update writes is what selection trusts.
+ */
 export function graphCoversCommit(graph, head) {
   return graph?.commit === head && COMMIT.test(head) && graph.resolver === RESOLVER
     && graph.files && Object.keys(graph.files).length > 0;
@@ -76,12 +80,13 @@ export function normalizeGraph(value) {
   }
   const commit = commitOf(value.commit);
   const resolver = value.resolver === RESOLVER ? RESOLVER : 0;
+  const unknown = Object.values(files).some((node) => node.unresolved?.length);
   return {
     schema: SCHEMA,
     files,
     ...(commit ? { commit } : {}),
     ...(resolver ? { resolver } : {}),
-    ...(Object.values(files).some((node) => node.unresolved?.length) ? { unknown: true } : {}),
+    ...(unknown ? { unknown: true } : {}),
   };
 }
 
@@ -282,9 +287,9 @@ function updateFromGit(cwd, outPath) {
   let previous = emptyGraph();
   try { previous = normalizeGraph(JSON.parse(readFileSync(outPath, 'utf8'))); } catch { /* first build */ }
   const head = headSha(cwd);
-  // An exact pin for this checkout skips the reparse. A master-published
-  // graph (ancestor of HEAD, current resolver) is updated incrementally.
-  // Anything else is rebuilt so a foreign cache cannot keep stale edges.
+  // Exact pin for this checkout skips the reparse (#8574). A master-published
+  // graph from before resolver 2 is not an exact pin: its `..` edges from
+  // test/*.test.ts are wrong, so it is rebuilt and then stamped.
   if (graphCoversCommit(previous, head)) {
     console.log(`dependency graph: reused ${Object.keys(previous.files).length} files at ${head}`);
     return previous;

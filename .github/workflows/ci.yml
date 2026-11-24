@@ -182,6 +182,31 @@ jobs:
           if [ "$(git config --bool --get core.sparseCheckout || true)" = true ]; then
             git sparse-checkout disable
           fi
+      # Master pushes publish the import graph fast-gate restores. A cache
+      # outage must not fail Quick: Publish dependency graph rebuilds from
+      # the tree when the restored file is missing.
+      - name: Restore published dependency graph
+        id: push_dep_graph
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.sha }}
+          restore-keys: phantom-dep-graph-v2-
+      - name: Publish dependency graph
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        env:
+          CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
+        run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
+      - name: Save published dependency graph
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.push_dep_graph.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.sha }}
       - name: Install dependencies
         if: github.event_name == 'push' || steps.mcp_selection.outputs.mcp_output == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -451,16 +476,29 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: node .github/scripts/ci-fetch-range.mjs
+      # Keyed by the checked-out head, not the run id: an exact hit skips the
+      # reparse, and restore-keys picks up the graph a master push published.
+      # Save is best-effort. Fork pull requests have a read-only cache token,
+      # and a failed save must not fail the gate.
       - name: Restore dependency graph
+        id: dep_graph
+        continue-on-error: true
         uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: ${{ runner.temp }}/dep-graph.json
-          key: phantom-dep-graph-v1-${{ github.sha }}-${{ github.run_id }}
-          restore-keys: phantom-dep-graph-v1-
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          restore-keys: phantom-dep-graph-v2-
       - name: Update dependency graph
         env:
           CI_DEP_GRAPH: ${{ runner.temp }}/dep-graph.json
         run: node .github/scripts/ci-dep-graph.mjs update --out "$CI_DEP_GRAPH"
+      - name: Save dependency graph
+        if: steps.dep_graph.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ runner.temp }}/dep-graph.json
+          key: phantom-dep-graph-v2-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
       - name: Select affected tests
         id: select
         env:
@@ -632,7 +670,10 @@ jobs:
         if: failure() && github.event_name == 'merge_group'
         run: node .github/scripts/ci-fast-attribute.mjs
       - name: Upload merge group attribution
+        # actions: write is not granted. A refused upload must not replace the
+        # test failure, and it never runs on a green pull request.
         if: failure() && github.event_name == 'merge_group'
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: merge-group-attribution

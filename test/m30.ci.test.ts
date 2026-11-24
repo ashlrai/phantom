@@ -793,9 +793,21 @@ echo pending=true; exit 2
     expect(saves.length).toBeGreaterThan(0);
     for (const step of saves) {
       expect(step['continue-on-error']).toBe(true);
-      expect(step.with?.key ?? '').toMatch(/^phantom-ci-green-v1-/);
+      expect(step.with?.key ?? '').not.toContain('github.run_id');
       expect(step.with?.key ?? '').not.toContain('master-typecheck');
     }
+    const greenSaves = saves.filter((step) => (step.with?.key ?? '').startsWith('phantom-ci-green-v1-'));
+    expect(greenSaves.length).toBeGreaterThan(0);
+    const graphSave = saves.find((step) => (step.with?.key ?? '').startsWith('phantom-dep-graph-v2-'));
+    expect(graphSave, 'fast-gate saves the dependency graph for the checked-out head').toBeDefined();
+    expect(graphSave?.if).toBe("steps.dep_graph.outputs.cache-hit != 'true'");
+    expect(graphSave?.with?.key).toContain('pull_request.head.sha');
+    expect(graphSave?.with?.key).toContain('merge_group.head_sha');
+    const graphRestore = job.steps.find((step) => step.name === 'Restore dependency graph');
+    expect(graphRestore?.['continue-on-error']).toBe(true);
+    expect(graphRestore?.with?.key).not.toContain('github.run_id');
+    const upload = job.steps.find((step) => step.name === 'Upload merge group attribution');
+    expect(upload?.['continue-on-error']).toBe(true);
     const typecheck = job.steps.find((step) => step.name === 'Core no-emit type check');
     expect(typecheck?.run).toContain('npm run typecheck');
     expect(typecheck?.if).toBeUndefined();

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
-import { updateGraph } from '../scripts/ci-dep-graph.mjs';
+import { RESOLVER, updateGraph } from '../scripts/ci-dep-graph.mjs';
 import {
   classifyPaths, plan, changedPaths, selectRelated, selectFallback, selectSmoke, loadSmokeSet,
   TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS, SMOKE_SCHEMA,
@@ -43,6 +43,7 @@ function freshGraph(dir) {
   }));
   const { graph } = updateGraph(null, entries);
   graph.commit = head;
+  graph.resolver = RESOLVER;
   return graph;
 }
 
@@ -417,6 +418,32 @@ test('colocated and transitively reached web tests are selected for the web runn
   const changed = plan({ cwd: dir, paths: ['src/web-ui/Widget.test.tsx'] });
   assert.equal(changed.mode, 'related');
   assert.deepEqual(changed.web, ['src/web-ui/Widget.test.tsx']);
+});
+
+test('a v2 cache file without resolver 2 is rebuilt and then takes the narrow path', (t) => {
+  const { dir, commit } = repo(t, {
+    'src/core/beta.ts': 'export const b = 1;\n',
+    'test/beta.test.ts': "import '../src/core/beta.js';\n",
+  });
+  const head = commit('seed');
+  const published = freshGraph(dir);
+  delete published.resolver;
+  published.files['test/beta.test.ts'] = { ...published.files['test/beta.test.ts'], imports: [] };
+  const raw = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: published, base: head });
+  assert.equal(raw.mode, 'fallback');
+  assert.match(raw.reason, /unparsable/);
+  const out = join(dir, 'dep-graph.json');
+  writeFileSync(out, JSON.stringify(published));
+  const script = join(dirname(fileURLToPath(import.meta.url)), '../scripts/ci-dep-graph.mjs');
+  execFileSync(process.execPath, [script, 'update', '--out', out], { cwd: dir, encoding: 'utf8' });
+  const restored = JSON.parse(readFileSync(out, 'utf8'));
+  assert.equal(restored.schema, 'phantom-dep-graph.v1');
+  assert.equal(restored.commit, head);
+  assert.equal(restored.resolver, RESOLVER);
+  assert.deepEqual(restored.files['test/beta.test.ts'].imports, ['src/core/beta.ts']);
+  const selected = plan({ cwd: dir, paths: ['src/core/beta.ts'], graph: restored, base: head });
+  assert.equal(selected.mode, 'related');
+  assert.deepEqual(selected.tests, ['test/beta.test.ts']);
 });
 
 test('stale, unparsable, and dynamic graphs fall back toward the broader set', (t) => {
