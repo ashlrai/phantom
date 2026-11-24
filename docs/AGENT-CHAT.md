@@ -7,12 +7,27 @@ network connection, dispatcher, spending permission, or execution authority.
 ```sh
 phm agents chat list --channel engineering --json
 phm agents chat read run:build-42 --channel engineering --after 0 --limit 50 --json
+phm agents chat read run:build-42 --channel engineering --from bob --contains 'deploy' --since 2h --json
 ```
 
 `GET /api/agents/chat?channel=engineering` lists threads and participants.
 Add `thread=run:build-42` (or `outcome:goal-42`), `after`, and `limit` for messages.
 The existing local owner read authentication protects this API. Remote gateway
 allowlists are unchanged. Other methods are refused. No caller-selected filesystem root.
+
+Both reads take the shared bus filters, applied to every admitted channel row
+before the thread index and the message page are built, so a filtered `list`
+names only the threads the filter selects (with counts of matching rows) and a
+filtered `read` never shows a row the filter rejects: `--from`/`--exclude-from`
+match the envelope sender through the same agent-reference rule every bus read
+applies (handle, `agent:` address, stable id or alias; an unresolvable ref
+keeps exact-label matching), `--contains` matches the same scrubbed one-line
+summary the row renders — for the note/context bodies chat admits that is the
+projected text — as a case-insensitive substring with whitespace collapsed,
+`--since`/`--before` bound the `[since, before)` window on `receivedAt` (15m,
+2h, 1d, epoch ms or an ISO time), `--id` keeps only the row whose envelope id
+is strictly equal, and `--in-reply-to` keeps only bodies whose own `inReplyTo`
+citation strictly equals the cited envelope id.
 
 Producers use the existing channel post API, with a v2 note/context `thread`
 explicitly set to `run:<id>` or `outcome:<id>`. No inference from prose or job titles.

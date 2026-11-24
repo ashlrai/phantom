@@ -8,6 +8,7 @@
 import { titleHash } from './supply.js';
 import type { BetsProposal, BetsProposeReport } from './bets-propose.js';
 import { stepZeroPrompt, stripStepZero, type AutofillCandidate, type AutofillSource } from './autofill-sources.js';
+import { familyKey } from './empty-family-stops.js';
 import { jobFamily } from './slot-yield.js';
 import { inferRequiredCapabilities, laneLacks, type LaneCapabilityOverrides } from './lane-capabilities.js';
 import type { GenerationDecision } from '../queue/generator-yield.js';
@@ -83,7 +84,7 @@ export function planAutofill(input: AutofillInput): QueueAutofillReport {
     const queuedAs = ids.has(c.id) ? c.id : hashes.get(titleHash(c.goal));
     if (queuedAs) { reject('duplicate'); skipped.push({ goal: clip(c.goal), reason: `Already queued as ${queuedAs}.` }); continue; }
     if (input.candidateRank?.(c) === null) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: 'Stopped, retired or family yield below 25% after four launches.' }); continue; }
-    if (input.stoppedFamilies?.has(c.family)) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
+    if ((input.stoppedFamilies?.has(c.family) || input.stoppedFamilies?.has(familyKey(c.id)))) { reject('stopped_family'); skipped.push({ goal: clip(c.goal), reason: `Family ${c.family} is stopped: most of its jobs end empty.` }); continue; }
     // A lane declared to lack a capability (claude has no gh) is never handed a job that needs it; unknown is not a refusal.
     const lacks = laneLacks(lane, inferRequiredCapabilities(`${c.goal}\n${c.acceptance}`), false, input.capabilities);
     if (lacks) { reject('missing_capability'); skipped.push({ goal: clip(c.goal), reason: `Lane ${lane} cannot use ${lacks}, and this job needs it.` }); continue; }

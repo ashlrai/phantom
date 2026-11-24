@@ -1,0 +1,7 @@
+.card { min-width: 0; padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-surface); overflow-wrap: anywhere; }
+.card h2 { margin: 0; font-size: var(--text-md-size); }
+.card ul { list-style: none; padding: 0; margin: var(--space-3) 0 0; }
+.card li { padding: var(--space-2) 0; font-size: var(--text-sm-size); line-height: var(--text-sm-line); }
+.card { min-width: 0; padding: var(--surface-gap); border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+.card h2 { margin: 0; font-size: var(--text-md-size); }
+.card time { font-size: var(--text-sm-size); color: var(--text-secondary); }

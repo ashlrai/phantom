@@ -304,7 +304,9 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
     if (!deps.emptyStop && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-empty-stop' };
     try {
       const { runEmptyApplyTick } = await import('../core/fleet/empty-family-apply.js');
-      return await runEmptyApplyTick({ runsDir: root, apply, now: now(), ...deps.emptyStop });
+      const off = await (deps.emptyStop?.readOff ?? (await import('../core/fleet/empty-family-apply.js')).readEmptyStopOff)(root);
+      const families = off === false ? await (await import('../core/fleet/empty-family-stops.js')).pruneFamilyStops(root, apply, now()) : null;
+      return { ...(await runEmptyApplyTick({ runsDir: root, apply, now: now(), ...deps.emptyStop })), families };
     } catch (error) {
       return { reason: `empty-stop failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
     }
