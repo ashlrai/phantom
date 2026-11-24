@@ -159,6 +159,23 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     .map(s => ({ family: clean(s.family), until: s.until, why: s.why, auto: false }));
   stops.push(...activeFamilyStops(familyStopText ?? '', now).map(s => ({ ...s, family: clean(s.family) })));
   const release = await readReleaseBacklog({ now, cacheOnly: true });
+  // Keep only facts that contribute to the first three explanations, before display rows are trimmed.
+  const idleLanes: typeof lanes = [];
+  const idleReasons = whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [] });
+  if (idleReasons.length) {
+    const candidates = [...lanes.filter(l => l.held === true || (l.pause_new_until !== null && l.pause_new_until > now / 1000)),
+      ...lanes.filter(l => l.held === false && !(l.pause_new_until !== null && l.pause_new_until > now / 1000) && l.queuedReady === 0)];
+    for (const lane of candidates) {
+      const before = whyIdle({ at: new Date(now).toISOString(), lanes: idleLanes, pools: [] });
+      const after = whyIdle({ at: new Date(now).toISOString(), lanes: [...idleLanes, lane], pools: [] });
+      if (JSON.stringify(before) !== JSON.stringify(after)) idleLanes.push(lane);
+      if (idleLanes.length === 3) break;
+    }
+  }
+  const idleEvidence = {
+    lanes: idleLanes.map(({ lane, running, target, held, pause_new_until, queuedReady }) => ({ lane, running, target, held, pause_new_until, queuedReady })),
+    attention: idleReasons.length ? attention.filter(j => j.status === 'stuck').map(({ lane, status }) => ({ lane, status })) : [],
+  };
   const brief = {
     openPrs, mergedPrs,
     release: release.counts,
@@ -180,7 +197,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
     hostLoad: { ...hostLoad, leftovers: hostLoad.leftovers ? { ...hostLoad.leftovers, items: undefined } : undefined,
       families: hostLoad.families.slice(0, 8), omitted: hostLoad.omitted + Math.max(0, hostLoad.families.length - 8) },
     stopped: stops, omitted: Math.max(0, merges.size - mergedPrs.length),
-    whyIdle: whyIdle({ at: new Date(now).toISOString(), lanes, attention, pools: [] }).map(clean),
+    idleEvidence, whyIdle: idleReasons.map(clean),
   };
   // Drop the lowest-priority rows, explicitly counting omissions, until the entire wire payload fits.
   const lists = [brief.families, brief.stopped, brief.main, brief.pools, brief.lanes, brief.attention, brief.mergedPrs];
@@ -194,7 +211,7 @@ export async function readCompactBrief(runsDir = runsRoot(), now = Date.now(), h
 }
 type GeneratedBrief = Awaited<ReturnType<typeof readCompactBrief>>;
 /** Stored briefs written before merge projection recovery remain readable. */
-export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95'>>;
+export type CompactLeaderBrief = Omit<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence'> & Partial<Pick<GeneratedBrief, 'mergedPrs' | 'tickWallP95' | 'idleEvidence'>>;
 export async function writeCompactBrief(runsDir: string, now = Date.now(), file = join(runsDir, LEADER_COMPACT_FILE)) {
   const brief = await readCompactBrief(runsDir, now);
   await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
