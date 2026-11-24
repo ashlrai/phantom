@@ -47,19 +47,22 @@
  * acks, replies or writes.
  */
 import { busReadContains } from '../core/agents/bus-unified.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import {
   CONVERSATION_STATES, readAgentConversations,
   type AgentConversations, type ConversationQuery, type ConversationState,
 } from '../core/fleet/agent-conversations.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job` and `waitingOn` share. */
+/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `from` and `excludeFrom` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
-  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains', 'limit',
+  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
+  'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'from', 'excludeFrom'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -82,6 +85,16 @@ export interface FleetAgentConversationsArgs {
   before?: number;
   /** Keep only threads where at least one member message's scrubbed one-line subject carries this needle — the shared `--contains` rule. */
   contains?: string;
+  /** Keep only threads where at least one member message's body cites this envelope id through its own `inReplyTo` field — the shared `--in-reply-to` rule. */
+  inReplyTo?: string;
+  /** Keep only threads where at least one member message is addressed to `group:<channel>:*` — the shared `--channel` rule. */
+  channel?: string;
+  /** Keep only threads where at least one member message carries this exact P0..P3 band — the shared `--priority` rule. */
+  priority?: BusPriority;
+  /** Keep only threads where at least one member message was sent under this agent's labels — the shared `--from` rule. */
+  from?: string;
+  /** Drop threads where any member message was sent under this agent's labels — the shared `--exclude-from` rule. */
+  excludeFrom?: string;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
   limit?: number;
 }
@@ -125,6 +138,16 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
   if (contains !== undefined) parsed.contains = contains;
+  const channel = args.channel;
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    parsed.channel = channel;
+  }
+  const priority = args.priority;
+  if (priority !== undefined) {
+    if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    parsed.priority = priority as BusPriority;
+  }
   const since = args.since;
   if (since !== undefined) {
     if (typeof since !== 'string') return null;
@@ -185,6 +208,11 @@ export async function readFleetAgentConversations(
     ...(args.since === undefined ? {} : { since: args.since }),
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
+    ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.priority === undefined ? {} : { priority: args.priority }),
+    ...(args.from === undefined ? {} : { from: args.from }),
+    ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
   const result: AgentConversations = read(query);

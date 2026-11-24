@@ -177,6 +177,87 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { contains: 'zzz' })).toEqual([]);
   });
 
+  it('inReplyTo keeps whole threads where a member body cites that envelope id', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a', inReplyTo: 'env-9' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c', inReplyTo: 'env-9x' }),
+    ], NOW);
+    // Only 'b' cites env-9 through its own inReplyTo — 'd' cites a different id
+    // and 'a'/'c' cite nothing; whole threads survive, never partial lists.
+    expect(filterConversations(list, { inReplyTo: 'env-9' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { inReplyTo: 'env-9' })[0]!.messageCount).toBe(2);
+    // Exact and case-sensitive like every bus read: a prefix or case variant never matches.
+    expect(filterConversations(list, { inReplyTo: 'env-9x' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { inReplyTo: 'ENV-9' })).toEqual([]);
+    expect(filterConversations(list, { inReplyTo: 'env' })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { inReplyTo: 'env-9', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { inReplyTo: 'env-9', agent: 'grok' })).toEqual([]);
+  });
+
+  it('channel keeps whole threads where a member message is addressed to the room', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'group:dev:deploy', 0, { kind: 'ask' }),
+      say('b', 'claude', 'group:dev:deploy', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'group:ops:alerts', 2, { kind: 'status' }),
+      say('d', 'zai', 'leader', 3, { kind: 'status' }),
+    ], NOW);
+    // 'a'+'b' are one reply chain into the dev room; 'c' sits in ops; 'd' is agent mail.
+    expect(filterConversations(list, { channel: 'dev' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { channel: 'ops' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { channel: 'missing' })).toEqual([]);
+    // A topic deeper than one level still sits under the room prefix.
+    expect(filterConversations(list, { channel: 'dev:deploy' })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { channel: 'dev', agent: 'claude' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { channel: 'dev', agent: 'grok' })).toEqual([]);
+  });
+
+  it('priority keeps whole threads where a member message carries that band', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask', priority: 'P0' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a', priority: 'P2' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status', priority: 'P1' }),
+      say('d', 'zai', 'grok', 3, { kind: 'status' }),
+    ], NOW);
+    // 'a' is P0 (its reply 'b' is P2 — any member band counts), 'c' is P1, 'd' names no band.
+    expect(filterConversations(list, { priority: 'P0' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { priority: 'P1' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { priority: 'P2' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { priority: 'P3' })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { priority: 'P0', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { priority: 'P0', agent: 'grok' })).toEqual([]);
+  });
+
+  it('from keeps threads a sender wrote in and excludeFrom drops them, composing to nothing', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'bot', 'zai', 2, { kind: 'status' }),
+      say('d', 'peer-a', 'peer-b', 3, { kind: 'status' }),
+      say('e', 'peer-b', 'peer-a', 4, { kind: 'reply', replyTo: 'd' }),
+    ], NOW);
+    // 'from' decides on the member's sender only — 'a' has leader+claude senders,
+    // 'c' is bot-only, 'd'+'e' are the peer pair.
+    expect(filterConversations(list, { from: 'leader' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { from: 'bot' }).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { from: 'missing' })).toEqual([]);
+    // 'excludeFrom' drops any thread the sender appears in — 'claude' is in 'a',
+    // 'bot' only in 'c', 'peer-a' in 'd'.
+    expect(filterConversations(list, { excludeFrom: 'claude' }).map(c => c.id).sort()).toEqual(['c', 'd']);
+    expect(filterConversations(list, { excludeFrom: 'bot' }).map(c => c.id).sort()).toEqual(['a', 'd']);
+    expect(filterConversations(list, { excludeFrom: 'missing' })).toHaveLength(3);
+    // A sender both included and excluded matches nothing, like every bus read.
+    expect(filterConversations(list, { from: 'leader', excludeFrom: 'leader' })).toEqual([]);
+    // The identity resolver folds a sender's labels the same way `agent` does.
+    const same = (label: string) => ['leader', 'agt_lead'].includes(label) ? 'agt_lead' : undefined;
+    expect(filterConversations(list, { from: 'agt_lead' }, same).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { excludeFrom: 'agt_lead' }, same).map(c => c.id).sort()).toEqual(['c', 'd']);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -415,7 +496,9 @@ describe('phm agents conversations --json', () => {
     expect(result).toMatchObject({ schema: 'agents.conversations.v1', version: 1, source: 'available', matched: 2, waiting: 1, skipped: 0 });
     expect(Object.keys(result.conversations![0]!)).toEqual(['id', 'participants', 'subject', 'messageCount', 'lastAt', 'state', 'stateText', 'waiting', 'jobs', 'links', 'messages']);
     expect(result.conversations!.map(c => [c.id, c.state])).toEqual([['m3', 'waiting'], ['m1', 'answered']]);
-    expect(Object.keys(result.conversations![0]!.messages[0]!)).toEqual(['id', 'at', 'from', 'to', 'kind', 'subject']);
+    // Every member item carries its envelope band; a body `inReplyTo` citation
+    // joins only the messages that make one, appended after `subject`.
+    expect(Object.keys(result.conversations![0]!.messages[0]!)).toEqual(['id', 'at', 'from', 'to', 'kind', 'subject', 'priority']);
   });
 
   it('matched reports the filtered total while limit caps the page', () => {
@@ -574,6 +657,30 @@ describe('phm agents conversations --json', () => {
     // not a thread, so h3 roots at its own id; t-other is its own bucket.
     expect(threads['h3']).toMatchObject({ messageCount: 1 });
     expect(threads['t-other']).toMatchObject({ messageCount: 1 });
+  });
+
+  it('inReplyTo, channel, priority and from read the same member fields every bus read filters on', () => {
+    const root = bus([
+      [T0, 'r1', 'leader', 'claude', { text: 'can you look?' }],
+      [T0 + MIN, 'r2', 'claude', 'leader', { text: 'yes', inReplyTo: 'r1' }, { priority: 'P0' }],
+      [T0 + 2 * MIN, 'r3', 'bot', 'group:dev:deploy', { kind: 'note', text: 'room note' }],
+      [T0 + 3 * MIN, 'r4', 'grok', 'zai', { text: 'unrelated' }],
+    ]);
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    // r1+r2 cite through the body's own inReplyTo; r2's P0 band and r3's room address mark their threads.
+    expect(read({ inReplyTo: 'r1' })).toEqual(['r1']);
+    expect(read({ inReplyTo: 'r2' })).toEqual([]);
+    expect(read({ channel: 'dev' })).toEqual(['r3']);
+    expect(read({ priority: 'P0' })).toEqual(['r1']);
+    // r1, r3 and r4 all carry the default P2 band; only r2 is P0.
+    expect(read({ priority: 'P2' }).sort()).toEqual(['r1', 'r3', 'r4']);
+    expect(read({ from: 'bot' })).toEqual(['r3']);
+    expect(read({ excludeFrom: 'bot' }).sort()).toEqual(['r1', 'r4']);
+    // They compose like every other filter and stay whole-thread reads.
+    expect(read({ channel: 'dev', priority: 'P0' })).toEqual([]);
+    expect(read({ inReplyTo: 'r1', from: 'claude' })).toEqual(['r1']);
+    expect(read({ inReplyTo: 'r1', from: 'grok' })).toEqual([]);
   });
 
   it('the CLI prints that JSON, filters, and refuses unknown flags', async () => {
