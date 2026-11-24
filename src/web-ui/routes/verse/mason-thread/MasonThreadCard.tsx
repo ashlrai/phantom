@@ -2,7 +2,8 @@
  * The "Mason" panel (desktop pane and phone card): one timeline of what Mason
  * said on any channel and what the leader sent back, each of his messages
  * tagged Received, Assigned, Running, Blocked or Verified with its jobs. The
- * same request on two channels shows once. Read-only: nothing here sends.
+ * same request on two channels shows once. The card sends nothing; the desktop
+ * pane adds MasonThreadReply under it.
  * Data is phantom.mason.thread.v1, the same as `phm mason thread --json`.
  * Text is untrusted and renders as plain text.
  */
