@@ -29,7 +29,7 @@ Check actual imports for a change rather than assuming an acyclic architecture.
 | Concern | Source starting points | Guide or contract |
 | --- | --- | --- |
 | Command dispatch and flags | `src/cli/index.ts`, `src/cli/args.ts`, matching `src/cli/<command>.ts` | [CLI reference](cli.md) |
-| Configuration, shared types, disk state | `src/core/config.ts`, `src/core/types.ts`, `schema/` | [Architecture: home layout](ARCHITECTURE.md#the-ashlr-home-layout) |
+| Configuration, shared types, disk state | `src/core/config.ts`, `src/core/types.ts` (entry point) and `src/core/types/` (declarations), `schema/` | [Architecture: home layout](ARCHITECTURE.md#the-ashlr-home-layout) |
 | Runs, engines, sandboxes and swarms | `src/core/run/`, `sandbox/`, `swarm/`, `spec/` | [Architecture](ARCHITECTURE.md), [mailbox engine](MAILBOX-ENGINE.md) |
 | Fleet scheduling and execution | `src/core/fleet/`, `daemon/`, `routing/`, `queue/`, `resources/` | [Fleet API](FLEET-API.md), [queue](QUEUE.md), [resource pools](RESOURCE-POOLS.md) |
 | Session recording/replay and risk | `src/fleet/` (distinct from `src/core/fleet/`) | [Replay boundary](../src/fleet/README.md) |

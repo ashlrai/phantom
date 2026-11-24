@@ -15,8 +15,8 @@ import {
   readLedgerFile, readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE,
   type LedgerReadState, type LedgerTailRead,
 } from '../router/outcomes.js';
-import { appendQueueVisits, queueJournalPath, readQueueVisits } from './journal.js';
-import { isQueueVisit, type QueueVisit } from './stats.js';
+import { appendQueueVisits, compactQueueVisits, queueJournalPath, readQueueVisits } from './journal.js';
+import { isQueueVisit, queueVisitKey, type QueueVisit } from './stats.js';
 
 export const VISIT_SYNC_SCHEMA = 'queue.visits-sync.v1';
 
@@ -363,12 +363,12 @@ export function planVisitSync(visits: readonly QueueVisit[], existing: readonly 
   const latest = new Map<string, QueueVisit>();
   for (const v of existing) {
     if (!isQueueVisit(v)) continue;
-    latest.set(JSON.stringify([v.station, v.pool, v.id]), v);
+    latest.set(queueVisitKey(v), v);
   }
   const plan: VisitSyncPlan = { append: [], unchanged: 0, regression: 0 };
   for (const candidate of visits) {
     if (!isQueueVisit(candidate)) continue;
-    const key = JSON.stringify([candidate.station, candidate.pool, candidate.id]);
+    const key = queueVisitKey(candidate);
     const prior = latest.get(key);
     if (!prior) { plan.append.push(candidate); continue; }
     if (completeness(candidate) < completeness(prior)) { plan.regression++; continue; }
@@ -418,6 +418,10 @@ export interface QueueVisitSyncResult {
   unchanged: number;
   /** Candidates less complete than the journal's latest snapshot; refused, never appended. */
   regression: number;
+  /** True when this pass rewrote the journal under its byte cap (journal.ts compaction). */
+  journalCompacted: boolean;
+  /** Snapshot lines the compaction removed; 0 when no rewrite ran. */
+  journalDropped: number;
 }
 
 function visitSyncBase(
@@ -427,6 +431,7 @@ function visitSyncBase(
     state, jobsPath, queuePath, journalPath, truncated: false,
     queueState: 'not-read', journalState: 'not-read',
     rows: 0, ignored: 0, invalid: 0, derived: 0, appended: 0, unchanged: 0, regression: 0,
+    journalCompacted: false, journalDropped: 0,
   };
 }
 
@@ -509,6 +514,17 @@ export async function syncQueueVisits(opts: QueueVisitSyncOptions = {}): Promise
     };
     if (plan.append.length > 0 && !opts.signal?.aborted) {
       result.appended = await appendQueueVisits(plan.append, journalPath);
+    }
+    // The journal is append-only evidence, but every reader loads it whole —
+    // keep it near the live evidence window. This pass's derived visits are
+    // the keepKeys: anything still foldable from the bounded jobs tail or the
+    // live queue survives compaction, so the next pass finds the same dedup
+    // set and cannot churn dropped keys back in.
+    if (!opts.signal?.aborted) {
+      const keepKeys = new Set(visits.filter(isQueueVisit).map(queueVisitKey));
+      const compaction = await compactQueueVisits(journalPath, { now: nowMs, keepKeys });
+      result.journalCompacted = compaction.compacted;
+      result.journalDropped = compaction.dropped;
     }
     return result;
   } catch {

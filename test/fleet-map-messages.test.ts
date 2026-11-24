@@ -56,6 +56,31 @@ describe('fleet map messages', () => {
     expect(short.messages![0]!.summary).toBe('see [hidden] now');
   });
 
+  it('before keeps only messages received strictly before its cutoff, composing with since into one [since, before) window', () => {
+    const root = store([[T0 - 3_600_000, 'claude', 'codex', 'too old'], [T0, 'leader', 'claude', 'first'], [T0 + 1_000, 'claude', 'leader', 'second'], [T0 + 2_000, 'claude', 'codex', 'third']]);
+    const options = { root, now: () => NOW };
+    // before at T0+1500 drops the T0+2000 row; T0 and T0+1000 stay, newest first.
+    const windowed = readMapMessages(undefined, { ...options, before: new Date(T0 + 1_500).toISOString() })!;
+    expect(windowed.matched).toBe(2);
+    expect(windowed.messages!.map(m => m.summary)).toEqual(['second', 'first']);
+    // A message stamped exactly at the cutoff drops — adjacent windows never double-count it.
+    expect(readMapMessages(undefined, { ...options, before: String(T0 + 2_000) })!.matched).toBe(2);
+    // [since, before): since after T0 keeps only the T0+1000 row inside the window.
+    expect(readMapMessages(new Date(T0 + 500).toISOString(), { ...options, before: new Date(T0 + 1_500).toISOString() })!.messages!.map(m => m.summary))
+      .toEqual(['second']);
+    // An inverted window is an honest empty page, not an error.
+    expect(readMapMessages(new Date(T0 + 2_000).toISOString(), { ...options, before: new Date(T0 + 1_000).toISOString() }))
+      .toMatchObject({ matched: 0, messages: [] });
+    // A bad before spelling is refused like a bad since.
+    expect(readMapMessages(undefined, { ...options, before: 'soon' })).toBeNull();
+    // The pure builder applies the same exclusive bound on receivedAt.
+    const row = (id: string, receivedAt: number) => ({ cursor: receivedAt, receivedAt,
+      envelope: { id, from: 'comms', to: 'leader', priority: 'P2' as const, ttl: 60_000, body: { text: id } } });
+    const scan = { source: 'available' as const, skipped: 0, rows: [row('a', T0), row('b', T0 + 1_000), row('c', T0 + 2_000)] };
+    expect(buildMapMessages(scan, T0 - 1, NOW, 20, undefined, T0 + 1_500).matched).toBe(2);
+    expect(buildMapMessages(scan, T0 - 1, NOW, 20, undefined, T0 + 2_000).matched).toBe(2);
+  });
+
   it('deduplicates receipts before since filtering and exposes scrubbed display text', () => {
     const row = (id: string, receivedAt: number) => ({ cursor: receivedAt, receivedAt,
       envelope: { id, from: 'comms', to: 'leader', priority: 'P2' as const, ttl: 60_000,
@@ -80,7 +105,10 @@ describe('fleet map messages', () => {
     const root = store([[T0, 'claude', 'codex', 'hello']]), options = { root, now: () => NOW };
     expect(mapMessagesResponse(MAP_MESSAGES_PATH, options)).toEqual({ status: 200, body: readMapMessages(undefined, options) });
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?limit=1&since=1h`, options).body as { messages: unknown[] }).messages).toHaveLength(1);
-    for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'limit=0', 'limit=101', 'limit=x', 'limit=1&limit=2']) {
+    const before = encodeURIComponent(new Date(T0 + 30_000).toISOString());
+    expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?before=${before}`, options).body as { matched: number }).matched).toBe(1);
+    for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'limit=0', 'limit=101', 'limit=x', 'limit=1&limit=2',
+      'before=soon', 'before=', 'before=1h&before=2h', 'since=1h&bogus=1']) {
       expect(mapMessagesResponse(`${MAP_MESSAGES_PATH}?${query}`, options).status).toBe(400);
     }
     const req = Object.assign(Readable.from([]) as IncomingMessage, { url: MAP_MESSAGES_PATH, method: 'GET', headers: {} });
@@ -95,12 +123,15 @@ describe('fleet map messages', () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {}), err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(cmdFleetMapMessages(['--help'])).toBe(0);
     expect(out.mock.lastCall![0]).toContain('phm fleet map messages [--json]');
-    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--limit', '0'], ['--limit'], ['--apply']]) expect(cmdFleetMapMessages(args)).toBe(2);
-    expect(err).toHaveBeenCalledTimes(6);
+    for (const args of [['--since'], ['--json', '--json'], ['--since', 'soon'], ['--limit', '0'], ['--limit'], ['--apply'],
+      ['--before'], ['--before', 'soon'], ['--before', '1h', '--before', '2h']]) expect(cmdFleetMapMessages(args)).toBe(2);
+    expect(err).toHaveBeenCalledTimes(9);
     expect(cmdFleetMapMessages(['--json', '--limit', '5'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1', version: 1 });
-    expect(await cmdFleetMessages(['--json', '--since', '1m'])).toBe(0);
+    expect(cmdFleetMapMessages(['--json', '--before', '1h'])).toBe(0);
+    expect(await cmdFleetMessages(['--json', '--since', '1m', '--before', '2h'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toEqual([]);
+    expect(await cmdFleetMessages(['--before', 'bad'])).toBe(2);
     expect(await cmdFleetMessages(['--since', 'bad'])).toBe(2);
     expect(await cmdFleetMap(['messages', '--json', '--since', '1m'])).toBe(0);
     expect(Object.keys(JSON.parse(out.mock.lastCall![0]))).toEqual(KEYS);

@@ -23,7 +23,7 @@ export const OUTCOME_LEARNING_SCHEMA = 'routing.outcome-learning.v1' as const;
 /** Three failures is the smallest run that is more than a pair of coincidences. */
 const RECURRING_FAILURES = 3;
 
-export type ImprovementPattern = 'breakage' | 'dirty' | 'fixup' | 'low-merge';
+export type ImprovementPattern = 'breakage' | 'revert' | 'dirty' | 'fixup' | 'low-merge';
 export type LearnedPriority = 'critical' | 'normal';
 export type LearnedAction = 'dispatch' | 'wait' | 'nowhere';
 
@@ -244,9 +244,10 @@ const MODEL_WORDS: Readonly<Record<string, string>> = {
 };
 const PATTERN_ORDER: Readonly<Record<ImprovementPattern, number>> = {
   breakage: 0,
-  dirty: 1,
-  fixup: 2,
-  'low-merge': 3,
+  revert: 1,
+  dirty: 2,
+  fixup: 3,
+  'low-merge': 4,
 };
 
 function ident(value: unknown): value is string {
@@ -1041,6 +1042,7 @@ function stableId(parts: readonly string[]): string {
 function patternRate(cell: OutcomeCellView, pattern: ImprovementPattern): number {
   switch (pattern) {
     case 'breakage': return cell.breakageRate;
+    case 'revert': return cell.attempts > 0 ? cell.reverted / cell.attempts : 0;
     case 'dirty': return cell.dirtyRate;
     case 'fixup': return cell.fixupRate;
     case 'low-merge': return 1 - cell.goodMergeRate;
@@ -1059,6 +1061,11 @@ function patternCopy(cell: OutcomeCellView, pattern: ImprovementPattern): { titl
       return {
         title: `Stop main breakage from ${who} on ${where}`,
         task: `${who} broke main on ${cell.breakages} of ${cell.attempts} ${where}. Find what those jobs changed and add a regression check that fails before merge.`,
+      };
+    case 'revert':
+      return {
+        title: `Stop the reverted merges from ${who} on ${where}`,
+        task: `${who} had ${cell.reverted} of ${cell.attempts} ${where} merges reverted — work that shipped and then did not hold. Find what those jobs changed and why each merge was undone, and add the check that keeps the next merge standing.`,
       };
     case 'dirty':
       return {
@@ -1086,6 +1093,7 @@ function recurringPatterns(cell: OutcomeCellView): ImprovementPattern[] {
   const failures = cell.attempts - cell.goodMerges;
   const patterns: ImprovementPattern[] = [];
   if (cell.breakages >= RECURRING_FAILURES) patterns.push('breakage');
+  if (cell.reverted >= RECURRING_FAILURES) patterns.push('revert');
   if (cell.dirty >= RECURRING_FAILURES) patterns.push('dirty');
   if (cell.fixups >= RECURRING_FAILURES) patterns.push('fixup');
   if (failures >= RECURRING_FAILURES && cell.goodMerges * 2 < cell.attempts) patterns.push('low-merge');
@@ -1152,11 +1160,11 @@ function evidenceFor(learning: OutcomeLearning, resource: string, model: string,
   return publish(sum);
 }
 
-function meanSuccess(cell: OutcomeCellView): number {
+function meanSuccess(cell: Pick<OutcomeCellView, 'attempts' | 'goodMerges'>): number {
   return (1 + cell.goodMerges) / (2 + cell.attempts);
 }
 
-function meanCheapness(cell: OutcomeCellView): number {
+function meanCheapness(cell: Pick<OutcomeCellView, 'attempts' | 'usage'>): number {
   return (1 + cell.attempts) / (1 + cell.usage);
 }
 
@@ -1381,6 +1389,37 @@ export function learnedSeatPenalty(learning: OutcomeLearning, jobType: string, r
     const previous = scores.get(cell.resource);
     if (previous === undefined || score > previous) scores.set(cell.resource, score);
   }
+  return normalizedPenalties(scores);
+}
+
+/**
+ * The same posterior means pooled across every recorded cell: a seat-router
+ * request carries no fleet job type or repo, so the honest prior is the
+ * resource's whole dispatch record — attempts, good merges and usage summed
+ * per resource over all models, job types and repos, then the same
+ * meanSuccess x meanCheapness reward and normalization learnedSeatPenalty
+ * applies. Lower is better; the best resource stays at 0 and every other
+ * resource's penalty stays inside [0, 1]. An empty or all-unmeasured log
+ * yields {} — the router's ranking is then byte-identical.
+ */
+export function learnedFleetSeatPenalty(learning: OutcomeLearning): Record<string, number> {
+  const pooled = new Map<string, { attempts: number; goodMerges: number; usage: number }>();
+  for (const cell of learning.cells) {
+    if (cell.attempts < 1) continue;
+    const acc = pooled.get(cell.resource) ?? { attempts: 0, goodMerges: 0, usage: 0 };
+    acc.attempts += cell.attempts;
+    acc.goodMerges += cell.goodMerges;
+    acc.usage += cell.usage;
+    pooled.set(cell.resource, acc);
+  }
+  const scores = new Map<string, number>();
+  for (const [resource, cell] of pooled) {
+    scores.set(resource, meanSuccess(cell) * meanCheapness(cell));
+  }
+  return normalizedPenalties(scores);
+}
+
+function normalizedPenalties(scores: ReadonlyMap<string, number>): Record<string, number> {
   let best = 0;
   for (const score of scores.values()) if (score > best) best = score;
   const penalty: Record<string, number> = {};
