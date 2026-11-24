@@ -20,7 +20,7 @@ export const UNIFIED_INBOX_QUERY_LIMIT_DEFAULT = 50;
 
 /** The query keys the read accepts — the CLI/MCP filter dimensions plus `limit`. */
 export const UNIFIED_INBOX_QUERY_PARAMS = [
-  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'contains',
+  'limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains',
 ] as const;
 
 export interface UnifiedInboxQuery {
@@ -44,8 +44,10 @@ const invalid = (error: string): UnifiedInboxQueryResult => ({ ok: false, error 
  * (`UNIFIED_INBOX_SOURCES`, `UNIFIED_INBOX_KINDS`, `info|warn|high`),
  * `blocking` takes the literals `true` or `false` — the two states
  * `UnifiedInboxFilter.blocking` distinguishes — `job` the shared printable
- * label rule, `since` the shared `parseSince` grammar (15m, 2h, 1d, epoch
- * ms or an ISO time, resolved against `options.now`), and `contains` a
+ * label rule, `since` and `before` the shared `parseSince` grammar (15m, 2h,
+ * 1d, epoch ms or an ISO time, resolved against `options.now`) — `since`
+ * the inclusive lower bound, `before` the exclusive upper bound composing
+ * into one `[since, before)` window — and `contains` a
  * non-empty needle of at most `UNIFIED_INBOX_CONTAINS_MAX` characters.
  * Repeated keys are the caller's concern: this parser sees `URLSearchParams`
  * values one key at a time and takes the first, so callers enforcing
@@ -108,6 +110,14 @@ export function parseUnifiedInboxQuery(
       return invalid('since takes 15m, 2h, 1d, epoch ms or an ISO time.');
     }
     filter.since = resolved;
+  }
+  const before = params.get('before');
+  if (before !== null) {
+    const resolved = parseSince(before, options.now ?? Date.now());
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) {
+      return invalid('before takes 15m, 2h, 1d, epoch ms or an ISO time.');
+    }
+    filter.before = resolved;
   }
   const contains = params.get('contains');
   if (contains !== null) {
