@@ -1061,7 +1061,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh and mcp-gateway items carry priority 3;
+  catalog-refresh, mcp-gateway and source-heal items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1308,7 +1308,18 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   owner-side no-change escape for owner-pinned policy, foreign
   callers, pinned ops machinery or a rolled-forward window, and emit
   only for the fleet's own repository since the journal records this
-  install's gateway and carries no repository column. They
+  install's gateway and carries no repository column. Source-heal items
+  name the bridge-source-repair journal, healSource in
+  scripts/bridge-heal.mjs and the `phm doctor worktree` reader,
+  keep the find-what-keeps-breaking-or-blocking-the-source-toolchain
+  framing per event kind — a source checkout whose node_modules keeps
+  losing tsgo or eslint, npm ci repairs that keep failing, or heals
+  deferred by a wedged repair lock or the hourly cap — with the same
+  owner-side no-change escape for npm registry, disk or credential
+  state only the owner can fix, pinned ops machinery or a
+  rolled-forward window, and emit only for the fleet's own repository
+  since the journal records this install's source checkout and
+  carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never

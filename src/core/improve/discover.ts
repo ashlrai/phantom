@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-five sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-six sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -498,6 +498,19 @@
  *     pair the policy kept denying, a tool whose approval gate kept
  *     stalling calls, and calls that kept arriving on dead session
  *     records never became work;
+ *   - the bridge source-heal journal's recurring adverse evidence: the
+ *     {schema: 'phm.bridge.source-heal/1', at, event, ok, reason,
+ *     tsgo, eslint} rows healSource appends to
+ *     bridge-source-repair.jsonl inside the fleet source checkout's
+ *     .git (or its root) on every bridge worktree creation
+ *     (sourceHealBacklogItems below). Until now the journal's only
+ *     reader was `phm doctor worktree`'s last-five-lines display — a
+ *     point-in-time surface someone had to open — so a source
+ *     checkout whose node_modules kept losing tsgo or eslint, whose
+ *     npm ci repairs kept failing or whose repairs kept being
+ *     deferred by a wedged lock or the hourly cap never became work,
+ *     even though every broken probe degrades verify-changed and
+ *     typecheck for every job cloned from that source;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -575,6 +588,7 @@ import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
 import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
+import { sourceHealBacklogItems } from './source-heal-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1350,6 +1364,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's gateway and carries no repository column.
   items.push(...await gatewayActivityBacklogItems({ repo }));
+
+  // Bridge source-heal journal: healSource's per-call audit of the
+  // fleet source checkout's toolchain — 'probe' rows are the healthy
+  // baseline while 'repaired', 'failed' and 'skipped' each mean a
+  // bridge worktree creation found tsgo or eslint broken — folded per
+  // event kind across distinct UTC days inside the window. Until now
+  // the journal's only reader was `phm doctor worktree`'s five-line
+  // display tail, so a toolchain that kept breaking, a repair that
+  // kept failing, or a heal that kept being deferred never became
+  // work. Same bounded no-follow tail read; rows count only under the
+  // writer's contract (exact schema stamp, closed event vocabulary,
+  // boolean ok/tsgo/eslint, bounded reason), a kind emits only at the
+  // recurring bars, the source checkout is resolved through the same
+  // findSource + repairLogPath pair the writer's caller and the
+  // doctor use, truncated tails are stated as lower bounds, and items
+  // emit only for the fleet's own repository since the journal
+  // records this install's source checkout and carries no repository
+  // column.
+  items.push(...await sourceHealBacklogItems({ repo }));
   return { items, errors };
 }
 
