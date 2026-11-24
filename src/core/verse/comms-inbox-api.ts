@@ -5,7 +5,8 @@
  *
  * GET accepts `limit` (1..200, default 50) plus the same view dimensions
  * `phm comms inbox` and `fleet_comms_inbox` take — `source`, `kind`,
- * `severity`, `blocking`, `job`, `since`, `before`, `contains` — validated by
+ * `severity`, `blocking`, `job`, `since`, `before`, `contains`, `channel` —
+ * validated by
  * `parseUnifiedInboxQuery` so the HTTP read, the CLI read and the MCP read
  * can never disagree on what a value means; the applied filter echoes on the
  * response's `filter` field exactly like the MCP tool's. */

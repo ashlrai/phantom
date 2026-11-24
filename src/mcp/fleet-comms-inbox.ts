@@ -5,6 +5,7 @@ import {
   type UnifiedInbox, type UnifiedInboxFilter, type UnifiedInboxOptions,
 } from '../core/comms/unified-inbox.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 
 export interface FleetCommsInboxArgs {
   limit: number;
@@ -18,7 +19,7 @@ export interface FleetCommsInboxDeps {
 
 /** The job-id rule every bus read surface shares: a printable label, 1-128 chars. */
 const JOB_ID = /^[\x21-\x7e]{1,128}$/;
-const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains']);
+const INBOX_KEYS = new Set(['limit', 'source', 'kind', 'severity', 'blocking', 'job', 'since', 'before', 'contains', 'channel']);
 
 export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCommsInboxArgs | null {
   if (Object.keys(args).some(key => !INBOX_KEYS.has(key))) return null;
@@ -61,6 +62,10 @@ export function parseFleetCommsInboxArgs(args: Record<string, unknown>): FleetCo
   if (args.contains !== undefined) {
     if (typeof args.contains !== 'string' || args.contains.trim() === '' || args.contains.length > UNIFIED_INBOX_CONTAINS_MAX) return null;
     filter.contains = args.contains;
+  }
+  if (args.channel !== undefined) {
+    if (typeof args.channel !== 'string' || !agentChannelNameSchema.safeParse(args.channel).success) return null;
+    filter.channel = args.channel;
   }
   return { limit, ...(Object.keys(filter).length === 0 ? {} : { filter }) };
 }

@@ -218,7 +218,7 @@ digests. Actual adapters still enforce owner verification, KILL, pause and send 
 
 ## Unified inbox
 
-`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]`
+`phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--channel <name>] [--json]`
 ([`unified-inbox.ts`](../src/core/comms/unified-inbox.ts)) is the read-only
 roll-up of everything still pending, ranked the way Needs-you ranks: severity
 band, then priority, then expiry, then newest. It aggregates local sources
@@ -436,7 +436,16 @@ as new or old; and `--contains <text>` only items whose scrubbed `title` or
 `detail` carries the text as a case-insensitive substring with whitespace
 collapsed — the same text the row shows, so a match is always visible in
 the row it selects, while the `act` deep links (commands, never item
-content) stay out of the match. The dimensions AND together. `total`, `omitted` and `items` then
+content) stay out of the match; and `--channel <name>` only items that
+provably name that bus channel — the item's `channels` citation set, the
+same `group:<name>:*` room namespace every bus read's `--channel` shares
+under strict name grammar with no registry dependence: a bus or mailbox
+envelope's `to` under the room prefix, a feed job's announcement address,
+a wake hint's addressee label or a conversation member message's recipient
+carries the citation, and this is the bus channel namespace, never the
+owner-thread channel names — an item that names no bus channel never
+matches, so unknown stays out of the match. The dimensions AND together.
+`total`, `omitted` and `items` then
 describe
 the matched view and the report echoes the applied `filter`, while `sources`
 keeps every store's real unfiltered pending count — `null` when a source
@@ -444,7 +453,7 @@ could not be read, never a fabricated 0 — a filtered view never
 reports a busy or degraded source as empty. `GET /api/verse/comms/inbox` —
 the desktop and agent read of the same report — accepts the same dimensions
 as query parameters (`source`, `kind`, `severity`, `blocking=true|false`,
-`job`, `since`, `before`, `contains`, each at most once, plus `limit` 1–200 default
+`job`, `since`, `before`, `contains`, `channel`, each at most once, plus `limit` 1–200 default
 50), validated by `parseUnifiedInboxQuery` — the same value rules `phm
 comms inbox` and `fleet_comms_inbox` apply — and echoes the applied
 `filter` on the response exactly like

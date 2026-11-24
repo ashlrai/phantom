@@ -2779,6 +2779,74 @@ describe('readUnifiedInbox job filter', () => {
   });
 });
 
+describe('readUnifiedInbox channel filter', () => {
+  const mailbox = () => createBusMailbox(root, () => now);
+  const sendMail = (envelope: BusEnvelope) => {
+    const result = mailbox().send(envelope);
+    expect(result.replayed).toBe(false);
+    return result.id;
+  };
+  const wakeRow = (id: string, to: string, at: number): AgentWakeRow =>
+    ({ id, from: 'agent:peer', to, kind: 'bus.send', at });
+  const wakesPage = (wakes: AgentWakeRow[]): AllWakesPage =>
+    ({ status: 'ok', scope: 'fleet', wakes, matched: wakes.length, truncated: false });
+
+  it('annotates each item with the bus channel names its citations prove', async () => {
+    const workEnv = postV2Body({ kind: 'work', text: 'fake channel work' }, { to: 'group:eng:general' });
+    const handoffEnv = postV2Body({ kind: 'worker-handoff', taskId: 'RQ-CHH-1', prompt: 'fake handoff' },
+      { from: 'agent:lead', to: 'group:ops:alerts' });
+    postJob('RQ-CH-1', { to: 'group:eng:general' });
+    const mailId = sendMail({ id: 'mb-ch-1', from: 'codex-cmp', to: 'group:ops:alerts',
+      priority: 'P2', ttl: 60_000, body: { kind: 'note', text: 'fake mail' } });
+    postV2Body({ kind: 'note', text: 'room ping?', thread: 'eng-sync' },
+      { from: 'agent:asker', to: 'group:eng:general' });
+    postV2Body({ kind: 'note', text: 'plain agent mail?', thread: 'plain-sync' },
+      { from: 'agent:a', to: 'agent:b' });
+    const inbox = await read({ readWakes: () => wakesPage([wakeRow('wh-1', 'group:eng:general', now - 60_000)]) });
+    const byId = (id: string) => inbox.items.find(i => i.id === id);
+    expect(byId(`bus:${workEnv}`)?.channels).toEqual(['eng']);
+    expect(byId(`bus-handoff:${handoffEnv}`)?.channels).toEqual(['ops']);
+    expect(byId('bus-feed:RQ-CH-1')?.channels).toEqual(['eng']);
+    expect(byId(`mailbox:${mailId}`)?.channels).toEqual(['ops']);
+    expect(inbox.items.find(i => i.source === 'wakes')?.channels).toEqual(['eng']);
+    // A thread cites every channel its member messages reached.
+    expect(byId('conversations:eng-sync')?.channels).toEqual(['eng']);
+    // An agent-addressed thread names no bus channel — the field stays absent.
+    expect(byId('conversations:plain-sync')).not.toHaveProperty('channels');
+  });
+
+  it('keeps only items naming the channel, exact-matches the name and ANDs with the other dimensions', async () => {
+    const engWork = postV2Body({ kind: 'work', text: 'fake eng work' }, { to: 'group:eng:general' });
+    postJob('RQ-CH-2', { to: 'group:ops:alerts' });
+    postV2Body({ kind: 'note', text: 'plain?', thread: 'plain-sync' }, { from: 'agent:a', to: 'agent:b' });
+    const eng = await read({ filter: { channel: 'eng' } });
+    expect(eng.filter).toEqual({ channel: 'eng' });
+    expect(eng.items.map(i => i.id)).toEqual([`bus:${engWork}`]);
+    expect(eng.total).toBe(1);
+    expect(eng.omitted).toBe(0);
+    // Per-source reports stay the unfiltered store truth.
+    expect(eng.sources.bus.pending).toBe(2);
+    expect(eng.sources.conversations.pending).toBe(1);
+
+    const ops = await read({ filter: { channel: 'ops' } });
+    expect(ops.items.map(i => i.id)).toEqual(['bus-feed:RQ-CH-2']);
+
+    // A channel nobody cites matches nothing — never a guessed room.
+    const missing = await read({ filter: { channel: 'no-such-room' } });
+    expect(missing.total).toBe(0);
+    expect(missing.items).toEqual([]);
+    expect(missing.sources.bus.pending).toBe(2);
+
+    // channel ANDs with source/kind like every other dimension.
+    const convOnly = await read({ filter: { channel: 'eng', source: 'conversations' } });
+    expect(convOnly.total).toBe(0);
+    const wrongSource = await read({ filter: { channel: 'ops', source: 'conversations' } });
+    expect(wrongSource.total).toBe(0);
+    const kindOnly = await read({ filter: { channel: 'eng', kind: 'bus-work' } });
+    expect(kindOnly.items.map(i => i.id)).toEqual([`bus:${engWork}`]);
+  });
+});
+
 describe('readUnifiedInbox since filter', () => {
   it('keeps only items whose recorded since reaches the cutoff; undated items never match', async () => {
     postWork('flt-since-old', { at: now - 3_600_000 });
@@ -3012,7 +3080,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--channel <name>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -3226,6 +3294,32 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('filters the unified JSON view by --channel', async () => {
+    const { command, json } = setupCli();
+    const engWork = postV2Body({ kind: 'work', text: 'fake eng work' }, { to: 'group:eng:general' });
+    postJob('RQ-CLI-CH', { to: 'group:ops:alerts' });
+    postWork('cli-channel-plain');
+
+    expect(await command(['--channel', 'eng', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ channel: 'eng' });
+    expect(report.items.map(i => i.id)).toEqual([`bus:${engWork}`]);
+    expect(report.items[0]!.channels).toEqual(['eng']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+
+    expect(await command(['--channel', 'ops', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['bus-feed:RQ-CLI-CH']);
+
+    // --channel ANDs with the other view filters.
+    expect(await command(['--channel', 'eng', '--source', 'conversations', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ channel: 'eng', source: 'conversations' });
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -3289,6 +3383,9 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--channel'], ['--channel', ''], ['--channel', '--json'], ['--channel', 'Eng'],
+      ['--channel', 'bad name'], ['--channel', 'group:eng:general'], ['--channel', 'x'.repeat(33)],
+      ['--channel', 'eng', '--channel', 'ops'], ['--channel', 'eng', '--job'], ['--json', '--channel'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
