@@ -1135,9 +1135,12 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
 
 /**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
- * traffic still addressed to its bare handle, stable id or legacy aliases,
- * and posts in its channels (minus its own and minus `group.presence`
- * heartbeats, which are observations with their own read, never mail).
+ * traffic still addressed to any label that resolves to its identity — the
+ * bare handle, stable id or legacy aliases, exact first then lowercase, the
+ * same addressed-to fold `bus next`, `work mine`, `handoff-receive` and the
+ * conversations reads apply — and posts in its channels (minus its own and
+ * minus `group.presence` heartbeats, which are observations with their own
+ * read, never mail).
  * A handoff is the `channel:'handoff'` stamp or the receivable
  * `worker-handoff` body — `fleet handoff-send` posts the body on a legacy
  * envelope — under any of those addresses, so an unstamped or
@@ -1263,9 +1266,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
-  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
+  const identityOf = labelIdentityOf(read.registry);
+  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, identityOf);
   const excludeFromMatch = page.excludeFrom === undefined ? undefined
-    : agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(page.excludeFrom, read.registry, identityOf);
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1289,7 +1293,15 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       // channel's group address from anyone else — the same coverage
       // `work mine` handoffs and `handoff-receive` apply.
       const isHandoff = envelope.channel === 'handoff' || isWorkerHandoffBody(envelope.body);
-      const toLabel = target.labels.has(envelope.to);
+      // "Addressed to this identity" is the same label resolution every other
+      // addressed-to read applies — handle, `agent:` address, stable id or
+      // alias, exact first then lowercase — so a case-folded spelling of a
+      // registered label reaches the same inbox `bus next`, `work mine`,
+      // `handoff-receive` and the conversations reads already count as its
+      // pending work; a spelling that resolves to no identity still reaches
+      // nobody. The channel self-exclusion stays on the exact stored labels,
+      // the same rule `agentPendingAddressMatcher` keeps.
+      const toLabel = identityOf(envelope.to) === target.identity.id;
       const toChannel = channel !== null && !target.labels.has(envelope.from);
       if (isHandoff && (toLabel || toChannel)) kind = 'handoff';
       else if (envelope.to === self) kind = 'dm';
@@ -1532,7 +1544,7 @@ export function busInboxJobMarker(job: BusEnvelopeLookupJob): string {
 const WAKE_HINT_LABEL = /^[\x21-\x7e]{1,256}$/;
 
 export type WakePage = { status: 'ok'; agent: string;
-  /** 'identity' matched every label of a registered identity plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
+  /** 'identity' matched every spelling that resolves to a registered identity (exact, then lowercase) plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
   scope: 'identity' | 'label';
   wakes: AgentWakeRow[];
   /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. With a `job` filter this counts the proven job matches on the resolved page instead — the same accepted-hints count, never a total beyond `truncated`. */
@@ -1674,8 +1686,10 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
 }
 
 /**
- * Wake hints addressed to this identity under any label it resolves through
- * (address, bare handle, stable id or alias) or to one of its channels after
+ * Wake hints addressed to this identity under any spelling that resolves to
+ * it — the `agent:<handle>` address, bare handle, stable id or alias, exact
+ * first then lowercase, the same addressed-to fold the inbox read and every
+ * other addressed-to match applies — or to one of its channels after
  * `sinceAt`. A ref that resolves to no registered identity keeps exact-label
  * matching instead — `scope:'label'`, `agent` the queried label — so hints
  * queued under a bare coordination or routing label (claim-holder fan-out
@@ -1764,18 +1778,23 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
+  const identityOf = labelIdentityOf(read.registry);
   const fromMatch = parsed.from === undefined ? undefined
-    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(parsed.from, read.registry, identityOf);
   const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
-    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, identityOf);
   const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (parsed.id === undefined || wake.id === parsed.id) &&
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
+    // The addressee label folds to its identity exactly as the inbox read
+    // and every other addressed-to match does; the channel self-exclusion
+    // stays on the exact stored labels like `agentPendingAddressMatcher`.
     (target !== undefined
-      ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
+      ? identityOf(wake.to) === target.identity.id
+        || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
       : wake.to === ref), parsed);
   if (page.status !== 'ok') return page;
   return { status: 'ok', agent: target?.identity.handle ?? ref,

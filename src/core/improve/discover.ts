@@ -518,6 +518,25 @@
  *     journal had no reader at all — queue-writer.mjs only re-exports
  *     the writer — so every report a user filed sat in an append-only
  *     file nobody opened, never work;
+ *   - the Eng Ops autofix ledgers' recurring adverse evidence: the
+ *     per-action LedgerLine rows appendLedger writes to
+ *     <runs>/ledger/autofix.jsonl and the per-transition
+ *     IncidentStatusLine rows record writes to
+ *     <runs>/ledger/incidents.jsonl on every `phm autofix` pass —
+ *     'failed' outcomes, 'refused' and its named variants
+ *     ('refused_admitted', 'refused_stale'), 'detect-only' security
+ *     reports, and incident 'failed'/'refused' transitions, folded
+ *     per (fixer, action, result) cell across distinct targets and
+ *     UTC days, and per (incident class, status) cell across distinct
+ *     keys and UTC days, inside the 7-day window
+ *     (autofixBacklogItems below). Until now the ledgers' only readers
+ *     were the pass itself — readLedger's alreadyRecorded idempotency
+ *     dedup and readIncidentStatuses' transition dedup — plus
+ *     `phm autofix --json`'s current-pass print, so a fixer action
+ *     that kept failing every pass, a refusal guard whose
+ *     precondition never became satisfiable, pinned files that kept
+ *     being hand-edited, and incident classes that kept ending
+ *     failed or refused never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -598,6 +617,7 @@ import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
+import { autofixBacklogItems } from './autofix-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1426,6 +1446,36 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // own repository inherits the items since the journal describes
   // this install's schedules and carries no repository column.
   items.push(...await routineBacklogItems({ repo }));
+
+  // Eng Ops autofix ledgers: every `phm autofix` pass appends one
+  // LedgerLine per non-skipped action outcome to
+  // <runs>/ledger/autofix.jsonl and one IncidentStatusLine per
+  // transition to <runs>/ledger/incidents.jsonl — until now the only
+  // readers were the pass itself (alreadyRecorded and
+  // terminalIncident dedup) and `phm autofix --json`'s current-pass
+  // print, so a fixer action that kept failing, a refusal guard that
+  // never became satisfiable, recurring pinned-file hand edits and
+  // incident classes that kept ending failed or refused sat in
+  // append-only files nobody folded, never work. Action rows count
+  // only under the writer's contract (the closed fixer and result
+  // vocabularies, bounded target/action strings, parseable ts) and
+  // only the adverse results join cells — 'failed', 'refused' and its
+  // named variants, 'detect-only' — while 'applied', 'dry-run',
+  // 'skipped' and the deliberate 'refused_operator' quiet deferral
+  // stay out; incident rows need the INCIDENT_KEY_RE key, the closed
+  // status vocabulary and a parseable ts, classed through the
+  // writer's own INCIDENT_FIXER_TABLE parse. A (fixer, action,
+  // result) cell emits only at the recurring bars of adverse rows
+  // across distinct UTC days inside the window — 'failed' is
+  // non-terminal in the writer's dedup so one broken action appends a
+  // fresh row every pass — and a (class, status) cell only at
+  // distinct incident keys across distinct UTC days since one
+  // incident's transition-deduped rows cannot show recurrence alone;
+  // truncated tails are stated as lower bounds, ledger strings are
+  // scrubbed before they reach a prompt, and only the fleet's own
+  // repository inherits the items since the ledgers describe this
+  // install's machinery and carry no repository column.
+  items.push(...await autofixBacklogItems({ repo }));
   return { items, errors };
 }
 

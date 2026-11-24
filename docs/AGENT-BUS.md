@@ -416,8 +416,9 @@ The reserved prefixes `agent:`, `group:`, `dm:` and `handoff:` are refused —
 `dm`, `channel post`, `handoff` and `wake` own those addresses — and the
 sender must still be a registered identity, so the mail carries the same
 `agent-bus` sender metadata, scrub gate, priority-wake rules and id dedupe as
-a DM. Delivery follows the label: a `to` that is one of a registered
-identity's labels (alias, bare handle or stable id) lands in its inbox as
+a DM. Delivery follows the label: a `to` that resolves to a registered
+identity — any of its labels, exact first then lowercase — lands in its
+inbox as
 legacy mail and records a wake hint by the priority rules; a sink or topic
 label reaches no identity inbox — its readers are the label's own
 subscribers and projections. The body stays untrusted data: consumers of the
@@ -456,9 +457,11 @@ returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
 heartbeats, which are observations with their own read, never mail) and
-traffic still addressed to
-its bare handle, stable id or aliases — every ref `resolveAgent` accepts —
-highest priority first. A handoff is the `channel:'handoff'` stamp or the
+traffic still addressed to any spelling that resolves to its identity —
+the `agent:` address, bare handle, stable id or aliases, exact first then
+lowercase, the same addressed-to fold `bus next`, `work mine`,
+`handoff-receive` and the conversations reads apply — highest priority
+first. A handoff is the `channel:'handoff'` stamp or the
 receivable `worker-handoff` body `fleet handoff-send` posts on a legacy
 envelope, under any of those labels or a member channel's `group:` address —
 the same coverage `work mine` handoffs and `handoff-receive` apply;
@@ -571,7 +574,9 @@ carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>] [--id <id>]` lists wake
-hints for the agent and its
+hints for the agent — addressed under any spelling that resolves to its
+identity, exact first then lowercase, the same fold the inbox read
+applies — and its
 channels. `--all` drops the addressee scope entirely — every hint in the
 bounded queue tail, registered identities' and bare coordination or
 routing labels' alike, each row's own `to` naming its addressee — so a

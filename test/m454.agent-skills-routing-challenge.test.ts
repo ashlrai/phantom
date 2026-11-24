@@ -639,7 +639,7 @@ describe('M454 pinned upstream routing challenge', () => {
       'docs/ECOSYSTEM-CHANGELOG.md',
     ]);
     // Explicit review of newly shipped members preserves challenge isolation.
-    for (const file of ['docs/model-registry.json', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
+    for (const file of ['docs/model-registry.json', 'docs/CLI-AGENT-READINESS.md', 'docs/lanes.md', 'docs/REPO-OWNERS.md', 'docs/LEADER-NETWORK.md', 'docs/DISK-MAINT.md']) {
       const source = readFileSync(join(REPO_ROOT, file), 'utf8');
       for (const canary of consumerCanaries) expect(source).not.toContain(canary);
     }

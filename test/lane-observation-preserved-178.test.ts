@@ -100,11 +100,13 @@ describe('phm lanes --json observation preservation (RQ-PHX-LANEOBSERVEPRESERVE1
   it('does not leak private state fields or unscrubbed free text (173 #2)', async () => {
     await homeWithStatus({ ...baseStatus,
       operator_private: 'PRIVATE-MARKER-9f8e7d',
+      operator_secret: 'PRIVATE-MARKER-9f8e7d',
       lanes: {
         'alpha-lane': {
           running: 0, target: 1, queued: 0, held: true,
           held_reason: 'hold until /Users/someone/private/quota resets',
           lane_private: 'PRIVATE-MARKER-9f8e7d',
+          api_token: 'PRIVATE-MARKER-9f8e7d',
           healthy: 'yes',
         },
       } });

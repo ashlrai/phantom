@@ -556,6 +556,73 @@ describe('sender-filtered inbox reads', () => {
   });
 });
 
+describe('identity-folded addressee reads', () => {
+  it('reaches mail and wake hints addressed under a case-folded spelling of an identity label', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    // Unified sends canonicalize `to` to agent:<handle>, but foreign producers
+    // and label posts stamp the routing label verbatim — a case variant of a
+    // registered label still names the identity, the same addressed-to fold
+    // bus next, work mine, handoff-receive and the conversations reads apply.
+    const post = (id: string, to: string) => appendBusInbox({ id, from: 'agent:atlas', to,
+      priority: 'P3', ttl: 60_000, body: { kind: 'note', text: id } }, options).status;
+    expect(post('case-handle', 'Nova')).toBe('posted');
+    expect(post('case-addr', 'agent:Nova')).toBe('posted');
+    expect(post('case-upper', 'NOVA')).toBe('posted');
+    expect(post('case-alias', 'LANE-RELAY')).toBe('posted');
+    // A spelling that resolves to no identity still reaches nobody.
+    expect(post('case-none', 'NOVA-2')).toBe('posted');
+
+    const nova = readAgentInbox('nova', {}, options);
+    if (nova.status !== 'ok') throw new Error(`unexpected ${nova.status}`);
+    expect(nova.messages.map(m => `${m.envelope.id}:${m.kind}`).sort())
+      .toEqual(['case-addr:legacy', 'case-handle:legacy', 'case-upper:legacy']);
+
+    const relay = readAgentInbox('relay', {}, options);
+    if (relay.status !== 'ok') throw new Error(`unexpected ${relay.status}`);
+    expect(relay.messages.map(m => m.envelope.id)).toEqual(['case-alias']);
+
+    const orion = readAgentInbox('orion', {}, options);
+    if (orion.status !== 'ok') throw new Error(`unexpected ${orion.status}`);
+    expect(orion.messages).toEqual([]);
+
+    // The same fold reaches wake hints: the queue row's own `to` is the
+    // addressee evidence, matched like the pending-work reads.
+    expect(enqueueBusWake({ kind: 'bus.send', id: 'wk-case', from: 'agent:atlas', to: 'Nova' },
+      { root: options.runsRoot })).toBe('queued');
+    expect(enqueueBusWake({ kind: 'bus.send', id: 'wk-none', from: 'agent:atlas', to: 'NOVA-2' },
+      { root: options.runsRoot })).toBe('queued');
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok',
+      wakes: [{ id: 'wk-case', to: 'Nova' }] });
+    expect(readAgentWakes('atlas', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+    expect(readAgentWakes('orion', undefined, options)).toMatchObject({ status: 'ok', wakes: [] });
+    // A case-variant ref still resolves to no identity on either read: the
+    // query side stays exact while only the envelope label folds.
+    expect(readAgentInbox('Nova', {}, options)).toMatchObject({ status: 'unknown-agent' });
+    expect(readAgentWakes('Nova', undefined, options)).toMatchObject({ status: 'ok', scope: 'label',
+      wakes: [{ id: 'wk-case', to: 'Nova' }] });
+  });
+
+  it('keeps the channel self-exclusion and label-scope rules exact', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova', 'orion');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    // A channel post from a case-folded spelling of the reader's own label is
+    // not provably the reader's own post — the same exact self-label rule
+    // agentPendingAddressMatcher applies — so it stays channel mail.
+    expect(appendBusInbox({ id: 'ch-case-self', from: 'Nova', to: 'group:release:general',
+      priority: 'P3', ttl: 60_000, body: { kind: 'note', text: 'variant self' } }, options).status).toBe('posted');
+    // The canonical self address still hides the agent's own channel post.
+    expect(appendBusInbox({ id: 'ch-self', from: 'agent:nova', to: 'group:release:general',
+      priority: 'P3', ttl: 60_000, body: { kind: 'note', text: 'own post' } }, options).status).toBe('posted');
+    const nova = readAgentInbox('nova', {}, options);
+    if (nova.status !== 'ok') throw new Error(`unexpected ${nova.status}`);
+    expect(nova.messages.map(m => `${m.envelope.id}:${m.kind}`)).toEqual(['ch-case-self:channel']);
+  });
+});
+
 describe('priority-filtered reads', () => {
   it('narrows inbox and channel pages to one exact priority band', async () => {
     const options = setup();
