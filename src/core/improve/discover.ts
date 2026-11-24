@@ -464,6 +464,25 @@
  *     models that kept failing verification while staying routable,
  *     a pattern rule rejected every week, and removal proposals that
  *     piled up unreviewed never became work;
+ *   - the automations firing journal's recurring adverse evidence: the
+ *     per-transition {at, event, automationId, firingId, dedupeKey,
+ *     repo, state, lane, sourceUrl, laneRef, laneUrl, reason, spendUsd}
+ *     rows journalRecord + appendAutomationJournal write to
+ *     <ashlr home>/automations/firings.jsonl (rotated once to
+ *     firings.1.jsonl) on every firing transition the engine journals —
+ *     'fired', 'dropped', 'deferred', 'dispatched', 'refused',
+ *     'settled', 'reviewed' — folded per (automationId, kind) cell
+ *     across distinct dedupeKeys and UTC days inside the 7-day window
+ *     for the adverse kinds only: 'refused', 'dropped', 'deferred'
+ *     (minus the two deliberate global holds, KILL and no-grant) and
+ *     'settled' rows whose state is 'failed'
+ *     (automationBacklogItems below). Until now the journal's only
+ *     reader was readAutomationJournal — the Verse automations API's
+ *     newest-200 display tail — a point-in-time surface someone had to
+ *     open, so an automation whose lane kept refusing its firings,
+ *     whose dispatched work kept failing, whose queue kept overflowing
+ *     or whose candidates kept waiting out gates and limits never
+ *     became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -539,6 +558,7 @@ import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
 import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
+import { automationBacklogItems } from './automation-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1270,6 +1290,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the reports describe this
   // install's router catalog and carry no repository column.
   items.push(...await catalogRefreshBacklogItems({ repo }));
+
+  // Automations firing journal: the engine's own audit of every firing
+  // transition — intake queues, queue-overflow trims, 7-day expiry
+  // drops, gate-reason changes, lane deferrals and acceptances,
+  // for-good refusals, settlements and review decisions — recurring per
+  // (automationId, kind) cell across distinct dedupeKeys and UTC days
+  // inside the window, for the adverse kinds only. Until now the
+  // journal's only reader was the Verse automations API's newest-200
+  // display tail, a point-in-time surface that never folded a
+  // recurrence. Same bounded no-follow tail reads of both journal
+  // generations (live plus its one rotation); rows count only under the
+  // writer's contract (closed event/state/lane vocabularies, the
+  // automation and firing id patterns, the owner/name repo pattern), a
+  // cell emits only at the recurring bars of distinct events across
+  // distinct UTC days inside the 7-day window, deferred rows on the two
+  // deliberate global holds (KILL, no-grant) never join a cell, repo
+  // attribution is the row's owner/name matched case-insensitively to
+  // the target, truncated tails are stated as lower bounds, and every
+  // journal string is scrubbed before it reaches a prompt.
+  items.push(...await automationBacklogItems({ repo }));
   return { items, errors };
 }
 
