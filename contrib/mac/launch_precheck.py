@@ -126,10 +126,50 @@ def request_hash(job, repo, prompt):
                    and not re.fullmatch(r"P[0-9]+|(?:pool|tier|repo)=[^,]+", a.strip()))
     before, _, after = prompt.partition(tasks[0])
     before = re.sub(r"\AJob " + re.escape(job) + r" \(pool [^,\n]+, tier [^,\n]+, repo [^)\n]+\)\. Task from the Ashlr router queue, verbatim:\n\n", "", before)
+    if repo == 'phantom' and re.fullmatch(r'RQ-DRAIN-PHX-REB-[0-9]+', job):
+        # Scheduling and the attempt's own name are not new rebase work.
+        before, after = before.replace(job, '<job>'), after.replace(job, '<job>')
+        text = match[2].replace(job, '<job>')
+    else:
+        text = match[2]
     # A repair job's identity names its PR; two repairs of different PRs are never the same request.
     target = repair_target(job, repo)
     ident = list(target.groups()[:2]) if target else None
-    return hashlib.sha256(json.dumps([repo, attrs, match[2], before, after, ident], separators=(',', ':')).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([repo, attrs, text, before, after, ident], separators=(',', ':')).encode()).hexdigest()
+
+
+REBASE_MAX_ATTEMPTS = 3
+
+
+def rebase_retry_reason(identity, rows):
+    """Count resolved claims, not repeated finish receipts or lane/base changes.
+
+    Dispatcher ticks already serialize claims and persist request_hashes before
+    spawning. Publication resolves unchanged work; only new task/head evidence
+    creates another identity. Unknown/missing finishes cannot spend a retry.
+    """
+    key = identity.get('rebase_hash')
+    if not key: return None
+    claims, attempts = {}, 0
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('job'), str): continue
+        job, event = row['job'], row.get('event')
+        if event == 'claim':
+            claims[job] = dict(row, resolved=False)
+        claim = claims.get(job, {})
+        if claim.get('rebase_hash') != key or claim.get('repo') != 'phantom': continue
+        if event == 'publish' and isinstance(row.get('url'), str) and re.fullmatch(
+                r'https://github\.com/ashlrai/phantom/pull/[1-9][0-9]*', row['url']):
+            return 'rebase_recut_published_inspect_replacement'
+        if event not in ('finish', 'launch_terminal') or claim['resolved']: continue
+        claim['resolved'] = True
+        if event == 'launch_terminal' or row.get('empty') is True or (type(row.get('exit_code')) is int and row['exit_code'] != 0):
+            attempts += 1
+    if any(c.get('rebase_hash') == key and c.get('repo') == 'phantom' and not c['resolved'] for c in claims.values()):
+        return 'rebase_claim_in_flight_wait_for_finish'
+    if attempts >= REBASE_MAX_ATTEMPTS:
+        return 'rebase_retry_exhausted_3x_inspect_claims_change_head_or_task'
+    return None
 
 
 def admission_history(rows, now):
@@ -490,20 +530,25 @@ def task_hash(job, prompt):
 def with_prompt(identity, job, prompt):
     """Bind a repo/base identity to one prompt: prompt_hash plus task_hash when known."""
     import hashlib
-    if not identity: return {}
+    rebase = request_hash(job, 'phantom', prompt) if re.fullmatch(r'RQ-DRAIN-PHX-REB-[0-9]+', job) else None
+    if not identity:
+        return {'repo': 'phantom', 'rebase_hash': rebase} if rebase else {}
     out = dict(identity, prompt_hash=hashlib.sha256(prompt.encode()).hexdigest())
+    if rebase and out.get('repo') == 'phantom': out['rebase_hash'] = rebase
     task = task_hash(job, prompt)
     if task: out["task_hash"] = task
     return out
 
 
 def empty_reason(job, identity, rows, now):
-    """Only successful empty finishes suppress work. Auth failures must retry.
+    """Rebase work has a durable retry cap; other work uses successful empties.
 
     Claims bind each finish to its own attempt, so an older empty cannot mask
     a newer nonempty run. MERGED outcomes remain independently measurable.
     """
     if not identity: return None
+    if identity.get('rebase_hash'):
+        return rebase_retry_reason(identity, rows)
     latest = latest_attempts(rows)
     task = identity.get('task_hash'); task_repeats = 0
     for key, row in latest.items():
