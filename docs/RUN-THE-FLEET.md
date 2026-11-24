@@ -141,6 +141,24 @@ phm admission explain --json
 
 This report explains a recommendation; it does not change host pacing.
 
+
+### Say something to a running job
+
+Type into **Tell this job** under the Worker log header (or on the phone's
+worker screen) and press **Send note**. From a terminal or an agent:
+
+```bash
+phm job say RQ-EXAMPLE "also update the docs" --json
+phm job notes RQ-EXAMPLE --json
+```
+
+`say` returns `fleet.job.say.v1` with `status` `sent`, `refused` or `unknown`;
+`notes` returns `fleet.job.notes.v1`. Each note is timestamped and appended to
+`queue/job-notes.jsonl`. A worker whose runner supports steering reads new
+notes between steps; every note also stays on the job and shows as **Notes
+sent** in the job window. Whether a worker has read a note is not recorded.
+A finished job refuses the note with a plain message.
+
 ## 4. Check Autonomy in Fleet
 
 Open **Fleet** and read its **Autonomy** card. It measures the last 24 hours:

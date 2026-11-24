@@ -21,7 +21,8 @@ import {
 } from './bus-inbox.js';
 import { readStableRegularFile } from '../util/stable-file-read.js';
 import { scrubPrivateText } from '../util/scrub.js';
-import { isFleetJobId } from './runs-job-detail.js';
+import { agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
+import { isWorkerHandoffBody } from './handoff-body.js';
 import { runContextWorker, type ContextWorkerIO } from './context-worker-run.js';
 
 /** Bounded scan of the durable inbox, the same page cap the notice reader uses. */
@@ -34,20 +35,22 @@ export const HANDOFF_RECEIVE_END = '\nEND UNTRUSTED RETAINED BUS HANDOFF\n';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-const keys = (value: Record<string, unknown>, allowed: string[]): boolean =>
-  Object.keys(value).every(key => allowed.includes(key));
 /** Same printable-ASCII token rule the envelope applies to id/from/to. */
 const token = (value: unknown): value is string =>
   typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
 
-interface WorkerHandoffBody { taskId: string; prompt: string }
-
-/** Exact body schema emitted by `ashlr fleet handoff-send --apply`. */
-function isWorkerHandoffBody(body: unknown): body is WorkerHandoffBody {
-  return record(body) && keys(body, ['kind', 'taskId', 'prompt']) &&
-    body.kind === 'worker-handoff' &&
-    typeof body.taskId === 'string' && isFleetJobId(body.taskId) &&
-    typeof body.prompt === 'string' && body.prompt.trim().length > 0;
+/**
+ * `--to` names one agent identity, not one literal label: a retained
+ * handoff addressed to the `agent:` address, bare handle, stable id or any
+ * alias of that identity all match, through the same registry read the bus
+ * inbox, wakes, message filters and `bus next` claims use. A `--to` naming
+ * no registered identity — and an unreadable registry — keep exact-label
+ * matching, so unknown identity state never widens which handoffs run.
+ */
+export function handoffRecipientMatches(to: string, recipient: string, options: BusInboxOptions): boolean {
+  if (to === recipient) return true;
+  const read = readAgentRegistry({ root: options.root });
+  return agentRefAddressMatcher(recipient, read.status === 'ok' ? read.registry : undefined)(to);
 }
 
 type Found = { status: 'ok'; receipt: BusInboxReceipt }
@@ -92,7 +95,8 @@ function matchingSnapshot(path: string, taskId: string): string | null {
 export interface HandoffBusReceiveOptions {
   /** Envelope id to locate in the local inbox. */
   id: string;
-  /** The exact address the retained envelope must be addressed to. */
+  /** The recipient the retained envelope must be addressed to; any routing
+   * label of the same agent identity matches (see handoffRecipientMatches). */
   to: string;
   /** Absolute path to a NodeContextPackInput JSON whose node.jobId equals the body taskId. */
   snapshot: string;
@@ -148,7 +152,7 @@ export async function receiveHandoffBus(opts: HandoffBusReceiveOptions,
     return 1;
   }
   const envelope = found.receipt.envelope;
-  if (envelope.to !== opts.to) { diagnostic('handoff is not addressed to this recipient'); return 1; }
+  if (!handoffRecipientMatches(envelope.to, opts.to, options)) { diagnostic('handoff is not addressed to this recipient'); return 1; }
   if (!isWorkerHandoffBody(envelope.body)) { diagnostic('unexpected handoff body'); return 1; }
   const { taskId, prompt } = envelope.body;
   const snapshot = matchingSnapshot(opts.snapshot, taskId);

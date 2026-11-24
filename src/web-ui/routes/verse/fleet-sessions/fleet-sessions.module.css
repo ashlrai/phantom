@@ -1,23 +1,46 @@
 .root { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); min-width: 0; color: var(--text-primary); font-size: var(--text-xs-size); line-height: var(--text-xs-line); }
 .headline { margin: 0; font-family: var(--font-display); font-size: var(--text-sm-size); font-weight: 600; font-variant-numeric: tabular-nums; }
 .notice { margin: 0; color: var(--text-secondary); }
-.lane { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.laneName { display: flex; align-items: center; gap: var(--space-1); margin: 0; font-size: var(--text-xs-size); font-weight: 600; }
+.group { font-weight: 600; }
+.group .muted { margin-left: var(--space-1); font-weight: 400; }
 .list, .gaps { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .row { display: flex; align-items: stretch; gap: var(--space-1); min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
 .row[data-quiet='true'] { border-color: var(--status-warning-solid); background: var(--status-warning-bg); }
 .open { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-1) var(--space-2); border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .open:hover, .open:focus-visible { background: var(--surface-raised, transparent); }
-.top { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .quiet { flex: none; padding: 0 var(--space-1); border-radius: var(--radius-sm); background: var(--status-warning-solid); color: var(--text-on-solid, Canvas); font-weight: 600; }
 .muted { margin-left: auto; flex: none; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.laneName .muted { margin-left: 0; font-weight: 400; }
+.muted[data-state='failed'] { color: var(--status-danger-fg, var(--status-warning-fg)); font-weight: 600; }
+/* The last message: two lines at most, so a long one never pushes the tree off a phone screen. */
+.message { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 /* Facts wrap rather than scroll, so a 390 px window shows every fact. */
 .facts { display: flex; flex-wrap: wrap; column-gap: var(--space-2); color: var(--text-secondary); min-width: 0; }
 .facts > span { min-width: 0; overflow-wrap: anywhere; }
 .facts > span[data-quiet='true'] { color: var(--status-warning-fg); font-weight: 600; }
 .facts > span[data-elsewhere='true'] { font-style: italic; }
 .why { color: var(--text-tertiary, var(--text-secondary)); overflow-wrap: anywhere; }
+.thread { flex: none; align-self: center; margin-right: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; cursor: pointer; }
+.thread:hover, .thread:focus-visible { background: var(--bg-hover); }
 .pr { flex: none; align-self: center; padding: var(--space-1) var(--space-2); color: var(--accent-500); }
 .gaps { color: var(--text-secondary); }
+/* Scope and filter share one line and wrap at phone width. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.search { flex: 1 1 12rem; min-width: 0; }
+.count { color: var(--text-tertiary, var(--text-secondary)); font-variant-numeric: tabular-nums; }
+.clear { padding: 0; border: 0; background: none; color: var(--accent-500); font: inherit; text-decoration: underline; cursor: pointer; }
+/* The dot repeats the state word beside it in colour; the word stays the source of truth. */
+.dot { flex: none; width: var(--space-2); height: var(--space-2); border-radius: 50%; background: var(--status-unknown-solid); }
+.dot[data-dot='running'] { background: var(--status-running-solid); }
+.dot[data-dot='quiet'] { background: var(--status-warning-solid); }
+.dot[data-dot='failed'] { background: var(--status-danger-solid); }
+.dot[data-dot='done'] { background: var(--status-success-solid); }
+.dot[data-dot='idle'] { background: var(--status-neutral-solid); }
+/* A parent kept only to place a match under it reads quieter than the match. */
+.row[data-context='true'] { border-style: dashed; }
+.row[data-context='true'] .job, .row[data-context='true'] .message { color: var(--text-secondary); font-weight: 400; }
+.open:focus-visible { outline: 2px solid var(--accent-500); outline-offset: -2px; }
+.keys { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-tertiary, var(--text-secondary)); }
+.keys kbd { margin-left: var(--space-2); }
+.keys kbd:first-child { margin-left: 0; }

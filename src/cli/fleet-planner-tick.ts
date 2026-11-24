@@ -118,7 +118,7 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
   // Every tick is observed, apply or not; a log that will not take the line
   // never changes the verdict.
   await appendTickLine(root,
-    `${eventClock(new Date(now))} PLANNER_TICK ${decision.run ? 'run' : 'skip'} reason=${decision.reason} phx=${decision.phxReady} free=${decision.freeSlots}\n`)
+    `${eventClock(new Date(now))} PLANNER_TICK ${decision.run ? 'run' : 'skip'} reason=${decision.reason} phx=${decision.phxReady} free=${decision.freeSlots}${decision.lane ? ` lane=${decision.lane} from=${decision.fallbackFrom}` : ''}\n`)
     .catch(() => undefined);
   const printDecision = (): void => {
     if (json) output(JSON.stringify(sanitizePublicJson(decision)));
@@ -148,14 +148,17 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
   }
   const result = await runPlannerPass({
     runsRoot: root,
-    candidates: slate.candidates,
-    lastProvider: slate.lastProvider ?? '',
+    // A fallback pass runs on the chosen login only: the slate's own order
+    // could land on another exhausted pool.
+    candidates: decision.lane === undefined ? slate.candidates : slate.candidates.filter((c) => c.provider === decision.lane),
+    lastProvider: decision.lane === undefined ? slate.lastProvider ?? '' : '',
     promptPath,
     spawn: deps.spawn,
     now,
   });
+  const laneReport = decision.lane === undefined ? {} : { lane: decision.lane, fallbackFrom: decision.fallbackFrom };
   if (result.outcome !== 'ran') {
-    output(JSON.stringify(sanitizePublicJson({ ...result, verdict: 'failed', evidence: { state: 'not-collected' } })));
+    output(JSON.stringify(sanitizePublicJson({ ...result, ...laneReport, verdict: 'failed', evidence: { state: 'not-collected' } })));
     return 1;
   }
   const start = Date.parse(result.startedAt), finish = Date.parse(result.finishedAt);
@@ -175,6 +178,6 @@ export async function cmdFleetPlannerTick(args: string[], deps: Dependencies = {
     }
   }
   const verdict = result.exitCode === 0 ? evidence.state : 'failed';
-  output(JSON.stringify(sanitizePublicJson({ ...result, verdict, evidence: { ...evidence, attribution: 'observational' } })));
+  output(JSON.stringify(sanitizePublicJson({ ...result, ...laneReport, verdict, evidence: { ...evidence, attribution: 'observational' } })));
   return verdict === 'productive' ? 0 : 1;
 }

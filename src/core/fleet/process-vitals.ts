@@ -52,10 +52,14 @@ async function snapshot(root: string, io: ProcessVitalsIo) {
     const ledger = io.read(join(root, 'metrics/jobs.jsonl'));
     if (ledger === null) throw new Error('missing');
     for (const line of ledger.split('\n').filter(s => s.trim())) {
-      const r = JSON.parse(line);
-      outcomes.delete(r.job);
-      const at = typeof r.ts === 'number' ? r.ts * 1000 : Date.parse(r.ts);
-      if (r.event === 'outcome' && terminal.has(r.state) && Number.isFinite(at) && at <= io.now()) outcomes.set(r.job, at);
+      const r = JSON.parse(line) as Record<string, unknown>;
+      const job = [r.job, r.job_id, r.jobId, r.id].find((v): v is string => typeof v === 'string') ?? null;
+      const event = [r.event, r.type, r.kind].find((v): v is string => typeof v === 'string');
+      const state = [r.state, r.outcome, r.status, r.phase, r.result, r.conclusion].find((v): v is string => typeof v === 'string');
+      const stamp = [r.ts, r.timestamp, r.at, r.time, r.mergedAt, r.closedAt, r.recordedAt, r.updatedAt].find(v => v !== undefined && v !== null);
+      const at = typeof stamp === 'number' ? stamp * 1000 : Date.parse(String(stamp ?? ''));
+      if (job !== null) outcomes.delete(job);
+      if (event === 'outcome' && state !== undefined && terminal.has(state) && Number.isFinite(at) && at <= io.now() && job !== null) outcomes.set(job, at);
     }
     ledgerKnown = true;
   } catch { outcomes.clear(); }

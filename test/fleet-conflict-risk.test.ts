@@ -101,6 +101,17 @@ describe('merge velocity', () => {
     expect(ledgerMergeCount(text, 'acme/app', 6 * 3_600_000, NOW_MS)).toBe(2);
     expect(ledgerMergeCount('', 'acme/app', 6 * 3_600_000, NOW_MS)).toBe(0);
   });
+  it('counts reconciler and alias-spelled MERGED rows', () => {
+    const text = [
+      // Reconciler row: publish-shaped event carrying the terminal phase.
+      JSON.stringify({ jobId: 'rec-1', type: 'publish', outcome: 'MERGED', prUrl: 'https://github.com/acme/app/pull/9', mergedAt: new Date(NOW_MS - 3_600_000).toISOString() }),
+      // Event-named merge verdict with alias fields.
+      JSON.stringify({ id: 'rec-2', kind: 'merged', pr: 'https://github.com/acme/app/pull/10', recordedAt: new Date(NOW_MS - 2 * 3_600_000).toISOString() }),
+      // Wrong repo stays out even with a MERGED phase.
+      JSON.stringify({ job_id: 'rec-3', event: 'outcome', state: 'MERGED', url: 'https://github.com/acme/other/pull/9', timestamp: new Date(NOW_MS - 3_600_000).toISOString() }),
+    ].join('\n');
+    expect(ledgerMergeCount(text, 'acme/app', 6 * 3_600_000, NOW_MS)).toBe(2);
+  });
   it('counts mergedAt rows inside the window from the merged page', () => {
     const merged = [
       parseConflictRiskMergedPr(mergedRow(1))!,                                        // 1h ago

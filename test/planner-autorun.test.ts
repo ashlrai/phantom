@@ -197,6 +197,21 @@ describe('readPlannerAutorunInput', () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it('counts lane-open Phantom rows as supply the market can place anywhere', async () => {
+    const dir = await fixture();
+    try {
+      await writeFile(join(dir, 'queue', 'ready.tsv'), [
+        'RQ-PHX-READY1\tphantom\tdevin\twork\t/q/p/1.md',
+        // Empty lane cell and no preferred_lane: lane-open work. The Phantom
+        // id still marks real supply; the filler id does not.
+        'RQ-PHX-OPEN2\tphantom\t\twork\t/q/p/2.md',
+        'RQ-FILL-OPEN3\tother\t\twork\t/q/p/3.md\t{"preferred_lane":null}',
+      ].join('\n'));
+      const read = await readPlannerAutorunInput(dir, NOW);
+      expect(read.phxReady).toBe(2);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('an ORCH_OFF file under the runs dir gates the pass, like planner-run checks', async () => {
     const dir = await fixture();
     try {

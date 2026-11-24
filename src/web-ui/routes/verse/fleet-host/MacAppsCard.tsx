@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { AppsActionReport } from '../../../../core/apps-control.js';
+import { lastUsedText } from '../../../../core/apps-last-used.js';
 import type { MacAppRow, MacAppsReport } from '../../../../core/apps-known.js';
 import { Button } from '../../../components/primitives/index.js';
 import { apiGet, apiPost } from '../../../data/client.js';
@@ -19,7 +20,7 @@ const isRow = (r: unknown): r is MacAppRow => {
 
 export const macAppsQuery = { key: 'mac-apps', fetch: async (signal?: AbortSignal) => {
   const data = await apiGet<MacAppsReport>(READ_PATH, signal);
-  if (!data || data.schema !== 'phm.apps/1' || !Array.isArray(data.apps) || !data.apps.every(isRow)) throw new Error('Invalid apps response');
+  if (!data || data.schema !== 'phm.apps/2' || !Array.isArray(data.apps) || !data.apps.every(isRow)) throw new Error('Invalid apps response');
   return data;
 } };
 
@@ -34,11 +35,21 @@ export function macAppState(row: MacAppRow): string {
 }
 
 const LABEL = { open: 'Open', focus: 'Bring to front' } as const;
+const DID: Record<string, string> = { open: 'Opened', focus: 'Brought to front', quit: 'Quit', restart: 'Restarted' };
+
+/** The last thing Phantom did to the app, in plain words; empty when nothing is on record. */
+export function macAppLastAction(row: MacAppRow): string {
+  const last = row.lastAction;
+  if (!last) return '';
+  const time = new Date(last.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return last.outcome === 'done' ? `${DID[last.action] ?? last.action} at ${time}` : `${LABEL[last.action as 'open'] ?? last.action} did not finish at ${time}`;
+}
 
 /**
  * Apps on this Mac: the same report as `phm apps --json`, one row per app and
  * at most one button (Open or Bring to front). Actions use `phm apps open|focus`
- * through the shared control API; there is no quit button.
+ * through the shared control API; there is no quit or restart button. Each row also says the
+ * last thing Phantom did to the app.
  */
 export function MacAppsCard({ visible }: { visible: boolean }) {
   const sectionVisible = useSectionVisible();
@@ -73,7 +84,8 @@ export function MacAppsCard({ visible }: { visible: boolean }) {
         {data.apps.every(a => a.installed === false) ? <p className={styles.muted}>None of these apps are installed on this Mac.</p> : null}
         <ul className={styles.appList}>{data.apps.map(row => <li className={styles.appRow} key={row.id}>
           <span className={styles.appName}>{row.name}</span>
-          <span className={styles.appState} data-unknown={row.installed === null || row.running === null ? 'true' : undefined}>{macAppState(row)}</span>
+          <span className={styles.appState} data-unknown={row.installed === null || row.running === null ? 'true' : undefined}>{macAppState(row)}{macAppLastAction(row) ? ` · ${macAppLastAction(row)}` : ''}</span>
+          <span className={styles.appState} data-unknown={row.lastFocus === 'unknown' ? 'true' : undefined} aria-label={`${row.name} last used`}>{row.running ? `Last used: ${lastUsedText(row)}` : ''}</span>
           {row.action ? <Button size="sm" disabled={busy || !active} aria-label={`${LABEL[row.action]} ${row.name}`}
             onClick={() => { void act(row, row.action!); }}>{LABEL[row.action]}</Button> : null}
         </li>)}</ul>

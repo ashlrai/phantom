@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSlackLeaderAdapter, readSlackDeliveryPolicy } from '../src/core/agents/slack-leader.js';
+import { buildStatusDigest } from '../src/core/leader/status-digest.js';
+import { gatherStatusDigestInput } from '../src/core/leader/status-digest-sources.js';
 import { ownerStatusReply } from '../src/core/agents/owner-status-reply.js';
 import { openSlackSocket, type SlackCall } from '../src/core/agents/slack-transport.js';
 
@@ -29,7 +31,14 @@ async function receive(user: string) {
   });
   const options = { configDir, runsDir, busRoot, now: clock };
   const policy = readSlackDeliveryPolicy(options)!;
-  const adapter = createSlackLeaderAdapter({ ...options, call, statusReply: ownerStatusReply() });
+  const adapter = createSlackLeaderAdapter({ ...options, call, statusReply: ownerStatusReply({
+    // Keep real gather/digest and disk-backed inbox/lane readers. Only external facts are synthetic.
+    brief: async (dir, now) => ['Morning leader brief', ...buildStatusDigest(await gatherStatusDigestInput(dir, now, {
+      installedVersion: () => '3.30.36', publishedVersion: async () => '3.30.37',
+      mergeFacts: async () => ({ shipped: [{ text: 'ashlrai/phantom#123: synthetic merge' }], mergeCountUnavailable: false }),
+      workClaims: undefined, peers: undefined, nodeRuns: undefined, mergeLatency: undefined,
+    }))].join('\n'),
+  }) });
   let settled = false;
   const handlers: Record<string, (event: { data?: unknown }) => void> = {};
   const socket = { readyState: 1, addEventListener: (type: string, handler: (event: { data?: unknown }) => void) => { handlers[type] = handler; }, send: vi.fn(), close: vi.fn() };
@@ -45,7 +54,16 @@ it('answers the verified owner once in the inbound thread and records delivery',
   const posts = () => vi.mocked(call).mock.calls.filter(([method]) => method === 'chat.postMessage');
   await vi.waitFor(() => expect(posts()).toHaveLength(1), { timeout: 15000 });
   expect(posts()[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: ts });
-  expect(posts()[0]?.[1]?.text).toMatch(/Shipped \(last 12h\):|Quota:/);
+  const text = posts()[0]?.[1]?.text;
+  expect(typeof text).toBe('string');
+  expect(String(text).split('\n').slice(0, 6)).toEqual([
+    'Leader: Phantom status, 21:00 ET',
+    'App: installed 3.30.36 · published 3.30.37 · update pending',
+    'Merges: 1 in the last hour · 1 in the last 24h',
+    'Lanes: unknown (queue/status.json missing or invalid)',
+    'Needs Mason: none waiting',
+    'Top P0: Phantom status (0m ago)',
+  ]);
   await vi.waitFor(() => {
     const state = JSON.parse(readFileSync(join(runsDir, 'leader', 'network-state.json'), 'utf8')) as { routes: Record<string, { reply?: { delivered: boolean } }> };
     expect(Object.values(state.routes)).toHaveLength(1);

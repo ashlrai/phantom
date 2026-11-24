@@ -1,0 +1,8 @@
+> @ashlr/phantom@3.30.60 lint:verse-sync-io
+> node scripts/check-verse-sync-io.mjs
+
+verse-sync-io: 2 synchronous call(s) in Phantom console route files — a macOS privacy prompt on the folder freezes the whole sidecar:
+  src/core/verse/example-api.ts:42  readFileSync(…)  → use the fs/promises or promisified child_process form
+  src/core/verse/other-api.ts:7  describeRoots(…)  → use describeRootsAsync
+If the call can never touch an operator folder, say why on it or on the line above: // sync-io-ok: <reason>
+##[error]Process completed with exit code 1.

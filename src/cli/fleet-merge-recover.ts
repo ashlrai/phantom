@@ -8,14 +8,15 @@ import { countQueuedDropJobPrompts, DROP_JOB_QUEUE_LIMIT, dropJobExists, DropJob
 import { cmdFleetDirtyLanded, type DirtyLandedPr } from './fleet-dirty-landed.js';
 import { mergeQueueAge, validMergeQueueAgeInput } from './fleet-merge-queue-age.js';
 import { reserveMergeRecoveryAttempt } from '../core/fleet/merge-recovery-budget.js';
+import { conflicted, type MergeAgePr } from '../core/fleet/merge-age.js';
 
 const USAGE = 'Usage: phm fleet merge-recover [--queue-input <snapshot.json>] [--apply] [--json] [--runs-dir <absolute path>]\nPreview stale conflicting fleet PRs. A queue snapshot prioritizes the oldest measured entries and reports their wait. Apply queues isolated recuts; run again after publication to request auto-merge. Required checks remain enforced.';
 const REPO = 'ashlrai/phantom';
 /** Mason's own holds in ashlrai/phantom (AGENTS.md hold list); never auto-acted on. */
 export const PHANTOM_PR_HOLDS = new Set([197, 878, 743, 725, 738, 744, 693, 1228]);
-const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest';
+const FIELDS = 'number,title,state,headRefOid,baseRefName,isDraft,mergeable,mergeStateStatus,autoMergeRequest';
 const REPLACEMENT_LIMIT = 100;
-interface Pr { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
+interface Pr extends Pick<MergeAgePr, 'mergeable'> { number: number; title: string; state: string; headRefOid: string; baseRefName: string; isDraft: boolean; mergeStateStatus: string; autoMergeRequest: unknown }
 export interface MergeRecoverDeps {
   gh?: CloudGh;
   inspect?: () => Promise<DirtyLandedPr[]>;
@@ -23,7 +24,23 @@ export interface MergeRecoverDeps {
   write?: typeof writeDropJob;
   reserve?: typeof reserveMergeRecoveryAttempt;
   output?: (text: string) => void;
+  /** Limit the plan to these `number:head` pairs (used by `queue-latency --recover`). */
+  only?: ReadonlySet<string>;
 }
+/** Plain-words reason for every row that is not progress. The original PR and its work are never closed or edited. */
+export const MERGE_RECOVER_REASONS: Readonly<Record<string, string>> = {
+  'replacement-conflict': 'The recut still conflicts with the default branch. The original PR stays open with all its work; a person or agent must resolve it.',
+  'replacement-changed': 'The replacement PR was renamed or retargeted, so it is left alone. The original PR stays open.',
+  'retry-limit': 'Recovery attempts for this PR are used up. The original PR stays open with all its work.',
+  'source-changed': 'The PR moved since it was inspected. Run again to recover its new head.',
+  'already-present-on-base': 'The default branch already has this work; nothing to recover.',
+  'too-wide': 'More than 20 files remain, too wide for an automatic recut. The original PR stays open.',
+  'owner-path': 'The PR touches owner-only paths, so only a person may recut it. The original PR stays open.',
+  title: 'Not a fleet agent PR (`bridge: RQ-...`), so it is left alone.',
+  held: 'On the hold list; never recovered automatically.',
+  capped: 'Two recuts are queued per run; run again for the rest.',
+  failed: 'A GitHub read or write failed. Nothing was changed; run again.',
+};
 export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDeps = {}): Promise<number> {
   const output = deps.output ?? console.log;
   if (args.length === 1 && args[0] === '--help') { output(USAGE); return 0; }
@@ -57,11 +74,11 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       if (!validMergeQueueAgeInput(snapshot)) throw new Error('invalid queue snapshot');
       queue = mergeQueueAge(snapshot);
     }
-    const prs = await (deps.inspect ?? (async () => {
+    const prs = (await (deps.inspect ?? (async () => {
       let text = '';
       if (await cmdFleetDirtyLanded(['--json'], { gh, output: t => { text = t; } })) throw new Error('inspect');
       return (JSON.parse(text) as { prs: DirtyLandedPr[] }).prs;
-    }))();
+    }))()).filter(p => !deps.only || deps.only.has(`${p.number}:${p.head}`));
     const ranks = new Map<number, number>();
     queue?.entries.forEach((entry, index) => {
       if (entry.ageSeconds !== null && !entry.missingData.includes('unique_queue_entry')) ranks.set(entry.number, index);
@@ -79,11 +96,11 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
         const sourceUnchanged = async () => {
           const latest = await read(['pr', 'view', String(pr.number), '--repo', REPO, '--json', FIELDS]) as Pr;
           return valid(latest) && latest.number === pr.number && latest.state === 'OPEN'
-            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && latest.mergeStateStatus === 'DIRTY';
+            && latest.headRefOid === pr.head && latest.baseRefName === pr.base && !latest.isDraft && conflicted(latest);
         };
         let action = 'source-changed';
         if (current.state !== 'OPEN') action = current.state.toLowerCase();
-        else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && current.mergeStateStatus === 'DIRTY') {
+        else if (current.headRefOid === pr.head && current.baseRefName === pr.base && !current.isDraft && conflicted(current)) {
           const matches = await read(['pr', 'list', '--repo', REPO, '--state', 'all', '--limit', String(REPLACEMENT_LIMIT), '--search', `in:title "${title}"`, '--json', FIELDS]) as Pr[];
           // A full page cannot prove there is no second replacement.
           if (!Array.isArray(matches) || matches.length >= REPLACEMENT_LIMIT || !matches.every(valid)) throw new Error('invalid');
@@ -99,8 +116,8 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
               rows.push({ pr: pr.number, action: 'replacement-changed' }); continue;
             }
             action = `replacement-${replacement.state.toLowerCase()}`;
-            if (replacement.state === 'OPEN' && replacement.mergeStateStatus === 'DIRTY') action = 'replacement-conflict';
-            if (replacement.state === 'OPEN' && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
+            if (replacement.state === 'OPEN' && conflicted(replacement)) action = 'replacement-conflict';
+            if (replacement.state === 'OPEN' && !conflicted(replacement) && !replacement.isDraft && ['CLEAN', 'BLOCKED', 'BEHIND', 'UNSTABLE', 'HAS_HOOKS'].includes(replacement.mergeStateStatus)) {
               action = replacement.autoMergeRequest ? 'auto-merge-requested' : 'request-auto-merge';
               if (!replacement.autoMergeRequest && !await (deps.reserve ?? reserveMergeRecoveryAttempt)(resolveDropJobRoot(root), pr.number, 'merge', false)) {
                 rows.push({ pr: pr.number, action: 'retry-limit' }); continue;
@@ -138,7 +155,8 @@ export async function cmdFleetMergeRecover(args: string[], deps: MergeRecoverDep
       } catch { failed = true; rows.push({ pr: pr.number, action: 'failed' }); }
     }
   } catch { failed = true; }
-  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, queue, rows };
-  output(json ? JSON.stringify(report) : `${USAGE}\n${queue ? queue.entries.map(e => `#${e.number}: ${e.ageSeconds === null ? 'unknown wait' : `${e.ageSeconds}s queued`}`).join('\n') + '\n' : ''}${rows.map(r => `#${r.pr}: ${r.action}`).join('\n')}`);
+  const detailed = rows.map(r => MERGE_RECOVER_REASONS[r.action] ? { ...r, reason: MERGE_RECOVER_REASONS[r.action] } : r);
+  const report = { schema: 'fleet.merge-recover.v1', dryRun: !apply, ok: !failed, queue, rows: detailed };
+  output(json ? JSON.stringify(report) : `${USAGE}\n${queue ? queue.entries.map(e => `#${e.number}: ${e.ageSeconds === null ? 'unknown wait' : `${e.ageSeconds}s queued`}`).join('\n') + '\n' : ''}${detailed.map(r => `#${r.pr}: ${r.action}${'reason' in r ? ` (${r.reason})` : ''}`).join('\n')}`);
   return failed ? 1 : 0;
 }

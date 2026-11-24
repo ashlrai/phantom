@@ -31,16 +31,24 @@ const admissionLane = (
 
 const admission = (
   lanes: FleetAdmissionReport['lanes'], cap = 18, running = 18, atCap?: boolean,
-): FleetAdmissionReport => ({
-  schema: 'fleet.admission.v1', readOnly: true, status: 'ok',
-  global: { cap, running, load1: 1, admit_reason: atCap === undefined ? null : (atCap ? 'at_cap: global running reached the cap' : 'ok'), at_cap: atCap ?? running >= cap },
-  lanes,
-});
+  nonCapClosed = false, admitReason?: string | null,
+): FleetAdmissionReport => {
+  const at = atCap ?? running >= cap;
+  return {
+    schema: 'fleet.admission.v1', readOnly: true, status: 'ok',
+    global: {
+      cap, running, load1: 1,
+      admit_reason: admitReason !== undefined ? admitReason : (atCap === undefined ? null : (atCap ? 'at_cap: global running reached the cap' : 'ok')),
+      at_cap: at, closed: at || nonCapClosed, non_cap_closed: nonCapClosed,
+    },
+    lanes,
+  };
+};
 
 const queueView = (patch: Partial<FleetQueueV1> = {}): FleetQueueV1 => ({
   v: 1, generatedAt: '2026-11-07T00:00:00.000Z',
   sources: { ready: 'healthy', skips: 'healthy' },
-  total: 0, ready: 0, parked: 0, malformed: 0,
+  total: 0, ready: 0, parked: 0, malformed: 0, unhinted: 0,
   byLane: [], nextUp: [], groups: [], unmetDeps: [], metDeps: [], skips: [], skipsLast24h: 0,
   ...patch,
 });
@@ -111,6 +119,32 @@ describe('planFleetAutopilot', () => {
     expect(report.action).toMatchObject({ kind: 'no-op', reason: 'dispatch-stall' });
   });
 
+  it('answers admission-closed, not dispatch-stall, when the load gate shuts admission under the cap', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission(
+        [admissionLane('devin', 0, 2, 4), admissionLane('codex-local', 2, 2, 2)],
+        18, 2, false, true, 'loadavg 1m 14.2 > max 12.0',
+      ),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 4, parked: 0 }, { lane: 'codex-local', ready: 2, parked: 0 }] }),
+    }));
+    expect(report.topGap?.kind).toBe('starved-lane');
+    expect(report.global).toMatchObject({ atCap: false, closed: true, nonCapClosed: true });
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'admission-closed' });
+    expect(report.action).toMatchObject({ detail: expect.stringContaining('loadavg 1m 14.2') });
+  });
+
+  it('prefers admission-closed over hold-lane when the gate and the cap are both shut', () => {
+    const report = planFleetAutopilot(state({
+      admission: admission(
+        [admissionLane('devin', 0, 2, 6), admissionLane('codex-local', 3, 2, 12)],
+        3, 3, true, true, 'loadavg 1m 14.2 > max 12.0; at_cap running 3 >= cap 3',
+      ),
+      queue: queueView({ byLane: [{ lane: 'devin', ready: 6, parked: 0 }, { lane: 'codex-local', ready: 12, parked: 0 }] }),
+    }));
+    expect(report.topGap?.kind).toBe('starved-lane');
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'admission-closed' });
+  });
+
   it('proposes an unpark sweep for stale parked deps whose gates all merged', () => {
     const report = planFleetAutopilot(state({
       admission: admission([admissionLane('devin', 2, 2, 0)]),
@@ -131,6 +165,18 @@ describe('planFleetAutopilot', () => {
     }));
     expect(report.topGap?.kind).toBe('missing-restock');
     expect(report.action).toMatchObject({ kind: 'enqueue', type: 'restock', count: 3, lane: 'devin' });
+  });
+
+  it('does not propose restock while lane-open rows wait as open supply', () => {
+    // Unhinted READY rows are launchable supply the market may place on any
+    // lane — a free lane is fed-pending, not missing restock.
+    const report = planFleetAutopilot(state({
+      admission: admission([admissionLane('devin', 0, 3, 0)], 18, 0),
+      queue: queueView({ ready: 2, total: 2, unhinted: 2 }),
+      slots: slotsView([slotLane('devin', 3)]),
+    }));
+    expect(report.gaps.every((g) => g.kind !== 'missing-restock')).toBe(true);
+    expect(report.action).toMatchObject({ kind: 'no-op', reason: 'fleet-healthy' });
   });
 
   it('proposes rebase jobs for uncovered conflicting PRs, capped', () => {

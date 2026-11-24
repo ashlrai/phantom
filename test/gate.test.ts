@@ -8,16 +8,23 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { NPM_BUILD_STEPS } from '../scripts/build-outputs.mjs';
 import {
+  CORPUS_GUARDS,
   GATE_BUILD_ASSET_SCRIPTS,
+  MAX_BASENAME_EXTRA_READERS,
   buildCommands,
+  checkTypeSpecs,
+  corpusGuardTests,
+  discoverTextReads,
   evaluateVitest,
   formatDuration,
+  isTextReaderTest,
   loadKnownFailures,
   loadSmoke,
   loadTextReads,
   lockfileDependencyChanged,
   packageDependencyChanges,
   parseArgs,
+  phaseASpecs,
   planTests,
   renderTable,
 } from '../scripts/gate.mjs';
@@ -147,6 +154,153 @@ describe('planTests', () => {
   });
 });
 
+describe('corpusGuardTests', () => {
+  it('maps doc markdown to the whole-tree link guards', () => {
+    expect(corpusGuardTests(['docs/CHANNELS.md'])).toEqual(['test/docs-repo-links.test.ts']);
+    expect(corpusGuardTests(['README.md', 'AGENTS.md'])).toEqual(['test/docs-repo-links.test.ts']);
+    expect(corpusGuardTests(['docs/fleet/status.md'])).toEqual(['test/docs-fleet-links.test.ts', 'test/docs-repo-links.test.ts']);
+  });
+
+  it('maps pane sources, sections, mobile and design trees to their walkers', () => {
+    expect(corpusGuardTests(['src/web-ui/routes/verse/apps/Apps.tsx'])).toEqual([
+      'src/web-ui/routes/verse/shell/pane-sections.test.ts',
+      'test/docs-panes.test.ts',
+    ]);
+    expect(corpusGuardTests(['src/web-ui/routes/verse/sections/Chat.tsx'])).toEqual([
+      'src/web-ui/routes/verse/shell/pane-sections.test.ts',
+      'src/web-ui/routes/verse/shell/section-modules.test.ts',
+      'test/docs-panes.test.ts',
+    ]);
+    expect(corpusGuardTests(['src/web-ui/routes/verse/mobile/Mobile.tsx'])).toEqual([
+      'src/web-ui/routes/verse/mobile/mobile-overflow.test.ts',
+      'src/web-ui/routes/verse/shell/pane-sections.test.ts',
+      'test/docs-panes.test.ts',
+    ]);
+    expect(corpusGuardTests(['src/web-ui/design/tokens.css'])).toEqual([
+      'src/web-ui/design/font-ranges.test.ts',
+      'src/web-ui/design/subset-glyphs.test.ts',
+    ]);
+    expect(corpusGuardTests(['docs/PANES.md'])).toEqual(['test/docs-panes.test.ts', 'test/docs-repo-links.test.ts']);
+    expect(corpusGuardTests(['schemas/registry.json'])).toEqual(['test/schemas/registry.test.ts']);
+  });
+
+  it('ignores scratch paths and files no walker covers', () => {
+    expect(corpusGuardTests([
+      'BRIDGE_STAGED/note.md', '.github/PULL_REQUEST_TEMPLATE.md', 'workplans/plan.md',
+      'contrib/mac/dispatchd.py', 'docs/fleet/notes.txt', 'docs/images/diagram.png',
+    ])).toEqual([]);
+  });
+
+  it('every guard names an existing vitest test file', () => {
+    for (const guard of CORPUS_GUARDS) {
+      expect(isTextReaderTest(guard.test), guard.test).toBe(true);
+      expect(existsSync(join(repoRoot, guard.test)), guard.test).toBe(true);
+    }
+  });
+});
+
+describe('discoverTextReads', () => {
+  const deps = (files: Record<string, string>) => ({
+    grep: () => Object.keys(files),
+    read: (file: string) => {
+      const text = files[file];
+      if (text == null) throw new Error(`missing ${file}`);
+      return text;
+    },
+  });
+
+  it('finds tests naming the full repo-relative path', () => {
+    const found = discoverTextReads(['docs/CHANNELS.md'], deps({
+      'test/docs-a.test.ts': 'reads docs/CHANNELS.md',
+      'test/unrelated.test.ts': 'nothing here',
+    }));
+    expect(found).toEqual({ 'docs/CHANNELS.md': ['test/docs-a.test.ts'] });
+  });
+
+  it('adds basename readers when they are few', () => {
+    const found = discoverTextReads(['docs/CHANNELS.md'], deps({
+      'test/full.test.ts': 'join(ROOT, "docs/CHANNELS.md")',
+      'test/joined.test.ts': 'join(dir, "CHANNELS.md")',
+    }));
+    expect(found['docs/CHANNELS.md']).toEqual(['test/full.test.ts', 'test/joined.test.ts']);
+  });
+
+  it('drops the basename when it adds too many readers', () => {
+    const files: Record<string, string> = { 'test/full.test.ts': 'docs/CHANNELS.md' };
+    for (let i = 0; i < MAX_BASENAME_EXTRA_READERS + 1; i++) files[`test/generic-${i}.test.ts`] = 'CHANNELS.md';
+    const found = discoverTextReads(['docs/CHANNELS.md'], deps(files));
+    expect(found['docs/CHANNELS.md']).toEqual(['test/full.test.ts']);
+  });
+
+  it('ignores candidates that are not vitest test files or cannot be read', () => {
+    const found = discoverTextReads(['docs/CHANNELS.md'], {
+      grep: () => ['src/core/not-a-test.ts', 'test/fixture.txt', 'test/ok.test.ts', 'test/broken.test.ts'],
+      read: (file: string) => {
+        if (file === 'test/broken.test.ts') throw new Error('gone');
+        return 'docs/CHANNELS.md';
+      },
+    });
+    expect(found).toEqual({ 'docs/CHANNELS.md': ['test/ok.test.ts'] });
+  });
+
+  it('returns an empty map for an empty change set without grepping', () => {
+    let calls = 0;
+    const found = discoverTextReads([], { grep: () => { calls += 1; return []; } });
+    expect(found).toEqual({});
+    expect(calls).toBe(0);
+  });
+
+  it('maps each changed file to its own readers', () => {
+    const found = discoverTextReads(['docs/A.md', 'docs/B.md'], deps({
+      'test/a.test.ts': 'docs/A.md',
+      'test/b.test.ts': 'docs/B.md',
+      'test/ab.test.ts': 'docs/A.md docs/B.md',
+    }));
+    expect(found['docs/A.md']).toEqual(['test/a.test.ts', 'test/ab.test.ts']);
+    expect(found['docs/B.md']).toEqual(['test/ab.test.ts', 'test/b.test.ts']);
+  });
+
+  it('finds real readers in this repo (guards the grep/read defaults)', () => {
+    // docs/ECOSYSTEM-MAP.md is named by doc-facts and ecosystem-index-docs; a
+    // silent grep or path regression would return an empty map here.
+    const found = discoverTextReads(['docs/ECOSYSTEM-MAP.md']);
+    expect(found['docs/ECOSYSTEM-MAP.md']?.length).toBeGreaterThan(0);
+  });
+});
+
+describe('planTests corpus guards', () => {
+  const guarded = (changed: string[], guards: string[]) =>
+    planTests({ full: false, changed, dependencyKeys: [], smoke, guards });
+
+  it('runs backend and web guards even when nothing importable changed', () => {
+    const p = guarded(['docs/CHANNELS.md'], ['test/docs-repo-links.test.ts', 'src/web-ui/design/font-ranges.test.ts']);
+    expect(p.backend).toEqual({
+      mode: 'smoke',
+      reason: 'no importable change; 1 smoke + 1 guard',
+      files: ['test/docs-repo-links.test.ts', 'test/smoke-a.test.ts'],
+    });
+    expect(p.web).toEqual({
+      mode: 'smoke',
+      reason: 'no importable change; 1 smoke + 1 guard',
+      files: ['src/web-ui/design/font-ranges.test.ts', 'src/web-ui/smoke-b.test.tsx'],
+    });
+  });
+
+  it('adds guards to related selections too, filtered per suite', () => {
+    const p = guarded(['src/core/verse/seats.ts'], ['test/docs-panes.test.ts', 'src/web-ui/x.test.tsx']);
+    expect(p.backend.files).toContain('test/docs-panes.test.ts');
+    expect(p.backend.files).not.toContain('src/web-ui/x.test.tsx');
+    expect(p.backend.reason).toContain('guard');
+    expect(p.web.files).toContain('src/web-ui/x.test.tsx');
+    expect(p.web.files).not.toContain('test/docs-panes.test.ts');
+  });
+
+  it('defaults to no guards', () => {
+    const p = planTests({ full: false, changed: ['docs/x.md'], dependencyKeys: [], smoke });
+    expect(p.backend.reason).toBe('no importable change; 1 smoke');
+  });
+});
+
 describe('evaluateVitest', () => {
   const known = new Set(['test/flaky.test.ts']);
   const report = (results: Array<[string, string]>) => ({
@@ -254,6 +408,25 @@ describe('gate data files', () => {
     const positions = GATE_BUILD_ASSET_SCRIPTS.map((script) => buildSteps.indexOf(`node ${script}`));
     for (const [i, pos] of positions.entries()) expect(pos, GATE_BUILD_ASSET_SCRIPTS[i]).toBeGreaterThan(1);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  it('phase A typechecks both projects once, inside typecheck-fast — no duplicate web pass', () => {
+    const specs = phaseASpecs({ nodeBin: 'node', npmCmd: 'npm', tscBin: 'TSC', eslintBin: 'ESLINT', gateDir: '.ashlr-gate' });
+    // Exactly one typecheck step: the npm script that runs tsgo on both projects.
+    expect(specs.filter((spec) => spec.name.includes('typecheck')).map((spec) => spec.name)).toEqual(['typecheck-fast']);
+    // No step invokes a compiler on the web tsconfig directly.
+    for (const spec of specs) expect(spec.args.join(' ')).not.toContain('src/web-ui/tsconfig.json');
+    // And typecheck:fast itself still names the web project, matching `npm run typecheck`.
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    expect(pkg.scripts['typecheck:fast']).toContain('tsgo');
+    expect(pkg.scripts['typecheck:fast']).toContain('src/web-ui/tsconfig.json');
+  });
+
+  it('--check typechecks both tsconfig projects with the native compiler', () => {
+    expect(checkTypeSpecs({ nodeBin: 'node', tsgoBin: 'TSGO' })).toEqual([
+      { name: 'typecheck', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'tsconfig.json'] },
+      { name: 'typecheck-web', cmd: 'node', args: ['TSGO', '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
+    ]);
   });
 
   it('npm scripts point at the gate and ship scripts', () => {

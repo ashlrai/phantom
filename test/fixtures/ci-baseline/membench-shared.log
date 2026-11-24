@@ -1,0 +1,10 @@
+##[group]Run npm run --silent bench:memory -- --check > /dev/null
+npm run --silent bench:memory -- --check > /dev/null
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+memory benchmark below floor:
+  overall: 400 passed, floor 407
+  retrieval held-out: 30 passed, floor 34
+  agent writes validation: 22 duplicate facts served, ceiling 10
+  over budget: bench-q3, bench-q7
+##[error]Process completed with exit code 1.

@@ -53,8 +53,8 @@ describe('fleet merge-retry', () => {
     expect(await f.run()).toBe(0);
     expect(f.report).toMatchObject({ schema: 'fleet.merge-retry.v1', dryRun: true, ok: true, known: true, max_retries_per_pr: 3 });
     expect(f.report.rows).toEqual([
-      { repo: REPO, pr: 7, action: 'request-auto-merge', disabled_at: ago(700), waiting_s: 700, retries_left: 3, requests_failed: 0, head_sha: HEAD },
-      { repo: REPO, pr: 8, action: 'needs-person', reason: 'unattributed', requests_failed: 0 },
+      { repo: REPO, pr: 7, action: 'request-auto-merge', disabled_at: ago(700), waiting_s: 700, retries_left: 3, requests_failed: 0, head_sha: HEAD, note: expect.any(String) },
+      { repo: REPO, pr: 8, action: 'needs-person', reason: 'unattributed', requests_failed: 0, note: expect.any(String) },
     ]);
     expect(f.calls).toEqual([]);
   });
@@ -78,7 +78,7 @@ describe('fleet merge-retry', () => {
       ev(7, 'retry_requested', 950), ev(7, 'retry_requested', 850), ev(7, 'retry_requested', 750),
     ]);
     expect(await f.run(['--apply', '--json'])).toBe(0);
-    expect(f.report.rows).toEqual([{ repo: REPO, pr: 7, action: 'needs-person', reason: 'too-many-retries', requests_failed: 0 }]);
+    expect(f.report.rows).toEqual([{ repo: REPO, pr: 7, action: 'needs-person', reason: 'too-many-retries', requests_failed: 0, note: expect.any(String) }]);
     expect(f.merges()).toEqual([]);
     expect(f.recorded).toEqual([]);
   });
@@ -142,7 +142,7 @@ describe('fleet merge-retry', () => {
     const g = fixture([...failed(8),
       ev(8, 'retry_failed', 600, { head_sha: HEAD }), ev(8, 'retry_failed', 500, { head_sha: HEAD }), ev(8, 'retry_failed', 400)]);
     expect(await g.run(['--apply', '--json'])).toBe(0);
-    expect(g.report.rows).toEqual([{ repo: REPO, pr: 8, action: 'needs-person', reason: 'request-failed', requests_failed: 3 }]);
+    expect(g.report.rows).toEqual([{ repo: REPO, pr: 8, action: 'needs-person', reason: 'request-failed', requests_failed: 3, note: expect.any(String) }]);
     expect(g.calls).toEqual([]);
     // Replayed identical failure lines dedupe to one submission failure.
     const h = fixture([...failed(9), ev(9, 'retry_failed', 600, { head_sha: HEAD }), ev(9, 'retry_failed', 600, { head_sha: HEAD })]);
@@ -187,6 +187,57 @@ describe('fleet merge-retry', () => {
     }
     expect(await f.run(['--help'])).toBe(0);
     expect(f.text).toContain('merge-retry');
+  });
+
+  describe('diagnosis and queue wait', () => {
+    const live = (state: string, merge = 'CLEAN') =>
+      ({ number: 0, state, headRefOid: HEAD, isDraft: false, mergeStateStatus: merge, autoMergeRequest: null });
+    const at = (n: number, view: object) => ({ ...view, number: n });
+    /** Dropped `waited` seconds ago, with the enable and queue blocker recorded before it. */
+    const dropped = (pr: number, waited: number) => failed(pr, waited).map((e, i) => ({ ...e, at: ago(waited + 200 - i * 100) }));
+
+    it('conflict: explains it needs a recut, never arms, and still counts its wait', async () => {
+      const f = fixture(dropped(3, 700), { 3: at(3, live('OPEN', 'DIRTY')) });
+      expect(await f.run(['--apply', '--json'])).toBe(0);
+      expect(f.report.rows[0]).toMatchObject({ pr: 3, action: 'conflict', waiting_s: 700 });
+      expect(f.report.rows[0].note).toMatch(/recut/);
+      expect(f.report.queue_wait).toEqual({ waiting: 1, oldest_s: 700, total_s: 700, finished: 0, conflicts: 1 });
+      expect(f.merges()).toEqual([]);
+      expect(f.recorded).toEqual([]);
+    });
+
+    it('transient failure: a refused request keeps its wait and tells the next run to retry', async () => {
+      const f = fixture([...dropped(5, 1200), ...dropped(6, 300)]);
+      f.state.failMerge = true;
+      expect(await f.run(['--apply', '--json'])).toBe(1);
+      expect(f.report.rows.map((r: { note: string }) => r.note)).toEqual([expect.stringMatching(/next run retries/), expect.stringMatching(/next run retries/)]);
+      expect(f.report.queue_wait).toMatchObject({ waiting: 2, oldest_s: 1200, total_s: 1500, finished: 0, conflicts: 0 });
+      f.state.failMerge = false;
+      expect(await f.run(['--apply', '--json'])).toBe(0);
+      expect(f.report.rows.every((r: { action: string }) => r.action === 'auto-merge-requested')).toBe(true);
+    });
+
+    it('already merged or closed: nothing is requested and the PR no longer counts as waiting', async () => {
+      const f = fixture([...dropped(1, 900), ...dropped(2, 800), ...dropped(4, 100)],
+        { 1: at(1, live('MERGED')), 2: at(2, live('CLOSED')) });
+      expect(await f.run(['--apply', '--json'])).toBe(0);
+      expect(f.report.rows.map((r: { pr: number; action: string }) => [r.pr, r.action]))
+        .toEqual([[1, 'merged'], [2, 'closed'], [4, 'auto-merge-requested']]);
+      expect(f.report.rows[0].note).toMatch(/already merged/i);
+      expect(f.report.queue_wait).toEqual({ waiting: 1, oldest_s: 100, total_s: 100, finished: 2, conflicts: 0 });
+      expect(f.merges()).toHaveLength(1);
+    });
+
+    it('prints the queue wait in plain words and reports it on a dry run', async () => {
+      const f = fixture(dropped(7, 4000));
+      expect(await f.run([])).toBe(0);
+      expect(f.text).toContain(`${REPO}#7: request-auto-merge`);
+      expect(f.text).toContain('Queue wait: 1 waiting, oldest 1h 6m, 0 conflicting, 0 already finished.');
+      expect(f.calls).toEqual([]);
+      const none = fixture([]);
+      expect(await none.run([])).toBe(0);
+      expect(none.text).toBe('No dropped auto-merges to retry.');
+    });
   });
 
   it('is reachable as `phm fleet merge-retry`', async () => {

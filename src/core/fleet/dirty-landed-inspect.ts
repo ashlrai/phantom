@@ -24,6 +24,8 @@ export interface DirtyLandedPr {
   head: string;
   /** The PR's base branch (`master` for every fleet PR); '' when unreadable. */
   base: string;
+  /** Base tip used for this inspection; absent when the read failed. */
+  baseSha?: string;
   class: DirtyLandedClass;
   /** Paths the PR changes relative to its merge-base. */
   changedPaths: string[];
@@ -146,7 +148,7 @@ export async function inspectDirtyLanded(dir: string, row: DirtyRow, remote: str
   }
   const classification = classifyDirtyLanded(changedPaths, stillDiffering);
   return {
-    number: row.number, title: row.title, head: row.headSha, base: row.baseRef,
+    number: row.number, title: row.title, head: row.headSha, base: row.baseRef, baseSha: base,
     class: classification,
     ...(classification === 'landed' ? { reason: 'already-present-on-base' } : {}),
     ...(diffAnomaly ? { diffAnomaly } : {}),

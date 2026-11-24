@@ -16,7 +16,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { docsSync } from '../scripts/docs-sync.mjs';
 import { CODEMAP_SECTIONS, codemapInventory, regenerateCodemap, syncCodemap } from '../scripts/codemap.mjs';
@@ -74,6 +74,17 @@ describe('committed generated docs stay in sync', () => {
     expect(drift, 'run `node scripts/docs-sync.mjs` to regenerate').toEqual([]);
     expect(report.ok).toBe(true);
     // src/ is scanned recursively; under a loaded shard 5s is too tight.
+  }, 60_000);
+
+  it('does not depend on the clock: still no drift 30 days from now', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+      const report = docsSync(ROOT, { check: true, external: false });
+      expect(report.surfaces.filter((s) => s.status !== 'clean').map((s) => s.id)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 60_000);
 });
 

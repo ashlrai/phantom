@@ -42,6 +42,9 @@ it('returns the report for a temp ledger', async () => {
   expect(status).toBe(200);
   expect(body).toMatchObject({ schema: 'verse.merge-latency.v1', generatedAt: new Date(NOW).toISOString(), ledger: 'present' });
   expect(body.report.window_hours).toBe(6);
+  expect(body.report.queue_stage_timing).toMatchObject({ schema: 'fleet.queue-stage-timing.v1', prs: 1,
+    readOnly: true, requiredChecksPreserved: true, largest_delay: 'merge',
+    stages: { required_checks: { count: 0, missing: 1 }, queue_admission: { total_s: 60 }, merge: { total_s: 660 } } });
   expect(body.report.pr_stages).toEqual([expect.objectContaining({ pr: 7, queue_wait_s: 120, required_checks_s: 600, merge_s: 60 }),
     expect.objectContaining({ pr: 8, merge_s: null })]);
   expect(body.report.queue_timelines).toMatchObject([{ eligible_to_merge_s: 720,

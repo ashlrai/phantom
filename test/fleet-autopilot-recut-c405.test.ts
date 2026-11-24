@@ -64,7 +64,7 @@ const admission = (
   lanes: FleetAdmissionReport['lanes'], cap = 10, running = 10, atCap = true,
 ): FleetAdmissionReport => ({
   schema: 'fleet.admission.v1', readOnly: true, status: 'ok',
-  global: { cap, running, load1: 1, admit_reason: null, at_cap: atCap },
+  global: { cap, running, load1: 1, admit_reason: null, at_cap: atCap, closed: atCap, non_cap_closed: false },
   lanes,
 });
 

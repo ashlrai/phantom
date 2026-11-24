@@ -1,0 +1,17 @@
+  PID  PPID  %CPU     RSS COMM
+    1     0   1.0   20480 /sbin/launchd
+  100     1 150.0 2048000 /Applications/Cursor.app/Contents/MacOS/Cursor
+  101   100 120.0 1024000 /Applications/Cursor.app/Contents/Frameworks/Cursor Helper.app/Contents/MacOS/Cursor Helper
+  102   101  30.0  512000 node
+  200     1  80.0 4096000 /Applications/Docker.app/Contents/MacOS/com.docker.backend
+  300     1  60.0 1024000 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT
+  350     1  20.0  512000 /Applications/Codex.app/Contents/MacOS/Codex
+  351   350   2.0   51200 worker
+  352   351  38.0  204800 node
+  600     1  25.0  307200 /Applications/Notes.app/Contents/MacOS/Notes
+  610     1   9.0   10240 /usr/local/bin/alpha
+  611     1   8.0   10240 /usr/local/bin/bravo
+  612     1   7.0   10240 /usr/local/bin/charlie
+  613     1   6.0   10240 /usr/local/bin/delta
+  614     1   5.0   10240 /usr/local/bin/echo
+  615     1   4.0   10240 /usr/local/bin/foxtrot

@@ -9,7 +9,7 @@ function SessionsGlyph({ size = 16 }: { size?: number }) {
 registerPane({
   id: 'fleet-sessions',
   title: 'Sessions',
-  description: 'Every running agent session, grouped by lane, with quiet ones highlighted; open one to see its log, pause or stop it',
+  description: 'Every agent session as one tree (leader, workers, subagents) with its last message and quiet ones highlighted; open one to see its messages, pause or stop it',
   needsSession: false,
   icon: SessionsGlyph,
   component: lazyPane(() => import('./SessionsPane.js').then(m => m.SessionsPane)),

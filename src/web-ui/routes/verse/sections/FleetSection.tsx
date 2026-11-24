@@ -37,10 +37,11 @@ import { budgetPreviewQuery, budgetQuery } from '../budget/budget-queries.js';
 import { ActionStatus, useSurfaceActions } from '../command/actions.js';
 import { paletteBlock, useGrantFlow } from '../command/AutonomyBar.js';
 import { anchorId } from '../command/nav.js';
-import { OrgMap } from '../fleet/OrgMap.js';
 import { RunsLanesCard } from '../fleet/RunsLanesCard.js';
+import { LaunchesCard } from '../fleet/LaunchesCard.js';
 import { WorkersCard } from '../fleet/WorkersCard.js';
 import { InterjectBox } from '../fleet/InterjectBox.js';
+import { SlackBridgeLine } from '../fleet/SlackBridgeLine.js';
 import { CosTaskList } from '../fleet/CosTaskList.js';
 import { EmptyJobsPanel } from '../growth/EmptyJobsPanel.js';
 import { FleetControl } from '../fleet/FleetControl.js';
@@ -150,15 +151,16 @@ export function FleetSection() {
             <FleetControl actions={actions} grantFlow={grantFlow} darkSince={fleetDarkSince(live)} setupShownBelow={off?.kind === 'setup'} />
           </div>
           <InterjectBox />
+          <SlackBridgeLine />
           <CosTaskList />
           <AutonomyCard />
           <OperationsDeck />
           <WorkersCard />
           <RunsLanesCard />
+          <LaunchesCard />
           {/* The one-time setup checklist (the only step list left); every other
               off state is FleetControl's single blocker + button. */}
           {off && off.kind === 'setup' ? <AutonomyOffState state={off} here="fleet" /> : null}
-          <OrgMap live={live} />
           <LanesStrip live={live} />
           {/* Per-repo main state from the guardian's state.json — one row each,
               unknown never green. Owns its own read + poll. */}

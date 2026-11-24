@@ -102,8 +102,9 @@ class MarketUnit(unittest.TestCase):
         self.assertIsNone(self.devin_view({'used': None})['devin']['allowance']['used'])
 
     def test_devin_preview_is_zero_cost_only_until_expiry(self):
+        bound = dict(provenance=dict(account_id='org-test', model='swe-2-flash'))
         for model in ('swe-2-lightning', 'swe-2-flash'):
-            entry = self.devin_view({'used': None}, model=model, now=1796101199)['devin']
+            entry = self.devin_view(dict({'used': None, 'as_of': 1796101199}, **bound), model=model, now=1796101199)['devin']
             self.assertEqual((entry['cost_class'], entry['posture']), ('included', 'burn'))
             self.assertTrue(entry['zero_cost'])
             self.assertEqual(entry['cost_class_reason'], 'devin_free_preview')
@@ -115,6 +116,26 @@ class MarketUnit(unittest.TestCase):
         self.assertEqual((expired['cost_class'], expired['posture']), ('metered', 'balanced'))
         self.assertEqual(expired['cost_class_reason'], 'devin_preview_expired')
         self.assertEqual(self.devin_view(model='swe-2-high')['devin']['zero_cost'], False)
+
+    def test_devin_preview_requires_fresh_account_evidence(self):
+        for reading in ({}, {'state': None}, {'state': 'stale'}, {'as_of': 1796100000}):
+            entry = self.devin_view(reading, model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Fresh and live is not enough: the reading must be bound to the measured
+        # account and to a preview-scoped model.
+        fresh = {'used': None, 'as_of': 1796101199}
+        for provenance in (None, {}, {'account_id': 'org-test'}, {'model': 'swe-2-flash'},
+                           {'account_id': 'org-test', 'model': 'swe-2-high'},
+                           {'account_id': '', 'model': 'swe-2-flash'}):
+            entry = self.devin_view(dict(fresh, provenance=provenance), model='swe-2-flash', now=1796101199)['devin']
+            self.assertEqual((entry['cost_class'], entry['zero_cost']), ('metered', False))
+            self.assertEqual(entry['cost_class_reason'], 'devin_preview_unverified')
+        # Account- and preview-model-bound fresh evidence verifies, across the preview family.
+        bound = dict(fresh, provenance=dict(account_id='org-test', model='swe-2-lightning'))
+        entry = self.devin_view(bound, model='swe-2-flash', now=1796101199)['devin']
+        self.assertEqual((entry['cost_class'], entry['zero_cost'], entry['cost_class_reason']),
+                         ('included', True, 'devin_free_preview'))
 
     def test_metered_api_cannot_burn_from_host_posture(self):
         entry = market.lane_view(['claude-api'], {'claude-api': {'posture': 'burn'}},
@@ -205,6 +226,37 @@ class MarketUnit(unittest.TestCase):
         reasons = {r['lane']: r['reason_codes'] for r in result['rejected_lanes']}
         self.assertIn('tier_unavailable', reasons['codex-personal'])
         self.assertIn('quota_exhausted', reasons['claude'])
+
+    def test_hard_down_evidence(self):
+        # RQ-CONSTRAINT-AUDIT-1: provider-attributed (autobackoff) holds are hard-down; manual holds are not.
+        for slot, expected in [({}, False), ({'held': True}, False), ({'held': True, 'held_by': 'manual'}, False),
+                               ({'held': False, 'held_by': 'autobackoff'}, False), ({'quota': True}, False),
+                               ({'held': True, 'held_by': 'autobackoff'}, True), ({'auth_failed': True}, True),
+                               ({'quota': 0}, True), ({'quota': 0.0}, True),
+                               ({'held': True, 'held_reason': 'auth_failure'}, True),
+                               ({'held': True, 'held_reason': 'credits exhausted (RQ-X 2026-11-16)'}, True),
+                               ({'held': False, 'held_reason': 'credits exhausted'}, False)]:
+            self.assertIs(market.hard_down(slot), expected, slot)
+        # The operator HOLD list wins over provider backoff evidence; explicit auth/quota evidence still counts.
+        self.assertIs(market.hard_down({'held': True, 'held_by': 'autobackoff'}, True), False)
+        self.assertIs(market.hard_down({'held': True, 'held_reason': 'credits exhausted'}, True), False)
+        self.assertIs(market.hard_down({'quota': 0}, True), True)
+
+    def test_autobackoff_hold_releases_residency_but_not_move_cap_or_launch(self):
+        record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}
+        lanes = view(**{'codex-personal': {'held': True, 'held_by': 'autobackoff'}})
+        result, moved = self.choose(lanes=lanes, record=record)
+        self.assertEqual(result['chosen_lane'], 'claude')
+        self.assertIn('hard_down', result['reason_codes'])
+        self.assertEqual(moved['moves'], [10000])
+        for extra, reason in [({'moves': [9900, 9950]}, 'move_cap'), ({'launched': True}, 'launched')]:
+            result, _ = self.choose(lanes=lanes, record={**record, **extra})
+            self.assertIsNone(result['chosen_lane'])
+            self.assertIn('hysteresis_' + reason, result['reason_codes'])
+        manual = view(**{'codex-personal': {'held': True, 'held_by': 'manual'}})
+        result, _ = self.choose(lanes=manual, record=record)
+        self.assertIsNone(result['chosen_lane'])
+        self.assertIn('hysteresis_minimum_residency', result['reason_codes'])
 
     def test_hysteresis_hard_down_move_cap_and_launch_fence(self):
         record = {'pool': 'codex-personal', 'decided_at': 9999, 'moves': []}

@@ -86,6 +86,20 @@ inventory; `fleet/sync.py` is the recipe.
 - `sync.py` dry-run against the live bin dir is the ongoing audit: zero
   unexplained `unmanaged` entries is the migration's done condition.
 
+### See what is not live yet
+
+`phm fleet drift` answers "which merged fleet fixes are not running?" It hashes
+each runs-bin file the manifest lists against the installed copy (under
+`$ASHLR_RUNS_BIN`, else `~/.ashlr-runs/bin`) and reports `same`, `repo_newer`,
+`live_only` (no repo copy, or a live edit newer than the repo change) or
+`missing`, with the date of the newest repo change when git knows it. `--json`
+returns `fleet.drift.v1`. `phm fleet sync --dry-run` prints the exact copy plan
+(backup, syntax check, copy, sha check) as `fleet.sync-plan.v1`. It skips
+manifest-pinned files, files with a sha pin or a SHA256SUMS entry, sandbox
+profiles, leader prompts and wrappers, and publish or release scripts, and it
+never writes to the runtime directory. The digest gains a `Not live yet:` line
+when merged files are waiting. Installing stays with the operator.
+
 ### Compare the live scripts
 
 From a Phantom checkout, run `phm fleet bin-diff` for a plain-language count,

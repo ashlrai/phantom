@@ -1,0 +1,13 @@
+##[group]Run npm run check:first-paint:built
+npm run check:first-paint:built
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+    150.2 KB  assets/VerseConsoleApp-4f2a91c.js
+    120.4 KB  assets/index-77bd03e.js
+    110.8 KB  assets/ChatSection-9c1d5f0.js
+OVER BUDGET: chat first-paint critical JS 381.4 KB (budget 354 KB)
+     88.6 KB  assets/VerseMobileApp-2be771a.js
+     80.3 KB  assets/HomeScreen-5d90c22.js
+     91.1 KB  assets/VerseShared-e03b618.js
+OVER BUDGET: phone (/verse/m) first-paint critical JS 260.0 KB (budget 250 KB)
+##[error]Process completed with exit code 1.

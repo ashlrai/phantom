@@ -17,7 +17,7 @@ export function planFallbackChain(request: RouteRequest, sources: RouteSources, 
   const rejected = routeCandidateRejections(input, sources, nowMs, { failover: true, pinned: pins?.map(p => p.lane) });
   const eligible = new Set(rejected.filter(r => !r.reason_codes.length).map(r => r.lane));
   const candidates = enumerateRouteCandidates(input, sources).filter(c => eligible.has(c.lane) && c.lane !== primaryLane);
-  const order = pins ? pins.flatMap(p => candidates.filter(c => c.lane === p.lane)) : rankRouteCandidates(input, candidates, nowMs);
+  const order = pins ? pins.flatMap(p => candidates.filter(c => c.lane === p.lane)) : rankRouteCandidates(input, candidates, nowMs, sources.familyYield);
   const lanes: Entry[] = order.slice(0, 3).map(c => ({ lane: c.lane, model: c.model, effort: c.effort,
     mode_tier: c.mode_tier, speed_tier: c.speed_tier, on: pins?.find(p => p.lane === c.lane)?.on ?? [...routeFailureKindSchema.options], source: pins ? 'pinned' : 'ranked' }));
   return { schema: 'route.fallback.v1', advisory: true, live: false, primary: primaryLane, lanes,

@@ -6,17 +6,26 @@ import { estimateQueueStats } from '../core/queue/stats.js';
 const HELP = `Usage: phm queue [--json]
        phm queue top <id> | lane <id> <lane> | drop <id> [--dry-run] [--json]
        phm queue stuck [--json]
+       phm queue supply [--json]
+       phm queue autofill --lane <lane> [--min <n>] [--apply] [--json]
+       phm queue wait [--events <file>] [--json]
        phm queue batches [--runs <directory>] [--json]
        phm queue stats [--json] [--window <seconds>]
+       phm queue visits-sync [--jobs <path>] [--queue <path>] [--journal <path>] [--apply] [--json]
        phm queue yield [--since 24h] [--json]
        phm queue report --events <file> [--json]
        phm queue dedupe [--file <router-queue.md>] [--apply] [--json]
+       phm queue dupcheck <job-id|prompt-file> [--gate] [--json]
+       phm queue dupcheck --stats [--json]
        phm queue coalesce [<file>] [--apply --out <directory>] [--json]
        phm queue supersede [--json] [--apply]
        phm queue add|claim|done|block|replay|list|import|export|spawn|promote|serve [options]
 
 stats: sliding windows over the local visit journal (~/.ashlr/queue/visits.jsonl).
   Windows default to 1h, 24h and 7d. Rates per second; wait in seconds.
+
+visits-sync: fold metrics/jobs.jsonl and router-queue.md into that journal
+  (dry run unless --apply). See docs/QUEUE-STATS.md for the station mapping.
 
 report: read local JSON/JSONL station visits: {station, arrivedAt, startedAt?, completedAt?}.
   Timestamps must be ISO with timezone. JSON may also be {start,end,events:[...]}.
@@ -27,6 +36,9 @@ report: read local JSON/JSONL station visits: {station, arrivedAt, startedAt?, c
   Unknown metrics print n/a; incomplete visits count toward arrivals only.
 
 phm queue lists the queued jobs in launch order; --json adds them as the launch field of the batch report.
+autofill: when a lane has fewer than --min ready jobs (default: its slot target), draft the gap from phm bets propose,
+  skip anything already shipped or queued, and with --apply add the rest as READY jobs. Dry run by default.
+supply: per pool, usage left against the work queued for it; see phm queue supply --help.
 top, lane and drop steer one queued job; see phm queue top --help.
 
 Job queue: use phm queue <command> --help for options; see docs/QUEUE.md.`;
@@ -101,7 +113,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   let command: string | undefined;
   let commandIndex = -1;
-  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs']);
+  const valueOptions = new Set(['--since', '--query', '--mode', '--dir', '--priority', '--pool', '--tier', '--repo', '--scope', '--acceptance', '--deps', '--owner', '--pr-url', '--reason', '--window', '--events', '--preferred-lane', '--needs', '--min-tier', '--max-tier', '--max-cost-class', '--data-class', '--work-class', '--impact', '--port', '--token-file', '--runs', '--lane', '--min', '--runs-dir']);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--') { command = args[i + 1]; commandIndex = i + 1; break; }
@@ -109,10 +121,14 @@ export async function cmdQueue(args: string[]): Promise<number> {
     if (!arg.startsWith('-')) { command = arg; commandIndex = i; break; }
   }
   if (command === 'top' || command === 'lane' || command === 'drop') return (await import('./queue-order.js')).cmdQueueOrder([command, ...args.filter((_, i) => i !== commandIndex)]);
+  if (command === 'supply') return (await import('./queue-supply.js')).cmdQueueSupply(args.filter((_, i) => i !== commandIndex));
+  if (command === 'autofill') return (await import('./queue-autofill.js')).cmdQueueAutofill(args.filter((_, i) => i !== commandIndex));
   if (command === 'yield') return (await import('./queue-yield.js')).cmdQueueYield(args.slice(args.indexOf('yield') + 1));
+  if (command === 'wait') return (await import('./queue-wait.js')).cmdQueueWait(args.filter((_, i) => i !== commandIndex));
   if (command === 'batches') return (await import('./queue-batches.js')).cmdQueueBatches(args.filter((_, i) => i !== commandIndex));
   if (command === 'coalesce') return (await import('./queue-coalesce.js')).cmdQueueCoalesce(args.slice(args.indexOf('coalesce') + 1));
   if (command === 'supersede') return (await import('./queue-supersede.js')).cmdQueueSupersede(args.slice(args.indexOf('supersede') + 1));
+  if (command === 'dupcheck') return (await import('./queue-dupcheck.js')).cmdQueueDupcheck(args.slice(args.indexOf('dupcheck') + 1));
   if (command === 'dedupe') return (await import('./queue-dedupe.js')).cmdQueueDedupe(args.slice(args.indexOf('dedupe') + 1));
   if (['add', 'claim', 'done', 'block', 'replay', 'list', 'import', 'export', 'spawn', 'promote', 'serve'].includes(command ?? '') ||
       args.some(arg => arg === '--dir' || arg.startsWith('--dir='))) {
@@ -134,6 +150,7 @@ export async function cmdQueue(args: string[]): Promise<number> {
   }
   if (args[0] === 'stats') return cmdQueueStats(args);
   if (args[0] === 'report') return cmdQueueReport(args);
+  if (args[0] === 'visits-sync') return (await import('./queue-visits-sync.js')).cmdQueueVisitsSync(args.slice(1));
   console.error(HELP);
   return 2;
 }

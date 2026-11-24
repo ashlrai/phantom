@@ -46,6 +46,7 @@ import { isAbsolute, join } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
 import { parsePublishResult } from './job-state.js';
 import { listLiveWorkers, type ListLiveWorkersOptions } from './runs-live-workers.js';
+import { ledgerAtMs, ledgerEventName, ledgerJobId, ledgerPrUrl } from './empty-cause.js';
 
 // ---------------------------------------------------------------------------
 // Public types — the fleet.sessions.v1 wire shape.
@@ -109,6 +110,10 @@ export interface FleetSessionV1 {
    *  agent last printed anything. Null when no regular log file was found.
    *  Optional only because older servers do not send it. */
   lastOutputAt?: string | null;
+  /** True when the job's publish record has a RESULT line: the work is done even
+   *  if no exit code or finish marker reached this host (cloud jobs). Optional
+   *  only because older servers do not send it. */
+  published?: boolean;
 }
 
 export interface FleetSessionsDispatcherV1 {
@@ -447,13 +452,6 @@ const emptyFacts = (): JobMetricFacts => ({
   enqueueTsMs: null, claimTsMs: null, publishTsMs: null, prUrl: null,
 });
 
-function parseMetricTs(value: unknown): number | null {
-  if (typeof value !== 'string') return null;
-  // dispatchd writes local time `%Y-%m-%dT%H:%M:%S%z`; Date.parse handles it.
-  const ms = Date.parse(value);
-  return Number.isFinite(ms) ? ms : null;
-}
-
 const nonNegInt = (v: unknown): number | null =>
   typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 
@@ -472,15 +470,15 @@ export function parseSessionMetrics(text: string): { facts: Map<string, JobMetri
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) { malformed++; continue; }
       row = parsed as Record<string, unknown>;
     } catch { malformed++; continue; }
-    const job = row.job;
+    const job = ledgerJobId(row);
     // Jobless ledger events (concurrency, pool, …) carry no session facts —
     // they are skipped silently, not counted malformed.
-    if (typeof job !== 'string') continue;
+    if (job === null) continue;
     if (!JOB_ID.test(job)) { malformed++; continue; }
-    const ts = parseMetricTs(row.ts);
+    const ts = ledgerAtMs(row);
     const f = facts.get(job) ?? emptyFacts();
     facts.set(job, f);
-    switch (row.event) {
+    switch (ledgerEventName(row)) {
       case 'enqueue':
         if (ts !== null) f.enqueueTsMs = ts;
         break;
@@ -504,7 +502,8 @@ export function parseSessionMetrics(text: string): { facts: Map<string, JobMetri
       }
       case 'publish': {
         if (ts !== null) f.publishTsMs = ts;
-        const url = typeof row.url === 'string' && PR_URL.test(row.url) && scrubSecrets(row.url) === row.url ? row.url : null;
+        const raw = ledgerPrUrl(row);
+        const url = raw !== null && PR_URL.test(raw) && scrubSecrets(raw) === raw ? raw : null;
         if (url) f.prUrl = url;
         break;
       }
@@ -841,6 +840,8 @@ export async function getFleetSessions(options: FleetSessionsOptions = {}): Prom
       baseProbe.mtimeMs ?? 0, logProbe.mtimeMs ?? 0, launchProbe.mtimeMs ?? 0, lineMs,
     );
     const dispatchedMs = m!.dispatched !== null ? m!.dispatched * 1000 : lineMs;
+    // A RESULT written before this attempt was dispatched belongs to an earlier attempt.
+    session.published = publishedResult && (publishProbe.mtimeMs ?? 0) >= dispatchedMs;
     const withinGrace = m!.rc === null && nowMs - dispatchedMs <= LAUNCH_GRACE_MS;
     const diskLive = m!.rc === null && diskFreshMs > 0 && nowMs - diskFreshMs <= DISK_ACTIVE_MS;
     const attemptLive = worker !== undefined || m!.reaping || withinGrace || diskLive;

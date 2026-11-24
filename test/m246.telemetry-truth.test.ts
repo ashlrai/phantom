@@ -12,8 +12,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
   AshlrConfig,
-  UsageEvent,
-  DashboardSnapshot,
   IntelligenceSummary,
   DecisionEntry,
 } from '../src/core/types.js';
@@ -332,6 +330,17 @@ vi.mock('../src/core/mcp-registry.js', () => ({ discoverMcpServers: () => FIXTUR
 vi.mock('../src/core/daemon/state.js', () => ({ loadDaemonState: () => FIXTURE_DAEMON_STATE }));
 vi.mock('../src/core/usage/frontier-usage.js', () => ({
   getFrontierUsageSync: () => FIXTURE_FRONTIER_USAGE,
+}));
+// These optional dashboard sections are unrelated to telemetry aggregation.
+// Keep their live host reads and large lazy import graphs outside this unit suite.
+vi.mock('../src/core/web/fleet-status-cache.js', () => ({
+  getCachedFleetStatus: vi.fn(async () => ({ status: undefined, stale: true, ageMs: null })),
+}));
+vi.mock('../src/core/web/visibility.js', () => ({
+  buildVisibilitySnapshot: vi.fn(async () => undefined),
+}));
+vi.mock('../src/core/fleet/runs-sessions.js', () => ({
+  getFleetSessions: vi.fn(async () => undefined),
 }));
 vi.mock('../src/core/inbox/store.js', () => {
   const listProposals = vi.fn(() => []);

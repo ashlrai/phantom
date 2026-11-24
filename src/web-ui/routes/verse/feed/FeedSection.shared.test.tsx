@@ -22,7 +22,7 @@ vi.mock('./feed-seen-store.js', async load => ({ ...await load<typeof import('./
 
 const at = (minute: number) => `2026-11-17T10:${String(minute).padStart(2, '0')}:00.000Z`;
 const item = (kind: FeedItem['kind'], minute: number, text: string, href: string, more: Partial<FeedItem> = {}): FeedItem =>
-  ({ id: `${kind}:${minute}`, kind, at: at(minute), text, href, repo: null, job: null, count: 1, ...more });
+  ({ id: `${kind}:${minute}`, kind, at: at(minute), text, detail: null, href, repo: null, lane: null, job: null, count: 1, ...more });
 const rows: FeedItem[] = [
   item('merged', 1, 'Merged #42 Add the feed in phantom', 'https://github.com/ashlrai/phantom/pull/42', { repo: 'phantom' }),
   item('released', 2, 'Released ashlrai/phantom v3.31.0', 'https://github.com/ashlrai/phantom/releases/tag/v3.31.0'),
@@ -79,6 +79,28 @@ describe('Feed built on /api/feed', () => {
     expect(screen.getByRole('button', { name: 'Incidents' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(screen.getByRole('list', { name: 'Feed' })).getAllByRole('listitem')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('puts a burst behind one tap, shows a lane pause in plain words, and an empty filter leads back to everything', () => {
+    const group = [1, 2, 3].map(n => ({ text: `Merged #${n} Change ${n} in phantom`, href: `https://github.com/ashlrai/phantom/pull/${n}`, at: at(n) }));
+    byKey = { 'shared-feed:lane:30': report([]), 'shared-feed': report([
+      item('merged', 9, '3 PRs merged in phantom in the last hour', '/verse/?pane=fleet-merges', { group: [...group, { text: 'Bad link', href: 'javascript:alert(1)', at: at(0) }, null as never] }),
+      item('lane', 8, 'The codex lane hit its plan limit and is paused', '/verse/?pane=fleet-lanes', { lane: 'codex', detail: 'codex credits exhausted (limit)' }),
+    ]) };
+    const host = { openPane: vi.fn() };
+    render(<FeedSection host={host} />);
+    const [burst, lane] = within(screen.getByRole('list', { name: 'Feed' })).getAllByRole('listitem').filter(card => card.hasAttribute('data-kind'));
+    expect(within(burst!).getByText('Show all 4')).toBeInTheDocument();
+    expect(within(burst!).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/verse/?pane=fleet-merges', ...group.map(entry => entry.href)]);
+    expect(within(burst!).getByText('Bad link').closest('a')).toBeNull();
+    expect(within(lane!).getByRole('img', { name: 'Lanes' })).toBeInTheDocument();
+    expect(within(lane!).getByText('codex credits exhausted (limit)')).toBeInTheDocument();
+    fireEvent.click(within(lane!).getByRole('link'));
+    expect(host.openPane).toHaveBeenLastCalledWith('fleet-lanes');
+    fireEvent.click(screen.getByRole('button', { name: 'Lanes' }));
+    expect(screen.getByText(/No lanes events in the last 7 days/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('says plainly when the feed is empty, partly unknown, or unavailable', () => {

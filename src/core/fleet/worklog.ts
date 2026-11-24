@@ -20,8 +20,12 @@ export type WorklogSource = { state: 'ok' } | { state: 'unknown'; reason: string
 export type WorklogSources = Record<'jobs' | 'events' | 'leader', WorklogSource>;
 export interface WorklogEntry {
   job: string | null; repo: string | null; lane: string | null; model: string | null;
-  kind: 'launch' | 'finished' | 'pr' | 'empty' | 'failed' | 'merged'; at: string;
+  kind: 'launch' | 'finished' | 'pr' | 'empty' | 'failed' | 'merged' | 'closed'; at: string;
   mergedAt: string | null; openToMergeSeconds: number | null; url: string | null;
+  /** The job's one-line goal (its recorded title), when any joined event carries one. */
+  goal: string | null;
+  /** Why a job failed or ended with no change, in plain words; null when not recorded. */
+  detail: string | null;
 }
 export interface WorklogReport {
   schema: 'worklog.v3'; hours: number | null; rows: WorklogRow[]; sources: WorklogSources;
@@ -30,8 +34,8 @@ export interface WorklogReport {
 export interface WorklogExtra { rows?: WorklogRow[]; sources?: Partial<WorklogSources>; emptyReasons?: ReadonlyMap<string, string>; hours?: number }
 const unknown = (reason: string): WorklogSource => ({ state: 'unknown', reason });
 const plain = (text: string, max = 160): string => redactHomePaths(scrubSecrets(text)).replace(/\s+/g, ' ').trim().slice(0, max);
-const ROW_KIND: Record<WorklogEntry['kind'], WorklogKind> = { launch: 'launched', finished: 'finished', pr: 'finished', empty: 'empty', failed: 'incident', merged: 'merged' };
-function duration(seconds: number): string {
+const ROW_KIND: Record<WorklogEntry['kind'], WorklogKind> = { launch: 'launched', finished: 'finished', pr: 'finished', empty: 'empty', failed: 'incident', merged: 'merged', closed: 'finished' };
+export function duration(seconds: number): string {
   const s = Math.round(seconds), m = Math.floor(s / 60), h = Math.floor(m / 60);
   return h ? `${h}h ${m % 60}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
 }
@@ -41,6 +45,7 @@ function words(entry: WorklogEntry, row: Row, title: string | null, reason: stri
   switch (entry.kind) {
     case 'launch': return `Launched${entry.model ? ` with ${entry.model}` : ''}`;
     case 'merged': return ['Merged', pr, title].filter(Boolean).join(' ') + (entry.openToMergeSeconds === null ? '' : ` in ${duration(entry.openToMergeSeconds)}`);
+    case 'closed': return `Closed PR ${pr ?? ''} without merging`.replace('  ', ' ');
     case 'pr': return ['Opened PR', pr, title].filter(Boolean).join(' ');
     case 'finished': return 'Finished, no pull request recorded';
     case 'empty': return `Ended with no change: ${reason ?? 'reason unknown'}`;
@@ -51,7 +56,8 @@ const EVENT_LABELS: Partial<Record<BusFeedEvent['kind'], string>> = { incident: 
 /** Incidents, lane holds and parked jobs from the dispatch events reader. Launches and publishes come from the ledger. */
 export function eventRows(events: BusFeedEvent[]): WorklogRow[] {
   return events.flatMap(event => {
-    const label = EVENT_LABELS[event.kind];
+    // LANE_UNHOLD shares the lane-hold kind; it is the lane running again.
+    const label = event.text.startsWith('LANE_UNHOLD') ? 'Lane released' : EVENT_LABELS[event.kind];
     if (!label || !event.atIso) return [];
     const rest = event.text.replace(/^\S+\s*/, '');
     const job = (event.kind === 'blocked' ? /^([A-Za-z0-9][A-Za-z0-9._-]{2,79})(?=\s|$)/ : /\bstopped ([A-Za-z0-9][A-Za-z0-9._-]{2,79}) by\b/).exec(rest)?.[1] ?? null;
@@ -67,17 +73,27 @@ export function leaderRows(replies: ReadonlyArray<{ at: string; text: string }>)
 }
 const str = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v : null;
 type Row = Record<string, unknown>;
-const timestamp = (row: Row) => str(row.ts ?? row.timestamp ?? row.at);
-const jobId = (row: Row) => str(row.job ?? row.job_id ?? row.jobId);
+/**
+ * jobs.jsonl field dialects: ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
+ * job|job_id|jobId|id, url|prUrl|pr_url|pr|html_url, event|type|kind and
+ * phase|state|outcome|status|result|conclusion — the aliases dispatchd `_vc_*`
+ * and the fleet metrics readers accept.
+ */
+const timestamp = (row: Row) => str(row.ts ?? row.timestamp ?? row.at ?? row.time ?? row.mergedAt ?? row.closedAt ?? row.recordedAt ?? row.updatedAt);
+const jobId = (row: Row) => str(row.job ?? row.job_id ?? row.jobId ?? row.id);
+const eventName = (row: Row) => str(row.event ?? row.type ?? row.kind);
+const phaseName = (row: Row) => str(row.phase ?? row.state ?? row.outcome ?? row.status ?? row.result ?? row.conclusion);
 function prUrl(row: Row): string | null {
-  const value = str(row.url ?? row.prUrl ?? row.pr_url);
+  const value = str(row.url ?? row.prUrl ?? row.pr_url ?? row.pr ?? row.html_url);
   return value && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*\/?$/i.test(value) ? value.replace(/\/$/, '') : null;
 }
 function eventKind(row: Row): WorklogEntry['kind'] | null {
-  if (row.event === 'launch') return 'launch';
-  if (row.event === 'merged' || (row.event === 'outcome' && row.state === 'MERGED')) return 'merged';
-  if (row.event === 'publish' && prUrl(row)) return 'pr';
-  if (row.event !== 'finish') return null;
+  const event = eventName(row), phase = phaseName(row);
+  if (event === 'launch') return 'launch';
+  if (event === 'merged' || (event === 'outcome' && phase === 'MERGED')) return 'merged';
+  if (event === 'outcome' && phase === 'CLOSED' && prUrl(row)) return 'closed';
+  if (event === 'publish' && prUrl(row)) return 'pr';
+  if (event !== 'finish') return null;
   if (typeof row.exit_code === 'number' && Number.isFinite(row.exit_code) && row.exit_code !== 0) return 'failed';
   if (prUrl(row)) return 'pr';
   return row.empty === true ? 'empty' : 'finished';
@@ -109,9 +125,9 @@ export function worklog(text: string, since: number, now: number, extra: Worklog
   const publications = new Map<string, Row>();
   for (const row of rows) {
     const id = jobId(row);
-    if (id && row.event === 'launch') launches.set(id, [...(launches.get(id) ?? []), row]);
+    if (id && eventName(row) === 'launch') launches.set(id, [...(launches.get(id) ?? []), row]);
     const url = prUrl(row);
-    if (id && url && row.event === 'publish') publications.set(url.toLowerCase(), row);
+    if (id && url && eventName(row) === 'publish') publications.set(url.toLowerCase(), row);
   }
   const entries: WorklogEntry[] = [];
   const texts = new Map<WorklogEntry, string>();
@@ -132,17 +148,20 @@ export function worklog(text: string, since: number, now: number, extra: Worklog
     }).sort((a, b) => Date.parse(timestamp(b)!) - Date.parse(timestamp(a)!))[0] : undefined;
     const repo = str(row.repo ?? launch?.repo) ?? (url ? new URL(url).pathname.split('/')[2] ?? null : null);
     const seconds = row.ttm_s;
+    const title = str(row.title ?? publication?.title ?? launch?.title ?? launch?.goal), reason = job ? extra.emptyReasons?.get(job) : undefined;
+    const why = str(row.reason ?? row.failure_class);
+    const detail = kind === 'failed' ? plain(why ?? `exit code ${String(row.exit_code)}`, 80) : kind === 'empty' ? reason ?? null : null;
     const entry: WorklogEntry = { job, repo, lane: str(row.lane ?? launch?.lane), model: str(row.model ?? launch?.model), kind, at: recordedAt,
       mergedAt: kind === 'merged' ? recordedAt : null,
-      openToMergeSeconds: kind === 'merged' && typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 ? seconds : null, url };
+      openToMergeSeconds: kind === 'merged' && typeof seconds === 'number' && Number.isFinite(seconds) && seconds >= 0 ? seconds : null, url,
+      goal: title && plain(title, 80), detail };
     entries.push(entry);
-    const title = str(row.title ?? publication?.title ?? launch?.title);
-    texts.set(entry, plain(words(entry, row, title && plain(title, 60), job ? extra.emptyReasons?.get(job) : undefined)));
+    texts.set(entry, plain(words(entry, row, title && plain(title, 60), reason)));
   }
   entries.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const seen = new Set<string>();
   const unique = entries.filter(entry => {
-    if (!entry.url || (entry.kind !== 'merged' && entry.kind !== 'pr')) return true;
+    if (!entry.url || !['merged', 'pr', 'closed'].includes(entry.kind)) return true;
     const key = `${entry.kind}:${entry.url.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key); return true;

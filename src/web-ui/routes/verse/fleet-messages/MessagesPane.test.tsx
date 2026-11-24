@@ -6,13 +6,14 @@ import { getPane } from '../panes/pane-registry.js';
 import type { PaneProps } from '../panes/pane-registry.js';
 import { OrgPane } from '../fleet-org/OrgPane.js';
 import { MessagesPane } from './MessagesPane.js';
+import { showMessagePair } from './messages-pair.js';
 import { talkingNow, type AgentMessage } from './messages-model.js';
 import './fleet-messages.pane.js';
 
 const now = Date.now();
 const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
 const msg = (over: Partial<AgentMessage>): AgentMessage => ({
-  id: 'x', ts: at(1), from: { name: 'claude-1', lane: 'claude' }, to: { name: 'codex-local-2', lane: 'codex-local' },
+  id: 'x', ts: at(1), priority: 'P2', from: { name: 'claude-1', lane: 'claude' }, to: { name: 'codex-local-2', lane: 'codex-local' },
   kind: 'status', summary: 'hello', conversation: 'c1', job: null, pr: null, ...over,
 });
 const messages = [
@@ -30,7 +31,7 @@ function stub(map: Record<string, unknown>) {
     return hit ? Response.json(hit[1]) : new Response('{}', { status: 404 });
   }));
 }
-beforeEach(() => { evictAll(); resetWorkerLogSelection(); });
+beforeEach(() => { evictAll(); resetWorkerLogSelection(); showMessagePair(null); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); resetWorkerLogSelection(); });
 
 it('registers a session-independent Messages pane', () => {
@@ -86,4 +87,23 @@ it('shows talking-now lines in the Org pane from the same API', async () => {
   render(<OrgPane {...{ visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps} />);
   const talk = await screen.findByRole('region', { name: 'Talking now' });
   expect(await within(talk).findByRole('img', { name: 'claude-1 and codex-local-2: 3 messages' })).toBeInTheDocument();
+});
+
+it('narrows to the last 20 messages between two agents when a pair is chosen, and Show all returns', async () => {
+  stub({ 'agent=leader&with=devin-1&limit=20': page([messages[3]!]), '/api/verse/agent-bus/messages?limit=200': page(messages) });
+  showMessagePair(['leader', 'devin-1']);
+  render(<MessagesPane {...{ visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps} />);
+  expect(await screen.findByText('leader ↔ devin-1 · last 20 messages')).toBeInTheDocument();
+  expect(await screen.findByText('CI red')).toBeInTheDocument();
+  expect(screen.queryByRole('combobox')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+  expect(await screen.findByRole('heading', { name: '2 conversations' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Agent' })).toBeInTheDocument();
+});
+
+it('says so when the chosen pair has no messages', async () => {
+  stub({ '/api/verse/agent-bus/messages': page([]) });
+  showMessagePair(['leader', 'zai']);
+  render(<MessagesPane {...{ visible: true, host: { openPane: vi.fn() } } as unknown as PaneProps} />);
+  expect(await screen.findByText('No messages between leader and zai.')).toBeInTheDocument();
 });
