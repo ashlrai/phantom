@@ -1,7 +1,7 @@
 /** Thin argv adapter for the unified agent bus (src/core/agents/bus-unified.ts). Exit 0 ok, 1 refused, 2 usage. */
 import { isAbsolute } from 'node:path';
 import {
-  agentChannelNameSchema, BUS_CLIS, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry, registerAgentIdentity,
+  agentChannelNameSchema, BUS_CLIS, createAgentChannel, joinAgentChannel, leaveAgentChannel, readAgentRegistry, registerAgentIdentity, resolveAgent,
   type BusCli, type BusProvider,
 } from '../core/agents/bus-identity.js';
 import {
@@ -21,11 +21,12 @@ import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim, type BusClaimRequest, type BusClaimResult as BusMessageClaimResult } from '../core/fleet/bus-work-claims.js';
 import { scrubSecrets } from '../core/util/scrub.js';
-import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
+import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority } from '../core/fleet/bus-envelope.js';
+import { readBusThread } from '../core/fleet/bus-thread-context.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -42,6 +43,7 @@ ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--id <id>]
 ashlr agents bus show <id>
+ashlr agents bus thread <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -811,6 +813,40 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(result.job === undefined ? [] : [showJobLine(result.job)]),
       ].join('\n'));
       return 0;
+    }
+    if (verb === 'thread') {
+      noExtra(2);
+      if (sub === undefined) throw new UsageError('A message id is required.');
+      // The same printable routing-label rule `show` applies to its id.
+      if (!validateBusEnvelope({ id: sub, from: 'x', to: 'x', priority: 'P3', ttl: 1, body: null }).ok) {
+        const invalid = { status: 'invalid', reason: 'Invalid message id.' };
+        out(json ? JSON.stringify(invalid) : `${invalid.status}: ${invalid.reason}`);
+        return 1;
+      }
+      const result = readBusThread(sub, options);
+      if (json) {
+        out(JSON.stringify(result));
+        return result.complete && result.rootFound ? 0 : 1;
+      }
+      // Sender/recipient handles decorate labels best-effort, the same rule
+      // `show`'s fromAgent follows; an unreadable registry keeps raw labels.
+      const registryRead = readAgentRegistry(options);
+      const registry = registryRead.status === 'ok' ? registryRead.registry : undefined;
+      const label = (value: string): string =>
+        registry === undefined ? value : resolveAgent(registry, value)?.handle ?? value;
+      out([
+        `thread ${sub}: ${result.rootFound ? `${result.messages.length} message${result.messages.length === 1 ? '' : 's'}` : 'not found'}` +
+          `${result.complete ? '' : ' (incomplete)'}` +
+          `${result.sourceFailure === null ? '' : ` source=${result.sourceFailure}`}` +
+          ` scanned through ${result.scannedThrough}`,
+        ...result.messages.map(row => {
+          const summary = busBodyFallbackSummary(row.envelope.body);
+          return `${row.cursor} ${row.envelope.priority} ${row.envelope.id}${row.envelope.id === sub ? ' (root)' : ''} ` +
+            `from ${label(row.envelope.from)} -> ${label(row.envelope.to)}` +
+            (summary === '' ? '' : `\n  ${summary}`);
+        }),
+      ].join('\n'));
+      return result.complete && result.rootFound ? 0 : 1;
     }
     if (verb === 'wakes') {
       noExtra(2);
