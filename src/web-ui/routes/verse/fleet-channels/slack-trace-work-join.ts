@@ -1,7 +1,7 @@
 /**
  * Pure client-side join of a Slack trace row to the work board
  * (RQ-PHX-SLACKTRACEWORKSTATE453C). No React, no I/O, never throws.
- * Absence is only claimed when the board is readable and not truncated.
+ * Uniqueness and absence require a readable, explicitly complete board.
  */
 export type SlackWorkState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
 
@@ -45,6 +45,9 @@ export function joinSlackWork(threadTs: string, channelId: string | undefined, b
     }
   }
   if (matches.length > 1) return { kind: 'ambiguous', count: matches.length };
+  // Multiple visible matches prove ambiguity even if additional rows are hidden.
+  // The producer requires a boolean; missing legacy or malformed markers prove nothing.
+  if (b['truncated'] !== false) return UNKNOWN;
   if (matches.length === 1) return { kind: 'item', ...matches[0]! };
-  return b['truncated'] === true ? UNKNOWN : { kind: 'none' };
+  return { kind: 'none' };
 }
