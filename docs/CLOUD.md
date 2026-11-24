@@ -887,7 +887,34 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   nothing, truncated tails are stated as lower bounds, malformed
   lines drop like the writer's contract, and rows emit only for the
   fleet's own repository since the journal describes this install's
-  host and carries no repository column.
+  host and carries no repository column,
+  and the fleet self-tick run-record journal's recurring adverse
+  evidence, the per-run `fleet.self-tick-record.v1` lines
+  appendSelfTickLine in `src/core/fleet/self-tick-last.ts` appends to
+  `queue/self-tick.jsonl` under the fleet runs directory on every
+  `ashlr fleet self-tick` pass — the launchd/systemd-scheduled
+  maintenance cadence — ran or bounced off the single-runner lock,
+  carrying the run's mode, ran/busy state, failedSteps with error
+  text, the planner-tick intake hooks' folded outcomes and any
+  empty-family auto-stop proposals (otherwise only visible through
+  `phm fleet self-tick --last`/`--status`, which read only
+  queue/self-tick-last.json — the LAST run — so a step failing every
+  tick, a pass bouncing off its lock, an intake hook throwing or
+  silently going unrecorded, and an empty producer family re-earning
+  its 12-hour auto-stop each expiry never became work). A cell — a
+  failed step, the busy state, a hook's failed or not-recorded
+  outcome, or a family auto-stop — becomes an item only while its
+  in-window records reach the recurring bars of three across two
+  distinct UTC days inside the 7-day window; skipped steps and hooks,
+  ran hooks, clean runs and single lock collisions are the writer's
+  deliberate-off or working vocabulary and never emit, rows written
+  before familyStops existed carry no such key and read as no stop
+  evidence, malformed lines and off-contract rows drop like the
+  writer's contract with entries inside a valid row dropped rather
+  than folded, a truncated tail is stated as a lower bound, and rows
+  emit only for the fleet's own repository since the journal
+  describes this install's machinery and carries no repository
+  column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -895,8 +922,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop, judge-verdicts, disk-pressure, devin-autoland and
-  host-load items carry priority 3;
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load
+  and fleet-self-tick items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
