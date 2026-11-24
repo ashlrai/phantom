@@ -87,6 +87,16 @@ const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
  */
 const HTML_FILE = /\.html?$/i;
 
+/**
+ * PowerShell script/module/manifest extensions share one grammar: the
+ * Language.Parser API parses all three without executing. The repo's only
+ * member today is scripts/install.ps1 — the shipped Windows per-user
+ * installer `irm ... | iex` runs on user machines — which no tsconfig,
+ * eslint grammar or other step ever reads, so a syntax error would ship
+ * silently to every Windows install.
+ */
+const POWERSHELL_FILE = /\.ps[dm]?1$/i;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -96,6 +106,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
+    powershellFiles: changed.filter((path) => existing.has(path) && POWERSHELL_FILE.test(path)),
     jsonFiles: changed.filter((path) => existing.has(path) && (/\.(?:json|webmanifest)$/.test(path) || TSBUILDINFO_FILE.test(path))),
     jsonlFiles: changed.filter((path) => existing.has(path) && /\.jsonl$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
@@ -485,6 +496,79 @@ export function runPerlSyntaxCheck(root, files, spawn = spawnSync) {
     }
   }
   console.log('PASS perl syntax check');
+  return true;
+}
+
+/**
+ * Probe for a working PowerShell host: pwsh (PowerShell 7+, cross-platform)
+ * first, then Windows PowerShell 5.1's powershell.exe — the interpreter
+ * names differ per platform and only one may exist. `-NoProfile
+ * -NonInteractive -Command "exit 0"` is the lightest invocation both
+ * accept; a host that errors, is killed or exits non-zero does not count.
+ * The returned exe feeds runPowerShellSyntaxCheck so the same host that
+ * answered the probe parses the files.
+ */
+export function powershellPreflight(spawn = spawnSync, subject = 'changed PowerShell files') {
+  for (const exe of ['pwsh', 'powershell']) {
+    const probe = spawn(exe, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8', timeout: 15000 });
+    if (!probe.error && !probe.signal && probe.status === 0) return { ok: true, exe };
+  }
+  return { ok: false, reason: `pwsh/powershell is unavailable or did not run; ${subject} cannot be syntax-checked locally` };
+}
+
+/**
+ * Parse changed .ps1/.psm1/.psd1 files with the PowerShell language
+ * parser — [System.Management.Automation.Language.Parser]::ParseFile is
+ * the grammar step the host itself applies, and it parses without
+ * executing the script (unlike `powershell -File`, which would run
+ * install.ps1's body). The target path travels in PHANTOM_VERIFY_PS1_FILE
+ * rather than argv: an environment variable carries any repo path
+ * verbatim on both hosts, where $args marshalling after -Command differs
+ * between pwsh and powershell.exe. Parse errors print
+ * `path:line:column: message` on stderr and exit 1; a missing env var
+ * exits 2 so an arg-passing surprise fails closed instead of vacuously
+ * passing an unparsed batch. One spawn per file keeps the diagnostic
+ * pointed at the failing path, matching the perl and node checks.
+ */
+const POWERSHELL_SYNTAX_CHECK = [
+  '$path = $env:PHANTOM_VERIFY_PS1_FILE',
+  'if (-not $path) { exit 2 }',
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+  '$tokens = $null',
+  '$errors = $null',
+  'try {',
+  '  [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)',
+  '} catch {',
+  '  [Console]::Error.WriteLine($_.Exception.Message)',
+  '  exit 1',
+  '}',
+  '$failed = $false',
+  'if ($null -ne $errors) {',
+  '  foreach ($parseError in $errors) {',
+  '    [Console]::Error.WriteLine((\'{0}:{1}:{2}: {3}\' -f $parseError.Extent.File, $parseError.Extent.StartLineNumber, $parseError.Extent.StartColumnNumber, $parseError.Message))',
+  '    $failed = $true',
+  '  }',
+  '}',
+  'if ($failed) { exit 1 }',
+  'exit 0',
+].join('\n');
+
+/** Syntax-check changed PowerShell files with Language.Parser.ParseFile; returns false on any parse failure. */
+export function runPowerShellSyntaxCheck(root, files, exe = 'pwsh', spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn(exe, ['-NoProfile', '-NonInteractive', '-Command', POWERSHELL_SYNTAX_CHECK], {
+      cwd: root, encoding: 'utf8', timeout: 120000,
+      env: { ...process.env, PHANTOM_VERIFY_PS1_FILE: resolve(root, path) },
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stdout) console.log(result.stdout.trimEnd());
+      if (result.stderr) console.error(result.stderr.trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL powershell syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS powershell syntax check');
   return true;
 }
 
@@ -1560,6 +1644,7 @@ function main() {
   let pythonFiles = [];
   let shellFiles = [];
   let perlFiles = [];
+  let powershellFiles = [];
   let nodeFiles = [];
   let conflictFiles = [];
   try {
@@ -1582,6 +1667,7 @@ function main() {
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
     perlFiles = [...new Set([...selection.perlFiles, ...shebangScripts.perl])];
+    powershellFiles = selection.powershellFiles;
     nodeFiles = shebangScripts.node;
     console.log('PASS file selection');
     const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
@@ -1683,6 +1769,16 @@ function main() {
     if (!perl.ok) {
       console.log(`SKIP perl syntax check: ${perl.reason}`);
     } else if (!runPerlSyntaxCheck(root, perlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (powershellFiles.length === 0) {
+    console.log('PASS powershell syntax check skipped: no powershell change');
+  } else {
+    const powershell = powershellPreflight();
+    if (!powershell.ok) {
+      console.log(`SKIP powershell syntax check: ${powershell.reason}`);
+    } else if (!runPowerShellSyntaxCheck(root, powershellFiles, powershell.exe)) {
       process.exitCode = 1;
     }
   }
