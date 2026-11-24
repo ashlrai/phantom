@@ -121,9 +121,9 @@ export function deriveBusWorkItemEvidence(
   id: string, receipts: BusInboxReceipt[], claims: BusWorkClaimView[], now: number,
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
-  let request: BusInboxReceipt | undefined;
+  const request = receipts.find(row => row.envelope.id === id);
   for (const row of receipts) {
-    if (row.envelope.id === id) request = row;
+    if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
     const verified = replyVerifiedEvidence(row, id);
     if (verified) evidence.verified = verified;
     // Newest blocked reply wins; a later reply without `blocked` does not
