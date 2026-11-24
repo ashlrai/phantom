@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-six sources, all of which Phantom
+ * evidence instead of a hand-kept list. Thirty-seven sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -307,6 +307,18 @@
  *     Jev card — day-scoped reports someone had to run — so a kind
  *     whose Jev path kept losing, or a provider-side fallback reason
  *     recurring across kinds, never became work;
+ *   - the scheduled worktree reap's removal-attempt journal: the
+ *     per-attempt rows worktrees.ts removeSafe appends to
+ *     queue/worktree-reap.jsonl every time the self-tick's
+ *     planner-tick stage runs the reap — failed git removals,
+ *     unsafe-path refusals and the unpushed-commits /
+ *     uncommitted-changes holds that strand finished jobs' worktrees
+ *     (worktreeReapBacklogItems below). Until now the journal's only
+ *     reader was the newest-attempt fold inside `phm worktrees --reap
+ *     --status` and the worktrees report — reports someone had to run
+ *     and read — so a reap whose removals keep failing, whose unsafe
+ *     paths keep recurring, or whose safety holds keep accumulating
+ *     un-reapable worktrees never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -369,6 +381,7 @@ import { runtimeJournalBacklogItems } from './runtime-journal-backlog.js';
 import { generatorYieldBacklogItems } from './generator-yield-backlog.js';
 import { incidentGateBacklogItems } from './incident-gate-backlog.js';
 import { jevBacklogItems } from './jev-backlog.js';
+import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -850,6 +863,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // unpriced, and only the fleet's own repository inherits the items
   // since every decide() call site is this install's own code.
   items.push(...await jevBacklogItems({ repo }));
+
+  // Worktree-reap journal: the scheduled reap's own removal-attempt
+  // audit — recurring failed git removals, unsafe-path refusals and
+  // the unpushed-commits / uncommitted-changes holds that strand
+  // finished jobs' worktrees — become backlog items too. Until now the
+  // journal's only reader was the newest-attempt fold inside `phm
+  // worktrees --reap --status` and the worktrees report's ReaperHealth
+  // verdict, reports someone had to run and read, so a reap that keeps
+  // failing, keeps minting un-reapable paths, or keeps holding dirty
+  // and unpushed worktrees forever never became work. Same bounded
+  // tail read; a (kind, lane) cell emits only at the recurring bar of
+  // distinct jobs inside the 7-day window — 'removed' successes and
+  // 'state-changed' recheck refusals never emit — lane/repo
+  // attribution joins metrics/jobs.jsonl as enrichment that degrades
+  // to 'unknown' rather than suppressing the reap evidence, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the reap is this install's
+  // machinery.
+  items.push(...await worktreeReapBacklogItems({ repo }));
   return { items, errors };
 }
 

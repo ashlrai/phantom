@@ -632,6 +632,7 @@
 /test/improve-typed-route-backlog.test.ts @masonwyatt23
 /test/improve-unfed-backlog.test.ts @masonwyatt23
 /test/improve-usage-gap-backlog.test.ts @masonwyatt23
+/test/improve-worktree-reap-backlog.test.ts @masonwyatt23
 /test/ingest-doctor-owner-preservation-769s.test.ts @masonwyatt23
 /test/int4-confine-engines-310b.test.ts @masonwyatt23
 /test/intent-fleet-merge-observe-preservation-231s.test.ts @masonwyatt23

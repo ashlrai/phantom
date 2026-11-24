@@ -719,14 +719,31 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   malformed lines and off-contract rows drop like the writer's own
   contract, and rows emit only for the fleet's own repository since
   every call site is this install's own code and the ledger carries no
-  repository column.
+  repository column,
+  and the scheduled worktree reap's removal-attempt journal, the
+  per-attempt rows `removeSafe` in `src/core/fleet/worktrees.ts` appends
+  to `queue/worktree-reap.jsonl` under the fleet runs directory every
+  time the self-tick's planner-tick stage runs the reap — failed git
+  removals, unsafe-path refusals and the unpushed-commits /
+  uncommitted-changes holds that strand finished jobs' worktrees
+  (otherwise only visible through `phm worktrees --reap --status`'s
+  last-run summary and the worktrees report's ReaperHealth verdict —
+  reports someone had to run and read, while the journal's recurring
+  failures never folded into work). A (kind, lane) cell becomes an item
+  while its distinct job count reaches the recurring bar of three
+  inside the 7-day window — 'removed' successes and 'state-changed'
+  recheck refusals never emit — with lane and repo attribution joining
+  `metrics/jobs.jsonl` as enrichment that degrades to 'unknown' rather
+  than suppressing the reap evidence, truncated tails stated as lower
+  bounds, and rows emitting only for the fleet's own repository since
+  the reap is this install's machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
-  incident-gate and jev-decisions items carry priority 3;
+  incident-gate, jev-decisions and worktree-reap items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -872,7 +889,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   budget state — with the same owner-side no-change escape for a kind
   that legitimately falls back by design, and emit only for the fleet's
   own repository since the ledger is this install's decision record and
-  carries no repository column. They
+  carries no repository column. Worktree-reap items name the reap
+  journal, `phm worktrees --reap --status` and the pinned contrib/mac
+  machinery boundary, keep the find-why-removals-keep-failing-or-
+  worktrees-keep-stranding framing per kind — a broken removal path,
+  unsafe paths the minting side should never produce, unpushed commits
+  the publish path dropped, or dirty worktrees the finish path left —
+  with the same owner-side no-change escape, and emit only for the
+  fleet's own repository since the reap is this install's machinery.
+  They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
