@@ -647,8 +647,13 @@ interface SystemdActivationState {
 function readSystemdActivationState(timeoutMs = 15_000): SystemdActivationState {
   const active = runCmd(['systemctl', '--user', 'is-active', 'ashlr-daemon'], undefined, timeoutMs);
   const activeToken = active.stdout.trim();
-  const isActive = active.ok && activeToken === 'active';
-  const isInactive = !active.ok && activeToken === 'inactive';
+  // systemctl is-active also reports activating, deactivating, reloading, and
+  // failed. Those are real unit states. Treating only active/inactive as
+  // known made uninstall fail while Restart=always was still bringing the
+  // process up.
+  const isStarting = ['activating', 'deactivating', 'reloading'].includes(activeToken);
+  const isActive = (active.ok && activeToken === 'active') || isStarting;
+  const isInactive = !active.ok && (activeToken === 'inactive' || activeToken === 'failed');
   if (!isActive && !isInactive) throw commandError('systemd active-state query', active);
 
   const enabled = runCmd(['systemctl', '--user', 'is-enabled', 'ashlr-daemon'], undefined, timeoutMs);

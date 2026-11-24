@@ -105,9 +105,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $raw = npm pack --json
+          $raw = npm pack --json --ignore-scripts 2>$null | Out-String
           if ($LASTEXITCODE -ne 0) { throw 'npm pack failed' }
-          $pack = $raw | ConvertFrom-Json
+          $start = $raw.IndexOf('[')
+          if ($start -lt 0) { $start = $raw.IndexOf('{') }
+          if ($start -lt 0) { throw "npm pack did not return JSON: $raw" }
+          $pack = $raw.Substring($start) | ConvertFrom-Json
           $file = if ($pack.filename) { $pack.filename } else { $pack[0].filename }
           $full = (Resolve-Path $file).Path
           $sha = [System.Security.Cryptography.SHA512]::Create()
