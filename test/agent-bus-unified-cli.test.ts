@@ -1251,6 +1251,68 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ code: 2, json: { status: 'invalid' } });
   });
 
+  it('filters the next-work claim by channel and sender', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'coord', '--alias', 'coordinator'])).json)
+      .toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'noisy'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'eng', '--from', 'atlas'])).json)
+      .toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, from: string, priority: BusEnvelope['priority']): void => {
+      expect(appendBusInbox({ id, from, to, priority, ttl: 3_600_000,
+        body: { kind: 'work', text: id } }, { root }).status).toBe('posted');
+    };
+    post('wn-chan-coord', 'group:eng:general', 'agent:coord', 'P0');
+    post('wn-chan-noisy', 'group:eng:alerts', 'noisy', 'P1');
+    post('wn-direct-coord', 'agent:atlas', 'coordinator', 'P2');
+    post('wn-direct-other', 'agent:atlas', 'agent:nova', 'P3');
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --channel keeps only the room's whole traffic under every topic: the
+    // P0 group:eng:* receipt claims ahead of the direct mail.
+    const byChannel = await run(['work', 'next', '--lease-ms', '60000', '--channel', 'eng'], env);
+    expect(byChannel.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-chan-coord' } } });
+    await complete('wn-chan-coord', byChannel.json.token);
+    const byChannelAgain = await run(['work', 'next', '--lease-ms', '60000', '--channel', 'eng'], env);
+    expect(byChannelAgain.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-chan-noisy' } } });
+    await complete('wn-chan-noisy', byChannelAgain.json.token);
+
+    // --from resolves the ref through the registry: 'coord' names the identity
+    // behind both 'agent:coord' and alias 'coordinator', so the coord-posted
+    // direct receipt claims while the completed room post still counts.
+    const byFrom = await run(['work', 'next', '--lease-ms', '60000', '--from', 'coord'], env);
+    expect(byFrom.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-direct-coord' } } });
+    await complete('wn-direct-coord', byFrom.json.token);
+
+    // --exclude-from drops every registered spelling of one sender: coord's
+    // two posts leave only the unregistered-sender receipt live.
+    const byExclude = await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'coord'], env);
+    expect(byExclude.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-direct-other' } } });
+    await complete('wn-direct-other', byExclude.json.token);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'coord'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 2, held: 0 } });
+    // A sender both included and excluded matches nothing.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--from', 'coord', '--exclude-from', 'coord'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Malformed channel and sender filters are usage errors, never a
+    // widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--channel', 'Bad Name'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--from', 'has space'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--exclude-from', 'has space'], env))
+      .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+  });
+
   it('claims one envelope id and renews, releases and completes its message claim', async () => {
     expect(appendBusInbox({ id: 'mc-work', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
       ttl: 3_600_000, body: { kind: 'work', text: 'named work' } }, { root }).status).toBe('posted');
