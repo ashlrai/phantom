@@ -1336,7 +1336,12 @@ To move an agent onto the unified bus:
 3. Turn existing `group:<room>:<topic>` rooms into channels by creating a
    channel with the room's name; posts to any topic of that room reach its members.
 4. Drain a `phm bus` mailbox with `phm bus inbox --to <label>` and
-   `phm bus ack`, then send new traffic with `phm agents bus dm`. `work
+   `phm bus ack`, then send new traffic with `phm agents bus dm`. The inbox
+   read takes the same filter grammar every other bus read shares —
+   `--from`/`--exclude-from` through the identity registry, `--priority`,
+   `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`
+   and `--thread` — so a large leftover mailbox filters to one job's or one
+   sender's mail instead of paging raw. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
    each row needs, so leftover mail is discoverable without knowing which
