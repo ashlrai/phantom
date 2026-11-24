@@ -1,0 +1,6 @@
+.reply { display: grid; grid-template-columns: 1fr auto; gap: var(--space-1) var(--space-2); align-items: end; padding-top: var(--space-2); }
+.box { min-width: 0; padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-input); color: inherit; font: inherit; resize: vertical; }
+.box:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.send { padding: var(--space-1) var(--space-3); border: 0; border-radius: var(--radius-sm); background: var(--accent-500); color: var(--accent-contrast); font: inherit; font-weight: 600; cursor: pointer; }
+.send:disabled { opacity: 0.5; cursor: default; }
+.failure { grid-column: 1 / -1; margin: 0; color: var(--status-danger-fg); }
