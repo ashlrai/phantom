@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-five sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fifty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -537,6 +537,19 @@
  *     precondition never became satisfiable, pinned files that kept
  *     being hand-edited, and incident classes that kept ending
  *     failed or refused never became work;
+ *   - the Claude CLI rate-limit journal's recurring adverse pressure:
+ *     the sanitized {type, status, rateLimitType, utilization,
+ *     resetsAt, capturedAt} rows recordClaudeRateLimitEventLine
+ *     appends to ~/.ashlr/fabric/claude-rate-limit-events.jsonl from
+ *     every Claude run's captured output, folded per
+ *     (rateLimitType, tier) — 'exhausted' at utilization >= 1,
+ *     'near-limit' at >= 0.75 — over the bounded tail
+ *     (rateLimitBacklogItems below). Until now the journal's only
+ *     reader was the resource monitor's live snapshot — the newest
+ *     unexpired event per window type, a point-in-time verdict that
+ *     resets every poll — so a fleet that kept exhausting the same
+ *     provider window week after week looked healthy between events,
+ *     never work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -618,6 +631,7 @@ import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
 import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { routineBacklogItems } from './routine-backlog.js';
 import { autofixBacklogItems } from './autofix-backlog.js';
+import { rateLimitBacklogItems } from './rate-limit-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1476,6 +1490,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the ledgers describe this
   // install's machinery and carry no repository column.
   items.push(...await autofixBacklogItems({ repo }));
+  // The Claude rate-limit journal's only reader until now was the
+  // resource monitor's live snapshot — the newest unexpired event per
+  // window type, a point-in-time verdict that resets every poll — so
+  // a fleet that kept exhausting the same provider window week after
+  // week looked healthy between events. Same bounded no-follow tail
+  // read at the writer's own compaction bound; cells key
+  // (rateLimitType, tier) on 'exhausted' (utilization >= 1, the
+  // provider reports the window fully consumed) and 'near-limit'
+  // (>= 0.75, the monitor's 'near' band) — healthier rows count as
+  // events but never form cells — a cell emits only at the recurring
+  // bars of rows across distinct UTC days AND distinct provider reset
+  // windows inside the 7-day window, so one exhausted window
+  // re-sampled by every run cannot mint a pattern, truncated tails
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // Claude runs and carries no repository column.
+  items.push(...await rateLimitBacklogItems({ repo }));
   return { items, errors };
 }
 

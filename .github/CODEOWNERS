@@ -633,6 +633,7 @@
 /test/improve-precheck-skip-backlog.test.ts @masonwyatt23
 /test/improve-promote-redteam.test.ts @masonwyatt23
 /test/improve-proposal-outcome-backlog.test.ts @masonwyatt23
+/test/improve-rate-limit-backlog.test.ts @masonwyatt23
 /test/improve-recheck-backlog.test.ts @masonwyatt23
 /test/improve-recut-loop-backlog.test.ts @masonwyatt23
 /test/improve-repair-handoff-backlog.test.ts @masonwyatt23

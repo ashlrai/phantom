@@ -1101,7 +1101,33 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   no-follow tail read is stated as a lower bound when it truncates,
   and rows emit only for the fleet's own repository since the
   journal describes this install's schedules and executors and
-  carries no repository column.
+  carries no repository column,
+  and the Claude CLI rate-limit journal's recurring adverse
+  pressure, the sanitized {type, status, rateLimitType, utilization,
+  resetsAt, capturedAt} rows recordClaudeRateLimitEventLine in
+  `src/core/fabric/claude-rate-limit-event.ts` appends to
+  `~/.ashlr/fabric/claude-rate-limit-events.jsonl` from every Claude
+  run's captured output — the CLI's own rate_limit_event metadata
+  line, prompts, diffs, tool arguments and model text never
+  persisted (otherwise only visible through the resource monitor's
+  live snapshot — readLatestClaudeRateLimitEvent's newest unexpired
+  event per window type, a point-in-time verdict that resets every
+  poll — so a fleet that kept exhausting the same provider window
+  week after week looked healthy between events, never work). A
+  cell — a (rateLimitType, tier) group on 'exhausted' (utilization
+  >= 1, the provider reports the window fully consumed) and
+  'near-limit' (utilization >= 0.75, the monitor's 'near' band) —
+  becomes an item only while its in-window rows reach the recurring
+  bars of three across two distinct UTC days AND two distinct
+  provider reset windows inside the 7-day window; healthier rows
+  count as events but never form cells, rows count only under the
+  writer's own parser (type 'rate_limit_event', finite utilization,
+  positive resetsAt, a capturedAt inside the window — undated rows
+  fold as the epoch, outside every window), a bounded no-follow tail
+  read at the writer's compaction bound is stated as a lower bound
+  when it truncates, and rows emit only for the fleet's own
+  repository since the journal describes this install's Claude runs
+  and carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1111,7 +1137,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
-  catalog-refresh, mcp-gateway and routines items carry priority 3;
+  catalog-refresh, mcp-gateway, routines and rate-limit items carry
+  priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1387,7 +1414,19 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   billing and provider-side quota only the owner can fix — with the
   same owner-side no-change escape, and emit only for the fleet's own
   repository since the journal describes this install's schedules and
-  executors and carries no repository column. They
+  executors and carries no repository column. Rate-limit items name
+  the rate-limit journal,
+  `src/core/fabric/claude-rate-limit-event.ts` and
+  `src/core/fabric/resource-monitor.ts`, keep the
+  provider-window-versus-seat-spread-versus-plan-cap framing per
+  tier — too many concurrent Claude runs on one account, the budget
+  policy scheduling work into an already-exhausted window, demand
+  genuinely growing toward the cap, or the provider plan's own
+  window limit only the owner can change — with the same owner-side
+  no-change escape for a rolled-forward window, a planned burst or
+  owner-pinned plan limits, and emit only for the fleet's own
+  repository since the journal describes this install's Claude runs
+  and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
