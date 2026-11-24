@@ -14,7 +14,7 @@
  * Every argument is optional and takes the same value rules the
  * `phm agents conversations` flags and the API params share, all validated
  * before any store read: `agent`, `job`, `waitingOn`, `with`, `inReplyTo`,
- * `from` and `excludeFrom` printable routing
+ * `id`, `from` and `excludeFrom` printable routing
  * labels (`agent` keeps threads that identity is in, resolved through the
  * server-owned registry; `waitingOn` keeps the waiting threads one agent
  * owes a reply on — its own labels or a `group:<channel>:<topic>` address
@@ -61,14 +61,14 @@ import {
 } from '../core/fleet/agent-conversations.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `from`, `excludeFrom` and `with` share. */
+/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `id`, `from`, `excludeFrom` and `with` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'limit',
+  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'from', 'excludeFrom', 'with'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -93,6 +93,8 @@ export interface FleetAgentConversationsArgs {
   contains?: string;
   /** Keep only threads where at least one member message's body cites this envelope id through its own `inReplyTo` field — the shared `--in-reply-to` rule. */
   inReplyTo?: string;
+  /** Keep only the thread one member message's own wire id strictly equals — at most one thread — the shared `--id` rule. */
+  id?: string;
   /** Keep only threads where at least one member message is addressed to `group:<channel>:*` — the shared `--channel` rule. */
   channel?: string;
   /** Keep only threads where at least one member message carries this exact P0..P3 band — the shared `--priority` rule. */
@@ -220,6 +222,7 @@ export async function readFleetAgentConversations(
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.from === undefined ? {} : { from: args.from }),

@@ -101,12 +101,12 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
     if (path === AGENT_CONVERSATIONS_PATH) {
       const waiting = params.get('waiting'), blocked = params.get('blocked'), agent = params.get('agent'), job = params.get('job'), waitingOn = params.get('waitingOn');
       const state = params.get('state'), limit = params.get('limit'), since = params.get('since'), before = params.get('before'), contains = params.get('contains');
-      const inReplyTo = params.get('inReplyTo'), channel = params.get('channel'), priority = params.get('priority');
+      const inReplyTo = params.get('inReplyTo'), id = params.get('id'), channel = params.get('channel'), priority = params.get('priority');
       const from = params.get('from'), excludeFrom = params.get('excludeFrom'), withPeer = params.get('with');
       const sinceMs = since === null ? undefined : parseSince(since);
       const beforeMs = before === null ? undefined : parseSince(before);
       const KEYS = ['agent', 'waiting', 'blocked', 'job', 'waitingOn', 'state', 'limit', 'since', 'before', 'contains',
-        'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom', 'with'];
+        'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with'];
       if ([...params.keys()].some(key => !KEYS.includes(key))
         || KEYS.some(key => params.getAll(key).length > 1)
         || (waiting !== null && waiting !== '1' && waiting !== '0') || (blocked !== null && blocked !== '1' && blocked !== '0')
@@ -115,10 +115,10 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
         || (contains !== null && (contains.trim() === '' || contains.length > 512))
         || (priority !== null && !(BUS_PRIORITIES as readonly string[]).includes(priority))
         || (channel !== null && !agentChannelNameSchema.safeParse(channel).success)
-        || [agent, job, waitingOn, inReplyTo, from, excludeFrom, withPeer].some(v => v !== null && !/^[\x21-\x7e]{1,128}$/.test(v))
+        || [agent, job, waitingOn, inReplyTo, id, from, excludeFrom, withPeer].some(v => v !== null && !/^[\x21-\x7e]{1,128}$/.test(v))
         || sinceMs === null || beforeMs === null
         || [agent, job, waitingOn, since, before].some(v => v === '')) {
-        sendJson(res, 400, { error: 'Use agent (a name), with (the other agent, needs agent), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), before (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters), inReplyTo (an envelope id), channel (a channel name), priority (P0..P3), from (a name), excludeFrom (a name) and limit (1-1024) only, once each.' }); return true;
+        sendJson(res, 400, { error: 'Use agent (a name), with (the other agent, needs agent), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), before (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters), inReplyTo (an envelope id), id (an envelope id), channel (a channel name), priority (P0..P3), from (a name), excludeFrom (a name) and limit (1-1024) only, once each.' }); return true;
       }
       if (withPeer !== null && agent === null) {
         sendJson(res, 400, { error: 'with takes the other agent and needs agent.' }); return true;
@@ -126,7 +126,7 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       try {
         const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', blockedOnly: blocked === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined,
           state: state === null ? undefined : state as ConversationState, since: sinceMs ?? undefined, before: beforeMs ?? undefined, contains: contains ?? undefined,
-          inReplyTo: inReplyTo ?? undefined, channel: channel ?? undefined, priority: priority === null ? undefined : priority as BusPriority,
+          inReplyTo: inReplyTo ?? undefined, id: id ?? undefined, channel: channel ?? undefined, priority: priority === null ? undefined : priority as BusPriority,
           from: from ?? undefined, excludeFrom: excludeFrom ?? undefined, with: withPeer ?? undefined, limit: limit === null ? undefined : Number(limit) });
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
