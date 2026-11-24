@@ -1076,6 +1076,61 @@ describe('since-filtered reads', () => {
     expect(readAgentChannel('release', { since: Number.NaN }, options)).toMatchObject({ status: 'invalid' });
     expect(readAgentChannel('release', { since: Number.MAX_SAFE_INTEGER + 1 }, options)).toMatchObject({ status: 'invalid' });
   });
+
+  it('keeps only rows received strictly before the cutoff on inbox and channel reads', async () => {
+    const options = setup(10_000);
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'old dm', id: 'bb-old-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'old post', id: 'bb-old-ch' }, options);
+    options.clock.now = 20_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'new dm', id: 'bb-new-dm' }, options);
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'new post', id: 'bb-new-ch' }, options);
+    options.clock.now = 30_000;
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'edge dm', id: 'bb-edge-dm' }, options);
+
+    // The bound is exclusive: a row stamped exactly at it never matches,
+    // and the channel post reaches nova's inbox as channel mail too.
+    const inbox = readAgentInbox('nova', { before: 30_000 }, options);
+    if (inbox.status !== 'ok') throw new Error(`unexpected ${inbox.status}`);
+    expect(inbox.messages.map(m => m.envelope.id))
+      .toEqual(['bb-old-dm', 'bb-old-ch', 'bb-new-dm', 'bb-new-ch']);
+    const channel = readAgentChannel('release', { before: 30_000 }, options);
+    if (channel.status !== 'ok') throw new Error(`unexpected ${channel.status}`);
+    expect(channel.messages.map(m => m.envelope.id)).toEqual(['bb-old-ch', 'bb-new-ch']);
+
+    // --matched counts only the rows the cutoff accepts.
+    const counted = readAgentInbox('nova', { before: 30_000, matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(4);
+
+    // The pair reads one [since, before) window on receivedAt: the lower
+    // bound inclusive, the upper exclusive.
+    expect(readAgentInbox('nova', { since: 20_000, before: 30_000 }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-new-dm' } },
+        { envelope: { id: 'bb-new-ch' } }] });
+    expect(readAgentChannel('release', { since: 10_000, before: 20_000 }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-old-ch' } }] });
+    // A window that admits nothing still scans the whole store.
+    const empty = readAgentInbox('nova', { since: 30_000, before: 30_000 }, options);
+    if (empty.status !== 'ok') throw new Error(`unexpected ${empty.status}`);
+    expect(empty.messages).toEqual([]);
+    expect(empty.nextCursor).toBeGreaterThan(0);
+
+    // It composes with the other page filters.
+    expect(readAgentInbox('nova', { before: 30_000, kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'bb-old-dm' } },
+        { envelope: { id: 'bb-new-dm' } }] });
+    expect(readAgentChannel('release', { before: 30_000, topic: 'deploy' }, options))
+      .toMatchObject({ status: 'ok', messages: [] });
+
+    // Invalid cutoffs are refused, never silently widened or emptied.
+    expect(readAgentInbox('nova', { before: -1 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { before: 1.5 }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { before: Number.NaN }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentChannel('release', { before: Number.MAX_SAFE_INTEGER + 1 }, options))
+      .toMatchObject({ status: 'invalid' });
+  });
 });
 
 describe('envelope lookup by id', () => {
@@ -2781,6 +2836,55 @@ describe('fleet-wide wakes read', () => {
     expect(readAllWakes(undefined, options, { priority: 'P0' }))
       .toMatchObject({ status: 'unavailable' });
     expect(readAllWakes(undefined, options)).toMatchObject({ status: 'ok' });
+  });
+
+  it('bounds wake hints by the exclusive before on queue time under the same (since, before) window', () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    // Direct queue writes carry the injected clock, so old/edge/new
+    // discrimination is provable — the send path stamps wall-clock `at`.
+    const wake = (id: string, at: number, to = 'agent:atlas'): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to },
+        { root: options.runsRoot, now: () => at })).toBe('queued');
+    };
+    wake('wb-old', 1_000);
+    wake('wb-edge', 2_000);
+    wake('wb-new', 3_000);
+    wake('wb-other', 1_500, 'agent:nova');
+
+    // before is exclusive on the hint's queue `at`: the edge row drops,
+    // and the addressee scope still applies on the per-agent read.
+    const page = readAgentWakes('atlas', undefined, options, { before: 2_000 });
+    expect(page).toMatchObject({ status: 'ok', matched: 1 });
+    if (page.status !== 'ok') throw new Error('unreachable');
+    expect(page.wakes.map(row => row.id)).toEqual(['wb-old']);
+
+    // It composes with sinceAt's strictly-after boundary into one
+    // (since, before) window on queue time.
+    const window = readAgentWakes('atlas', 1_000, options, { before: 3_000 });
+    expect(window).toMatchObject({ status: 'ok', matched: 1 });
+    if (window.status !== 'ok') throw new Error('unreachable');
+    expect(window.wakes.map(row => row.id)).toEqual(['wb-edge']);
+
+    // The fleet-wide read applies the identical bound and window.
+    const fleet = readAllWakes(undefined, options, { before: 2_000 });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 2 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['wb-old', 'wb-other']);
+    // The edge row drops here too: wb-new sits exactly at the cutoff, and
+    // wb-other — another addressee's hint — stays inside the window.
+    const fleetWindow = readAllWakes(1_000, options, { before: 3_000 });
+    expect(fleetWindow).toMatchObject({ status: 'ok', matched: 2 });
+    if (fleetWindow.status !== 'ok') throw new Error('unreachable');
+    expect(fleetWindow.wakes.map(row => row.id)).toEqual(['wb-edge', 'wb-other']);
+
+    // Invalid cutoffs are refused like every other filter, on both reads.
+    for (const before of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(readAgentWakes('atlas', undefined, options, { before }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { before }))
+        .toMatchObject({ status: 'invalid' });
+    }
   });
 });
 

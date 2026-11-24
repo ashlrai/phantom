@@ -304,7 +304,8 @@ accepts no caller root or path and never posts, joins, leaves or renames
 a channel. `phm agents bus channel read <name> [--topic <t>]
 [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3]
 [--job <id>]
-[--since <15m|2h|1d|ISO>] [--contains <text>] [--matched]
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
+[--matched]
 [--after <cursor>] [--limit <n>]` pages the room's posts
 oldest-first — every live envelope addressed to `group:<name>:*` (or one
 `--topic`), minus `group.presence` heartbeats, which are observations with
@@ -322,7 +323,11 @@ keeps only posts stamped with that exact band — the same match
 `comms bus read --priority` applies, and `--since` keeps only posts
 received at or after the cutoff — the `phm messages` grammar (`15m`,
 `2h`, `1d`, epoch ms or an ISO time) resolved to epoch ms, matched
-inclusively on `receivedAt` like `phm messages --since`. `--contains`
+inclusively on `receivedAt` like `phm messages --since` — while
+`--before` keeps only posts received strictly before its own cutoff on
+the same grammar, the exclusive upper bound composing with `--since`
+into one `[since, before)` window on `receivedAt`, so "what did the room
+say before time T" is one filtered read. `--contains`
 keeps only posts whose scrubbed one-line summary — the same text the
 inbox `--frame` renders per row — carries the needle as a
 case-insensitive substring, whitespace collapsed on both sides, so "has
@@ -405,7 +410,8 @@ untrusted data: a wake is a hint to read the inbox and grants no authority.
 **Inbox.** `phm agents bus inbox <agent> [--thread <t>] [--from <agent>]
 [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy]
 [--job <id>]
-[--since <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>]`
+[--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>]
+[--contains <text>]`
 returns one page of
 DMs, handoffs,
 posts in the agent's channels (minus its own and minus `group.presence`
@@ -444,7 +450,12 @@ pending mail without paging the whole inbox and eyeballing each row's
 cutoff — the same `phm messages` grammar (`15m`, `2h`, `1d`, epoch ms or
 an ISO time) resolved to epoch ms, matched inclusively on `receivedAt` —
 so fresh mail is one filtered read without a persisted cursor, and it
-composes with every other inbox filter including `--matched`.
+composes with every other inbox filter including `--matched`. `--before`
+keeps only mail received strictly before its own cutoff on the same
+grammar — the exclusive upper bound every bus read's `--before` shares —
+composing with `--since` into one `[since, before)` window on
+`receivedAt`, so "what was in my inbox before time T" is one filtered
+read.
 `--channel` keeps only mail addressed to `group:<name>:*` of one registry
 channel the agent belongs to — channel posts and channel-addressed
 handoffs alike, matched on the delivery address rather than the reported
@@ -506,7 +517,7 @@ feed's own `refused`/`unavailable` state) without a `show` per item; the
 compact `job=<id>:<state>` marker rides inside the frame's bracket and on
 the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
-`phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--job <id>]
+`phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
 [--channel <name>] [--contains <text>]` lists wake
 hints for the agent and its
@@ -518,6 +529,10 @@ leader or comms pass sees who has pending hints in one read under
 agent operand and the same filters apply. `--since` keeps only hints after the cutoff — the same `phm
 messages` grammar the inbox and channel read take, resolved to epoch ms —
 so a wake-driven agent reads just the hints newer than its last check.
+`--before` keeps only hints recorded strictly before its own cutoff on
+the same grammar — the exclusive upper bound composing with `--since`
+into the wakes read's own `(since, before)` window on the hint's queue
+time — so "which hints were pending before time T" is one filtered read.
 `--from` keeps only hints whose recorded sender label matches one agent —
 a handle, `agent:<handle>`, stable id or alias resolving every label of
 that identity through the same `agentRefAddressMatcher` rule `inbox --from`
@@ -1074,11 +1089,12 @@ match `updatedAt`, `next`/`handoffs` match the envelope receipt,
 threads/awaiting/blocked inherit the shared conversations read's
 `lastAt` bound, mailbox mail matches acceptance, and board deliveries
 match `createdAt` while board tasks — which keep no timestamp — never
-match. `wakes` and `inbox` keep their `--since` bound but their
-shared reads accept no upper bound yet, so the cutoff never reaches
-them and they report exactly the rows their `--since`-only read
-returns; `channels` and `seats` carry no per-item historical timestamp
-and stay unfiltered under every filter, like they do under `--since`.
+match. `wakes` and `inbox` delegate both bounds to their shared reads —
+`inbox` matching `receivedAt` and `wakes` the hint's queue time, each the
+same exclusive upper bound every other bus read's `--before` applies —
+so the cutoff reaches them like every other section; `channels` and
+`seats` carry no per-item historical timestamp and stay unfiltered under
+every filter, like they do under `--since`.
 An item stamped at or after the cutoff never matches, every count
 stays the filtered total, the result echoes `before` as ISO in JSON
 and the human header prints it. `--priority

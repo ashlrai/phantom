@@ -64,8 +64,8 @@ async function callWakes(client: Client, args?: Record<string, unknown>) {
 describe('fleet_agent_wakes argument parsing', () => {
   it('leaves agent absent by default and parses every filter without it', () => {
     expect(parseFleetAgentWakesArgs({})).toEqual({});
-    expect(parseFleetAgentWakesArgs({ since: '1800000000000', priority: 'P0', contains: 'x' }))
-      .toEqual({ since: 1800000000000, priority: 'P0', contains: 'x' });
+    expect(parseFleetAgentWakesArgs({ since: '1800000000000', before: '1700000000000', priority: 'P0', contains: 'x' }))
+      .toEqual({ since: 1800000000000, before: 1700000000000, priority: 'P0', contains: 'x' });
     expect(parseFleetAgentWakesArgs({ agent: 'planner' })).toEqual({ agent: 'planner' });
     expect(parseFleetAgentWakesArgs({ agent: 'agent:planner' })).toEqual({ agent: 'agent:planner' });
     expect(parseFleetAgentWakesArgs({ agent: 'x'.repeat(128) })).toEqual({ agent: 'x'.repeat(128) });
@@ -80,12 +80,12 @@ describe('fleet_agent_wakes argument parsing', () => {
 
   it('maps every shared wakes filter onto the read arguments', () => {
     const parsed = parseFleetAgentWakesArgs({
-      agent: 'agent:planner', since: '1800000000000', job: 'RQ-9',
+      agent: 'agent:planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: '  Parser   Fix ',
     });
     expect(parsed).toEqual({
-      agent: 'agent:planner', since: 1800000000000, job: 'RQ-9',
+      agent: 'agent:planner', since: 1800000000000, before: 1700000000000, job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: 'parser fix',
     });
@@ -104,6 +104,8 @@ describe('fleet_agent_wakes argument parsing', () => {
   it('resolves the shared since grammar to epoch ms', () => {
     const parsed = parseFleetAgentWakesArgs({ agent: 'a', since: '2026-01-01T00:00:00.000Z' });
     expect(parsed).toMatchObject({ since: Date.parse('2026-01-01T00:00:00.000Z') });
+    const bounded = parseFleetAgentWakesArgs({ agent: 'a', before: '2026-01-01T00:00:00.000Z' });
+    expect(bounded).toMatchObject({ before: Date.parse('2026-01-01T00:00:00.000Z') });
   });
 
   it('rejects unknown keys, caller roots and malformed filter values', () => {
@@ -118,6 +120,8 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', priority: 'P4' }, { agent: 'a', priority: 'high' }, { agent: 'a', priority: 5 },
       { agent: 'a', since: 'never' }, { agent: 'a', since: 5 }, { agent: 'a', since: '' },
       { agent: 'a', since: '1960-01-01T00:00:00.000Z' },
+      { agent: 'a', before: 'never' }, { agent: 'a', before: 5 }, { agent: 'a', before: '' },
+      { agent: 'a', before: '1960-01-01T00:00:00.000Z' },
       { agent: 'a', contains: '' }, { agent: 'a', contains: '   ' },
       { agent: 'a', contains: 'x'.repeat(513) }, { agent: 'a', contains: 42 },
     ]) expect(parseFleetAgentWakesArgs(bad)).toBeNull();
@@ -132,9 +136,9 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1' }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000 }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,
@@ -169,10 +173,10 @@ describe('fleet_agent_wakes reader', () => {
     };
     const read = vi.fn();
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ since: '1800000000000', job: 'RQ-9', priority: 'P1' })!,
+      parseFleetAgentWakesArgs({ since: '1800000000000', before: '1700000000000', job: 'RQ-9', priority: 'P1' })!,
       { read, readAll });
     expect(read).not.toHaveBeenCalled();
-    expect(seen).toEqual([[1800000000000, {}, { job: 'RQ-9', priority: 'P1' }]]);
+    expect(seen).toEqual([[1800000000000, {}, { job: 'RQ-9', priority: 'P1', before: 1700000000000 }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', scope: 'fleet', matched: 4, truncated: false,
@@ -225,6 +229,7 @@ describe('fleet_agent_wakes MCP tool', () => {
       .toMatchObject({ type: 'string', minLength: 1, maxLength: 512 });
     expect(tool?.inputSchema.properties?.['channel'])
       .toMatchObject({ type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
   });
 
   it.each([
@@ -234,7 +239,7 @@ describe('fleet_agent_wakes MCP tool', () => {
     [{ agent: 'a', job: 'has space' }], [{ agent: 'a', from: 5 }], [{ agent: 'a', excludeFrom: null }],
     [{ agent: 'a', channel: 'Bad Name' }], [{ agent: 'a', channel: '' }], [{ agent: 'a', channel: 5 }],
     [{ agent: 'a', priority: 'P4' }], [{ agent: 'a', priority: 'high' }], [{ agent: 'a', priority: 5 }],
-    [{ agent: 'a', since: 'never' }], [{ agent: 'a', since: 5 }],
+    [{ agent: 'a', since: 'never' }], [{ agent: 'a', since: 5 }], [{ agent: 'a', before: 'never' }], [{ agent: 'a', before: 5 }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', contains: 'x'.repeat(513) }], [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const agentWakes = vi.fn();
