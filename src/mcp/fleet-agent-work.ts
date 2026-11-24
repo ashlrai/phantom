@@ -21,7 +21,7 @@
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
- * `priority` and `channel` apply the same rules the
+ * `priority`, `channel`, `from` and `excludeFrom` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
  * root, path or cwd is
@@ -41,7 +41,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -58,6 +58,10 @@ export interface FleetAgentWorkArgs {
   priority?: BusPriority;
   /** Keep only pending items provably addressed to `group:<name>:*` of one bus channel — the same `--channel` rule every bus read shares. */
   channel?: string;
+  /** Keep only pending items provably sent by this agent ref — the same `--from` rule every bus read shares. */
+  from?: string;
+  /** Keep only pending items NOT provably sent by this agent ref — the same `--exclude-from` rule every bus read shares. */
+  excludeFrom?: string;
 }
 
 /**
@@ -69,7 +73,9 @@ export interface FleetAgentWorkArgs {
  * needle `busReadContains` normalizes, `since` the shared `15m`/`2h`/`1d`/
  * epoch-ms/ISO grammar resolved to a safe non-negative epoch-ms integer,
  * `priority` one exact P0..P3 band, `channel` the strict channel-name
- * grammar every bus `--channel` read validates. Unknown keys, wrong
+ * grammar every bus `--channel` read validates, `from`/`excludeFrom` the
+ * same printable-label bound every bus sender filter shares. Unknown
+ * keys, wrong
  * types, caller roots and malformed values are all refused before the
  * store is touched.
  */
@@ -111,6 +117,13 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
   }
+  for (const key of ['from', 'excludeFrom'] as const) {
+    const value = args[key];
+    if (value !== undefined) {
+      if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
+      parsed[key] = value;
+    }
+  }
   return parsed;
 }
 
@@ -140,5 +153,7 @@ export async function readFleetAgentWork(
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.from === undefined ? {} : { from: args.from }),
+    ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
   });
 }

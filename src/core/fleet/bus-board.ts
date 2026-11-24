@@ -185,6 +185,25 @@ export interface BusBoardReceiptFilter {
   beforeMs?: number;
 }
 
+/**
+ * Optional sender slice for the pending digests: `from` keeps only
+ * deliveries whose `sender` peer label the predicate accepts, `excludeFrom`
+ * drops deliveries whose `sender` the predicate accepts for the excluded
+ * ref — the same include-then-exclude order every bus `--from`/
+ * `--exclude-from` read applies. The predicates are the caller-resolved
+ * `agentRefAddressMatcher` rules (the board keeps no identity registry of
+ * its own), so an unresolvable ref already degraded to exact-label
+ * matching before it reaches here. Deliveries are the only pending rows
+ * carrying a sender: tasks record no author, so they never match under
+ * `from` and stay listed under `excludeFrom` — nothing proves a task came
+ * from the excluded sender — and a thread rollup keeps only while a
+ * surviving delivery or task remains.
+ */
+export interface BusBoardSenderFilter {
+  from?: (sender: string) => boolean;
+  excludeFrom?: (sender: string) => boolean;
+}
+
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_RECORDS = 10_000;
 /** Item rows one pending digest section shows; `matched` keeps the true totals. */
@@ -624,13 +643,14 @@ export class BusBoard {
    * bound never matches; tasks stay unmatchable under any time bound and
    * thread rollups keep the same surviving-delivery rule.
    */
-  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPendingPeers {
+  pendingFor(peers: readonly string[], now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
+    sender?: BusBoardSenderFilter): BusBoardPendingPeers {
     const labels = new Set<string>();
     for (const peer of peers) {
       try { labels.add(this.peer(peer)); } catch { /* not a board peer label; it can match nothing */ }
     }
     return this.transaction(false, (state) => {
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender);
       const known = new Set(digest.members);
       return {
         peers: [...labels].filter((label) => known.has(label)).sort(),
@@ -663,10 +683,11 @@ export class BusBoard {
    * `pendingFor`; reading never acknowledges anything and grants no
    * authority.
    */
-  pendingAll(now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPendingPeers {
+  pendingAll(now?: number, jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
+    sender?: BusBoardSenderFilter): BusBoardPendingPeers {
     return this.transaction(false, (state) => {
       const labels = new Set(state.threads.flatMap((thread) => thread.members));
-      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs);
+      const digest = this.pendingDigest(state, labels, now ?? Date.now(), jobId, contains, sinceMs, beforeMs, sender);
       return {
         peers: digest.members,
         claims: digest.claims,
@@ -705,7 +726,8 @@ export class BusBoard {
    * unchanged.
    */
   private pendingDigest(state: BoardState, labels: ReadonlySet<string>, now: number,
-    jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardDigest {
+    jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
+    sender?: BusBoardSenderFilter): BusBoardDigest {
     const index = this.options.fleet.readClaimIndex();
     const acknowledged = new Set((state.receipts ?? []).map((receipt) => receipt.deliveryId));
     const jobThreads = jobId === undefined ? undefined : new Set(
@@ -717,16 +739,27 @@ export class BusBoard {
 
     // The shared helpers carry the one --contains/--since/--before rule
     // every board read applies: scrubbed normalized display text for the
-    // needle, the [since, before) window on createdAt for the bounds.
+    // needle, the [since, before) window on createdAt for the bounds. The
+    // sender slice applies only to deliveries — the one pending row
+    // carrying a `sender` label: `from` keeps posts the predicate accepts,
+    // `excludeFrom` drops posts the predicate accepts for the excluded
+    // ref. Tasks record no author, so under `from` they never match —
+    // unknown stays out — while under `excludeFrom` they stay listed:
+    // nothing proves a task came from the excluded sender.
     const textHit = boardContainsMatcher(contains) ?? (() => true);
+    const senderHit = (value: string): boolean =>
+      (sender?.from === undefined || sender.from(value)) &&
+      (sender?.excludeFrom === undefined || !sender.excludeFrom(value));
 
     const deliveries = state.deliveries.filter((delivery) =>
       labels.has(delivery.recipient) && joinedIds.has(delivery.threadId) &&
       !acknowledged.has(delivery.id) &&
       textHit(busBoardDeliveryText(delivery)) &&
-      boardTimeWindowHit(delivery.createdAt, sinceMs, beforeMs));
+      boardTimeWindowHit(delivery.createdAt, sinceMs, beforeMs) &&
+      senderHit(delivery.sender));
 
-    const tasks = state.tasks.filter((task) => sinceMs === undefined && beforeMs === undefined && joinedIds.has(task.threadId) &&
+    const tasks = state.tasks.filter((task) => sinceMs === undefined && beforeMs === undefined &&
+      sender?.from === undefined && joinedIds.has(task.threadId) &&
       (jobId === undefined || task.itemId === jobId) && textHit(task.title)).map((task): BusBoardPendingTask => {
       const entry = index.claims[task.itemId];
       let hold: BusBoardTaskHold = 'unknown';
@@ -756,8 +789,8 @@ export class BusBoard {
       holdCounts.set(task.threadId, counts);
     }
     const threads: BusBoardPendingThread[] = joined
-      .filter((thread) => sinceMs !== undefined || beforeMs !== undefined
-        ? deliveryCounts.has(thread.id)
+      .filter((thread) => sinceMs !== undefined || beforeMs !== undefined || sender !== undefined
+        ? deliveryCounts.has(thread.id) || holdCounts.has(thread.id)
         : textHit(thread.title) || deliveryCounts.has(thread.id) || holdCounts.has(thread.id))
       .map((thread) => ({
         id: thread.id, members: [...thread.members],
