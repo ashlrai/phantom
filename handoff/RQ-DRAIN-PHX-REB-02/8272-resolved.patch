@@ -1,0 +1,193 @@
+diff --git a/docs/CLI-REFERENCE.md b/docs/CLI-REFERENCE.md
+index 7fe44a0dcc..d3c4b4b62c 100644
+--- a/docs/CLI-REFERENCE.md
++++ b/docs/CLI-REFERENCE.md
+@@ -854,6 +854,7 @@ Missing fleet summaries are marked explicitly; flags hidden behind `[opts]` or u
+ | <code>phm pool runway [--json]</code> | Will each pool last until it resets? One line per pool: used, burn per hour, hours to empty, hours to reset, and a state (starve, spend, pace or unknown) with what to do. Read-only. | <code>--json</code> | <code>phm pool runway --json</code> |
+ | <code>phm pools [--text]</code> | Per resource: burn from the last 6 h of readings, when it runs empty or how much goes unused, and a plain verdict (slow down, add work). JSON (pools.v1) by default. | <code>--text</code> | - |
+ | <code>phm pools waste [--json]</code> | Which pool is about to waste included usage within 12 hours, and the one fix in plain words. A sign-in fix also goes on the phone Asks card. | <code>--json</code> | <code>phm pools waste --json</code> |
++| <code>phm pr recut-check &lt;n&gt; [--repo owner/name] [--json]</code> | Check which PR files are already on master and which still need a recut. Missing evidence never skips work. | <code>--json</code>, <code>--repo</code> | <code>phm pr recut-check &lt;n&gt; [--repo owner/name] --json</code> |
+ | <code>phm pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]</code> | Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md. | <code>--apply</code>, <code>--json</code>, <code>--pr</code>, <code>--repo</code> | <code>phm pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] --json</code> |
+ | <code>phm preflight [--json]</code> | Read-only first-activation readiness check: ready=true&#124;false + blockers/warnings (model/enrollment/kill/daemon/writeable/sandbox/git/phantom/locus); mutates nothing. | <code>--json</code> | <code>phm preflight --json</code> |
+ | <code>phm prs arm-sweep [--repos &lt;list&gt;] [--since 24h] [--apply] [--json]</code> | Preview auto-merge across seven AshlrAI repos; --apply arms PRs with no failing checks, preserving GitHub gates and owner holds. Reports superseded open PRs without closing them. | <code>--apply</code>, <code>--json</code>, <code>--repos</code>, <code>--since</code> | <code>phm prs arm-sweep [--repos &lt;list&gt;] [--since 24h] [--apply] --json</code> |
+diff --git a/docs/PR-CONFLICT-RESOLVER.md b/docs/PR-CONFLICT-RESOLVER.md
+index 5deb81d7b1..9211aacec6 100644
+--- a/docs/PR-CONFLICT-RESOLVER.md
++++ b/docs/PR-CONFLICT-RESOLVER.md
+@@ -1,5 +1,11 @@
+ # Append-union PR conflict resolver
+ 
++Before recutting a PR, run `phm pr recut-check 123 --json`. Content comparisons
++and a scratch merge preview report `alreadyOnMasterFiles` and `remainingFiles`.
++Only `alreadyOnMaster: true` proves the recut can be skipped. Unknown evidence
++uses `null`, never an empty file list. Exit 0 means checked, 1 means unknown,
++and 2 means bad usage. Omit `--json` for plain words. This only reads the PR.
++
+ `phm pr resolve-conflicts --json` inspects conflicting open PRs in
+ `ashlrai/phantom`. It defaults to dry-run: temporary git objects and a detached
+ worktree are removed after inspection. It does not run repository scripts,
+diff --git a/src/cli/help.ts b/src/cli/help.ts
+index d65c3578a4..7fdfba6d77 100644
+--- a/src/cli/help.ts
++++ b/src/cli/help.ts
+@@ -38,6 +38,7 @@ export interface AgentCommandDoc {
+  * actual effects and command-specific result/exit semantics.
+  */
+ export const AGENT_COMMANDS: AgentCommandDoc[] = [
++  { usage: 'phm pr recut-check <n> [--repo owner/name] [--json]', description: 'Read which PR files are already on master and which still need a recut. Unknown evidence never skips work. Exit 0 checked, 1 unknown, 2 usage.', safety: 'read', jsonShape: 'PrRecutCheckReport {schema:pr.recut-check.v1,repo,pr,alreadyOnMaster,alreadyOnMasterFiles,remainingFiles,evidence,next}' },
+   { usage: 'phm prs arm-sweep [--repos <list>] [--since 24h] [--apply] [--json]', description: 'Preview auto-merge requests across seven AshlrAI repos; --apply arms eligible PRs with no failing checks. Pending checks remain subject to GitHub gates. Owner holds stay skipped; superseded open PRs are report-only close candidates.', safety: 'append', jsonShape: 'prs.arm-sweep.v1 {dryRun,rows:[{repo,number,title,action,reason?}],closeCandidates,errors,counts:{armed,wouldArm,skipped}}' },
+   { usage: 'phm fleet empties [--since 24h] [--jobs <jobs.jsonl>] [--runs-dir <directory>] [--human | --json]', description: 'Read EMPTY finishes, evidence-only causes, empty rates and top five job families. JSON by default; unknown evidence stays unknown. Exit 1 unreadable metrics, 2 invalid arguments.', safety: 'read', jsonShape: 'fleet.empties.v2' },
+   { usage: 'phm sessions threads [--lane <lane>] [--repo <repo>] [--live] [--json]', description: 'Every agent session as a short conversation in one read: the summary `phm sessions thread <id>` builds and the newest 3 messages of each, what Mason wrote to it in the Leader inbox, the jobs the Leader routed each message to and the last 3 lines a running session wrote to its log included, leader first, then each worker followed by its helpers. Up to 40 sessions; message text is cut at 400 characters. --live shows only running ones. Exit 0 read, 1 session list unreadable, 2 usage.', safety: 'read', jsonShape: 'SessionThreadsV1 {schema:fleet.session-threads.v1,generatedAt,filter:{lane,repo,live},counts:{sessions,shown,states:{running,quiet,idle,done,failed,unknown}},threads:[{session:{id,kind,agent,lane,model,repo,jobId,parentId,state,startedAt,ageSeconds,lastMessageAt,lastMessageAgeSeconds,prUrl,computer,helpers},summary:[string],task:{line,from:title|queue|opening,truncated}|null,messages:[{key,kind,side,label,at,text,format,truncated}],messageCount,sources,gaps,reply:{to,mention,hint},serves:{key,at,source,text,truncated,jobs}|null}],sources:{sessions,bus,owner,replies,orders},gaps}' },
+@@ -1194,6 +1195,7 @@ export const HELP_ENTRIES: HelpEntry[] = [
+   { cmd: 'daemon resolve-state --dry-run|--execute', desc: 'Preview or explicitly resolve one exact quarantine, restoring daemon state after `daemon recover-state`.', topic: 'autonomy' },
+   { cmd: 'worker setup',                 desc: 'Temporarily unavailable and fail-closed before config, enrollment, queue, wizard, or service mutation.', topic: 'autonomy' },
+   { cmd: 'pr resolve-conflicts [--repo owner/name] [--pr N] [--apply] [--json]', desc: 'Dry-run append-union conflict repair; apply verifies an isolated merge and exports a supersede bundle. See docs/PR-CONFLICT-RESOLVER.md.', topic: 'autonomy' },
++  { cmd: 'pr recut-check <n> [--repo owner/name] [--json]', desc: 'Check which PR files are already on master and which still need a recut. Missing evidence never skips work.', topic: 'autonomy' },
+   { cmd: 'prs arm-sweep [--repos <list>] [--since 24h] [--apply] [--json]', desc: 'Preview auto-merge across seven AshlrAI repos; --apply arms PRs with no failing checks, preserving GitHub gates and owner holds. Reports superseded open PRs without closing them.', topic: 'autonomy' },
+   { cmd: 'prs triage [--repo ashlrai/<name>] [--limit N] --json', desc: 'Read-only classification of open pull requests.', topic: 'autonomy' },
+   { cmd: 'log [--since 6h] [--lane <lane>] [--repo <repo>] [--json]', desc: 'What the fleet did, one row per job, newest first, under a one-line summary: jobs, merged, no-change rate and median time to merge.', topic: 'observability' },
+diff --git a/src/cli/pr.ts b/src/cli/pr.ts
+index 2aa02241f4..13d135b4f2 100644
+--- a/src/cli/pr.ts
++++ b/src/cli/pr.ts
+@@ -1,14 +1,37 @@
+ import { resolve } from 'node:path';
+ import { runPrConflictResolution, type ConflictRunOptions } from '../core/fleet/pr-conflict-run.js';
+ import { scrubSecrets } from '../core/util/scrub.js';
++import { checkPrRecut, type PrRecutCheckDeps } from '../core/fleet/pr-recut-check.js';
+ 
+-const USAGE = 'Usage: phm pr resolve-conflicts [--repo owner/name] [--pr N] [--limit N] [--root dir] [--out dir] [--allowlist file] [--apply] [--json]';
++const RECUT_USAGE = 'Usage: phm pr recut-check <n> [--repo owner/name] [--json]';
++const USAGE = 'Usage: phm pr resolve-conflicts [--repo owner/name] [--pr N] [--limit N] [--root dir] [--out dir] [--allowlist file] [--apply] [--json]\n' + RECUT_USAGE;
+ 
+ export async function cmdPr(args: string[], deps: {
+   run?: (options: ConflictRunOptions) => Promise<unknown>; stdout?: (text: string) => void;
++  recut?: PrRecutCheckDeps;
+ } = {}): Promise<number> {
+   const out = deps.stdout ?? ((text: string) => { process.stdout.write(text); });
+   if (args.includes('--help') || args.includes('-h')) { out(USAGE + '\n'); return 0; }
++  if (args[0] === 'recut-check') {
++    const pr = Number(args[1]);
++    let repo = 'ashlrai/phantom';
++    const seen = new Set<string>();
++    let valid = /^\d+$/.test(args[1] ?? '') && Number.isSafeInteger(pr) && pr > 0;
++    for (let i = 2; i < args.length; i++) {
++      const flag = args[i]!;
++      if (seen.has(flag)) valid = false;
++      seen.add(flag);
++      if (flag === '--json') continue;
++      if (flag === '--repo' && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(args[i + 1] ?? '')) repo = args[++i]!;
++      else valid = false;
++    }
++    if (!valid) { out(RECUT_USAGE + '\n'); return 2; }
++    const report = await checkPrRecut(pr, repo, deps.recut);
++    const files = (paths: string[] | null) => paths === null ? 'unknown' : paths.join(', ') || 'none';
++    const text = `${report.next}\nAlready on master: ${files(report.alreadyOnMasterFiles)}\nRemaining files: ${files(report.remainingFiles)}`;
++    out(scrubSecrets(args.includes('--json') ? JSON.stringify(report) : text) + '\n');
++    return report.alreadyOnMaster === null ? 1 : 0;
++  }
+   if (args[0] !== 'resolve-conflicts') { out(USAGE + '\n'); return 2; }
+   const options: ConflictRunOptions = { apply: false, repo: 'ashlrai/phantom', limit: 500 };
+   const seen = new Set<string>();
+diff --git a/src/core/commands/catalog.ts b/src/core/commands/catalog.ts
+index b7db19cfcf..268b6aaeeb 100644
+--- a/src/core/commands/catalog.ts
++++ b/src/core/commands/catalog.ts
+@@ -33,7 +33,7 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
+   'graph', 'graph status', 'growth', 'help', 'home', 'host load', 'inbox show', 'jobs empty', 'knowledge graph', 'knowledge impact', 'lanes',
+   'lanes fit', 'library', 'log', 'ls', 'map', 'mcp list', 'metrics idle', 'metrics levers', 'metrics merges', 'models', 'models check', 'nodes',
+ 
+-  'observe', 'observe session', 'orient', 'pages list', 'publish orphans', 'pool admission', 'pool runway', 'preflight', 'prs triage', 'pulse-test', 'queue batches', 'recut check', 'recut plan',
++  'observe', 'observe session', 'orient', 'pages list', 'publish orphans', 'pool admission', 'pool runway', 'preflight', 'pr recut-check', 'prs triage', 'pulse-test', 'queue batches', 'recut check', 'recut plan',
+   'recut prompt',
+   'reflect', 'release status', 'resources', 'route explain', 'router rank', 'router-calibration', 'run show', 'runs',
+   'sandbox diff', 'sandbox list', 'seams', 'self drift', 'signals', 'skills audit', 'skills list', 'spec list', 'spec show', 'spend', 'status',
+diff --git a/test/fleet-dirty-landed.test.ts b/test/fleet-dirty-landed.test.ts
+index f763b37255..5b1e099516 100644
+--- a/test/fleet-dirty-landed.test.ts
++++ b/test/fleet-dirty-landed.test.ts
+@@ -9,6 +9,8 @@ import { cmdFleetRecutSweep } from '../src/cli/fleet-recut-sweep.js';
+ import * as gitOps from '../src/core/verse/git-ops.js';
+ import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+ import { resolveFleetSubcommand } from '../src/cli/fleet-subcommand-resolve.js';
++import { cmdPr } from '../src/cli/pr.js';
++import type { PrRecutCheckReport } from '../src/core/fleet/pr-recut-check.js';
+ 
+ const row = (number: number, headRefOid: string, mergeStateStatus = 'DIRTY', title = `pr ${number}`) => ({
+   number, title, mergeable: mergeStateStatus === 'DIRTY' ? 'CONFLICTING' : 'MERGEABLE',
+@@ -129,6 +131,14 @@ describe('fleet dirty-landed', () => {
+       expect(pr.class).toBe(state === 'landed' ? 'landed' : conflict ? 'needs-recut' : 'partly-landed');
+       expect(pr.remainingPaths).toEqual(state === 'landed' ? [] : conflict ? ['a.txt', 'b.txt'] : ['b.txt']);
+       if (state === 'landed') expect(pr.reason).toBe('already-present-on-base');
++      let checked = '';
++      const ghOne = vi.fn(async () => ({ ok: true, stdout: JSON.stringify(row(1, head)), stderr: '' }));
++      expect(await cmdPr(['recut-check', '1', '--json'], {
++        recut: { gh: ghOne, remote: dir }, stdout: text => { checked = text; },
++      })).toBe(0);
++      expect(JSON.parse(checked)).toMatchObject({ schema: 'pr.recut-check.v1',
++        alreadyOnMaster: state === 'landed', remainingFiles: pr.remainingPaths,
++        evidence: { head, baseSha: before } });
+       const runs = join(dir, 'runs');
+       let report = '';
+       expect(await cmdFleetRecutSweep(['--json', '--apply', '--runs-dir', runs], {
+@@ -190,6 +200,60 @@ describe('fleet dirty-landed', () => {
+     expect(report.prs[5]).toMatchObject({ reason: 'row-unreadable' });
+   });
+ 
++  it.each([1, 2, 3, 4, 5, 6])('PR recut-check reports content evidence or retains uncertain source %s', async n => {
++    const { dir, t1, t2, t3 } = fixture();
++    const source = row(n, [t1, t2, t3, t3, t1, ''][n - 1]!);
++    const gh = vi.fn(async () => ({ ok: true, stdout: JSON.stringify(source), stderr: '' }));
++    let text = '';
++    expect(await cmdPr(['recut-check', String(n), '--repo', 'ashlrai/phantom', '--json'], {
++      recut: { gh, remote: dir }, stdout: value => { text = value; },
++    })).toBe(n <= 3 ? 0 : 1);
++    expect(gh).toHaveBeenCalledWith(['pr', 'view', String(n), '--repo', 'ashlrai/phantom',
++      '--json', 'number,headRefOid,baseRefName']);
++    const report = JSON.parse(text) as PrRecutCheckReport;
++    expect(report.alreadyOnMaster).toBe(n <= 3 ? n === 1 : null);
++    expect(report.alreadyOnMasterFiles).toEqual(n <= 2 ? ['a.txt'] : n === 3 ? [] : null);
++    expect(report.remainingFiles).toEqual(n === 1 ? [] : n === 2 ? ['b.txt'] : n === 3 ? ['c.txt'] : null);
++    if (n > 3) expect(report.next).toContain('keep this recut');
++  });
++
++  it.each(['failed', 'malformed', 'mismatched', 'other-base', 'throws'])('PR recut-check never skips a %s source', async mode => {
++    const gh = vi.fn(async () => {
++      if (mode === 'throws') throw new Error('private error must not be printed');
++      return { ok: mode !== 'failed', stderr: 'private error must not be printed', stdout: mode === 'malformed' ? '{'
++        : JSON.stringify({ ...row(mode === 'mismatched' ? 2 : 1, 'a'.repeat(40)), baseRefName: mode === 'other-base' ? 'other' : 'master' }) };
++    });
++    let text = '';
++    expect(await cmdPr(['recut-check', '1', '--json'], { recut: { gh }, stdout: value => { text = value; } })).toBe(1);
++    expect(JSON.parse(text)).toMatchObject({ alreadyOnMaster: null, alreadyOnMasterFiles: null, remainingFiles: null });
++    expect(text).not.toContain('private error');
++  });
++
++  it.each([[], ['0'], ['-1'], ['1.5'], ['9007199254740992'], ['1', '--apply'], ['1', '--json', '--json'], ['1', '--repo']].map(args => ({ args })))(
++    'PR recut-check rejects invalid arguments $args before reading a source', async ({ args }) => {
++      const gh = vi.fn();
++      expect(await cmdPr(['recut-check', ...args], { recut: { gh }, stdout: () => {} })).toBe(2);
++      expect(gh).not.toHaveBeenCalled();
++    });
++
++  it('PR recut-check gives a plain next step when the source is unavailable', async () => {
++    let text = '';
++    expect(await cmdPr(['recut-check', '1'], { recut: { gh: async () => ({ ok: false, stdout: '', stderr: '' }) },
++      stdout: value => { text = value; } })).toBe(1);
++    expect(text).toContain('keep this recut');
++    expect(text).toContain('Already on master: unknown\nRemaining files: unknown');
++  });
++
++  it.each(['timeout', 'truncated'])('PR recut-check rejects a %s metadata read before inspecting git', async failure => {
++    const run = vi.spyOn(gitOps, 'defaultGitRunner').mockResolvedValue({ code: 0,
++      stdout: JSON.stringify(row(1, 'a'.repeat(40))), stderr: '', missing: false,
++      timedOut: failure === 'timeout', truncated: failure === 'truncated' });
++    let text = '';
++    expect(await cmdPr(['recut-check', '1', '--json'], { stdout: value => { text = value; } })).toBe(1);
++    expect(JSON.parse(text)).toMatchObject({ alreadyOnMaster: null, remainingFiles: null });
++    expect(run).toHaveBeenCalledTimes(1);
++  });
++
+   it('refuses a criss-cross history with more than one merge base', async () => {
+     const dir = mkdtempSync(join(tmpdir(), 'ambiguous-fork-')); dirs.push(dir);
+     const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
