@@ -19,7 +19,7 @@
  * 'label'` — the same fallback the CLI read reports — so hints queued
  * under a bare coordination label stay readable by their addressee.
  * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
- * `contains` and `id` apply
+ * `contains`, `thread`, `inReplyTo` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
  * before any store read; the page always reports `matched` (every hint
  * the bounded queue tail accepted before its row cap) and `truncated`
@@ -44,8 +44,8 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent`, `job`, `from`, `excludeFrom` and `id` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id']);
-const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id'] as const;
+const WAKE_KEYS = new Set(['agent', 'since', 'before', 'job', 'from', 'excludeFrom', 'channel', 'priority', 'contains', 'id', 'thread', 'inReplyTo']);
+const LABEL_KEYS = ['job', 'from', 'excludeFrom', 'id', 'thread', 'inReplyTo'] as const;
 
 export interface FleetAgentWakesArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. Omit for the fleet-wide read: every hint in the bounded queue tail, each row's own `to` naming its addressee. */
@@ -68,6 +68,10 @@ export interface FleetAgentWakesArgs {
   contains?: string;
   /** Keep only the hint whose own id is strictly equal to the value — the triggering envelope's wire id on a bus.send hint, the wh-… claim-holder id on those — the same exact-id match `phm agents bus wakes --id` applies. */
   id?: string;
+  /** Keep only hints whose resolved referent is a note/context body carrying this v2 thread label — the same match `phm agents bus wakes --thread` applies. */
+  thread?: string;
+  /** Keep only hints whose resolved referent body cites this envelope id through its own inReplyTo field — the same own-property exact match `phm agents bus wakes --in-reply-to` applies. */
+  inReplyTo?: string;
 }
 
 /**
@@ -75,7 +79,8 @@ export interface FleetAgentWakesArgs {
  * tools/list schema, so the server re-validates on every call. `agent`
  * is required — the addressed read has no meaningful default — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
- * the other bus reads share: `job`/`from`/`excludeFrom`/`id` printable
+ * the other bus reads share: `job`/`from`/`excludeFrom`/`id`/`thread`/
+ * `inReplyTo` printable
  * routing labels (`id` the exact hint-id match), `channel` the strict
  * channel-name grammar, the P0–P3 priority enum, `since` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
@@ -168,6 +173,8 @@ export async function readFleetAgentWakes(
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.id === undefined ? {} : { id: args.id }),
+    ...(args.thread === undefined ? {} : { thread: args.thread }),
+    ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
   };
   const page: WakePage | AllWakesPage = args.agent === undefined
     ? (deps.readAll ?? readAllWakes)(args.since, {}, filter)

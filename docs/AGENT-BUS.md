@@ -573,7 +573,7 @@ the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--id <id>]` lists wake
+[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
 applies — and its
@@ -645,7 +645,25 @@ the citing `work.status` receipt's band behind a claim-holder `wh-…`
 hint (carried on the row's `claimHolder.priority`); a hint whose
 referent is `unresolved` or `unknown` names no provable band and never
 matches, an unreadable bus store makes the filtered read `unavailable`,
-and `matched` counts the proven matches on the resolved page. `--id`
+and `matched` counts the proven matches on the resolved page. `--thread`
+keeps only the hints whose resolved referent is a `note`/`context` body
+carrying that v2 thread label — the same `busBodyThread` own-field match
+`inbox --thread` and `channel read --thread` apply to the message a hint
+refers to — so "which wake was about thread T" is one filtered read; a
+claim-holder `wh-…` hint's referent is a `work.status` receipt, which
+carries no thread label, so those hints never match, an
+`unresolved`/`unknown` referent names no provable thread and never
+matches, the unreadable-store and `matched` rules are `--job`'s, and a
+malformed label answers `invalid`. `--in-reply-to` keeps only the hints
+whose resolved referent body cites that envelope id through its own
+`inReplyTo` field — the same own-property exact match `inbox
+--in-reply-to`, `channel read --in-reply-to`, `phm messages
+--in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet
+bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply,
+never the `replyTo` alias or a substring — so "did the reply to
+envelope X trigger a wake" is one filtered read; claim-holder hints
+never match for the same reason, the unreadable-store and `matched`
+rules are `--thread`'s, and a malformed id answers `invalid`. `--id`
 keeps only the hint whose own id is strictly equal to the value — the
 triggering envelope's wire id on a `bus.send` hint, the `wh-…`
 claim-holder id on those — the same exact-id match `inbox --id` and
@@ -669,7 +687,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

@@ -246,6 +246,38 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters wakes by the resolved referent thread label and reply citation', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // dm carries the v2 thread label and --reply-to citation; --wake queues the hint.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plan',
+      '--thread', 'release-plan', '--id', 'wt-th', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 're: plan',
+      '--reply-to', 'env-orig', '--id', 'wt-re', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain',
+      '--id', 'wt-plain', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 3 });
+    const thread = await run(['wakes', 'nova', '--thread', 'release-plan']);
+    expect(thread.json).toMatchObject({ matched: 1, truncated: false });
+    expect(thread.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-th']);
+    const cited = await run(['wakes', 'nova', '--in-reply-to', 'env-orig']);
+    expect(cited.json).toMatchObject({ matched: 1 });
+    expect(cited.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-re']);
+    expect((await run(['wakes', 'nova', '--thread', 'absent'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', '--all', '--thread', 'release-plan'])).json)
+      .toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    expect((await run(['wakes', '--all', '--in-reply-to', 'env-orig'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wt-re']);
+    expect(await run(['wakes', 'nova', '--thread', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--in-reply-to='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('lists channels for discovery and filters by agent', async () => {
     // Before any registry exists the list is verified-empty, not an error.
     expect(await run(['channel', 'list'])).toMatchObject({ code: 0,
