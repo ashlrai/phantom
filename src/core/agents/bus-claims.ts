@@ -53,6 +53,25 @@ export interface BusClaimsListOptions {
    */
   contains?: string;
   /**
+   * When set, keep only live claims whose recorded `started` — the lease's
+   * ISO acquisition time, stable across renewals — is at or after this
+   * epoch-ms cutoff: the same inclusive `>=` rule every bus read's `--since`
+   * applies and the same field `work mine`'s claims section bounds. A claim
+   * whose `started` is null or unparseable is unknown and never matches —
+   * the same "unknown stays out" rule every other section's missing
+   * timestamp follows.
+   */
+  since?: number;
+  /**
+   * When set, keep only live claims whose recorded `started` is strictly
+   * before this epoch-ms cutoff — the exclusive upper bound composing with
+   * `since` into one `[since, before)` window, the same rule every bus
+   * read's `--before` applies. A null or unparseable `started` never
+   * matches, and a claim still held but started inside the window stays
+   * listed.
+   */
+  before?: number;
+  /**
    * When set, only live claims of this origin class — `resource` for v2
    * work.claim leases, `message` for bus message-id claims, `team` for
    * team leases and `board` for board task claims. Queue path
@@ -233,7 +252,12 @@ export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' 
  * same identity-label rule `owner` applies, inverted — "what do the other
  * seats hold" is one read. With `contains`, the list keeps claims whose
  * rendered fields carry the needle under the shared bus `--contains` rule.
- * With `jobs`, each claim also names the announced feed jobs
+ * With `since`/`before`, the list keeps claims whose recorded `started`
+ * lands inside the `[since, before)` window — the same inclusive/exclusive
+ * bounds every bus read's time filters apply, on the same field
+ * `work mine`'s claims section already bounds — so "which claims started
+ * lately" or "what was held before time T" is one filtered read of the
+ * claim table itself. With `jobs`, each claim also names the announced feed jobs
  * it blocks and `feed` reports the read state; a non-ok feed leaves
  * `jobs` absent.
  */
@@ -266,6 +290,10 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   if (containsNeedle === null) return { status: 'invalid', asOf };
   const origin = options.origin;
   if (origin !== undefined && !COORDINATION_ORIGINS.includes(origin)) return { status: 'invalid', asOf };
+  const since = options.since;
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) return { status: 'invalid', asOf };
+  const before = options.before;
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) return { status: 'invalid', asOf };
   const listed = listCoordination(options.root, now);
   if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
   let live = listed.claims.filter(row => row.live);
@@ -297,6 +325,20 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   }
   if (origin !== undefined) live = live.filter(row => row.origin === origin);
   if (containsNeedle !== undefined) live = live.filter(row => busClaimRowContains(row, containsNeedle));
+  if (since !== undefined || before !== undefined) {
+    // A claim lists under a time window only when its recorded start lands
+    // inside it — `started` is the lease's ISO acquisition time, and a null
+    // or unparseable start is unknown, never a match: the same "unknown
+    // stays out" rule work mine's claims section and every other section's
+    // missing timestamp follow. A claim first taken before the window stays
+    // live but is not new; a claim still held but started inside it lists.
+    live = live.filter(row => {
+      if (row.started === null) return false;
+      const startedAt = Date.parse(row.started);
+      if (!Number.isFinite(startedAt)) return false;
+      return (since === undefined || startedAt >= since) && (before === undefined || startedAt < before);
+    });
+  }
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
   let feed: BusClaimsFeedState | undefined;
   let annotated: BusClaimsListClaim[] = claims;

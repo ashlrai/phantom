@@ -468,6 +468,63 @@ describe('listBusClaims', () => {
     expect(listBusClaims({ root, now: NOW, contains: '   ' })).toMatchObject({ status: 'invalid' });
     expect(listBusClaims({ root, now: NOW, contains: 'x'.repeat(513) })).toMatchObject({ status: 'invalid' });
   });
+
+  it('keeps claims whose recorded started lands inside the since/before window', () => {
+    const root = tempDir('v2claim-list-');
+    // Two live resource claims taken at different instants: started is the
+    // lease's ISO acquisition time and both stay live at NOW.
+    acquire('repo:a/old', 'seat-a', 600_000, 'op-old', root, NOW - 120_000);
+    acquire('repo:a/new', 'seat-b', 600_000, 'op-new', root, NOW);
+    // Team and message claims keep no start stamp — started stays null.
+    expect(acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'a/b', path: 'src' }), owner: 'team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'a/b', path: 'src' }, now: NOW }).status).toBe('acquired');
+    expect(acquireCoordination({ root, origin: 'message', key: 'queue:env-msg-1',
+      owner: 'nova', leaseMs: 600_000, leaseUntil: NOW + 600_000,
+      sourceId: 'env-msg-1:1:1', now: NOW }).status).toBe('acquired');
+
+    const all = listBusClaims({ root, now: NOW });
+    expect(all).toMatchObject({ status: 'ok', source: 'available' });
+    if (all.status !== 'ok') throw new Error('expected ok');
+    expect(all.claims).toHaveLength(4);
+    expect(all.claims.find(row => row.origin === 'team')?.started).toBeNull();
+    expect(all.claims.find(row => row.origin === 'message')?.started).toBeNull();
+
+    const keys = (result: ReturnType<typeof listBusClaims>) => {
+      if (result.status !== 'ok') throw new Error(`expected ok, got ${result.status}`);
+      return result.claims.map(row => row.key).sort();
+    };
+    // since is the inclusive lower bound on started: only the claim taken at
+    // NOW reaches a cutoff 60s back; the older one and the stamp-less rows drop.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 60_000 }))).toEqual(['repo:a/new']);
+    // before is the exclusive upper bound on the same field.
+    expect(keys(listBusClaims({ root, now: NOW, before: NOW - 60_000 }))).toEqual(['repo:a/old']);
+    // The pair reads one [since, before) window.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 180_000, before: NOW - 60_000 })))
+      .toEqual(['repo:a/old']);
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 60_000, before: NOW + 60_000 })))
+      .toEqual(['repo:a/new']);
+    // Boundaries match the shared rule: a start stamped exactly at since
+    // lists, one stamped exactly at before does not.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW }))).toEqual(['repo:a/new']);
+    expect(keys(listBusClaims({ root, now: NOW, before: NOW }))).toEqual(['repo:a/old']);
+    // A window nothing provably started inside stays an honest empty list.
+    expect(listBusClaims({ root, now: NOW, since: NOW + 1 }))
+      .toMatchObject({ status: 'ok', source: 'available', claims: [] });
+    // The window composes with the other filters.
+    expect(listBusClaims({ root, now: NOW, since: NOW - 60_000, owner: 'seat-b' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:a/new' }] });
+    expect(listBusClaims({ root, now: NOW, before: NOW - 60_000, origin: 'resource' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:a/old' }] });
+    expect(listBusClaims({ root, now: NOW, since: NOW - 60_000, origin: 'team' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    // Non-integer or negative cutoffs are invalid, never a silent widen.
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(listBusClaims({ root, now: NOW, since: bad })).toMatchObject({ status: 'invalid' });
+      expect(listBusClaims({ root, now: NOW, before: bad })).toMatchObject({ status: 'invalid' });
+    }
+  });
 });
 
 describe('claimBusWorkJob', () => {
