@@ -25,6 +25,18 @@ function blockerText(v: WorkStateVerdict): string | undefined {
   return entry === undefined ? undefined : entry.slice(BLOCKED_PREFIX.length).trim();
 }
 
+/** Compare only a single complete classifier assignment; missing or ambiguous evidence is unknown. */
+function assignment(v: WorkStateVerdict): [string, string] | undefined {
+  const matches = v.reasons.flatMap((reason) => {
+    const match = /^owner (.+), claim (.+)$/.exec(reason);
+    if (!match) return [];
+    const owner = match[1].trim();
+    const claim = match[2].trim();
+    return owner && claim ? [[owner, claim] as [string, string]] : [];
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** The quiet verdict: nothing about the work state meaningfully moved. */
 function noChange(state: WorkState): PublishDecision {
   return { publish: false, reason: `no meaningful change (${state})` };
@@ -61,6 +73,15 @@ export function decideWorkStatePublish(
     return { publish: true, reason: 'live evidence went stale' };
   }
 
-  // 6. RUNNING heartbeats, asOf-only changes, reason reorderings.
+  // 6. Compare known assignments only; absent evidence cannot prove a reassignment.
+  if (next.state === 'ASSIGNED' || next.state === 'RUNNING') {
+    const before = assignment(previous);
+    const after = assignment(next);
+    if (before && after && (before[0] !== after[0] || before[1] !== after[1])) {
+      return { publish: true, reason: 'assignment changed' };
+    }
+  }
+
+  // 7. RUNNING heartbeats, asOf-only changes, reason reorderings.
   return noChange(next.state);
 }
