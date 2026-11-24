@@ -30,18 +30,20 @@ const text = (v: unknown): v is string => typeof v === 'string' && v.trim() !== 
 const stamped = (v: unknown): v is string => text(v) && !Number.isNaN(Date.parse(v));
 
 export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemClassification {
+  const now = Date.parse(nowIso);
+  const current = (at: unknown): at is string => stamped(at) && Date.parse(at) - now <= FUTURE_SKEW_MS;
   const v = e.verified;
-  if (v && text(v.source) && stamped(v.at)
+  if (v && text(v.source) && current(v.at)
     && ((typeof v.pr === 'number' && Number.isInteger(v.pr) && v.pr > 0 && text(v.head)) || text(v.tests) || text(v.artifact))) {
     return { state: 'VERIFIED', asOf: v.at, source: v.source, missing: [] };
   }
   const b = e.blocker;
-  if (b && text(b.dependency) && b.dependency.trim().toLowerCase() !== 'unknown' && text(b.source) && stamped(b.at)) {
+  if (b && text(b.dependency) && b.dependency.trim().toLowerCase() !== 'unknown' && text(b.source) && current(b.at)) {
     return { state: 'BLOCKED', asOf: b.at, source: b.source, missing: [] };
   }
   const r = e.runningEvidence;
   const hasRunning = !!r && text(r.source) && stamped(r.at);
-  const age = hasRunning ? Date.parse(nowIso) - Date.parse(r.at) : NaN;
+  const age = hasRunning ? now - Date.parse(r.at) : NaN;
   if (text(e.owner) && text(e.claimReceipt) && hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
     return { state: 'RUNNING', asOf: r.at, source: r.source, missing: [] };
   }
