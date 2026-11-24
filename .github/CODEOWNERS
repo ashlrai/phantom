@@ -610,6 +610,7 @@
 /test/improve-incident-gate-backlog.test.ts @masonwyatt23
 /test/improve-jev-backlog.test.ts @masonwyatt23
 /test/improve-job-control-backlog.test.ts @masonwyatt23
+/test/improve-judge-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
 /test/improve-lost-launch-backlog.test.ts @masonwyatt23
