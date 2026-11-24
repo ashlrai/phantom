@@ -164,15 +164,21 @@ export interface BusBoardOptions {
 /**
  * Optional read slice for the thread delivery reads (`readThread`, `hops`):
  * `sinceMs`/`beforeMs` are the same `[since, before)` window on each
- * delivery's `createdAt` every bus read's `--since`/`--before` applies, and
+ * delivery's `createdAt` every bus read's `--since`/`--before` applies,
  * `contains` the same normalized `--contains` needle over the post text
- * `busBoardDeliveryText` extracts — the filters `board pending` takes,
- * scoped to the fields a thread read carries.
+ * `busBoardDeliveryText` extracts, and `from`/`excludeFrom` the same
+ * `--from`/`--exclude-from` sender rule every bus read applies — the
+ * filters `board pending` takes, scoped to the fields a thread read
+ * carries. Peer labels compare exactly: a label no board peer carries
+ * simply matches nothing under `from` and excludes nothing under
+ * `excludeFrom`.
  */
 export interface BusBoardDeliveryFilter {
   sinceMs?: number;
   beforeMs?: number;
   contains?: string;
+  from?: string;
+  excludeFrom?: string;
 }
 
 /** Optional read slice for `receipts`: the same `[since, before)` window on each receipt's `receivedAt`. */
@@ -226,6 +232,21 @@ function boardTimeWindowHit(at: string, sinceMs?: number, beforeMs?: number): bo
   return Number.isFinite(parsed) &&
     (sinceMs === undefined || parsed >= sinceMs) &&
     (beforeMs === undefined || parsed < beforeMs);
+}
+
+/**
+ * The shared `--from`/`--exclude-from` sender rule on one stored peer
+ * label: `from` keeps only deliveries the named peer sent, `excludeFrom`
+ * drops them, and the two compose so a sender both included and excluded
+ * matches nothing — the same rule every other bus read's sender filters
+ * apply. Board peer labels are cooperative routing labels compared
+ * exactly, never resolved through an identity registry; a well-formed
+ * label no stored sender carries is simply an empty `from` match or an
+ * `excludeFrom` that excludes nothing.
+ */
+function boardSenderHit(sender: string, from?: string, excludeFrom?: string): boolean {
+  return (from === undefined || sender === from) &&
+    (excludeFrom === undefined || sender !== excludeFrom);
 }
 
 /**
@@ -477,11 +498,12 @@ export class BusBoard {
    * The thread's stored deliveries addressed to `actor`; `pendingOnly`
    * narrows to rows no receipt acknowledges. `filter` takes the same
    * optional reads `board pending` applies — `sinceMs`/`beforeMs` keep only
-   * deliveries whose `createdAt` falls inside the `[since, before)` window
-   * and `contains` keeps only posts whose `busBoardDeliveryText` carries
-   * the normalized needle — so a thread read narrows exactly the way the
-   * digest does. `content.text` still returns the re-wrapped untrusted
-   * display frame; filtering never acknowledges anything.
+   * deliveries whose `createdAt` falls inside the `[since, before)` window,
+   * `contains` keeps only posts whose `busBoardDeliveryText` carries the
+   * normalized needle, and `from`/`excludeFrom` keep or drop deliveries by
+   * the stored `sender` peer label — so a thread read narrows exactly the
+   * way the digest does. `content.text` still returns the re-wrapped
+   * untrusted display frame; filtering never acknowledges anything.
    */
   readThread(actor: string, threadId: string, pendingOnly = false, filter?: BusBoardDeliveryFilter): BusBoardDelivery[] {
     actor = this.peer(actor);
@@ -493,6 +515,7 @@ export class BusBoard {
         .filter((delivery) => delivery.threadId === threadId && delivery.recipient === actor &&
           (!pendingOnly || !acknowledged.has(delivery.id)) &&
           boardTimeWindowHit(delivery.createdAt, filter?.sinceMs, filter?.beforeMs) &&
+          boardSenderHit(delivery.sender, filter?.from, filter?.excludeFrom) &&
           (textHit === undefined || textHit(busBoardDeliveryText(delivery))))
         .map((delivery) => ({
           ...delivery,

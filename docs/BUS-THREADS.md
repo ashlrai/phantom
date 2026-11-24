@@ -128,18 +128,24 @@ and neither a pending read nor a receipt grants execution authority.
 
 The thread reads take the same optional filters `board pending` applies,
 scoped to the fields each read's rows carry. `thread read`, `thread pending`
-and `thread hops` accept `--contains`, `--since` and `--before`: `--contains`
-keeps only posts whose text carries the normalized needle under the same
-scrubbed display-text rule, `--since` (15m, 2h, 1d, epoch ms or an ISO time)
-keeps only deliveries whose `createdAt` reaches the inclusive cutoff, and
-`--before` keeps only deliveries recorded strictly before its own cutoff, so
-the pair reads one `[since, before)` window on `createdAt`; `thread hops`
-filters the same deliveries before projecting metadata. `thread receipts`
+and `thread hops` accept `--contains`, `--since`, `--before`, `--from` and
+`--exclude-from`: `--contains` keeps only posts whose text carries the
+normalized needle under the same scrubbed display-text rule, `--since`
+(15m, 2h, 1d, epoch ms or an ISO time) keeps only deliveries whose
+`createdAt` reaches the inclusive cutoff, and `--before` keeps only
+deliveries recorded strictly before its own cutoff, so the pair reads one
+`[since, before)` window on `createdAt`; `--from` keeps only deliveries the
+named peer sent and `--exclude-from` drops them, the same sender rule every
+other bus read applies, compared on the stored `sender` routing label so a
+sender both included and excluded matches nothing and a label no delivery
+carries is an honest empty match; `thread hops` filters the same deliveries
+before projecting metadata. `thread receipts`
 accepts `--since`/`--before` on each receipt's `receivedAt`. `thread list`
 and `task list` accept `--contains` on the stored thread or task title.
 A flag is valid only where the row carries the field it filters: `--contains`
-on `thread receipts` (receipt rows keep no text) and `--since`/`--before` on
-`thread list` or `task list` (threads and tasks record no timestamp) are
+on `thread receipts` (receipt rows keep no text), `--since`/`--before` on
+`thread list` or `task list` (threads and tasks record no timestamp) and
+`--from`/`--exclude-from` anywhere but the delivery reads are
 usage errors rather than silently ignored flags, and `--job`/`--all` remain
 `board pending` only. Filtering reads history only: it never acknowledges a
 delivery, claims a task or grants authority.
