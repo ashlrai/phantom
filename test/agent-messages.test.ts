@@ -297,7 +297,7 @@ describe('phm messages projection', () => {
     expect(byId.get('c5')).toMatchObject({ summary: 'plain words' });
   });
 
-  it('validates flags and reads relative --since', () => {
+  it('validates flags and reads relative --since and --before', () => {
     expect(parseSince('15m', T0)).toBe(T0 - 900_000);
     expect(parseSince('2026-11-17T00:00:00Z')).toBe(Date.UTC(2026, 10, 17));
     expect(parseSince('soon')).toBeNull();
@@ -305,6 +305,24 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ limit: '5000' }).ok).toBe(false);
     expect(parseAgentMessagesQuery({ agent: 'bad name' }).ok).toBe(false);
     expect(parseAgentMessagesQuery({ since: '1h', agent: 'claude', limit: '10' }, T0)).toEqual({ ok: true, query: { since: T0 - 3_600_000, agent: 'claude', limit: 10 } });
+    expect(parseAgentMessagesQuery({ before: 'soon' })).toEqual({ ok: false, error: '--before takes 15m, 2h, 1d, epoch ms or an ISO time.' });
+    expect(parseAgentMessagesQuery({ before: '2h', since: '15m', limit: '10' }, T0)).toEqual({ ok: true, query: { since: T0 - 900_000, before: T0 - 7_200_000, limit: 10 } });
+  });
+
+  it('--before keeps only messages received strictly before its cutoff, composing with --since into one [since, before) window', () => {
+    const root = store();
+    post(root, T0, { id: 'b1', from: 'a', to: 'b', body: { kind: 'note', text: 'first' } });
+    post(root, T0 + 1_000, { id: 'b2', from: 'b', to: 'a', body: { kind: 'note', text: 'second' } });
+    post(root, T0 + 2_000, { id: 'b3', from: 'a', to: 'b', body: { kind: 'note', text: 'third' } });
+    // before at T0+1500 drops the T0+2000 row; the T0 and T0+1000 rows stay, newest first.
+    expect(read(root, { before: T0 + 1_500 }).messages.map(m => m.id)).toEqual(['b2', 'b1']);
+    expect(read(root, { before: T0 + 1_500 }).matched).toBe(2);
+    // A message stamped exactly at the cutoff drops — adjacent windows never double-count it.
+    expect(read(root, { before: T0 + 2_000 }).matched).toBe(2);
+    // [since, before): since after T0 keeps only the T0+1000 row inside the window.
+    expect(read(root, { since: T0 + 500, before: T0 + 1_500 }).messages.map(m => m.id)).toEqual(['b2']);
+    // An inverted window is an honest empty page, not an error.
+    expect(read(root, { since: T0 + 2_000, before: T0 + 1_000 })).toMatchObject({ matched: 0, messages: [] });
   });
 
   it('filters to one classified kind and counts only the rows it accepts', () => {
@@ -693,13 +711,15 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', agent: 'claude', limit: 5 }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1' }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?before=never')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?before=1h&before=2h')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?priority=urgent')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?job=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?thread=has%20space')).status).toBe(400);

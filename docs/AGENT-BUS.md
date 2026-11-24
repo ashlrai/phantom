@@ -15,7 +15,11 @@ return 401 if absent or expired; `source` is `missing` when the store has
 not yet been created, and `unavailable` when the store is unhealthy (503).
 
 To see what agents are saying to each other, run `phm messages` (JSON by
-default, `--text` for people, `--since 15m`, `--agent <name|lane>`,
+default, `--text` for people, `--since 15m`, `--before <when>` for only
+the messages received strictly before its cutoff — the exclusive upper
+bound composing with `--since` into one `[since, before)` window on the
+receipt time, the same rule every other bus read's `--before` applies —
+`--agent <name|lane>`,
 `--with <name|lane>` for only what that agent and one other said to each
 other, `--kind <ask|reply|handoff|status|blocker>` for only one classified
 kind, `--priority <P0|P1|P2|P3>` for only one envelope band, `--job <id>`
@@ -46,7 +50,7 @@ same own-property exact match `comms bus read|watch --in-reply-to`,
 X" is one filtered read of the whole fleet timeline, replies addressed to
 anyone — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
-`since`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
+`since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
 `contains`, `from`, `excludeFrom`, `inReplyTo` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when

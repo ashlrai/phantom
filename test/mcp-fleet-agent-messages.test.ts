@@ -69,13 +69,13 @@ describe('fleet_agent_messages argument parsing', () => {
 
   it('maps every shared messages filter onto the projection query', () => {
     const parsed = parseFleetAgentMessagesArgs({
-      since: '1800000000000', agent: 'agent:planner', with: 'agent:worker',
+      since: '1800000000000', before: '1800086400000', agent: 'agent:planner', with: 'agent:worker',
       kind: 'ASK', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: '  Parser   Fix ',
       from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
     });
     expect(parsed).toEqual({
-      since: 1800000000000, agent: 'agent:planner', with: 'agent:worker',
+      since: 1800000000000, before: 1800086400000, agent: 'agent:planner', with: 'agent:worker',
       kind: 'ask', priority: 'P0', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: 'parser fix',
       from: 'agent:sender', excludeFrom: 'agent:bot', inReplyTo: 'm-1', limit: 25,
@@ -130,6 +130,7 @@ describe('fleet_agent_messages argument parsing', () => {
       { kind: 'gossip' }, { kind: 'ASKS' }, { kind: 5 }, { kind: null },
       { priority: 'P4' }, { priority: 'high' }, { priority: 5 },
       { since: 'never' }, { since: 5 }, { since: '' }, { since: '9999999d' },
+      { before: 'never' }, { before: 5 }, { before: '' }, { before: '9999999d' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentMessagesArgs(bad)).toBeNull();
@@ -194,6 +195,10 @@ describe('fleet_agent_messages MCP tool', () => {
     expect(tool?.description).toContain('no caller root, path or cwd is accepted');
     expect(tool?.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
     expect(tool?.inputSchema.required).toBeUndefined();
+    expect(tool?.inputSchema.properties?.['since'])
+      .toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['before'])
+      .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['kind'])
       .toMatchObject({ type: 'string', enum: ['ask', 'reply', 'handoff', 'status', 'blocker'] });
     expect(tool?.inputSchema.properties?.['priority'])
@@ -217,6 +222,7 @@ describe('fleet_agent_messages MCP tool', () => {
     [{ kind: 'gossip' }], [{ kind: 'ASKS' }], [{ kind: 5 }],
     [{ priority: 'P4' }], [{ priority: 'high' }], [{ priority: 5 }],
     [{ since: 'never' }], [{ since: 5 }], [{ since: '9999999d' }],
+    [{ before: 'never' }], [{ before: 5 }], [{ before: '' }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
     [{ limit: 0 }], [{ limit: 1025 }], [{ limit: 1.5 }], [{ limit: '50' }],
     [{ extra: 1 }],
@@ -238,13 +244,13 @@ describe('fleet_agent_messages MCP tool', () => {
     const agentMessages = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentMessages });
     const { parsed } = await callMessages(client, {
-      agent: 'planner', with: 'agent:worker', since: '1800000000000',
+      agent: 'planner', with: 'agent:worker', since: '1800000000000', before: '1800086400000',
       kind: 'ASK', priority: 'P2', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: 'Parser Fix', from: 'agent:sender',
       excludeFrom: 'agent:bot', inReplyTo: 'm-9', limit: 10,
     });
     expect(agentMessages).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'planner', with: 'agent:worker', since: 1800000000000,
+      agent: 'planner', with: 'agent:worker', since: 1800000000000, before: 1800086400000,
       kind: 'ask', priority: 'P2', job: 'RQ-9', thread: 't-1',
       channel: 'fleet-ops', contains: 'parser fix', from: 'agent:sender',
       excludeFrom: 'agent:bot', inReplyTo: 'm-9', limit: 10,
