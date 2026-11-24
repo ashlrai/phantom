@@ -15,7 +15,7 @@ import { proveReuse } from './ci-green-reuse.mjs';
 export function failedTestFiles(log) {
   const found = new Set();
   for (const line of stripVTControlCharacters(log).split('\n')) {
-    const m = /^\s*(?:FAIL|×|✗)\s+(?:(?:\|[^|]*\||[^\s/|]+)\s+)?((?:test|\.github\/tests)\/[^\s>]+\.test\.(?:ts|mjs))/.exec(line);
+    const m = /^\s*(?:FAIL|×|✗)\s+(?:(?:\|[^|]*\||[^\s/|]+)\s+)?((?:test|\.github\/tests|src\/web-ui)\/[^\s>]+\.test\.(?:tsx|ts|mjs))/.exec(line);
     if (m) found.add(m[1]);
   }
   return [...found].sort();
@@ -52,6 +52,22 @@ function reusedPriorGreen() {
   }
 }
 
+export function commandsFor(plan, cpus = availableParallelism()) {
+  const jobs = [];
+  if (plan.mode === 'fallback') {
+    const live = (plan.shards ?? []).filter((shard) => shard.length);
+    const workers = shardWorkers(cpus, live.length);
+    for (const shard of live) jobs.push({ command: process.execPath, args: ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard] });
+  } else if (plan.tests?.length) {
+    jobs.push({ command: process.execPath, args: ['scripts/test-ci.mjs', ...plan.tests] });
+  }
+  if (plan.web?.length) {
+    jobs.push({ command: process.execPath, args: ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', ...plan.web] });
+  }
+  if (plan.node?.length) jobs.push({ command: process.execPath, args: ['--test', ...plan.node] });
+  return jobs;
+}
+
 export async function main(planPath, outPath) {
   if (reusedPriorGreen()) {
     writeFileSync(outPath, JSON.stringify({ failed: [], ok: true, reused: true }, null, 2));
@@ -59,15 +75,7 @@ export async function main(planPath, outPath) {
     return 0;
   }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
-  const jobs = [];
-  if (plan.mode === 'fallback') {
-    const live = plan.shards.filter((shard) => shard.length);
-    const workers = shardWorkers(availableParallelism(), live.length);
-    for (const shard of live) jobs.push(run(process.execPath, ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]));
-  } else if (plan.tests.length) {
-    jobs.push(run(process.execPath, ['scripts/test-ci.mjs', ...plan.tests]));
-  }
-  if (plan.node.length) jobs.push(run(process.execPath, ['--test', ...plan.node]));
+  const jobs = commandsFor(plan).map((job) => run(job.command, job.args));
   const results = await Promise.all(jobs);
   const failed = failedTestFiles(results.map((r) => r.log).join('\n'));
   const bad = results.some((r) => r.code !== 0);
@@ -76,7 +84,7 @@ export async function main(planPath, outPath) {
     console.error(`fast-gate tests failed${failed.length ? `: ${failed.join(', ')}` : ' (no file name parsed)'}`);
     return 1;
   }
-  console.log(`fast-gate tests passed: ${plan.tests.length} vitest + ${plan.node.length} node files`);
+  console.log(`fast-gate tests passed: ${plan.tests.length} vitest + ${(plan.web ?? []).length} web + ${plan.node.length} node files`);
   return 0;
 }
 

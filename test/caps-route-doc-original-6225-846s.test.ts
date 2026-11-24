@@ -56,6 +56,16 @@ describe('documented caps-route examples', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
+  it('prints usage for --help and -h', async () => {
+    for (const flag of ['--help', '-h']) {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        expect(await cmdFleetCapsRoute([flag])).toBe(0);
+        expect(String(log.mock.lastCall?.[0])).toContain('phm fleet caps-route');
+      } finally { log.mockRestore(); }
+    }
+  });
+
   it('returns exit 2 and JSON for each missing required argument', async () => {
     for (const flag of ['--surface', '--model', '--json']) {
       const args = [...examples[0]]; const index = args.indexOf(flag);

@@ -375,7 +375,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   `queue/precheck-skips.tsv` rows the dispatchd claim loop appends for
   every job its empty-run precheck or dupcheck gate finishes as
   DONE-NOOP without a model call (otherwise only visible through
-  `phm fleet precheck-repeats`, `phm fleet parked`'s queue-health
+  `phm fleet parked`'s queue-health
   tallies and `phm fleet queue`'s skip sections — reports someone had
   to run and read). A (code, reason-shape) group becomes an item while
   its recorded skips span enough distinct job ids inside the 7-day
@@ -433,7 +433,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   outlives its dead process and the `by:'stuck-jobs'` kill rows it audits
   to `queue/job-stops.jsonl` when a job past the stuck bar had to be
   SIGTERMed/SIGKILLed (otherwise only visible through `phm jobs stuck`'s
-  live marker view and `phm job show`'s per-job window — both ledgers
+  live marker view and the per-job window — both ledgers
   were write-only audit with no trend fold, while the lost-launch feed
   excludes open-marker jobs by design). A (kind, lane) cell becomes an
   item while its distinct job count reaches the recurring bar of three
@@ -479,11 +479,11 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   the fleet's own repository since the journal describes this
   install's dispatcher and lanes —
   and the pre-launch dupcheck gate's precision ledger, the
-  queue.dupcheck-event.v1 rows `phm queue dupcheck --gate` records for
+  queue.dupcheck-event.v1 rows the dupcheck gate records for
   every claimed job — skip, warn or launch — plus the outcome rows
   empty-tag-sync and `phm jobs empty --record` append when a
   let-through job finishes EMPTY already_done, folded through the same
-  per-job semantics `phm queue dupcheck --stats` and the Ideas list's
+  per-job semantics the dupcheck stats report and the Ideas list's
   dupcheck-gate signal compute (otherwise only visible through those
   reports — recurring missed duplicates or wrong skips never became
   work). A cell becomes an item only at the Ideas list's recurring
@@ -657,8 +657,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   and supply-floor pass append to metrics/generation.jsonl under the
   fleet runs directory on every applied pass — 'drafted' and
   'rejected' rows per candidate with the refusal reason, otherwise
-  only visible through `phm queue yield`'s queue.generator-yield.v1
-  report, the metrics panel and queue-autofill's per-pass candidate
+  only visible through the generator yield report (queue.generator-yield.v1),
+  the metrics panel and queue-autofill's per-pass candidate
   ranking — surfaces that steer one pass at a time or that someone
   had to run and read). A (src, reason) cell becomes an item only
   while its recorded rejections reach the recurring bars of four
@@ -670,8 +670,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   bounds, and another repository emits nothing since the journal
   carries no repository column —
   and the incident-gate decision ledger's recurring failure classes
-  and stuck tightenings, the per-class rows `ashlr fleet
-  incident-gate --apply` appends to
+  and stuck tightenings, the per-class rows the incident-gate
+  apply path appends to
   `fleet/incident-gates.jsonl` under the Ashlr home (~/.ashlr/fleet)
   after mining `metrics/jobs.jsonl` and `dispatch-events.log` under
   the fleet runs directory for repeated failure signatures —
@@ -944,8 +944,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rotation once the live file passes 2 MiB — on every caught render
   crash the console's error boundaries report through
   `src/web-ui/lib/report-desktop-error.ts` to POST
-  /api/verse/desktop-errors (otherwise only visible through `ashlr
-  fleet desktop-errors`, a report someone had to run with a
+  /api/verse/desktop-errors (otherwise only visible through the desktop
+  error report, a report someone had to run with a
   24-hour window and a 50-group cap, so a crash recurring day after
   day in this repo's own console never became work). A cell — one
   fingerprint, the writer's sha256 of surface + first stack frame +
@@ -1030,7 +1030,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   withdrawal, which is a host-signed ledger act, and emit only for the
   fleet's own repository since the learned-skill machinery is this
   repo's. Precheck-skip items name the skip ledger and the
-  `phm fleet precheck-repeats`/`phm fleet parked`/`phm fleet queue`
+  `phm fleet parked`/`phm fleet queue`
   folds, keep the find-which-producer-keeps-minting-or-resurrecting-
   finished-work framing — pinned contrib/mac precheck machinery
   versus the queue producers and dedup this repository owns — and
@@ -1076,7 +1076,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   excluded — with the same owner-side no-change escape, and emit only
   for the fleet's own repository since the journal describes this
   install's dispatcher and carries no repository column. Dupcheck items
-  name the dupcheck ledger, `phm queue dupcheck --stats` and the gate
+  name the dupcheck ledger, the dupcheck stats report and the gate
   module src/core/queue/dupcheck.ts, keep the
   find-which-side-owns-the-miss framing per cell — gate recall versus
   producers minting already-done work — with the same owner-side
@@ -1096,7 +1096,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   the same owner-side no-change escape, and emit only when a journal
   row's recorded repository matches the discovery target, since each
   audited remote owns its own branch namespace. Generator-yield items
-  name the generation journal, `phm queue yield` and the
+  name the generation journal, the generator yield report and the
   queue-autofill refusal checks, keep the
   which-side-owns-the-refusals framing per cell — candidate sources
   minting work the fleet already refuses versus refusal checks or
@@ -1104,7 +1104,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   no-change escape, and emit only for the fleet's own repository
   since the journal describes this install's queue intake and carries
   no repository column. Incident-gate items name the decision ledger,
-  the `ashlr fleet incident-gate` verb and the mining sources, keep
+  `src/cli/fleet-incident-gate.ts` and the mining sources, keep
   the find-why-the-class-keeps-recurring-or-the-tightening-keeps-
   failing framing per bucket — an unfixed lane, credential, quota,
   test or merge cause versus a broken apply path (slots.json or
@@ -1173,7 +1173,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rolled-forward window or pinned ops machinery, and emit only for
   the fleet's own repository since the journal records this
   install's actions and carries no repository column. Desktop-console
-  items name the crash journal, `ashlr fleet desktop-errors`,
+  items name the crash journal,
   `src/core/verse/desktop-error-report.ts` and the reporting call
   sites under src/web-ui, keep the find-the-throwing-surface framing —
   the surface's error boundary catching a recurring fault versus a

@@ -79,8 +79,10 @@ if (!reuse(dir, 'prepush-shape', patchHash)) remember(dir, 'prepush-shape', patc
 const graphPath = resolve(dir, 'dep-graph.json');
 run(process.execPath, [resolve(root, '.github/scripts/ci-dep-graph.mjs'), 'update', '--out', graphPath]);
 const graph = JSON.parse(readFileSync(graphPath, 'utf8'));
-const selection = plan({ cwd: root, paths, graph });
-const workHash = createHash('sha256').update(JSON.stringify({ paths, mode: selection.mode, tests: selection.tests })).digest('hex');
+const selection = plan({ cwd: root, paths, graph, base: mergeBase.stdout.trim() });
+const workHash = createHash('sha256').update(JSON.stringify({
+  paths, mode: selection.mode, tests: selection.tests, web: selection.web ?? [], node: selection.node,
+})).digest('hex');
 if (reuse(dir, 'prepush-work', workHash)) {
   console.log(`prepush gate reused a prior green result in ${Date.now() - started}ms`);
   process.exit(0);
@@ -100,6 +102,7 @@ if (projects !== 'none' || selection.mode !== 'docs') {
     run(process.execPath, ['node_modules/eslint/bin/eslint.js', ...lintable]);
   }
   if (selection.tests.length) run(process.execPath, ['scripts/test-ci.mjs', ...selection.tests]);
+  if (selection.web?.length) run(process.execPath, ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', ...selection.web]);
   if (selection.node.length) run(process.execPath, ['--test', ...selection.node]);
 }
 
