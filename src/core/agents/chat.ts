@@ -4,10 +4,13 @@ import { createHash } from 'node:crypto';
 import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, type BusInboxOptions } from '../fleet/bus-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { busBodySchema } from './bus-v2-schema.js';
-import { readAgentRegistry, resolveAgent, agentChannelNameSchema } from './bus-identity.js';
+import { readAgentRegistry, resolveAgent, agentChannelNameSchema, agentRefAddressMatcher } from './bus-identity.js';
+import { busBodyInReplyToMatch, busReadContains, busReadContainsMatch, labelIdentityOf } from './bus-unified.js';
 
 export const CHAT_SCHEMA = 'agent-chat.v1';
 const THREAD = /^(outcome|run):[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
+/** The printable-label rule the shared bus reads apply to `--id` and `--in-reply-to`. */
+const BUS_TOKEN = /^[\x21-\x7e]{1,128}$/;
 const COLORS = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#db2777', '#0891b2'];
 export interface ChatMessage {
   id: string; cursor: number; receivedAt: number; thread: string; agentId: string;
@@ -23,7 +26,18 @@ export type ChatResult = {
   participants: ChatParticipant[]; threads: ChatThread[]; messages: ChatMessage[];
   nextCursor: number; hasMore: boolean; retention: 'live-retained-only';
 } | { status: 'invalid' | 'unavailable' | 'retryable' | 'unknown-channel' };
-export interface ChatQuery { channel: string; thread?: string; after?: number; limit?: number }
+export interface ChatQuery {
+  channel: string; thread?: string; after?: number; limit?: number;
+  /** The shared bus read filters, applied to every admitted channel row before
+   * the thread index and the message page are built: `from`/`excludeFrom` match
+   * the envelope sender label through `agentRefAddressMatcher`, `contains` the
+   * same scrubbed one-line summary every bus read's `--contains` matches (for
+   * the note/context bodies chat admits, that summary is the projected text),
+   * `since`/`before` the `[since, before)` window on `receivedAt`, `id` the
+   * exact envelope id and `inReplyTo` the body's own reply citation. */
+  from?: string; excludeFrom?: string; contains?: string;
+  since?: number; before?: number; id?: string; inReplyTo?: string;
+}
 
 /** Local owner read boundary only; never combines DMs, inboxes, or external transports.
  * Owner interjections require a matching accepted ingress receipt; a human flag
@@ -31,9 +45,18 @@ export interface ChatQuery { channel: string; thread?: string; after?: number; l
  */
 export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): ChatResult {
   const after = query.after ?? 0, limit = query.limit ?? 100;
+  const containsNeedle = busReadContains(query.contains);
   if (!agentChannelNameSchema.safeParse(query.channel).success ||
       (query.thread !== undefined && !THREAD.test(query.thread)) ||
-      !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      (query.from !== undefined && (typeof query.from !== 'string' || query.from.length === 0 || query.from.length > 128)) ||
+      (query.excludeFrom !== undefined &&
+        (typeof query.excludeFrom !== 'string' || query.excludeFrom.length === 0 || query.excludeFrom.length > 128)) ||
+      (query.since !== undefined && (!Number.isSafeInteger(query.since) || query.since < 0)) ||
+      (query.before !== undefined && (!Number.isSafeInteger(query.before) || query.before < 0)) ||
+      (query.id !== undefined && (typeof query.id !== 'string' || !BUS_TOKEN.test(query.id))) ||
+      (query.inReplyTo !== undefined && (typeof query.inReplyTo !== 'string' || !BUS_TOKEN.test(query.inReplyTo))) ||
+      containsNeedle === null) {
     return { status: 'invalid' };
   }
   const asOf = (options.now ?? Date.now)();
@@ -41,6 +64,10 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
   const fixed = { ...options, now: () => asOf };
   const registry = readAgentRegistry(fixed);
   if (registry.status !== 'ok') return { status: 'unavailable' };
+  const fromMatch = query.from === undefined ? undefined
+    : agentRefAddressMatcher(query.from, registry.registry, labelIdentityOf(registry.registry));
+  const excludeFromMatch = query.excludeFrom === undefined ? undefined
+    : agentRefAddressMatcher(query.excludeFrom, registry.registry, labelIdentityOf(registry.registry));
   const channel = registry.registry.channels.find(row => row.name === query.channel);
   if (!channel) return { status: 'unknown-channel' };
   const identities = registry.registry.identities.filter(row => channel.members.includes(row.handle));
@@ -74,6 +101,17 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       const body = busBodySchema.safeParse(e.body);
       if (!body.success || !('thread' in body.data) || !body.data.thread || !THREAD.test(body.data.thread) ||
           !('text' in body.data)) continue;
+      // The shared read filters scope every admitted row — the thread index's
+      // counts and the message page alike — so a filtered `list` names only
+      // the threads the filter selects and a filtered `read` never shows a
+      // row the filter rejects.
+      if ((fromMatch !== undefined && !fromMatch(e.from)) ||
+          (excludeFromMatch !== undefined && excludeFromMatch(e.from)) ||
+          (containsNeedle !== undefined && !busReadContainsMatch(e.body, containsNeedle)) ||
+          (query.since !== undefined && row.receivedAt < query.since) ||
+          (query.before !== undefined && row.receivedAt >= query.before) ||
+          (query.id !== undefined && e.id !== query.id) ||
+          (query.inReplyTo !== undefined && !busBodyInReplyToMatch(e.body, query.inReplyTo))) continue;
       if (owner && !participants.some(p => p.agentId === 'owner:local')) participants.push({
         agentId: 'owner:local', handle: 'owner', displayName: 'Owner', engine: null, avatarColor: '#475569', state: 'unknown' });
       const thread = body.data.thread;

@@ -100,6 +100,10 @@ describe('fleet_comms_thread argument parsing', () => {
     expect(parseFleetCommsThreadArgs({ direction: 'outbound' })).toEqual({ limit: 50, filter: { direction: 'outbound' } });
     expect(parseFleetCommsThreadArgs({ contains: 'deploy window' })).toEqual({ limit: 50, filter: { contains: 'deploy window' } });
     expect(parseFleetCommsThreadArgs({ replyTo: 'inbound-key-1' })).toEqual({ limit: 50, filter: { replyTo: 'inbound-key-1' } });
+    expect(parseFleetCommsThreadArgs({ awaiting: true })).toEqual({ limit: 50, filter: { awaiting: true } });
+    expect(parseFleetCommsThreadArgs({ awaiting: false })).toEqual({ limit: 50 });
+    expect(parseFleetCommsThreadArgs({ undelivered: true })).toEqual({ limit: 50, filter: { undelivered: true } });
+    expect(parseFleetCommsThreadArgs({ undelivered: false })).toEqual({ limit: 50 });
     const withSince = parseFleetCommsThreadArgs({ since: '2h' });
     expect(withSince?.limit).toBe(50);
     expect(typeof withSince?.filter?.since).toBe('number');
@@ -110,11 +114,13 @@ describe('fleet_comms_thread argument parsing', () => {
 
   it('combines every filter into one narrowing', () => {
     expect(parseFleetCommsThreadArgs({
-      limit: 10, channel: 'slack', direction: 'inbound', since: '2026-11-17T00:00:00.000Z', beforeAt: '2026-11-18T00:00:00.000Z', contains: 'ship it', replyTo: 'inbound-key-9',
+      limit: 10, channel: 'slack', direction: 'inbound', since: '2026-11-17T00:00:00.000Z', beforeAt: '2026-11-18T00:00:00.000Z', contains: 'ship it', replyTo: 'inbound-key-9', awaiting: true,
     })).toEqual({
       limit: 10,
-      filter: { channel: 'slack', direction: 'inbound', since: Date.parse('2026-11-17T00:00:00.000Z'), beforeAt: Date.parse('2026-11-18T00:00:00.000Z'), contains: 'ship it', replyTo: 'inbound-key-9' },
+      filter: { channel: 'slack', direction: 'inbound', since: Date.parse('2026-11-17T00:00:00.000Z'), beforeAt: Date.parse('2026-11-18T00:00:00.000Z'), contains: 'ship it', replyTo: 'inbound-key-9', awaiting: true },
     });
+    expect(parseFleetCommsThreadArgs({ undelivered: true, direction: 'outbound' }))
+      .toEqual({ limit: 50, filter: { undelivered: true, direction: 'outbound' } });
   });
 
   it('rejects out-of-range limits, unknown keys and malformed filters before any read runs', () => {
@@ -125,6 +131,8 @@ describe('fleet_comms_thread argument parsing', () => {
       { beforeAt: 'bogus' }, { beforeAt: 1700000000000 }, { beforeAt: null }, { beforeAt: '-1' },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { replyTo: 'has space' }, { replyTo: 'short' }, { replyTo: 'x'.repeat(81) }, { replyTo: 42 }, { replyTo: null },
+      { awaiting: 'true' }, { awaiting: 1 }, { awaiting: null },
+      { undelivered: 'true' }, { undelivered: 1 }, { undelivered: null },
       { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' }, { runsDir: '/tmp/x' }, { configDir: '/tmp/x' },
       { extra: 1 }, { json: true },
     ]) expect(parseFleetCommsThreadArgs(bad)).toBeNull();
@@ -137,7 +145,7 @@ describe('fleet_comms_thread reader', () => {
     const view = {
       schema: 'comms.owner-thread.v1' as const, threadId: 'owner' as const,
       messages: [inbound(1, 'inbound-key-1', 'status check')],
-      receipts: {}, awaitingReply: ['m1'],
+      receipts: {}, awaitingReply: ['m1'], undeliveredReplies: [],
     };
     const thread: typeof readOwnerThread = (...args: Parameters<typeof readOwnerThread>) => {
       seen.push(args as unknown[]);
@@ -222,6 +230,26 @@ describe('fleet_comms_thread reader', () => {
     expect((unanswered as ReturnType<typeof readOwnerThread>).awaitingReply).toEqual(['m3']);
   });
 
+  it('serves the undelivered slice and mark through the shared projection', async () => {
+    const dir = runsDir([
+      inbound(1, 'inbound-key-1', 'status check', 'telegram'),
+      // A recorded reply with no sent-mark and no receipt: every fanout leg reads unknown — never delivered.
+      { ...outbound(2, 'reply-key-1', 'on it', 'inbound-key-1', 'telegram'), fanout: ['telegram', 'desktop'] },
+      inbound(3, 'inbound-key-2', 'ping', 'desktop'),
+    ]);
+    const result = await readFleetCommsThread({ limit: 50 }, { options: ownerOptions(dir) });
+    const view = result as ReturnType<typeof readOwnerThread>;
+    expect(view.undeliveredReplies).toEqual(['m2']);
+    expect(view.awaitingReply).toEqual(['m3']);
+    const slice = await readFleetCommsThread(
+      { limit: 50, filter: { undelivered: true } }, { options: ownerOptions(dir) });
+    const sliceView = slice as ReturnType<typeof readOwnerThread>;
+    expect(sliceView.messages.map(message => message.seq)).toEqual([2]);
+    expect(sliceView.undeliveredReplies).toEqual(['m2']);
+    // Marks follow the slice: the outbound-only view reports no awaiting inbound.
+    expect(sliceView.awaitingReply).toEqual([]);
+  });
+
   it('keeps awaitingReply null and unavailable true on a corrupt thread — unknown stays unknown', async () => {
     const dir = runsDir(undefined, true);
     const result = await readFleetCommsThread({ limit: 50 }, { options: ownerOptions(dir) });
@@ -230,6 +258,7 @@ describe('fleet_comms_thread reader', () => {
     expect(view.unavailable).toBe(true);
     expect(view.messages).toEqual([]);
     expect(view.awaitingReply).toBeNull();
+    expect(view.undeliveredReplies).toBeNull();
     expect(view.receipts).toEqual({});
   });
 
@@ -287,7 +316,7 @@ describe('fleet_comms_thread MCP tool', () => {
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       generatedAt: '2026-01-01T00:00:00.000Z',
       schema: 'comms.owner-thread.v1', threadId: 'owner',
-      messages: [], receipts: {}, awaitingReply: [],
+      messages: [], receipts: {}, awaitingReply: [], undeliveredReplies: [],
     };
     const commsThread = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), commsThread });

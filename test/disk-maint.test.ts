@@ -12,7 +12,7 @@ import { planDiskMaint, type MaintDeps, type MaintRoots } from '../src/core/disk
 import { applyDiskMaint } from '../src/core/disk-maint/apply.js';
 import { protectedReason, protectedRoots, resolveMaintRoots } from '../src/core/disk-maint/protect.js';
 import { diskMaintSchedule } from '../src/core/disk-maint/schedule.js';
-import { cmdDiskMaint } from '../src/cli/disk-maint.js';
+import { cmdDiskMaint, formatDiskMaint } from '../src/cli/disk-maint.js';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const DAY = 86_400_000;
@@ -438,6 +438,39 @@ describe('completed job artifacts', () => {
   ]);
   const artifact = '.ashlr-runs/RQ-DONE.publish.prev-123';
 
+  it('reports the 115 GB shortfall from stale results without changing files', async () => {
+    const path = file(artifact, 2048, 60);
+    const protectedFile = file('Documents/keep.publish.prev-123', 4096, 60);
+    file('.ashlr/agent-logs/old.log', 8192, 60);
+    const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), freeBytes: () => 115e9 }));
+    expect(plan.reclaimAdvice).toMatchObject({ status: 'insufficient', targetFreeGb: 150,
+      candidateBytes: 2048, neededBytes: 35e9, estimatedShortfallBytes: 35e9 - 2048 });
+    expect(plan.totals.bytes).toBeGreaterThan(plan.reclaimAdvice.candidateBytes!);
+    expect(formatDiskMaint(plan)).toContain(plan.reclaimAdvice.message);
+    expect(readFileSync(path)).toEqual(Buffer.alloc(2048, 7));
+    expect(readFileSync(protectedFile)).toEqual(Buffer.alloc(4096, 7));
+  });
+
+  it('keeps unknowns distinct and never promises physical recovery', async () => {
+    file(artifact, 2048, 60);
+    const deps = baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) });
+    for (const free of [null, NaN, -1]) {
+      expect((await planDiskMaint({ ...deps, freeBytes: () => free })).reclaimAdvice)
+        .toMatchObject({ status: 'unknown', neededBytes: null, estimatedShortfallBytes: null });
+    }
+    for (const over of [{ readJobs: async () => ({ state: 'degraded' as const, text: '' }) },
+      { readJobs: HEALTHY(completed + '{bad\n') },
+      { only: new Set<'caches'>(['caches']) }]) {
+      expect((await planDiskMaint({ ...deps, freeBytes: () => 115e9, ...over })).reclaimAdvice)
+        .toMatchObject({ status: 'unknown', candidateBytes: null, estimatedShortfallBytes: null });
+    }
+    const advice = (await planDiskMaint({ ...deps, freeBytes: () => 150e9 - 1 })).reclaimAdvice;
+    expect(advice).toMatchObject({ status: 'review', neededBytes: 1, estimatedShortfallBytes: 0 });
+    expect(advice.message).toContain('physical savings are unverified');
+    expect((await planDiskMaint({ ...deps, freeBytes: () => 150e9 })).reclaimAdvice.status).toBe('above-target');
+    expect((await planDiskMaint({ ...deps, freeBytes: () => 150e9 - 2049 })).reclaimAdvice.message).toContain('<0.001 GB');
+  });
+
   it('reclaims an old archived result only after completion, reporting bytes and current free space', async () => {
     const path = file(artifact, 2048, 60);
     const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) }));
@@ -475,8 +508,9 @@ describe('completed job artifacts', () => {
     for (const marker of ['.ashlr-runs/RQ-DONE.base', '.ashlr-runs/queue/run/RQ-DONE.dispatched',
       '.ashlr-runs/queue/run/RQ-DONE.reaping', '.ashlr-runs/wt/RQ-DONE', 'Projects/ashlrai/wt/RQ-DONE']) {
       const path = file(marker, 1, 1);
-      const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']) }));
+      const plan = await planDiskMaint(baseDeps({ readJobs: HEALTHY(completed), only: new Set(['job-artifacts']), freeBytes: () => 115e9 }));
       expect(plan.classes[0]!.candidates).toHaveLength(0);
+      expect(plan.reclaimAdvice).toMatchObject({ status: 'insufficient', candidateBytes: 0, estimatedShortfallBytes: 35e9 });
       rmSync(path);
     }
     for (const text of [completed + jobsText([{ job: 'RQ-DONE', event: 'launch' }]), completed + '{bad\n']) {
@@ -542,6 +576,19 @@ describe('cli', () => {
     expect(code).toBe(0);
     expect(logs.join('\n')).toMatch(/freed/i);
     expect(existsSync(join(home, '.ashlr/agent-logs/old.jsonl'))).toBe(false);
+  });
+
+  it('shares advice with JSON and drops the pre-apply estimate after cleanup', async () => {
+    const deps = baseDeps({ freeBytes: () => 115e9 });
+    const preview = await run(['--json', '--only', 'job-artifacts'], deps);
+    const view = JSON.parse(preview.logs.join(''));
+    expect(preview.code).toBe(0);
+    expect(view.reclaimAdvice).toMatchObject({ scope: 'listed-job-artifacts',
+      basis: 'pre-apply-logical-bytes', status: 'insufficient', estimatedShortfallBytes: 35e9 });
+    expect((await run(['--only', 'job-artifacts'], deps)).logs).toContain(view.reclaimAdvice.message);
+    const applied = await run(['--apply', '--json', '--only', 'job-artifacts'], deps);
+    expect(applied.code).toBe(0);
+    expect(JSON.parse(applied.logs.join('')).reclaimAdvice).toBeNull();
   });
 });
 

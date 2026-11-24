@@ -1244,7 +1244,7 @@ def retire_bundle_worktree(j, wt):
 # ---- per-job launch outcome (requeue PAUSED/HELD launches)
 requeue = []; fork_seen = []; rl_seen = []
 # RQ-QUEUERECOVERYQ8: bounded launch retries (launch_precheck.launch_failure); one ledger file, keyed per job.
-from launch_precheck import (classify_launch_failure, classify_empty_failure, launch_hold, launch_failure, launch_ok,
+from launch_precheck import (classify_launch_failure, classify_empty_failure, claude_recoveries, launch_hold, launch_failure, launch_ok,
                              park_key as _launch_key)
 LAUNCH_RETRY_PATH = Q + "/launch-retries.json"
 launch_state = jload(LAUNCH_RETRY_PATH, {})
@@ -1400,7 +1400,7 @@ fix_main_repos = {_job_repo(j) for j in alive if j.startswith("RQ-FIX-MAIN-")
 def drain_target(j, repo):
     # Only the refix producer's exact ID identifies a PR; other DRAIN jobs
     # must remain independent, including repos whose names contain hyphens.
-    m = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", j) if repo else None
+    m = re.fullmatch(r"RQ-DRAIN-" + re.escape(repo) + r"-([1-9][0-9]*)-[0-9a-fA-F]{7}", j.removesuffix('-CR1')) if repo else None
     return (repo, m.group(1)) if m else None
 drain_targets = {drain_target(j, _job_repo(j)) for j in alive if _rc(j) is None and not result(j)} - {None}
 LANDONLY_PREFIXES = ("RQ-DESK-",)   # fixed strings in code; never read from the file
@@ -1797,6 +1797,42 @@ def qlock(who="dispatchd", timeout=None):
 lk = qlock("dispatchd-read")
 if lk is None: log("ready.lock busy; tick skipped"); raise SystemExit(0)
 _raw = rd(Q + "/ready.tsv").splitlines()
+# One recovery attempt gets its own id: never overwrite failed logs or move an
+# immutable launched route. Persist before queueing so tick replay cannot multiply it.
+recovery_path = Q + '/claude-recoveries.json'
+recoveries = json.loads(rd(recovery_path)) if os.path.exists(recovery_path) else {}
+for parent, evidence in claude_recoveries(JOBS_RAW, NOW).items():
+    if over_budget(): break
+    if parent in recoveries: continue
+    child = parent + '-CR1'
+    f = rd(RUN + '/' + parent + '.line').strip().split('\t')
+    if (len(f) < 5 or f[0] != parent or f[1] != evidence[-1]['repo']
+            or not os.path.realpath(f[4]).startswith(Q + '/prompts/') or not rd(f[4]).strip()
+            or any(r.get('job') == child for r in JOBS_RAW)
+            or os.path.exists(Q + '/prompts/' + child + '.md')): continue
+    spec = work_market.requirements(f)
+    spec['exclusive'] = True
+    source = f[4]
+    f[0], f[4] = child, Q + '/prompts/' + child + '.md'
+    recoveries[parent] = dict(job=child, line='\t'.join(f[:5] + [json.dumps(spec)]),
+                              reason='claude_exit_1_empty_repeated', evidence=evidence, done=False, source=source)
+    jsave(recovery_path, recoveries)
+    metric(dict(event='claude_recovery', parent_job=parent, **recoveries[parent]))
+finished = {r.get('job') for r in JOBS_RAW if r.get('event') == 'finish'}
+published = {r.get('job') for r in JOBS_RAW if r.get('event') == 'publish'
+             or (r.get('event') == 'outcome' and r.get('state') == 'MERGED')}
+for parent, recovery in recoveries.items():
+    if (recovery['job'] in finished | published or parent in published
+            or launch_state.get(recovery['job'], {}).get('gave_up')):
+        recovery['done'] = True
+    target = Q + '/prompts/' + recovery['job'] + '.md'
+    if not recovery['done'] and not os.path.exists(target):
+        prompt = re.sub(r'(?m)^(Job )?' + re.escape(parent) + r'(?= \()',
+                        lambda m: (m[1] or '') + recovery['job'], rd(recovery['source']))
+        open(target, 'w').write(prompt)
+jsave(recovery_path, recoveries)
+recovery_children = {r['job']: p for p, r in recoveries.items()}
+requeue.extend(r['line'] for r in recoveries.values() if not r['done'])
 def parked_row(line):
     fields = line.split("\t")
     return fields[0].startswith("PARKED-") or (len(fields) > 2 and fields[2].startswith("PARKED-"))
@@ -2197,9 +2233,13 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
         j, repo, lane, tier, pf = f[:5]; line = "\t".join(f)
         res = result(j)
         if j in seen: continue  # duplicate line
+        parent = recovery_children.get(j)
+        if j in recoveries or (parent and recoveries[parent]['done']): continue
+        if parent and (parent in alive | reaping | publishing | ACTIVE_LAUNCHES or os.path.isdir(WTROOT + '/' + parent)):
+            rest.append(line); seen.add(j); continue
         if j in ACTIVE_LAUNCHES:
             rest.append(line); seen.add(j); continue
-        why = retired(j)
+        why = retired(parent or j) or retired(j)
         if why:
             if rq is None: ev("SKIP_RETIRED_CHECK %s held (%s)" % (j, why)); rest.append(line); seen.add(j); continue
             ev("SKIP_RETIRED %s dropped from ready.tsv (%s)" % (j, why)); seen.add(j); continue
@@ -2239,6 +2279,8 @@ if not pause and not disk_hard_stop and not GATE["tripped"]:
                                          market_models, BUS["quota"], JOBS_RAW, now=NOW,
                                          allowance=market_allowance, tier=tier))
         for dest in LANES:
+            if parent and (dest in ('claude', 'claude-api') or view[dest]['cost_class'] == 'metered'):
+                view[dest]['unavailable'] = 'claude_recovery_lane_excluded'
             if dest == "devin":
                 size = _size_hint(j, pf)
                 why = batch_sessions.devin_route(repo, None if size == math.inf else size, BS_CFG)

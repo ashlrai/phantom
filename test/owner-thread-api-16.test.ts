@@ -135,6 +135,22 @@ describe('GET /api/verse/comms/owner-thread', () => {
     }
   });
 
+  it('filters by undelivered and rejects a bad value with 400', async () => {
+    const options: OwnerThreadOptions = { runsDir, now: () => NOW, settings, halted: false, paused: false, mailbox };
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'owner-test-1', text: 'fake ask', idempotencyKey: 'telegram-test-0001', at: NOW }, options);
+    // No transports attached: the reply records but no destination confirms — it stays undelivered.
+    await sendOwnerReply({ text: 'fake answer', replyTo: 'telegram-test-0001', idempotencyKey: 'reply-test-0001' }, options);
+    const r = await call('GET', '?undelivered=true');
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: { seq: number; direction: string }) => [m.seq, m.direction])).toEqual([[2, 'outbound']]);
+    expect(r.body.undeliveredReplies).toEqual(['m2']);
+    expect(r.body.awaitingReply).toEqual([]);
+    for (const bad of ['?undelivered=', '?undelivered=yes']) {
+      const rejected = await call('GET', bad);
+      expect(rejected.status, bad).toBe(400);
+    }
+  });
+
   it('filters by direction and rejects a bad value with 400', async () => {
     await seed(2);
     const inbound = await call('GET', '?direction=inbound');

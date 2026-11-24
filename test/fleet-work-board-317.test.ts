@@ -157,6 +157,42 @@ describe('listWorkBoard on real durable stores', { timeout: 60_000 }, () => {
     expect(all.matched).toBeUndefined();
     expect(all.items).toHaveLength(5);
   });
+
+  it('filters by the [since, before) receivedAt window and reports the true matched total', () => {
+    seed();
+    // seed() posts slack-request-a at now-3000, slack-request-b at now-2000
+    // and bus-request-c at now-1000; the reply is never a request.
+    const t0 = now - 3_000;
+    // `since` is inclusive: the request exactly on the cutoff stays.
+    const since = listWorkBoard({ root, now, since: t0 + 1_000 });
+    expect(since.items.map(item => item.id)).toEqual(['bus-request-c', 'slack-request-b']);
+    expect(since.matched).toBe(2);
+    expect(since.truncated).toBe(false);
+    expect(since.state).toBeUndefined();
+    // `before` is exclusive: bus-request-c sits exactly on now-1000 and drops.
+    const before = listWorkBoard({ root, now, before: t0 + 2_000 });
+    expect(before.items.map(item => item.id)).toEqual(['slack-request-b', 'slack-request-a']);
+    expect(before.matched).toBe(2);
+    // The pair reads one [since, before) window.
+    const window = listWorkBoard({ root, now, since: t0 + 1_000, before: t0 + 2_000 });
+    expect(window.items.map(item => item.id)).toEqual(['slack-request-b']);
+    expect(window.matched).toBe(1);
+    // The window composes with channelRef and state into one filtered total.
+    const scoped = listWorkBoard({ root, now, channelRef: REF_B, since: t0 + 1_000 });
+    expect(scoped.items.map(item => item.id)).toEqual(['slack-request-b']);
+    expect(scoped.matched).toBe(1);
+    const running = listWorkBoard({ root, now, state: 'RUNNING', since: t0 });
+    expect(running.items.map(item => item.id)).toEqual(['slack-request-a']);
+    expect(running.matched).toBe(1);
+    expect(running.state).toBe('RUNNING');
+    // A window matching nothing is an honest zero, never an error or a pad.
+    const none = listWorkBoard({ root, now, since: now + 60_000 });
+    expect(none.items).toEqual([]);
+    expect(none.matched).toBe(0);
+    expect(none.truncated).toBe(false);
+    // A channelRef-only read keeps the unfiltered shape: no matched token.
+    expect(listWorkBoard({ root, now, channelRef: REF_A }).matched).toBeUndefined();
+  });
 });
 
 describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
@@ -221,6 +257,29 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(parsed.items[0].id).toBe('bus-request-c');
   });
 
+  it('--since/--before keep requests inside the window and the footer echoes it', async () => {
+    seed();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const t0 = now - 3_000;
+    // Epoch-ms bounds resolve through the shared grammar; the footer prints
+    // the resolved ISO window beside the true matched total.
+    expect(await cmdFleetWorkBoard(['--root', root, '--since', String(t0 + 1_000)])).toBe(0);
+    let lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain('bus-request-c RECEIVED');
+    expect(lines[1]).toContain('slack-request-b RECEIVED');
+    expect(lines[2]).toBe(`items=2 matched=2 since=${iso(t0 + 1_000)} truncated=no inbox=ok as-of=${iso(now)}`);
+    // Relative and ISO spellings take the same grammar every bus read shares.
+    expect(await cmdFleetWorkBoard(['--root', root, '--since', '1d', '--before', iso(t0 + 2_000)])).toBe(0);
+    lines = log.mock.calls.map(call => String(call[0]));
+    expect(lines.at(-1)).toBe(`items=2 matched=2 since=${iso(now - 86_400_000)} before=${iso(t0 + 2_000)} truncated=no inbox=ok as-of=${iso(now)}`);
+    // The window composes with --state: footer keeps state= and matched=.
+    expect(await cmdFleetWorkBoard(['--root', root, '--state', 'RUNNING', '--since', '1d', '--json'])).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
+    expect(parsed).toMatchObject({ state: 'RUNNING', matched: 1, inbox: 'ok' });
+    expect(parsed.items.map((i: { id: string }) => i.id)).toEqual(['slack-request-a']);
+  });
+
   it('exits 2 on bad or duplicate flags and prints nothing on stdout', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -235,6 +294,14 @@ describe('cmdFleetWorkBoard', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkBoard(['--state', 'running'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--state'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--state', 'RUNNING', '--state', 'BLOCKED'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--since', 'bogus'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--since', '1.5.2'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--since', ''])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--before', 'not-a-time'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--since'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--before'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--since', '1h', '--since', '2h'])).toBe(2);
+    expect(await cmdFleetWorkBoard(['--before', '1h', '--before', '2h'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--json', '--json'])).toBe(2);
     expect(await cmdFleetWorkBoard(['--root', root, '--root', root])).toBe(2);
     expect(log).not.toHaveBeenCalled();

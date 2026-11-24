@@ -108,7 +108,11 @@ export function formatDiskMaint(plan: DiskMaintPlan, applied?: Awaited<ReturnTyp
   }
   if (plan.refused.length) lines.push(`protect-list refusals during scan: ${plan.refused.length}`);
   if (applied) lines.push(`freed: ${gb(applied.totals.freedBytes)} total${applied.totals.failures ? ` (${applied.totals.failures} failures)` : ''}`);
-  else lines.push(`reclaimable: ${gb(plan.totals.bytes)} across ${plan.totals.candidates} items${plan.totals.complete ? '' : ' (partial scan - byte counts are floors)'} - re-run with --apply`);
+  else {
+    lines.push(`reclaimable: ${gb(plan.totals.bytes)} across ${plan.totals.candidates} items${plan.totals.complete ? '' : ' (partial scan - byte counts are floors)'} - re-run with --apply`);
+    lines.push(plan.reclaimAdvice.message);
+    lines.push('Advice covers listed archived job results only; logical bytes are not promised physical savings.');
+  }
   return lines;
 }
 
@@ -183,7 +187,7 @@ export async function cmdDiskMaint(args: string[], deps: DiskMaintCliDeps = {}):
   });
   const applied = apply ? await applyDiskMaint(plan, { roots, runner: deps.runner, now: deps.now, readJobs: deps.readJobs, freeBytes: deps.freeBytes }) : undefined;
   if (json) {
-    out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
+    out.log(JSON.stringify(sanitizePublicJson({ ...plan, apply, ...(applied ? { reclaimAdvice: null, freeGb: applied.freeGb, results: applied.classes, totals: { ...plan.totals, freedBytes: applied.totals.freedBytes, failures: applied.totals.failures } } : {}) }), null, 2));
   } else {
     for (const line of formatDiskMaint(plan, applied)) out.log(line);
   }

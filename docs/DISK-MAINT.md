@@ -108,6 +108,22 @@ gains `results` (per-class per-path status and `freedBytes`), updates `freeGb`
 from the runs volume after the sweep, and adds
 `totals.freedBytes`/`failures`. Paths are home-relative sanitized.
 
+Dry runs also return typed `reclaimAdvice`, printed in the human view. It
+compares free space with a 150 GB review target, without changing DISKGUARD.
+Only listed, inactive, completed-job archived results contribute to
+`candidateBytes`; compression inputs and age-only directory totals do not.
+`neededBytes` and `estimatedShortfallBytes` expose the gap. `insufficient`
+means this known shortlist cannot cover it, not that all host cleanup was
+assessed. `review` means logical sizes cover the gap; physical savings remain
+unverified. Missing free-space evidence or an unscanned class is `unknown`.
+After apply, `reclaimAdvice` is null; run a new preview for current advice.
+
+To investigate a drop in free space, compare the time-matched directory deltas
+in `queue/disk-growth.json` with `queue/disk-growth-history.json`, produced by
+`contrib/mac/disk-growth.py`. Large folders today do not establish the cause of
+an earlier drop. Missing history leaves attribution unknown; preserve active
+work and protected files while collecting evidence.
+
 ### Forecast the 150 GB free-space line
 
 Run `phm fleet disk-forecast --json` for a read-only, typed

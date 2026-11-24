@@ -7,3 +7,8 @@ worktree `BRIDGE_NOTES.md` files and log tails. Reasons are fixed descriptions;
 the report does not copy notes or logs. Missing evidence stays in `other`.
 The Fleet page shows the five most common causes, counts, and an example job for each. The JSON report exposes the same ranked causes in `topCauses`. This is a heuristic, not proof
 of why a job ended empty.
+
+For failed empty guardian repairs, preview `phm jobs retry-empty --dry-run --json`,
+then use `--apply` to queue one retry per original job and tier. Existing repairs
+defer retries. Original logs and finish records stay intact; exhausted retries
+appear in `escalations` with the failed job, root, tier, exit code and reason.

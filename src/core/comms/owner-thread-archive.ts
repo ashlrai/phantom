@@ -67,6 +67,14 @@ export interface OwnerThreadHistoryPage extends OwnerThreadReadFilter {
 }
 
 export function readOwnerThreadHistory(options: { runsDir: string }, page: OwnerThreadHistoryPage = {}) {
+  // `awaiting` and `undelivered` are live-window marks: archived messages are
+  // outside both windows by contract (`awaitingReplyMessages` and
+  // `undeliveredReplyItems` read live state only — an archived reply's
+  // sent-marks leave with it), so either slice of history is honestly empty
+  // — never archived rows passed off as still waiting or still unconfirmed.
+  if (page.awaiting === true || page.undelivered === true) {
+    return { schema: 'comms.owner-thread-history.v1' as const, messages: [], archives: listOwnerThreadArchives(options).length, skipped: 0 };
+  }
   const inView = ownerThreadViewPredicate(page);
   const archives = listOwnerThreadArchives(options);
   const limit = Number.isSafeInteger(page.limit) && page.limit! > 0 ? Math.min(page.limit!, 500) : 50;

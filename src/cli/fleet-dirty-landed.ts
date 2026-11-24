@@ -22,6 +22,7 @@
  * GitHub state are never written.
  */
 import { tmpdir } from 'node:os';
+import { describeGhFailure, type GhFailure } from '../core/fleet/landed-gh-failure.js';
 import type { CloudGh } from '../core/cloud/pr-actions.js';
 import { defaultGitRunner } from '../core/verse/git-ops.js';
 import {
@@ -52,9 +53,11 @@ export interface DirtyLandedReport {
   prs: DirtyLandedPr[];
 }
 
+type GhReader = (args: string[]) => Promise<Awaited<ReturnType<CloudGh>> & { missing?: boolean; timedOut?: boolean }>;
+
 export interface FleetDirtyLandedDeps {
   /** gh reader; defaults to the bounded production runner. */
-  gh?: CloudGh;
+  gh?: GhReader;
   /** Remote the scratch repo fetches base/pull refs from (tests inject a local repo). */
   remote?: string;
   now?: () => Date;
@@ -65,6 +68,7 @@ export interface FleetDirtyLandedDeps {
    * offline): nothing is wrong with any report. `malformed` = gh answered with something unreadable.
    */
   onFailure?: (kind: 'unavailable' | 'malformed', message: string) => void;
+  onGhFailure?: (failure: GhFailure) => void;
 }
 
 /** A row counts as conflicting the way classifyFleetPrGh reads conflict. */
@@ -93,11 +97,11 @@ function parseRow(raw: unknown): DirtyRow | null {
   };
 }
 
-const defaultGh: CloudGh = async args => {
+const defaultGh: GhReader = async args => {
   const result = await defaultGitRunner('gh', args, {
     cwd: tmpdir(), timeoutMs: GIT_TIMEOUT_MS, maxStdoutBytes: GIT_MAX_BYTES,
   });
-  return { ok: result.code === 0 && !result.timedOut && !result.truncated, stdout: result.stdout, stderr: result.stderr };
+  return { ok: result.code === 0 && !result.timedOut && !result.truncated, stdout: result.stdout, stderr: result.stderr, missing: result.missing, timedOut: result.timedOut };
 };
 
 function describe(pr: DirtyLandedPr): string {
@@ -132,10 +136,10 @@ export async function cmdFleetDirtyLanded(args: string[], deps: FleetDirtyLanded
     deps.onFailure?.(kind, message);
     return 1;
   };
-  let read: { ok: boolean; stdout: string };
+  let read: Awaited<ReturnType<GhReader>>;
   try { read = await gh(['pr', 'list', '--repo', REPO, '--state', 'open', '--limit', String(limit), '--json', GH_LIST_FIELDS]); }
-  catch { return fail('unavailable', 'gh pr list could not run'); }
-  if (!read.ok) return fail('unavailable', 'gh pr list failed');
+  catch { deps.onGhFailure?.(describeGhFailure({ stderr: '' })); return fail('unavailable', 'gh pr list could not run'); }
+  if (!read.ok) { deps.onGhFailure?.(describeGhFailure(read)); return fail('unavailable', 'gh pr list failed'); }
   let rows: unknown;
   try { rows = JSON.parse(read.stdout); } catch { return fail('malformed', 'invalid gh response'); }
   if (!Array.isArray(rows)) return fail('malformed', 'invalid gh response');

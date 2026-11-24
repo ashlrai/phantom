@@ -146,6 +146,7 @@ exit code is non-zero if any of them failed.
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
+| Contrib router type check | A `.ts` file under `contrib/router/`, `src/core/authority/protected-paths.ts`, or `package.json`/`package-lock.json` changed | Fix the `path:line:col` type errors the documented `tsc --noEmit` run reports; the router executes under `tsx`, which transpiles without checking types, and no `tsconfig` project covers the tree. With no installed `typescript` package the step prints `SKIP`. |
 | Type check | Backend project when the diff touches a root `tsconfig*.json`, `src/` (outside `src/web-ui/` and `src/raycast/`), `test/` or `scripts/`; web project when it touches `src/web-ui/`; both when `package.json` or `package-lock.json` changed. Docs-only diffs skip it. Runs incrementally with `tsgo`, falling back to `tsc` | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 
 `SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
@@ -320,8 +321,8 @@ do not block auto-merge:
   the file's tolerance (20% unless a target sets its own). A red result means your change may have slowed startup, or the
   shared runner was slow; look before you dismiss it.
 - `Dependency audit (root + Raycast)` runs only when a manifest, lockfile or
-  audit configuration changes. Those paths are protected, so the owner reviews
-  that pull request anyway; see
+  audit configuration changes. Dependency manifests and lockfiles are protected;
+  other audit inputs need not be. See
   [docs/DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md).
 - `PR topology observation (non-authoritative)` is telemetry, and the
   `Merge Queue Reaper` only cancels queue runs whose queue entry is gone.

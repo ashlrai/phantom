@@ -197,6 +197,34 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { inReplyTo: 'env-9', agent: 'grok' })).toEqual([]);
   });
 
+  it('id keeps the whole thread one member message\'s wire id strictly equals', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c' }),
+      say('e', 'peer-a', 'peer-b', 4, { kind: 'status', thread: 't-x' }),
+      say('f', 'peer-b', 'peer-a', 5, { kind: 'reply', replyTo: 'e', thread: 't-x' }),
+    ], NOW);
+    // 'b' is a member of thread 'a' — the read returns the whole thread where
+    // `phm messages --id b` would report only the one row.
+    expect(filterConversations(list, { id: 'b' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { id: 'b' })[0]!.messageCount).toBe(2);
+    // The thread root finds the same thread.
+    expect(filterConversations(list, { id: 'a' }).map(c => c.id)).toEqual(['a']);
+    // A declared bucket is no member id: 't-x' names the conversation, never
+    // a wire id — but member 'f' of that bucket still finds it whole.
+    expect(filterConversations(list, { id: 't-x' })).toEqual([]);
+    expect(filterConversations(list, { id: 'f' }).map(c => c.id)).toEqual(['t-x']);
+    // Exact and case-sensitive like every bus read: a case variant or an id
+    // nothing carries is an honest empty list, never a widened one.
+    expect(filterConversations(list, { id: 'B' })).toEqual([]);
+    expect(filterConversations(list, { id: 'env-9' })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { id: 'b', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { id: 'b', agent: 'grok' })).toEqual([]);
+  });
+
   it('channel keeps whole threads where a member message is addressed to the room', () => {
     const list = buildConversations([
       say('a', 'leader', 'group:dev:deploy', 0, { kind: 'ask' }),
@@ -256,6 +284,44 @@ describe('conversations from messages', () => {
     const same = (label: string) => ['leader', 'agt_lead'].includes(label) ? 'agt_lead' : undefined;
     expect(filterConversations(list, { from: 'agt_lead' }, same).map(c => c.id)).toEqual(['a']);
     expect(filterConversations(list, { excludeFrom: 'agt_lead' }, same).map(c => c.id).sort()).toEqual(['c', 'd']);
+  });
+
+  it('with keeps threads holding the pairwise exchange agent names, in either direction', () => {
+    const list = buildConversations([
+      say('a', 'leader', 'claude', 0, { kind: 'ask' }),
+      say('b', 'claude', 'leader', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 2, { kind: 'ask' }),
+      say('d', 'zai', 'grok', 3, { kind: 'reply', replyTo: 'c' }),
+      say('e', 'peer-a', 'peer-b', 4, { kind: 'status' }),
+      say('f', 'peer-b', 'peer-c', 5, { kind: 'status' }),
+      // 'g'+'h' share thread t-x: leader and claude are both in it, but
+      // each only ever addresses grok — never each other.
+      say('g', 'leader', 'grok', 6, { kind: 'status', thread: 't-x' }),
+      say('h', 'claude', 'grok', 7, { kind: 'status', thread: 't-x' }),
+    ], NOW);
+    // Threads: 'a' leader<->claude, 'c' grok<->zai, 'e' peer-a->peer-b,
+    // 'f' peer-b->peer-c, 't-x' leader+claude via grok — 'd' replies into 'c'.
+    expect(filterConversations(list, { agent: 'leader', with: 'claude' }).map(c => c.id)).toEqual(['a']);
+    // Either direction counts: agent=claude with=leader finds the same thread.
+    expect(filterConversations(list, { agent: 'claude', with: 'leader' }).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { agent: 'grok', with: 'zai' }).map(c => c.id)).toEqual(['c']);
+    // A pair that never exchanges directly never passes: leader and zai
+    // share no thread at all, so the pairwise read is an honest empty.
+    expect(filterConversations(list, { agent: 'leader', with: 'zai' })).toEqual([]);
+    expect(filterConversations(list, { agent: 'peer-a', with: 'peer-b' }).map(c => c.id)).toEqual(['e']);
+    expect(filterConversations(list, { agent: 'peer-b', with: 'peer-c' }).map(c => c.id)).toEqual(['f']);
+    // with means nothing without agent: an honest empty list, never widened.
+    expect(filterConversations(list, { with: 'claude' })).toEqual([]);
+    // Both agents in one thread is not the exchange: 't-x' holds leader and
+    // claude as participants yet no member runs leader<->claude, so --agent
+    // leader alone keeps it while --with claude drops it — 'a' stays.
+    expect(filterConversations(list, { agent: 'leader' }).map(c => c.id).sort()).toEqual(['a', 't-x']);
+    expect(filterConversations(list, { agent: 'leader', with: 'claude' }).map(c => c.id)).toEqual(['a']);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { agent: 'leader', with: 'claude', state: 'answered' }).map(c => c.id)).toEqual(['a']);
+    // The identity resolver folds both refs' labels the same way `agent` does.
+    const same = (label: string) => ['leader', 'agt_lead'].includes(label) ? 'agt_lead' : undefined;
+    expect(filterConversations(list, { agent: 'agt_lead', with: 'claude' }, same).map(c => c.id)).toEqual(['a']);
   });
 
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
@@ -814,6 +880,51 @@ describe('phm agents conversations --json', () => {
     expect(errors.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('the CLI --with narrows --agent to the pairwise exchange and needs --agent', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // CHAT: m1 leader<->claude answered, m3 grok->zai waiting.
+    expect(await run(['--agent', 'leader', '--with', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(await run(['--agent', 'claude', '--with', 'leader', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    // A pair that never exchanges is an honest empty page.
+    expect(await run(['--agent', 'leader', '--with', 'zai', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // --with without --agent is a usage error, never a widened read.
+    expect(await run(['--with', 'claude'])).toBe(2);
+    expect(errors.pop()).toContain('--with takes the other agent and needs --agent');
+    expect(await run(['--with'])).toBe(2);
+    expect(await run(['--agent', 'leader', '--with', 'has space'])).toBe(2);
+  });
+
+  it('the CLI --id keeps the thread the envelope belongs to and refuses a bad id', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // CHAT: m1 leader->claude, m2 claude->leader replyTo m1 (thread m1), m3 grok->zai (thread m3).
+    // m2 is a member of thread m1 — the read returns the whole thread where
+    // `phm messages --id m2` would report only the one row.
+    expect(await run(['--id', 'm2', '--json'])).toBe(0);
+    const hit = JSON.parse(lines.pop()!);
+    expect(hit.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(hit.conversations[0].messageCount).toBe(2);
+    expect(hit.matched).toBe(1);
+    expect(await run(['--id', 'm3', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    // An id nothing on the bus carries is an honest empty page, matched 0.
+    expect(await run(['--id', 'env-9', '--json'])).toBe(0);
+    const none = JSON.parse(lines.pop()!);
+    expect(none.conversations).toEqual([]);
+    expect(none.matched).toBe(0);
+    // It composes with the other filters like every flag here.
+    expect(await run(['--id', 'm2', '--agent', 'grok', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    // Bad values are usage errors, never a silent default.
+    expect(await run(['--id', 'has space'])).toBe(2);
+    expect(await run(['--id'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('the API serves the same read behind a read session and checks its query', async () => {
     const root = bus(CHAT);
     const serve = (module: ReturnType<typeof createFleetLiveMapApi>) =>
@@ -869,6 +980,25 @@ describe('phm agents conversations --json', () => {
     expect(found.status).toBe(200);
     expect(found.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
     expect(found.body.matched).toBe(1);
+    // with narrows agent to the pairwise exchange; it needs agent and a bad value is refused.
+    const pair = await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=claude`);
+    expect(pair.status).toBe(200);
+    expect(pair.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    const none = await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=zai`);
+    expect(none.status).toBe(200);
+    expect(none.body.conversations).toEqual([]);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?with=claude`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=a&with=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=has%20space`)).status).toBe(400);
+    // id keeps the thread the named envelope belongs to; bad values are refused.
+    const member = await call(`${AGENT_CONVERSATIONS_PATH}?id=m2`);
+    expect(member.status).toBe(200);
+    expect(member.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(member.body.matched).toBe(1);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?id=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?id=a&id=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?id=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=%20%20`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?contains=a&contains=b`)).status).toBe(400);

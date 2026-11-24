@@ -16,6 +16,7 @@ import { VERSE_AGENTS_PATH, type AgentBoardResponse, type AgentChecksDetail } fr
 import { apiGet } from '../../../data/client.js';
 import { MutationTokenDialog } from '../../../components/auth/MutationTokenDialog.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { EmptyState } from '../../../components/primitives/EmptyState.js';
 import { Switch } from '../../../components/primitives/Switch.js';
 import { describeContextError, useTokenGate } from '../context/use-token-gate.js';
 import { sendVerseTurn } from '../verse-queries.js';
@@ -46,7 +47,12 @@ export function commentToAgentText(c: AgentChecksDetail['comments'][number]): st
   return [`Review comment from @${c.author}${c.path ? ` on ${c.path}` : ''}:`, '', c.body.split('\n').map((l) => `> ${l}`).join('\n'), '', 'Address it in this workspace, then commit and push to the same branch.'].join('\n');
 }
 
-export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: ChecksPanelProps) {
+export function ChecksPanel(props: ChecksPanelProps) {
+  // Switching agents must discard the old checks, pending actions and notices together.
+  return <AgentChecksPanel key={props.cardId} {...props} />;
+}
+
+function AgentChecksPanel({ cardId, visible = true, draftToChat, onChanged }: ChecksPanelProps) {
   const [detail, setDetail] = useState<AgentChecksDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -54,14 +60,20 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
   const [note, setNote] = useState<string | null>(null);
   const gate = useTokenGate();
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; request.current?.abort(); };
+  }, []);
 
   const load = useCallback((fresh: boolean) => {
+    request.current?.abort();
     const ctl = new AbortController();
+    request.current = ctl;
     setLoading(true);
     fetchAgentChecks(cardId, fresh, ctl.signal).then(
       (d) => {
-        if (!alive.current) return;
+        if (!alive.current || ctl.signal.aborted) return;
         if (!d || !Array.isArray(d.checks) || !Array.isArray(d.comments) || !d.mergeVerdict) {
           setError('Checks are unavailable: the server returned an incomplete response.');
           return;
@@ -70,15 +82,14 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
         setError(null);
       },
       (err: unknown) => { if (alive.current && !ctl.signal.aborted) setError(describeContextError(err)); },
-    ).finally(() => { if (alive.current) setLoading(false); });
-    return ctl;
+    ).finally(() => { if (alive.current && !ctl.signal.aborted) setLoading(false); });
   }, [cardId]);
 
   useEffect(() => {
     if (!visible) return undefined;
-    const first = load(false);
+    load(false);
     const timer = setInterval(() => load(false), REFRESH_MS);
-    return () => { first.abort(); clearInterval(timer); };
+    return () => { request.current?.abort(); clearInterval(timer); };
   }, [visible, load]);
 
   const agentId = cardId.startsWith('ag_') ? cardId : null;
@@ -87,13 +98,14 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
     setNote(null);
     try {
       const message = await gate.run(why, run);
+      if (!alive.current) return;
       if (message) setNote(message);
       onChanged?.();
       load(true);
     } catch (err) {
-      setNote(describeContextError(err));
+      if (alive.current) setNote(describeContextError(err));
     } finally {
-      setBusy(null);
+      if (alive.current) setBusy(null);
     }
   };
 
@@ -109,7 +121,7 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
     const text = commentToAgentText(c);
     if (draftToChat) {
       draftToChat(text);
-      setNote('Drafted into the chat — edit and send it.');
+      setNote('Drafted into the chat. Edit and send it.');
       return;
     }
     const sessionId = detail?.sessionId;
@@ -120,12 +132,17 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
     });
   };
 
-  if (error && !detail) return <p className={styles.panelNote} role="alert">{error}</p>;
-  if (!detail) return <p className={styles.panelNote}>{loading ? 'Reading git and GitHub…' : 'No checks yet.'}</p>;
+  const recovery = error ? <EmptyState compact tone="error"
+    title={detail ? 'Checks could not be refreshed' : 'Could not load checks'}
+    body={detail ? `Last successful checks are still shown. ${error}` : `Retry to read this agent's git and GitHub checks. ${error}`}
+    action={<Button size="sm" onClick={() => load(true)} busy={loading}>Retry checks</Button>}
+  /> : null;
+  if (!detail) return recovery ?? <p className={styles.panelNote} role="status">{visible ? 'Reading git and GitHub…' : 'Open this pane to load checks.'}</p>;
 
   const d = detail;
   return (
     <div className={styles.checks} aria-label="Checks">
+      {recovery}
       <div className={styles.checksHead}>
         <div className={styles.checksBranch}>
           <span className={styles.mono}>{d.branch ?? 'detached HEAD'}</span>
@@ -227,19 +244,24 @@ export function ChecksPanel({ cardId, visible = true, draftToChat, onChanged }: 
 }
 
 /** The chat dock's Checks pane: the open chat's agent (or the chat itself, read-only). */
-export function ChecksDockPane({ sessionId, visible, host }: { sessionId: string | null; visible: boolean; host: { addToMessage(text: string): void } }) {
+export function ChecksDockPane(props: { sessionId: string | null; visible: boolean; host: { addToMessage(text: string): void } }) {
+  return <SessionChecksPane key={props.sessionId} {...props} />;
+}
+
+function SessionChecksPane({ sessionId, visible, host }: { sessionId: string | null; visible: boolean; host: { addToMessage(text: string): void } }) {
   const [cardId, setCardId] = useState<string | null>(null);
   useEffect(() => {
     if (!sessionId) return;
     let live = true;
+    const ctl = new AbortController();
     // The board already knows which agent owns this chat.
-    apiGet<AgentBoardResponse>(VERSE_AGENTS_PATH)
+    apiGet<AgentBoardResponse>(VERSE_AGENTS_PATH, ctl.signal)
       .then((b) => { if (live) setCardId(b.cards.find((c) => c.sessionId === sessionId)?.id ?? `chat:${sessionId}`); })
       .catch(() => { if (live) setCardId(`chat:${sessionId}`); });
-    return () => { live = false; };
+    return () => { live = false; ctl.abort(); };
   }, [sessionId]);
   if (!sessionId) return <p className={styles.panelNote}>Open a chat to see its checks.</p>;
-  if (!cardId) return <p className={styles.panelNote}>Reading…</p>;
+  if (!cardId) return <p className={styles.panelNote} role="status">Finding this chat's checks…</p>;
   return (
     <div className={styles.dockPane}>
       <ChecksPanel cardId={cardId} visible={visible} draftToChat={(t) => host.addToMessage(t)} />

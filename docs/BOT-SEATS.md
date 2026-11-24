@@ -82,6 +82,12 @@ invalid transitions (such as active directly to idle) throw. State is persisted
 atomically in private `~/.phantom/bots/seat-state.json`; listing can persist a
 lifecycle transition. Missing node storage is never initialized by observation.
 
+Each `phm bots seats --json` row includes `claimsOwner`: `ref` is the seat's
+participant label, `identity` is its resolved stable bus identity id (null
+when unresolved), and `registry` is `missing`, `available` or `unavailable`.
+These diagnostics use the same registry snapshot as claim matching. Missing,
+unreadable or unresolved identities keep exact-label matching.
+
 ## Inspect and hand off
 
 ```sh
@@ -166,6 +172,11 @@ is recorded, not automatically retried. Owner notices use the configured owner
 thread, honor KILL and comms pause, and are local desktop notices, not proof of
 external-channel delivery. Journal uniqueness does not imply exactly-once
 execution or delivery across independent systems.
+
+`agents bus status`'s seats section probes the same store files — roster,
+state map, handoff journal and this receipts map — so a corrupt
+`handoff-notices.json` is named there (`notices: null`) instead of leaving
+status green while every apply fails or resends notices.
 
 ## Bus and console participation
 

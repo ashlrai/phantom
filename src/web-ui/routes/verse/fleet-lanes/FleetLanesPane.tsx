@@ -129,7 +129,7 @@ export function FleetLanesPane({ visible }: Pick<PaneProps, 'visible'>) {
               const rows = strayRows(lane.lane, strays.data);
               const claudeDown = lane.state === 'down';
               const focused = lane.lane === focusedLane;
-              return <li key={lane.lane} className={styles.lane} data-state={lane.state} ref={focused ? scrollToLane : undefined} data-focused={focused ? 'true' : undefined} aria-current={focused ? 'true' : undefined}>
+              return <li key={lane.lane} className={styles.lane} data-board-card data-state={lane.state} ref={focused ? scrollToLane : undefined} data-focused={focused ? 'true' : undefined} aria-current={focused ? 'true' : undefined}>
                 <div className={styles.line}>
                   <span className={styles.name}><ProviderBadge of={lane.lane} iconOnly size={14} /><strong>{lane.lane}</strong></span>
                   {claudeDown ? <span className={styles.badge} data-tone="danger">Down</span> : null}

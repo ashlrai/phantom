@@ -40,7 +40,7 @@ export function ThroughputFiguresSkeleton() {
 function LaneCard({ lane, bars, peak, cursor, onCursor }: HourCursor & { lane: LaneRow; bars: readonly HourBar[] | null; peak: number }) {
   const percent = lane.emptyRate === null ? null : Math.round(lane.emptyRate * 100);
   const at = bars ? cursorAt(bars, cursor) : null;
-  return <li className={styles.lane} data-lane={lane.name}>
+  return <li className={styles.lane} data-board-card data-lane={lane.name}>
     <div className={styles.laneHead}>
       <span className={styles.laneName}><BrandMark brand={lane.name} size={16} />{lane.name}</span>
       <span className={styles.laneCount}>{word(lane.merged === null ? 'unknown' : String(lane.merged), lane.merged !== null)} <span className={styles.unit}>merged</span></span>

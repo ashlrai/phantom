@@ -134,8 +134,10 @@ export function findAgentChannel(registry: AgentRegistry, name: string): AgentCh
 
 /** Every routing label a message to this identity may carry: the refs
  * `resolveAgent` accepts — its `agent:` address, bare handle, stable id and
- * aliases. Inbox and wake matching key on this set, so a foreign producer that
- * addresses the bare handle or `agt_` id still reaches the same agent. */
+ * aliases. The inbox and wake reads match the addressee through the same
+ * resolution, exact then lowercase, so this set plus its case-folded
+ * spellings all reach the same agent; it still backs the exact self-label
+ * exclusion those reads apply to channel traffic. */
 export function agentLabels(identity: AgentIdentity): string[] {
   return [`${AGENT_ADDRESS_PREFIX}${identity.handle}`, identity.handle, identity.id, ...identity.aliases];
 }

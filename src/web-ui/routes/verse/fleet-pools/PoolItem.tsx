@@ -31,7 +31,7 @@ export function PoolItem({ row, view, windows }: { row: PoolRow; view: Pick<Pool
   const pace = reservePace(row);
   const facts = poolFacts(row, view, localTime);
   // Focusable from code only: the Runway line above the cards puts the keyboard here when a pool's name is chosen.
-  return <li className={styles.row} data-pool={row.id} tabIndex={-1} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
+  return <li className={styles.row} data-board-card data-pool={row.id} tabIndex={-1} data-risk={row.wasteRisk} data-group={poolGroup(row)} aria-label={`${row.id} pool`}>
     <div className={styles.head}>
       <span className={styles.name}>
         <ProviderBadge of={row.id} iconOnly size={14} />

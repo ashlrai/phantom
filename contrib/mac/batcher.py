@@ -34,7 +34,7 @@ BATCH_PREFIX = "RQ-BATCH-"
 BATCH_LANES = ("codex-cmp", "codex-personal", "claude", "devin")
 # Release, desktop, main-repair and PR-maintenance work stays one job per session: each targets a
 # specific branch or PR and their priority buckets must not wait for unrelated batch-mates.
-SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", BATCH_PREFIX)
+SOLO_PREFIXES = ("RQ-FIX-MAIN-", "RQ-REL-", "RQ-DESK-", "RQ-DRAIN-PHX-REB-", BATCH_PREFIX)
 SOLO_KINDS = re.compile(r"(?:RQ-)?(?:LAND|FIXUP|RECUT|SALVAGE|CONSOLIDATE|CLOSE)(?:[-_]|$)")
 MIN_BATCH = 2            # fewer related tasks than this launch individually
 MIN_SIZE, DEFAULT_SIZE, MAX_SIZE = 2, 8, 10   # Mason Nov 10: "about ten tasks in one session"

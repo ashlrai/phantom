@@ -121,9 +121,13 @@ export function deriveBusWorkItemEvidence(
   id: string, receipts: BusInboxReceipt[], claims: BusWorkClaimView[], now: number,
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
-  let request: BusInboxReceipt | undefined;
+  const request = receipts.find(row => row.envelope.id === id);
   for (const row of receipts) {
-    if (row.envelope.id === id) request = row;
+    if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    // Match the classifier's private five-minute future-skew boundary; it has
+    // no historical TTL. Check Date validity before reply conversion to ISO.
+    if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
+      !(row.receivedAt - now <= 5 * 60 * 1000)) continue;
     const verified = replyVerifiedEvidence(row, id);
     if (verified) evidence.verified = verified;
     // Newest blocked reply wins; a later reply without `blocked` does not

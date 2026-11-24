@@ -13,12 +13,18 @@
  *
  * Every argument is optional and takes the same value rules the
  * `phm agents conversations` flags and the API params share, all validated
- * before any store read: `agent`, `job` and `waitingOn` printable routing
+ * before any store read: `agent`, `job`, `waitingOn`, `with`, `inReplyTo`,
+ * `id`, `from` and `excludeFrom` printable routing
  * labels (`agent` keeps threads that identity is in, resolved through the
  * server-owned registry; `waitingOn` keeps the waiting threads one agent
  * owes a reply on — its own labels or a `group:<channel>:<topic>` address
  * of a channel it belongs to, never a thread whose waiting message the
- * agent itself sent), `waiting`/`blocked` JSON booleans for the
+ * agent itself sent; `with` narrows `agent` to the threads holding the
+ * two-way exchange between the two named agents — the same pairwise rule
+ * `phm messages --agent <a> --with <b>` applies, decided on each member
+ * message's from/to endpoints in either direction — and means nothing
+ * without `agent`, which is refused the same way the CLI and the API
+ * refuse it), `waiting`/`blocked` JSON booleans for the
  * `--waiting`/`--blocked`/`?waiting=1`/`?blocked=1` shortcuts (`false` is
  * the same as absent), `state` one of waiting/answered/blocked/done — the
  * general form of the two booleans, which stay conjunctive with it so a
@@ -55,14 +61,14 @@ import {
 } from '../core/fleet/agent-conversations.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `from` and `excludeFrom` share. */
+/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `id`, `from`, `excludeFrom` and `with` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom', 'limit',
+  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'from', 'excludeFrom'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -87,6 +93,8 @@ export interface FleetAgentConversationsArgs {
   contains?: string;
   /** Keep only threads where at least one member message's body cites this envelope id through its own `inReplyTo` field — the shared `--in-reply-to` rule. */
   inReplyTo?: string;
+  /** Keep only the thread one member message's own wire id strictly equals — at most one thread — the shared `--id` rule. */
+  id?: string;
   /** Keep only threads where at least one member message is addressed to `group:<channel>:*` — the shared `--channel` rule. */
   channel?: string;
   /** Keep only threads where at least one member message carries this exact P0..P3 band — the shared `--priority` rule. */
@@ -95,6 +103,8 @@ export interface FleetAgentConversationsArgs {
   from?: string;
   /** Drop threads where any member message was sent under this agent's labels — the shared `--exclude-from` rule. */
   excludeFrom?: string;
+  /** Keep only threads holding the two-way exchange `agent` and this agent name — the shared `--with` rule; needs `agent`, refused without it. */
+  with?: string;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
   limit?: number;
 }
@@ -106,7 +116,9 @@ export interface FleetAgentConversationsArgs {
  * the same value rules `phm agents conversations` flags and the API
  * params share: the label keys printable routing labels, `waiting`/
  * `blocked` JSON booleans (`false` is the same as absent), `state` one
- * exact CONVERSATION_STATES member, `since`/`before` the shared
+ * exact CONVERSATION_STATES member, `with` a printable routing label that
+ * needs `agent` — the same needs-`--agent` rule the CLI flag and the
+ * `phm messages --with` read share — `since`/`before` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved to a safe non-negative
  * epoch-ms integer — `before` the exclusive upper bound composing with
  * `since` into one `[since, before)` window on last activity —
@@ -124,6 +136,7 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     parsed[key] = value;
   }
+  if (parsed.with !== undefined && parsed.agent === undefined) return null;
   for (const key of ['waiting', 'blocked'] as const) {
     const value = args[key];
     if (value === undefined) continue;
@@ -209,10 +222,12 @@ export async function readFleetAgentConversations(
     ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.channel === undefined ? {} : { channel: args.channel }),
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.with === undefined ? {} : { with: args.with }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
   const result: AgentConversations = read(query);

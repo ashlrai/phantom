@@ -240,14 +240,20 @@ export async function executeSend(
     if (outcome.status === 'drafted') await rememberDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
     return outcome;
   }
-  await appendSendLog(options.runsDir, {
-    at,
-    transport: attempt.transport,
-    recipient: attempt.recipient.trim(),
-    credentialHandle: attempt.credentialHandle ?? null,
-    result: 'sent',
-  });
+  // The 'sent' draft record is the per-reply delivery evidence a later pass
+  // dedupes on, so it lands before the audit append. A send-log store failure
+  // is bookkeeping too: it cannot rewrite a completed send, and throwing here
+  // would leave the reply pending and resend it on the next pass.
   await resolveSentDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
+  try {
+    await appendSendLog(options.runsDir, {
+      at,
+      transport: attempt.transport,
+      recipient: attempt.recipient.trim(),
+      credentialHandle: attempt.credentialHandle ?? null,
+      result: 'sent',
+    });
+  } catch { /* See above: the send already happened. */ }
   return outcome;
 }
 

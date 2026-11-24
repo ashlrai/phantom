@@ -381,6 +381,150 @@ describe('listBusClaims', () => {
     expect(listBusClaims({ root, now: NOW, origin: 'bogus' as never })).toMatchObject({ status: 'invalid' });
     expect(listBusClaims({ root, now: NOW, origin: 'queue' as never })).toMatchObject({ status: 'invalid' });
   });
+
+  it('drops one holder under excludeOwner, resolving every label of one identity', () => {
+    const root = tempDir('v2claim-list-');
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root }).status).toBe('created');
+    const atlasId = stableAgentId('atlas');
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    acquire('pr:ashlrai/phantom#3', 'lane-atlas', 600_000, 'op-3', root);
+    acquire('queue:RQ-B', 'unregistered', 600_000, 'op-4', root);
+
+    for (const ref of ['atlas', 'agent:atlas', 'lane-atlas', atlasId]) {
+      const listed = listBusClaims({ root, now: NOW, excludeOwner: ref });
+      expect(listed).toMatchObject({ status: 'ok', source: 'available',
+        excludeOwner: { ref, identity: atlasId, registry: 'available' } });
+      if (listed.status !== 'ok') throw new Error('expected ok');
+      expect(listed.claims.map(row => row.owner)).toEqual(['unregistered']);
+    }
+    // An unregistered ref falls back to the exact owner label, and says so.
+    const labelOnly = listBusClaims({ root, now: NOW, excludeOwner: 'unregistered' });
+    expect(labelOnly).toMatchObject({ status: 'ok',
+      excludeOwner: { ref: 'unregistered', identity: null, registry: 'available' } });
+    if (labelOnly.status !== 'ok') throw new Error('expected ok');
+    expect(labelOnly.claims.map(row => row.owner).sort()).toEqual(['agent:atlas', 'atlas', 'lane-atlas']);
+    // owner and excludeOwner compose: include atlas's claims minus atlas's claims lists nothing.
+    expect(listBusClaims({ root, now: NOW, owner: 'atlas', excludeOwner: 'atlas' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    expect(listBusClaims({ root, now: NOW, excludeOwner: 'atlas' }))
+      .toMatchObject({ status: 'ok', claims: [{ owner: 'unregistered' }] });
+    // A malformed exclude-owner is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, excludeOwner: 'bad owner' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, excludeOwner: '' })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('matches only the exact owner label under excludeOwner when the registry is unreadable', () => {
+    const root = tempDir('v2claim-list-');
+    registerAgentIdentity({ handle: 'atlas', aliases: ['lane-atlas'] }, { root });
+    acquire('repo:ashlrai/phantom', 'atlas', 600_000, 'op-1', root);
+    acquire('queue:RQ-A', 'agent:atlas', 600_000, 'op-2', root);
+    writeFileSync(join(root, 'agent-identities', 'registry.json'), 'corrupt');
+    const listed = listBusClaims({ root, now: NOW, excludeOwner: 'atlas' });
+    expect(listed).toMatchObject({ status: 'ok', source: 'available',
+      excludeOwner: { ref: 'atlas', identity: null, registry: 'unavailable' } });
+    if (listed.status !== 'ok') throw new Error('expected ok');
+    expect(listed.claims.map(row => row.owner)).toEqual(['agent:atlas']);
+  });
+
+  it('keeps claims whose rendered fields carry the contains needle', () => {
+    const root = tempDir('v2claim-list-');
+    acquire('repo:ashlrai/phantom', 'dot-main', 600_000, 'op-1', root);
+    acquire('queue:RQ-OTHER', 'other-seat', 600_000, 'op-2', root);
+    expect(acquireCoordination({ root, origin: 'message', key: 'queue:env-msg-1',
+      owner: 'nova', leaseMs: 600_000, leaseUntil: NOW + 600_000,
+      sourceId: 'env-msg-1:1:1', now: NOW }).status).toBe('acquired');
+    expect(acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'ashlrai/other', path: 'src' }), owner: 'team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'ashlrai/other', path: 'src' }, now: NOW }).status).toBe('acquired');
+
+    // The needle is a case-insensitive substring over the claim's own fields:
+    // 'phantom' names only the repo claim's key, 'env-msg-1:1' and 'team-ev'
+    // name only the two sourceIds (never their keys), and 'other' names the
+    // queue claim's key plus the team claim's key and repo target.
+    const phantom = listBusClaims({ root, now: NOW, contains: 'PHANTOM' });
+    expect(phantom).toMatchObject({ status: 'ok', source: 'available' });
+    if (phantom.status !== 'ok') throw new Error('expected ok');
+    expect(phantom.claims.map(row => row.key)).toEqual(['repo:ashlrai/phantom']);
+
+    expect(listBusClaims({ root, now: NOW, contains: 'env-msg-1:1' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'queue:env-msg-1' }] });
+    expect(listBusClaims({ root, now: NOW, contains: 'team-ev' }))
+      .toMatchObject({ status: 'ok', claims: [{ origin: 'team' }] });
+    const others = listBusClaims({ root, now: NOW, contains: 'other' });
+    if (others.status !== 'ok') throw new Error('expected ok');
+    expect(others.claims.map(row => row.key).sort()).toEqual(['queue:RQ-OTHER', 'team:ashlrai/other::src']);
+
+    // contains composes with the other filters.
+    expect(listBusClaims({ root, now: NOW, contains: 'other', owner: 'team-lane' }))
+      .toMatchObject({ status: 'ok', claims: [{ origin: 'team' }] });
+    expect(listBusClaims({ root, now: NOW, contains: 'other', origin: 'message' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    expect(listBusClaims({ root, now: NOW, contains: 'other', excludeOwner: 'other-seat' }))
+      .toMatchObject({ status: 'ok', claims: [{ origin: 'team' }] });
+
+    // A blank or oversized needle is invalid, never a silent empty list.
+    expect(listBusClaims({ root, now: NOW, contains: '   ' })).toMatchObject({ status: 'invalid' });
+    expect(listBusClaims({ root, now: NOW, contains: 'x'.repeat(513) })).toMatchObject({ status: 'invalid' });
+  });
+
+  it('keeps claims whose recorded started lands inside the since/before window', () => {
+    const root = tempDir('v2claim-list-');
+    // Two live resource claims taken at different instants: started is the
+    // lease's ISO acquisition time and both stay live at NOW.
+    acquire('repo:a/old', 'seat-a', 600_000, 'op-old', root, NOW - 120_000);
+    acquire('repo:a/new', 'seat-b', 600_000, 'op-new', root, NOW);
+    // Team and message claims keep no start stamp — started stays null.
+    expect(acquireCoordination({ root, origin: 'team',
+      key: teamClaimKey({ repo: 'a/b', path: 'src' }), owner: 'team-lane',
+      leaseMs: 600_000, leaseUntil: NOW + 600_000, sourceId: 'team-ev-1',
+      teamTarget: { repo: 'a/b', path: 'src' }, now: NOW }).status).toBe('acquired');
+    expect(acquireCoordination({ root, origin: 'message', key: 'queue:env-msg-1',
+      owner: 'nova', leaseMs: 600_000, leaseUntil: NOW + 600_000,
+      sourceId: 'env-msg-1:1:1', now: NOW }).status).toBe('acquired');
+
+    const all = listBusClaims({ root, now: NOW });
+    expect(all).toMatchObject({ status: 'ok', source: 'available' });
+    if (all.status !== 'ok') throw new Error('expected ok');
+    expect(all.claims).toHaveLength(4);
+    expect(all.claims.find(row => row.origin === 'team')?.started).toBeNull();
+    expect(all.claims.find(row => row.origin === 'message')?.started).toBeNull();
+
+    const keys = (result: ReturnType<typeof listBusClaims>) => {
+      if (result.status !== 'ok') throw new Error(`expected ok, got ${result.status}`);
+      return result.claims.map(row => row.key).sort();
+    };
+    // since is the inclusive lower bound on started: only the claim taken at
+    // NOW reaches a cutoff 60s back; the older one and the stamp-less rows drop.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 60_000 }))).toEqual(['repo:a/new']);
+    // before is the exclusive upper bound on the same field.
+    expect(keys(listBusClaims({ root, now: NOW, before: NOW - 60_000 }))).toEqual(['repo:a/old']);
+    // The pair reads one [since, before) window.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 180_000, before: NOW - 60_000 })))
+      .toEqual(['repo:a/old']);
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW - 60_000, before: NOW + 60_000 })))
+      .toEqual(['repo:a/new']);
+    // Boundaries match the shared rule: a start stamped exactly at since
+    // lists, one stamped exactly at before does not.
+    expect(keys(listBusClaims({ root, now: NOW, since: NOW }))).toEqual(['repo:a/new']);
+    expect(keys(listBusClaims({ root, now: NOW, before: NOW }))).toEqual(['repo:a/old']);
+    // A window nothing provably started inside stays an honest empty list.
+    expect(listBusClaims({ root, now: NOW, since: NOW + 1 }))
+      .toMatchObject({ status: 'ok', source: 'available', claims: [] });
+    // The window composes with the other filters.
+    expect(listBusClaims({ root, now: NOW, since: NOW - 60_000, owner: 'seat-b' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:a/new' }] });
+    expect(listBusClaims({ root, now: NOW, before: NOW - 60_000, origin: 'resource' }))
+      .toMatchObject({ status: 'ok', claims: [{ key: 'repo:a/old' }] });
+    expect(listBusClaims({ root, now: NOW, since: NOW - 60_000, origin: 'team' }))
+      .toMatchObject({ status: 'ok', claims: [] });
+    // Non-integer or negative cutoffs are invalid, never a silent widen.
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(listBusClaims({ root, now: NOW, since: bad })).toMatchObject({ status: 'invalid' });
+      expect(listBusClaims({ root, now: NOW, before: bad })).toMatchObject({ status: 'invalid' });
+    }
+  });
 });
 
 describe('claimBusWorkJob', () => {
@@ -708,5 +852,33 @@ describe('phm agents bus claim', () => {
     // 'queue' is a read-only path-observation class, never a stored claim origin.
     expect(await cli(['claim', 'list', '--origin', 'bogus'])).toMatchObject({ code: 2 });
     expect(await cli(['claim', 'list', '--origin', 'queue'])).toMatchObject({ code: 2 });
+  });
+
+  it('filters claim list by --exclude-owner and --contains', async () => {
+    const now = Date.now();
+    const lease = { leaseMs: 600_000, leaseUntil: now + 600_000, now };
+    expect(acquireCoordination({ root: cliRoot, origin: 'resource', key: 'queue:RQ-CLI-RES',
+      owner: 'dot-main', sourceId: 'res-1', ...lease }).status).toBe('acquired');
+    expect(acquireCoordination({ root: cliRoot, origin: 'message', key: 'queue:cli-msg-1',
+      owner: 'nova', sourceId: 'msg-1:1:1', ...lease }).status).toBe('acquired');
+    expect(acquireCoordination({ root: cliRoot, origin: 'board', key: 'board:cli-item',
+      owner: 'board-op', sourceId: 'cli-item', ...lease }).status).toBe('acquired');
+
+    const others = await cli(['claim', 'list', '--exclude-owner', 'dot-main']);
+    expect(others.code).toBe(0);
+    expect(others.json.claims.map((row: { owner: string }) => row.owner).sort()).toEqual(['board-op', 'nova']);
+    expect(others.json.excludeOwner).toMatchObject({ ref: 'dot-main', registry: 'missing' });
+
+    const text = await cli(['claim', 'list', '--contains', 'cli-msg']);
+    expect(text.code).toBe(0);
+    expect(text.json.claims).toEqual([expect.objectContaining({ key: 'queue:cli-msg-1' })]);
+
+    const human = await cli(['claim', 'list', '--exclude-owner', 'dot-main'], {}, false);
+    expect(human.code).toBe(0);
+    expect(human.text).toContain('excludeOwner=dot-main');
+
+    // Both new flags validate like the rest of the read.
+    expect(await cli(['claim', 'list', '--exclude-owner', 'bad owner'])).toMatchObject({ code: 2 });
+    expect(await cli(['claim', 'list', '--contains', ''])).toMatchObject({ code: 2 });
   });
 });

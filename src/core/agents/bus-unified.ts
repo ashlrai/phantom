@@ -31,7 +31,7 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
+import { BUS_V2_TEXT_MAX, busBodyKind, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
   workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
@@ -85,8 +85,25 @@ interface SendCommon {
    */
   wake?: boolean;
 }
-export interface DirectMessageInput extends SendCommon { to: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
-export interface ChannelPostInput extends SendCommon { channel: string; topic?: string; text: string; thread?: string; refs?: string[]; replyTo?: string }
+export interface DirectMessageInput extends SendCommon {
+  to: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+  replyTo?: string;
+}
+export interface ChannelPostInput extends SendCommon {
+  channel: string;
+  topic?: string;
+  text: string;
+  /** v2 conversational body kind; default `note`. */
+  kind?: 'note' | 'context';
+  thread?: string;
+  refs?: string[];
+  replyTo?: string;
+}
 export interface LabelPostInput extends SendCommon {
   /** Plain routing label the message addresses; the reserved prefixes are refused. */
   to: string;
@@ -175,7 +192,8 @@ function noteBody(input: { kind?: 'note' | 'context'; text: string; thread?: str
   };
 }
 
-function noteFields(input: { text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
+function noteFields(input: { kind?: unknown; text: unknown; thread?: unknown; refs?: unknown; replyTo?: unknown }): string | null {
+  if (input.kind !== undefined && input.kind !== 'note' && input.kind !== 'context') return 'Kind must be note or context.';
   if (!text(input.text)) return `Text must be 1-${BUS_V2_TEXT_MAX} characters.`;
   if (input.thread !== undefined && (typeof input.thread !== 'string' || !THREAD.test(input.thread))) return 'Thread must be a printable label.';
   if (input.refs !== undefined && (!Array.isArray(input.refs) || input.refs.length > 32 ||
@@ -247,7 +265,6 @@ export async function postLabelMessage(input: LabelPostInput, options: UnifiedBu
   const problem = noteFields(input);
   if (problem) return refuse('invalid', problem);
   const kind = input.kind ?? 'note';
-  if (kind !== 'note' && kind !== 'context') return refuse('invalid', 'Kind must be note or context.');
   const to = input.to;
   if (typeof to !== 'string' || !THREAD.test(to) || scrubSecrets(to) !== to) {
     return refuse('invalid', 'Address must be a printable routing label.');
@@ -1118,9 +1135,12 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
 
 /**
  * One page of an identity's inbox: DMs and handoffs to `agent:<handle>`,
- * traffic still addressed to its bare handle, stable id or legacy aliases,
- * and posts in its channels (minus its own and minus `group.presence`
- * heartbeats, which are observations with their own read, never mail).
+ * traffic still addressed to any label that resolves to its identity — the
+ * bare handle, stable id or legacy aliases, exact first then lowercase, the
+ * same addressed-to fold `bus next`, `work mine`, `handoff-receive` and the
+ * conversations reads apply — and posts in its channels (minus its own and
+ * minus `group.presence` heartbeats, which are observations with their own
+ * read, never mail).
  * A handoff is the `channel:'handoff'` stamp or the receivable
  * `worker-handoff` body — `fleet handoff-send` posts the body on a legacy
  * envelope — under any of those addresses, so an unstamped or
@@ -1174,7 +1194,14 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * the value — the same exact-envelope match `comms bus read|watch --id`,
  * `fleet bus-follow --id` and `fleet_bus_inbox`'s `id` apply, never a
  * substring — so "is envelope X still pending for me" is one filtered
- * read that composes with every other filter.
+ * read that composes with every other filter. `bodyKind` keeps only mail
+ * whose body carries that exact kind discriminator — the v2 `kind` field,
+ * a `worker-handoff` assignment, a notice kind, a bus-transport v1
+ * `protocol.kind` or a `type`/`schema` notice discriminator, the same
+ * discriminator `busBodySummary` switches on — matched exactly and
+ * case-sensitively, so "which of my pending mail are work results" or
+ * "which are wake requests" is one filtered read; a body carrying no
+ * discriminator never matches.
  * Returned highest
  * priority first; `nextCursor` covers every scanned row, so callers persist
  * it only after handling the page. Claimable work and worker-handoff items
@@ -1194,12 +1221,12 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string } = {},
+    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
   const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
-  const inReplyTo = page.inReplyTo, idFilter = page.id;
+  const inReplyTo = page.inReplyTo, idFilter = page.id, bodyKindFilter = page.bodyKind;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1228,6 +1255,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
     return { status: 'invalid', reason: 'Invalid message id.' };
   }
+  if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
+    return { status: 'invalid', reason: 'Invalid body kind.' };
+  }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
   }
@@ -1246,9 +1276,10 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   const target = addressing(read.registry, ref);
   if (!target) return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   const self = `${AGENT_ADDRESS_PREFIX}${target.identity.handle}`;
-  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, labelIdentityOf(read.registry));
+  const identityOf = labelIdentityOf(read.registry);
+  const fromMatch = page.from === undefined ? undefined : agentRefAddressMatcher(page.from, read.registry, identityOf);
   const excludeFromMatch = page.excludeFrom === undefined ? undefined
-    : agentRefAddressMatcher(page.excludeFrom, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(page.excludeFrom, read.registry, identityOf);
   const messages: InboxMessage[] = [];
   let matched = 0;
   let cursor = after;
@@ -1272,7 +1303,15 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
       // channel's group address from anyone else — the same coverage
       // `work mine` handoffs and `handoff-receive` apply.
       const isHandoff = envelope.channel === 'handoff' || isWorkerHandoffBody(envelope.body);
-      const toLabel = target.labels.has(envelope.to);
+      // "Addressed to this identity" is the same label resolution every other
+      // addressed-to read applies — handle, `agent:` address, stable id or
+      // alias, exact first then lowercase — so a case-folded spelling of a
+      // registered label reaches the same inbox `bus next`, `work mine`,
+      // `handoff-receive` and the conversations reads already count as its
+      // pending work; a spelling that resolves to no identity still reaches
+      // nobody. The channel self-exclusion stays on the exact stored labels,
+      // the same rule `agentPendingAddressMatcher` keeps.
+      const toLabel = identityOf(envelope.to) === target.identity.id;
       const toChannel = channel !== null && !target.labels.has(envelope.from);
       if (isHandoff && (toLabel || toChannel)) kind = 'handoff';
       else if (envelope.to === self) kind = 'dm';
@@ -1290,6 +1329,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
+        (bodyKindFilter === undefined || busBodyKind(envelope.body) === bodyKindFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
@@ -1415,18 +1455,28 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
  * work and job citations then get the page-level `held`/`job` evidence
  * `readAgentInbox` computes — one hold-store read and one claims-joined feed
  * read per page, never per hint. `wh-…` ids are claim-holder hints, not
- * envelope ids, and pass through untouched.
+ * envelope ids, and pass through untouched. `match` names the referent-body
+ * verdicts the page's filters need — the `job` citation rule plus the
+ * `thread` label, `inReplyTo` citation and `bodyKind` discriminator the
+ * inbox/channel reads apply —
+ * each decided on the live body here, where it is still in hand, and
+ * reported as the hint ids that provably match.
  */
 function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | undefined,
-  registry: AgentRegistry, options: UnifiedBusOptions, job?: string):
-  { contexts: Map<string, AgentWakeMessage>; jobMatches: Set<string> } {
+  registry: AgentRegistry, options: UnifiedBusOptions,
+  match?: { job?: string; thread?: string; inReplyTo?: string; bodyKind?: string }):
+  { contexts: Map<string, AgentWakeMessage>; jobMatches: Set<string>;
+    threadMatches: Set<string>; inReplyToMatches: Set<string>; bodyKindMatches: Set<string> } {
   const contexts = new Map<string, AgentWakeMessage>();
   const jobMatches = new Set<string>();
+  const threadMatches = new Set<string>();
+  const inReplyToMatches = new Set<string>();
+  const bodyKindMatches = new Set<string>();
   const ordinary = rows.filter(row => row.kind === 'bus.send' && !CLAIM_HOLDER_WAKE_ID.test(row.id));
-  if (ordinary.length === 0) return { contexts, jobMatches };
+  if (ordinary.length === 0) return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
   if (scan === undefined || scan.source === 'unavailable') {
     for (const row of ordinary) contexts.set(row.id, { status: 'unknown' });
-    return { contexts, jobMatches };
+    return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
   }
   const byId = new Map<string, BusInboxReceipt>();
   for (const receipt of scan.rows) byId.set(receipt.envelope.id, receipt);
@@ -1468,10 +1518,15 @@ function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | u
     // The referent names the filtered job through the same rule every other
     // read surface's --job applies — a feed jobId citation, a worker-handoff
     // taskId or a job:<id> thread label — decided on the live body here,
-    // where it is still in hand.
-    if (job !== undefined && busBodyJobMatch(body, job)) jobMatches.add(row.id);
+    // where it is still in hand. The thread label and reply citation are the
+    // same own-field matches the inbox and channel reads' --thread and
+    // --in-reply-to apply to the message a hint refers to.
+    if (match?.job !== undefined && busBodyJobMatch(body, match.job)) jobMatches.add(row.id);
+    if (match?.thread !== undefined && busBodyThread(body) === match.thread) threadMatches.add(row.id);
+    if (match?.inReplyTo !== undefined && busBodyInReplyToMatch(body, match.inReplyTo)) inReplyToMatches.add(row.id);
+    if (match?.bodyKind !== undefined && busBodyKind(body) === match.bodyKind) bodyKindMatches.add(row.id);
   }
-  return { contexts, jobMatches };
+  return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
 }
 
 /** Human suffix naming the message an ordinary wake hint refers to; '' on claim-holder hints. */
@@ -1515,7 +1570,7 @@ export function busInboxJobMarker(job: BusEnvelopeLookupJob): string {
 const WAKE_HINT_LABEL = /^[\x21-\x7e]{1,256}$/;
 
 export type WakePage = { status: 'ok'; agent: string;
-  /** 'identity' matched every label of a registered identity plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
+  /** 'identity' matched every spelling that resolves to a registered identity (exact, then lowercase) plus its member channels; 'label' is the literal-`to` fallback for a ref that resolves to no identity — `agent` then reports the queried label verbatim. */
   scope: 'identity' | 'label';
   wakes: AgentWakeRow[];
   /** Every hint the bounded queue read matched for the agent, before its row cap; `wakes` shows only the newest slice. With a `job` filter this counts the proven job matches on the resolved page instead — the same accepted-hints count, never a total beyond `truncated`. */
@@ -1533,17 +1588,18 @@ export type WakePage = { status: 'ok'; agent: string;
  * read. `matched`/`truncated` carry the same queue-tail semantics
  * `readAgentWakes` documents — `matched` counts every hint the bounded
  * tail accepted before the row cap, or the proven matches on the resolved
- * page under `job`/`contains`/`priority`, and `truncated` marks older
- * bytes or matched rows beyond the returned slice.
+ * page under `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`,
+ * and `truncated` marks older bytes or matched rows beyond the returned
+ * slice.
  */
 export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, the exclusive upper time bound and one exact hint id. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, the exclusive upper time bound and one exact hint id. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1555,6 +1611,18 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   const id = filter.id;
   if (id !== undefined && (typeof id !== 'string' || !THREAD.test(id))) {
     return { ok: false, reason: 'Invalid message id.' };
+  }
+  const thread = filter.thread;
+  if (thread !== undefined && (typeof thread !== 'string' || !THREAD.test(thread))) {
+    return { ok: false, reason: 'Invalid thread label.' };
+  }
+  const inReplyTo = filter.inReplyTo;
+  if (inReplyTo !== undefined && (typeof inReplyTo !== 'string' || !THREAD.test(inReplyTo))) {
+    return { ok: false, reason: 'Invalid in-reply-to id.' };
+  }
+  const bodyKind = filter.bodyKind;
+  if (bodyKind !== undefined && (typeof bodyKind !== 'string' || !THREAD.test(bodyKind))) {
+    return { ok: false, reason: 'Invalid body kind.' };
   }
   const priority = filter.priority;
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
@@ -1585,6 +1653,9 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
     ...(priority === undefined ? {} : { priority }),
     ...(before === undefined ? {} : { before }),
     ...(id === undefined ? {} : { id }),
+    ...(thread === undefined ? {} : { thread }),
+    ...(inReplyTo === undefined ? {} : { inReplyTo }),
+    ...(bodyKind === undefined ? {} : { bodyKind }),
     ...(containsNeedle === undefined ? {} : { containsNeedle }) };
 }
 
@@ -1597,10 +1668,11 @@ type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; trun
  * `match` decides addressee scope inside `readBusWakes`, so `matched`
  * counts only rows the whole filter set accepts; one bounded store scan
  * then resolves each row's `claimHolder`/`message` evidence and the
- * `job`/`contains`/`priority` verdicts filter on that resolved text — an
- * unreadable queue is `unavailable`, and a `job`/`contains`/`priority`
- * read whose bus store cannot be read fails closed the same way, never
- * an empty page passed off as "no wakes".
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` verdicts
+ * filter on that resolved text — an unreadable queue is `unavailable`,
+ * and a `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` read
+ * whose bus store cannot be read fails closed the same way, never an
+ * empty page passed off as "no wakes".
  */
 function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, registry: AgentRegistry,
   match: (wake: BusWakeRow) => boolean, filter: ParsedWakeFilter & { ok: true }): WakeRowsPage {
@@ -1611,21 +1683,39 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
   const scan = wakes.wakes.length === 0 ? undefined
     : scanBusInbox({ root: options.root, now: options.now });
   const job = filter.job, containsNeedle = filter.containsNeedle, priority = filter.priority;
-  // A job, contains or priority verdict needs the resolved referent; when the
-  // store cannot be read every hint's citation, summary and band are unknown,
-  // so the filtered read fails closed instead of reporting an empty page as
-  // "no wakes for this job", "no wakes mentioning this" or "no urgent wakes".
-  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined) &&
+  const thread = filter.thread, inReplyTo = filter.inReplyTo, bodyKind = filter.bodyKind;
+  // A job, contains, priority, thread, reply-citation or body-kind verdict
+  // needs the resolved referent; when the store cannot be read every hint's
+  // citation, summary, band and body fields are unknown, so the filtered
+  // read fails closed instead of reporting an empty page as "no wakes for
+  // this job", "no wakes mentioning this", "no urgent wakes", "no wakes in
+  // this thread", "no wakes answering that message" or "no wakes about
+  // this body kind".
+  if ((job !== undefined || containsNeedle !== undefined || priority !== undefined ||
+       thread !== undefined || inReplyTo !== undefined || bodyKind !== undefined) &&
       scan !== undefined && scan.source === 'unavailable') {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
-  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, job);
+  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, { job, thread, inReplyTo, bodyKind });
   const shown = wakes.wakes.filter(row => {
     if (job !== undefined) {
       const holder = contexts.get(row.id);
       const jobMatch = typeof holder === 'object' ? holder.jobId === job : resolved.jobMatches.has(row.id);
       if (!jobMatch) return false;
+    }
+    // A claim-holder hint's referent is a work.status receipt, which carries
+    // no thread label or reply citation, so wh-… ids never enter these sets.
+    if (thread !== undefined && !resolved.threadMatches.has(row.id)) return false;
+    if (inReplyTo !== undefined && !resolved.inReplyToMatches.has(row.id)) return false;
+    if (bodyKind !== undefined) {
+      // The citing work.status receipt behind a resolved claim-holder hint
+      // provably carries that body kind; 'unresolved'/'unknown' holders and
+      // ordinary hints name no provable kind and never match.
+      const holder = contexts.get(row.id);
+      const kindMatch = typeof holder === 'object' ? bodyKind === 'work.status'
+        : resolved.bodyKindMatches.has(row.id);
+      if (!kindMatch) return false;
     }
     if (containsNeedle !== undefined &&
         !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
@@ -1652,13 +1742,16 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
         ...(claimHolder === undefined ? {} : { claimHolder }),
         ...(message === undefined ? {} : { message }) };
     }),
-    matched: job === undefined && containsNeedle === undefined && priority === undefined ? wakes.matched ?? 0 : shown.length,
+    matched: job === undefined && containsNeedle === undefined && priority === undefined &&
+      thread === undefined && inReplyTo === undefined && bodyKind === undefined ? wakes.matched ?? 0 : shown.length,
     truncated: wakes.truncated ?? false };
 }
 
 /**
- * Wake hints addressed to this identity under any label it resolves through
- * (address, bare handle, stable id or alias) or to one of its channels after
+ * Wake hints addressed to this identity under any spelling that resolves to
+ * it — the `agent:<handle>` address, bare handle, stable id or alias, exact
+ * first then lowercase, the same addressed-to fold the inbox read and every
+ * other addressed-to match applies — or to one of its channels after
  * `sinceAt`. A ref that resolves to no registered identity keeps exact-label
  * matching instead — `scope:'label'`, `agent` the queried label — so hints
  * queued under a bare coordination or routing label (claim-holder fan-out
@@ -1728,6 +1821,39 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * matching (they name no provable band), `matched` counting the proven
  * matches on the resolved page, an unreadable bus store answering
  * `unavailable`, and a band outside P0..P3 answering `invalid`.
+ * `filter.thread` keeps only hints whose resolved referent is a
+ * `note`/`context` body carrying that v2 thread label — the same
+ * `busBodyThread` own-field match `inbox --thread` and `channel read
+ * --thread` apply to the message a hint refers to — so "which wake was
+ * about thread T" is one filtered read; a claim-holder `wh-…` hint's
+ * referent is a `work.status` receipt, which carries no thread label, so
+ * those hints never match, an `unresolved`/`unknown` referent names no
+ * provable thread and never matches, an unreadable bus store answers
+ * `unavailable`, `matched` counts the proven matches on the resolved
+ * page, and a malformed label answering `invalid`. `filter.inReplyTo`
+ * keeps only hints whose resolved referent body cites that envelope id
+ * through its own `inReplyTo` field — the same own-property exact match
+ * `inbox --in-reply-to`, `channel read --in-reply-to`, `phm messages
+ * --in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet
+ * bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply,
+ * never the `replyTo` alias or a substring — so "did the reply to
+ * envelope X trigger a wake" is one filtered read; claim-holder hints
+ * never match for the same reason, `unresolved`/`unknown` referents
+ * never match, the unreadable-store and `matched` rules are `thread`'s,
+ * and a malformed id answering `invalid`.
+ * `filter.bodyKind` keeps only hints whose resolved referent body carries
+ * that exact kind discriminator — the same `busBodyKind` match
+ * `inbox --body-kind` and `channel read --body-kind` apply to the message
+ * a hint refers to: the v2 `kind` field, a `worker-handoff` assignment,
+ * a bus-transport v1 `protocol.kind`, or a `type`/`schema` notice
+ * discriminator, matched exactly and case-sensitively so "which wakes
+ * were about `work.status` receipts" or "which wakes cite `work.post`
+ * announcements" is one filtered read; a claim-holder `wh-…` hint's
+ * citing receipt provably carries `work.status`, so those hints match
+ * only that kind and `unresolved`/`unknown` referents never match, an
+ * unreadable bus store answers `unavailable`, `matched` counts the
+ * proven matches on the resolved page, and a malformed value answering
+ * `invalid`.
  * `filter.before` keeps only hints recorded strictly before that
  * epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
  * applies on the hint's own queue time, composing with `sinceAt`'s
@@ -1747,18 +1873,23 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
   if (target === undefined && !WAKE_HINT_LABEL.test(ref)) {
     return { status: 'unknown-agent', reason: 'Agent is not a registered identity.' };
   }
+  const identityOf = labelIdentityOf(read.registry);
   const fromMatch = parsed.from === undefined ? undefined
-    : agentRefAddressMatcher(parsed.from, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(parsed.from, read.registry, identityOf);
   const excludeFromMatch = parsed.excludeFrom === undefined ? undefined
-    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, labelIdentityOf(read.registry));
+    : agentRefAddressMatcher(parsed.excludeFrom, read.registry, identityOf);
   const channelPrefix = parsed.channel === undefined ? undefined : `group:${parsed.channel}:`;
   const page = readWakeRows(sinceAt, options, read.registry, wake =>
     (parsed.id === undefined || wake.id === parsed.id) &&
     (channelPrefix === undefined || wake.to.startsWith(channelPrefix)) &&
     (fromMatch === undefined || fromMatch(wake.from)) &&
     (excludeFromMatch === undefined || !excludeFromMatch(wake.from)) &&
+    // The addressee label folds to its identity exactly as the inbox read
+    // and every other addressed-to match does; the channel self-exclusion
+    // stays on the exact stored labels like `agentPendingAddressMatcher`.
     (target !== undefined
-      ? target.labels.has(wake.to) || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
+      ? identityOf(wake.to) === target.identity.id
+        || (channelOf(wake.to, target.channels) !== null && !target.labels.has(wake.from))
       : wake.to === ref), parsed);
   if (page.status !== 'ok') return page;
   return { status: 'ok', agent: target?.identity.handle ?? ref,
@@ -1773,7 +1904,8 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * claim-holder fan-out writes, which no identity ref can name). Rows
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
- * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`
+ * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/
+ * `thread`/`inReplyTo`/`bodyKind`
  * filters behave identically — `channel` keeps only hints whose own `to`
  * label sits under `group:<name>:*`, the room prefix every other bus read's
  * channel filter matches, decided on the address alone inside the
@@ -1782,8 +1914,9 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
  * hint's queue time — including the fail-closed
  * `unavailable` when a
- * `job`/`contains`/`priority` verdict needs a bus store that cannot be
- * read. An unreadable registry or queue is `unavailable`, never an
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` verdict
+ * needs a bus store that cannot be read. An unreadable registry or queue is
+ * `unavailable`, never an
  * empty page passed off as "no wakes". `filter.id` keeps only the hint
  * whose own id is strictly equal to the value — the triggering envelope's
  * wire id on a `bus.send` hint, the `wh-…` claim-holder id on those — the
@@ -1981,6 +2114,18 @@ export interface ChannelReadOptions {
    * one filtered read of the transcript.
    */
   id?: string;
+  /**
+   * Body-kind filter: only posts whose body carries this exact kind
+   * discriminator — the v2 `kind` field (`note`, `context`, `work.post`,
+   * `work.claim`, `work.status`, `work.result`, `work.release`, `wake`), a
+   * `worker-handoff` assignment or a notice kind, a bus-transport v1
+   * `protocol.kind`, or a `type`/`schema` notice discriminator — the same
+   * discriminator `busBodySummary` switches on, matched exactly and
+   * case-sensitively. A body carrying no discriminator never matches, so
+   * "which room posts are work results" or "which are wake requests" is one
+   * filtered read of the transcript, composing with every other filter.
+   */
+  bodyKind?: string;
   after?: number;
   limit?: number;
 }
@@ -2024,7 +2169,14 @@ export type ChannelReadPage =
  * field — the same own-property exact match `inbox --in-reply-to`,
  * `phm messages --in-reply-to` and the raw bus reads apply, never the
  * `replyTo` alias or a substring — so "which room posts answer envelope
- * X" is one filtered read of the transcript. `nextCursor`
+ * X" is one filtered read of the transcript. `bodyKind` keeps only posts
+ * whose body carries that exact kind discriminator — the v2 `kind` field,
+ * a `worker-handoff` assignment, a notice kind, a bus-transport v1
+ * `protocol.kind` or a `type`/`schema` notice discriminator, the same
+ * discriminator `busBodySummary` switches on — matched exactly and
+ * case-sensitively, so "which room posts are work results" or "which are
+ * wake requests" is one filtered read of the transcript; a body carrying
+ * no discriminator never matches. `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -2040,7 +2192,7 @@ export type ChannelReadPage =
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
   const countMatched = page.matched === true, since = page.since, before = page.before, inReplyTo = page.inReplyTo;
-  const idFilter = page.id;
+  const idFilter = page.id, bodyKindFilter = page.bodyKind;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -2061,6 +2213,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (idFilter !== undefined && (typeof idFilter !== 'string' || !THREAD.test(idFilter))) {
     return { status: 'invalid', reason: 'Invalid message id.' };
+  }
+  if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
+    return { status: 'invalid', reason: 'Invalid body kind.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -2118,6 +2273,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (inReplyTo === undefined || busBodyInReplyToMatch(body, inReplyTo)) &&
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
+        (bodyKindFilter === undefined || busBodyKind(body) === bodyKindFilter) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;

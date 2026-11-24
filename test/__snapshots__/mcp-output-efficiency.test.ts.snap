@@ -2341,6 +2341,9 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
   {
     "inputSchema": {
       "properties": {
+        "awaiting": {
+          "type": "boolean",
+        },
         "beforeAt": {
           "type": "string",
         },
@@ -2372,6 +2375,9 @@ exports[`native MCP tool inventory > preserves the complete input schema contrac
         },
         "since": {
           "type": "string",
+        },
+        "undelivered": {
+          "type": "boolean",
         },
       },
       "type": "object",

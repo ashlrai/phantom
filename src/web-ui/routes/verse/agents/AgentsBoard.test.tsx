@@ -152,6 +152,59 @@ describe('agents-model', () => {
 });
 
 describe('<AgentsBoard>', () => {
+  it('keeps loading distinct from an empty board and unknown counts', async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    installFetch(call => call.path === '/api/verse/agents' ? pending : json({}));
+    render(<AgentsBoard />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading agents');
+    expect(screen.queryByRole('region', { name: /^Working, 0/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('No agents yet')).not.toBeInTheDocument();
+    await act(async () => { finish(json(board())); });
+    expect(await screen.findByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+    expect(screen.queryByText('Loading agents…')).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed first read distinct from an empty board and lets Retry recover', async () => {
+    let fails = true;
+    installFetch(call => call.path === '/api/verse/agents'
+      ? fails ? json({ error: 'unavailable' }, 503) : json(board()) : json({}));
+    render(<AgentsBoard />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('The board could not be read');
+    expect(screen.queryByText('No agents yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: /^Working, 0/ })).not.toBeInTheDocument();
+    fails = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry board read' }));
+    expect(await screen.findByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+  });
+
+  it('clears repository, text and Done history filters together to reveal saved work', async () => {
+    const saved = CARDS.map(c => c.column === 'done' ? { ...c, updatedAt: '2000-01-01T00:00:00Z' } : c);
+    installFetch(call => call.path === '/api/verse/agents' ? json(board(saved)) : json({}));
+    render(<AgentsBoard />);
+    await screen.findByRole('button', { name: /Fix login/ });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Repository' }), { target: { value: 'site' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Filter cards' }), { target: { value: 'missing task' } });
+    expect(screen.getByText('No agents match these filters')).toBeInTheDocument();
+    expect(screen.queryByText('No agents yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: 'Filter cards' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Done history' })).toHaveValue('all');
+    expect(screen.getByRole('button', { name: /Old chat/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Fix login/ })).toBeInTheDocument();
+  });
+
+  it('explains empty columns while keeping the populated board available', async () => {
+    installFetch(call => call.path === '/api/verse/agents' ? json(board([CARDS[0]!])) : json({}));
+    render(<AgentsBoard />);
+    await screen.findByRole('button', { name: /Fix login/ });
+    expect(within(screen.getByRole('region', { name: 'Needs you, 0' })).getByText(/Approvals and blocked agents/)).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Ready for review, 0' })).getByText(/Finished work appears here/)).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Done, 0' })).getByText(/Use Done history/)).toBeInTheDocument();
+    expect(screen.queryByText('\u2014')).not.toBeInTheDocument();
+  });
+
   it('draws four columns of cards with seat, branch, reason and spend', async () => {
     server();
     render(<AgentsBoard />);

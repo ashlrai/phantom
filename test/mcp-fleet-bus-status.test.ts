@@ -35,7 +35,7 @@ const probe = (over: Partial<UnifiedBusStatus> = {}): UnifiedBusStatus => ({
   mailbox: { source: 'missing', pending: 0 },
   ownerChat: { source: 'missing', receipts: 0 },
   board: { source: 'available', threads: 1, tasks: 2, pendingDeliveries: 1, claims: 'readable' },
-  seats: { source: 'missing', seats: 0, states: 0, handoffs: 0 },
+  seats: { source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 },
   peerDispatch: { source: 'missing', receipts: 0, unpublished: 0 },
   peerLedger: { source: 'missing', liveRows: 0 },
   sendGate: {

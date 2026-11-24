@@ -18,7 +18,7 @@ import {
   type OwnerThreadReadFilter,
 } from '../core/comms/owner-thread.js';
 
-const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--json]';
+const THREAD_USAGE = 'usage: phm comms thread [--limit <1..200>] [--channel <desktop|telegram|email|imessage|slack>] [--direction <inbound|outbound>] [--since <15m|2h|1d|ISO|epoch-ms>] [--before-at <15m|2h|1d|ISO|epoch-ms>] [--contains <text>] [--reply-to <key>] [--awaiting] [--undelivered] [--json]';
 const SEND_USAGE = 'usage: phm comms send-owner --text <message> [--reply-to <key>] [--idempotency-key <key>] [--json]';
 
 const HELLO_USAGE = 'usage: phm comms owner hello [--json]';
@@ -128,7 +128,7 @@ export async function cmdCommsOwnerStatus(json: boolean, options = ownerThreadOp
 export async function cmdCommsOwner(args: string[], options = ownerThreadOptions()): Promise<number> {
   const verb = args[0];
   if (verb === 'thread') {
-    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
+    const bad = rejectUnknownOptions(args.slice(1), { flags: ['--json', '--awaiting', '--undelivered'], values: ['--limit', '--channel', '--direction', '--since', '--before-at', '--contains', '--reply-to'] });
     if (bad) { console.error(bad.message); console.error(THREAD_USAGE); return 2; }
     const limitRaw = args[args.indexOf('--limit') + 1];
     const limit = args.includes('--limit') ? Number(limitRaw) : 200;
@@ -142,17 +142,29 @@ export async function cmdCommsOwner(args: string[], options = ownerThreadOptions
       console.error(THREAD_USAGE);
       return 2;
     }
-    const view = readOwnerThread(options, limit, parsed.filter);
+    // --awaiting and --undelivered are live-window slices the archive read
+    // never takes, so they stay out of the shared filter parser
+    // `phm fleet owner-history` runs.
+    const filter = args.includes('--awaiting') || args.includes('--undelivered')
+      ? {
+          ...(parsed.filter ?? {}),
+          ...(args.includes('--awaiting') ? { awaiting: true as const } : {}),
+          ...(args.includes('--undelivered') ? { undelivered: true as const } : {}),
+        }
+      : parsed.filter;
+    const view = readOwnerThread(options, limit, filter);
     const json = args.includes('--json');
     const awaiting = new Set(view.awaitingReply ?? []);
+    const undelivered = new Set(view.undeliveredReplies ?? []);
     emit(json, view, view.messages.map(message => {
       const line = `${message.seq} ${message.at} ${message.channel} ${message.direction} ${message.text}`;
       if (message.direction === 'inbound') return awaiting.has(message.id) ? `${line} [awaiting reply]` : line;
+      const marker = undelivered.has(message.id) ? ' [undelivered]' : '';
       const perChannel = view.receipts[message.id];
-      if (!perChannel) return line;
+      if (!perChannel) return `${line}${marker}`;
       const states = Object.entries(perChannel).sort(([a], [b]) => a.localeCompare(b))
         .map(([channel, receipt]) => `${channel}:${receipt.state}`);
-      return states.length ? `${line} [${states.join(' ')}]` : line;
+      return `${line}${marker}${states.length ? ` [${states.join(' ')}]` : ''}`;
     }).join('\n') || '(empty)');
     return 'unavailable' in view ? 1 : 0;
   }

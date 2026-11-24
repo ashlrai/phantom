@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Fifty-eight sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -174,6 +174,16 @@
  *     finish evidence, or jobs that keep hanging instead of ending —
  *     become work instead of sitting in two write-only audit files
  *     `phm jobs stuck` and `phm job show` only ever read live or per-job;
+ *   - the stray-stop reaper's own audit ledger: the {at, lane, job, pid,
+ *     result} rows stopStray appends to stray-stops.jsonl at the runs
+ *     dir root — one per SIGTERM (or already-gone pid) on a live process
+ *     still inside a finished job's worktree, written by the self-tick's
+ *     stray-stop step, `phm fleet stray-stop --apply` and the
+ *     fleet-holds stop route (strayStopBacklogItems below), so recurring
+ *     process leaks — finished jobs leaving children that hold lane
+ *     slots until the next reaper pass — become work instead of sitting
+ *     in a write-only audit file `phm fleet stray-slots` only ever
+ *     serves live;
  *   - the cloud lesson holdout trial's adverse verdicts: the randomized
  *     served-vs-holdout landing comparison lessonTrial folds from the
  *     cloud task files and revert ledgers — overall and per knowledge
@@ -447,6 +457,162 @@
  *     recurring — so a backend whose parents keep finishing empty, a
  *     capture path that keeps erroring, or a gate that keeps blocking
  *     proposals into repair children never became work;
+ *   - the router catalog refresh report series' recurring adverse
+ *     evidence: the router.catalog-refresh.v1 reports refreshCatalog
+ *     writes one per `phm router catalog refresh` run — the weekly
+ *     catalogSchedule unit plus manual runs — to
+ *     <ashlr home>/router/catalog/catalog-refresh-<stamp>.json, each
+ *     carrying per-source probe statuses, the unseen/deprecated/
+ *     proposedRemovals model lists, the unknown list of catalog models
+ *     no ok source could verify, and rejectedRules pattern-table
+ *     rejections (catalogRefreshBacklogItems below). Until now the
+ *     series had no reader at all — each run prints only its own
+ *     report and the artifacts accumulate unread — so a catalog source
+ *     whose probe kept failing (its models never discovered, and its
+ *     owned models never even flagged missing since diffCatalog skips
+ *     unseen marks while an owning source reads unknown), catalog
+ *     models that kept failing verification while staying routable,
+ *     a pattern rule rejected every week, and removal proposals that
+ *     piled up unreviewed never became work;
+ *   - the automations firing journal's recurring adverse evidence: the
+ *     per-transition {at, event, automationId, firingId, dedupeKey,
+ *     repo, state, lane, sourceUrl, laneRef, laneUrl, reason, spendUsd}
+ *     rows journalRecord + appendAutomationJournal write to
+ *     <ashlr home>/automations/firings.jsonl (rotated once to
+ *     firings.1.jsonl) on every firing transition the engine journals —
+ *     'fired', 'dropped', 'deferred', 'dispatched', 'refused',
+ *     'settled', 'reviewed' — folded per (automationId, kind) cell
+ *     across distinct dedupeKeys and UTC days inside the 7-day window
+ *     for the adverse kinds only: 'refused', 'dropped', 'deferred'
+ *     (minus the two deliberate global holds, KILL and no-grant) and
+ *     'settled' rows whose state is 'failed'
+ *     (automationBacklogItems below). Until now the journal's only
+ *     reader was readAutomationJournal — the Verse automations API's
+ *     newest-200 display tail — a point-in-time surface someone had to
+ *     open, so an automation whose lane kept refusing its firings,
+ *     whose dispatched work kept failing, whose queue kept overflowing
+ *     or whose candidates kept waiting out gates and limits never
+ *     became work;
+ *   - the MCP gateway activity journal's recurring policy blocks: the
+ *     per-call {ts, session, caller, tool, verdict, args} rows the
+ *     gateway's audit() in src/core/mcp-gateway.ts appends to
+ *     <account home>/gateway/activity.jsonl through
+ *     recordGatewayActivity on every CallToolRequest — 'deny' and
+ *     'approval_required' verdicts where checkGatewayPolicy refused the
+ *     call, and 'revoked' verdicts where the call arrived on a session
+ *     whose record is revoked or unreadable — folded per
+ *     (caller, tool, verdict) cell across distinct UTC days inside the
+ *     7-day window (gatewayActivityBacklogItems below). Until now the
+ *     journal had no reader at all — readGatewayActivity's only callers
+ *     were the writer's own rotation and tests — so a (caller, tool)
+ *     pair the policy kept denying, a tool whose approval gate kept
+ *     stalling calls, and calls that kept arriving on dead session
+ *     records never became work;
+ *   - the desktop friction-flag journal's reported surfaces: the
+ *     per-flag {v, id, createdAt, repo, tier, lead, flag, source,
+ *     surface, description} rows the console's Flag UI friction action
+ *     appends to ~/.ashlr/router/feedback.jsonl through
+ *     enqueueFrictionFlag — one deliberate authenticated user report
+ *     per row, folded per surface over every retained row inside the
+ *     bounded tail (frictionFlagBacklogItems below). Until now the
+ *     journal had no reader at all — queue-writer.mjs only re-exports
+ *     the writer — so every report a user filed sat in an append-only
+ *     file nobody opened, never work;
+ *   - the Eng Ops autofix ledgers' recurring adverse evidence: the
+ *     per-action LedgerLine rows appendLedger writes to
+ *     <runs>/ledger/autofix.jsonl and the per-transition
+ *     IncidentStatusLine rows record writes to
+ *     <runs>/ledger/incidents.jsonl on every `phm autofix` pass —
+ *     'failed' outcomes, 'refused' and its named variants
+ *     ('refused_admitted', 'refused_stale'), 'detect-only' security
+ *     reports, and incident 'failed'/'refused' transitions, folded
+ *     per (fixer, action, result) cell across distinct targets and
+ *     UTC days, and per (incident class, status) cell across distinct
+ *     keys and UTC days, inside the 7-day window
+ *     (autofixBacklogItems below). Until now the ledgers' only readers
+ *     were the pass itself — readLedger's alreadyRecorded idempotency
+ *     dedup and readIncidentStatuses' transition dedup — plus
+ *     `phm autofix --json`'s current-pass print, so a fixer action
+ *     that kept failing every pass, a refusal guard whose
+ *     precondition never became satisfiable, pinned files that kept
+ *     being hand-edited, and incident classes that kept ending
+ *     failed or refused never became work;
+ *   - the Claude CLI rate-limit journal's recurring adverse pressure:
+ *     the sanitized {type, status, rateLimitType, utilization,
+ *     resetsAt, capturedAt} rows recordClaudeRateLimitEventLine
+ *     appends to ~/.ashlr/fabric/claude-rate-limit-events.jsonl from
+ *     every Claude run's captured output, folded per
+ *     (rateLimitType, tier) — 'exhausted' at utilization >= 1,
+ *     'near-limit' at >= 0.75 — over the bounded tail
+ *     (rateLimitBacklogItems below). Until now the journal's only
+ *     reader was the resource monitor's live snapshot — the newest
+ *     unexpired event per window type, a point-in-time verdict that
+ *     resets every poll — so a fleet that kept exhausting the same
+ *     provider window week after week looked healthy between events,
+ *     never work;
+ *   - asksLedgerBacklogItems folds the NEEDS-MASON answers ledger
+ *     (<runs>/asks-ledger.jsonl, asks.ledger.v1 rows answerAsk and the
+ *     usage sensor append) per (kind, subject) cell across distinct UTC
+ *     days inside the 7-day window, counting fleet self-answers as
+ *     coverage context (asksLedgerBacklogItems below). Until now the
+ *     ledger's only readers were the ask surfaces and readFleetActions
+ *     for display, so an ask kind that kept reaching Mason — a self-
+ *     answer coverage gap or an owner-gated need never resolved once —
+ *     never became work;
+ *   - the queue-visit journal's recurring saturation and parked
+ *     visits: the per-attempt {id, station, pool, arrivedAt, startedAt?,
+ *     completedAt?} snapshots the daemon's visit-sync off-tick job
+ *     appends to queue/visits.jsonl under the Ashlr home — each a job
+ *     attempt's recorded dwell through a pipeline station (READY queue
+ *     wait, claimed worker service, publish slot, pr-ci CI dwell,
+ *     merge-queue dwell, the zero-dwell merged marker) — folded per
+ *     (kind, scope, name) cell: 'saturated' when the same
+ *     estimateQueueStats fold `phm queue stats` and the Fleet
+ *     Dashboard station graph run rates the cell's rho at or above the
+ *     documented 0.9 red band on distinct UTC days inside the window,
+ *     and 'stuck' when latest snapshots with no completedAt age past
+ *     the parked bar across distinct visits and days
+ *     (queueVisitBacklogItems below). Until now the journal's only
+ *     readers were those point-in-time reports, so a station that kept
+ *     rating red or visits that kept parking open never became work;
+ *   - the Devin PR-review journal's recurring adverse outcomes and its
+ *     oversize condition: the per-attempt {v, key, repo, number,
+ *     headSha, at, day, origin, outcome, reason?, status?} rows
+ *     triggerDevinPrReviewOnce appends to pr-reviews.jsonl under the
+ *     devin directory of the Ashlr home on every `ashlr devin review`
+ *     and every merge-autopilot advisory review — outcome the writer's
+ *     closed vocabulary, 'requested' always paired with one terminal
+ *     row ('triggered', 'failed' or 'quota-exhausted') since the
+ *     writer captures `now` once per call, refusals journaling
+ *     nothing (devinReviewBacklogItems below). Until now the journal's
+ *     only readers were the writer's own dedupe scans — journalRows
+ *     inside triggerDevinPrReviewOnce and the fleetDevinReview
+ *     duplicate check — point-in-time "have we already asked" reads,
+ *     so a review path whose API calls kept failing, whose provider
+ *     quota kept exhausting, or whose requests kept orphaning
+ *     mid-flight (a 'requested' row with no terminal sibling refuses
+ *     'duplicate' for that PR head forever) never became work, and the
+ *     append-only file's growth past its own 8 MiB read bound — which
+ *     makes every trigger refuse 'unavailable' — was invisible;
+ *   - the fleet custody spawns ledger's recurring unwrapped reasons:
+ *     the {schema, at, wrapped, engine, preflight_exit, reason?} rows
+ *     appendCustodyRecord (src/core/run/custody-ledger.ts) appends to
+ *     ~/.ashlr/custody/spawns.jsonl — plus its one rotated generation
+ *     spawns.jsonl.1 — on every engine spawn runEngine makes, the
+ *     closed UnwrappedReason vocabulary decidePhantomCustody names when
+ *     a spawn runs without `phantom exec` (custodyBacklogItems below).
+ *     Until now the ledger's only readers were `phm status`'s
+ *     point-in-time custody summary and the receipt timeline's per-run
+ *     window, so a fleet whose spawns kept missing custody for the same
+ *     reason — checkouts never initialized, the phantom binary missing,
+ *     linked-worktree vault-namespace gaps, preflight refusals — never
+ *     became work. An (engine, reason) cell emits only at the recurring
+ *     bars of three adverse rows across two distinct UTC days inside
+ *     the 7-day window; the by-design verdicts
+ *     self-authenticating-engine and phantom-disabled count toward
+ *     spawn totals but never emit, truncated tails are stated as lower
+ *     bounds, and rows emit only for the fleet's own repository since
+ *     the ledger carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -497,6 +663,7 @@ import { recheckBacklogItems } from './recheck-backlog.js';
 import { sourceYieldBacklogItems } from './source-yield-backlog.js';
 import { gatewayShadowBacklogItems } from './gateway-shadow-backlog.js';
 import { stuckJobBacklogItems } from './stuck-job-backlog.js';
+import { strayStopBacklogItems } from './stray-stop-backlog.js';
 import { lessonTrialBacklogItems } from './lesson-trial-backlog.js';
 import { unfedBacklogItems } from './unfed-backlog.js';
 import { dupcheckGateBacklogItems } from './dupcheck-gate-backlog.js';
@@ -521,6 +688,17 @@ import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { auditBacklogItems } from './audit-backlog.js';
 import { desktopErrorBacklogItems } from './desktop-error-backlog.js';
 import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
+import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
+import { automationBacklogItems } from './automation-backlog.js';
+import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
+import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
+import { routineBacklogItems } from './routine-backlog.js';
+import { autofixBacklogItems } from './autofix-backlog.js';
+import { rateLimitBacklogItems } from './rate-limit-backlog.js';
+import { asksLedgerBacklogItems } from './asks-backlog.js';
+import { queueVisitBacklogItems } from './queue-visit-backlog.js';
+import { devinReviewBacklogItems } from './devin-review-backlog.js';
+import { custodyBacklogItems } from './custody-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -805,6 +983,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // 'unknown' rather than suppressing the reaper evidence, and only the
   // fleet's own repository inherits the items.
   items.push(...await stuckJobBacklogItems({ repo }));
+
+  // Stray-stop ledger: the stray-stop reaper's own audit trail — one
+  // {at, lane, job, pid, result} row per SIGTERM (or already-gone pid)
+  // stopStray made on a live process still inside a finished job's
+  // worktree — becomes backlog items too. Until now stray-stops.jsonl
+  // was write-only audit with no reader at all: `phm fleet stray-slots`
+  // serves only the live report and the sibling stuck-job feed covers
+  // the marker/kill ledgers under queue/, not this runs-dir-root stop
+  // ledger. A lane cell emits only at the recurring bar of distinct
+  // jobs inside the window, repo attribution joins metrics/jobs.jsonl
+  // as enrichment, truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items.
+  items.push(...await strayStopBacklogItems({ repo }));
 
   // Cloud lesson holdout trial: the randomized served-vs-holdout landing
   // comparison lessonTrial computes over the cloud task files and revert
@@ -1228,6 +1419,226 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // tails are stated as lower bounds, and every journal string is
   // scrubbed before it reaches a prompt.
   items.push(...await repairHandoffBacklogItems({ repo }));
+
+  // Router catalog refresh report series: each `phm router catalog
+  // refresh` run — the weekly catalogSchedule unit plus manual runs —
+  // writes one router.catalog-refresh.v1 report to
+  // <ashlr home>/router/catalog/catalog-refresh-<stamp>.json carrying
+  // the per-source probe statuses, the unknown model list, the
+  // rejectedRules pattern rejections and the proposedRemovals list.
+  // Until now the artifacts accumulated unread — each run prints only
+  // its own report — so a source whose probe kept failing, models that
+  // kept failing verification while staying routable, a rule rejected
+  // every week and removal proposals piling up unreviewed never became
+  // work. Bounded no-follow tail reads of the newest report files; a
+  // cell emits only at the recurring bars of distinct in-window
+  // reports across distinct UTC days inside the 28-day window — four
+  // scheduled observations, since the refresh is weekly — AND only
+  // while the newest in-window report still shows it adverse, because
+  // these are state snapshots: a source that recovered, a model that
+  // left the unknown or removal lists, a rule that left rejectedRules
+  // all resolved and emit nothing. Rows count only under the writer's
+  // contract, malformed reports are dropped rather than folded, an
+  // unreadable dir or read yields nothing, and only the fleet's own
+  // repository inherits the items since the reports describe this
+  // install's router catalog and carry no repository column.
+  items.push(...await catalogRefreshBacklogItems({ repo }));
+
+  // Automations firing journal: the engine's own audit of every firing
+  // transition — intake queues, queue-overflow trims, 7-day expiry
+  // drops, gate-reason changes, lane deferrals and acceptances,
+  // for-good refusals, settlements and review decisions — recurring per
+  // (automationId, kind) cell across distinct dedupeKeys and UTC days
+  // inside the window, for the adverse kinds only. Until now the
+  // journal's only reader was the Verse automations API's newest-200
+  // display tail, a point-in-time surface that never folded a
+  // recurrence. Same bounded no-follow tail reads of both journal
+  // generations (live plus its one rotation); rows count only under the
+  // writer's contract (closed event/state/lane vocabularies, the
+  // automation and firing id patterns, the owner/name repo pattern), a
+  // cell emits only at the recurring bars of distinct events across
+  // distinct UTC days inside the 7-day window, deferred rows on the two
+  // deliberate global holds (KILL, no-grant) never join a cell, repo
+  // attribution is the row's owner/name matched case-insensitively to
+  // the target, truncated tails are stated as lower bounds, and every
+  // journal string is scrubbed before it reaches a prompt.
+  items.push(...await automationBacklogItems({ repo }));
+
+  // MCP gateway activity journal: the per-call audit rows the gateway's
+  // audit() appends to <account home>/gateway/activity.jsonl on every
+  // CallToolRequest — recurring 'deny' and 'approval_required' verdicts
+  // where checkGatewayPolicy refused the call, and 'revoked' verdicts
+  // where the call arrived on a session whose record is revoked or
+  // unreadable — folded per (caller, tool, verdict) cell across
+  // distinct UTC days inside the window. Until now the journal had no
+  // reader at all — readGatewayActivity's only callers were the
+  // writer's own rotation and tests — so a (caller, tool) pair the
+  // policy kept denying, a tool whose approval gate kept stalling
+  // calls, and calls that kept arriving on dead session records never
+  // became work. Same bounded no-follow tail read at a bound above the
+  // writer's own 8 MiB self-trim; rows count only under the writer's
+  // contract (gs_ session ids, the caller/tool length bounds, the
+  // closed verdict vocabulary, args as at most 20 '[redacted]'-valued
+  // keys), 'allow' rows — the call running — never emit, a cell emits
+  // only at the recurring bars of records across distinct UTC days
+  // inside the window, truncated tails are stated as lower bounds,
+  // argument signatures quote key names only, every journal string is
+  // scrubbed before it reaches a prompt, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's gateway and carries no repository column.
+  items.push(...await gatewayActivityBacklogItems({ repo }));
+
+  // Desktop friction-flag journal: the console's Flag UI friction action
+  // appends one row per deliberate authenticated user report to
+  // ~/.ashlr/router/feedback.jsonl through enqueueFrictionFlag — until
+  // now the journal had no reader at all, so every report a user filed
+  // sat in an append-only file nobody opened, never work. Rows count
+  // only under the writer's contract (the RQ-DESKTOP-FRICTION id shape,
+  // the fixed repo/tier/lead/flag/source literals, the surface pattern
+  // and description bound), flags carry no expiry so the fold covers
+  // every retained row, each surface with at least one report emits —
+  // a deliberate human flag needs no machine-telemetry recurrence bar —
+  // descriptions are scrubbed, deduped, capped and quoted inside a DATA
+  // fence, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the journal
+  // describes this install's console and carries no repository column.
+  items.push(...await frictionFlagBacklogItems({ repo }));
+
+  // Scheduled-routine attempt journal: the `phm routines` scheduler's own
+  // per-attempt record — runs.jsonl under the Ashlr home's routines
+  // directory, appended by tick/run on every scheduled firing — carrying
+  // the Attempt outcome vocabulary (success, submitted, failed, quota,
+  // rate-limit, unhealthy, unavailable). Until now the journal's only
+  // readers were the scheduler's own point-in-time folds — history()
+  // feeding candidates()' cooldowns and daily-limit tallies and
+  // status() rendering STATUS.md's last-attempt table — so a routine
+  // whose attempts keep failing, a routine that keeps finding no
+  // eligible executor, and an executor that keeps recording provider-
+  // side failures across the routines that use it never became work.
+  // Same bounded no-follow tail read; routine cells key (routine,
+  // outcome) on the routine-side outcomes 'failed' and 'unavailable',
+  // executor cells key (executor, outcome) on 'failed', 'quota',
+  // 'rate-limit' and 'unhealthy' — 'unavailable' rows never form
+  // executor cells since their 'none' sentinel names no executor, and
+  // 'success'/'submitted' never emit — a cell emits only at the
+  // recurring bars of rows across distinct UTC days inside the
+  // 7-day window, rows count only under the writer's contract,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes
+  // this install's schedules and carries no repository column.
+  items.push(...await routineBacklogItems({ repo }));
+
+  // Eng Ops autofix ledgers: every `phm autofix` pass appends one
+  // LedgerLine per non-skipped action outcome to
+  // <runs>/ledger/autofix.jsonl and one IncidentStatusLine per
+  // transition to <runs>/ledger/incidents.jsonl — until now the only
+  // readers were the pass itself (alreadyRecorded and
+  // terminalIncident dedup) and `phm autofix --json`'s current-pass
+  // print, so a fixer action that kept failing, a refusal guard that
+  // never became satisfiable, recurring pinned-file hand edits and
+  // incident classes that kept ending failed or refused sat in
+  // append-only files nobody folded, never work. Action rows count
+  // only under the writer's contract (the closed fixer and result
+  // vocabularies, bounded target/action strings, parseable ts) and
+  // only the adverse results join cells — 'failed', 'refused' and its
+  // named variants, 'detect-only' — while 'applied', 'dry-run',
+  // 'skipped' and the deliberate 'refused_operator' quiet deferral
+  // stay out; incident rows need the INCIDENT_KEY_RE key, the closed
+  // status vocabulary and a parseable ts, classed through the
+  // writer's own INCIDENT_FIXER_TABLE parse. A (fixer, action,
+  // result) cell emits only at the recurring bars of adverse rows
+  // across distinct UTC days inside the window — 'failed' is
+  // non-terminal in the writer's dedup so one broken action appends a
+  // fresh row every pass — and a (class, status) cell only at
+  // distinct incident keys across distinct UTC days since one
+  // incident's transition-deduped rows cannot show recurrence alone;
+  // truncated tails are stated as lower bounds, ledger strings are
+  // scrubbed before they reach a prompt, and only the fleet's own
+  // repository inherits the items since the ledgers describe this
+  // install's machinery and carry no repository column.
+  items.push(...await autofixBacklogItems({ repo }));
+  // The Claude rate-limit journal's only reader until now was the
+  // resource monitor's live snapshot — the newest unexpired event per
+  // window type, a point-in-time verdict that resets every poll — so
+  // a fleet that kept exhausting the same provider window week after
+  // week looked healthy between events. Same bounded no-follow tail
+  // read at the writer's own compaction bound; cells key
+  // (rateLimitType, tier) on 'exhausted' (utilization >= 1, the
+  // provider reports the window fully consumed) and 'near-limit'
+  // (>= 0.75, the monitor's 'near' band) — healthier rows count as
+  // events but never form cells — a cell emits only at the recurring
+  // bars of rows across distinct UTC days AND distinct provider reset
+  // windows inside the 7-day window, so one exhausted window
+  // re-sampled by every run cannot mint a pattern, truncated tails
+  // are stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // Claude runs and carries no repository column.
+  items.push(...await rateLimitBacklogItems({ repo }));
+  // NEEDS-MASON answers ledger (asks-ledger.jsonl beside NEEDS-MASON.md):
+  // every Mason answer and every sensor self-answer lands as one
+  // asks.ledger.v1 row, and until now the ledger's only readers were the
+  // ask surfaces themselves — an ask kind that keeps reaching Mason, the
+  // fleet's autonomy gap made visible, never became work. A (kind,
+  // subject) cell emits only at the recurring bar — distinct UTC days in
+  // the 7-day window — with fleet self-answers counted as coverage
+  // context, truncated tails stated as lower bounds, journal strings
+  // scrubbed before they reach a prompt, and only the fleet's own
+  // repository inheriting the items since the ledger describes this
+  // install's ask traffic and carries no repository column.
+  items.push(...await asksLedgerBacklogItems({ repo }));
+
+  // Queue-visit journal: the daemon's visit-sync off-tick job folds
+  // metrics/jobs.jsonl and the live READY rows into per-attempt station
+  // dwell snapshots appended to queue/visits.jsonl under the Ashlr home.
+  // Until now its only readers were `phm queue stats` and
+  // GET /api/queue/stats — the Fleet Dashboard's station graph,
+  // point-in-time reports someone had to run and read — so a station
+  // that kept rating red or visits that kept parking open never became
+  // work. Same bounded no-follow tail read at twice the writer's
+  // compaction bound and the writer's own visit contract; cells key
+  // (kind, scope, name) — 'saturated' on the dashboard's own rho >= 0.9
+  // red band recurring across distinct UTC days, 'stuck' on open
+  // snapshots aged past the parked bar across distinct visits and days
+  // — a cell emits only at its recurring bars inside the 7-day window,
+  // truncated tails are stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journal describes this
+  // install's dispatch pipeline and carries no repository column.
+  items.push(...await queueVisitBacklogItems({ repo }));
+
+  // Devin PR-review journal (pr-reviews.jsonl under <ashlr
+  // home>/devin): every `ashlr devin review` and every merge-autopilot
+  // advisory review lands one row per attempt outcome, and until now
+  // the journal's only readers were the writer's own dedupe scans —
+  // point-in-time "have we already asked" reads that never fold a
+  // recurrence — so a review path that kept failing, kept exhausting
+  // quota or kept orphaning requests never became work. Same bounded
+  // no-follow tail read at the writer's own read bound — truncated
+  // means the file passed it and every trigger now refuses
+  // 'unavailable', which emits its own fleet-repo item — cells key on
+  // outcome ('failed', 'quota-exhausted', 'orphaned-request') matched
+  // to rows whose recorded repo names the discovery target
+  // case-insensitively, a cell emits only at the recurring bars of
+  // rows across distinct UTC days AND distinct pull requests inside
+  // the 7-day window, truncated tails are stated as lower bounds, and
+  // journal strings are scrubbed before they reach a prompt.
+  items.push(...await devinReviewBacklogItems({ repo }));
+
+  // Custody spawns ledger: the fleet custody ledger's own audit trail —
+  // one {schema, at, wrapped, engine, preflight_exit, reason?} row per
+  // engine spawn runEngine makes, appended by appendCustodyRecord to
+  // ~/.ashlr/custody/spawns.jsonl (rotating once to spawns.jsonl.1 past
+  // the 4 MiB cap) — becomes backlog items too. Until now the ledger was
+  // trend-blind: `phm status`'s custody section folds point-in-time
+  // counts and the receipt timeline reads one run's window, so recurring
+  // unwrapped reasons never became work. An (engine, reason) cell emits
+  // only at the recurring bars of three adverse rows across two distinct
+  // UTC days inside the 7-day window; self-authenticating-engine and
+  // phantom-disabled are deliberate-posture verdicts that count toward
+  // spawn totals but never emit, truncated tails are stated as lower
+  // bounds, and only the fleet's own repository inherits the items
+  // since the ledger describes this install's spawn machinery and
+  // carries no repository column.
+  items.push(...await custodyBacklogItems({ repo }));
   return { items, errors };
 }
 
