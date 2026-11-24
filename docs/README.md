@@ -42,6 +42,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Discover an experimental Phantom peer API and generate a typed client | [Phantom peer discovery](https://github.com/ashlrai/phantom/blob/master/docs/PHANTOM-DISCOVERY.md) |
 | Install, open the console, and make a first turn | [Quickstart](QUICKSTART.md) |
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
+| Install a tool and its project MCP server with one command | [Tool installer](https://github.com/ashlrai/phantom/blob/master/docs/INSTALL-TOOLS.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
 | Publish local reports and browse their pages | [Report pages — source guide](https://github.com/ashlrai/phantom/blob/master/docs/PAGES.md) |
 | Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
