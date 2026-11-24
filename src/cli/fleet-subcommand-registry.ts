@@ -375,6 +375,7 @@ export const FLEET_SUBCOMMAND_LOADERS: Record<string, () => Promise<Record<strin
   'ready-dups': () => import('./fleet-ready-dups.js'),
   'ready-supply': () => import('./fleet-ready-supply.js'),
   'real-supply': () => import('./fleet-real-supply.js'),
+  'reap': () => import('./fleet-reap.js'),
   'reap-marks': () => import('./fleet-reap-marks.js'),
   'reassign': () => import('./fleet-reassign.js'),
   'reassign-stdin': () => import('./fleet-reassign-stdin.js'),
