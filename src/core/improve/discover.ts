@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Sixty sources, all of which Phantom
+ * evidence instead of a hand-kept list. Sixty-one sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -651,6 +651,20 @@
  *     for injection — a withheld projection (degraded or truncated
  *     runs log, degraded trajectory sources), a failed knowledge read
  *     or another repository emits nothing;
+ *   - the landed-close attempt journal's recurring adverse cells: the
+ *     {at, pr, head, outcome, reason?} rows `ashlr fleet landed-close
+ *     --apply` appends to <runs>/queue/landed-closes.jsonl — fed every
+ *     applied self-tick by step 14's landed-sweep closing DIRTY bridge
+ *     PRs whose changed paths already match master — until now read
+ *     only by the Verse Live home card's last-24h view and the
+ *     self-tick step's aggregate closed=/planned= counts, so recurring
+ *     per-PR close failures, head-moved skips, view-failed read
+ *     outages and unrecognized skip reasons never became work
+ *     (landedCloseBacklogItems below). A cell emits only at the
+ *     recurring bars of three adverse rows across two distinct UTC
+ *     days inside the 7-day window, truncated tails are stated as lower
+ *     bounds, and items emit only for the fleet's own repository since
+ *     the journal carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -739,6 +753,7 @@ import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { custodyBacklogItems } from './custody-backlog.js';
 import { launchCostBacklogItems } from './launch-cost-backlog.js';
 import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
+import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1717,6 +1732,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // nothing, and only the fleet's own repository inherits the items
   // since the ledger describes this install's injection machinery.
   items.push(...await knowledgeOutcomeBacklogItems({ repo }));
+
+  // Landed-close attempt journal (queue/landed-closes.jsonl under the
+  // runs dir): the {at, pr, head, outcome, reason?} rows `fleet
+  // landed-close --apply` appends per attempted close of a DIRTY
+  // bridge PR whose paths already match master — fed every applied
+  // self-tick by step 14's landed-sweep. Until now the ledger's only
+  // readers were the Verse Live home card (last 256 KiB / 24 h) and
+  // the self-tick step's aggregate counts, so recurring per-PR close
+  // failures, head-moved skips, view-failed read outages and skip
+  // reasons outside the writer's vocabulary never became work. A cell
+  // emits only at the recurring bars of three adverse rows across two
+  // distinct UTC days inside the 7-day window, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal carries no repo column.
+  items.push(...await landedCloseBacklogItems({ repo }));
   return { items, errors };
 }
 
