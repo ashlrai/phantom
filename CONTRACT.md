@@ -62,7 +62,17 @@ Exports:
   and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
   Durable notice receipts suppress repeated attempts; crashes before receipt
   persistence retry with stable deduplication keys. Notification exceptions are
-  value-free statuses, not post-release exceptions.
+  value-free statuses, not post-release exceptions. `applySeatHandoffs(opts?)`
+  is the fleet-wide apply: one `planSeatHandoffs` snapshot picks eligible seats,
+  then each runs the same `applySeatHandoff` serialized by the shared lock,
+  returning `{schema:'phantom-bot-handoffs-apply.v1', apply:true, seats}` with
+  per-seat `{seatId, participantId, eligible, outcome, state, handoffs, reason?}`
+  — outcome `applied`/`skipped`/`contended`/`failed`, `reason` a fixed
+  value-free phrase or 'unavailable' (never a raw error that could carry a
+  path), `state` the apply's reported state on applied seats and the plan
+  projection otherwise, `handoffs` the journaled `AppliedSeatHandoff` records
+  with notification receipts on applied seats only. A throwing plan read
+  propagates; a partial apply is safely re-run.
 - `sendSeatMessage({from, to, text}, opts?)` delegates configured participants to
   unified bus DMs under the seat's fleet root and clock, or owner notices;
   `from`/`to` accept a seat id or participantId (`to: 'owner'` posts an
