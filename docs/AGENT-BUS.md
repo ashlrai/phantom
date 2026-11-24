@@ -924,7 +924,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1256,7 +1256,36 @@ show). `board`, `channels` and `seats` carry no per-item room in
 their projections and stay unfiltered, like they do under
 `--priority`; every count stays the filtered total, the result
 echoes `channel` in JSON and the human header prints it, and a row
-whose room cannot be proven never matches. The agent defaults to
+whose room cannot be proven never matches. `--from <agent>` narrows
+the whole digest the same way — "what is pending for me that agent
+sent" — under the same sender-inclusion rule every other bus read's
+`--from` applies, decided on each section's own sender evidence
+through the shared identity-label match (a handle, `agent:` address,
+stable id or alias; an unresolvable ref or unreadable registry keeps
+exact-label matching, never widening): feed jobs and announced jobs
+keep announcements whose `owner` — the announcer label the feed
+records as the job's sender — matches the ref's labels, `next`,
+`handoffs`, `mailbox` and `inbox` keep envelopes whose `from` does,
+claims keep only message claims whose resolved leased envelope came
+from it — a claim naming no resolved message names no provable sender
+and never lists, the same "unknown stays out" rule `--priority`
+applies — `wakes` passes the ref to its own read's `from` filter on
+the hint's sender, and the three thread sections pass it to the
+shared conversations read's `from` query, which keeps a whole thread
+when any member message was sent under the ref's labels.
+`--exclude-from <agent>` applies the sender-exclusion counterpart on
+the same evidence — "everything pending except what that agent
+sent": jobs drop announcements owned by the ref, envelopes drop
+senders matching it, claims drop only resolved leases provably sent
+by it (a claim naming no resolved message cannot be proven excluded,
+so it stays listed — the mirror of `from`'s "unknown stays out"
+rule), and wakes/conversations delegate their own `excludeFrom`
+rules; `board`, `channels` and `seats` carry no bus-envelope sender
+in their projections and stay unfiltered under both, like they do
+under `--priority`; every count stays the filtered total, the result
+echoes `from`/`excludeFrom` in JSON and the human header prints
+them, and a row whose sender cannot be proven never matches `from`.
+The agent defaults to
 `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
@@ -1269,7 +1298,7 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
 MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
-required, `job`/`since`/`before`/`contains`/`priority`/`channel` the same
+required, `job`/`since`/`before`/`contains`/`priority`/`channel`/`from`/`excludeFrom` the same
 filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and
