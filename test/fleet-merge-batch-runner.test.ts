@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { cmdFleetMergeBatchRun, type FleetMergeBatchRunDeps } from '../src/cli/fleet-merge-batch-run.js';
 import { MAX_FILES_PER_PR, MAX_PRS, parseMergeBatchPrs, planMergeBatches, type MergeBatchPr } from '../src/core/fleet/merge-batch.js';
 import { classifyMergeBatchRisk, runMergeBatch, type MergeBatchRun, type MergeBatchRunInput } from '../src/core/fleet/merge-batch-runner.js';
+import type { GreenMergeTrain } from '../src/core/fleet/green-merge-train.js';
 
 const now = new Date('2026-11-14T10:00:00Z');
 const repo = 'ashlrai/phantom';
@@ -101,8 +102,70 @@ async function cli(value: unknown, args = ['--repo', repo], deps: FleetMergeBatc
   let output = ''; let error = '';
   const code = await cmdFleetMergeBatchRun(args, { stdin: Readable.from([JSON.stringify(value)]), stdinIsTty: false,
     now: () => now, existing: [], hold: new Set(), stdout: text => { output += text; }, stderr: text => { error += text; }, ...deps });
-  return { code, output, error, report: output.startsWith('{') ? JSON.parse(output) as MergeBatchRun & { error?: string } : null };
+  return { code, output, error, report: output.startsWith('{') ? JSON.parse(output) as MergeBatchRun & { error?: string; train: GreenMergeTrain | null } : null };
 }
+
+const checked = (number: number, patch: Record<string, unknown> = {}) => ({ ...wire(pr(number)),
+  state: 'OPEN', baseRefName: 'master', changedFiles: 1,
+  statusCheckRollup: [{ __typename: 'CheckRun', name: 'Merge Gate', status: 'COMPLETED', conclusion: 'SUCCESS' }], ...patch });
+
+describe('green merge train proposals', () => {
+  it('combines green disjoint heads deterministically without mutating input', async () => {
+    const rows = [checked(3), checked(1), checked(2, {
+      statusCheckRollup: [{ __typename: 'StatusContext', context: 'legacy', state: 'SUCCESS' },
+        ...['SKIPPED', 'NEUTRAL'].map(conclusion => ({ __typename: 'CheckRun', name: conclusion, status: 'COMPLETED', conclusion }))],
+    })];
+    const before = JSON.stringify(rows);
+    const train = (await cli(rows)).report!.train!;
+    expect(train).toMatchObject({ authority: 'proposal-only', validation: 'required-checks-on-combined-commit',
+      baseRef: 'master', members: [1, 2, 3].map(number => ({ number, headSha: pr(number).headSha })), deferred: [] });
+    expect((await cli([...rows].reverse())).report!.train).toEqual(train);
+    expect(JSON.stringify(rows)).toBe(before);
+  });
+  it.each([undefined, [], Array(100).fill({ __typename: 'StatusContext', context: 'ci', state: 'SUCCESS' }),
+    [{ __typename: 'CheckRun', name: 'ci', status: 'IN_PROGRESS', conclusion: 'SUCCESS' }],
+    ...['FAILURE', 'CANCELLED', 'SKIPPED', 'NEUTRAL', 'TIMED_OUT'].map(conclusion => [
+      { __typename: 'CheckRun', name: 'ci', status: 'COMPLETED', conclusion },
+    ]), [null], [{ state: 'SUCCESS' }], [{ __typename: 'StatusContext', context: 'ci', state: 'PENDING' }],
+    ['SUCCESS', 'FAILURE'].map(state => ({ __typename: 'StatusContext', context: state, state }))]
+    .map((statusCheckRollup, index) => ({ statusCheckRollup, index })))(
+    'withholds missing, pending, failed, capped and unfamiliar checks #$index', async ({ statusCheckRollup }) => {
+      const train = (await cli([checked(1, { statusCheckRollup })])).report!.train!;
+      expect(train.members).toEqual([]);
+      expect(train.deferred).toEqual([{ number: 1, reason: 'checks-not-green' }]);
+    });
+  it('keeps holds, active jobs, overlaps, drafts, base mismatches and file completeness out', async () => {
+    const rows = [checked(1), checked(2), checked(3), checked(4, { files: [{ path: 'src/feature-3.ts' }] }),
+      checked(5, { isDraft: true }), checked(6, { baseRefName: 'release' }), checked(7, { changedFiles: 2 }),
+      checked(8, { baseRefName: undefined }), checked(9, { mergeStateStatus: 'BEHIND' }),
+      checked(10, { files: [{ path: '../invalid' }] })];
+    const train = (await cli(rows, ['--repo', repo], { hold: new Set(['phantom#1']),
+      existing: [{ id: 'RQ-REBASE-phantom-2-abcdef0', status: 'RUNNING', text: '' }] })).report!.train!;
+    expect(train.members.map(member => member.number)).toEqual([3]);
+    expect(train.deferred).toEqual(expect.arrayContaining([
+      { number: 1, reason: 'held' }, { number: 2, reason: 'active-job' },
+      { number: 4, reason: 'after-overlapping-merges' }, { number: 5, reason: 'draft' },
+      { number: 6, reason: 'different-base' }, { number: 7, reason: 'incomplete-files' },
+      { number: 8, reason: 'missing-identity' }, { number: 9, reason: 'base-sync-required' },
+      { number: 10, reason: 'incomplete-files' },
+    ]));
+  });
+  it('never combines case-folded file aliases', async () => {
+    const train = (await cli([checked(1), checked(2, { files: [{ path: 'SRC/FEATURE-1.TS' }] })])).report!.train!;
+    expect(train.members).toHaveLength(1);
+    expect(train.deferred).toHaveLength(1);
+  });
+  it('bounds a train and withholds it when hold or queue evidence is unreadable', async () => {
+    const rows = Array.from({ length: 17 }, (_, i) => checked(i + 1));
+    const train = (await cli(rows)).report!.train!;
+    expect(train.members).toHaveLength(16);
+    expect(train.deferred).toEqual([{ number: 17, reason: 'train-limit' }]);
+    for (const missing of [{ hold: undefined }, { existing: undefined }]) {
+      const result = await cli(rows, ['--repo', repo], { ...missing, readText: async () => { throw new Error('missing'); } });
+      expect(result.report!.train).toBeNull();
+    }
+  });
+});
 
 describe('fleet merge-batch-run CLI', () => {
   it('retains explicit merged supersession evidence from hygiene even without file data', async () => {

@@ -91,12 +91,66 @@ function gather(root) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared sections: mission, ecosystem and how agents work. The wording mirrors
+// README.md ("Chasing open-source RSI", "The Phantom ecosystem" and "How agents
+// work on Phantom"); keep the two in step when either changes.
+// ---------------------------------------------------------------------------
+
+const REPO = 'https://github.com/ashlrai/phantom/blob/master';
+
+const ECOSYSTEM = [
+  ['Phantom', 'https://github.com/ashlrai/phantom', 'the factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work (this package)'],
+  ['Phantom Secrets', 'https://github.com/ashlrai/phantom-secrets', 'local vault, placeholders and a proxy for supported API credential use'],
+  ['Locus', 'https://github.com/ashlrai/locus', 'account and tenant bindings for agent tools'],
+  ['Ashlr Plugin', 'https://github.com/ashlrai/ashlr-plugin', 'compact tool results and a local usage ledger'],
+  ['Lexicon', 'https://github.com/ashlrai/lexicon', 'correct recurring speech-to-text errors before agents read them'],
+  ['Ashlr MD', 'https://github.com/ashlrai/ashlr-md', 'Markdown editing with CLI and MCP interfaces'],
+  ['Ashlr Stack', 'https://github.com/ashlrai/ashlr-stack', 'configure supported development services through CLI and MCP'],
+];
+
+function missionLines() {
+  return [
+    '## Mission',
+    '',
+    'Phantom is chasing open-source RSI (recursive self-improvement): an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute.',
+    'Agents run the factory and the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the owner sets direction and is needed only for passwords, 2FA, device approvals and payments.',
+    '',
+    `- [Strategy for recursive self-improvement and an open fleet](${REPO}/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials`,
+    `- [How agents work on Phantom](${REPO}/README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims`,
+    `- [AGENTS.md](${REPO}/AGENTS.md): the agent constitution`,
+    '',
+  ];
+}
+
+function ecosystemLines() {
+  return [
+    '## Ecosystem',
+    '',
+    'Companions install separately; each has its own capabilities and authorization boundaries.',
+    '',
+    ...ECOSYSTEM.map(([name, url, purpose]) => `- [${name}](${url}): ${purpose}`),
+    '',
+  ];
+}
+
+/** The CLI ships as `phm`; `ashlr` is the compatible alias. */
+function primaryBin(bin) {
+  if (bin.phm) return 'phm';
+  return Object.keys(bin).sort()[0] ?? 'ashlr';
+}
+
+/** `>=22.15.0` reads as "22.15.0 or newer" in prose. */
+function nodeFloor(range) {
+  return String(range).replace(/^>=\s*/, '');
+}
+
+// ---------------------------------------------------------------------------
 // llms.txt — concise agent guide
 // ---------------------------------------------------------------------------
 
 function renderLlmsTxt(data) {
   const { pkg, landing, useCases, compare, other } = data;
-  const installBin = Object.keys(pkg.bin).sort()[0] ?? 'ashlr';
+  const installBin = primaryBin(pkg.bin);
 
   // Strip trailing punctuation from the package description to avoid
   // a double-dot when concatenating the tagline suffix.
@@ -107,6 +161,7 @@ function renderLlmsTxt(data) {
     '',
     `> ${desc}${desc.endsWith('.') ? '' : '.'} Open-source, local-first. Documentation index for autonomous agents — not an execution API or authorization.`,
     '',
+    ...missionLines(),
     '## Start here',
     '',
   ];
@@ -119,6 +174,7 @@ function renderLlmsTxt(data) {
   lines.push(`- [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task`);
   lines.push(`- [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md`);
   lines.push(`- [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide`);
+  lines.push(`- [Contribute with an agent](${REPO}/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge`);
 
   lines.push('');
   lines.push('## Install');
@@ -131,9 +187,11 @@ function renderLlmsTxt(data) {
   lines.push('');
 
   if (pkg.engines?.node) {
-    lines.push(`Node.js ${pkg.engines.node} or newer is required.`);
+    lines.push(`Node.js ${nodeFloor(pkg.engines.node)} or newer is required.`);
     lines.push('');
   }
+
+  lines.push(...ecosystemLines());
 
   lines.push('## Use-case guides');
   lines.push('');
@@ -162,7 +220,7 @@ function renderLlmsTxt(data) {
   lines.push('## Agent-facing resources');
   lines.push('');
   lines.push('- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations guide');
-  lines.push('- [CLI agent docs](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): command registry via `ashlr docs --agent`');
+  lines.push(`- [CLI agent docs](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): command registry via \`${installBin} docs --agent\``);
   lines.push('- [llms-full.txt](https://verse.ashlr.ai/llms-full.txt): detailed agent guide');
   lines.push('- [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index');
   lines.push('- [Capabilities](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config');
@@ -177,7 +235,7 @@ function renderLlmsTxt(data) {
 
 function renderLlmsFull(data) {
   const { pkg, landing, useCases, compare, other } = data;
-  const installBin = Object.keys(pkg.bin).sort()[0] ?? 'ashlr';
+  const installBin = primaryBin(pkg.bin);
 
   const lines = [
     `# ${landing?.title ?? 'Phantom — the engineering agent workbench'}`,
@@ -188,8 +246,10 @@ function renderLlmsFull(data) {
     '',
     `${pkg.description}`,
     '',
+    ...missionLines(),
+    ...ecosystemLines(),
     `Package: \`${pkg.name}\` v${pkg.version}.`,
-    pkg.engines?.node ? `Node.js floor: ${pkg.engines.node}.` : '',
+    pkg.engines?.node ? `Node.js floor: ${nodeFloor(pkg.engines.node)} or newer.` : '',
     '',
     '## Install',
     '',
@@ -254,6 +314,7 @@ function renderLlmsFull(data) {
   lines.push('- [README](https://github.com/ashlrai/phantom/blob/master/README.md): quickstart and overview');
   lines.push('- [docs/README.md](https://github.com/ashlrai/phantom/blob/master/docs/README.md): task-indexed guide map');
   lines.push('- [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide');
+  lines.push(`- [Contribute with an agent](${REPO}/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge`);
   lines.push('- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations');
   lines.push('- [Architecture](https://github.com/ashlrai/phantom/blob/master/docs/ARCHITECTURE.md): component boundaries');
   lines.push('- [Quickstart](https://github.com/ashlrai/phantom/blob/master/docs/QUICKSTART.md): first useful turn');
@@ -267,7 +328,7 @@ function renderLlmsFull(data) {
   lines.push('- [llms.txt](https://verse.ashlr.ai/llms.txt): concise agent index');
   lines.push('- [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index');
   lines.push('- [server.json](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config');
-  lines.push('- [Agent docs command](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): `ashlr docs --agent --json`');
+  lines.push(`- [Agent docs command](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): \`${installBin} docs --agent --json\``);
   lines.push('');
 
   return lines.join('\n');

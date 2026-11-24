@@ -1,0 +1,17 @@
+--- a/contrib/mac/publish.sh
++++ b/contrib/mac/publish.sh
+@@ -8,6 +8,14 @@
+ [ "$#" -le 2 ] || { echo "RESULT ABORT extra-arguments"; exit 1; }
+ # RQ-SEC-RUNLOG-SCRUB: scrub this run log on exit; install/test logs are piped through scrub.pl
+ SCRUB="perl $R/bin/scrub.pl"; trap '[ -z "$IMLOCK" ] || rmdir "$IMLOCK" 2>/dev/null; $SCRUB < "$OUT" > "$OUT.s" && mv "$OUT.s" "$OUT"' EXIT
++# ACTION-CLASS REGISTRY (RQ-SWE5-ACTION-CLASSES): a default-mode run is the `publish`
++# action class, an integrated mode is `merge`. The shared registry (installed sibling
++# $R/bin/action-classes.json via action_classes.py) must list the class with a
++# publishable gate; unlisted or non-publishable classes fail closed before any mutation.
++# The scrub trap above stays installed, so this abort cannot skip the run-log scrub.
++ACMODE=publish; [ "$IM" = 1 ] && ACMODE=merge
++ACGATE=$(/usr/bin/python3 -I -B "$R/bin/action_classes.py" check "$ACMODE" 2>/dev/null) || { echo "RESULT ABORT action-class-$ACMODE-not-publishable"; exit 1; }
++echo "ACTION_CLASS $ACMODE $ACGATE"
+ read BASE BR WT POOL < $R/$J.base
+ [ -z "$BASE" ] && { echo "RESULT ABORT empty-base"; exit 1; }
+ cd "$WT" || { echo "RESULT ABORT no-wt"; exit 1; }

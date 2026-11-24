@@ -13,7 +13,7 @@
 import { useEffect, useMemo } from 'react';
 import { useQuery, useRefetch } from '../../data/hooks.js';
 import { fleetLanesQuery } from '../../data/queries.js';
-import { ProviderLogo, providerEngine } from '../primitives/ProviderLogo.js';
+import { BrandMark } from '../primitives/BrandMark.js';
 import { SkeletonLine } from '../primitives/Skeleton.js';
 import { readFailureReason } from '../../data/client.js';
 import { buildLaneHealth, liveOverTarget, type LaneHealth } from './fleet-health.js';
@@ -22,7 +22,6 @@ import styles from './FleetHealthStrip.module.css';
 const POLL_MS = 15_000;
 
 function LaneChip({ lane }: { lane: LaneHealth }) {
-  const mark = providerEngine(lane.lane);
   const title = [
     `${lane.lane}: ${liveOverTarget(lane)} live`,
     `queue ${lane.queue === null ? 'unknown' : lane.queue}`,
@@ -34,7 +33,7 @@ function LaneChip({ lane }: { lane: LaneHealth }) {
   return (
     <li className={styles.chip} data-held={lane.held || undefined} title={title}>
       <span className={styles.lane}>
-        {mark ? <ProviderLogo engine={mark} size={14} /> : null}
+        <BrandMark brand={lane.lane} size={14} />
         {lane.lane}
         {lane.held ? <em className={styles.held}>HELD</em> : null}
       </span>

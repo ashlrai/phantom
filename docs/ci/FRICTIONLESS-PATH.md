@@ -158,7 +158,7 @@ gates, and repairing forward. This change activates none of those transitions.
 
 ## Workflow inventory and minute model
 
-All 18 workflow definitions were reviewed. Values below are sums of configured
+The 16 workflow definitions in this table were reviewed. Values below are sums of configured
 job timeout ceilings, **not measured runtime, elapsed latency or billed minutes**.
 Matrix parallelism, cancellations, conditional jobs, warm caches and OS billing
 multipliers prevent treating these caps as spend. No historical runtime data was
@@ -177,18 +177,21 @@ available; actual expected savings remain unmeasured.
 | `companion-smoke.yml` | Daily / manual | 30 |
 | `ecosystem-stats.yml` | Daily / manual data publication | 10 |
 | `attest-ci-build.yml` | Half-hour / manual attestation | 15 |
-| `auto-tag.yml` | Selected push / CI completion / half-hour / manual | 15 |
+| `auto-tag.yml` | Selected push / CI completion / exact-SHA release-gate dispatch / half-hour / manual | 15 |
 | `release-please.yml` | Master push / five-minute / manual | 10 + conditional 10 |
 | `release-train.yml` | Five-minute / workflow completion / manual, variable-gated | 20 |
 | `publish-canonical-npm.yml` | Manual | 60 |
 | `finalize-github-release.yml` | Manual | 28 |
-| `publish-phantom-registry.yml` | Manual, legacy identity condition | 10 |
-| `promote.yml` | Manual historical promotion | 10 |
 | `release.yml` | Frozen historical v3.3.2 tag | Reusable CI + 90 explicit; two jobs omit explicit caps |
 | `release-desktop.yml` | desktop-v tag | Two platform jobs omit explicit caps |
 
 Workflow files live under [.github/workflows](https://github.com/ashlrai/phantom/tree/master/.github/workflows).
 Trigger definitions are source evidence, not proof of live workflow enablement.
+`publish-phantom-registry.yml` is no longer in this repository. Registry server
+`io.github.ashlrai/phantom-secrets-mcp` is published by
+[ashlrai/phantom-secrets `.github/workflows/publish-mcp-registry.yml`](https://github.com/ashlrai/phantom-secrets/blob/master/.github/workflows/publish-mcp-registry.yml)
+([phantom-secrets #1461](https://github.com/ashlrai/phantom-secrets/pull/1461),
+merge `7eac17a808bb034d26235ebb37cfc9aef5a8e380`).
 
 Reproducible arithmetic from `ci.yml`:
 

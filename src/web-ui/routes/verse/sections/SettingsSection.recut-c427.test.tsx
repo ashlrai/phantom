@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { defaultUiSettings } from '../../../../core/ui-settings-schema.js';
 import { ToastProvider } from '../../../components/primitives/Toast.js';
 import { getAppearance, resetAppearance } from '../../../data/appearance-store.js';
@@ -43,6 +43,7 @@ describe('SettingsSection file reload through the recovered panels (C427)', () =
       return new Response(JSON.stringify(body), { status: 200 });
     }));
     render(<ToastProvider><SettingsSection /></ToastProvider>);
+    await act(async () => { await import('../panes/index.js'); });
 
     const editor = screen.getByRole('textbox', { name: /Contents/ });
     fireEvent.change(editor, { target: { value: '{"layout":{"resourcesWidth":280}}' } });

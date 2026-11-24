@@ -46,6 +46,25 @@ describe('fleet queue nextUp', () => {
       expect(result.nextUp).toEqual([{ lane: 'codex-local', jobs: ['RQ-COD-1'] }]);
     });
   });
+  it('attributes lane-column parked rows to one lane across dispatcher dialects', async () => {
+    await withRuns([
+      'RQ-DEV-READY\tashlrai/phantom\tdevin\twork\tprompts/a.md',
+      'RQ-DEV-PARK-WORK\tashlrai/phantom\tPARKED-DEP.devin\twork\tprompts/b.md',
+      'RQ-DEV-PARK-LOW\tashlrai/phantom\tPARKED-DEP.devin\tlow\tprompts/c.md',
+      'PARKED-DEP.devin\tRQ-DEV-PARK-HEAD\tdevin\tmid\tashlrai/phantom\tprompts/d.md',
+    ], (result) => {
+      // The dialect parser uppercases the PARKED marker inside `status`; the
+      // lane must still resolve to the pool cell's file-original casing so
+      // header-path and dialect-path rows share one lane key.
+      expect(result.byLane).toEqual([
+        { lane: 'devin', ready: 1, parked: 3, phantom: 1, other: 0, otherRepos: [] },
+      ]);
+      expect(result.groups).toEqual([
+        { reason: 'DEP', lane: 'devin', count: 3, jobs: ['RQ-DEV-PARK-HEAD', 'RQ-DEV-PARK-LOW', 'RQ-DEV-PARK-WORK'] },
+      ]);
+      expect(result.nextUp).toEqual([{ lane: 'devin', jobs: ['RQ-DEV-READY'] }]);
+    });
+  });
   it('reports an empty nextUp when nothing is ready', async () => {
     await withRuns([], (result) => {
       expect(result.nextUp).toEqual([]);

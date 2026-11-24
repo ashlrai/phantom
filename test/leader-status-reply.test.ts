@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { generateLeaderReply, type LeaderReplySeatModule } from '../src/core/agents/leader-network-runtime.js';
 import { cleanLeaderReplyText, readLeaderStatusSnapshot, renderLeaderStatus } from '../src/core/comms/leader-status-snapshot.js';
+// Compile the lazy production dependency before timing individual reply tests.
+import '../src/core/vision/leader-run-chain.js';
 
 const seats = { prompts: [] as string[], raw: '' as string | null };
 const seat = {
@@ -24,7 +26,7 @@ afterEach(() => { roots.splice(0).forEach(root => rmSync(root, { recursive: true
 function runsDir(): string {
   const root = mkdtempSync(join(tmpdir(), 'leader-status-')); roots.push(root);
   for (const dir of ['queue', 'supervisor', 'leader']) mkdirSync(join(root, dir));
-  writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: '2026-11-09T03:09:00Z', rollup_24h: { by_lane: {
+  writeFileSync(join(root, 'queue', 'status.json'), JSON.stringify({ last_tick: new Date('2026-11-09T03:09:00').toISOString(), rollup_24h: { by_lane: {
     claude: { merged: 9, median_ttm_s: 1500 }, 'codex-personal': { merged: 3, median_ttm_s: 2400 }, devin: { merged: 0 } } } }));
   writeFileSync(join(root, 'supervisor', 'status-main-guardian.md'), [
     '# Main guardian status (2026-11-09 03:00:00)', '',
@@ -50,7 +52,7 @@ describe('leader reply cleanup', () => {
 });
 
 describe('leader status reply', () => {
-  const options = (dir: string) => ({ runsDir: dir, now: () => Date.parse('2026-11-09T03:10:00Z') });
+  const options = (dir: string) => ({ runsDir: dir, now: () => Date.parse('2026-11-09T03:10:00') });
 
   it('summarizes the fixture snapshot with real numbers', async () => {
     const snapshot = await readLeaderStatusSnapshot(options(runsDir()));

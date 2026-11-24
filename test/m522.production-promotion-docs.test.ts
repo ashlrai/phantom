@@ -22,7 +22,7 @@ describe('M522 — production-promotion operator boundary', () => {
     expect(currentNote).toMatch(/Initial or changed publisher bindings still require npm owner authentication/u);
     expect(currentNote).toMatch(/exact-source hosted CI, independent Audit and trusted attestation remain prerequisites/u);
     expect(currentNote).toMatch(/Native desktop finalization, signed asset publication, installation and resident activation are separate steps/u);
-    expect(currentNote).toMatch(/`release.yml` and `promote.yml`[^.]*historical 3\.3\.2 lane; they are not the current publisher/u);
+    expect(currentNote).toMatch(/`release.yml` procedure in the archive describes the historical 3\.3\.2 lane; it is not the current publisher/u);
     expect(currentNote).toMatch(/Publication does not activate provider credentials, spending permissions or resident autonomy/u);
     const currentRelease = releaseDocs.split('> **Verified distribution state')[0]!;
     expect(currentRelease.replace(/\s+/g, ' ')).toMatch(/candidate version bump does not become a publication claim/u);
@@ -31,12 +31,12 @@ describe('M522 — production-promotion operator boundary', () => {
     expect(historicalDocs).toContain('**Verified distribution state — 2026-09-05 UTC:** `@ashlr/hub@3.3.2`');
   });
 
-  it('preserves the original archive bytes without treating its directives as current', () => {
+  it('pins the historical archive body without treating its directives as current', () => {
     const marker = '> **Verified distribution state — 2026-09-05 UTC:**';
     expect(historicalDocs.split(marker)).toHaveLength(2);
     const body = historicalDocs.slice(historicalDocs.indexOf(marker));
     expect(createHash('sha256').update(body).digest('hex'))
-      .toBe('6df3f0d204c501eba917d0052c4a7f070ad2bb755e912d111d4a9f54e16547dc');
+      .toBe('5d3f545a87d9759c2a5b0a7b2e9c6569dde69ccdfa7831d5d4d2203900e62f36');
     expect(historicalDocs).toContain('not current release instructions');
     expect(historicalDocs).toContain('Keep Actions disabled');
     expect(releaseDocs).not.toContain('all successor verification runs locally');

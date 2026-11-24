@@ -22,6 +22,7 @@ import {
   type ReadObserveOptions,
 } from '../observe/read.js';
 import type { UsageSensorReport } from '../usage/sensor-reading.js';
+import type { LaneHistory } from '../usage/resource-live/types.js';
 import type { AgentRoster } from '../fleet/agent-roster.js';
 import { writeWorldExport } from './export.js';
 import { loadGrowthFacts } from '../growth/read.js';
@@ -218,6 +219,8 @@ export async function buildWorldModel(options: WorldReadOptions = {}): Promise<C
     nowMs,
     sensors: isSensorReport(sensors) ? sensors : null,
     sensorRows: isSensorReport(sensors) ? sensors.lanes : [],
+    laneHistory: sensors && typeof sensors === 'object' && 'history' in sensors
+      ? sensors.history as Record<string, LaneHistory> : undefined,
     roster: isRoster(roster) ? roster : null,
     claims,
     claimStore: readClaimStore(nowMs),

@@ -25,6 +25,43 @@ def metrics(home, event):
 
 
 class Batching(unittest.TestCase):
+    def test_active_attempt_cannot_be_claimed_as_a_batch_member(self):
+        for job, action in (('RQ-Q-A', 'retry'), ('RQ-Q-B', 'timeout'), ('RQ-Q-C', 'recovery')):
+            self.queue(job, f'{job} (P1): fix src/core/queue/store.ts {action} handling')
+        (self.r / 'metrics/jobs.jsonl').write_text(json.dumps(dict(event='launch', job='RQ-Q-A')) + '\n')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-B', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-A.batched').exists())
+        self.assertIn('RQ-Q-A', self.ready())
+
+    def test_duplicate_requests_never_take_batch_leases(self):
+        for job in ('RQ-Q-A', 'RQ-Q-B', 'RQ-Q-C'):
+            action = 'retry' if job != 'RQ-Q-C' else 'timeout'
+            self.queue(job, f'{job} (P1): fix src/core/queue/store.ts {action} handling')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-A', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-B.batched').exists())
+        self.assertIn('RQ-Q-B', self.ready())
+        self.run_tick()
+        self.assertIn('RQ-Q-B', self.ready())
+        self.assertTrue(any(r.get('job') == 'RQ-Q-B' and r.get('reason') == 'duplicate-request'
+                            for r in metrics(self.home, 'dispatch_deferred')))
+
+    def test_terminal_target_is_removed_before_batch_leases(self):
+        # Keep two distinct actionable targets after the merged target is removed.
+        for job, pr in (('RQ-Q-A', 43), ('RQ-Q-B', 42), ('RQ-Q-C', 44)):
+            self.queue(job, f'{job} (pr={pr}): edit src/core/queue/store.ts')
+        from datetime import datetime, timezone
+        (self.r / 'metrics/jobs.jsonl').write_text(json.dumps(dict(event='outcome', job='old', state='MERGED',
+            url='https://github.com/ashlrai/phantom/pull/42', ts=datetime.now(timezone.utc).isoformat())) + '\n')
+        self.run_tick()
+        _, manifest = self.only_batch()
+        self.assertEqual({m['job'] for m in manifest['members']}, {'RQ-Q-A', 'RQ-Q-C'})
+        self.assertFalse((self.q / 'run/RQ-Q-B.batched').exists())
+        self.assertTrue(any(r.get('job') == 'RQ-Q-B' and r.get('state') == 'DONE-NOOP' for r in metrics(self.home, 'outcome')))
+
     def setUp(self):
         slots = held_lanes()
         slots['devin'] = devin_slot(target=10, last_change=int(1e15))
@@ -120,6 +157,68 @@ class Batching(unittest.TestCase):
             self.queue(j)
         self.run_tick()
         self.assertFalse([j for j in launched(self.home) if j.startswith('RQ-BATCH-')])
+
+    def test_twelve_lines_in_three_modules_keep_twelve_independent_outcomes(self):
+        jobs = [f'RQ-ACCEPT-{area}-{i}' for area in ('queue', 'agents', 'fleet') for i in range(4)]
+        for job in jobs:
+            self.queue(job, prompt=f'Edit src/core/{job.split("-")[2]}/store.ts.')
+        self.run_tick()
+        sessions = launched(self.home)
+        self.assertEqual(len(sessions), 3)
+        manifests = [json.loads((self.q / 'batches' / f'{bid}.json').read_text()) for bid in sessions]
+        self.assertEqual({m['area'] for m in manifests}, {'src/core/queue', 'src/core/agents', 'src/core/fleet'})
+        self.assertTrue(all(len(m['members']) == 4 for m in manifests))
+        self.assertEqual(sorted(x['job'] for m in manifests for x in m['members']), sorted(jobs))
+        failed, skipped = jobs[0], jobs[1]
+        old = time.time() - 600
+        wtroot = self.home / 'Projects/ashlrai/wt'
+        for manifest in manifests:
+            bid = manifest['id']
+            notes = [f'<!-- batch-checklist:{bid} -->']
+            for member in manifest['members']:
+                job = member['job']
+                self.assertEqual((self.q / 'run' / f'{job}.batched').read_text(), bid)
+                (wtroot / job).mkdir()
+                (self.r / f'{job}.base').write_text(f'deadbeef codex-bridge/{job} {wtroot / job} devin\n')
+                (self.q / 'run' / f'{job}.bundle-wt').write_text(bid)
+                state = 'failed: dependency unavailable' if job == failed else 'skipped: already fixed' if job == skipped else 'done: fixed'
+                notes.append(f'- [{" " if job in (failed, skipped) else "x"}] {job}: {state}')
+            wt = wtroot / bid
+            wt.mkdir()
+            (wt / 'BRIDGE_NOTES.md').write_text('\n'.join(notes) + '\n<!-- /batch-checklist -->\n')
+            for path, content in ((self.r / f'{bid}.base', f'deadbeef codex-bridge/{bid} {wt} devin\n'),
+                                  (self.r / f'{bid}.log', 'done\n')):
+                path.write_text(content)
+                os.utime(path, (old, old))
+            (self.q / 'run' / f'{bid}.dispatched').unlink(missing_ok=True)
+        # Exercise real reap isolation without publishing or relaunching the failed line.
+        (self.r / 'HOLD').write_text('devin\n')
+        (self.r / 'PUBLISH_HOLD').write_text('fixture\n')
+        (self.q / '.worktree-reap.stamp').unlink(missing_ok=True)
+        self.git_stub()
+        self.run_tick()
+        outcomes = metrics(self.home, 'task_outcome')
+        self.assertEqual(len(outcomes), 12)
+        self.assertEqual({row['job'] for row in outcomes}, set(jobs))
+        self.assertEqual({row['job']: row['outcome'] for row in outcomes},
+                         {job: 'failed' if job == failed else 'skipped' if job == skipped else 'done' for job in jobs})
+        self.assertEqual({row['job']: row['reason'] for row in outcomes if row['job'] in (failed, skipped)},
+                         {failed: 'dependency unavailable', skipped: 'already fixed'})
+        self.assertEqual(self.ready(), [failed])
+        self.assertFalse(list((self.q / 'run').glob('*.batched')))
+        for manifest in manifests:
+            reaped = json.loads((self.q / 'batches' / f'{manifest["id"]}.json').read_text())
+            self.assertIn('reaped', reaped)
+            self.assertEqual(len(reaped['outcomes']), 4)
+            self.assertEqual(set(reaped['results']), {member['job'] for member in manifest['members']})
+            for member in manifest['members']:
+                expected_reason = 'dependency unavailable' if member['job'] == failed else 'already fixed' if member['job'] == skipped else 'fixed'
+                self.assertEqual(reaped['results'][member['job']]['reason'], expected_reason)
+                marker = self.q / 'run' / f'{member["job"]}.bundled-in'
+                if member['job'] == failed:
+                    self.assertFalse(marker.exists())
+                else:
+                    self.assertEqual(marker.read_text(), manifest['id'])
 
     def test_tasks_at_the_attempt_limit_only_run_solo(self):
         for j in ('RQ-T-1', 'RQ-T-2', 'RQ-T-3'):

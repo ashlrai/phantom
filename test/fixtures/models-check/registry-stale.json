@@ -1,0 +1,4 @@
+[
+  {"id": "gpt-6-luna", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-17", "status": "verified"},
+  {"id": "gpt-6-sol", "provider": "openai", "verified_source": "https://developers.openai.com/api/docs/models", "verified_at": "2026-11-01", "status": "verified"}
+]

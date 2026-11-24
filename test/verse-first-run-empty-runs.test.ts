@@ -22,6 +22,7 @@ const HOME_GETS = [
   '/api/verse/cloud', // resources/resources-queries
   '/api/verse/devin', // resources/ResourcesBar
   '/api/verse/resources/credit-pools', // resources/credit-pools-query
+  '/api/verse/leader/resources/usage-history', // resources/SpendDown
   '/api/verse/observe', // resources/ResourcesBar
   '/api/verse/proactive-agents', // resources/ResourcesBar
   '/api/verse/leader/thread?limit=50', // leader/thread-data, Feed

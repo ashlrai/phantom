@@ -668,10 +668,10 @@ describe('fresh public facts are data, not saved release authority', () => {
     await expect(verifyPublishedRelease(proposed, reader, NOW)).rejects.toThrow();
   });
   it.each([
-    ['proof-condition-inverted', (y: string) => y.replaceAll("steps.history.outputs.equal != 'true'", "steps.history.outputs.equal == 'true'")],
-    ['proof-condition-renamed', (y: string) => y.replaceAll('steps.history.outputs.equal', 'steps.history.outputs.fastpath')],
-    ['proof-step-widened-to-push', (y: string) => y.replace("        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'\n", '        if: always()\n')],
-    ['proof-step-deleted', (y: string) => y.replace(/ {6}- name: Prove source-identical history fast path[\s\S]*?(?= {6}- name: Install dependencies)/, '')],
+    ['typecheck-widened-to-pr', (y: string) => y.replace("- name: Core no-emit type check\n        if: github.event_name == 'push'\n", "- name: Core no-emit type check\n        if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'merge_group'\n")],
+    ['typecheck-condition-dropped', (y: string) => y.replace("- name: Core no-emit type check\n        if: github.event_name == 'push'\n", '- name: Core no-emit type check\n')],
+    ['mcp-selection-widened', (y: string) => y.replace("        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'\n", '        if: always()\n')],
+    ['typecheck-step-deleted', (y: string) => y.replace(/ {6}- name: Core no-emit type check\n {8}if: github\.event_name == 'push'\n[\s\S]*?(?= {6}- name: Save protected-branch compiler state)/, '')],
     ['mutated-secret-scan', (y: string) => y.replace('Scan candidate diff (fail closed)', 'Scan candidate diff')],
     ['mutated-classifier-command', (y: string) => y.replace('node .github/scripts/ci-site-lane.mjs', 'node .github/scripts/ci-site-lane-mutated.mjs')],
     ['mutated-merge-gate-needs', (y: string) => y.replace('secret-shape, secret-scan, classify, clean-tree, quick,', 'secret-shape, secret-scan, classify, clean-tree,')],

@@ -43,11 +43,45 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
+  'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
+  'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.
+  'test/email-outbox-crash-batch-103.test.ts', // Restarts real outbox processes after crashes.
+  'test/fleet-channel-health-proof-320s.test.ts', // Spawns real channel health proof processes.
+  'test/gmail-archive-plan-concurrent-104.test.ts', // Exercises concurrent archive planner subprocesses.
+  'test/handoff-api-response-contract-10ssl2.test.ts', // Binds a real local handoff API server.
+  'test/imessage-teammate-dispatch.test.ts', // Runs real teammate dispatch child processes.
+  'test/recut-desk-s0-c205.test.ts', // Binds a real loopback API server.
+  'test/recut-n1r4200s92.test.ts', // Runs real recut child processes.
+  'test/recut-top-a59.test.ts', // Binds a real loopback API server.
+  'test/recut-check.test.ts', // Builds a real git repo to prove refContained sees applied hunks.
+  'test/repo-tracked-artifacts.test.ts', // Inspects tracked artifacts through real Git subprocesses.
+  'test/ui-settings-recut-c196.test.ts', // Binds a real settings API server.
+  'test/ui-settings-recut-c206.test.ts', // Binds a real settings API server.
+  'test/ui-settings.test.ts', // Binds a real settings API server.
+  'test/web-ui-redfix-5262.test.ts', // Binds a real web API server.
+  'test/work-trace-restart-proof-319s.test.ts', // Restarts real work trace child processes.
+  'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
+  'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
+  'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
+  'test/m30.ci.test.ts', // Runs real Bash workflow checks and native tsgo compiler children.
+  'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real Git history for MCP snapshot replay reads.
+  'test/no-stray-source-artifacts-373.test.ts', // Runs git ls-files to inspect tracked source artifacts.
+  'test/recut-scripts-c497.test.ts', // Runs the desktop performance script in a real Node child.
+  'test/release-notes.test.ts', // Creates real Git merge history and invokes the release CLI through tsx.
+  'test/release-status.test.ts', // Creates real Git tags and remote refs for release status reads.
+  'test/release-git-backlog.test.ts', // Creates temporary Git tags, remote refs and shallow clones for the leader brief fallback.
+  'test/verify-changed-master-overlay.test.ts', // Creates real Git branches and materializes master overlay fixtures.
+  'test/acp-seat-client.test.ts', // Real hermetic ACP stdio fixture subprocesses.
+  'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.
+  'test/pr-resolve-conflicts.test.ts', // Creates real git histories/worktrees and imports verified supersede bundles.
+  'test/fleet-republish.test.ts', // publish-log filesystem fixtures
   'test/orchestration-e2e.test.ts', // Real queue/bus ledgers, disposable Git and checker subprocesses through proof and learning.
   'test/route-explain.test.ts', // Runs the Python controller against TypeScript eval-report fixtures and reads persisted receipts.
   'test/owner-assist.test.ts', // private state, real runtime fixture and queue integration
   'test/fleet-proof-envelope.test.ts', // Real Git trees, artifact files and the publisher capture CLI hook.
   'test/agentnet-peer-bus.test.ts', // Real private ledgers and OS lock/ACL probes across 8 hops; measured 21s under fleet load.
+  'test/agent-mesh.test.ts', // Real private identity/bus ledgers and OS storage checks.
   'test/fleet-orchestrate.test.ts', // Real roster, authenticated peer and owner-thread ledgers across repeated cycles.
   'test/queue.test.ts', // Real Python dispatcher ticks in disposable homes for the shared work market.
   'test/delegation-scope-prompts.test.ts', // real Python and shell prompt builders plus isolated restock fixture subprocesses
@@ -62,6 +96,7 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-coordination.test.ts', // Spawns tsx children that contend for the coordination lock.
   'test/coordination-return-durable-retry-378s.test.ts', // Spawns a tsx child racing a concurrent owner return on the coordination lock.
   'test/release-articles.test.ts', // Real temporary Git repositories driven through git children.
+  'test/release-status.test.ts', // Local publication fixtures use real Git repositories and child processes.
   'test/real-home-child.test.ts', // Spawns a Node child to prove the test preload keeps KILL and enrollment inside HOME.
   'test/release-train.test.ts', // Spawns node --experimental-strip-types against the release-train guard.
   'test/main-blame.test.ts', // Spawns git bisect children against a real temporary repository.
@@ -621,7 +656,6 @@ export const REAL_IO_TEST_FILES = [
   'test/m46.fleet.test.ts', // real subprocess/fs work (marker-detected or measured) — 3.2s slowest test in the quiet baseline
   'test/h5.leak-containment.test.ts', // real subprocess/fs work (marker-detected or measured) — 30.6s slowest test in the quiet baseline
   'test/m518.goal-timestamp-repair-faults.test.ts', // real subprocess/fs work (marker-detected or measured) — 3.5s slowest test in the quiet baseline
-  'test/m522.production-promotion-admission.test.ts', // spawns a real Node child to validate immutable promotion admission
   'test/m523.github-stable-release-finalization.test.ts', // executes the privileged Bash/jq effect with file-backed fake transports
 
   // --- special cases: fast on a quiet machine but genuinely real I/O, so still contention-prone ---
@@ -714,6 +748,8 @@ export const REAL_IO_TEST_FILES = [
   'test/verse-agents-api-316.test.ts', // 3.16: real git worktree per agent behind /api/verse/agents (temp HOME + temp repo)
   'test/verse-retro-sweep-close-315.test.ts', // 3.15: real loopback startServer bind; close() stops the retro sweep schedule
   'test/devin-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/devin routes
+  'test/devin-land.test.ts', // real git repos, bundles, worktrees and a stub publish.sh subprocess
+  'test/devin-autoland.test.ts', // hermetic autoland journal and git bundle integration
   'test/automations-api-315.test.ts', // 3.15: real loopback http server bind for the /api/verse/automations routes
   'test/cloud-pr-actions.test.ts', // 3.13: real loopback http server bind for the Needs-you land/close/update-branch routes
   'test/devin-evidence-triage-315.test.ts', // 3.15: real loopback http server bind for the Devin previews / close-with-reason / timeline routes
@@ -836,4 +872,5 @@ export const REAL_IO_TEST_FILES = [
   'test/fleet-guardian-head-manifest-01.test.ts', // execFileSync builds real git repo fixtures; the module execFiles real git reads
   'test/recut-n4r2000s79.test.ts', // execFileSync builds a real temp git repo for the recovered guardian-head module
   'test/leader-relay-process-preservation-10srt1.test.ts', // spawnSync runs the real `leader replies sync` CLI child
+  'test/node-ready-bridge.test.ts', // spawns python3 flock holders and contrib/mac/batch_sessions.py against real temp queue dirs
 ];

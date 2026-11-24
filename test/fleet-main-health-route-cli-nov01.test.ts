@@ -89,6 +89,93 @@ describe('parseMainGuardianStatus', () => {
 });
 
 describe('readFleetMainHealth', () => {
+  const job = 'FIXUP-MAIN-phantom-a1f206c';
+  const event = (kind: string, minutesAgo: number, extra: Record<string, unknown> = {}) =>
+    ({ event: kind, job, ts: new Date(NOW - minutesAgo * 60_000).toISOString(), ...extra });
+  async function withAttempts(rows: object[], status = SAMPLE, suffix = '') {
+    const dir = runsDir(status);
+    mkdirSync(join(dir, 'metrics'));
+    writeFileSync(join(dir, 'metrics', 'jobs.jsonl'), rows.map(row => JSON.stringify(row)).join('\n') + suffix);
+    return readFleetMainHealth({ runsDir: dir, now: () => NOW });
+  }
+
+  it('keeps persistent red visible after an empty fix, including successful worker exits', async () => {
+    for (const exit_code of [0, 1]) {
+      const report = await withAttempts([event('launch', 10), event('finish', 5, { empty: true, exit_code })]);
+      expect(report).toMatchObject({ source: 'ok', red: 1, repos: [
+        { state: 'red', failingCheck: 'npm run typecheck', fixJobs: [] }, { state: 'green' },
+      ] });
+    }
+  });
+
+  it('uses recovered CI state rather than an empty worker result', async () => {
+    const report = await withAttempts([event('launch', 10), event('finish', 5, { empty: true })], SAMPLE.replace('| red |', '| green |'));
+    expect(report.red).toBe(0);
+    expect(report.repos.every(repo => repo.state === 'green')).toBe(true);
+  });
+
+  it('suppresses duplicate empty finishes and keeps another active repair assigned', async () => {
+    const rows = [event('launch', 10), event('finish', 5, { empty: true })];
+    const report = await withAttempts([...rows, rows[1]!, rows[1]!]);
+    expect(report.repos.filter(repo => repo.state === 'red' && !repo.fixJobs.length)).toHaveLength(1);
+    const active = await withAttempts(rows, SAMPLE.replace(`| ${job} |`, `| ${job} FIXUP-OTHER |`));
+    expect(active.repos[0]!.fixJobs).toEqual(['FIXUP-OTHER']);
+  });
+
+  it.each([
+    [event('launch', 10), event('finish', 5, { empty: false })],
+    [event('launch', 10), event('finish', 5)],
+    [event('finish', 5, { empty: true })],
+    [event('launch', 10), event('finish', 5, { empty: true }), event('launch', 1)],
+    [event('launch', 10), event('publish', 7), event('finish', 5, { empty: true })],
+    [event('launch', 10), event('finish', 5, { empty: true }), event('finish', 5, { empty: false })],
+    [event('launch', 10), event('finish', -5, { empty: true })],
+    [event('launch', 10), event('finish', 5, { empty: true, ts: 'unknown' })],
+  ])('preserves active or uncertain repairs for evidence %j', async (...rows) => {
+    expect((await withAttempts(rows)).repos[0]!.fixJobs).toEqual([job]);
+  });
+
+  it('orders attempt evidence by time and accepts a new empty attempt after an old publication', async () => {
+    const rows = [event('launch', 4), event('finish', 1, { empty: true }), event('publish', 8), event('launch', 10)];
+    expect((await withAttempts(rows)).repos[0]!.fixJobs).toEqual([]);
+  });
+
+  it('counts repeated empty attempts for one failure and holds retries at the limit', async () => {
+    const attempt = (n: number) => [event('launch', 30 - n * 10), event('finish', 25 - n * 10, { empty: true })];
+    const one = await withAttempts(attempt(0));
+    expect(one.repos[0]).toMatchObject({ fixJobs: [], emptyAttempts: 1, retryHold: false });
+    const two = await withAttempts([...attempt(0), ...attempt(1)]);
+    expect(two.repos[0]).toMatchObject({ fixJobs: [], emptyAttempts: 2, retryHold: true });
+    // Duplicate ledger rows are one attempt, not two.
+    const dup = await withAttempts([...attempt(0), attempt(0)[1]!]);
+    expect(dup.repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+  });
+
+  it('resets the count after a published fix or a non-empty finish', async () => {
+    const rows = [event('launch', 40), event('finish', 35, { empty: true }), event('publish', 30),
+      event('launch', 20), event('finish', 15, { empty: true })];
+    expect((await withAttempts(rows)).repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+    const mixed = [event('launch', 40), event('finish', 35, { empty: true }), event('launch', 30),
+      event('finish', 25, { empty: false }), event('launch', 20), event('finish', 15, { empty: true })];
+    expect((await withAttempts(mixed)).repos[0]).toMatchObject({ emptyAttempts: 1, retryHold: false });
+  });
+
+  it('never holds an actively repaired or independent failure', async () => {
+    const other = 'FIXUP-MAIN-ashlr-md-6e97fd8';
+    const two = [event('launch', 30), event('finish', 25, { empty: true }), event('launch', 20), event('finish', 15, { empty: true })];
+    const status = SAMPLE.replace(/\| ashlr-md[^\n]*\n/, `| ashlr-md | main | 6e97fd8537 | red | 2026-11-01 23:42:07 | build | ${other} | |\n`);
+    const otherRows = [{ event: 'launch', job: other, ts: new Date(NOW - 3 * 60_000).toISOString() }];
+    const report = await withAttempts([...two, ...otherRows], status);
+    const [phantom, ashlr] = report.repos;
+    expect(phantom).toMatchObject({ repo: 'phantom', emptyAttempts: 2, retryHold: true });
+    expect(ashlr).toMatchObject({ repo: 'ashlr-md', fixJobs: [other], emptyAttempts: 0, retryHold: false });
+  });
+
+  it('retains assignments when the ledger is torn', async () => {
+    const report = await withAttempts([event('launch', 10), event('finish', 5, { empty: true })], SAMPLE, '\n{');
+    expect(report.repos[0]!.fixJobs).toEqual([job]);
+  });
+
   it('reads the status file and the kill switch', async () => {
     const report = await readFleetMainHealth({ runsDir: runsDir(SAMPLE, true), now: () => NOW });
     expect(report).toMatchObject({ source: 'ok', guardianOff: true, red: 1 });

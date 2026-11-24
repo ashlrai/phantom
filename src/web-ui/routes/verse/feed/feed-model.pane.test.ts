@@ -25,8 +25,8 @@ const feed = buildFeed({
   update: [{ id: 'update-ready:9.9.9', category: 'action-required', severity: 'high', title: 'Update ready', detail: '', ts: at(6) }],
   bus,
   teammate: { total: 3, omitted: 0, sources: {}, items: [entry('dot', 'teammate-text'), entry('mail', 'gmail-over-target'), entry('li', 'linkedin-message')] },
-  shared: { schema: 'phantom.feed.v1', sources: { merges: 'available', releases: 'unknown', incidents: 'unknown', leaderReplies: 'available' },
-    items: [{ kind: 'merge', at: at(7), text: 'Merged in phantom' }, { kind: 'leader-reply', at: at(9), text: 'Done' }] },
+  shared: { schema: 'phantom.feed.v2', version: 2, more: false, sources: { jobs: 'available', events: 'unknown', leader: 'available', merges: 'available', releases: 'unknown', main: 'unknown' },
+    items: [{ kind: 'merged', at: at(7), text: 'Merged in phantom' }, { kind: 'leader', at: at(9), text: 'Done' }] },
 });
 const paneOf = (prefix: string) => feed.filter(item => item.id.startsWith(prefix)).map(item => item.pane);
 
@@ -41,8 +41,8 @@ describe('the pane that owns each Feed item', () => {
     expect(paneOf('teammate:')).toEqual(['fleet-inbox']);
     expect(paneOf('gmail:')).toEqual(['fleet-inbox']);
     expect(paneOf('linkedin:')).toEqual(['fleet-inbox']);
-    expect(paneOf('shared:merge:')).toEqual(['fleet-merges']);
-    expect(paneOf('shared:leader-reply:')).toEqual(['leader-thread']);
+    expect(paneOf('shared:merged:')).toEqual(['fleet-merges']);
+    expect(paneOf('shared:leader:')).toEqual(['leader-thread']);
   });
 
   it('gives updates no pane and keeps the Needs-you https link with no pane', () => {

@@ -1,4 +1,73 @@
+# Phantom
 
+> Phantom (`@ashlr/phantom`) is an open-source workbench for running coding agents, coordinating a fleet and reviewing their work: CLI `phm` (alias `ashlr`), MCP gateway, agent bus and web console. Repository-root index for agents; not an execution API or authorization.
+
+## Mission
+
+Phantom is chasing open-source RSI (recursive self-improvement): an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute. Agents run the factory and the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the owner sets direction and is needed only for passwords, 2FA, device approvals and payments.
+
+- [Strategy for recursive self-improvement and an open fleet](docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials
+- [How agents work on Phantom](README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims
+- [AGENTS.md](AGENTS.md): the agent constitution and its "Working in this repository" section
+
+## Install
+
+Node.js 22.15.0 or newer and Git. `phm` and `ashlr` are the same program.
+
+```sh
+npm install -g @ashlr/phantom
+phm --version
+phm verse --no-open --json
+phm docs --agent --json
+```
+
+## Start here
+
+- [README](README.md): overview, quickstart and CLI reference
+- [Documentation map](docs/README.md): canonical guides by task
+- [Full docs index](docs/llms.txt): every docs page, generated and checked for completeness
+- [Agent operations](docs/AGENT-OPERATIONS.md): cold-start checklist for building and operating Phantom from source
+- [Contributing](CONTRIBUTING.md): conventions, tests and contracts
+- [Website index](site/llms.txt): landing page, use-case guides and comparison
+
+## Contribute
+
+Outside contributors and their agents work on a focused branch, run local checks, and open a pull request from a fork. `Merge Gate` checks the pull request; see the guide for current required checks and merge-queue details.
+
+- [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): the fork, checks and merge path
+- [Which tests the fast gate runs](docs/CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): how changed paths select tests
+- [Protected paths wait for the owner](docs/CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): review for protected changes
+- [Changed-files verification](docs/verify-changed.md): verifier steps and pass records
+- [FAQ](docs/FAQ.md) and [Glossary](docs/GLOSSARY.md): common questions and Phantom terms
+
+Clone upstream as `origin` (the verifier compares against `origin/master`) and push to your fork:
+
+```sh
+git clone https://github.com/ashlrai/phantom.git && cd phantom
+git remote add fork https://github.com/<you>/phantom.git
+npm ci                                   # or npm run install:worktree for parallel worktrees
+node scripts/verify-changed.mjs          # once, in the foreground
+HOME=$(mktemp -d) npm run test:ci -- test/<file>.test.ts # affected suites
+npm run check:docs                       # when docs changed, if not already checked
+git push fork <topic-branch>
+gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>
+```
+
+## Ecosystem
+
+Companions install separately; each has its own capabilities and authorization boundaries. The repo's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7` and `ashlr`; registration does not prove readiness (see the [toolchain guide](docs/AGENT-TOOLCHAIN.md)).
+
+- [Phantom](https://github.com/ashlrai/phantom): the factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work (this repo)
+- [Phantom Secrets](https://github.com/ashlrai/phantom-secrets): local vault, placeholders and a proxy for supported API credential use
+- [Locus](https://github.com/ashlrai/locus): account and tenant bindings for agent tools
+- [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin): compact tool results and a local usage ledger
+- [Lexicon](https://github.com/ashlrai/lexicon): correct recurring speech-to-text errors before agents read them
+- [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
+- [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
+
+## Operator guides
+
+- [Router gateway](docs/ROUTER-GATEWAY.md): `phm run --model auto "<prompt>" --json`, `phm router serve|models|pick|config --json`; loopback-only OpenAI-compatible endpoint and one CLI call over `routeSeat`. Preview with `phm router pick`.
 - [Node router](docs/NODE-ROUTER.md): `phm node join|pull|plan|status --json`; computers join as nodes, jobs carry an owner scope, per-job leases with fencing tokens so no job runs twice.
 - [Lane health](docs/LANE-HEALTH.md): `phm lanes health --json`, calls, error rate, p50 latency and deployed commit per lane over 12 h, with a stuck badge and phase age past a phase timeout.
 - [Provider capacity cards](docs/PROVIDER-CARDS.md): `phm resource --cards --json`, usage and burn-down per provider, unknown stays unknown.

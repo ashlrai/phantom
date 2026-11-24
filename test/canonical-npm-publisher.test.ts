@@ -155,6 +155,10 @@ describe('canonical publication recovery', () => {
     const read = (endpoint: string) => endpoint.endsWith('/jobs?per_page=100') ? {total_count: 1, jobs: [{name: 'admit', conclusion: 'success', head_sha: env.GITHUB_SHA}]} : endpoint.endsWith('/attempts/1') ? {...run, id: 9, head_sha: env.GITHUB_SHA, path: '.github/workflows/publish-canonical-npm.yml', head_branch: 'master', conclusion: 'failure'} : {...repo, default_branch: 'master', private: false, visibility: 'public'};
     expect(verifyCanonicalProvenance(accepted, audit, env.GITHUB_SHA, '9', '2', read)).toEqual({runId: '9', runAttempt: '1'});
     expect(() => verifyCanonicalProvenance(accepted, audit, '3'.repeat(40), '9', '2', read)).toThrow();
+    // A later daily run on a newer master re-verifies the already published version.
+    expect(verifyCanonicalProvenance(accepted, audit, null, '10', '1', read)).toEqual({runId: '9', runAttempt: '1'});
+    const driftedRun = (endpoint: string) => endpoint.endsWith('/attempts/1') ? {...read(endpoint), head_sha: '4'.repeat(40)} : read(endpoint);
+    expect(() => verifyCanonicalProvenance(accepted, audit, null, '10', '1', driftedRun)).toThrow();
     const failedAdmission = (endpoint: string) => endpoint.endsWith('/jobs?per_page=100') ? {total_count: 1, jobs: [{name: 'admit', conclusion: 'failure', head_sha: env.GITHUB_SHA}]} : read(endpoint);
     expect(() => verifyCanonicalProvenance(accepted, audit, env.GITHUB_SHA, '9', '2', failedAdmission)).toThrow();
   });

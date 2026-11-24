@@ -16,12 +16,18 @@ export interface ThroughputWindow {
   lane: string;
   status: 'fresh' | 'unknown';
   headroom: number | null;
+  /**
+   * `false` only when the reading is a flat-rate subscription allowance.
+   * Prepaid credits, on-demand usage and top-ups are `true`. Missing means
+   * unproven, which counts as paid for a zero-paid lane.
+   */
+  paid?: boolean;
 }
 
 export interface ThroughputSample {
   /** A tick failed or timed out, or a runtime reported it was full. */
   saturated?: boolean;
-  /** Usage windows. Devin ACU and claude-api are ignored so spend gates stay put. */
+  /** Usage windows. Devin ACU and claude-api are ignored so spend gates stay put; Grok and Cursor count only when `paid === false`. */
   windows?: readonly ThroughputWindow[];
 }
 
@@ -30,12 +36,25 @@ export type ThroughputRule = 'ramp' | 'back-off' | 'hold';
 /** Pay-per-use lanes. Their caps stay in the spend and ACU gates. */
 const SPEND_LANES = new Set(['devin', 'claude-api']);
 
+/**
+ * Lanes that must never spend money. They may ramp on their subscription
+ * allowance only: a paid, credit or unproven window never raises or lowers
+ * the adaptive level, so a ramp cannot be read as permission to spend.
+ */
+export const ZERO_PAID_LANES: ReadonlySet<string> = new Set(['grok', 'cursor']);
+
+/** True when this window may steer the adaptive level. */
+export function countsForThroughput(window: ThroughputWindow): boolean {
+  if (window.status !== 'fresh' || SPEND_LANES.has(window.lane)) return false;
+  return !ZERO_PAID_LANES.has(window.lane) || window.paid === false;
+}
+
 export function nextThroughputLevel(
   previous: ThroughputLevel | null,
   sample: ThroughputSample = {},
 ): ThroughputLevel & { rule: ThroughputRule } {
   if (previous === null) return { level: ADAPTIVE_START_LEVEL, measuredLimit: null, rule: 'ramp' };
-  const fresh = (sample.windows ?? []).filter((window) => window.status === 'fresh' && !SPEND_LANES.has(window.lane));
+  const fresh = (sample.windows ?? []).filter(countsForThroughput);
   const blocked = fresh.some((window) => window.headroom === 0);
   const room = fresh.some((window) => window.headroom !== null && window.headroom > 0);
   if (sample.saturated === true || blocked) {

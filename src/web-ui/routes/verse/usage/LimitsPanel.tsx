@@ -10,6 +10,7 @@
  * follow.
  */
 import type { ReactNode } from 'react';
+import { BrandMark } from '../../../components/primitives/BrandMark.js';
 import { StatusBadge, type Tone } from '../../../components/primitives/StatusBadge.js';
 import { chartFormat } from '../../../components/charts/index.js';
 import { limitWindowLabel } from './limit-window-label.js';
@@ -64,7 +65,7 @@ export function LimitsPanel({
             return (
               <div key={row.id} className={styles.limitRow}>
                 <span className={styles.limitName}>
-                  {row.backend}
+                  <span><BrandMark brand={row.backend} size={14} inline />{row.backend}</span>
                   <span className={styles.limitWindow} data-retired={label.retired ? 'true' : undefined} title={label.title ?? undefined}>
                     {label.text}
                   </span>

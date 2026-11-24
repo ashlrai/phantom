@@ -369,6 +369,16 @@ const SELF_REPO_RULES: readonly ProtectedPathRule[] = [
     why: 'test setup and build config decide which tests run and whether HOME is isolated',
   },
   {
+    id: 'action-classes',
+    scope: 'self-repo',
+    patterns: [
+      'contrib/mac/action_classes.py',
+      'contrib/mac/action-classes.json',
+      'contrib/mac/tests/test_action_classes.py',
+    ],
+    why: 'Publish and merge action-class registry; an unlisted class must fail closed',
+  },
+  {
     id: 'comms-agent',
     scope: 'self-repo',
     patterns: ['src/core/comms-agent/'],

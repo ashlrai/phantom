@@ -13,6 +13,7 @@ const row = (o: Record<string, unknown>) => JSON.stringify(o);
 function healthy(over: FleetDoctorOptions = {}): FleetDoctorOptions {
   return {
     now: () => NOW,
+    readGuardian: async () => ({ name: 'guardian', level: 'ok', reason: 'Healthy.', nextStep: 'No action needed.' }),
     leader: { readEvents: async () => `${localStamp(30)} OPUS-LEADER rc=0\n` },
     heartbeat: { queueStatus: async () => JSON.stringify({ last_tick: at(5) }), supervisorStatuses: async () => [] },
     readJobs: async () => '',

@@ -1,5 +1,6 @@
 /** Pure advisory projections. No slot, hold, reader or dispatch mutations. */
 import { parseResetWindows } from '../fabric/reset-windows.js';
+import type { ResourceLedgerV1 } from './runs-resource-ledger.js';
 
 export interface ResetWindowResource {
   resource: string;
@@ -47,4 +48,16 @@ export function resetWindowPlan(resources: readonly ResetWindowResource[], nowMs
     return { ...base, projectedPercentLeftAtReset, verdict, reason };
   }).sort((a, b) => Number(b.verdict === 'wasting') - Number(a.verdict === 'wasting') ||
     resetOrder(a.resetAt) - resetOrder(b.resetAt));
+}
+
+/** The plan for the resource ledger's lanes; a reading older than five minutes counts as unknown. Shared by `fleet window-plan` and `phm home`. */
+export function ledgerWindowPlan(ledger: ResourceLedgerV1, nowMs: number): ResetWindowPlanRow[] {
+  return resetWindowPlan(ledger.lanes.map(row => {
+    const observed = Date.parse(row.observation?.asOf ?? ledger.asOf ?? '');
+    const fresh = Number.isFinite(observed) && observed <= nowMs && nowMs - observed <= 300_000;
+    return { resource: row.lane, usedPercent: fresh ? row.usedPct : null, resetAt: row.resetAt,
+      burnPctPerHour: fresh ? row.burnPctPerHour : null, running: row.running, target: row.target,
+      // Weekly allowances expire; credit balances alone do not establish expiry.
+      expiresUnused: row.window === 'weekly' };
+  }), nowMs);
 }

@@ -129,6 +129,8 @@ const realGh: GhRunner = (args, options) =>
   });
 
 interface GhRow {
+  openedAtMs?: number;
+  jobId?: string;
   repo: string;
   number: number;
   title: string;
@@ -143,7 +145,7 @@ export function resetFleetTruthCache(): void { ghCache.clear(); }
 
 /** Bounded GitHub search; each page must prove its count and source identity.
  * Partial results remain useful observations, never proof of an empty window. */
-async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh: boolean, monotonicNow: () => number): Promise<{ at: number; rows: GhRow[]; truncated: boolean; complete: boolean } | null> {
+async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh: boolean, monotonicNow: () => number, repos: readonly string[] = []): Promise<{ at: number; rows: GhRow[]; truncated: boolean; complete: boolean } | null> {
   const key = new Date(sinceMs).toISOString();
   const hit = ghCache.get(key);
   if (!fresh && hit && nowMs >= hit.at && nowMs - hit.at < CACHE_MS) return { ...hit, complete: false };
@@ -155,7 +157,7 @@ async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh:
       const remaining = Math.floor(deadline - monotonicNow());
       if (!Number.isFinite(remaining) || remaining < 1) throw new Error('merge search deadline');
       const raw: unknown = JSON.parse(await gh(['api', 'search/issues', '-X', 'GET', '-f',
-        `q=user:${FLEET_OWNER} is:pr is:merged merged:${key}..${new Date(nowMs).toISOString()}`,
+        `q=${repos.length ? repos.map(repo => `repo:${repo}`).join(' ') : `user:${FLEET_OWNER}`} is:pr is:merged merged:${key}..${new Date(nowMs).toISOString()}`,
         '-f', 'per_page=100', '-f', `page=${page}`], { timeoutMs: Math.min(GH_TIMEOUT_MS, remaining) }));
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid merge search');
       const result = raw as Record<string, unknown>;
@@ -176,7 +178,10 @@ async function readGhMerges(sinceMs: number, nowMs: number, gh: GhRunner, fresh:
         const time = Date.parse(mergedAt); if (!Number.isFinite(time) || new Date(time).toISOString().slice(0,19) !== mergedAt.slice(0,19)) throw new Error('invalid merge time');
         const repo = `${FLEET_OWNER}/${match[1]}`; const number = Number(row['number']); const id = `${repo.toLowerCase()}#${number}`;
         if (seen.has(id)) throw new Error('duplicate merge row'); seen.add(id);
-        if (time >= sinceMs && time <= nowMs) rows.push({ repo, number, title: row['title'], url: `https://github.com/${repo}/pull/${number}`, mergedAtMs: time });
+        const openedAtMs = typeof row['created_at'] === 'string' ? Date.parse(row['created_at']) : NaN;
+        const jobId = typeof row['body'] === 'string' ? /\bRQ-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/.exec(row['body'])?.[0]?.slice(0, 96) : undefined;
+        if (time >= sinceMs && time <= nowMs) rows.push({ repo, number, title: row['title'],
+          ...(Number.isFinite(openedAtMs) && openedAtMs <= time ? { openedAtMs } : {}), ...(jobId ? { jobId } : {}), url: `https://github.com/${repo}/pull/${number}`, mergedAtMs: time });
       }
       if (monotonicNow() >= deadline) { complete = false; break; }
       if (received === count) break;
@@ -222,7 +227,9 @@ async function readQueue(root: string): Promise<{ ready: number; blocked: number
     const parked = (pool: string): boolean => /^PARKED[^.]*\./i.test(pool);
     return {
       ready: rows.filter((r) => r.status === 'READY' && !parked(r.pool)).length,
-      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool)).length,
+      // PARKED-<reason>[.<lane>] statuses are held work too — parked rows no
+      // longer hide inside READY once the dispatcher dialect parses natively.
+      blocked: rows.filter((r) => ['BLOCKED', 'HOLD'].includes(r.status) || parked(r.pool) || r.status.startsWith('PARKED')).length,
     };
   } catch {
     return null;
@@ -316,4 +323,9 @@ export async function getFleetTruth(sinceMs: number, opts: FleetTruthOptions = {
 export function getFleetTruthToday(opts: FleetTruthOptions = {}): Promise<FleetTruth> {
   const nowMs = opts.nowMs ?? Date.now();
   return getFleetTruth(startOfDayInZone(nowMs), { ...opts, nowMs });
+}
+
+/** Shared bounded GitHub reader for the fleet shipped feed; no ledger or process-table reads. */
+export function readFleetShippedMerges(since: number, now: number, repos: readonly string[], gh: GhRunner = realGh) {
+  return readGhMerges(since, now, gh, true, () => performance.now(), repos);
 }

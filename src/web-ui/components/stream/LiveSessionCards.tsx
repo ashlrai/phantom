@@ -14,7 +14,8 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '../../data/hooks.js';
 import { runsQuery } from '../../data/queries.js';
 import { Dialog } from '../primitives/Dialog.js';
-import { ProviderLogo, providerEngine } from '../primitives/ProviderLogo.js';
+import { BrandMark } from '../primitives/BrandMark.js';
+import { resolveBrand } from '../../../core/brand/registry.js';
 import { formatMetric } from '../charts/format-metric.js';
 import { RunStreamPanel } from './RunStreamPanel.js';
 import { buildLiveSessions, formatElapsedMs, formatQuietLabel, type LiveSession } from './live-session.js';
@@ -38,13 +39,12 @@ function useNow(intervalMs: number): number {
 
 function SessionCard({ session, onWatch }: { session: LiveSession; onWatch: (runId: string) => void }) {
   const quiet = formatQuietLabel(session.quietMs, QUIET_AFTER_MS);
-  const mark = providerEngine(session.engine) ?? providerEngine(session.provider);
   return (
     <li className={styles.card}>
       <div className={styles.cardTop}>
         <span className={styles.pulse} aria-hidden="true" />
         <span className={styles.engine}>
-          {mark ? <ProviderLogo engine={mark} size={14} /> : null}
+          <BrandMark brand={resolveBrand(session.engine) ? session.engine : session.provider || session.engine} size={14} />
           {session.engine}
         </span>
         <span className={styles.model} title={session.engineModel ?? session.provider}>

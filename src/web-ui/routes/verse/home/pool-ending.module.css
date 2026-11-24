@@ -1,0 +1,6 @@
+/* The words around a pool tile's bar. The bar itself is the design system's WindowBar (components/primitives). */
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.parts { display: inline-flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.parts > span { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+/* The runway's own sentence for the open pool, above its running jobs. */
+.advice { margin: 0; color: var(--text-primary); font-size: var(--text-sm-size); overflow-wrap: anywhere; }

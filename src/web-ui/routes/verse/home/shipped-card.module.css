@@ -1,0 +1,46 @@
+/* Home's Shipped today card: two sentences, a switch between repositories, then one row per merged pull request with
+   its time open drawn on the feed's own 24 hours. `.body` outranks Home's `.card p` size, whichever sheet loads last. */
+.body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.body .headline { color: var(--text-primary); font-size: var(--text-md-size, var(--text-sm-size)); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.body .note, .body .axis { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.body .note[data-warn] { color: var(--status-warning-fg); }
+/* Holds a few rows' height while the first read is out, so the card does not jump when it lands. */
+.body .note[data-reading] { min-height: 6rem; }
+.refresh { margin-inline-start: var(--space-2); padding: 0; border: 0; background: none; color: var(--text-link, var(--accent-500)); font: inherit; text-decoration: underline; cursor: pointer; }
+
+/* One button per repository that merged, each underlined by its share of the list. */
+.repos { display: flex; flex-wrap: wrap; gap: var(--space-1); min-width: 0; }
+.repo { position: relative; display: inline-flex; align-items: baseline; gap: var(--space-2); min-height: 1.75rem; padding: 0 var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--text-xs-size); overflow: hidden; cursor: pointer; transition: color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard); }
+.repo:hover { color: var(--text-primary); border-color: var(--border-default); }
+.repo[aria-pressed='true'] { color: var(--text-primary); border-color: var(--border-strong); background: var(--bg-surface-raised); }
+.repo strong { color: var(--text-primary); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.share { position: absolute; inset-block-end: 0; inset-inline-start: 0; height: 2px; background: var(--accent-500); opacity: 0.45; transition: width var(--duration-slow) var(--ease-standard); }
+.repo[aria-pressed='true'] .share { opacity: 1; }
+
+.body .axis { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); }
+
+/* The list scrolls inside the card; Home stays a glance however much merged. */
+.body .rows { display: flex; flex-direction: column; max-height: 22rem; overflow-y: auto; border-block: 1px solid var(--border-subtle); }
+.rows li { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); column-gap: var(--space-2); row-gap: 2px; padding: var(--space-2) 0; min-width: 0; }
+.rows li + li { border-top: 1px solid var(--border-subtle); }
+.when { grid-row: 1 / span 2; color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.what { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.what a { min-width: 0; color: var(--text-primary); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.what a:hover, .what a:focus-visible { text-decoration: underline; }
+.facts { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.job { padding: 0; border: 0; background: none; color: var(--text-secondary); font-family: var(--font-mono, monospace); font-size: var(--text-2xs-size); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; cursor: pointer; }
+.job:hover, .job:focus-visible { color: var(--text-primary); }
+
+/* The feed's 24 hours, left to right. The line is the time the pull request was open, the dot is its merge.
+   Decoration only: the row's words give the merge time and the time open. */
+.track { grid-column: 1 / -1; position: relative; height: 0.5rem; margin-top: 2px; }
+.track::before { content: ''; position: absolute; inset-inline: 0; top: 50%; height: 1px; background: var(--border-subtle); }
+.life { position: absolute; top: calc(50% - 1.5px); height: 3px; min-width: 2px; border-radius: var(--radius-full); background: var(--accent-500); opacity: 0.45; transform-origin: 100% 50%; animation: grow var(--duration-slow) var(--ease-decelerate) both; transition: opacity var(--duration-fast) var(--ease-standard); }
+/* Opened before the window began: the line fades in from the edge instead of starting there. */
+.life[data-clipped] { background: linear-gradient(to right, transparent, var(--accent-500) 1.5rem); }
+.dot { position: absolute; top: 50%; box-sizing: border-box; width: 0.4375rem; height: 0.4375rem; border: 1.5px solid var(--accent-500); border-radius: var(--radius-full); background: var(--accent-500); transform: translate(-50%, -50%); }
+/* No time open in the feed: a hollow dot and no line, so an unknown never reads as "merged at once". */
+.dot[data-open='unknown'] { background: var(--bg-surface); border-color: var(--status-unknown-solid); }
+.rows li:hover .life, .rows li:focus-within .life { opacity: 1; }
+@keyframes grow { from { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .life { animation: none; transition: none; } .share, .repo { transition: none; } }

@@ -13,9 +13,13 @@ describe('inbox flag noise', () => {
       const events = join(runsDir, 'dispatch-events.log');
       await writeFile(inbox, 'existing inbox');
       await writeFile(events, 'existing events');
-      for (const text of ['--help', '-h', '  --version  ', '--json --help', '', '  \n ']) {
+      for (const text of ['--help', '-h', '  --version  ', '--json --help']) {
         expect(isFlagOnlyInboxText(text)).toBe(true);
         expect(await appendInboxEntry(text, { runsDir })).toEqual({ ok: false, reason: 'flag-only' });
+      }
+      // Blank text is refused as empty before the flag check (#6338).
+      for (const text of ['', '  \n ']) {
+        expect(await appendInboxEntry(text, { runsDir })).toEqual({ ok: false, reason: 'empty' });
       }
       expect(await readFile(inbox, 'utf8')).toBe('existing inbox');
       expect(await readFile(events, 'utf8')).toBe('existing events');

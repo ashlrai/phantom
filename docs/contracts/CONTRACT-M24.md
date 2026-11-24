@@ -110,7 +110,8 @@ overrides). Whatever `tick()` does — return, throw, or never settle — the
 resident loop persists `lastTickAt`/`lastTickOutcome`/`lastTickPhases`/
 `lastTickError` in a `finally`, and refuses to start a new tick while a
 previously abandoned one remains open (`refused-open`). Inside `tick()`,
-every awaited stage runs via `runTickPhase(name, run, { deadlineMs })` with
+every awaited stage runs via `runTickPhase(name, run, { deadlineMs, budgetExempt? })`
+inside one whole-tick budget (`beginTickPhases({ budgetMs })`, `TICK_BUDGET_MS`), with
 an `AbortSignal`, degrade/timeout capture, and ledger recording; dispatched
 runs detach under their own watchdog and never block tick completion.
 `phm daemon status --json` exposes the ledger at `.tick.phases`.

@@ -76,6 +76,7 @@ export function buildDigestMarkdown(report: DigestReport): string {
 
   lines.push(`## Headline\n`);
   lines.push(report.headline || '_No activity to report._');
+  if (report.emptyJobs) lines.push(``, report.emptyJobs);
   lines.push(``);
 
   lines.push(`## Overview\n`);
@@ -381,6 +382,7 @@ function printDigestHuman(report: DigestReport): void {
 
   // Headline — the load-bearing one-line summary.
   out('  ' + bold(report.headline || 'No activity to report.'));
+  if (report.emptyJobs) out('  ' + report.emptyJobs);
   out('');
 
   // Repos + pending + daemon roll-up.

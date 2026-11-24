@@ -1,0 +1,20 @@
+.list { margin: 0; padding: 0; list-style: none; }
+/* The one sentence on top wraps inside a 390 px screen. */
+.headline { margin: 0 0 var(--space-2); font-size: var(--text-sm-size); color: var(--text-primary); overflow-wrap: anywhere; }
+.head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); align-items: baseline; overflow-wrap: anywhere; }
+.facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px var(--space-2); margin: var(--space-1) 0; font-size: var(--text-xs-size); color: var(--text-secondary); }
+.facts dt, .facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd { text-align: right; font-variant-numeric: tabular-nums; }
+.countdown { display: block; }
+.verdict { font-size: var(--text-xs-size); color: var(--text-secondary); text-align: right; }
+.verdict[data-verdict='behind'] { color: var(--status-warning-fg); }
+.verdict[data-verdict='on-pace'] { color: var(--status-success-fg); }
+.verdict[data-verdict='used-up'], .verdict[data-verdict='expired'] { color: var(--status-warning-fg); }
+.verdict[data-verdict='unknown'] { color: var(--status-unknown-fg); }
+/* Two layers on one track: the faint projected-at-reset share under the solid used-now share. */
+.track { position: relative; height: 6px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
+.projected, .used { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }
+.projected { background: var(--status-info-bg); }
+.used { background: var(--status-info-solid); }
+.track[data-verdict='behind'] .used { background: var(--status-warning-solid); }
+.track[data-verdict='behind'] .projected { background: var(--status-warning-bg); }

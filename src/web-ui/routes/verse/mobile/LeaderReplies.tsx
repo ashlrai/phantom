@@ -6,7 +6,8 @@
  * Reads the shared inbox-tail query — same cache key MobileInterject
  * polls, so this adds no request of its own. Merging, ordering, the 8-row
  * cap and the "answers" link all live in leader-replies-model.ts; the text
- * is untrusted and renders plain, never as HTML.
+ * is untrusted and renders plain, never as HTML. When the Mac serves the
+ * Leader chat (MobileInterject shows it), this list steps aside.
  */
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { OUTBOX_KIND_LABEL, type OutboxKind } from '../../../../core/fleet/outbox-kind.js';
@@ -24,6 +25,8 @@ export function LeaderReplies() {
   const query = useQuery(inboxTailQuery);
   const refetch = useRefetch(inboxTailQuery);
   usePollWhileVisible(refetch, 20_000);
+  // The Leader chat in the box above already shows these replies, in order.
+  if (query.data?.chat) return null;
   if (query.error !== undefined && query.data === undefined) {
     return <Section title="Leader replies"><p className={ui.faint}>Leader replies could not be read.</p></Section>;
   }

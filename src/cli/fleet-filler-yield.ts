@@ -1,12 +1,13 @@
 /** Read-only yield of author-filler jobs per repo from the host jobs ledger. Exit 1 when any repo is red. */
 import { readTaskCheckJobs, type TaskCheckReader } from './fleet-task-check.js';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 const usage = 'Usage: ashlr fleet filler-yield [--hours 6] [--json]';
 const SKIP_CODE = 13;
 const RED_MIN_ROWS = 10;
-/** Author filler: RQ-, capital letters, digits, A, digits, Q8. */
-export const FILLER_ID = /^RQ-[A-Z]+[0-9]+A[0-9]+Q8$/;
+import { FILLER_ID } from '../core/fleet/slot-yield.js';
+export { FILLER_ID };
 
 export interface FillerYieldRow {
   repo: string;
@@ -61,7 +62,11 @@ export async function fleetFillerYield(read: TaskCheckReader = readTaskCheckJobs
     repos.set(name, entry);
     entry.rows++;
     if (row.event === 'launch') entry.launches++;
-    else if (row.event === 'precheck_skip' && Number(row.code) === SKIP_CODE) entry.skips++;
+    // Code 13 is the covered-work verdict: precheck_skip is the candidate
+    // spelling, skipped_empty+code the live decline spelling, and
+    // precheck_parked the live park the dispatcher writes instead of a skip.
+    else if (Number(row.code) === SKIP_CODE
+      && (isPrecheckSkipRow(row) || row.event === 'precheck_parked')) entry.skips++;
     else if (row.event === 'finish' && row.empty === true) entry.empty_finishes++;
     else if (row.event === 'outcome' && row.state === 'MERGED' && !mergedJobs.has(id)) { mergedJobs.add(id); entry.merged++; }
   }
@@ -78,7 +83,7 @@ export async function fleetFillerYield(read: TaskCheckReader = readTaskCheckJobs
 
 export async function cmdFleetFillerYield(args: string[], read: TaskCheckReader = readTaskCheckJobs, now = Date.now()): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
-    console.log(`${usage}\nPer repo, count author-filler jobs (RQ-<LETTERS><digits>A<digits>Q8) in the window: launches, precheck skips with code ${SKIP_CODE}, empty finishes and MERGED outcomes. Yield is merged over launches plus skips. A repo is red when skips are over half of its ${RED_MIN_ROWS}+ rows; exit 1 on red. Reads ~/.ashlr-runs/metrics/jobs.jsonl; unreadable metrics are unknown (exit 0).`);
+    console.log(`${usage}\nPer repo, count author-filler jobs (RQ-<LETTERS><digits>A<digits>Q8) in the window: launches, code-${SKIP_CODE} precheck verdicts (skips and parks), empty finishes and MERGED outcomes. Yield is merged over launches plus skips. A repo is red when skips are over half of its ${RED_MIN_ROWS}+ rows; exit 1 on red. Reads ~/.ashlr-runs/metrics/jobs.jsonl; unreadable metrics are unknown (exit 0).`);
     return 0;
   }
   let hours = 6, json = false, seenHours = false;

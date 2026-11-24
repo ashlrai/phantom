@@ -15,10 +15,12 @@ import {
   formatFleetEvalReport,
   DEFAULT_EVAL_DAYS,
   MAX_EVAL_DAYS,
+  type EvalReportJobsRead,
   type FleetEvalReport,
 } from '../core/fleet/eval-report.js';
 import { buildProofOutcomeReport, formatProofOutcomeReport } from '../core/fleet/proof-outcome-join.js';
 import { readPostMergeObservations, type PostMergeObservationReadResult } from '../core/fleet/post-merge-observations.js';
+import { readLedgerTail } from '../core/router/outcomes.js';
 
 const usage = `Usage: phm fleet eval-report [--jobs <file>] [--prs <file>]... [--days <n>] [--until <iso>] [--no-observations] [--json]
 
@@ -61,8 +63,17 @@ async function readText(path: string, max = MAX_FILE_BYTES): Promise<string | nu
   }
 }
 
+/** Newest bounded tail of the append-only jobs ledger; null when missing/unreadable. */
+const readJobsTail: NonNullable<FleetEvalReportDeps['read']> = async (path) => {
+  const tail = await readLedgerTail(path);
+  return tail.state === 'read' ? { text: tail.text, truncated: tail.truncated } : null;
+};
+
 export interface FleetEvalReportDeps {
-  read?: (path: string) => Promise<string | null>;
+  /** File reader for --jobs/--prs paths. A bare string is a complete read;
+   * { text, truncated } marks a bounded tail. Defaults: the jobs ledger reads
+   * its newest tail (readLedgerTail), --prs exports read whole-file. */
+  read?: (path: string) => Promise<string | EvalReportJobsRead | null>;
   observations?: () => PostMergeObservationReadResult;
   now?: () => number;
 }
@@ -163,13 +174,13 @@ async function runEvalReport(
   deps: FleetEvalReportDeps,
   render: (report: FleetEvalReport) => string,
 ): Promise<number> {
-  const read = deps.read ?? readText;
   const jobsPath = parsed.jobs ?? join(homedir(), '.ashlr-runs', 'metrics', 'jobs.jsonl');
-  const jobsText = await read(jobsPath);
+  const jobsText = await (deps.read ?? readJobsTail)(jobsPath);
   const prsTexts: string[] = [];
   let prsUnreadable = 0;
   for (const path of parsed.prs) {
-    const text = await read(path);
+    const raw = await (deps.read ?? readText)(path);
+    const text = raw === null ? null : typeof raw === 'string' ? raw : raw.text;
     if (text === null) prsUnreadable++;
     else prsTexts.push(text);
   }

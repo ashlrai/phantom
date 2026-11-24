@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MAC = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MAC))
@@ -54,6 +55,7 @@ class ClosedPrune(unittest.TestCase):
         git('init', '-q', '-b', 'main', str(self.repo))
         (self.repo / '.gitignore').write_text('node_modules/\n')
         (self.repo / 'a.txt').write_text('a\n')
+        (self.repo / 'models.ts').write_text('export const models = [];\n')  # source files are not model-weight directories
         git('add', '.', cwd=self.repo)
         git('commit', '-q', '-m', 'seed', cwd=self.repo)
         self.wtroot = root / 'wt'
@@ -112,6 +114,113 @@ class ClosedPrune(unittest.TestCase):
         listed = git('worktree', 'list', '--porcelain', cwd=self.repo).stdout
         self.assertNotIn('RQ-MERGED', listed)
         self.assertIn('refs/heads/codex-bridge/RQ-MERGED', git('branch', '--list', '--format=%(refname)', cwd=self.repo).stdout)
+
+    def test_fresh_terminal_reaps_but_pinned_and_unknown_policy_stay(self):
+        home = self.runs.parent
+        (home / '.ashlr').mkdir()
+        pins = home / '.ashlr/kept-worktrees.json'
+        pins.write_text(json.dumps([str(self.wtroot / 'RQ-MERGED')]))
+        with patch.dict(os.environ, {'HOME': str(home)}):
+            r = self.run_cli('--apply')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((self.wtroot / 'RQ-CLOSED').exists())  # no hour-long grace after terminal
+            self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+            pins.write_text('{broken')
+            self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'pins-unavailable': 1})
+            pins.unlink()
+            keep = self.runs / 'queue/keep.txt'
+            keep.unlink(); keep.mkdir()
+            self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'keep-unavailable': 1})
+            self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_symlink_root_and_retention_change_refuse_removal(self):
+        alias = self.runs.parent / 'alias'; alias.symlink_to(self.wtroot)
+        self.assertEqual(prune.plan(str(alias), str(self.runs), [], '')[1], {'protected-root': 1})
+        rows = [{'event': 'outcome', 'job': 'RQ-MERGED', 'state': 'MERGED'}]
+        items, _ = prune.plan(str(self.wtroot), str(self.runs), rows, '')
+        allowed, original = {'RQ-MERGED'}, prune.git
+        def resolve_then_pin(args):
+            result = original(args)
+            if 'rev-parse' in args: allowed.clear()
+            return result
+        with patch.object(prune, 'git', side_effect=resolve_then_pin):
+            self.assertEqual(prune.apply(items, 1, lambda job: job in allowed)[0], [])
+        self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_protected_ignored_payloads_and_damaged_ledger_are_retained(self):
+        rows = [{'event': 'outcome', 'job': 'RQ-MERGED', 'state': 'MERGED'}]
+        for name in ('models', '.codex-extra', 'Docker', 'Documents', 'weights.gguf'):
+            with self.subTest(name=name):
+                payload = self.wtroot / 'RQ-MERGED/node_modules' / name
+                payload.mkdir()
+                items, held = prune.plan(str(self.wtroot), str(self.runs), rows, '')
+                self.assertEqual(items, [])
+                self.assertEqual(held['protected-payload'], 1)
+                payload.rmdir()
+        with (self.runs / 'metrics/jobs.jsonl').open('a') as f: f.write('{"event":"launch"')
+        self.assertEqual(json.loads(self.run_cli('--apply').stdout)['held'], {'ledger-unavailable': 1})
+        self.assertTrue((self.wtroot / 'RQ-MERGED').exists())
+
+    def test_delayed_outcome_cannot_close_a_new_attempt(self):
+        rows = [{'event': 'publish', 'job': 'RQ-X', 'url': 'old'}, {'event': 'launch', 'job': 'RQ-X'},
+                {'event': 'outcome', 'job': 'RQ-X', 'state': 'MERGED', 'url': 'old'}]
+        self.assertEqual(prune.closed_jobs(rows), {})
+        rows += [{'event': 'publish', 'job': 'RQ-X', 'url': 'new'},
+                 {'event': 'outcome', 'job': 'RQ-X', 'state': 'MERGED', 'url': 'new'}]
+        self.assertEqual(prune.closed_jobs(rows), {'RQ-X': 'MERGED'})
+
+    def test_375_terminal_worktrees_removed_once_and_five_kept_with_reasons(self):
+        self.wtroot = self.runs.parent / 'wt-large'; self.wtroot.mkdir()
+        terminal = [f'RQ-MDA1102-{i:03d}Q8' for i in range(375)]
+        kept = {'RQ-KEEP': 'keep-list', 'RQ-LIVE': 'live-process', 'RQ-LEASED': 'claimed',
+                'RQ-REAP': 'claimed', 'RQ-PROTECTED': 'protected-payload'}
+        rows = []
+        for job in terminal + list(kept):
+            git('worktree', 'add', '-q', '--detach', str(self.wtroot / job), cwd=self.repo)
+            rows.append({'event': 'outcome', 'job': job, 'state': 'MERGED'})
+        (self.runs / 'metrics/jobs.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        marker = self.runs / 'queue/run/RQ-REAP.reaping'; marker.mkdir(); os.utime(marker, (1, 1))
+        payload = self.wtroot / 'RQ-PROTECTED/node_modules/Documents'; payload.mkdir(parents=True)
+        (payload / 'sentinel').write_text('retain')
+        for expected in (375, 0):
+            result = self.run_cli('--apply', '--max', '375')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['removed'], expected)
+            self.assertEqual({it['job']: it['why'] for it in report['skipped']}, kept)
+            self.assertEqual(len(report['skipped']), 5)
+        lines = (self.runs / 'dispatch-events.log').read_text().splitlines()
+        removed = [line.split('WT_REMOVED ')[1] for line in lines if 'WT_REMOVED ' in line]
+        self.assertEqual(sorted(removed), terminal)
+        for job, why in kept.items():
+            self.assertEqual(sum(f'REAP_SKIP {why} {job}' in line for line in lines), 2)
+        self.assertEqual(sorted(p.name for p in self.wtroot.iterdir()), sorted(kept))
+        self.assertEqual((payload / 'sentinel').read_text(), 'retain')
+        self.assertTrue(marker.is_dir())
+
+    def test_unknown_processes_report_every_id_without_removing(self):
+        with patch.object(prune, 'live_commands', side_effect=RuntimeError()):
+            with patch('builtins.print') as output:
+                code = prune.main(['--apply', '--json', '--wtroot', str(self.wtroot), '--runs', str(self.runs)])
+        report = json.loads(output.call_args.args[0])
+        self.assertEqual(code, 1)
+        self.assertFalse(report['known'])
+        self.assertIsNone(report['removable'])
+        self.assertEqual(report['unknown_reasons'], ['processes-unavailable'])
+        self.assertEqual(report['removed'], 0)
+        self.assertEqual(len(report['skipped']), 8)
+        self.assertTrue(all(it['why'] == 'processes-unavailable' for it in report['skipped']))
+        self.assertEqual((self.runs / 'dispatch-events.log').read_text().count('REAP_SKIP'), 8)
+        with patch.object(prune.os, 'listdir', side_effect=PermissionError()):
+            self.assertEqual(prune.plan(str(self.wtroot), str(self.runs), [], '')[1], {'worktrees-unavailable': 1})
+
+    def test_recheck_error_and_false_git_success_do_not_claim_removal(self):
+        item = {'job': 'RQ-MERGED', 'path': str(self.wtroot / 'RQ-MERGED')}
+        with patch.object(prune, 'git', return_value=subprocess.CompletedProcess([], 0, str(self.repo / '.git'), '')):
+            removed, failed = prune.apply([item], 1, lambda _: True)
+            self.assertEqual((removed, failed[0]['why']), ([], 'worktree-remains'))
+            removed, failed = prune.apply([item], 1, unittest.mock.Mock(side_effect=RuntimeError()))
+            self.assertEqual((removed, failed[0]['why']), ([], 'state-unavailable'))
 
 
 if __name__ == '__main__':
