@@ -3,8 +3,8 @@
 <!-- fresh:begin version-table -->
 | Version source | Version |
 | --- | --- |
-| Source package | 3.30.72 |
-| Latest dated changelog release (2026-11-22) | 3.30.72 |
+| Source package | 3.30.73 |
+| Latest dated changelog release (2026-11-24) | 3.30.73 |
 <!-- fresh:end -->
 
 All notable changes to Phantom are documented in this file.
@@ -16,7 +16,160 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
-## [3.30.73](https://github.com/ashlrai/phantom/compare/v3.30.72...v3.30.73) (2026-11-24)
+## [Unreleased]
+
+### Since v3.30.40
+
+Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left out.
+
+**Desktop**
+
+- Show a health badge for each lane in the fleet map and lane views (#7309).
+- Show a "what is loading this computer" card in the fleet host pane (#7260).
+- Show every computer as one pool, with free memory, load and free slots (#7353).
+- Show job outcomes per lane instead of raw exit codes (#7284).
+- Show a spend-down chart for each resource pool (#7306).
+- Add an org map that groups lanes and machines in the fleet view (#7332).
+- Show app open, focus, quit and restart history in the fleet host pane.
+- Show fleet throughput in the Home pulse strip (#7371).
+
+**Mobile**
+
+- Add a phone layout for the Org view (#7355).
+- Let the phone Asks card answer several asks in one go (#7327).
+
+**CLI**
+
+- Add `phm release notes --markdown` to print plain-words release notes for readers (#7348).
+- Add `phm publish resume` to finish a half-done publish and `phm publish orphans` to find stuck branches (#7335).
+- Add `phm bets check` to see whether new work already exists before you queue it (#7250, #7285).
+- Add `phm bets propose` so a lane can suggest its own next work (#7325).
+- Add `phm plan dup` to catch a bet that has already shipped, and `phm plan check` for leader plans (#7349).
+- Add `phm asks` to list what only you can do and answer each with one word (#7293).
+- Add `phm host load` to show which jobs, models and apps are loading the machine (#7260).
+- Add `phm leader seat` to show where the leader runs now and where it moves next (#7369).
+- Add `phm queue autofill` to top up a short lane queue from proposed bets (#7384).
+- Add `phm jobs empty` to explain why jobs ended with no change (#7351).
+- Add `phm channels reply-state` to read one work item's state before replying (#7370).
+- Send an hourly leader reply into the outbox from the log (#7307).
+- Make `phm pools` show burn from real readings and a plain verdict (#7283).
+
+**Fleet**
+
+- Add a lane health verdict to `phm fleet` and the live map data (#7309).
+- Add `phm fleet starved` to show which lanes are starved of work and why (#7280).
+- Add `phm fleet outcomes` and `phm router outcomes` to read job results per lane (#7284).
+- Count throughput per lane in `phm fleet pulse` (#7371).
+- Add a live merge-queue latency read and a merge recovery verb (#7265).
+- Add offline coding-CLI tools: spend ledger append and score, cooldown evidence, adapter contract, regret report.
+- Add offline posterior sampling, comparison and update for coding-CLI routing (#7336, #7292, #7319).
+
+**Docs**
+
+- Document empty jobs in `docs/FLEET-EMPTIES.md` and reply states in `docs/WORK-ORDERS.md`.
+- Update the CLI reference and agent operations guide for every new verb above.
+
+### Since #7384
+
+Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is left out.
+
+**CLI**
+
+- Add `phm jobs gaps` to turn gaps listed by no-change jobs into new work; `--propose` queues the new ones (#7506). The gap finder also reads jobs that opened a PR (#7581).
+- Add `phm jobs cost` for tokens per merged PR by lane or model, with unknown where no usage was printed (#7469).
+- Add `phm jobs empty --by-family` and act on it with `--apply` or `--undo <family>` (#7408, #7422).
+- Add `phm queue supply` and the `supply_low` signal (#7464), and run queue autofill inside the self-tick (#7406). Autofill takes Ideas first (#7426).
+- Add `phm host disk` to show how fast free disk is falling and when the lanes freeze (#7444).
+- Add `phm nodes plan` to show how many more jobs each computer could take and which queued job fits which (#7388).
+- Add `phm leader brief` to read the last bets' results, lanes, pools and open gaps in one read (#7541).
+- Add `phm release cadence` to show how stale each repo's latest release is (#7410).
+- Add `phm doctor supply` to check whether self-supply is landing jobs (#7570), and `phm doctor worktree` to check that a checkout can typecheck and lint (#7557).
+- Add `phm team join` and the owner-side `phm team add` to bring co-founders on (#7513).
+- Add bounded fetch retries to `phm publish` (#7449), and recut conflicting agent PRs so they return to auto-merge (#7451).
+- Make the digest open with the blocker (#7450) and add sleep gaps, a keep-awake hint and a digest line (#7436).
+
+**Desktop and mobile**
+
+- Replay the fleet on the map, with past frames using the pool and lane numbers of that time (#7531, #7548).
+- Show agent message lines on the map (#7389) and a Slack bridge line in the desktop (#7455).
+- Add pulse alerts (#7387), one thread with Mason (#7390), release cards (#7511) and a Leader card (#7562).
+- Add a Supply card on the desktop Command view and the phone Home view (#7582).
+- Give asks an expiry on the phone (#7507) and add a Claude API gift credit ask (#7543).
+- Show where the loop waits in the loop stages card (#7529) and read releases there (#7546).
+
+**Fleet**
+
+- Add merge leverage classes (#7510) and a lane yield weight (#7479).
+- Add capability-aware lane routing (#7590).
+- Show spend-down queue hours and sign-in blockers (#7508).
+- Heal a bridge worktree's dependencies on its own (#7537).
+
+**Fixes**
+
+- Confirm group absence before recording SIGKILL completion in dispatchd (#7434).
+- Make the leader cloud test hermetic against the host memory-fit gate (#7523).
+- Require live account evidence for Devin previews and use unique shim temp paths (#7532).
+- Regenerate the CLI reference, quickstart version pins and the site LLM digest so they match master.
+
+### Added
+
+- Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.
+- Add `phm devin land` to land a Devin session's attached bundle and `pr.md` through the pinned fork-only `publish.sh`: verifies the bundle, rebases the session's own commits onto the latest base, writes the job records, arms auto-merge unless `publish.sh` withheld it, and records the landing. Dry run by default; `--apply` acts. See `docs/DEVIN.md`.
+- Add one owner thread that joins desktop, Telegram, email, iMessage and Slack, with replies returning only to the channel the owner used ([#4233](https://github.com/ashlrai/phantom/pull/4233)). See `docs/OWNER-THREAD.md`.
+- Add `phm fleet owner-pull` to pull configured remote owner channels into the thread ([#4295](https://github.com/ashlrai/phantom/pull/4295)) and `phm fleet owner-history` to page archived messages after rotation ([#4302](https://github.com/ashlrai/phantom/pull/4302), [#4316](https://github.com/ashlrai/phantom/pull/4316)).
+- Show the owner thread and a channel strip inline in the desktop Leader pane ([#4287](https://github.com/ashlrai/phantom/pull/4287), [#4296](https://github.com/ashlrai/phantom/pull/4296)), and open the desktop on a Leader-first home surface ([#4328](https://github.com/ashlrai/phantom/pull/4328)).
+- Add the leader office, one co-founder that routes work ([#4232](https://github.com/ashlrai/phantom/pull/4232)).
+- Add the Comms agent role with an enforced send policy ([#4230](https://github.com/ashlrai/phantom/pull/4230)). See `docs/COMMS-AGENT.md`.
+- Add `phm growth` and Robinhood-style Growth charts built from real ledgers, with Engineering Ops growth exports read into the charts ([#4243](https://github.com/ashlrai/phantom/pull/4243), [#4248](https://github.com/ashlrai/phantom/pull/4248)).
+- Add a phone watch view on the existing loopback gateway ([#4234](https://github.com/ashlrai/phantom/pull/4234)).
+- Show live world-model lanes in the desktop resource bar ([#4231](https://github.com/ashlrai/phantom/pull/4231)).
+- Add Goals, Ideas and Library panes to the desktop dock ([#4315](https://github.com/ashlrai/phantom/pull/4315), [#4313](https://github.com/ashlrai/phantom/pull/4313), [#4310](https://github.com/ashlrai/phantom/pull/4310)).
+- Add resumable agent sessions with an append-only event log to `phm sessions` ([#4289](https://github.com/ashlrai/phantom/pull/4289)). See `docs/SESSIONS.md`.
+- Add `phm fleet done-plan` (read-only preview) and `phm fleet done-evaluate` (runs the checks, needs `--trust-worktree`) for a job's frozen done-contract, with `schema/done-contract.v1.schema.json` ([#4308](https://github.com/ashlrai/phantom/pull/4308), [#4317](https://github.com/ashlrai/phantom/pull/4317), [#4329](https://github.com/ashlrai/phantom/pull/4329)).
+- Add `npm run perf:desktop` to measure desktop startup and render cost ([#4294](https://github.com/ashlrai/phantom/pull/4294)).
+- Add `phm fleet recheck` (one read-only verdict over runtime, claims, bridge and task, with `--json` and a paste-ready `--reply`) and `phm fleet recheck-record` to log and page recheck results ([#5482](https://github.com/ashlrai/phantom/pull/5482)).
+- Add `phm fleet work-board`, `work-state` and `work-trace` to read the state of work requests from durable stores, and `phm fleet work-result` to post one verified or blocked result as a bus reply. A result receipt is evidence, not authority ([#5519](https://github.com/ashlrai/phantom/pull/5519)).
+- Add `phm fleet channel-health`, `runtime-identity` and `slack-trace` to show Slack and iMessage bridge health, which host and build is answering, and each Slack request from journal receipt to reply outcome ([#5539](https://github.com/ashlrai/phantom/pull/5539), [#5440](https://github.com/ashlrai/phantom/pull/5440), [#5548](https://github.com/ashlrai/phantom/pull/5548)). See `docs/FLEET-VERBS.md`.
+- Add `phm fleet bridge-check` and the read-only `fleet_bridge_check` MCP tool: one READY or BLOCKED verdict on whether a cloud agent can reach the live runtime, claims ledger and peer ledger, with `missing[]` naming what did not read. A READY is reachability, not authority ([#6025](https://github.com/ashlrai/phantom/pull/6025), [#6017](https://github.com/ashlrai/phantom/pull/6017)). The desktop fleet host pane shows the same verdict in a bridge check card ([#6040](https://github.com/ashlrai/phantom/pull/6040)). See `docs/CLOUD-AGENT-ROUTES.md`.
+- Add `phm fleet peer-ledger` and the `fleet_peer_ledger` MCP tool for peer bus rate-limit, capacity and hop budget, with an exact `--from-agent` and `--target` pair lookup, a desktop Peer ledger card, and a peers line in `phm fleet recheck` and the status digest ([#5960](https://github.com/ashlrai/phantom/pull/5960), [#5982](https://github.com/ashlrai/phantom/pull/5982), [#5996](https://github.com/ashlrai/phantom/pull/5996), [#5963](https://github.com/ashlrai/phantom/pull/5963), [#5968](https://github.com/ashlrai/phantom/pull/5968)).
+- Add `phm fleet returns-check` to re-read each VERIFIED PR receipt from GitHub and label it merged-at-head, merged-other-head, open, closed-unmerged or unknown ([#5966](https://github.com/ashlrai/phantom/pull/5966)).
+- Add `phm fleet ideation-status` to report what the daily ideation loop did on recent UTC days, and the standing ideation loop itself ([#5989](https://github.com/ashlrai/phantom/pull/5989), [#5805](https://github.com/ashlrai/phantom/pull/5805)). See `docs/IDEATION.md`.
+- Add the read-only `fleet_session_handoff` MCP tool for a job's latest handoff checkpoint ([#5988](https://github.com/ashlrai/phantom/pull/5988)), and a node runs line in the status digest ([#5991](https://github.com/ashlrai/phantom/pull/5991)).
+- Add `phm node run-once`, the `phm-node-worker/v1` runner for the multi-Mac compute pool ([#5806](https://github.com/ashlrai/phantom/pull/5806)). See `docs/NODES.md`.
+- Add `phm fleet roster` to list, show, assign and annotate specialists ([#5820](https://github.com/ashlrai/phantom/pull/5820)). See `docs/contracts/CONTRACT-SPECIALIST-ROSTER.md`.
+- Add the unified agent bus: one `agt_` identity per handle across providers, direct messages, member-only channels, handoffs and wake hints on the single local bus, with `phm agents bus id|dm|channel|handoff|inbox|wakes|adapters` ([#6232](https://github.com/ashlrai/phantom/pull/6232)). Identities are routing names and grant no authority. See `docs/AGENT-BUS.md`.
+- Add bounded peer dispatch: `phm agentnet peers post` sends a directed work proposal and `phm agentnet peers dispatch` consumes at most eight per pass, previewing unless `--apply` is given ([#6144](https://github.com/ashlrai/phantom/pull/6144)). It claims work for existing queue workers and does not launch an executor.
+- Add `phm node capacity`, where each node measures its own memory, CPU and swap headroom and reports how many more sessions of each agent harness it can start, and `phm node route` to place jobs by (node, provider, model) ([#6235](https://github.com/ashlrai/phantom/pull/6235)). See `docs/NODE-ROUTER.md`.
+- Add `phm fleet claim-bind` to record which Slack thread a claim came from, so `phm fleet claim-notices` posts its ASSIGNED, RELEASED, BLOCKED and VERIFIED notices back into that thread and drops them when no binding exists ([#6163](https://github.com/ashlrai/phantom/pull/6163)).
+- Add `phm fleet work-feed`, a read-only bus v2 work feed with `--status` and `--json` ([#6156](https://github.com/ashlrai/phantom/pull/6156)).
+- Check for signed desktop releases at startup and every 15 minutes, download them in the background when Automatic updates is on, and install them on a normal Quit once authority is Stop and no execution lease is held. `phm app update status --json` reports `current` for verifying a publication ([#6224](https://github.com/ashlrai/phantom/pull/6224)). See `DESKTOP.md`.
+- Add `phm fleet pulse` (is the fleet doing well right now, [#6904](https://github.com/ashlrai/phantom/pull/6904)), `phm fleet yield` (merged PRs per launch slot by job family, lane and tier, [#6530](https://github.com/ashlrai/phantom/pull/6530)) and `phm jobs yield` (keep, watch or stop per job kind, with `--stop-list` and `--stop-file`, [#6905](https://github.com/ashlrai/phantom/pull/6905)). See `docs/FLEET-EMPTIES.md`.
+- Add read-only fleet diagnostics: `phm fleet stuck` for queued jobs that can never launch ([#6529](https://github.com/ashlrai/phantom/pull/6529)), `phm fleet unfed` ([#6533](https://github.com/ashlrai/phantom/pull/6533)), `phm fleet republish --dry-run` to preview recovery of work whose publication aborted after a fork push ([#6510](https://github.com/ashlrai/phantom/pull/6510)), `phm empties` for why jobs finished with no change ([#6661](https://github.com/ashlrai/phantom/pull/6661)), `phm pools` for what would go unused at reset ([#6675](https://github.com/ashlrai/phantom/pull/6675)), `phm spend` for whether each pool is spent before it resets ([#6513](https://github.com/ashlrai/phantom/pull/6513)) and `phm throughput` for hourly launches, publishes and merges ([#6683](https://github.com/ashlrai/phantom/pull/6683)). See `docs/QUEUE.md` and `docs/CLI-REFERENCE.md`.
+- Add queue upkeep verbs: `phm queue wait` (oldest queued PR and why it waits, required checks stay enforced, [#6926](https://github.com/ashlrai/phantom/pull/6926)), `phm queue supersede` (list, or `--apply` to archive, queued jobs that a newer cycle replaces, [#6745](https://github.com/ashlrai/phantom/pull/6745)), `phm queue coalesce` to merge small READY lines for one repo into batch jobs ([#6532](https://github.com/ashlrai/phantom/pull/6532)), and `phm queue` with `top`, `lane` and `drop` to list jobs in launch order and steer one ([#6797](https://github.com/ashlrai/phantom/pull/6797)).
+- Add `phm recut check|plan|prompt` to decide whether a recut or red-fix job should launch and what its prompt must start with ([#6927](https://github.com/ashlrai/phantom/pull/6927)), and `phm ci baseline` to analyze open PRs read-only ([#6685](https://github.com/ashlrai/phantom/pull/6685)). See `docs/CI-BASELINE.md`.
+- Add `phm pr resolve-conflicts`, a dry-run-by-default append-union resolver for conflicting open PRs ([#6710](https://github.com/ashlrai/phantom/pull/6710)). See `docs/PR-CONFLICT-RESOLVER.md`.
+- Add owner-facing summaries: `phm home` (is the fleet healthy and moving, [#6717](https://github.com/ashlrai/phantom/pull/6717)), `phm map` and `phm map edges` (the whole fleet on one map, [#6715](https://github.com/ashlrai/phantom/pull/6715)), `phm asks` (what only the owner can do, with one-word answers, [#6730](https://github.com/ashlrai/phantom/pull/6730)), `phm shipped` (what shipped in plain words, `--md` writes `docs/SHIPPED.md`, [#6852](https://github.com/ashlrai/phantom/pull/6852)) and `phm autonomy` ([#6690](https://github.com/ashlrai/phantom/pull/6690)).
+- Add `phm host load` and `phm host top` to show what is using this Mac, read-only ([#6891](https://github.com/ashlrai/phantom/pull/6891)), `phm nodes` to show your computers as one pool ([#6701](https://github.com/ashlrai/phantom/pull/6701)), `phm usage history --lane <id>` for seven days of measured allowance ([#6569](https://github.com/ashlrai/phantom/pull/6569)) and `phm mobile check` to test every desktop view at 390 px ([#6884](https://github.com/ashlrai/phantom/pull/6884)).
+- Add `phm tools` and `phm tools parity` to show which lane has which tool and the top gaps ([#6664](https://github.com/ashlrai/phantom/pull/6664)), and `phm router catalog refresh`, a dry-run model catalog refresh that writes a report and patch under `~/.ashlr/router/catalog/` ([#6696](https://github.com/ashlrai/phantom/pull/6696)). See `docs/ROUTER-CATALOG.md`.
+- Add `phm agents apps` to operate other agent apps through one provider-neutral adapter interface ([#6688](https://github.com/ashlrai/phantom/pull/6688)), a read-only agent group chat projection over Agent Bus v2 ([#6567](https://github.com/ashlrai/phantom/pull/6567)), `phm subagent spawn` for cross-provider child plans ([#6774](https://github.com/ashlrai/phantom/pull/6774)), and `phm bots` for provider-neutral bot metadata and external bot seats ([#6781](https://github.com/ashlrai/phantom/pull/6781), [#6792](https://github.com/ashlrai/phantom/pull/6792)). Metadata grants no authority. See `docs/AGENT-APPS.md`, `docs/AGENT-CHAT.md`, `docs/SUBAGENTS.md`, `docs/BOTS.md` and `docs/BOT-SEATS.md`.
+- Add `phm pages publish|list` for report pages served only from the loopback dashboard ([#6662](https://github.com/ashlrai/phantom/pull/6662)), and `phm metrics impact`, the single `phantom-impact/v1` reward read from local evidence. See `docs/PAGES.md` and `docs/IMPACT-METRICS.md`.
+
+### Fixes
+
+- Make leader office writes, scrubbing and escalation fail closed ([#4240](https://github.com/ashlrai/phantom/pull/4240)).
+- Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
+- Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
+- Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
+- Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
+- Offer `spend` as a completion verb for `phm usage`, matching the documented `phm usage spend --json`, so `test/doc-facts.test.ts` passes again.
+- Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
+- Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
+
+### Removed
+
+- Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
+
+## [3.30.73] - 2026-11-24
 
 
 ### Features
@@ -249,159 +402,6 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 * per-OS gates and install-smoke path filters ([#8590](https://github.com/ashlrai/phantom/issues/8590)) ([ea6a988](https://github.com/ashlrai/phantom/commit/ea6a98878fccde315351686d7402d93fb8b3bdea))
 * reuse the fast-gate import graph and ignore read-only cache saves ([#8574](https://github.com/ashlrai/phantom/issues/8574)) ([242987c](https://github.com/ashlrai/phantom/commit/242987c7b0dee5fda839d60c02653c1eac1a3360))
-
-## [Unreleased]
-
-### Since v3.30.40
-
-Merged after v3.30.40 (#7245 to #7384). Bridge and recovery bookkeeping is left out.
-
-**Desktop**
-
-- Show a health badge for each lane in the fleet map and lane views (#7309).
-- Show a "what is loading this computer" card in the fleet host pane (#7260).
-- Show every computer as one pool, with free memory, load and free slots (#7353).
-- Show job outcomes per lane instead of raw exit codes (#7284).
-- Show a spend-down chart for each resource pool (#7306).
-- Add an org map that groups lanes and machines in the fleet view (#7332).
-- Show app open, focus, quit and restart history in the fleet host pane.
-- Show fleet throughput in the Home pulse strip (#7371).
-
-**Mobile**
-
-- Add a phone layout for the Org view (#7355).
-- Let the phone Asks card answer several asks in one go (#7327).
-
-**CLI**
-
-- Add `phm release notes --markdown` to print plain-words release notes for readers (#7348).
-- Add `phm publish resume` to finish a half-done publish and `phm publish orphans` to find stuck branches (#7335).
-- Add `phm bets check` to see whether new work already exists before you queue it (#7250, #7285).
-- Add `phm bets propose` so a lane can suggest its own next work (#7325).
-- Add `phm plan dup` to catch a bet that has already shipped, and `phm plan check` for leader plans (#7349).
-- Add `phm asks` to list what only you can do and answer each with one word (#7293).
-- Add `phm host load` to show which jobs, models and apps are loading the machine (#7260).
-- Add `phm leader seat` to show where the leader runs now and where it moves next (#7369).
-- Add `phm queue autofill` to top up a short lane queue from proposed bets (#7384).
-- Add `phm jobs empty` to explain why jobs ended with no change (#7351).
-- Add `phm channels reply-state` to read one work item's state before replying (#7370).
-- Send an hourly leader reply into the outbox from the log (#7307).
-- Make `phm pools` show burn from real readings and a plain verdict (#7283).
-
-**Fleet**
-
-- Add a lane health verdict to `phm fleet` and the live map data (#7309).
-- Add `phm fleet starved` to show which lanes are starved of work and why (#7280).
-- Add `phm fleet outcomes` and `phm router outcomes` to read job results per lane (#7284).
-- Count throughput per lane in `phm fleet pulse` (#7371).
-- Add a live merge-queue latency read and a merge recovery verb (#7265).
-- Add offline coding-CLI tools: spend ledger append and score, cooldown evidence, adapter contract, regret report.
-- Add offline posterior sampling, comparison and update for coding-CLI routing (#7336, #7292, #7319).
-
-**Docs**
-
-- Document empty jobs in `docs/FLEET-EMPTIES.md` and reply states in `docs/WORK-ORDERS.md`.
-- Update the CLI reference and agent operations guide for every new verb above.
-
-### Since #7384
-
-Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is left out.
-
-**CLI**
-
-- Add `phm jobs gaps` to turn gaps listed by no-change jobs into new work; `--propose` queues the new ones (#7506). The gap finder also reads jobs that opened a PR (#7581).
-- Add `phm jobs cost` for tokens per merged PR by lane or model, with unknown where no usage was printed (#7469).
-- Add `phm jobs empty --by-family` and act on it with `--apply` or `--undo <family>` (#7408, #7422).
-- Add `phm queue supply` and the `supply_low` signal (#7464), and run queue autofill inside the self-tick (#7406). Autofill takes Ideas first (#7426).
-- Add `phm host disk` to show how fast free disk is falling and when the lanes freeze (#7444).
-- Add `phm nodes plan` to show how many more jobs each computer could take and which queued job fits which (#7388).
-- Add `phm leader brief` to read the last bets' results, lanes, pools and open gaps in one read (#7541).
-- Add `phm release cadence` to show how stale each repo's latest release is (#7410).
-- Add `phm doctor supply` to check whether self-supply is landing jobs (#7570), and `phm doctor worktree` to check that a checkout can typecheck and lint (#7557).
-- Add `phm team join` and the owner-side `phm team add` to bring co-founders on (#7513).
-- Add bounded fetch retries to `phm publish` (#7449), and recut conflicting agent PRs so they return to auto-merge (#7451).
-- Make the digest open with the blocker (#7450) and add sleep gaps, a keep-awake hint and a digest line (#7436).
-
-**Desktop and mobile**
-
-- Replay the fleet on the map, with past frames using the pool and lane numbers of that time (#7531, #7548).
-- Show agent message lines on the map (#7389) and a Slack bridge line in the desktop (#7455).
-- Add pulse alerts (#7387), one thread with Mason (#7390), release cards (#7511) and a Leader card (#7562).
-- Add a Supply card on the desktop Command view and the phone Home view (#7582).
-- Give asks an expiry on the phone (#7507) and add a Claude API gift credit ask (#7543).
-- Show where the loop waits in the loop stages card (#7529) and read releases there (#7546).
-
-**Fleet**
-
-- Add merge leverage classes (#7510) and a lane yield weight (#7479).
-- Add capability-aware lane routing (#7590).
-- Show spend-down queue hours and sign-in blockers (#7508).
-- Heal a bridge worktree's dependencies on its own (#7537).
-
-**Fixes**
-
-- Confirm group absence before recording SIGKILL completion in dispatchd (#7434).
-- Make the leader cloud test hermetic against the host memory-fit gate (#7523).
-- Require live account evidence for Devin previews and use unique shim temp paths (#7532).
-- Regenerate the CLI reference, quickstart version pins and the site LLM digest so they match master.
-
-### Added
-
-- Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.
-- Add `phm devin land` to land a Devin session's attached bundle and `pr.md` through the pinned fork-only `publish.sh`: verifies the bundle, rebases the session's own commits onto the latest base, writes the job records, arms auto-merge unless `publish.sh` withheld it, and records the landing. Dry run by default; `--apply` acts. See `docs/DEVIN.md`.
-- Add one owner thread that joins desktop, Telegram, email, iMessage and Slack, with replies returning only to the channel the owner used ([#4233](https://github.com/ashlrai/phantom/pull/4233)). See `docs/OWNER-THREAD.md`.
-- Add `phm fleet owner-pull` to pull configured remote owner channels into the thread ([#4295](https://github.com/ashlrai/phantom/pull/4295)) and `phm fleet owner-history` to page archived messages after rotation ([#4302](https://github.com/ashlrai/phantom/pull/4302), [#4316](https://github.com/ashlrai/phantom/pull/4316)).
-- Show the owner thread and a channel strip inline in the desktop Leader pane ([#4287](https://github.com/ashlrai/phantom/pull/4287), [#4296](https://github.com/ashlrai/phantom/pull/4296)), and open the desktop on a Leader-first home surface ([#4328](https://github.com/ashlrai/phantom/pull/4328)).
-- Add the leader office, one co-founder that routes work ([#4232](https://github.com/ashlrai/phantom/pull/4232)).
-- Add the Comms agent role with an enforced send policy ([#4230](https://github.com/ashlrai/phantom/pull/4230)). See `docs/COMMS-AGENT.md`.
-- Add `phm growth` and Robinhood-style Growth charts built from real ledgers, with Engineering Ops growth exports read into the charts ([#4243](https://github.com/ashlrai/phantom/pull/4243), [#4248](https://github.com/ashlrai/phantom/pull/4248)).
-- Add a phone watch view on the existing loopback gateway ([#4234](https://github.com/ashlrai/phantom/pull/4234)).
-- Show live world-model lanes in the desktop resource bar ([#4231](https://github.com/ashlrai/phantom/pull/4231)).
-- Add Goals, Ideas and Library panes to the desktop dock ([#4315](https://github.com/ashlrai/phantom/pull/4315), [#4313](https://github.com/ashlrai/phantom/pull/4313), [#4310](https://github.com/ashlrai/phantom/pull/4310)).
-- Add resumable agent sessions with an append-only event log to `phm sessions` ([#4289](https://github.com/ashlrai/phantom/pull/4289)). See `docs/SESSIONS.md`.
-- Add `phm fleet done-plan` (read-only preview) and `phm fleet done-evaluate` (runs the checks, needs `--trust-worktree`) for a job's frozen done-contract, with `schema/done-contract.v1.schema.json` ([#4308](https://github.com/ashlrai/phantom/pull/4308), [#4317](https://github.com/ashlrai/phantom/pull/4317), [#4329](https://github.com/ashlrai/phantom/pull/4329)).
-- Add `npm run perf:desktop` to measure desktop startup and render cost ([#4294](https://github.com/ashlrai/phantom/pull/4294)).
-- Add `phm fleet recheck` (one read-only verdict over runtime, claims, bridge and task, with `--json` and a paste-ready `--reply`) and `phm fleet recheck-record` to log and page recheck results ([#5482](https://github.com/ashlrai/phantom/pull/5482)).
-- Add `phm fleet work-board`, `work-state` and `work-trace` to read the state of work requests from durable stores, and `phm fleet work-result` to post one verified or blocked result as a bus reply. A result receipt is evidence, not authority ([#5519](https://github.com/ashlrai/phantom/pull/5519)).
-- Add `phm fleet channel-health`, `runtime-identity` and `slack-trace` to show Slack and iMessage bridge health, which host and build is answering, and each Slack request from journal receipt to reply outcome ([#5539](https://github.com/ashlrai/phantom/pull/5539), [#5440](https://github.com/ashlrai/phantom/pull/5440), [#5548](https://github.com/ashlrai/phantom/pull/5548)). See `docs/FLEET-VERBS.md`.
-- Add `phm fleet bridge-check` and the read-only `fleet_bridge_check` MCP tool: one READY or BLOCKED verdict on whether a cloud agent can reach the live runtime, claims ledger and peer ledger, with `missing[]` naming what did not read. A READY is reachability, not authority ([#6025](https://github.com/ashlrai/phantom/pull/6025), [#6017](https://github.com/ashlrai/phantom/pull/6017)). The desktop fleet host pane shows the same verdict in a bridge check card ([#6040](https://github.com/ashlrai/phantom/pull/6040)). See `docs/CLOUD-AGENT-ROUTES.md`.
-- Add `phm fleet peer-ledger` and the `fleet_peer_ledger` MCP tool for peer bus rate-limit, capacity and hop budget, with an exact `--from-agent` and `--target` pair lookup, a desktop Peer ledger card, and a peers line in `phm fleet recheck` and the status digest ([#5960](https://github.com/ashlrai/phantom/pull/5960), [#5982](https://github.com/ashlrai/phantom/pull/5982), [#5996](https://github.com/ashlrai/phantom/pull/5996), [#5963](https://github.com/ashlrai/phantom/pull/5963), [#5968](https://github.com/ashlrai/phantom/pull/5968)).
-- Add `phm fleet returns-check` to re-read each VERIFIED PR receipt from GitHub and label it merged-at-head, merged-other-head, open, closed-unmerged or unknown ([#5966](https://github.com/ashlrai/phantom/pull/5966)).
-- Add `phm fleet ideation-status` to report what the daily ideation loop did on recent UTC days, and the standing ideation loop itself ([#5989](https://github.com/ashlrai/phantom/pull/5989), [#5805](https://github.com/ashlrai/phantom/pull/5805)). See `docs/IDEATION.md`.
-- Add the read-only `fleet_session_handoff` MCP tool for a job's latest handoff checkpoint ([#5988](https://github.com/ashlrai/phantom/pull/5988)), and a node runs line in the status digest ([#5991](https://github.com/ashlrai/phantom/pull/5991)).
-- Add `phm node run-once`, the `phm-node-worker/v1` runner for the multi-Mac compute pool ([#5806](https://github.com/ashlrai/phantom/pull/5806)). See `docs/NODES.md`.
-- Add `phm fleet roster` to list, show, assign and annotate specialists ([#5820](https://github.com/ashlrai/phantom/pull/5820)). See `docs/contracts/CONTRACT-SPECIALIST-ROSTER.md`.
-- Add the unified agent bus: one `agt_` identity per handle across providers, direct messages, member-only channels, handoffs and wake hints on the single local bus, with `phm agents bus id|dm|channel|handoff|inbox|wakes|adapters` ([#6232](https://github.com/ashlrai/phantom/pull/6232)). Identities are routing names and grant no authority. See `docs/AGENT-BUS.md`.
-- Add bounded peer dispatch: `phm agentnet peers post` sends a directed work proposal and `phm agentnet peers dispatch` consumes at most eight per pass, previewing unless `--apply` is given ([#6144](https://github.com/ashlrai/phantom/pull/6144)). It claims work for existing queue workers and does not launch an executor.
-- Add `phm node capacity`, where each node measures its own memory, CPU and swap headroom and reports how many more sessions of each agent harness it can start, and `phm node route` to place jobs by (node, provider, model) ([#6235](https://github.com/ashlrai/phantom/pull/6235)). See `docs/NODE-ROUTER.md`.
-- Add `phm fleet claim-bind` to record which Slack thread a claim came from, so `phm fleet claim-notices` posts its ASSIGNED, RELEASED, BLOCKED and VERIFIED notices back into that thread and drops them when no binding exists ([#6163](https://github.com/ashlrai/phantom/pull/6163)).
-- Add `phm fleet work-feed`, a read-only bus v2 work feed with `--status` and `--json` ([#6156](https://github.com/ashlrai/phantom/pull/6156)).
-- Check for signed desktop releases at startup and every 15 minutes, download them in the background when Automatic updates is on, and install them on a normal Quit once authority is Stop and no execution lease is held. `phm app update status --json` reports `current` for verifying a publication ([#6224](https://github.com/ashlrai/phantom/pull/6224)). See `DESKTOP.md`.
-- Add `phm fleet pulse` (is the fleet doing well right now, [#6904](https://github.com/ashlrai/phantom/pull/6904)), `phm fleet yield` (merged PRs per launch slot by job family, lane and tier, [#6530](https://github.com/ashlrai/phantom/pull/6530)) and `phm jobs yield` (keep, watch or stop per job kind, with `--stop-list` and `--stop-file`, [#6905](https://github.com/ashlrai/phantom/pull/6905)). See `docs/FLEET-EMPTIES.md`.
-- Add read-only fleet diagnostics: `phm fleet stuck` for queued jobs that can never launch ([#6529](https://github.com/ashlrai/phantom/pull/6529)), `phm fleet unfed` ([#6533](https://github.com/ashlrai/phantom/pull/6533)), `phm fleet republish --dry-run` to preview recovery of work whose publication aborted after a fork push ([#6510](https://github.com/ashlrai/phantom/pull/6510)), `phm empties` for why jobs finished with no change ([#6661](https://github.com/ashlrai/phantom/pull/6661)), `phm pools` for what would go unused at reset ([#6675](https://github.com/ashlrai/phantom/pull/6675)), `phm spend` for whether each pool is spent before it resets ([#6513](https://github.com/ashlrai/phantom/pull/6513)) and `phm throughput` for hourly launches, publishes and merges ([#6683](https://github.com/ashlrai/phantom/pull/6683)). See `docs/QUEUE.md` and `docs/CLI-REFERENCE.md`.
-- Add queue upkeep verbs: `phm queue wait` (oldest queued PR and why it waits, required checks stay enforced, [#6926](https://github.com/ashlrai/phantom/pull/6926)), `phm queue supersede` (list, or `--apply` to archive, queued jobs that a newer cycle replaces, [#6745](https://github.com/ashlrai/phantom/pull/6745)), `phm queue coalesce` to merge small READY lines for one repo into batch jobs ([#6532](https://github.com/ashlrai/phantom/pull/6532)), and `phm queue` with `top`, `lane` and `drop` to list jobs in launch order and steer one ([#6797](https://github.com/ashlrai/phantom/pull/6797)).
-- Add `phm recut check|plan|prompt` to decide whether a recut or red-fix job should launch and what its prompt must start with ([#6927](https://github.com/ashlrai/phantom/pull/6927)), and `phm ci baseline` to analyze open PRs read-only ([#6685](https://github.com/ashlrai/phantom/pull/6685)). See `docs/CI-BASELINE.md`.
-- Add `phm pr resolve-conflicts`, a dry-run-by-default append-union resolver for conflicting open PRs ([#6710](https://github.com/ashlrai/phantom/pull/6710)). See `docs/PR-CONFLICT-RESOLVER.md`.
-- Add owner-facing summaries: `phm home` (is the fleet healthy and moving, [#6717](https://github.com/ashlrai/phantom/pull/6717)), `phm map` and `phm map edges` (the whole fleet on one map, [#6715](https://github.com/ashlrai/phantom/pull/6715)), `phm asks` (what only the owner can do, with one-word answers, [#6730](https://github.com/ashlrai/phantom/pull/6730)), `phm shipped` (what shipped in plain words, `--md` writes `docs/SHIPPED.md`, [#6852](https://github.com/ashlrai/phantom/pull/6852)) and `phm autonomy` ([#6690](https://github.com/ashlrai/phantom/pull/6690)).
-- Add `phm host load` and `phm host top` to show what is using this Mac, read-only ([#6891](https://github.com/ashlrai/phantom/pull/6891)), `phm nodes` to show your computers as one pool ([#6701](https://github.com/ashlrai/phantom/pull/6701)), `phm usage history --lane <id>` for seven days of measured allowance ([#6569](https://github.com/ashlrai/phantom/pull/6569)) and `phm mobile check` to test every desktop view at 390 px ([#6884](https://github.com/ashlrai/phantom/pull/6884)).
-- Add `phm tools` and `phm tools parity` to show which lane has which tool and the top gaps ([#6664](https://github.com/ashlrai/phantom/pull/6664)), and `phm router catalog refresh`, a dry-run model catalog refresh that writes a report and patch under `~/.ashlr/router/catalog/` ([#6696](https://github.com/ashlrai/phantom/pull/6696)). See `docs/ROUTER-CATALOG.md`.
-- Add `phm agents apps` to operate other agent apps through one provider-neutral adapter interface ([#6688](https://github.com/ashlrai/phantom/pull/6688)), a read-only agent group chat projection over Agent Bus v2 ([#6567](https://github.com/ashlrai/phantom/pull/6567)), `phm subagent spawn` for cross-provider child plans ([#6774](https://github.com/ashlrai/phantom/pull/6774)), and `phm bots` for provider-neutral bot metadata and external bot seats ([#6781](https://github.com/ashlrai/phantom/pull/6781), [#6792](https://github.com/ashlrai/phantom/pull/6792)). Metadata grants no authority. See `docs/AGENT-APPS.md`, `docs/AGENT-CHAT.md`, `docs/SUBAGENTS.md`, `docs/BOTS.md` and `docs/BOT-SEATS.md`.
-- Add `phm pages publish|list` for report pages served only from the loopback dashboard ([#6662](https://github.com/ashlrai/phantom/pull/6662)), and `phm metrics impact`, the single `phantom-impact/v1` reward read from local evidence. See `docs/PAGES.md` and `docs/IMPACT-METRICS.md`.
-
-### Fixes
-
-- Make leader office writes, scrubbing and escalation fail closed ([#4240](https://github.com/ashlrai/phantom/pull/4240)).
-- Keep Comms owner files under the account home ([#4269](https://github.com/ashlrai/phantom/pull/4269)) and count the three Comms MCP tools in the output budget ([#4252](https://github.com/ashlrai/phantom/pull/4252)).
-- Regenerate the fleet subcommand registry so `fleet done-plan` and `fleet done-evaluate` dispatch.
-- Run the dependency audit on every master push so release signing is not blocked, and bump `hono` and `@hono/node-server` to clear it ([#5535](https://github.com/ashlrai/phantom/pull/5535), [#5532](https://github.com/ashlrai/phantom/pull/5532)).
-- Include `docs/CLI-AGENT-READINESS.md` in the published package files and raise the Node heap for hosted desktop builds ([#5552](https://github.com/ashlrai/phantom/pull/5552), [#5543](https://github.com/ashlrai/phantom/pull/5543)).
-- Offer `spend` as a completion verb for `phm usage`, matching the documented `phm usage spend --json`, so `test/doc-facts.test.ts` passes again.
-- Offer `request` as a completion verb for `phm apps`, matching `phm apps request open|quit|focus <app>`.
-- Fix release auto-tag to admit a green full CI run on an ancestor commit and a manual full dispatch, to treat a missing current-version tag ref as not yet tagged, and to send the enqueue GraphQL variable it names ([#6304](https://github.com/ashlrai/phantom/pull/6304), [#6300](https://github.com/ashlrai/phantom/pull/6300), [#6299](https://github.com/ashlrai/phantom/pull/6299)).
-
-### Removed
-
-- Remove the disabled observation-only npm admission workflow and the m522 admission test that only read it.
 
 ## [3.30.72] - 2026-11-22
 
