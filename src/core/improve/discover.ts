@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Fifty-eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Sixty sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -633,6 +633,24 @@
  *     order after the window's first dated row, truncated tails are
  *     stated as lower bounds, and items emit only for the fleet's own
  *     repository since the probe is this install's machinery;
+ *   - the knowledge-note trajectory outcome tallies' recurring adverse
+ *     evidence: the per-note {runs, joined, outcomes?, realized?} rows
+ *     readKnowledgeNoteOutcomes folds from the knowledge-runs ledger —
+ *     the per-injection {trajectoryId, ids, at} rows recordKnowledgeRuns
+ *     appends when an approved note reaches a fleet producer brief —
+ *     against trajectory records, published on each approved note's
+ *     `outcomes` field in the Lessons state
+ *     (knowledgeOutcomeBacklogItems below). Until now the tallies only
+ *     ever reached that one API payload — the Verse Lessons panel
+ *     renders the causal holdout `trial` line but not `outcomes`, and
+ *     no CLI folds them — so an approved note whose served runs keep
+ *     company with merges that did not hold never became work. A note
+ *     emits only while its realized adverse tally (reverted + regressed
+ *     + followed-up) reaches the recurring bar among joined runs and
+ *     the note is still approved — the state that keeps it eligible
+ *     for injection — a withheld projection (degraded or truncated
+ *     runs log, degraded trajectory sources), a failed knowledge read
+ *     or another repository emits nothing;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -720,6 +738,7 @@ import { queueVisitBacklogItems } from './queue-visit-backlog.js';
 import { devinReviewBacklogItems } from './devin-review-backlog.js';
 import { custodyBacklogItems } from './custody-backlog.js';
 import { launchCostBacklogItems } from './launch-cost-backlog.js';
+import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1683,6 +1702,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // bounds, and only the fleet's own repository inherits the items
   // since the probe is this install's launch machinery.
   items.push(...await launchCostBacklogItems({ repo }));
+
+  // Knowledge-note trajectory outcomes: the per-note tallies
+  // readKnowledgeNoteOutcomes folds from the knowledge-runs ledger —
+  // which approved notes reached which fleet trajectories — against
+  // trajectory records, published only on each approved note's
+  // `outcomes` field in the Lessons state. Until now a note whose
+  // served runs kept landing adverse post-merge outcomes (reverted,
+  // regressed, followed-up) never became work: the Verse panel renders
+  // the causal holdout `trial` line but not `outcomes`, and no CLI
+  // folds them. A note emits only at the recurring adverse bar of three
+  // realized outcomes among its joined runs while the note is still
+  // approved, a withheld projection or failed knowledge read emits
+  // nothing, and only the fleet's own repository inherits the items
+  // since the ledger describes this install's injection machinery.
+  items.push(...await knowledgeOutcomeBacklogItems({ repo }));
   return { items, errors };
 }
 
