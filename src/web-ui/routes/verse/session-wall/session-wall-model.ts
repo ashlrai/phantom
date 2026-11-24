@@ -13,7 +13,7 @@
 import { SESSION_FILTER_RE } from '../../../../core/fleet/live-sessions.js';
 import { ApiError, apiGet, readFailureReason } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
-import { narrowHelpers, narrowWork, replyRoute, standing, type ReplyRoute, type StandingControl, type ThreadWork } from '../fleet-sessions/session-thread-model.js';
+import { narrowHelpers, narrowTask, narrowWork, replyRoute, standing, type ReplyRoute, type StandingControl, type ThreadTask, type ThreadWork } from '../fleet-sessions/session-thread-model.js';
 
 export const SESSION_THREADS_API = '/api/verse/fleet/control/session-threads';
 /** The server builds the read at most once per 5 s; the pane asks every 10 s while visible. */
@@ -54,6 +54,8 @@ export interface WallServes {
 /** One session's short conversation: `messages` holds only the newest few of `messageCount`. */
 export interface WallEntry {
   session: WallSession; summary: string[]; messages: WallMessage[]; messageCount: number; gaps: string[];
+  /** What the session's job was asked to do, one line quoted from its brief. Null when the read knows none; absent for a session with no job and from a server that does not say. */
+  task?: ThreadTask | null;
   /** Where words written to this session go: the read's own answer, or the same rule applied here for a server that sends none. */
   reply: ReplyRoute;
   /** Null when its job cites no message of Mason's, and from a server that does not say. */
@@ -63,10 +65,14 @@ export interface WallEntry {
   /** Null for a session with no job, when its activity was not read, and from a server that does not say. */
   work: WallWork | null;
 }
+/** `ended` is finished or failed; `unknown` is every other state that is not running. */
+export interface WallUnshown { running: number; ended: number; unknown: number }
 export interface SessionWallRead {
   generatedAt: string;
   /** Every session in the list; `entries` may hold fewer. Null when the read did not say. */
   total: number | null;
+  /** The sessions the read left out because it holds a fixed number, by what the list says of each. Null when the read did not say. */
+  unshown: WallUnshown | null;
   entries: WallEntry[];
   gaps: string[];
   /** The narrowing the server says it applied; null when the read did not say. */
@@ -141,7 +147,7 @@ function narrowEntry(raw: unknown): WallEntry | null {
     helpers: narrowHelpers(s.helpers),
   };
   return {
-    session, summary: lines(raw.summary), messages,
+    session, summary: lines(raw.summary), ...narrowTask(session, raw.task), messages,
     // A count below what is shown would hide messages that are on screen.
     messageCount: Math.max(count(raw.messageCount) ?? 0, messages.length), gaps: lines(raw.gaps),
     // Believed only for this session's own job, the rule the opened conversation applies to the same field.
@@ -155,6 +161,13 @@ function narrowEntry(raw: unknown): WallEntry | null {
   };
 }
 
+/** Believed only when all three are counts. */
+function narrowUnshown(raw: unknown): WallUnshown | null {
+  if (!object(raw)) return null;
+  const running = count(raw.running), ended = count(raw.ended), unknown = count(raw.unknown);
+  return running === null || ended === null || unknown === null ? null : { running, ended, unknown };
+}
+
 /** Null when this is not a session-threads read. */
 export function narrowSessionWall(raw: unknown): SessionWallRead | null {
   if (!object(raw) || raw.schema !== 'fleet.session-threads.v1' || !Array.isArray(raw.threads)) return null;
@@ -166,7 +179,8 @@ export function narrowSessionWall(raw: unknown): SessionWallRead | null {
   // Believed only when every part is a value the route could have applied.
   const scope = f && (f.lane === null || scopeName(f.lane)) && (f.repo === null || scopeName(f.repo)) && typeof f.live === 'boolean'
     ? { lane: scopeName(f.lane), repo: scopeName(f.repo), live: f.live } : null;
-  return { generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), total: total === null ? null : Math.max(total, entries.length), entries, gaps: lines(raw.gaps), scope };
+  return { generatedAt: time(raw.generatedAt) ?? new Date(0).toISOString(), total: total === null ? null : Math.max(total, entries.length),
+    unshown: object(raw.counts) ? narrowUnshown(raw.counts.unshown) : null, entries, gaps: lines(raw.gaps), scope };
 }
 
 export const sessionWallQuery: QueryDef<SessionWallRead | null> = {
@@ -191,15 +205,15 @@ export function scopeChoices(known: readonly string[], entries: readonly WallEnt
 
 /**
  * The sessions on screen that hold every word typed in the find box, in any
- * of: id, kind, lane, model, repo, parent, state, summary, and the messages
+ * of: id, kind, lane, model, repo, parent, state, task, summary, and the messages
  * the read returned for the card. It does not search the whole conversation,
  * nor sessions the read left out.
  */
 export function findEntries(entries: readonly WallEntry[], find: string): readonly WallEntry[] {
   const words = find.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return entries;
-  return entries.filter(({ session, summary, messages }) => {
-    const hay = [session.id, session.kind, session.lane, session.model, session.repo, session.parentId ?? '', STATE_WORD[session.state], ...summary,
+  return entries.filter(({ session, summary, messages, task }) => {
+    const hay = [session.id, session.kind, session.lane, session.model, session.repo, session.parentId ?? '', STATE_WORD[session.state], task?.line ?? '', ...summary,
       ...messages.flatMap(message => [message.label, message.text])].join('\n').toLowerCase();
     return words.every(word => hay.includes(word));
   });

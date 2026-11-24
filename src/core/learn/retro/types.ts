@@ -18,7 +18,9 @@
  * BROWSER-SAFE: the Lessons view imports this — type-only imports, plain consts.
  */
 
+import type { LessonEffect } from '../../improve/lesson-trial.js';
 import type { PlaybookRef } from '../../playbooks/types.js';
+import type { TrajectoryRealizedOutcome, TrajectoryTerminalOutcome } from '../../autonomy/trajectory-records.js';
 
 export const VERSE_LESSONS_PATH = '/api/verse/learning/lessons';
 export const VERSE_LESSONS_KNOWLEDGE_PATH = `${VERSE_LESSONS_PATH}/knowledge`;
@@ -42,6 +44,9 @@ export type RetroSource = 'fleet' | 'cloud' | 'leader';
  * How it ended.
  *  - merged         landed on the default branch (fleet merge / cloud land).
  *  - reverted       landed, went red after merge, and was reverted.
+ *  - revert-failed  landed, went red after merge, and the revert failed or was
+ *                   refused — the red change stays on the default branch under
+ *                   owner hold (authority ledger `revert:failed`).
  *  - closed         PR closed without landing (with the recorded reason).
  *  - gate-refused   a merge gate (G0–G7) refused it.
  *  - owner-laned    a gate sent it to Mason's owner lane (never auto-merged).
@@ -53,6 +58,7 @@ export type RetroSource = 'fleet' | 'cloud' | 'leader';
 export type RetroEndKind =
   | 'merged'
   | 'reverted'
+  | 'revert-failed'
   | 'closed'
   | 'gate-refused'
   | 'owner-laned'
@@ -62,12 +68,12 @@ export type RetroEndKind =
   | 'vetoed';
 
 export const RETRO_END_KINDS: readonly RetroEndKind[] = [
-  'merged', 'reverted', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
+  'merged', 'reverted', 'revert-failed', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
 ];
 
 /** End kinds that are a failure worth a lesson (merged is a success). */
 export const RETRO_FAILURE_KINDS: ReadonlySet<RetroEndKind> = new Set<RetroEndKind>([
-  'reverted', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
+  'reverted', 'revert-failed', 'closed', 'gate-refused', 'owner-laned', 'verify-failed', 'failed', 'expired', 'vetoed',
 ]);
 
 /**
@@ -173,6 +179,21 @@ export interface RetroV1 {
 
 export type KnowledgeStatus = 'pending' | 'approved' | 'rejected';
 
+/**
+ * Descriptive outcome tallies for one note's served fleet trajectories.
+ * `runs` counts distinct trajectories the note was injected into (the
+ * retained knowledge-runs window); `joined` counts how many of those
+ * resolved to a trajectory record inside the read window. `outcomes` and
+ * `realized` are sparse exact counts over joined runs — present only once a
+ * note reaches the outcome sample floor, absent otherwise (unknown, never 0).
+ */
+export interface KnowledgeNoteOutcomes {
+  runs: number;
+  joined: number;
+  outcomes?: Partial<Record<TrajectoryTerminalOutcome, number>>;
+  realized?: Partial<Record<TrajectoryRealizedOutcome, number>>;
+}
+
 export interface KnowledgeNoteV1 {
   v: 1;
   id: string;
@@ -189,6 +210,23 @@ export interface KnowledgeNoteV1 {
   /** Times this note was injected into a prompt. */
   hits: number;
   lastHitAt: string | null;
+  /**
+   * How the fleet trajectories this note was injected into ended — computed
+   * at read time from the knowledge-runs ledger joined to trajectory records,
+   * never stored. Absent = not measured (no correlated injections, the
+   * trajectory evidence was degraded, or the note is below the outcome
+   * sample floor); never zero-filled.
+   */
+  outcomes?: KnowledgeNoteOutcomes;
+  /**
+   * The cloud lesson holdout's per-note read (improve/lesson-trial.ts
+   * `byNote`, `scope` dropped — it is this note's id): landed rates with and
+   * without the note's lessons, the effect and its 95% interval. Computed at
+   * read time from cloud task files, never stored. Absent = the note was
+   * never part of a finished eligible run, or the task store / revert
+   * evidence was unreadable — unknown, never "no effect".
+   */
+  trial?: Omit<LessonEffect, 'scope'>;
   /** Retros that suggested the same note again while it was pending/approved. */
   seen: number;
   /** Fleet task that proposes it for AGENTS.md; null until requested. */
@@ -216,6 +254,19 @@ export interface LessonsCauseRow {
   bySource: Record<RetroSource, number>;
 }
 
+/**
+ * The cloud lesson holdout's all-notes read, joined into the Lessons state at
+ * read time (improve/lesson-trial.ts): the share of eligible launches that
+ * ran without lessons, the served-vs-holdout effect across every note, and
+ * the finished runs left out of both arms. Absent = the task store or revert
+ * evidence was unreadable, or no finished run has been eligible yet.
+ */
+export interface KnowledgeTrialSummary {
+  holdout: number;
+  overall: LessonEffect;
+  excluded: { launchFailed: number; unfinished: number };
+}
+
 export interface LessonsStateV1 {
   v: 1;
   /** Newest first, ≤ 50. */
@@ -231,6 +282,8 @@ export interface LessonsStateV1 {
     /** Bytes the approved notes would take if every one matched (the cap bounds what is injected). */
     approvedBytes: number;
     capBytes: number;
+    /** The holdout trial across all notes; absent = not measured (see KnowledgeTrialSummary). */
+    trial?: KnowledgeTrialSummary;
   };
   /** Veto lessons the Leader and task prompts now read back (playbook deltas). */
   playbook: { text: string; hits: number; addedAt: string }[];

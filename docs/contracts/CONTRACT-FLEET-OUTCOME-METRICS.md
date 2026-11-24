@@ -65,7 +65,11 @@ emits policy. Plain output is Markdown. Nothing schedules or sends a brief.
   stays unknown. `claim` rows pair with their `launch` (`launch_dedupe`) and
   never open attempts. `RQ-BATCH-*` session ids are dispatch infrastructure:
   their launch/finish rows never form attempts, matching the agent-activity
-  verified-completion convention.
+  verified-completion convention. Node-pool producer rows
+  (`fleet.session-pool.v1`, `phm-node-runner.v1`) are a different jobs-ledger
+  dialect — `job` is a per-attempt/claim id and `jobId` the logical `ready:*`
+  queue id, with no attempt fields — so they never form attempts either; the
+  router outcome fold consumes them keyed on `jobId`.
 - `byLane` and `byModelTier` contain `{jobs, finished, finishRate, prRate,
   emptyRate, medianDuration, estCost, samples, evidenceRefs}`. Model-tier names
   are JSON tuples; absent metadata stays null (lane bucket `unknown`).
@@ -258,6 +262,16 @@ Families of one job id are listed under `single`.
   in the job stop file format; `phm jobs yield --stop-file` keeps hand-pasted rows.
 - An unreadable file is `known: false` with null totals.
 
+`empty_recommendations` lists recurring job kinds with at least three explicit
+empty launches, most empties first. Run `phm fleet yield --json` to read the typed
+`EmptyFamilyRecommendation[]`: family, `review_family` action, launches, empty,
+merged and missing-outcome counts, reason, and `last_successful_pr` (job, URL,
+merge time). It uses `jobKind` grouping, including recurring `N<day><letter>Q8`
+ids. Success means a non-reverted merge within the launch cohort and window;
+open PRs and missing outcomes never count as empty or successful. The last PR
+is null without success or usable merge ordering; an unrecorded URL stays null.
+These recommendations are advisory and do not change dispatch or family stops.
+
 `src/core/fleet/family-yield.ts` exports `collapseFamily(id)`, `familyVerdict(row)`,
 the pure `familyYield(lines, now, hours)`, `familyYieldFromRuns(runs, now, hours, lanesTiers?)`,
 `readFamilyYield(path, hours, now, read?)` and `unknownFamilyYield(hours)`; it parses
@@ -306,3 +320,16 @@ as it is. The launch precheck and stop list only see a job through that line.
 `withTaskLine(prompt, line, id)`, `eligibleRecutPrs(prs, area, now)` and
 `planRecutArea(area, family, gate, list, now)`; `recut-gate.ts` exports `AREA_PATHS` and `RECUT_AREAS`.
 Hermetic coverage: `test/recut-plan.test.ts`.
+
+## Lane yield (`fleet.lane-yield.v1`)
+
+RQ-YIELDBOARDN22UQ8. `phm fleet yield --by lane [--since 24h | --hours N] [--metrics <jobs.jsonl>] [--json]`
+prints one row per lane that launched in the window: launches, finished, PRs opened, merged PRs,
+`empty_rate` (empty finishes over finished runs; null when nothing finished), `merged_per_launch` and
+`median_minutes_to_merge` (launch to the newest recorded row of merged runs; null when nothing merged).
+A job merged twice counts once (the `yieldTally` model). A lane with no merge and 3 or more launches has
+`not_paying_off: true`. Lanes with no launches are omitted; an unreadable file is `known: false`.
+The first line is `Last 24 h: 79 merged PRs. Best lane: claude (0.69 merged per launch). Weakest: zai (0.03).`,
+or `No jobs in this window (last 24 h).`. `src/core/fleet/lane-yield-board.ts` owns the report
+(`readLaneYield`, `laneYieldFromRuns`); `GET /api/fleet/lane-yield[?hours=]` serves it and the Home and
+phone Yield card draws it without recounting. Tests: `test/fleet-lane-yield-board.test.ts`.

@@ -9,7 +9,7 @@ import { DOT_HANDOFF_SUMMARY } from './fleet-dot-handoff.js';
 const usage = 'Usage: ashlr fleet dot-evidence [--json]';
 
 /** Default readers; the bridge owner is resolved by the caller (async) and passed in. */
-function defaultDeps(owner: string | null): DotEvidenceDeps {
+export function defaultDotEvidenceDeps(owner: string | null): DotEvidenceDeps {
   const t = DOT_HANDOFF_SUMMARY.transport;
   return {
     now: () => new Date(),
@@ -31,7 +31,7 @@ export async function cmdFleetDotEvidence(args: string[], deps?: DotEvidenceDeps
     if (arg === '--json' && !json) json = true;
     else { console.error(usage); return 2; }
   }
-  const p = buildDotEvidencePacket(deps ?? defaultDeps(await resolveDotBridgeOwner()));
+  const p = buildDotEvidencePacket(deps ?? defaultDotEvidenceDeps(await resolveDotBridgeOwner()));
   const code = p.missing.length === 0 ? 0 : 1;
   if (json) { console.log(JSON.stringify(p, null, 2)); return code; }
   const s = (v: unknown): string => JSON.stringify(v);

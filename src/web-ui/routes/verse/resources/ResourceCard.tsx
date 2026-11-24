@@ -5,8 +5,9 @@
  *   [C] Claude Max · max
  *       ● Spent · resets Sat 11:46 PM · usable again in 1d 7h
  *       checked 2m ago
- *       Weekly  ▇▇▇▇▇▇▇▇▇▇▇▇│▨▨  limit reached
+ *       Weekly  ▇▇▇▇▇▇▇▇│░░░░▕▨▨  62%
  *               resets Sat 11:46 PM
+ *               │ 71% of the window gone · use is 9 points behind an even spend   ▨ 40% kept for you
  *       Anthropic removed the 5-hour limit on this plan.
  *       Reserved for you 40% · balanced mode
  *       [Check again]
@@ -17,10 +18,18 @@
  * for what the account needs — so this card and Apps & Accounts can never
  * disagree about one seat. Text wraps at word boundaries; anything long also
  * carries its full text as a tooltip.
+ *
+ * Each window is the shared WindowBar (the bar every resource board draws):
+ * used so far, the reserve as a hatched band at the window's end, and, only
+ * where the seat's reset provenance holds the window's start, a mark for how
+ * far its time has run. A flagged limit is a full red bar and no percentage;
+ * no reading, or a reading that is no longer current, is a hatched track.
  */
 import { estimatedCreditValue, formatNativeCreditUnits, nativeCreditBalanceTitle, CODEX_CREDIT_VALUE_SOURCE, CODEX_CREDIT_VALUE_CHECKED } from './codex-credit-value.js';
 import type { BudgetMode } from '../../../../core/routing/types.js';
 import { Button } from '../../../components/primitives/Button.js';
+import { WindowBar, WindowBarSwatch } from '../../../components/primitives/WindowBar.js';
+import { elapsedWords, leadWords, startClock, startWords, windowPace } from '../fleet-usage/window-pace-model.js';
 import { codexFreeResetsLine, codexResetLine } from './codex-reset-line.js';
 import { readingAge } from './reading-age.js';
 import { relativePhrase } from '../context/context-model.js';
@@ -32,7 +41,6 @@ import { windowSentence, type AccountStatus, type CapacityRow, type CapacityWind
 import type { ResourceReadinessRow } from '../../../../core/routing/readiness-types.js';
 import { ReadinessLines } from './ReadinessLines.js';
 import { ResourceFacts } from './ResourceFacts.js';
-import { UsagePaceChip } from './UsagePaceChip.js';
 import type { ResourceDisplayView } from './resource-display-model.js';
 import type { ResourceFactsView } from './resources-model.js';
 import { useWorldReading } from './world-card-reading.js';
@@ -43,7 +51,7 @@ import { lazy, Suspense } from 'react';
 import type { BudgetView } from '../../../../core/routing/policy.js';
 const ResetSpendingAccountControl = lazy(() => import('../budget/ResetSpendingControl.js').then(module => ({ default: module.ResetSpendingAccountControl })));
 
-/** Above this share of a window the meter turns amber (the capacity strip's own line). */
+/** At this share of a window the figure beside the bar turns amber (the capacity strip's own line); the bar never does. */
 const TIGHT_AT = 90;
 
 const MODE_WORD: Readonly<Record<BudgetMode, string>> = {
@@ -72,15 +80,16 @@ export function StatusLine({ status }: { status: AccountStatus }) {
   );
 }
 
-function WindowMeter({ row, w, reservePercent, current = true }: { row: CapacityRow; w: CapacityWindowRow; reservePercent: number | null; current?: boolean }) {
+function WindowMeter({ row, w, reservePercent, current = true, nowMs }: { row: CapacityRow; w: CapacityWindowRow; reservePercent: number | null; current?: boolean; nowMs: number }) {
   current = current && row.quotaCurrent !== false;
   const resetText = w.resetText === null ? null : current ? w.resetText : `Recorded reset ${w.resetText.replace(/^resets\s+/i, '')}`;
   const sentence = windowSentence(row, { ...w, resetText }, w.binding ? reservePercent : null) + (current ? '' : `${row.quotaCurrent === false && resetText !== null ? `; ${resetText}` : ''}; last reading, current usage unconfirmed`);
-  const ceiling = w.binding && reservePercent !== null && reservePercent > 0 ? 100 - clamp(reservePercent) : null;
+  const head = `${row.label} ${w.label}`;
   const label = w.label.replace(/ window$/, '');
   let level: 'ok' | 'tight' | 'limit' | 'unknown';
   let value: string;
-  let used = 0;
+  // Null draws the hatched track: no reading, or one that is no longer current.
+  let used: number | null = null;
   if (!current) {
     level = 'unknown';
     value = `${w.limitReached ? 'limit was flagged' : w.usedPercent === null ? 'usage unknown' : usedPercentText(w.usedPercent)} · last`;
@@ -96,17 +105,24 @@ function WindowMeter({ row, w, reservePercent, current = true }: { row: Capacity
     level = used >= TIGHT_AT ? 'tight' : 'ok';
     value = usedPercentText(w.usedPercent);
   }
+  // Time gone is read only against a current reading: a retained one may describe an earlier window.
+  const pace = current ? windowPace({ usedPercent: w.usedPercent, resetsAt: w.resetsAt, limitReached: w.limitReached, measured: w.usedPercent !== null, period: w.period }, nowMs) : null;
+  const lead = pace ? leadWords(pace) : null;
+  const kept = used !== null && w.binding && reservePercent !== null && reservePercent > 0 ? clamp(reservePercent) : null;
+  const said = sentence.startsWith(`${head}: `) ? sentence.slice(head.length + 2) : sentence;
   return (
     <div className={styles.meter} data-binding={w.binding || undefined} data-level={level}>
       <span className={styles.meterLabel} title={w.label}>{label.charAt(0).toUpperCase() + label.slice(1)}</span>
-      <span className={styles.meterTrack} role="img" aria-label={sentence} data-unknown={level === 'unknown' || undefined}>
-        {ceiling !== null ? <span className={styles.meterReserve} style={{ left: `${ceiling}%`, width: `${100 - ceiling}%` }} /> : null}
-        {level !== 'unknown' ? <span className={styles.meterFill} style={{ width: `${used}%` }} /> : null}
-        {ceiling !== null ? <span className={styles.meterTick} style={{ left: `${ceiling}%` }} /> : null}
-      </span>
+      <WindowBar label={head} valueText={pace ? `${said}, ${elapsedWords(pace)}` : said} valueNow={level === 'limit' ? null : used}
+        used={used} kept={kept} elapsed={pace?.elapsedPct ?? null} ending={level === 'limit' ? 'spent' : undefined} />
       <span className={styles.meterValue} aria-hidden="true">{value}</span>
-      {row.kind === 'subscription' && /week|seven_day/i.test(`${w.id} ${w.label}`) ? <UsagePaceChip usedFrac={current && w.usedPercent !== null ? w.usedPercent / 100 : null} ratePerHour={null} resetAt={w.resetsAt} now={Date.now()} /> : null}
       {resetText !== null ? <span className={styles.meterReset} title={resetText} aria-hidden="true">{resetText}</span> : null}
+      {pace !== null || kept !== null ? (
+        <span className={styles.meterPace} data-pace={pace === null ? undefined : pace.lead === null ? 'unread' : pace.lead < 0 ? 'behind' : pace.lead > 0 ? 'ahead' : 'level'}>
+          {pace !== null ? <span data-time-gone>{used !== null ? <WindowBarSwatch part="elapsed" /> : null}{[elapsedWords(pace), lead, startWords(pace, startClock(nowMs))].filter(Boolean).join(' · ')}</span> : null}
+          {kept !== null ? <span data-kept><WindowBarSwatch part="kept" />{kept}% kept for you</span> : null}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -175,7 +191,7 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
         : !display && status.checked !== null ? <p className={styles.stamp} title={status.checkedTitle ?? undefined}>{status.checked}</p> : null}
       {row.windows.length > 0 ? (
         <div className={styles.meters}>
-          {primaryWindow !== null ? <WindowMeter row={row} w={primaryWindow} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} /> : null}
+          {primaryWindow !== null ? <WindowMeter row={row} w={primaryWindow} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} nowMs={resetNowMs} /> : null}
         </div>
       ) : <p className={styles.subtle}>Usage not reported by this resource.</p>}
       {resetLine !== null ? <p className={styles.subtle} data-resource-codex-reset>{resetLine}</p> : null}
@@ -193,7 +209,7 @@ export function ResourceCard({ row, status, display, settled, mode, busy, onActi
         <div className={styles.usageDetailBody}>
           {facts !== null ? <ResourceFacts facts={facts} /> : null}
           {scheduling ? <SchedulingEvidence view={scheduling} /> : null}
-          {otherWindows.length > 0 ? <div className={styles.meters}>{otherWindows.map((w) => <WindowMeter key={w.id} row={row} w={w} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} />)}</div> : null}
+          {otherWindows.length > 0 ? <div className={styles.meters}>{otherWindows.map((w) => <WindowMeter key={w.id} row={row} w={w} current={display?.usage.current ?? true} reservePercent={reserve?.percent ?? null} nowMs={resetNowMs} />)}</div> : null}
           {row.windows.length === 0 ? <p className={styles.subtle}>Connection status and usage are separate. No percentage has been supplied.</p> : null}
           {creditCurrent && row.engine === 'codex' && row.creditState !== undefined && row.creditState !== 'unknown' ? <p className={styles.subtle}>
             {row.creditState === 'none' ? 'Native provider reports no available credits. ' : ''}

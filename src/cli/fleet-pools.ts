@@ -9,7 +9,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { readUsagePace } from '../core/usage/pace.js';
-import type { PoolShareSnapshot } from '../core/usage/runway.js';
+import { poolSpendLine, type PoolShareSnapshot } from '../core/usage/runway.js';
 
 const USAGE = 'Usage: ashlr fleet pools [--json] [--runs-dir <abs>]';
 
@@ -31,6 +31,6 @@ export async function cmdFleetPools(args: string[], deps: FleetPoolsDeps = {}): 
   const { shares } = await (deps.read ?? readUsagePace)(join(runsDir, 'queue', 'status.json'));
   if (json) { console.log(JSON.stringify(shares)); return 0; }
   console.log(shares.next_pool === null ? 'Next job: unknown (no pool is known to have room)' : `Next job: ${shares.next_pool}`);
-  for (const row of shares.pools) console.log(row.line);
+  for (const row of shares.pools) console.log(poolSpendLine(row));
   return 0;
 }

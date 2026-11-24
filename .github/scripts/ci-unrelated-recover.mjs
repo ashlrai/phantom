@@ -223,6 +223,7 @@ export async function loadSnapshot(gh, repo) {
   if (typeof masterSha !== 'string' || !SHA.test(masterSha)) return { ok: false, reason: 'master-sha' };
   const required = requiredChecks(rules.status === 404 ? [] : rules.body, branch.body);
   const pulls = [];
+  let capped = false;
   for (let page = 1; page <= PAGE_CAP; page += 1) {
     const reply = await apiGet(gh, `repos/${repo}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=${page}`);
     if (!reply.ok || !Array.isArray(reply.body)) return { ok: false, reason: 'pulls-unreadable' };
@@ -231,7 +232,9 @@ export async function loadSnapshot(gh, repo) {
       if (pull?.autoMerge && !pull.draft && pull.sameRepo) pulls.push(pull);
     }
     if (reply.body.length < 100) break;
-    if (page === PAGE_CAP) return { ok: false, reason: 'pulls-truncated' };
+    // Recovery needs complete checks for each selected PR, not every open PR.
+    // Keep this pass bounded even when the repository has a large backlog.
+    if (page === PAGE_CAP) capped = true;
   }
   const watched = required.filter((name) => recoverable.has(name));
   if (!watched.length) return { ok: true, snapshot: { required, masterSha, pulls: [], checks: {}, jobs: {} }, capped: false };
@@ -260,7 +263,7 @@ export async function loadSnapshot(gh, repo) {
   return {
     ok: true,
     snapshot: { required, masterSha, pulls: selected, checks, jobs },
-    capped: pulls.length > SCAN_CAP,
+    capped: capped || pulls.length > SCAN_CAP,
   };
 }
 
@@ -311,7 +314,7 @@ export async function main(options = {}) {
   catch { log('recover abort reason=state-unwritable'); return 1; }
   const loaded = await loadSnapshot(gh, repo);
   if (!loaded.ok) { log(`recover abort reason=${loaded.reason}`); return 1; }
-  if (loaded.capped) log(`recover note scan-capped kept=${SCAN_CAP}`);
+  if (loaded.capped) log(`recover note scan-capped kept=${loaded.snapshot.pulls.length}`);
   const plan = planRecovery({ ...loaded.snapshot, state, now, budget: MAX_MUTATIONS });
   for (const line of plan.logs) log(line);
   if (plan.abort) return 1;

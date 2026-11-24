@@ -16,7 +16,7 @@ import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, unlinkS
 import { dirname, join } from 'node:path';
 import { sanitizePublicJson } from '../util/public-json.js';
 import { hooksFromPlannerReport } from './self-tick-hooks.js';
-import { SELF_TICK_STEP_ORDER, type SelfTickReport, type SelfTickStepName } from './self-tick.js';
+import { SELF_TICK_STEP_ORDER, type SelfTickReport, type SelfTickStepName, type SelfTickStepResult } from './self-tick.js';
 
 /** Last-report path relative to the runs dir, under the queue/ directory. */
 export const SELF_TICK_LAST = 'queue/self-tick-last.json';
@@ -40,7 +40,7 @@ const EXIT_CODE_MAX = 255;
 /** One persisted step's verdict-relevant fields, after validation. */
 interface StepEvidence {
   step: SelfTickStepName;
-  state: 'ok' | 'failed';
+  state: SelfTickStepResult['state'];
 }
 
 export type SelfTickLastView =
@@ -81,6 +81,7 @@ function recordSummary(report: SelfTickReport) {
     at: report.at,
     mode: report.mode,
     state: report.state,
+    familyStops: sanitizePublicJson(report.familyStops ?? null),
     hooks: report.state === 'busy' ? [] : hooksFromPlannerReport(sanitizePublicJson(planner?.report ?? null), report.mode),
     failedSteps: report.steps
       .filter((step) => step.state === 'failed')
@@ -190,8 +191,8 @@ const isStepName = (value: unknown): value is SelfTickStepName =>
 
 /**
  * Validate one persisted step against the writer's shape: a known name,
- * state 'ok' or 'failed' where ok means exit 0 and failed means a nonzero
- * exit (the writer derives state from the exit code, so they must agree),
+ * state 'ok' or 'skipped' with exit 0, or 'failed' with a nonzero exit
+ * (a skip reason must never hide a nonzero exit),
  * and a `report` key whose value may be any JSON, null included.
  */
 const readStep = (raw: unknown): StepEvidence | null => {
@@ -199,12 +200,12 @@ const readStep = (raw: unknown): StepEvidence | null => {
   const row = raw as Record<string, unknown>;
   const { step, state, exitCode } = row;
   if (!isStepName(step)) return null;
-  if (state !== 'ok' && state !== 'failed') return null;
+  if (state !== 'ok' && state !== 'skipped' && state !== 'failed') return null;
   if (typeof exitCode !== 'number' || !Number.isInteger(exitCode) ||
     exitCode < 0 || exitCode > EXIT_CODE_MAX) {
     return null;
   }
-  if ((state === 'ok') !== (exitCode === 0)) return null;
+  if ((state !== 'failed') !== (exitCode === 0)) return null;
   if (!('report' in row)) return null;
   return { step, state };
 };

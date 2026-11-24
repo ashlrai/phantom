@@ -40,7 +40,7 @@ const TERMINAL_EMPTY = new Set(['EMPTY', 'DONE-NOOP', 'EMPTY_DONE', 'SKIPPED-EMP
 const SKIP_EMPTY_EVENTS: ReadonlySet<string> = new Set(['skipped_empty', 'precheck_skip']);
 const JOB_KEYS = ['job', 'job_id', 'jobId', 'id'] as const;
 const EVENT_KEYS = ['event', 'type', 'kind'] as const;
-const PHASE_KEYS = ['state', 'outcome', 'status'] as const;
+const PHASE_KEYS = ['state', 'outcome', 'status', 'phase', 'result', 'conclusion'] as const;
 const TS_KEYS = ['ts', 'timestamp', 'at', 'time', 'mergedAt', 'closedAt', 'recordedAt', 'updatedAt'] as const;
 const record = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -86,7 +86,8 @@ export function collapseJobOutcomes(rows: readonly JobOutcome[]): Map<string, Jo
  * Field coverage mirrors the fleet's canonical ledger dialects
  * (agent-activity.ts parseLedger, queue/visit-sync.ts classifyRow,
  * metrics-outcomes.ts reconciler rows): job ids accept job|job_id|jobId|id;
- * the phase reads state|outcome|status before the event name; the event name
+ * the phase reads state|outcome|status plus the producer aliases
+ * phase|result|conclusion before the event name; the event name
  * accepts event|type|kind; timestamps prefer mergedAt/closedAt on terminal
  * rows, then ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
  * first parseable wins (visit-sync.ts eventTs).

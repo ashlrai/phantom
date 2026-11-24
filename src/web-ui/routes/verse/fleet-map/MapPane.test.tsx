@@ -4,8 +4,9 @@ import { buildFleetLiveMap, messageLineWidth, type FleetLiveMap } from '../../..
 import type { NodeRow } from '../../../../core/fleet/nodes-view.js';
 import { fleetOrgMap } from '../../../../core/fleet/org-map.js';
 import { fleetOrgTree } from '../../../../core/fleet/org-tree.js';
-import { projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
+import { agentToAgent, projectFleetEdges } from '../../../../core/fleet/fleet-edges.js';
 import { buildMapEdges } from '../../../../core/fleet/map-edges.js';
+import { matchAgentMessages } from '../../../../core/fleet/agent-messages.js';
 import { buildAgentsMessages } from '../../../../core/fleet/agents-messages.js';
 import type { FleetSessionsV1 } from '../../../../core/fleet/runs-sessions.js';
 import { evictAll } from '../../../data/cache.js';
@@ -74,12 +75,21 @@ it('shows the empty state with every unknown spelled out', () => {
   expect(screen.getAllByRole('button')).toHaveLength(2);
 });
 
-it('opens the existing detail pane for the node clicked and polls at most every 5 seconds', async () => {
-  const fetch = vi.fn(async () => new Response(JSON.stringify(fleet()), { status: 200, headers: { 'content-type': 'application/json' } }));
+it('opens the existing detail pane and reads live messages alongside the graph', async () => {
+  const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/job/tail') ? {
+    schema: 'fleet.job.tail.v1', job: 'RQ-A', events: [
+      ...Array.from({ length: 25 }, (_, i) => ({ source: 'log', text: `line ${i}` })), { source: 'event', text: 'launched' }],
+  } : fleet()));
   vi.stubGlobal('fetch', fetch);
   const openPane = vi.fn();
   render(<MapPane visible host={{ openPane } as never} />);
   fireEvent.click(await screen.findByRole('button', { name: /^Open job RQ-A/ }));
+  const log = await screen.findByRole('log');
+  await waitFor(() => expect(log.textContent).toContain('line 24'));
+  expect(log.textContent?.split('\n')).toHaveLength(20);
+  expect(log.textContent).not.toContain('line 4'); expect(log.textContent).not.toContain('launched');
+  expect(fetch).toHaveBeenCalledWith('/api/fleet/job/tail?id=RQ-A&lines=20', expect.anything());
+  fireEvent.click(screen.getByRole('button', { name: 'Open full log' }));
   expect(openPane).toHaveBeenLastCalledWith('worker-log');
   fireEvent.click(screen.getByRole('button', { name: /^Open lane claude:/ }));
   expect(openPane).toHaveBeenLastCalledWith('fleet-lanes');
@@ -90,7 +100,13 @@ it('opens the existing detail pane for the node clicked and polls at most every 
   expect(DETAIL_PANE.resource).toBe('fleet-usage');
   // One read each of the graph, its message edges, its message cards, its conversations and its replay frames; none repeats inside the poll interval.
   await new Promise(resolve => setTimeout(resolve, 50));
-  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+  expect((fetch.mock.calls as unknown[][]).map(call => String(call[0]).replace(/^.*\/control\//, '')).sort()).toEqual(['/api/fleet/job/tail?id=RQ-A&lines=20', '/api/fleet/map/messages', 'agent-conversations', 'agent-messages', 'live-map', 'map-edges', 'map-replay']);
+});
+
+it('shows a plain message for a known empty fleet', () => {
+  const map = buildFleetLiveMap({ now: NOW, jobs: { schema: 'jobs.live.v1', generatedAt: AT, known: true, jobs: [] } });
+  render(<MapView map={map} now={NOW} onOpen={() => {}} />);
+  expect(screen.getByRole('status').textContent).toBe('Nothing running right now');
 });
 
 it('reads an unexpected payload as unavailable, and drops edges to nodes it does not have', async () => {
@@ -185,7 +201,7 @@ it('draws lines without last words when the edges read is unknown, and caps thic
 
 it('a message line opens the Messages pane on that pair, read from the typed messages API', async () => {
   const { map, edges } = scene(CHAT);
-  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, from: { name: 'leader', lane: 'leader' },
+  const pairRead = { schema: 'agent-messages.v1', source: 'available', matched: 1, skipped: 0, messages: [{ id: 'm2', ts: AT, priority: 'P2', from: { name: 'leader', lane: 'leader' },
     to: { name: 'claude', lane: 'claude' }, kind: 'status', summary: 'thanks, next the docs', conversation: 'pair:claude|leader', job: null, pr: null }] };
   const fetch = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes('/map-edges') ? { schema: 'fleet.map-edges.v1', version: 1, edges }
     : String(input).includes('/agent-bus/messages') ? pairRead : map));
@@ -208,7 +224,8 @@ it('a message line opens the Messages pane on that pair, read from the typed mes
 function pairsOf(said: Said[]) {
   const rows = said.map(([from, to, ago, text], i) => ({ cursor: i + 1, receivedAt: NOW - ago * 1000,
     envelope: { id: `m${i}`, from, to, priority: 'P2' as const, ttl: 3_600_000, body: { text } } }));
-  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', rows: rows as never }, { since: NOW - 3_600_000 }, NOW))));
+  const matched = matchAgentMessages(rows.filter(row => agentToAgent(row.envelope) && row.receivedAt <= NOW), { since: NOW - 3_600_000 }, {}, false);
+  return narrowMessagePairs(JSON.parse(JSON.stringify(buildAgentsMessages({ source: 'available', matched }, { since: NOW - 3_600_000 }, NOW))));
 }
 
 describe('message cards, the Messages switch and reduced motion', () => {

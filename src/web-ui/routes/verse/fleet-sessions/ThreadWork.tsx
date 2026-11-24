@@ -1,5 +1,7 @@
 /**
- * The body of an opened conversation's Summary: what the session's job has
+ * The body of an opened conversation's Summary: what the session's job was
+ * asked to do, one line quoted from its brief (session-wall/WallTask.tsx,
+ * the read's `task`), then what the job has
  * done as readings (the newest recorded step and how long ago, the diff, the
  * commands seen in its log, its helpers), then the summary sentences that say
  * something else. The pull request is the link in the conversation's header,
@@ -10,6 +12,7 @@
  * only when its value is drawn as a reading or that link. A session with no job, or a
  * server that sends no `work`, keeps every sentence and gets no readings.
  */
+import { TaskLine } from '../session-wall/WallTask.js';
 import { cardVitals, commandsWords, diffWords, hasVitals, helpersWords, stepWhen, summaryLeft } from '../session-wall/wall-vitals.js';
 import type { SessionThread } from './session-thread-model.js';
 import threadStyles from './session-thread.module.css';
@@ -24,6 +27,7 @@ export function ThreadWork({ thread }: { thread: SessionThread }) {
   const drawn = hasVitals(vitals);
   const left = drawn ? summaryLeft(thread.summary, vitals) : thread.summary;
   return <>
+    <TaskLine task={thread.task} place="thread" />
     {drawn && <dl className={styles.work} aria-label={`What ${session.id}'s job has done`} data-thread-work>
       {step && <div className={styles.reading} data-reading="step">
         <dt>Latest step</dt>
@@ -56,6 +60,10 @@ export function ThreadWork({ thread }: { thread: SessionThread }) {
         <dd data-failed={helpers.failed > 0 ? '' : undefined} title={helpersWords(helpers)}>
           {helpers.running} of {helpers.below} running{helpers.failed > 0 && `, ${helpers.failed} failed`}
         </dd>
+      </div>}
+      {vitals.fate !== null && <div className={styles.reading} data-reading="pr">
+        <dt>Pull request</dt>
+        <dd data-fate={vitals.fate.state} title={vitals.fate.title}>{vitals.fate.words[0]!.toUpperCase()}{vitals.fate.words.slice(1)}</dd>
       </div>}
     </dl>}
     {thread.summary.length === 0 && !drawn ? <p className={threadStyles.plain}>Summary unknown: the read returned none.</p>

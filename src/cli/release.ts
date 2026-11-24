@@ -1,4 +1,5 @@
 import { getReleaseStatus, formatReleaseStatus, getReleases, formatReleases } from '../core/release/status.js';
+import { releaseRepoLine } from '../core/release/release-repos.js';
 import { releaseStatus, readReleaseState, TRAIN_SCHEMA, type TrainState } from '../core/release/train.js';
 import { collectReleaseNotes, formatReleaseNotes, formatReleaseNotesMarkdown, writeReleaseNotes } from '../core/release/notes.js';
 import { buildPrNotes, formatPrNotesMarkdown, ghPrSource, resolveRepo, type PrSource } from '../core/release/pr-notes.js';
@@ -123,7 +124,7 @@ export async function cmdRelease(args: string[], deps: { prs?: PrSource; cadence
   if (!file) {
     const report = await getReleaseStatus();
     if (json) emit(report, true);
-    else process.stdout.write(`${formatReleaseStatus(report)}\n`);
+    else process.stdout.write(`${report.releaseRepos.map(row => `${releaseRepoLine(row)}; ${row.state}: ${row.reason}`).join('\n')}\n\n${formatReleaseStatus(report)}\n`);
     return 0;
   }
   try {

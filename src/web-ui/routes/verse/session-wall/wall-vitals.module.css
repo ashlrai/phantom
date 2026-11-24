@@ -11,6 +11,11 @@
 .figures > span[data-failed] { color: var(--status-danger-fg); }
 .added { color: var(--status-success-fg); }
 .removed { color: var(--status-danger-fg); }
+/* What became of the pull request: a mark and words. Merged is filled and green, closed is red, still open stays the line's own quiet colour with a hollow mark. */
+.fateMark { flex: none; box-sizing: border-box; width: 7px; height: 7px; border: 1.5px solid currentColor; border-radius: var(--radius-full); }
+.figures > span[data-fate='merged'], .railVitals > span[data-fate='merged'] { color: var(--status-success-fg); }
+.figures > span[data-fate='merged'] > .fateMark, .railVitals > span[data-fate='merged'] > .fateMark { background: currentColor; }
+.figures > span[data-fate='closed'], .railVitals > span[data-fate='closed'] { color: var(--status-danger-fg); }
 /* Added then removed, in proportion to each other. */
 .bar { flex: none; display: inline-flex; width: 28px; height: 4px; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
 .bar > i { min-width: 2px; }

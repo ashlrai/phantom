@@ -8,10 +8,10 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
-import { acquireCoordination, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationView } from './claim-store.js';
+import { acquireCoordination, COORDINATION_ORIGINS, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationOrigin, type CoordinationView } from './claim-store.js';
 import { CLAIM_MAX_LEASE_MS, parseClaimKey, workClaimBodySchema, workReleaseBodySchema, type WorkJob } from './bus-v2-schema.js';
 import { readAgentRegistry, resolveAgent } from './bus-identity.js';
-import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
+import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 
 export interface BusClaimOptions {
   /** Coordination store root; defaults to the shared fleet root. */
@@ -34,6 +34,14 @@ export interface BusClaimsListOptions {
    * ref, or an unreadable registry, matches the exact owner label only.
    */
   owner?: string;
+  /**
+   * When set, only live claims of this origin class — `resource` for v2
+   * work.claim leases, `message` for bus message-id claims, `team` for
+   * team leases and `board` for board task claims. Queue path
+   * observations are never live and never list. Anything outside
+   * `COORDINATION_ORIGINS` answers `invalid`.
+   */
+  origin?: CoordinationOrigin;
   /**
    * When true, join each returned claim with the announced work-feed jobs its
    * keys block (the reverse of `work feed --claims`). Read-only; an
@@ -58,7 +66,9 @@ type ReleaseBody = z.infer<typeof workReleaseBodySchema>;
 /**
  * Deterministic lease source id: a retried operation on the same claim key
  * replaces its own row instead of conflicting with it, while the same operation
- * id reused on a different key cannot silently relocate the first lease.
+ * id reused on a different key cannot silently relocate the first lease. The
+ * store binds that row to the acquiring owner, so a different owner presenting
+ * the same id conflicts with the live holder rather than replacing it.
  */
 function sourceIdFor(opId: string, claimKey: string): string {
   const digest = createHash('sha256').update(claimKey, 'utf8').digest('hex').slice(0, 16);
@@ -164,10 +174,26 @@ export interface BusClaimsOwnerMatch {
 /** An announced work-feed job a claim's keys overlap; the job's own status and title, never a guess. */
 export interface BusClaimJobRef { id: string; owner: string; status: WorkJob['status']; title: string;
   /** The feed job's newest status detail, when it carries one. */
-  detail?: string }
+  detail?: string;
+  /** Wire id of the `work.post` receipt that announced the job — `agents bus show <postId>` reads it. */
+  postId: string;
+  /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
+  statusId: string | null }
 
 /** A live claim plus, when `jobs` was requested and the feed read ok, the jobs it blocks. */
 export type BusClaimsListClaim = CoordinationView & { jobs?: BusClaimJobRef[] };
+
+/**
+ * The claim-view projection of one announced feed job: id, announcer,
+ * status, title and newest detail plus the retained `postId`/`statusId`
+ * receipt citations — shared by `claim list --jobs` and `work mine`'s
+ * claims section so both name the same `agents bus show` handles.
+ */
+export function busClaimJobRef(job: BusWorkFeedJob): BusClaimJobRef {
+  return { id: job.id, owner: job.owner, status: job.status, title: job.title,
+    ...(job.detail === undefined ? {} : { detail: job.detail }),
+    postId: job.postId, statusId: job.statusId };
+}
 
 /** Feed read state behind a `jobs` request; a non-ok state means blocked jobs are unknown, not absent. */
 export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' | 'invalid';
@@ -182,8 +208,12 @@ export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' 
  * With `owner`, the list narrows to one holder: a ref that resolves through
  * the identity registry matches every label of that identity, while an
  * unresolvable ref or unreadable registry falls back to the exact owner label.
- * With `jobs`, each claim also names the announced feed jobs it blocks and
- * `feed` reports the read state; a non-ok feed leaves `jobs` absent.
+ * With `origin`, the list narrows to one claim class — the same rows the
+ * claim's own `origin` field reports — so "which message-id claims do I
+ * hold" is one filtered read instead of paging every team's leases and
+ * board claims. With `jobs`, each claim also names the announced feed jobs
+ * it blocks and `feed` reports the read state; a non-ok feed leaves
+ * `jobs` absent.
  */
 export type BusClaimsListResult =
   | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[]; asOf: string;
@@ -199,6 +229,8 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   if (key !== undefined && parseClaimKey(key) === undefined) return { status: 'invalid', asOf };
   const owner = options.owner;
   if (owner !== undefined && !OWNER_LABEL.test(owner)) return { status: 'invalid', asOf };
+  const origin = options.origin;
+  if (origin !== undefined && !COORDINATION_ORIGINS.includes(origin)) return { status: 'invalid', asOf };
   const listed = listCoordination(options.root, now);
   if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
   let live = listed.claims.filter(row => row.live);
@@ -220,6 +252,7 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
       live = live.filter(row => ownerId(row.owner) === identity);
     }
   }
+  if (origin !== undefined) live = live.filter(row => row.origin === origin);
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
   let feed: BusClaimsFeedState | undefined;
   let annotated: BusClaimsListClaim[] = claims;
@@ -233,8 +266,7 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
         ...row,
         jobs: result.jobs
           .filter(job => job.claimKeys.some(claimKey => coordinationRowBlocks(row, claimKey)))
-          .map(job => ({ id: job.id, owner: job.owner, status: job.status, title: job.title,
-            ...(job.detail === undefined ? {} : { detail: job.detail }) })),
+          .map(busClaimJobRef),
       }));
     }
   }
@@ -254,6 +286,10 @@ export interface BusWorkJobClaimRef {
   status: WorkJob['status'];
   /** The feed job's newest status detail, when it carries one. */
   detail?: string;
+  /** Wire id of the `work.post` receipt that announced the job — `agents bus show <postId>` reads it. */
+  postId: string;
+  /** Wire id of the newest accepted `work.status` receipt; null while no status has moved the job. */
+  statusId: string | null;
 }
 
 export interface BusWorkJobClaimOptions extends BusClaimOptions {
@@ -304,9 +340,8 @@ export type BusWorkJobClaimResult =
 
 const JOB_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-function jobClaimRef(job: WorkJob): BusWorkJobClaimRef {
-  return { id: job.id, owner: job.owner, repo: job.repo, title: job.title, status: job.status,
-    ...(job.detail === undefined ? {} : { detail: job.detail }) };
+function jobClaimRef(job: BusWorkFeedJob): BusWorkJobClaimRef {
+  return { ...busClaimJobRef(job), repo: job.repo };
 }
 
 /**

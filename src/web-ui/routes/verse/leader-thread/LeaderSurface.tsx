@@ -82,7 +82,9 @@ export function LeaderSurface({ visible, host }: Pick<PaneProps, 'visible' | 'ho
       </nav>
       {/* Keyed by session: lines sent from one conversation never show in the next. */}
       <div className={styles.scroller}>
-        <SessionThread key={threadId} id={threadId} visible={visible} onBack={() => setThreadId(null)} onOpenLog={openLog} backTo={beside ? CLOSE_BESIDE : BACK_TO_LEADER} />
+        <SessionThread key={threadId} id={threadId} visible={visible} onBack={() => setThreadId(null)} onOpenLog={openLog} backTo={beside ? CLOSE_BESIDE : BACK_TO_LEADER}
+          // Beside the chat, the chat's own notice is on screen; over it, this conversation is the only place left to say it.
+          leaderHealth={!beside} />
       </div>
     </div>}
   </div>;

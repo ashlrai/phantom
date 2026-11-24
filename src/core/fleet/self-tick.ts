@@ -24,6 +24,7 @@
  *  14. landed-sweep   — close DIRTY PRs whose work already landed on master.
  *  15. cos-work       — draft at most one pending chief-of-staff reply.
  *
+ * A successful step reporting a nonempty skippedReason is recorded 'skipped'.
  * A step that exits nonzero or throws is recorded 'failed'; later steps still
  * run. A hold a person placed is never released — that rule stays inside the
  * verbs' guarded write paths.
@@ -34,6 +35,9 @@
  * does no step and reports 'busy'.
  */
 import { join } from 'node:path';
+import { LIVE_JOBS_FILE, readLiveJobs, writeLiveJobs } from './live-jobs.js';
+import { writeCompactBrief } from './leader-compact-brief.js';
+import type { FamilyAutoStop } from './family-auto-stop.js';
 import {
   acquireLocalStoreLockWithOutcome,
   releaseLocalStoreLock,
@@ -76,7 +80,7 @@ export type SelfTickSteps = Record<Exclude<SelfTickStepName, 'teammate-overdue' 
 
 export interface SelfTickStepResult {
   step: SelfTickStepName;
-  state: 'ok' | 'failed';
+  state: 'ok' | 'skipped' | 'failed';
   exitCode: number;
   /** The step's parsed --json output, or null when nothing parseable printed. */
   report: unknown;
@@ -93,11 +97,14 @@ export interface SelfTickReport {
   mode: 'apply' | 'dry-run';
   state: 'ran' | 'busy';
   steps: SelfTickStepResult[];
+  liveJobs?: 'written' | 'failed';
+  leaderBrief?: 'written' | 'failed';
+  familyStops?: Omit<FamilyAutoStop, 'pattern'>[] | null;
 }
 
 export interface SelfTickOutcome {
   report: SelfTickReport;
-  /** 0 when every step is ok or the run was busy; 1 when any step failed. */
+  /** 0 when every step is ok/skipped or the run was busy; 1 when any step failed. */
   exitCode: number;
   /** How the single-runner lock resolved; 'acquired' iff the steps ran. */
   lock: 'acquired' | 'contended' | 'unavailable';
@@ -156,6 +163,8 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
   }
   const argv = ['--json', ...(options.apply === true ? ['--apply'] : []), '--runs-dir', runsDir];
   try {
+    try { await writeLiveJobs(join(runsDir, LIVE_JOBS_FILE), await readLiveJobs({ runsDir, now: clock })); report.liveJobs = 'written'; }
+    catch { report.liveJobs = 'failed'; }
     for (const step of SELF_TICK_STEP_ORDER) {
       try {
         const run = options.steps[step] ?? (step === 'teammate-overdue' ? async () => {
@@ -172,11 +181,18 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
           continue;
         }
         const { exitCode, output } = await run(argv);
+        const parsed = parseReport(output);
+        if (step === 'planner-tick' && parsed && typeof parsed === 'object' && 'familyStops' in parsed) {
+          report.familyStops = (parsed as Pick<SelfTickReport, 'familyStops'>).familyStops;
+        }
+        const skippedReason = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)['skippedReason'] : undefined;
         report.steps.push({
           step,
-          state: exitCode === 0 ? 'ok' : 'failed',
+          state: exitCode !== 0 ? 'failed'
+            : typeof skippedReason === 'string' && skippedReason.trim() ? 'skipped' : 'ok',
           exitCode,
-          report: parseReport(output),
+          report: parsed,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -186,6 +202,8 @@ export async function runSelfTick(options: RunSelfTickOptions): Promise<SelfTick
     // Persisted while the lock is still held so a `--last` read can never
     // see a pass that is still mid-flight. A throwing write must not change
     // the steps' exit code or skip the release in finally.
+    try { await writeCompactBrief(runsDir, clock()); report.leaderBrief = 'written'; }
+    catch { report.leaderBrief = 'failed'; }
     appendHistory();
     try {
       (options.writeLast ?? writeSelfTickLast)(runsDir, report);

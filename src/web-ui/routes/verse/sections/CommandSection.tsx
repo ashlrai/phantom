@@ -70,6 +70,7 @@ import {
   authorityQuery,
   fleetHistoryQuery,
   fleetLiveQuery,
+  burnQuery,
   leaderQuery,
   learningQuery,
 } from '../command/surface-data.js';
@@ -93,6 +94,7 @@ export function CommandSection() {
   // The shell's ONE activity poll (C1) — never a second loop from here.
   const activity = useActivity();
   const leader = useQuery(leaderQuery);
+  const burn = useQuery(burnQuery, { freshMs: 60_000 });
   const learning = useQuery(learningQuery, { freshMs: 60_000 });
   const history = useQuery(fleetHistoryQuery, { freshMs: 60_000 });
   const budget = useQuery(budgetQuery, { freshMs: 15_000 });
@@ -224,7 +226,7 @@ export function CommandSection() {
         <NeedsYouCard state={activity} actions={actions} fleetLine={fleetLine} seatNames={names} />
       </Cell>
       <Cell span={7}>
-        <LeaderCard read={leader.data} loading={leader.status === 'loading'} actions={actions} seatNames={names} />
+        <LeaderCard burnLine={burn.data?.value?.sentence ?? null} read={leader.data} loading={leader.status === 'loading'} actions={actions} seatNames={names} />
       </Cell>
       <Cell span={12}><SupplyCard /></Cell>
       <Cell span={12}><IncidentsStrip now={now} /></Cell>

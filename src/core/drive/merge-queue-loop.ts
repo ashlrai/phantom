@@ -18,11 +18,14 @@
  *    re-reads open PRs before acting and after mechanical resolution; a green
  *    recovered head re-enters only through the same gated auto-merge path.
  *
- * What this cycle never does: merge, use --admin, skip or re-run checks,
+ * What this cycle never does: merge, use --admin, skip required checks,
  * enable auto-merge outside a merge queue, touch held or non-fleet PRs, or
  * auto-enqueue a PR whose files touch a Security-pinned path (or whose file
  * list is truncated, so the pin is unproven). Red checks belong to
  * refix-loop and are only reported.
+ *
+ * Queued entries observed for an hour are refreshed, then safely dequeued and
+ * re-enrolled if all head gates still pass. Recovery shares enqueue budgets.
  *
  * Failure policy: a failed repo read is logged and that repo is skipped (the
  * other repos still drain); a failed mutation consumes its retry budget and
@@ -108,6 +111,8 @@ export interface MergeQueueIo {
   readSnapshot(repo: string): MergeQueueRepoSnapshot;
   /** Head-pinned auto-merge enrollment; GitHub still enforces the merge queue. */
   enqueue(repo: string, pr: MergeQueuePr): void;
+  /** Optional sanctioned dequeue before head-pinned enrollment of a stalled entry. */
+  dequeue?(repo: string, pr: MergeQueuePr): void;
   /** updatePullRequestBranch(pullRequestId, expectedHeadOid, updateMethod: MERGE). */
   updateBranch(repo: string, pr: MergeQueuePr): void;
   /**
@@ -133,6 +138,8 @@ export interface MergeQueueOptions {
   cycleCap?: number;
   prWindowCap?: number;
   retryMs?: number;
+  /** Continuous observed queue time before recovery; defaults to one hour. */
+  stalledMs?: number;
   windowMs?: number;
   fleetAuthors?: readonly string[];
   /** Plan only: classify and report, no mutation and no queue append. */
@@ -145,6 +152,10 @@ export interface MergeQueueRepoResult {
   mergeQueue: boolean;
   totals: Partial<Record<MergeQueueAction, number>>;
   enqueued: number[];
+  /** PRs whose continuous sampled queue residence reached the timeout. */
+  stalled: number[];
+  /** Successful re-enrollment requests, not completed merges. */
+  recovered: number[];
   rebased: number[];
   resolved: number[];
   drained: number[];
@@ -246,6 +257,8 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
   const cycleCap = options.cycleCap ?? REFIX_CYCLE_CAP;
   const prWindowCap = options.prWindowCap ?? REFIX_PR_WINDOW_CAP;
   const retryMs = options.retryMs ?? REFIX_RETRY_MS;
+  const stalledMs = options.stalledMs ?? 60 * 60_000;
+  if (!Number.isSafeInteger(stalledMs) || stalledMs <= 0) throw new Error('invalid stalledMs');
   const windowMs = options.windowMs ?? REFIX_WINDOW_MS;
   const authors = new Set((options.fleetAuthors ?? [FLEET_AUTHOR]).map(bareLogin));
   const dryRun = options.dryRun === true;
@@ -283,7 +296,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
   try {
     for (const repo of repos) {
       const result: MergeQueueRepoResult = {
-        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], rebased: [], resolved: [], drained: [], failed: [], latency: [],
+        repo, ok: false, mergeQueue: false, totals: {}, enqueued: [], stalled: [], recovered: [], rebased: [], resolved: [], drained: [], failed: [], latency: [],
       };
       summary.repos.push(result);
       let snapshot: MergeQueueRepoSnapshot;
@@ -338,7 +351,14 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         (state.latency ??= {})[key] = latency;
         result.latency.push({ number: pr.number, ...latency });
         result.totals[action] = (result.totals[action] ?? 0) + 1;
-        if (dryRun || (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict')) continue;
+        const stalled = action === 'queued' && observedAt - latency.since >= stalledMs;
+        if (stalled) result.stalled.push(pr.number);
+        const recover = stalled && Boolean(io.dequeue) && classifyMergeQueuePr({ ...pr, inMergeQueue: false }, snapshot, {
+          fleet: authors.has(bareLogin(pr.author)), held: hold.has(tag),
+        }) === 'enqueue';
+        if (dryRun) continue;
+        if (recover) action = 'enqueue';
+        if (action !== 'enqueue' && action !== 'rebase' && action !== 'conflict') continue;
 
         if (action === 'conflict') {
           const initialKey = drainKey(repo, pr.number, pr.headSha);
@@ -407,6 +427,17 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         state.attempts[`${action}:${tag}:${now}`] = { pr: tag, action, at: now };
         io.saveState(state);
         try {
+          if (recover) {
+            // Reserve before refresh/dequeue: an ambiguous response cannot loop.
+            const fresh = io.readSnapshot(repo);
+            const current = fresh.prs.find(p => p.number === pr.number && p.id === pr.id && p.headSha === pr.headSha);
+            const held = io.readHoldList();
+            if (!current || classifyMergeQueuePr({ ...current, inMergeQueue: false }, fresh, {
+              fleet: authors.has(bareLogin(current.author)), held: held.has(tag),
+            }) !== 'enqueue') continue; // Merged, moved, owned or newly blocked.
+            pr = current;
+            if (pr.inMergeQueue) io.dequeue!(repo, pr);
+          }
           if (action === 'enqueue') io.enqueue(repo, pr);
           else io.updateBranch(repo, pr);
         } catch {
@@ -416,6 +447,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
           io.log(`MERGEQ_GH_ERROR ${action} ${repo}#${pr.number}`);
           continue;
         }
+        if (recover) { result.recovered.push(pr.number); latency.since = observedAt; }
         if (action === 'enqueue') { result.enqueued.push(pr.number); summary.enqueued++; }
         else { result.rebased.push(pr.number); summary.rebased++; }
         io.log(`MERGEQ_${action.toUpperCase()} ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);

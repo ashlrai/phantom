@@ -42,10 +42,9 @@ button.cell:hover { background: var(--bg-hover); }
 .usage { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); min-width: 0; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
 .track { position: relative; display: block; flex: 0 0 6rem; height: 0.375rem; overflow: hidden; border-radius: var(--radius-full); background: var(--border-subtle); }
-/* No reading is a hatched track, never an empty one that reads as zero. */
-.track[data-unknown] { background: repeating-linear-gradient(135deg, var(--border-subtle) 0 3px, transparent 3px 6px); }
+/* A seat's usage window is the shared WindowBar, held to the width the old track had. */
+.meter { flex: 0 0 6rem; width: 6rem; }
 .fill { display: block; height: 100%; border-radius: inherit; background: var(--accent-500); transition: width var(--duration-base) var(--ease-decelerate); }
-.fill[data-high] { background: var(--status-danger-solid); }
 .fill[data-none] { background: var(--status-unknown-solid); }
 
 .bars { gap: var(--space-2); }

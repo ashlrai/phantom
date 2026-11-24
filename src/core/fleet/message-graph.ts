@@ -8,7 +8,8 @@
  * Names, counts and times only: no message text leaves this read.
  */
 import type { BusInboxOptions } from './bus-inbox.js';
-import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdgeAgent, type MapEdges } from './map-edges.js';
+import { parseSince } from './agent-messages.js';
+import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdgeAgent, type MapEdges, type MapEdgesOptions } from './map-edges.js';
 import { PROVIDER_NAMES, providerFor, type ProviderName } from './provider.js';
 
 export const MESSAGE_GRAPH_PATH = '/api/fleet/message-graph';
@@ -62,17 +63,21 @@ export function buildMessageGraph(read: MapEdges): FleetMessageGraph {
   return { ...head, organizations: PROVIDER_NAMES.flatMap(name => organizations.get(name) ?? []), groups: [...groups.values()], messages: read.messages, skipped: read.skipped };
 }
 
-/** The one read behind the CLI, the API and the Fleet map. `since` is `10m`, `2h`, `1d`, epoch ms or an ISO time; null when it is none of those. */
-export function readMessageGraph(since: string = MAP_EDGES_DEFAULT_SINCE, options: BusInboxOptions = {}): FleetMessageGraph | null {
+/** The one read behind the CLI, the API and the Fleet map. `since`/`options.before` take `10m`, `2h`, `1d`, epoch ms or an ISO time; null when either is none of those. */
+export function readMessageGraph(since: string = MAP_EDGES_DEFAULT_SINCE, options: MapEdgesOptions = {}): FleetMessageGraph | null {
   const edges = readMapEdges(since, options);
   return edges && buildMessageGraph(edges);
 }
 
-/** GET /api/fleet/message-graph[?since=10m]: 200 the graph, 400 a bad query, 503 the typed "unknown" graph. */
+/** GET /api/fleet/message-graph[?since=10m&before=1h]: 200 the graph, 400 a bad query, 503 the typed "unknown" graph. */
 export function messageGraphResponse(url: string, options: BusInboxOptions = {}): { status: 200 | 400 | 503; body: FleetMessageGraph | { error: string } } {
   const params = new URL(url, 'http://localhost').searchParams;
-  if ([...params.keys()].some(key => key !== 'since') || params.getAll('since').length > 1) return { status: 400, body: { error: 'Use since only, once.' } };
-  const graph = readMessageGraph(params.get('since') ?? undefined, options);
+  if ([...params.keys()].some(key => key !== 'since' && key !== 'before') || params.getAll('since').length > 1 || params.getAll('before').length > 1) {
+    return { status: 400, body: { error: 'Use since and before only, once each.' } };
+  }
+  const rawBefore = params.get('before');
+  if (rawBefore !== null && parseSince(rawBefore) === null) return { status: 400, body: { error: 'before takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
+  const graph = readMessageGraph(params.get('since') ?? undefined, { ...options, before: rawBefore ?? undefined });
   if (!graph) return { status: 400, body: { error: 'since takes 10m, 2h, 1d, epoch ms or an ISO time.' } };
   return { status: graph.source === 'unavailable' ? 503 : 200, body: graph };
 }

@@ -95,6 +95,7 @@ class FakeChild extends EventEmitter {
 interface Deps {
   steps?: Partial<Record<SelfTickStepName, SelfTickStep>>;
   spawn?: SpawnLike;
+  loadSnapshot?: (runsDir: string) => Promise<unknown>;
 }
 const run = async (args: string[], deps: Deps = {}) => {
   const out: string[] = [], err: string[] = [];
@@ -168,6 +169,17 @@ describe('fleet self-tick', () => {
     expect(report!.steps.map((s) => s.step)).toEqual(rec.order);
     expect(report!.steps.every((s) => s.state === 'ok' && s.exitCode === 0
       && (s.report as { ok: string }).ok === s.step)).toBe(true);
+  });
+
+  it('takes one host-load snapshot on --apply only, and a failing snapshot changes nothing', async () => {
+    const seen: string[] = [];
+    const snap = async (dir: string) => { seen.push(dir); };
+    expect((await run(['--json', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: snap })).code).toBe(0);
+    expect(seen).toEqual([]);
+    expect((await run(['--json', '--apply', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: snap })).code).toBe(0);
+    expect(seen).toEqual([runsDir]);
+    const boom = async () => { throw new Error('ps unreadable'); };
+    expect((await run(['--json', '--apply', '--runs-dir', runsDir], { steps: recording().steps, loadSnapshot: boom })).code).toBe(0);
   });
 
   it('a throwing first step still runs the later two and exits 1', async () => {
@@ -268,10 +280,10 @@ describe('fleet self-tick', () => {
     }));
     const starved = { readLanes: async () => ({ lanes: [{ lane: 'claude', running: 0, target: 6, queued: 0, held: false, remainingPct: 68 }] }), readOff: async () => false, fill };
     const { report } = await run(['--apply', '--json', '--runs-dir', runsDir], { autofill: starved, ...quietSweep });
-    const planner = report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { runs: { lane: string; applied: number }[] } };
-    expect(planner.autofill.runs).toMatchObject([{ lane: 'claude', applied: 1 }]);
+    const planner = report!.steps.find(step => step.step === 'planner-tick')!.report as { autofill: { supply: { lane: string; added: number }[] } };
+    expect(planner.autofill.supply).toMatchObject([{ lane: 'claude', added: 1 }]);
     expect(fill).toHaveBeenCalledOnce();
-    expect(await readFile(QUEUE_EVENTS(), 'utf8')).toMatch(/ AUTOFILL \{.*"lane":"claude".*\} src=autofill/);
+    expect(await readFile(join(runsDir, 'queue/router-queue.md'), 'utf8')).toMatch(/- READY RQ-FIXTURE-1 .*pool=claude/);
 
     fill.mockClear();
     const none = { readLanes: async () => ({ lanes: [] }), readOff: async () => false, fill };
@@ -309,7 +321,7 @@ describe('fleet self-tick', () => {
 
   it('the lock is released even when a step throws', async () => {
     const { code } = await run(['--json', '--runs-dir', runsDir], {
-      steps: { 'reset-release': async () => { throw new Error('boom'); } },
+      steps: { ...quietSweep.steps, 'reset-release': async () => { throw new Error('boom'); } },
     });
     expect(code).toBe(1);
     expect(existsSync(LOCK())).toBe(false);

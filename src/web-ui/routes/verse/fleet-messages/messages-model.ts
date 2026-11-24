@@ -16,6 +16,7 @@ export function narrowAgentMessages(x: unknown): AgentMessages | null {
   if (!record(x) || x.schema !== 'agent-messages.v1' || !['available', 'missing', 'unavailable'].includes(String(x.source))
     || !count(x.matched) || !count(x.skipped) || !Array.isArray(x.messages)) return null;
   const ok = x.messages.every(m => record(m) && text(m.id) && text(m.ts) && Number.isFinite(Date.parse(m.ts))
+    && ['P0', 'P1', 'P2', 'P3'].includes(String(m.priority))
     && ref(m.from) && ref(m.to) && MESSAGE_KINDS.includes(m.kind as never) && text(m.summary) && text(m.conversation)
     && nullable(m.job) && nullable(m.pr));
   return ok ? x as unknown as AgentMessages : null;

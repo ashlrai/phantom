@@ -1,6 +1,6 @@
 /**
  * The Map pane's "By org" layout: the leader on top, then one box per lane holding the lane and its
- * jobs (a box named "unassigned" holds anything with no known parent), then computers and pools in a
+ * jobs (a box named "Other" holds anything with no known parent), then computers and pools in a
  * bottom row. Same nodes and ids as the row layout, so lines, logos and message counts are unchanged.
  * The choice of layout is remembered like the 2D/3D choice.
  */

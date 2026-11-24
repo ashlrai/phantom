@@ -1,6 +1,8 @@
 /**
  * One Comms pass: route a lane, triage the local inbox, archive bulk and bot
- * mail, and put every reply through the send policy. Delivery uses a
+ * mail, and put every reply through the send policy. A delivered reply also
+ * resolves its inbox message into the archive — never a resend — so pending
+ * depth counts only mail still awaiting a reply. Delivery uses a
  * ChannelAdapter or a sanctioned LinkedIn connector. This module opens no
  * network client of its own.
  */
@@ -153,15 +155,28 @@ async function rememberDraft(runsDir: string, attempt: SendAttempt, at: string, 
 }
 
 /**
- * A delivered reply resolves its pending draft record. Bookkeeping never
- * rewrites a completed send: a store failure leaves the pending record
- * visible rather than reporting a sent reply as failed.
+ * A delivered reply resolves its draft record. Bookkeeping never rewrites a
+ * completed send: a store failure leaves the pending record visible rather
+ * than reporting a sent reply as failed. Every delivered reply leaves a
+ * 'sent' record — a reply that was never pending gets one too — so a later
+ * pass over the same kept message resolves it without resending.
  */
-async function resolveSentDraft(runsDir: string, attempt: SendAttempt, at: string): Promise<void> {
+async function resolveSentDraft(runsDir: string, attempt: SendAttempt, at: string, messageId: string): Promise<void> {
   try {
     const id = draftId(attempt);
-    const pending = (await listDrafts(runsDir)).find(row => row.id === id && row.status === 'pending');
-    if (pending) await appendDraft(runsDir, { ...pending, status: 'sent', resolvedAt: at });
+    const recorded = (await listDrafts(runsDir)).find(row => row.id === id);
+    if (recorded?.status === 'sent') return;
+    const draft: CommsDraft = recorded ?? {
+      id,
+      status: 'pending',
+      transport: attempt.transport,
+      recipient: attempt.recipient.trim(),
+      subject: attempt.subject?.slice(0, 300) || (attempt.transport === 'email' ? 'Reply' : `${attempt.transport} reply`),
+      body: attempt.text,
+      messageId,
+      createdAt: at,
+    };
+    await appendDraft(runsDir, { ...draft, status: 'sent', resolvedAt: at });
   } catch { /* See above: the send already happened. */ }
 }
 
@@ -232,7 +247,7 @@ export async function executeSend(
     credentialHandle: attempt.credentialHandle ?? null,
     result: 'sent',
   });
-  await resolveSentDraft(options.runsDir, attempt, at);
+  await resolveSentDraft(options.runsDir, attempt, at, options.messageId ?? attempt.recipient);
   return outcome;
 }
 
@@ -250,6 +265,12 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     await appendArchive(options.runsDir, inbox.rows.find(row => row.id === message.id) ?? { ...message });
   }
   await writeInbox(options.runsDir, triage.kept, inbox.rows);
+  // A draft already marked sent — by an approved pass or an earlier run —
+  // resolves its message without another delivery attempt; the sent record
+  // is the only per-reply delivery evidence this store keeps.
+  const sentDraftIds = new Set((await listDrafts(options.runsDir))
+    .filter(draft => draft.status === 'sent').map(draft => draft.id));
+  const resolved = new Set<string>();
   const sends: CommsRunReport['sends'] = [];
   for (const draft of triage.drafts) {
     const attempt: SendAttempt = {
@@ -259,6 +280,11 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       text: draft.body,
       ...(draft.transport === 'linkedin' ? { linkedinMode: 'official-api' as const } : {}),
     };
+    if (sentDraftIds.has(draftId(attempt))) {
+      resolved.add(draft.messageId);
+      sends.push({ transport: attempt.transport, recipient: attempt.recipient, status: 'sent', reason: 'Reply already delivered; resolved without resending.' });
+      continue;
+    }
     const outcome = await executeSend(attempt, {
       ...options,
       approvals: options.approvalsSource === 'injected' ? config.approvals : undefined,
@@ -266,6 +292,18 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
       messageId: draft.messageId,
     });
     sends.push({ transport: attempt.transport, recipient: attempt.recipient, status: outcome.status, reason: outcome.reason });
+    if (outcome.status === 'sent') resolved.add(draft.messageId);
+  }
+  // A delivered reply answers its message: the row moves to the archive —
+  // nothing is deleted — and leaves the pending inbox, so `status` depth
+  // counts only mail still awaiting a reply and no later pass resends it.
+  if (resolved.size > 0) {
+    for (const message of triage.kept) {
+      if (resolved.has(message.id)) {
+        await appendArchive(options.runsDir, inbox.rows.find(row => row.id === message.id) ?? { ...message });
+      }
+    }
+    await writeInbox(options.runsDir, triage.kept.filter(message => !resolved.has(message.id)), inbox.rows);
   }
   return {
     ok: true,
@@ -276,8 +314,8 @@ export async function runCommsAgent(options: CommsRunOptions): Promise<CommsRunR
     laneReason: lane.reason,
     grokRequired: false,
     triage: {
-      kept: triage.kept.length,
-      archived: triage.archived.length,
+      kept: triage.kept.filter(message => !resolved.has(message.id)).length,
+      archived: triage.archived.length + resolved.size,
       drafted: sends.filter(send => send.status === 'drafted').length,
       deleted: 0,
     },
@@ -291,25 +329,33 @@ export async function commsStatus(runsDir: string): Promise<{
   role: typeof COMMS_AGENT_ROLE;
   kill: KillState;
   paused: boolean;
-  drafts: number;
-  sendsLogged: number;
-  adapters: string[];
+  /** Pending inbox messages still awaiting triage; null when the inbox file
+   * cannot be read — an unreadable store is unknown, never an empty inbox. */
+  inbox: number | null;
+  /** Pending drafts; null when the drafts log cannot be read. */
+  drafts: number | null;
+  /** Completed sends logged; null when the send log cannot be read. */
+  sendsLogged: number | null;
+  /** Registered channel adapters; null when the registry cannot be read. */
+  adapters: string[] | null;
 }> {
-  const [drafts, sends] = await Promise.all([
-    listDrafts(runsDir).catch(() => []),
-    readSendLog(runsDir).catch(() => []),
+  const [inbox, drafts, sends] = await Promise.all([
+    readInbox(runsDir).then(read => read.messages.length).catch(() => null),
+    listDrafts(runsDir).then(rows => rows.filter(draft => draft.status === 'pending').length).catch(() => null),
+    readSendLog(runsDir).then(rows => rows.length).catch(() => null),
   ]);
-  let adapters: string[] = [];
+  let adapters: string[] | null = null;
   try { adapters = listChannelRegistry().filter(row => row.adapterRegistered).map(row => row.id); }
-  catch { adapters = []; }
+  catch { adapters = null; }
   return {
     ok: true,
     schema: 'comms-agent.status.v1',
     role: COMMS_AGENT_ROLE,
     kill: readKillState(),
     paused: readPauseState(),
-    drafts: drafts.filter(draft => draft.status === 'pending').length,
-    sendsLogged: sends.length,
+    inbox,
+    drafts,
+    sendsLogged: sends,
     adapters,
   };
 }

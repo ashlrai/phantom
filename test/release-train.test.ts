@@ -2,8 +2,9 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cmdRelease } from '../src/cli/release.js';
+import * as remoteTags from '../src/core/release/remote-git-backlog.js';
 import {
   admitCiRun, allowReleasePrDispatch, assertReleaseWrite, buildTrain, cadenceMinutesFromEnv, cappedCadenceMinutes, DEFAULT_CADENCE_MINUTES, docsCarriersSynced, ENQUEUE_PULL_REQUEST,
   judgeRequiredChecks, releaseHeadBranch, releaseWriteUsesAppToken, TRAIN_JOB_CHECK_NAME,
@@ -1026,6 +1027,7 @@ describe('release train', () => {
     } finally { process.stdout.write = write; }
     const parsed = JSON.parse(lines.join('')) as { ok: boolean; schema: string; state: { schema: string } };
     expect(parsed).toMatchObject({ ok: true, schema: TRAIN_SCHEMA, state: { schema: TRAIN_SCHEMA, tag: 'v3.30.27' } });
+    vi.spyOn(remoteTags, 'readRemoteGitRelease').mockImplementation(async row => ({ ...row, reason: 'remote tags unavailable' }));
     expect(await cmdRelease(['status', '--json'])).toBe(0);
     expect(await cmdRelease(['nope'])).toBe(2);
   });

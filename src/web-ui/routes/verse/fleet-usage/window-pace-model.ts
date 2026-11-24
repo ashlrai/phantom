@@ -42,6 +42,10 @@ export function leadWords(pace: WindowPace): string | null {
   return `use is ${points} ${points === 1 ? 'point' : 'points'} ${pace.lead < 0 ? 'behind' : 'ahead of'} an even spend`;
 }
 
+/** A window's start as local time: the weekday while it is within the week, the date beyond it. */
+export const startClock = (nowMs: number) => (iso: string): string => new Date(iso).toLocaleString(undefined, nowMs - Date.parse(iso) < 6 * 86_400_000
+  ? { weekday: 'short', hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
 /** Where the start came from, so a derived start is never read as a reported one. */
 export const startWords = (pace: WindowPace, localTime: (iso: string) => string): string =>
   pace.basis === 'reported' ? `began ${localTime(pace.startsAt)}, as the provider reported` : `began about ${localTime(pace.startsAt)}, seven days before its reset`;

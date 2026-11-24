@@ -27,7 +27,7 @@ it('files every card under one of two named groups, agents and machines first', 
   expect(screen.getAllByRole('group').map(node => node.getAttribute('aria-labelledby') && within(node).getAllByRole('heading', { level: 2 })[0]!.textContent))
     .toEqual([AGENTS, RESOURCES]);
   expect(cardsIn(AGENTS)).toEqual(['Leader', 'Running jobs', 'Main']);
-  expect(cardsIn(RESOURCES)).toEqual(['Pools', 'Most at risk of going unused', 'Merged PRs', 'Work log']);
+  expect(cardsIn(RESOURCES)).toEqual(['Pools', 'Yield', 'Most at risk of going unused', 'Merged PRs', 'Work log']);
   // No card is left outside the groups, and the health line stays above both.
   const home = screen.getByRole('region', { name: 'Home' });
   expect([...home.querySelectorAll('section')].filter(card => card.closest('[role="group"]') === null)).toEqual([]);
@@ -49,7 +49,7 @@ it('has the same two groups before the summary arrives, and an open pool stays o
   const view = render(pane());
   expect(screen.getByText('Reading fleet health…')).toBeTruthy();
   expect(screen.getAllByRole('group').map(node => within(node).getByRole('heading', { level: 2 }).textContent)).toEqual([AGENTS, RESOURCES]);
-  expect(cardsIn(RESOURCES)).toEqual(['Pools']);
+  expect(cardsIn(RESOURCES)).toEqual(['Pools', 'Yield']);
   const pool = () => within(screen.getByRole('region', { name: 'Pools' })).getAllByRole('button')[0]!;
   expect(pool().getAttribute('aria-expanded')).toBe('false');
   fireEvent.click(pool());

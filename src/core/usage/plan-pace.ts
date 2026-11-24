@@ -163,8 +163,11 @@ export async function postPaceAlerts(rows: readonly PlanPaceRow[], deps: PaceAle
 export async function runDefaultPaceAlerts(): Promise<string[]> {
   const [{ postLeaderMessage }, memo] = await Promise.all([import('../vision/leader-thread.js'), import('../vision/leader-memo.js')]);
   const pace = await readPlanPace();
-  return postPaceAlerts(pace.plans, {
+  const sent = await postPaceAlerts(pace.plans, {
     stateDir: memo.leaderRoot(),
     post: text => { postLeaderMessage({ channel: 'telegram', kind: 'update', text }); },
   }, Date.parse(pace.generated_at));
+  // A notice failure must not hide the pace alerts already posted.
+  try { sent.push(...await (await import('../fleet/lane-held-notice.js')).runDefaultHeldLaneNotices()); } catch { /* retried next tick */ }
+  return sent;
 }

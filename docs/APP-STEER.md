@@ -37,7 +37,7 @@ Editing a recalled message makes it an ordinary draft.
 ### Reach a session by typing
 
 A reply that starts with `/` and names a command runs on Enter instead of
-being sent; `/help` lists them all. Four of them are about sessions. They
+being sent; `/help` lists them all. Five of them are about sessions. They
 only read, so they need no unlock and leave no note in the Leader inbox:
 
 | Type | What happens |
@@ -46,6 +46,7 @@ only read, so they need no unlock and leave no note in the Leader inbox:
 | `/thread <session>` | Opens that session as a conversation in the Leader pane (beside the chat when there is room, over it otherwise) and says its state and lane. Esc in the conversation returns to the reply box. |
 | `/summary <session>` | Prints the session's state, lane, model, when it last spoke and its recorded summary, without leaving the chat. |
 | `/log <job-id>` | Opens the job's live log. |
+| `/find <words>` | Looks for the words in every session's whole conversation and answers in the chat: how many sessions hold them, then a row for each of the first six with its state, how many of its messages match and the newest line that does. |
 
 Type `@` after the command to pick the session from the list above; the `@`
 is dropped. A job id in a command's answer is a button that opens that session
@@ -55,6 +56,14 @@ name the session list does not hold opens nothing and says so. When the list
 does not answer, `/who` reads "Working sessions are unknown" with the reason,
 and `/thread` opens the name unchecked and says that. The reads are the ones
 behind `phm sessions --json` and `phm sessions thread <id> --json`.
+
+`/find` asks what the find box in Conversations asks (`phm sessions find <words> --json`), across
+every lane and repo, for words of two letters or more; a session must hold
+all of them. A quoted line is cut around the first word found. Sessions past
+the sixth are counted, with a pointer to the Conversations find box, which
+lists them all. When the search does not answer, or the server is too old to
+have it, the line says the answer is unknown and why; it never reads as
+"no session holds them". What the search could not read is named under the rows.
 
 ### See and open the Mac's apps by typing
 
@@ -77,6 +86,24 @@ or restart from the reply box. When a read does not answer, that half of the
 they can be read only there. The reads are the ones behind `phm apps --json`
 and `phm apps log --json`.
 
+### See how the lanes stand by typing
+
+Two commands answer with the lanes, from the read the Lanes pane makes:
+
+| Type | What happens |
+| --- | --- |
+| `/lanes` | One line in the conversation: how many slots are running against how many were asked for and how many lanes are held, then every lane. A lane that is down or held comes first with the reason on record and, for a hold with one, the time it ends; a running lane reads `claude 3 of 4`, with the jobs waiting for it when there are any; a lane with target 0 comes last. The line ends with merges in the last hour and how long ago the dispatcher last ticked. |
+| `/lane <lane>` | The same for one lane, plus its target and bounds, the jobs running on it (oldest first, with repo, tier and age; up to eight are named), jobs claimed but not yet running, the recorded reason it is not running, and its tokens last hour, merges in 24 hours and merge rate. Each job id is a button that opens that session's conversation beside the chat. The name can be the start of a lane's name when it fits only one. |
+
+Both only read, so they need no unlock and leave no note in the Leader
+inbox. A paused fleet is named in the line, and so is a pause state or a
+reading the snapshot does not hold: those read "unknown", never zero. When
+the snapshot counts running jobs it does not name, the `/lane` line says
+that instead of "No job is running on it". When the read does not answer,
+the line says the lanes are unknown and why. The reads are the ones behind
+`phm fleet runs --json`; the end of a hold and a lane's bounds come from
+the lane hold record and are left out when it cannot be read.
+
 ### Pick a command's argument from a list
 
 After a command that takes an argument, a space opens a list of what the
@@ -85,7 +112,9 @@ command accepts, in the same place as the `@` list:
 | After | The list holds |
 | --- | --- |
 | `/release ` | The lanes that are held, each with the hold's reason and, when one is set, the time it ends. |
-| `/hold ` | Every lane, the ones not yet held first with their target. Choosing one leaves a space for the minutes. |
+| `/hold ` | Every lane, the ones not yet held first with their target. Choosing one leaves a space for the minutes and opens the next list. |
+| `/hold <lane> ` | Lengths of hold (15 and 30 minutes, 1, 2, 4 and 24 hours), each with the time the hold would end. Typed digits narrow the list; a number that is none of them is listed first with its own end time, and one outside 1 to 1440 gets the command's refusal instead. |
+| `/lane ` | Every lane, a held one marked with its reason. |
 | `/stop ` | The jobs running now, with lane, when each last spoke and its last words; a quiet one is marked. |
 | `/log ` | Every job in the session list, running ones first, then finished and failed ones. |
 | `/thread `, `/summary ` | Every session in the list, the Leader and helpers included. |

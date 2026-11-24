@@ -126,7 +126,9 @@ describe('Leader reply box: filling in a command’s argument', () => {
     expect(names(list)).toEqual(['claude', 'codex-personal', 'glm']);
     fireEvent.keyDown(input, { key: 'Tab' });
     expect(input).toHaveValue('/hold claude ');
-    expect(screen.queryByRole('listbox')).toBeNull();
+    // The lane list gives way to the lengths of hold (LeaderThreadPane.lanes-commands.test.tsx).
+    expect(screen.queryByRole('listbox', { name: 'Lanes' })).toBeNull();
+    expect(await screen.findByRole('listbox', { name: 'Minutes to hold' })).toBeInTheDocument();
   });
 
   it('Esc closes the list and keeps the draft; typing again reopens it', async () => {

@@ -15,7 +15,7 @@
  */
 import { flatTree, type LiveSessionsV1 } from './live-sessions.js';
 import { buildSessionThread, type SessionThreadMessage, type SessionThreadSession, type SessionThreadSource, type SessionThreadV1 } from './session-thread.js';
-import type { SessionThreadsParts } from './session-threads.js';
+import { pickSessions, type SessionThreadsParts } from './session-threads.js';
 import { sanitizePublicJson } from '../util/public-json.js';
 
 export const SESSION_FIND_SCHEMA = 'fleet.session-find.v1';
@@ -57,10 +57,10 @@ export function findWords(query: string): string[] {
   return [...new Set(query.slice(0, FIND_QUERY_CHARS).toLowerCase().split(/\s+/).filter(word => word.length >= 2))].slice(0, FIND_WORDS_MAX);
 }
 
-/** The sessions a search reads, in tree order, and how many the list holds in all. */
+/** The sessions a search reads, in tree order, and how many the list holds in all. Over FIND_SESSIONS_MAX, running sessions are read before ended ones (`pickSessions`). */
 export function findSessions(list: LiveSessionsV1): { searched: { id: string; jobId: string | null; kind: string }[]; total: number } {
   const nodes = flatTree(list.tree.roots).map(entry => entry.node).filter(node => node.kind !== 'unknown-parent');
-  return { searched: nodes.slice(0, FIND_SESSIONS_MAX).map(node => ({ id: node.id, jobId: node.jobId, kind: node.kind })), total: nodes.length };
+  return { searched: pickSessions(nodes, FIND_SESSIONS_MAX).kept.map(node => ({ id: node.id, jobId: node.jobId, kind: node.kind })), total: nodes.length };
 }
 
 /** A message cut to FIND_TEXT_CHARS around the first word found in it, on one line. */

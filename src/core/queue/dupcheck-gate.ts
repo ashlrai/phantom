@@ -70,14 +70,19 @@ export async function recordDupcheckGate(runsDir: string, gate: DupcheckGate, no
   try { await appendFile(file(runsDir), `${JSON.stringify(row)}\n`); return true; } catch { return false; }
 }
 
-async function readEvents(runsDir: string): Promise<DupcheckEvent[] | null> {
-  let text: string;
-  try { text = await readFile(file(runsDir), 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null; }
+/** Pure: the well-formed `queue.dupcheck-event.v1` rows of one JSONL text; torn and foreign lines drop. */
+export function parseDupcheckEvents(text: string): DupcheckEvent[] {
   const out: DupcheckEvent[] = [];
   for (const l of text.split('\n')) {
     try { const r = JSON.parse(l) as DupcheckEvent; if (r.schema === EVENT_SCHEMA && typeof r.job === 'string') out.push(r); } catch { /* torn line */ }
   }
   return out;
+}
+
+async function readEvents(runsDir: string): Promise<DupcheckEvent[] | null> {
+  let text: string;
+  try { text = await readFile(file(runsDir), 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null; }
+  return parseDupcheckEvents(text);
 }
 
 /** A launched or warned row that ended EMPTY already_done: write it once, so precision can be measured. Returns rows added. */

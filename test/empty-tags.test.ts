@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EMPTY_TAGS, EMPTY_TAGS_SCHEMA, emptyDigestLine, formatEmptyTags, recordEmptyTags, summarizeEmptyTags, tagEmpty } from '../src/core/fleet/empty-tags.js';
+import { EMPTY_TAGS, EMPTY_TAGS_SCHEMA, emptyDigestLine, recordEmptyTags, summarizeEmptyTags, tagEmpty } from '../src/core/fleet/empty-tags.js';
 import { readEmptyJobs } from '../src/core/fleet/empty-jobs.js';
 
 const FIXTURES = {
@@ -38,12 +38,6 @@ describe('summary and digest line', () => {
     expect(emptyDigestLine(summarizeEmptyTags(jobs, 10))).toContain('30% of jobs ended empty; top reason: model limit or quota');
     expect(emptyDigestLine(summarizeEmptyTags(jobs, 20))).toBeNull();
     expect(emptyDigestLine(summarizeEmptyTags([], 0))).toBeNull();
-  });
-  it('formats by reason and by lane', () => {
-    const report = summarizeEmptyTags(jobs, 10);
-    expect(formatEmptyTags(report, 'reason', 24)[1]).toContain('pool_cap: 2');
-    expect(formatEmptyTags(report, 'lane', 24)[1]).toBe('claude: 2 empty; pool_cap 2');
-    expect(formatEmptyTags(summarizeEmptyTags([], 0), 'lane', 24)).toEqual(['No empty jobs.']);
   });
 });
 

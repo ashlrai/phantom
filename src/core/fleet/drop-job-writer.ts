@@ -32,6 +32,7 @@ import { link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/pro
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { scrubSecrets } from '../util/scrub.js';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 
 // ---------------------------------------------------------------------------
 // Contract constants
@@ -335,6 +336,10 @@ export async function writeDropJob(
 ): Promise<DropJobWritten> {
   const validation = validateDropJob(input);
   if (!validation.ok) throw new DropJobValidationError(validation.reasons);
+  if (/(?:LAND|BACKLOG|RECUT|RED(?:TYPE|TEST)?FIX|GREEN)/.test(input.id)
+    && pausedFamily(await readLaunchFamilies(root, now().getTime()), `${DROP_JOB_FILE_PREFIX}${input.id}`)) {
+    throw new DropJobValidationError(['family paused: recent workers found no source or made no changes']);
+  }
   const name = `${DROP_JOB_FILE_PREFIX}${input.id}.md`;
   const dir = await realInside(root, 'leader', 'drop', 'claude');
   await mkdir(dir, { recursive: true });

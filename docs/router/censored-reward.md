@@ -17,6 +17,7 @@ How each PR state moves that posterior:
 | --- | --- | --- |
 | merged | `attempts + 1`, `goodMerges + 1` unless it broke main | `fold`, `case 'merged'` |
 | closed unmerged | `attempts + 1`, no success: a failure | `fold`, `case 'closed'` |
+| reverted (jobs ledger only) | `attempts + 1`, `reverted + 1`, no success: the recorded merge did not hold | `fold`, `case 'reverted'` |
 | dirty | `attempts + 1`, no success, counted in `dirty` | `fold`, `case 'dirty'` |
 | open, no outcome event | nothing. The assignment sits in the `open` map and is never read again | `fold`, `open.set` / `open.get` |
 

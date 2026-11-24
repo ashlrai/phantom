@@ -10,7 +10,11 @@
  */
 
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
-import { FILLER_ID, yieldTally, type YieldReport, type YieldRow, type YieldRun } from './slot-yield.js';
+import { FILLER_ID, jobKind, yieldTally, type YieldReport, type YieldRow, type YieldRun } from './slot-yield.js';
+import { dirname, join } from 'node:path';
+import { runsRoot } from '../metrics/loop-collect.js';
+import { readText } from './empty-cause.js';
+import { classifyYieldEmpty, YIELD_EMPTY_LABELS, type YieldEmptyReason } from './empty-why-classify.js';
 
 export const FAMILY_YIELD_SCHEMA = 'fleet.family-yield.v1';
 /** Finished runs a family needs in the window before it can be told to stop. */
@@ -23,6 +27,40 @@ export const FAMILY_WATCH_RATE = 0.4;
 export const FAMILY_STOP_HOURS = 24;
 
 export type FamilyVerdict = 'keep' | 'watch' | 'stop';
+
+export interface EmptyFamilyRecommendation {
+  family: string;
+  action: 'review_family';
+  launches: number;
+  empty: number;
+  merged: number;
+  /** No PR, explicit empty, abort or merge was recorded; never inferred empty. */
+  missing_outcomes: number;
+  /** Latest held merge in the launch cohort; null if absent or merge ordering is unknown. */
+  last_successful_pr: { job: string; url: string | null; merged_at: string } | null;
+  reason: string;
+}
+
+/** Advisory only: three explicit empties merit reviewing a recurring job kind before selecting it again. */
+export function recommendEmptyFamilies(runs: readonly YieldRun[]): EmptyFamilyRecommendation[] {
+  const groups = new Map<string, YieldRun[]>();
+  for (const run of runs) {
+    const family = jobKind(run.job, run.repo), group = groups.get(family) ?? [];
+    group.push(run); groups.set(family, group);
+  }
+  return [...groups].flatMap(([family, group]): EmptyFamilyRecommendation[] => {
+    const empty = group.filter(r => r.empty && !r.merged && !r.reverted && !r.aborted && r.prs.size === 0).length;
+    if (empty < 3) return [];
+    const successes = group.filter(r => r.merged && !r.reverted).sort((a, b) => (b.mergedAt ?? 0) - (a.mergedAt ?? 0) || a.job.localeCompare(b.job));
+    const last = successes.every(r => r.mergedAt !== null) ? successes[0] : undefined;
+    const url = last?.mergedPr ?? (last?.prs.size === 1 ? [...last.prs][0] : null);
+    const last_successful_pr = last && last.mergedAt !== null ? { job: last.job,
+      url: url && /^https?:\/\//.test(url) ? url : null, merged_at: new Date(last.mergedAt).toISOString() } : null;
+    const missing_outcomes = group.filter(r => !r.empty && !r.merged && !r.reverted && !r.aborted && r.prs.size === 0).length;
+    return [{ family, action: 'review_family', launches: group.length, empty, merged: successes.length, missing_outcomes, last_successful_pr,
+      reason: `Review this family before selecting it again: ${empty} of ${group.length} launches were empty; ${successes.length} merged; ${missing_outcomes} outcomes missing.` }];
+  }).sort((a, b) => b.empty - a.empty || a.family.localeCompare(b.family));
+}
 
 export interface FamilyYieldRow {
   family: string;
@@ -57,12 +95,71 @@ export interface FamilyYieldRow {
 /** One ready-to-use job stop file row: `<pattern>\t<until>\t<reason>`. */
 export interface FamilyStopRow { family: string; pattern: string; until: number; reason: string; line: string }
 
+/** Exact recurring name; unlike stop-policy families, internal digits and areas stay distinct. */
+export const launchFamily = (id: string): string => id.replace(/\d+[A-Za-z]?$/, '');
+export type FamilyFinish = { empty: boolean; reason: YieldEmptyReason; at: number };
+/** Last N finished launches, ordered by launch time; running launches never consume the sample. */
+export function shouldPauseFamily(stats: { recent_finishes: readonly FamilyFinish[] } | undefined, n = 4): boolean {
+  const last = stats?.recent_finishes.slice().sort((a, b) => b.at - a.at).slice(0, n) ?? [];
+  return Number.isSafeInteger(n) && n > 0 && last.length === n
+    && last.every(r => r.empty && (r.reason === 'no_eligible_source' || r.reason === 'no_diff'));
+}
+export function familyPauseReason(stats: { recent_finishes: readonly FamilyFinish[] } | undefined): string | null {
+  if (!shouldPauseFamily(stats)) return null;
+  const last = stats!.recent_finishes.slice().sort((a, b) => b.at - a.at).slice(0, 4);
+  const cause = last.every(r => r.reason === 'no_eligible_source') ? 'no eligible source PR or source PR already merged'
+    : last.every(r => r.reason === 'no_diff') ? 'workers finished with no changes' : 'workers found no source or made no changes';
+  return `4 of last 4 empty, ${cause}`;
+}
+export function pausedFamily(rows: readonly LaunchFamilyYield[], id: string, log = console.error): boolean {
+  const family = launchFamily(id), reason = familyPauseReason(rows.find(row => row.family === family));
+  if (reason) log(`skip ${family.replace(/^RQ-(?:PHX-)?/, '')}: ${reason}`);
+  return reason !== null;
+}
+export const readLaunchFamilies = async (root = runsRoot(), now = Date.now()): Promise<LaunchFamilyYield[]> =>
+  (await readFamilyYield(join(root, 'metrics/jobs.jsonl'), 24, now)).launch_families;
+export type LaunchFamilyYield = Pick<FamilyYieldRow, 'family' | 'launches' | 'prs' | 'merged' | 'empty' | 'merged_per_launch'> & {
+  empty_tokens: number | null;
+  empty_tokens_partial: boolean;
+  sentence: string;
+  empty_reasons: Record<YieldEmptyReason, number>;
+  recent_finishes: FamilyFinish[];
+  paused: boolean;
+  pausedReason: string | null;
+};
+
+function launchFamilies(runs: readonly YieldRun[]): LaunchFamilyYield[] {
+  const groups = new Map<string, YieldRun[]>();
+  for (const run of runs) {
+    const family = launchFamily(run.job), group = groups.get(family) ?? [];
+    group.push(run); groups.set(family, group);
+  }
+  return [...groups].map(([family, group]): LaunchFamilyYield => {
+    const row = familyRow(family, group), empty = group.filter(r => r.empty);
+    const empty_reasons = Object.fromEntries(Object.keys(YIELD_EMPTY_LABELS).map(k => [k, 0])) as Record<YieldEmptyReason, number>;
+    for (const run of empty) empty_reasons[run.empty_reason ?? 'unknown']++;
+    const top = (Object.keys(empty_reasons) as YieldEmptyReason[]).sort((a, b) => empty_reasons[b] - empty_reasons[a])[0]!;
+    const recent_finishes = group.filter(r => r.finished || r.merged).map(r => ({ empty: r.empty && !r.merged && r.prs.size === 0, reason: r.empty_reason ?? 'unknown', at: r.at })).sort((a, b) => b.at - a.at);
+    const tokens = knownSum(empty.map(r => r.tokens)), partial = empty.some(r => r.tokens === null);
+    const amount = tokens === null ? 'unknown tokens' : `${partial ? 'at least ' : ''}${new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(tokens)} tokens`;
+    return { family, launches: row.launches, prs: row.prs, merged: row.merged, empty: row.empty,
+      merged_per_launch: row.merged_per_launch, empty_tokens: tokens, empty_tokens_partial: partial,
+      empty_reasons, recent_finishes, paused: shouldPauseFamily({ recent_finishes }), pausedReason: familyPauseReason({ recent_finishes }),
+      sentence: `${family.replace(/^RQ-(?:PHX-)?/, '')}: ${row.merged} of ${row.launches} merged, ${amount} on empty runs${row.empty ? `; ${row.empty} of ${row.launches} empty, mostly '${YIELD_EMPTY_LABELS[top]}'` : ''}` };
+  }).sort((a, b) => a.merged_per_launch - b.merged_per_launch || (b.empty_tokens ?? -1) - (a.empty_tokens ?? -1)
+    || b.launches - a.launches || a.family.localeCompare(b.family));
+}
+
 /** `known: false` means the metrics file could not be read: totals are null and every list is empty. */
 export interface FamilyYieldReport {
   schema: typeof FAMILY_YIELD_SCHEMA;
   version: 1;
   window_hours: number;
   known: boolean;
+  /** Precise launch families, lowest merged-per-launch first, then most EMPTY tokens. */
+  launch_families: LaunchFamilyYield[];
+  /** Recurring job kinds with 3+ explicit empties, most empties first; never changes selection. */
+  empty_recommendations: EmptyFamilyRecommendation[];
   launches: number | null;
   merged: number | null;
   /** Launches whose merge was recorded as reverted; null when the read is unknown. */
@@ -175,6 +272,8 @@ export function familyYieldFromRuns(runs: readonly YieldRun[], now: number, hour
   });
   return {
     schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: true,
+    launch_families: launchFamilies(runs),
+    empty_recommendations: recommendEmptyFamilies(runs),
     launches: runs.length, merged: runs.filter(r => r.merged).length, reverted: runs.filter(r => r.reverted).length,
     wasted_tokens: knownSum(rows.map(r => r.wasted_tokens)),
     wasted_tokens_partial: rows.some(r => r.wasted_tokens_partial || r.wasted_tokens === null),
@@ -192,12 +291,20 @@ export function familyYield(lines: Iterable<string>, now: number, hours: number)
 
 export function unknownFamilyYield(hours: number): FamilyYieldReport {
   return { schema: FAMILY_YIELD_SCHEMA, version: 1, window_hours: hours, known: false, launches: null, merged: null, reverted: null,
+    launch_families: [], empty_recommendations: [],
     wasted_tokens: null, wasted_tokens_partial: null, families: [], single: [], stops: [], lanes: [], tiers: [] };
 }
 
 /** Stream a metrics file through the shared tally; an unreadable file is unknown, never zero. */
 export async function readFamilyYield(path: string, hours: number, now: number, read: YieldLineReader = readLedgerLines): Promise<FamilyYieldReport> {
   const tally = yieldTally(now, hours);
-  if (!await read(path, line => tally.add(line))) return unknownFamilyYield(hours);
-  return familyYieldFromRuns(tally.runs(), now, hours, tally.report());
+  if (!await read(path, line => tally.add(line)).catch(() => false)) return unknownFamilyYield(hours);
+  const runs = tally.runs(), latest = new Map(runs.map(r => [r.job, r]));
+  // Files are overwritten on retries: only the newest attempt may use their evidence.
+  for (let i = 0; i < runs.length; i += 16) await Promise.all(runs.slice(i, i + 16).map(async (run, offset) => {
+    if (!run.empty || run.empty_reason && run.empty_reason !== 'unknown' || latest.get(run.job) !== run || !/^[\w.-]+$/.test(run.job)) return;
+    const texts = await Promise.all(['log', 'publish'].map(ext => readText(join(dirname(path), '..', `${run.job}.${ext}`), 65536)));
+    runs[i + offset] = { ...run, empty_reason: (['precheck_skip', 'worker_error', 'no_eligible_source', 'no_diff'] as const).find(reason => texts.some(text => classifyYieldEmpty(text) === reason)) ?? 'unknown' };
+  }));
+  return familyYieldFromRuns(runs, now, hours, tally.report());
 }

@@ -49,6 +49,9 @@ describe('claim keys and overlap', () => {
   it('computes literal prefixes and globs', () => {
     expect(literalPrefix('src/core/*.ts')).toBe('src/core/');
     expect(literalPrefix('docs/a.md')).toBe('docs/a.md');
+    // `[`/`{` are literal under globMatches, never wildcard characters.
+    expect(literalPrefix('src/[id]/*.tsx')).toBe('src/[id]/');
+    expect(literalPrefix('src/{gen}/**')).toBe('src/{gen}/');
     expect(globMatches('src/*.ts', 'src/a.ts')).toBe(true);
     expect(globMatches('src/*.ts', 'src/a/b.ts')).toBe(false);
     expect(globMatches('src/**', 'src/a/b.ts')).toBe(true);
@@ -123,7 +126,9 @@ describe('claims', () => {
 describe('body kinds and work feed', () => {
   const valid: Record<string, unknown>[] = [
     { kind: 'note', text: 'hi', refs: ['pr:1'] },
+    { kind: 'note', text: 're: hi', inReplyTo: 'msg-1' },
     { kind: 'context', text: 'ctx', thread: 't1' },
+    { kind: 'context', text: 'ctx', inReplyTo: 'msg-9' },
     { kind: 'work.post', jobId: 'j1', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'] },
     { kind: 'work.post', jobId: 'j2', title: 'Fix', repo: 'a/b', claimKeys: ['repo:a/b'],
       dispatch: { tier: 'work', scope: 'the scope', acceptance: 'the check' } },
@@ -142,6 +147,10 @@ describe('body kinds and work feed', () => {
   it.each([
     { kind: 'note' },
     { kind: 'note', text: 'x', extra: 1 },
+    { kind: 'note', text: 'x', inReplyTo: 'has space' },
+    { kind: 'note', text: 'x', inReplyTo: 'x'.repeat(129) },
+    { kind: 'note', text: 'x', inReplyTo: 42 },
+    { kind: 'context', text: 'x', inReplyTo: 'line\nbreak' },
     { kind: 'work.status', jobId: 'j', status: 'paused' },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 3_600_001 },
     { kind: 'work.claim', op: 'acquire', claimKey: 'queue:q', owner: 'o', leaseMs: 1, token: TOKEN },
@@ -192,6 +201,7 @@ describe('ashlr agents bus contract', () => {
     expect(j.schemaVersion).toBe(AGENT_BUS_V2_VERSION);
     expect(j).toEqual(JSON.parse(JSON.stringify(busV2ContractSummary())));
     expect(j.bodyKinds).toEqual([...BODY_KINDS]);
+    expect(j.workTiers).toEqual(['fast', 'mid', 'work', 'frontier']);
   });
   it('lists registered adapters and refuses channels that have none', async () => {
     const listed = JSON.parse((await run(['bus', 'channels', 'list', '--json'])).out);

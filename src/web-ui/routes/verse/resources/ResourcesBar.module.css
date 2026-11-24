@@ -1,6 +1,6 @@
-/* The always-on resource bar in the rail foot (3.11.1): provider mark + a
-   battery per resource. Collapsed rail: a column of marks over vertical
-   batteries. Labelled rail: mark · name · battery · value on one line. */
+/* The always-on resource bar in the rail foot (3.11.1): provider mark + the
+   shared usage bar per resource. Collapsed rail: a column of marks, each over a
+   hairline of what is used. Labelled rail: mark · name, then bar · value. */
 
 .bar {
   display: flex;
@@ -79,10 +79,8 @@
   gap: 3px;
   padding: 5px var(--space-2);
 }
-/* Labelled rail: logo + full name on one line, battery + value below. */
+/* Labelled rail: logo + full name on one line, usage bar + value below. */
 .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.bar[data-expanded] .battery { flex: 1 1 auto; }
-.bar[data-expanded] .cell { flex: 1 1 auto; width: auto; min-width: 40px; }
 
 .densityToggle {
   display: flex;
@@ -128,8 +126,7 @@
   overflow-wrap: normal;
 }
 .bar[data-compact] .value { max-width: 100%; flex: 1 1 auto; }
-.bar[data-compact] .battery { flex: 0 0 14px; }
-.bar[data-compact] .cell { min-width: 0; width: 12px; }
+.bar[data-compact] .meter { flex: 0 0 20px; min-width: 0; }
 .bar[data-compact] [data-account-row] > .credits { display: none; }
 .bar[data-compact] .credits { display: block; text-align: right; }
 .bar[data-compact] .credits:has(.creditHold) { display: flex; }
@@ -171,7 +168,7 @@
 .row[data-level='out'] .value { color: var(--status-danger-fg); }
 .row[data-level='low'] .value { color: var(--status-warning-fg); }
 
-/* Credits have their own label and state; quota color belongs to the battery. */
+/* Credits have their own label and state; quota color belongs to the usage value. */
 .credits {
   display: flex;
   align-items: center;
@@ -186,59 +183,16 @@
 }
 .creditHold { flex: none; color: var(--status-warning-fg); }
 
-/* Battery: a rounded cell with a nub; the fill is what is LEFT. */
-.battery {
-  --level: var(--status-success-fg);
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-}
-.battery[data-level='low'] { --level: var(--status-warning-fg); }
-.battery[data-level='out'] { --level: var(--status-danger-fg); }
-.battery[data-level='unknown'] { --level: var(--text-tertiary); }
-.battery[data-level='idle'] { --level: var(--status-success-fg); }
+/* The shared usage bar (primitives/WindowBar): the fill is what is USED, as on every
+   resource board. Labelled rail: it takes the line beside the value. Collapsed rail:
+   a hairline under the mark. Its colours, hatching and motion are the primitive's. */
+.bar .meter { flex: 1 1 40px; width: auto; min-width: 24px; }
+.bar:not([data-expanded]) .meter { flex: none; width: 20px; }
 
-.cell {
-  position: relative;
-  width: 26px;
-  height: 9px;
-  border: 1px solid color-mix(in srgb, var(--level) 55%, var(--border-strong, var(--border-subtle)));
-  border-radius: 3px;
-  overflow: hidden;
-  background: var(--bg-surface);
-}
-.cell::before {
-  content: '';
-  position: absolute;
-  inset: 1px auto 1px 1px;
-  width: max(0px, calc(var(--fill, 0%) - 2px));
-  border-radius: 1.5px;
-  background: var(--level);
-  transition: width var(--duration-medium, 240ms) var(--ease-standard);
-}
-.nub {
-  width: 2px;
-  height: 4px;
-  border-radius: 0 1px 1px 0;
-  background: color-mix(in srgb, var(--level) 55%, var(--border-strong, var(--border-subtle)));
-}
-.battery[data-level='idle'] .cell::before { opacity: 0.55; }
-
-/* Collapsed rail: the battery stands up, filling from the bottom. */
-.battery[data-vertical] { flex-direction: column-reverse; gap: 1px; }
-.battery[data-vertical] .cell { width: 9px; height: 16px; }
-.battery[data-vertical] .cell::before {
-  inset: auto 1px 1px 1px;
-  width: auto;
-  height: max(0px, calc(var(--fill, 0%) - 2px));
-  transition: height var(--duration-medium, 240ms) var(--ease-standard);
-}
-.battery[data-vertical] .nub { width: 4px; height: 2px; border-radius: 1px 1px 0 0; }
-
-@media (prefers-reduced-motion: reduce) {
-  .cell::before { transition: none; }
-}
+/* Not metered (local models): readiness as a dot, never a bar. Unknown is an outline. */
+.ready { flex: none; box-sizing: border-box; width: 6px; height: 6px; border-radius: 50%; background: var(--status-success-solid); }
+.ready[data-ready='out'] { background: var(--status-danger-solid); }
+.ready[data-ready='unknown'] { background: none; border: 1px dashed var(--text-tertiary); }
 
 /* Hover card */
 .tip { display: flex; flex-direction: column; gap: 3px; max-width: 280px; }
@@ -246,13 +200,6 @@
 .tipSummary { color: var(--text-primary); }
 .tipLine { color: var(--text-secondary); font-size: var(--text-2xs-size, 11px); }
 .tipHint { margin-top: 2px; color: var(--text-tertiary); font-size: var(--text-2xs-size, 11px); }
-
-/* Missing usage is a distinct patterned state, never an empty measured battery. */
-.battery[data-unknown] .cell {
-  border-style: dashed;
-  background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--text-tertiary) 18%, transparent) 3px 5px);
-}
-.battery[data-unknown] .cell::before { display: none; }
 
 .providerGroup { width: 100%; padding: var(--space-1) var(--space-2); font-size: var(--text-xs-size); }
 .providerGroup > summary, .accountGroup > summary { cursor: pointer; overflow-wrap: anywhere; }
