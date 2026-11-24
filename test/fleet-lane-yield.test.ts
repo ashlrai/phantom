@@ -43,6 +43,18 @@ it('lane-yield is red only when skips are over half of 10 or more rows', async (
   expect(r.red).toBe(true);
 });
 
+it('counts code-carrying skipped_empty rows as skips and ignores empty-gate declines', async () => {
+  const r = await fleetLaneYield(read(
+    row('skipped_empty', 'L1', 1, { lane: 'claude', code: 10 }),
+    row('skipped_empty', 'L2', 1, { lane: 'claude', code: 14 }),
+    row('skipped_empty', 'L3', 1, { lane: 'claude', reason: 'task_empty_repeat_24h' }),
+    row('skipped_empty', 'L4', 1, { lane: 'claude', code: 10, applied: false }),
+    row('launch', 'L5', 1, { lane: 'claude' }),
+  ), 2, now);
+  expect(r.lanes).toEqual([
+    { lane: 'claude', launches: 1, skips_by_code: { 10: 1, 14: 1 }, skips: 2, empty_finishes: 0, merged: 0, rows: 5, yield: 0, red: false },
+  ]);
+});
 it('lane-yield reports unknown when the ledger is unreadable or throws', async () => {
   for (const reader of [async () => null, async () => { throw new Error('boom'); }]) {
     expect(await fleetLaneYield(reader, 2, now)).toMatchObject({ known: false, red: false, lanes: [] });

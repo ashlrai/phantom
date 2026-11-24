@@ -106,6 +106,7 @@ export interface MergeAutopilotAction {
 }
 
 export interface MergeAutopilotPr {
+  devinReview?: import('../devin/pr-review.js').DevinReviewSignal | null;
   /** Fleet merge-state key (the proposal / revert record the PR lives on). */
   key: string;
   repo: string;
@@ -139,6 +140,7 @@ export function mergeAutopilotArmed(env: NodeJS.ProcessEnv = process.env): boole
 }
 
 export interface MergeAutopilotDeps {
+  devinReview?: (row: Omit<MergeAutopilotPr, 'action'>) => Promise<import('../devin/pr-review.js').DevinReviewSignal>;
   /** GitHub reads + the update-branch effect (host-merge.ts). */
   host?: HostMergeDeps;
   /** Active repo holds; the default THROWS on an unreadable store (fail closed). */
@@ -429,6 +431,9 @@ async function act(
     return { kind, status: 'applied', detail: `${clean(result.reason, 200)}${memoNote(recorded)}` };
   }
   const input = kind === 'drain-task' ? drainTaskInput(row.repo, record) : fixupTaskInput(row.repo, record, row.firstFailingCheck);
+  if (row.class === 'red-required' && row.devinReview?.findings?.count) {
+    input.detail += '\n\nAdvisory Devin Review findings (not gating): ' + clean(row.devinReview.findings.items.map(item => `${item.path ?? 'review'}:${item.line ?? ''} ${item.body}`).join('; '), 2000);
+  }
   let result: EnqueueTaskResult;
   try {
     result = enqueue(input);
@@ -475,6 +480,14 @@ export async function runMergeAutopilot(opts: MergeAutopilotOptions = {}): Promi
     const record = read.record;
     if (!isPrCandidate(record, opts.repo)) continue;
     const row = await classifyRecord(record, holds, host, nowMs);
+    if (!['held', 'moved', 'closed', 'unknown'].includes(row.class)) {
+      if (!apply) row.devinReview = { state: 'planned' };
+      else {
+        try {
+          row.devinReview = await (deps.devinReview ?? (async r => (await import('../devin/pr-review.js')).fleetDevinReview(r, host)))(row);
+        } catch { row.devinReview = { state: 'refused', reason: 'request-failed' }; }
+      }
+    }
     const action = await act(row, record, apply, enqueue, host, nowMs);
     prs.push({ ...row, action });
   }

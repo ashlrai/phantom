@@ -11,7 +11,7 @@ let root: string;
 let out: string[];
 const result = (over: Partial<ClaudeAccountUsageResult>): ClaudeAccountUsageResult => ({
   schemaVersion: 1, scope: 'claude-native-auth-status', status: 'observed', reason: 'observed', loggedIn: true,
-  authMethod: 'claude.ai', subscriptionType: 'max', accountHint: 'hint-secret-value', startedAt: '2026-11-02T00:00:00Z',
+  authMethod: 'claude.ai', subscriptionType: 'max', accountHint: 'hint-secret-value', accountScope: null, startedAt: '2026-11-02T00:00:00Z',
   finishedAt: '2026-11-02T00:00:01Z', windows: [], ...over,
 });
 beforeEach(async () => {
@@ -41,11 +41,12 @@ describe('fleet claude-quota', () => {
     expect(out.join('\n')).toContain('usage-version-unsupported');
   });
   it('writes fresh windows and never leaks accountHint', async () => {
-    const probe = async () => result({ quotaFresh: true, windows: [
+    const probe = async () => result({ accountScope: 'claude:0123456789abcdef', quotaFresh: true, windows: [
       { id: 'seven_day', usedPercent: 61, resetsAt: '2026-11-07T16:02:00Z', nativeReport: { source: 'claude-usage-structured', resetDescription: 'secret prose' } },
     ] });
     expect(await cmdFleetClaudeQuota(['--root', root, '--write', '--json'], probe)).toBe(0);
     const text = await readFile(file(), 'utf8');
+    expect(JSON.parse(text).accountId).toBe('claude:0123456789abcdef');
     expect(JSON.parse(text).windows).toEqual([{ id: 'seven_day', usedPct: 61, resetAt: '2026-11-07T16:02:00Z' }]);
     for (const s of [text, out.join('\n')]) expect(s).not.toMatch(/hint-secret-value|secret prose|max/);
   });

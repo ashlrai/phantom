@@ -257,3 +257,4 @@ describe('Fable Leader orchestration routing', () => {
     } finally { spy.mockRestore(); }
   });
 });
+import './helpers/local-memory.js';

@@ -38,8 +38,15 @@ import { noteTickPhase, readTickProgress } from './tick-progress.js';
 export const TICK_PHASE_MAINTENANCE_MS = 5 * 60_000;
 export const TICK_PHASE_INVENT_MS = 3 * 60_000;
 export const TICK_PHASE_REFLECTION_MS = 3 * 60_000;
+export const TICK_PHASE_CI_RERUN_MS = 5 * 60_000;
+export const TICK_PHASE_REWARD_SYNC_MS = 60_000;
+export const TICK_PHASE_SKILL_NUDGE_MS = 60_000;
+export const TICK_PHASE_EMPTY_TAG_SYNC_MS = 60_000;
+export const TICK_PHASE_VISIT_SYNC_MS = 60_000;
+export const TICK_PHASE_SWAPOUT_SYNC_MS = 60_000;
 export const TICK_PHASE_CAPACITY_MS = 30_000;
 export const TICK_PHASE_DISPATCH_PLAN_MS = 60_000;
+export const TICK_PHASE_NODE_BRIDGE_MS = 30_000;
 export const TICK_PHASE_BACKLOG_REFRESH_MS = 5 * 60_000;
 /**
  * Whole-tick budget. Per-phase deadlines alone let a tick run for their sum

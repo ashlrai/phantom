@@ -85,7 +85,7 @@ export function appendClaimThreadBinding(path: string, binding: ClaimThreadBindi
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
       if (typeof row.claimId === 'string' && typeof row.repo === 'string') pairs.add(pairKey(row.claimId, row.repo));
-    } catch { /* torn line: the reader skips it too */ }
+    } catch { /* A torn row has no countable pair; the sender refuses the file until repair. */ }
   }
   const key = pairKey(clean.claimId, clean.repo);
   const current = read === null ? undefined

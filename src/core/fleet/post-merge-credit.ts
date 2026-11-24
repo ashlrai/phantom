@@ -21,10 +21,20 @@
  *      (repo, proposalId, mergeCommit) event, and the ledger must have read
  *      back healthy/complete (a degraded read fails closed — we never treat
  *      "couldn't check" as "checked clean").
+ *   4. The signed post-merge-stability store (post-merge-stability.ts) must
+ *      contain a RELEASED, manifested witness bound to this exact
+ *      (repo, proposalId, mergeCommit) event — the positive "swept clean"
+ *      proof the adverse-only ledger cannot give. Only cohort-manifested
+ *      rows are returned as usable evidence; schema v2 is required because
+ *      v1 cannot establish the verification environment. A degraded store
+ *      fails closed; a missing store simply has no witnesses.
  *
- * That ledger never records a positive "we checked, it's clean" row. Silence
- * after a conservative window is diagnostic only, not positive confirmation;
- * evaluation returns report-only and does not mint a label.
+ * Even with all four, POST_MERGE_CREDIT_OPERATIONAL_RELEASE keeps minting
+ * disabled until the remaining release proofs (denominator-complete cohorts,
+ * monotonic rollback anchor, authenticated release record) exist; evaluation
+ * then reports 'report-only-operational-release-disabled' rather than a
+ * token, which keeps "waiting on witnesses" distinguishable from "waiting on
+ * the ops gate".
  *
  * HISTORICAL TOKEN SHAPE: the verifier remains fail-closed even for formerly
  * valid HMAC-shaped values while operational release is disabled.
@@ -45,6 +55,11 @@ import { readDecisions, recordDecision } from './decisions-ledger.js';
 import { postMergeObservationEventId, readPostMergeObservations } from './post-merge-observations.js';
 import { skillCardContentHash } from './skill-attestation.js';
 import { POST_MERGE_CREDIT_RELEASE_LABEL } from './post-merge-credit-label.js';
+import {
+  postMergeStabilityRepoDigest,
+  readPostMergeStability,
+  type PostMergeStabilityReadResult,
+} from './post-merge-stability.js';
 
 export {
   POST_MERGE_CREDIT_RELEASE_LABEL,
@@ -161,7 +176,9 @@ export type PostMergeCreditEligibilityReason =
   | 'observation-window-not-elapsed'
   | 'observation-ledger-degraded'
   | 'adverse-outcome-observed'
-  | 'report-only-no-positive-stability-witness'
+  | 'stability-ledger-degraded'
+  | 'no-positive-stability-witness'
+  | 'report-only-operational-release-disabled'
   | 'signing-unavailable'
   | 'error';
 
@@ -173,19 +190,31 @@ export interface PostMergeCreditEligibility {
 }
 
 /**
+ * The stability-store fields the release gate consumes. Batch callers (the
+ * sweep) pass one shared snapshot so a pass reads the append-only store
+ * once; single callers get a fresh bounded read by default.
+ */
+export type PostMergeCreditStabilitySnapshot = Pick<
+  PostMergeStabilityReadResult,
+  'witnesses' | 'sourceState' | 'complete'
+>;
+
+/**
  * Determine whether `proposal` has reportable post-merge evidence RIGHT NOW.
  * Operational eligibility remains false until a positive stability witness
  * exists. Fail-closed on every
  * ambiguous path (missing witness, unparseable timestamp, window not yet
  * elapsed, degraded/incomplete observation-ledger read, any adverse
- * observation for this exact merge event, signing failure). Never throws.
+ * observation for this exact merge event, degraded/incomplete stability
+ * read, no manifested stability witness for this exact merge event, signing
+ * failure). Never throws.
  *
  * This function does NOT persist anything — see sweepPostMergeCreditReleases
  * for the write-back that records a minted label to the decisions ledger.
  */
 export function evaluatePostMergeCreditRelease(
   proposal: Proposal,
-  opts: { nowMs?: number } = {},
+  opts: { nowMs?: number; stability?: PostMergeCreditStabilitySnapshot } = {},
 ): PostMergeCreditEligibility {
   try {
     if (!proposal || typeof proposal.id !== 'string' || proposal.id.length === 0) {
@@ -229,14 +258,38 @@ export function evaluatePostMergeCreditRelease(
       return { eligible: false, label: null, reason: 'adverse-outcome-observed' };
     }
 
-    // Silence in an adverse-only ledger is useful diagnostic evidence, but it
-    // is not positive proof that this exact merge was observed stable. Keep
-    // the entire release path report-only until such a witness exists.
+    // The adverse ledger above proves only the negative. The positive
+    // "swept clean" proof this release protocol requires is a RELEASED,
+    // manifested stability witness (the store returns only cohort-manifested
+    // rows) bound to this exact (repo, proposalId, mergeCommit) event. Only
+    // schema v2 witnesses carry the sealed required-command execution
+    // evidence — v1 cannot establish the verification environment. A
+    // degraded store fails closed; a missing store simply has no witnesses.
+    const stability = opts.stability ??
+      readPostMergeStability({ requireComplete: true, lockWaitMs: 0 });
+    if (stability.sourceState === 'degraded' || !stability.complete) {
+      return { eligible: false, label: null, reason: 'stability-ledger-degraded' };
+    }
+    const repoDigest = postMergeStabilityRepoDigest(repoAbs);
+    const witnessed = repoDigest !== null && stability.witnesses.some((witness) =>
+      witness.schemaVersion === 2 &&
+      witness.proposalId === proposal.id &&
+      witness.mergeCommit === evidence.mergeCommitOid.toLowerCase() &&
+      witness.repoDigest === repoDigest);
+    if (!witnessed) {
+      return { eligible: false, label: null, reason: 'no-positive-stability-witness' };
+    }
+
+    // A witnessed-stable merge still mints nothing while operational release
+    // stays disabled: the remaining release proofs (denominator-complete
+    // cohorts, monotonic rollback anchor, authenticated release record) are
+    // separate lanes. This reason now distinguishes "waiting on witnesses"
+    // from "waiting on the ops gate".
     if (!POST_MERGE_CREDIT_OPERATIONAL_RELEASE) {
       return {
         eligible: false,
         label: null,
-        reason: 'report-only-no-positive-stability-witness',
+        reason: 'report-only-operational-release-disabled',
       };
     }
 
@@ -271,6 +324,11 @@ export interface PostMergeCreditSweepResult {
   /** Proposals inspected but not released this pass (not yet eligible, or a
    *  transient error) — never a reason to trust the negative permanently. */
   skipped: number;
+  /** Eligibility-reason counts for skipped proposals — the release funnel's
+   *  diagnostics (e.g. distinguishes 'no-positive-stability-witness' from
+   *  'report-only-operational-release-disabled'). Source-quality skips are
+   *  reported via sourceComplete, not here. */
+  skippedByReason: Record<string, number>;
   /** False when the proposal or decisions source was incomplete/degraded, or
    *  the candidate cap was hit — a hint the pass should be retried. */
   sourceComplete: boolean;
@@ -296,10 +354,15 @@ export interface PostMergeCreditSweepResult {
  * Never throws.
  */
 export function sweepPostMergeCreditReleases(
-  opts: { nowMs?: number; listProposals?: () => Proposal[] } = {},
+  opts: {
+    nowMs?: number;
+    listProposals?: () => Proposal[];
+    /** Pre-read stability snapshot shared by every evaluation this pass. */
+    stability?: PostMergeCreditStabilitySnapshot;
+  } = {},
 ): PostMergeCreditSweepResult {
   const result: PostMergeCreditSweepResult = {
-    scanned: 0, released: 0, skipped: 0, sourceComplete: true,
+    scanned: 0, released: 0, skipped: 0, skippedByReason: {}, sourceComplete: true,
   };
   try {
     const nowMs = opts.nowMs ?? Date.now();
@@ -319,6 +382,12 @@ export function sweepPostMergeCreditReleases(
       }
       proposals = read.proposals;
     }
+
+    // One bounded stability read per pass, shared by every evaluation — the
+    // store is append-only signed evidence, so a mid-pass write cannot make
+    // release decisions within the sweep inconsistent.
+    const stability = opts.stability ??
+      readPostMergeStability({ requireComplete: true, lockWaitMs: 0 });
 
     let inspected = 0;
     for (const proposal of proposals) {
@@ -344,9 +413,11 @@ export function sweepPostMergeCreditReleases(
         );
         if (alreadyReleased) continue;
 
-        const eligibility = evaluatePostMergeCreditRelease(proposal, { nowMs });
+        const eligibility = evaluatePostMergeCreditRelease(proposal, { nowMs, stability });
         if (!eligibility.eligible || !eligibility.label) {
           result.skipped++;
+          result.skippedByReason[eligibility.reason] =
+            (result.skippedByReason[eligibility.reason] ?? 0) + 1;
           continue;
         }
 

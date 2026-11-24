@@ -133,8 +133,8 @@ it('toggles between the 2D machine list and the 3D scene on the same data', asyn
 });
 
 it('badges every agent and message line with its provider, in 3D and in 2D', async () => {
-  const drawn: string[] = [];
-  const ctx = new Proxy({}, { get: (_t, k) => k === 'fillText' ? (text: string) => { drawn.push(text); } : vi.fn(), set: () => true });
+  const drawn: string[] = [], widths: unknown[] = [];
+  const ctx = new Proxy({}, { get: (_t, k) => k === 'fillText' ? (text: string) => { drawn.push(text); } : vi.fn(), set: (_t, k, v) => { if (k === 'lineWidth') widths.push(v); return true; } });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never);
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 1; });
   const jobs = [{ ...job('J1', 'a'), lane: 'claude' }, { ...job('J2', 'a'), model: 'gpt-5.5' }, job('J3', 'a')];
@@ -149,6 +149,8 @@ it('badges every agent and message line with its provider, in 3D and in 2D', asy
   expect(drawn.filter(text => text === 'A')).toHaveLength(2);
   expect(drawn.filter(text => text === 'O')).toHaveLength(1);
   expect(drawn.filter(text => text === '?')).toHaveLength(1);
+  // The J1 → J2 line is drawn at the shared message thickness for one message, then the pen is reset.
+  expect(widths.slice(-2)).toEqual([1.75, 1]);
   expect(screen.getByText('One → Two · 1 messages').querySelector('[data-provider-badge="Anthropic"]')).toBeTruthy();
   view.unmount();
 

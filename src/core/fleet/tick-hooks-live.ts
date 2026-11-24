@@ -703,7 +703,7 @@ async function runExperimentDefault(opts: { fleetQueueDepth: () => number; signa
 }
 
 async function insightsDefault(): Promise<ReasoningInsight[]> {
-  const { computeReasoningDigest } = await import('../reasoning/reasoning-api.js');
+  const { computeReasoningDigest } = await import('../reasoning/digest.js');
   const digest = await computeReasoningDigest(14);
   return digest.insights;
 }
@@ -1500,93 +1500,97 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
         }
       }
 
-      // ── Cloud-PR intake (3.13) ───────────────────────────────────────────
-      // After the mirrors are current and BEFORE this tick's standing merge
-      // pass: a cloud / self-improvement PR on a current mirror becomes a
-      // pending proposal the pass judges through G0–G7 like any other, and a
-      // cloud PR the pass already superseded with its App PR is closed. Bounded
-      // in time; a failure is audited and never holds the tick.
-      if (!hookCtx.dryRun && mirrorProblem === null && readyMirrors.length > 0 && !killActiveFailClosed()) {
-        const intakeRun = deps.ingestCloudPrs(cfg, policy, readyMirrors);
-        intakeRun.catch(() => undefined);
-        try {
-          const intake = await withTimeout(intakeRun, CLOUD_INTAKE_TICK_TIMEOUT_MS);
-          if (intake === 'timeout') {
-            deps.audit({ action: 'daemon:cloud-intake', repo: null, summary: `the cloud-PR intake exceeded ${CLOUD_INTAKE_TICK_TIMEOUT_MS} ms; the tick continues without waiting`, result: 'error' });
-          } else {
-            // Per-head refusals are remembered on the task, so each is audited
-            // once; grant / mirror refusals (no head) would repeat every tick.
-            const notable = intake.outcomes.filter((o) => o.action === 'ingested' || o.action === 'superseded'
-              || (o.action === 'refused' && o.headSha !== undefined) || o.code === 'error');
-            if (notable.length > 0) {
+      const runIntakeAndDevin = async (): Promise<void> => {
+        // ── Cloud-PR intake (3.13) ───────────────────────────────────────────
+        // After the mirrors are current and BEFORE this tick's standing merge
+        // pass: a cloud / self-improvement PR on a current mirror becomes a
+        // pending proposal the pass judges through G0–G7 like any other, and a
+        // cloud PR the pass already superseded with its App PR is closed. Bounded
+        // in time; a failure is audited and never holds the tick.
+        if (!hookCtx.dryRun && mirrorProblem === null && readyMirrors.length > 0 && !killActiveFailClosed()) {
+          const intakeRun = deps.ingestCloudPrs(cfg, policy, readyMirrors);
+          intakeRun.catch(() => undefined);
+          try {
+            const intake = await withTimeout(intakeRun, CLOUD_INTAKE_TICK_TIMEOUT_MS);
+            if (intake === 'timeout') {
+              deps.audit({ action: 'daemon:cloud-intake', repo: null, summary: `the cloud-PR intake exceeded ${CLOUD_INTAKE_TICK_TIMEOUT_MS} ms; the tick continues without waiting`, result: 'error' });
+            } else {
+              // Per-head refusals are remembered on the task, so each is audited
+              // once; grant / mirror refusals (no head) would repeat every tick.
+              const notable = intake.outcomes.filter((o) => o.action === 'ingested' || o.action === 'superseded'
+                || (o.action === 'refused' && o.headSha !== undefined) || o.code === 'error');
+              if (notable.length > 0) {
+                deps.audit({
+                  action: 'daemon:cloud-intake',
+                  repo: null,
+                  summary: `cloud intake: ${intake.ingested} ingested, ${intake.superseded} superseded, ${intake.refused} refused — `
+                    + notable.slice(0, 5).map((o) => `${o.taskId} ${o.code}${o.proposalId ? ` → ${o.proposalId}` : ''}${o.appPr ? ` (#${o.appPr})` : ''}`).join('; '),
+                  result: notable.some((o) => o.code === 'error') ? 'error' : 'ok',
+                });
+              }
+            }
+          } catch (err) {
+            deps.audit({ action: 'daemon:cloud-intake', repo: null, summary: `the cloud-PR intake failed: ${describeError(err)}`, result: 'error' });
+          }
+        }
+
+        // ── Devin fleet launcher (3.15) ──────────────────────────────────────
+        // Only when Mason turned the lane on AND opted the fleet in, never under
+        // KILL, never on a dry run, one step in flight at a time. The step
+        // re-checks KILL, the live grant (its `devin` engine + producer seat),
+        // the budget mode and the ACU budget / fleet caps itself, launches at
+        // most ONE session, and ledgers every decision. Its separately authorized
+        // ACU reservations/accounting do not debit the daemon USD allowance; USD
+        // exhaustion never labels this lane free or removes its ACU gates.
+        // Bounded; a failure is audited and never holds the tick.
+        if (!hookCtx.dryRun && devinInFlight === null && cfg.devin?.enabled === true && cfg.devin?.fleet === true && !killActiveFailClosed()) {
+          const refresh = nowMs - lastDevinRefreshMs >= DEVIN_FLEET_REFRESH_INTERVAL_MS;
+          if (refresh) lastDevinRefreshMs = nowMs;
+          const devinRun = deps.launchDevinFleet({ refresh });
+          devinInFlight = devinRun.finally(() => {
+            devinInFlight = null;
+          }).catch(() => undefined);
+          try {
+            const outcome = await withTimeout(devinRun, DEVIN_FLEET_TICK_TIMEOUT_MS);
+            if (outcome === 'timeout') {
+              deps.audit({ action: 'daemon:devin-fleet', repo: null, summary: `the Devin fleet step exceeded ${DEVIN_FLEET_TICK_TIMEOUT_MS} ms; the tick continues without waiting`, result: 'error' });
+            } else if (outcome.outcome !== 'held') {
               deps.audit({
-                action: 'daemon:cloud-intake',
-                repo: null,
-                summary: `cloud intake: ${intake.ingested} ingested, ${intake.superseded} superseded, ${intake.refused} refused — `
-                  + notable.slice(0, 5).map((o) => `${o.taskId} ${o.code}${o.proposalId ? ` → ${o.proposalId}` : ''}${o.appPr ? ` (#${o.appPr})` : ''}`).join('; '),
-                result: notable.some((o) => o.code === 'error') ? 'error' : 'ok',
+                action: 'daemon:devin-fleet',
+                repo: outcome.repo,
+                summary: outcome.outcome === 'launched'
+                  ? `Devin launched ${outcome.taskId} for backlog item ${outcome.itemId}`
+                  : `Devin launch for backlog item ${outcome.itemId} did not start: ${outcome.reason}`,
+                result: outcome.outcome === 'launched' ? 'ok' : 'refused',
               });
             }
+          } catch (err) {
+            deps.audit({ action: 'daemon:devin-fleet', repo: null, summary: `the Devin fleet step failed: ${describeError(err)}`, result: 'error' });
           }
-        } catch (err) {
-          deps.audit({ action: 'daemon:cloud-intake', repo: null, summary: `the cloud-PR intake failed: ${describeError(err)}`, result: 'error' });
         }
-      }
-
-      // ── Devin fleet launcher (3.15) ──────────────────────────────────────
-      // Only when Mason turned the lane on AND opted the fleet in, never under
-      // KILL, never on a dry run, one step in flight at a time. The step
-      // re-checks KILL, the live grant (its `devin` engine + producer seat),
-      // the budget mode and the ACU budget / fleet caps itself, launches at
-      // most ONE session, and ledgers every decision. Its separately authorized
-      // ACU reservations/accounting do not debit the daemon USD allowance; USD
-      // exhaustion never labels this lane free or removes its ACU gates.
-      // Bounded; a failure is audited and never holds the tick.
-      if (!hookCtx.dryRun && devinInFlight === null && cfg.devin?.enabled === true && cfg.devin?.fleet === true && !killActiveFailClosed()) {
-        const refresh = nowMs - lastDevinRefreshMs >= DEVIN_FLEET_REFRESH_INTERVAL_MS;
-        if (refresh) lastDevinRefreshMs = nowMs;
-        const devinRun = deps.launchDevinFleet({ refresh });
-        devinInFlight = devinRun.finally(() => {
-          devinInFlight = null;
-        }).catch(() => undefined);
-        try {
-          const outcome = await withTimeout(devinRun, DEVIN_FLEET_TICK_TIMEOUT_MS);
-          if (outcome === 'timeout') {
-            deps.audit({ action: 'daemon:devin-fleet', repo: null, summary: `the Devin fleet step exceeded ${DEVIN_FLEET_TICK_TIMEOUT_MS} ms; the tick continues without waiting`, result: 'error' });
-          } else if (outcome.outcome !== 'held') {
-            deps.audit({
-              action: 'daemon:devin-fleet',
-              repo: outcome.repo,
-              summary: outcome.outcome === 'launched'
-                ? `Devin launched ${outcome.taskId} for backlog item ${outcome.itemId}`
-                : `Devin launch for backlog item ${outcome.itemId} did not start: ${outcome.reason}`,
-              result: outcome.outcome === 'launched' ? 'ok' : 'refused',
-            });
+      };
+      const runLeader = async (): Promise<void> => {
+        // ── Leader (B-U8) ────────────────────────────────────────────────────
+        // Before the directives are read: this is what applies class-B actions
+        // whose veto window elapsed and grades moves. A due memo starts in the
+        // background inside leaderTick; the tick itself is bounded here.
+        if (!hookCtx.dryRun && !hookCtx.meteredUsdExhausted && leaderInFlight === null) {
+          const leaderRun = (async () => deps.leaderTick(cfg))();
+          leaderInFlight = leaderRun.finally(() => {
+            leaderInFlight = null;
+          }).catch(() => undefined);
+          try {
+            const outcome = await withTimeout(leaderRun, leaderTimeoutMs);
+            if (outcome === 'timeout') {
+              deps.audit({ action: 'daemon:leader-tick', repo: null, summary: `the Leader tick exceeded ${leaderTimeoutMs} ms; the fleet tick continues without waiting`, result: 'error' });
+            }
+          } catch (err) {
+            // The Leader is an input to the tick, never a reason to hold it.
+            deps.audit({ action: 'daemon:leader-tick', repo: null, summary: `the Leader tick failed: ${describeError(err)}`, result: 'error' });
           }
-        } catch (err) {
-          deps.audit({ action: 'daemon:devin-fleet', repo: null, summary: `the Devin fleet step failed: ${describeError(err)}`, result: 'error' });
         }
-      }
-
-      // ── Leader (B-U8) ────────────────────────────────────────────────────
-      // Before the directives are read: this is what applies class-B actions
-      // whose veto window elapsed and grades moves. A due memo starts in the
-      // background inside leaderTick; the tick itself is bounded here.
-      if (!hookCtx.dryRun && !hookCtx.meteredUsdExhausted && leaderInFlight === null) {
-        const leaderRun = (async () => deps.leaderTick(cfg))();
-        leaderInFlight = leaderRun.finally(() => {
-          leaderInFlight = null;
-        }).catch(() => undefined);
-        try {
-          const outcome = await withTimeout(leaderRun, leaderTimeoutMs);
-          if (outcome === 'timeout') {
-            deps.audit({ action: 'daemon:leader-tick', repo: null, summary: `the Leader tick exceeded ${leaderTimeoutMs} ms; the fleet tick continues without waiting`, result: 'error' });
-          }
-        } catch (err) {
-          // The Leader is an input to the tick, never a reason to hold it.
-          deps.audit({ action: 'daemon:leader-tick', repo: null, summary: `the Leader tick failed: ${describeError(err)}`, result: 'error' });
-        }
-      }
+      };
+      await Promise.all([runIntakeAndDevin(), runLeader()]);
 
       // ── Repo identity ────────────────────────────────────────────────────
       const repoOfPath = new Map<string, string | null>();
@@ -1617,23 +1621,37 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       let entries: LedgerEntry[] = [];
       let ledgerOk = false;
       let ledgerProblem: string | null = null;
-      try {
-        const read = await deps.readLedger({ sinceAt: new Date(sinceMs).toISOString(), kinds: LEDGER_KINDS });
-        if (read.chain === 'broken') {
-          ledgerProblem = `The authority ledger chain is broken${read.brokenAtSeq !== null ? ` at #${read.brokenAtSeq}` : ''}.`;
-        } else {
-          entries = read.entries;
-          ledgerOk = true;
-        }
-      } catch (err) {
-        ledgerProblem = `The authority ledger could not be read (${describeError(err)}).`;
-      }
       let journalRows: FleetJournalRecord[] = [];
-      try {
-        journalRows = await deps.readJournalSince(sinceMs);
-      } catch {
-        journalRows = [];
-      }
+      let waitingVerify: number | null = null;
+      await Promise.all([
+        (async () => {
+          try {
+            const read = await deps.readLedger({ sinceAt: new Date(sinceMs).toISOString(), kinds: LEDGER_KINDS });
+            if (read.chain === 'broken') {
+              ledgerProblem = `The authority ledger chain is broken${read.brokenAtSeq !== null ? ` at #${read.brokenAtSeq}` : ''}.`;
+            } else {
+              entries = read.entries;
+              ledgerOk = true;
+            }
+          } catch (err) {
+            ledgerProblem = `The authority ledger could not be read (${describeError(err)}).`;
+          }
+        })(),
+        (async () => {
+          try {
+            journalRows = await deps.readJournalSince(sinceMs);
+          } catch {
+            journalRows = [];
+          }
+        })(),
+        (async () => {
+          try {
+            waitingVerify = await deps.waitingVerify(enrolled);
+          } catch {
+            waitingVerify = null;
+          }
+        })(),
+      ]);
       const routeIndex = proposalRouteIndex(journalRows);
       const outcomes: OutcomeEvent[] = ledgerOk ? outcomeEventsFromLedger(entries, (id) => routeIndex.get(id) ?? null) : [];
       let ledgerHead: { seq: number; hash: string } | null = null;
@@ -1648,12 +1666,6 @@ export function createLiveTickHooks(options: CreateLiveTickHooksOptions = {}): L
       }
 
       // ── Backpressure ─────────────────────────────────────────────────────
-      let waitingVerify: number | null = null;
-      try {
-        waitingVerify = await deps.waitingVerify(enrolled);
-      } catch {
-        waitingVerify = null;
-      }
       let bpState: BackpressureStateV1;
       try {
         bpState = deps.loadBackpressure();

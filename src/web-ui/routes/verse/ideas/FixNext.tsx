@@ -1,7 +1,7 @@
 /**
  * routes/verse/ideas/FixNext.tsx: the top of the Ideas view. What the fleet
- * should fix next, ranked by `GET /api/verse/fleet/control/ideas` (same report as
- * `phm ideas list`), with one action per idea: "Queue it"
+ * should do next, ranked by `GET /api/verse/fleet/control/ideas` (same report as
+ * `phm ideas --json`), with one action per idea: "Queue it"
  * (`POST /api/verse/fleet/control/ideas/queue`, same as `phm ideas queue <id>`). Signals the
  * server could not read are named as not checked, never filled in.
  */
@@ -31,6 +31,12 @@ const SIGNAL_LABEL: Record<SignalName, string> = {
   'disk-trend': 'Disk trend',
   'idle-lanes': 'Idle lanes',
   'unspent-usage': 'Unspent usage',
+  'loop-hints': 'Self-awareness loop',
+  'dupcheck-gate': 'Dupcheck gate',
+  vision: 'Leader vision',
+  queue: 'Work queue',
+  'mason-inbox': 'Mason requests',
+  'job-events': 'Job events',
 };
 
 /** `emptyRate=0.6` → `empty rate 0.6`; a null value reads "unknown". */
@@ -69,19 +75,24 @@ export function FixNext({ visible }: { visible: boolean }) {
 
   const report = result.data;
   const notChecked = report ? notCheckedText(report) : null;
-  return <Card title="Fix next">
-    {report === undefined ? <CardNote tone={result.status === 'error' ? 'unknown' : 'muted'}>{result.status === 'error' ? 'Could not read what to fix next.' : 'Checking what to fix next…'}</CardNote> : <>
-      {report.ideas.length === 0 ? <CardNote>Nothing is stuck right now.</CardNote> : <ol className={styles.list}>
+  return <Card title="Next bets">
+    {report === undefined ? <CardNote tone={result.status === 'error' ? 'unknown' : 'muted'}>{result.status === 'error' ? 'Could not read ideas.' : 'Checking ideas…'}</CardNote> : <>
+      {report.ideas.length === 0 ? <CardNote>{notChecked ? 'No candidates from the available sources.' : 'No ideas to queue right now.'}</CardNote> : <ol className={styles.list}>
         {report.ideas.map(idea => {
           const state = states.get(idea.id);
-          return <li key={idea.id} className={styles.row}>
+          const status = idea.status === 'proposed' && !idea.evidence.existingJobId && state && 'done' in state ? 'queued' : idea.status;
+          const jobId = state && 'done' in state ? state.done.jobId : '';
+          const jobLabel = jobId.startsWith('RQ-') ? jobId : `RQ-PHX-${jobId}`;
+          return <li key={idea.id} className={styles.ideaCard}>
             <span className={styles.title}>{idea.title}</span>
+            <span className={styles.meta}>Why: {idea.why}</span>
+            <span className={styles.meta}>{idea.lane ?? 'Unknown lane'} · {status}</span>
             <span className={styles.meta}>{idea.payoff.text}</span>
             <span className={styles.meta}>{evidenceText(idea.evidence)}</span>
             <span className={styles.actions}>
-              <button type="button" className={styles.toggle} disabled={state !== undefined && ('busy' in state || 'done' in state)}
+              <button type="button" className={styles.toggle} disabled={status !== 'proposed' || typeof idea.evidence.existingJobId === 'string' || (state !== undefined && 'busy' in state)}
                 onClick={() => queue(idea.id)} aria-label={`Queue it: ${idea.title}`}>Queue it</button>
-              {state && 'done' in state ? <span className={styles.chip} role="status">{state.done.queued ? `Queued as RQ-PHX-${state.done.jobId}` : `Already queued as RQ-PHX-${state.done.jobId}`}</span> : null}
+              {state && 'done' in state ? <span className={styles.chip} role="status">{state.done.queued ? `Queued as ${jobLabel}` : `Already queued as ${jobLabel}`}</span> : null}
               {state && 'error' in state ? <span className={styles.chipBad} role="alert">{state.error}</span> : null}
             </span>
           </li>;

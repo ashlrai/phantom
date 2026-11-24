@@ -33,6 +33,7 @@ import { decisionsQuery } from '../../command/ladder-queries.js';
 import { ago, grantExpiry, OUTCOME_TONE, repoShort } from '../../command/ladder-model.js';
 import { authorityQuery, fleetLiveQuery } from '../../command/surface-data.js';
 import { releasePrQuery } from '../../fleet/release-pr-query.js';
+import { RunningJobsList } from '../../fleet/RunningJobsList.js';
 import { hostView } from '../../fleet-host/fleet-host-model.js';
 import { opsQueueQuery } from '../../ops/ops-queue-queries.js';
 import { isFleetRuns } from '../../ops/ops-runs-model.js';
@@ -43,8 +44,10 @@ import { runFleetAction } from '../fleet-actions.js';
 import { getMobileFleetClient } from '../fleet-client.js';
 import { wasteLines } from '../fleet-waste-lines.js';
 import { FleetUsageCard } from '../FleetUsageCard.js';
+import { MapMessagesCard } from '../MapMessagesCard.js';
 import { UsageResourcesCard } from '../UsageResourcesCard.js';
 import { MobileReleaseCard } from '../MobileReleaseCard.js';
+import { MobileReleasesCard } from '../MobileReleasesCard.js';
 import { homeRunsQuery } from '../home-runs-query.js';
 import { formatUsd } from '../format-usd.js';
 import { mergeSpeedLines } from '../merge-speed-lines.js';
@@ -466,6 +469,8 @@ export function FleetScreen() {
         )}
       </Section>
       <Section title="Right now" flat>{liveBody}</Section>
+      <RunningJobsList />
+      <MapMessagesCard />
       <FleetUsageCard />
       <UsageResourcesCard />
       <Section title="Waste forecast">
@@ -492,6 +497,7 @@ export function FleetScreen() {
         </Section>
       ) : null}
       <MobileReleaseCard />
+      <MobileReleasesCard />
       <Suspense fallback={<SkeletonList rows={2} label="Loading the queue" />}><QueueSection /></Suspense>
       <Section title="Budget mode" flat>{budgetBody}</Section>
       <Section title="Grant" flat footer="Grants are signed on your Mac with Touch ID.">{grantBody}</Section>

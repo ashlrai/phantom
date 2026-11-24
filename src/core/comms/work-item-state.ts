@@ -2,7 +2,12 @@
  * item is RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED only when
  * structured evidence says so. Free text ("routed", "dispatched") is never
  * evidence. Pure: no I/O, no clock (the caller passes `nowIso`). */
+import { scrubSecrets } from '../util/scrub.js';
+
 export type WorkItemState = 'RECEIVED' | 'ASSIGNED' | 'RUNNING' | 'BLOCKED' | 'VERIFIED';
+
+/** Every state the classifier can report, for CLI/API/MCP argument checks. */
+export const WORK_ITEM_STATES: readonly WorkItemState[] = ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'];
 
 export interface WorkItemEvidence {
   id: string;
@@ -14,7 +19,7 @@ export interface WorkItemEvidence {
   verified?: { pr?: number; head?: string; tests?: string; artifact?: string; source: string; at: string };
 }
 
-export interface WorkItemClassification { state: WorkItemState; asOf: string; source: string; missing: string[] }
+export interface WorkItemClassification { state: WorkItemState; owner?: string; asOf: string; source: string; missing: string[] }
 
 /** Running evidence older than this no longer proves the item is running. */
 export const RUNNING_FRESH_MS = 30 * 60 * 1000;
@@ -37,15 +42,22 @@ export function classifyWorkItem(e: WorkItemEvidence, nowIso: string): WorkItemC
   const r = e.runningEvidence;
   const hasRunning = !!r && text(r.source) && stamped(r.at);
   const age = hasRunning ? Date.parse(nowIso) - Date.parse(r.at) : NaN;
-  if (hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
+  if (text(e.owner) && text(e.claimReceipt) && hasRunning && age <= RUNNING_FRESH_MS && age >= -FUTURE_SKEW_MS) {
     return { state: 'RUNNING', asOf: r.at, source: r.source, missing: [] };
   }
 
   const missing: string[] = [];
   if (!text(e.owner)) missing.push('named owner');
   if (!text(e.claimReceipt)) missing.push('durable claim receipt');
-  const stale = hasRunning ? ['fresh running evidence'] : [];
+  const stale = hasRunning && (age > RUNNING_FRESH_MS || age < -FUTURE_SKEW_MS) ? ['fresh running evidence'] : [];
   const asOf = stamped(e.receivedAt) ? e.receivedAt : 'unknown';
   if (missing.length === 0) return { state: 'ASSIGNED', asOf, source: `claim:${e.claimReceipt}`, missing: stale };
   return { state: 'RECEIVED', asOf, source: asOf === 'unknown' ? 'unknown' : 'receivedAt', missing: [...missing, ...stale] };
+}
+
+/** One scrubbed line, using the evidence's time rather than the read clock. */
+export function formatWorkItemStatusLine(result: WorkItemClassification): string {
+  const safe = (value: string): string => scrubSecrets(value).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
+  return [result.state, result.owner ?? 'owner unknown', `as of ${result.asOf}`, `source ${result.source}`,
+    ...(result.missing.length ? [`missing: ${result.missing.map(safe).join(', ')}`] : [])].map(safe).join(' · ');
 }

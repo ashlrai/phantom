@@ -1,5 +1,136 @@
 # Apps control
 
+## Known apps
+
+`phm apps` lists the apps Phantom knows by name: Phantom, Claude, Codex,
+ChatGPT, Cursor, Grok, Devin and Safari (Phantom's own agent browser). Each row
+says whether the app is installed, running and in front, its pid, and how much
+memory it and its helpers hold. `phm apps status` with no name is the same list. Anything Phantom cannot read says `unknown`, with the
+reason. The Fleet Host **Apps** card shows the same report with one button per
+row: Open, or Bring to front.
+
+```sh
+phm apps
+phm apps --json
+phm apps open claude --json
+phm apps focus cursor --json
+phm apps suggest --pressure warning --json
+```
+
+`open` starts or raises an installed app. `focus` raises a running app and
+never starts one. Both are logged to the feed and stop under KILL or a comms
+pause; Phantom itself still goes to Needs you. Phantom never quits your apps:
+`phm apps quit` refuses every known app except Safari with code `protected`,
+whatever `apps-allow.json` says, and refuses Chrome (your own browser) the same
+way. An `apps-allow.json` entry for a known app narrows what it allows.
+
+Quitting reads the app through Accessibility to check for unsaved work. When
+that grant is missing, the answer is `outcome: "needs_permission"` with
+`permission.settingsPath`: turn Phantom on in System Settings > Privacy &
+Security > Accessibility, then try again. Nothing is pressed.
+
+`phm apps suggest [--pressure normal|warning|critical] [--need-mb <n>]` lists
+the idle apps (running, not in front) that would free the most memory, biggest
+first; with `--need-mb` it stops at the fewest that cover it. It is read-only
+and never quits anything. Rows for your own apps carry `command: null`: close
+those yourself. JSON is `schema: "phm.apps.suggest/1"`.
+
+`phm apps restart <app>` quits an app and opens it again, under every quit
+rule above. Quit and restart also refuse the app in front (code `focused`):
+that is the one you are using. After pressing Quit, Phantom watches for up to
+10 s; if the app has not closed, the answer is `outcome: "unknown"` with code
+`quit-timeout`, and a restart does not reopen it.
+
+Add `--dry-run` to open, focus, quit or restart to check every rule without
+acting: the answer is `outcome: "dry-run"` with `commands`, the exact steps a
+real run would take. Nothing is run and nothing is logged.
+
+```sh
+phm apps restart safari --dry-run
+phm apps open cursor --dry-run --json
+```
+
+Each row also carries `kind` (`agent-app`, `browser`, `ide` or `phantom`),
+`processName` (the running main executable, or null) and `lastAction` (the
+latest open, focus, quit or restart in the feed, or null). Action answers are
+`schema: "phm.apps.action/1"`; the allowlist is `schema: "phm.apps.allowed/1"`.
+
+The report reads the filesystem, `plutil`, `ps` and `lsappinfo` only. It needs
+no Accessibility or Automation permission and never launches anything. Apps
+are matched by their `.app` path, not bundle id. JSON (`schema: "phm.apps/2"`)
+has one row per app in a fixed order; GET `/api/verse/apps/mac` returns it.
+Every `phm apps` JSON answer carries `version: 1`; new fields are additive. The
+`phm.apps` report is at `version: 2`: each row adds `lastFocusedAt` (ISO time) and
+`lastFocus` (`known`, `never` or `unknown`), read for running apps with
+`lsappinfo`. A missing `lsappinfo`, an unreadable line or a stopped app is
+`unknown`, never 0 or now; the card and `phm apps` show it as "Last used".
+
+## Action log
+
+`phm apps log` lists what Phantom did to your apps: every open, focus, quit
+and restart on record in the feed, newest first, each with its outcome and the
+reason that was logged. Refusals are in the list too. The Fleet Host **App
+actions** card shows the same list in plain sentences; **Needs a look** keeps
+only the actions that were refused, failed, are waiting on you or have no
+known result. The card reads only: it has no button that acts on an app.
+
+```sh
+phm apps log
+phm apps log --limit 200 --json
+```
+
+JSON is `schema: "phm.apps.actions/1"`: `actions` (each with `at`, `action`,
+`app`, `outcome`, `detail`), `total`, `counts` by outcome, `lookups`, `source`,
+`skipped` and `truncated`. It lists 50 actions unless `--limit` asks for more,
+at most 200. GET `/api/verse/apps/actions` (optional `?limit=`) returns the
+same report to a local peer and writes nothing.
+
+The log adds no record of its own. It reads the two feed lines every
+operation already writes, the intent and the result:
+
+- An intent with no result line is `outcome: "no-result"`. Phantom does not
+  guess how it ended.
+- A feed that cannot be read gives `source: "unavailable"` with `total: null`,
+  and `phm apps log` exits 1. That is unknown, not zero.
+- `list` and `status` only read, so they are counted in `lookups` and not
+  listed. Dry runs are never logged.
+- The feed keeps a line for up to seven days, so older actions are not shown.
+- Agent browser actions (`phm browser`) are logged separately and are not in
+  this list.
+
+## Browser (Safari)
+
+Safari is Phantom's own agent browser. `phm browser` drives it and nothing
+else: Chrome, by name, address or profile path, is always refused.
+
+```sh
+phm browser --json
+phm browser doctor --json
+phm browser open https://example.com/ --json
+phm browser shot page.png --json
+phm browser close --json
+```
+
+`phm browser` (or `tabs`) lists the open agent tabs and the latest screenshot.
+`open` loads an http or https address in a new tab. `shot` saves a picture of
+the front Safari window and keeps a copy for the Browser card. `close` closes
+every Safari window without quitting Safari. `doctor` says whether Safari
+remote automation is on and the one step to turn it on (Safari > Settings >
+Developer > Allow remote automation); Phantom never changes that setting.
+Anything it cannot read says unknown.
+
+Every answer is `schema: "phm.browser/1"` with `version: 1`, `ok`, `outcome`
+(`done`, `refused`, `failed`, `needs_permission`), `code` and `detail`; new
+fields are additive. Exit 0 done, 1 refused or failed, 2 usage. The Fleet Host
+**Browser** card uses the same service: GET `/api/verse/apps/browser` (tabs),
+GET `/api/verse/apps/browser/doctor`, GET `/api/verse/apps/browser/shot`
+(latest screenshot) and POST `/api/verse/apps/browser` with
+`{ "action": "open" | "shot" | "close", "url"? }`. The API takes no file path.
+`open`, `shot` and `close` are logged to the feed; KILL and comms pause block
+`open` and `close`. Phantom never reads cookies or saved passwords.
+
+## Allowed apps
+
 The Phantom desktop Fleet Host pane's **Allowed apps** card and `phm apps` use
 one typed app-control service. Enrollment is empty by default. Actions are
 open, focus, quit and status; app-level requests can go to Needs you without
@@ -51,7 +182,7 @@ phm apps list --json
 phm apps status Cursor --json
 phm apps open com.apple.Safari --json
 phm apps focus Cursor --json
-phm apps quit Cursor --json
+phm apps quit Notes --json
 phm apps request focus Cursor --json
 phm apps request quit Phantom --json
 phm comms status --json

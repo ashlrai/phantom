@@ -6,7 +6,7 @@ vi.mock('../src/core/web/api.js', () => ({ sendJson: mocks.send }));
 vi.mock('../src/core/verse/fleet-live-api.js', () => ({ buildFleetLiveSnapshot: mocks.live }));
 vi.mock('../src/core/fleet/runs-sessions.js', () => ({ getFleetSessions: mocks.sessions }));
 vi.mock('../src/core/fleet/fleet-edges.js', () => ({ readFleetEdges: mocks.messages }));
-import { createFleetOrgMapApi, readFleetOrgMap } from '../src/core/verse/fleet-org-map-api.js';
+import { createFleetOrgMapApi, fleetOrgReaders, readFleetOrgMap } from '../src/core/verse/fleet-org-map-api.js';
 import { cmdFleetMap } from '../src/cli/fleet-map.js';
 import { fleetOrgMap } from '../src/core/fleet/org-map.js';
 
@@ -27,6 +27,7 @@ it('shares the CLI contract, rejects bad flags without reads, and keeps failed s
   mocks.live.mockRejectedValue(new Error('fixture failure')); mocks.sessions.mockRejectedValue(new Error('fixture failure'));
   mocks.messages.mockReturnValue({ schema: 'fleet.edges.v1', source: 'missing', edges: null });
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const clock = vi.spyOn(fleetOrgReaders, 'now').mockReturnValue(Date.parse('2026-11-17T12:00:00Z'));
   try {
     for (const args of [['--minutes'], ['--minutes', '0'], ['--json', '--json'], ['--apply']]) expect(await cmdFleetMap(args)).toBe(2);
     expect(mocks.live).not.toHaveBeenCalled();
@@ -35,5 +36,5 @@ it('shares the CLI contract, rejects bad flags without reads, and keeps failed s
     expect(graph).toMatchObject({ schema: 'fleet.map.v2', messageWindowMinutes: 5, sources: { fleet: 'unknown', sessions: 'unknown', messages: 'missing' } });
     expect(mocks.messages).toHaveBeenCalledWith(expect.objectContaining({ windowMinutes: 5 }));
     expect(await readFleetOrgMap(5)).toEqual(graph);
-  } finally { output.mockRestore(); }
+  } finally { output.mockRestore(); clock.mockRestore(); }
 });

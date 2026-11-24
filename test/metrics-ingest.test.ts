@@ -26,6 +26,52 @@ function files(text = jobsText, snapshot = statusText) {
 afterEach(() => { vi.unstubAllGlobals(); for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 describe('deterministic local metrics feed', () => {
+  const claudeRecords = readFileSync(new URL('./fixtures/router-metrics/claude-results.jsonl', import.meta.url), 'utf8').trim().split('\n');
+
+  it('ingests cumulative Claude result usage including cache tokens exactly once', () => {
+    const result = parseMetricsFeed(claudeRecords[0], status(claudeRecords[0]));
+    expect(result.overall).toMatchObject({ tokenSamples: 1, knownTokens: 38,
+      tokensPerMergedPR: 38, mergedImpactPerToken: 2 / 38 });
+    expect(JSON.stringify(result)).not.toContain('fixture response');
+    expect(JSON.stringify(parseMetricsFeed(claudeRecords[0], status(claudeRecords[0])))).toBe(JSON.stringify(result));
+    const job = JSON.parse(claudeRecords[0]);
+    expect(feed([{ ...job, tokens: 100 }]).overall.knownTokens).toBe(100);
+    expect(feed([{ ...job, type: 'assistant' }]).overall.tokenSamples).toBe(0);
+    expect(feed([job], [{ id: job.id, type: 'result', usage: job.usage }]).overall.knownTokens).toBe(38);
+  });
+
+  it.each([1, 2])('keeps missing or partial Claude usage unknown (fixture %i)', index => {
+    const text = `${claudeRecords[0]}\n${claudeRecords[index]}`;
+    const result = parseMetricsFeed(text, status(text));
+    expect(result.overall).toMatchObject({ completedJobs: 2, tokenSamples: 1,
+      knownTokens: 38, tokensPerMergedPR: null, mergedImpactPerToken: null });
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+
+  it('refuses a truncated Claude result without producing partial CLI JSON', () => {
+    const text = claudeRecords.join('\n');
+    const { jobs, state } = files(text, status(text));
+    const io = { out: vi.fn(), err: vi.fn() };
+    expect(cmdMetrics(['ingest', '--jobs', jobs, '--status', state, '--json'], io)).toBe(2);
+    expect(io.out).not.toHaveBeenCalled();
+    expect(io.err).toHaveBeenCalledWith('Invalid JSON input.');
+  });
+
+  it('handles zero, malformed and overflowing Claude counts without inventing usage', () => {
+    const job = JSON.parse(claudeRecords[0]);
+    const zeros = Object.fromEntries(Object.keys(job.usage).map(key => [key, 0]));
+    expect(feed([{ ...job, usage: zeros }]).overall).toMatchObject({ tokenSamples: 1, knownTokens: 0, tokensPerMergedPR: 0 });
+    for (const key of Object.keys(job.usage)) {
+      for (const value of [undefined, null, -1, 1.5, '10', true, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(feed([{ ...job, usage: { ...job.usage, [key]: value } }]).overall.tokenSamples).toBe(0);
+      }
+    }
+    for (const usage of [null, [], 'partial', { ...job.usage, input_tokens: Number.MAX_SAFE_INTEGER }]) {
+      expect(feed([{ ...job, usage }]).overall.tokenSamples).toBe(0);
+    }
+    expect(feed([{ ...job, tokens: 100 }], [{ id: job.id, type: 'result', usage: {} }]).overall.tokenSamples).toBe(0);
+  });
+
   it('rolls up fixture terminal outcomes, waste, elapsed time and retained impact', () => {
     const result = parseMetricsFeed(jobsText, statusText);
     expect(result.lanes.map(g => g.key)).toEqual(['codex-cmp', 'grok', 'local']);

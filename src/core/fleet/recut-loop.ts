@@ -11,7 +11,7 @@
  * sweeps every ~2 minutes.
  *
  * GUARDS (each failure is a named skip, never a silent drop):
- *   - title must start `bridge: RQ-PHX-` — only fleet bridge PRs;
+ *   - title must start `bridge: RQ-` — only fleet agent (bridge) PRs, any job family;
  *   - findSupersededPrs — a merged job whose prompt already names this PR
  *     (this is the guard against recutting the same PR twice);
  *   - the recut ledger <runsDir>/queue/recut-loop.jsonl — a PR written within
@@ -26,9 +26,9 @@
  *     head would classify 'pending', not 'conflicted'), and a bounded
  *     `gh pr view --json headRefOid` covers untracked PRs; no sha, no write;
  *   - empty-yield — the last EMPTY_YIELD_STREAK ledger attempts the loop
- *     wrote for this PR on the *same head* all finished empty in jobs.jsonl:
+ *     wrote for this PR on the same head and observed base all finished empty:
  *     minting another recut for identical evidence just repeats work that
- *     already yielded nothing. A moved head, a missing ledger entry, an
+ *     already yielded nothing. A moved head/base, a missing ledger entry, an
  *     unmeasured or a productive outcome, or outcome evidence older than
  *     EMPTY_YIELD_WINDOW_MS each fail open — suppression is advisory;
  *   - landed — `ashlr fleet dirty-landed`'s read says every path the PR changes
@@ -59,6 +59,7 @@
  * out of the timer.
  */
 import { randomBytes } from 'node:crypto';
+import { pausedFamily, readLaunchFamilies } from './family-yield.js';
 import { constants, existsSync, type Stats } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, readdir, link, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -69,7 +70,8 @@ import { acquireLocalStoreLockWithOutcome, releaseLocalStoreLock } from './local
 import type { CloudGh } from '../cloud/pr-actions.js';
 import { defaultGitRunner } from '../verse/git-ops.js';
 import { renderBacklogRecutJob } from './backlog-recut-job.js';
-import { inspectDirtyLanded, withScratchRepo, type DirtyLandedClass } from './dirty-landed-inspect.js';
+import { FLEET_BRIDGE_TITLE_RE } from './recut-drop-body.js';
+import { inspectDirtyLanded, withScratchRepo, type DirtyLandedClass, type DirtyLandedPr } from './dirty-landed-inspect.js';
 import { collectPrConflicts } from './dirty-union-collect.js';
 import { classifyDiff3 } from './dirty-union-preview.js';
 import {
@@ -91,6 +93,7 @@ import {
   type MergeBacklogReadV1,
 } from './merge-backlog-read.js';
 import { collapseJobOutcomes, parseJobOutcomeRows, type JobOutcome } from '../queue/job-outcomes.js';
+import { ledgerEventName, ledgerJobId } from './empty-cause.js';
 import { findSupersededPrs, type MergedFleetPr } from './superseded-prs.js';
 
 export const RECUT_LOOP_LANE = 'codex-personal';
@@ -118,7 +121,6 @@ const LEDGER_FILE = join('queue', 'recut-loop.jsonl');
 const LEASE_FILE = join('queue', 'recut-loop-leases.jsonl');
 const LEASE_MS = 10 * 60 * 1000;
 const OFF_FILE = join('queue', 'recut-loop.off');
-const BRIDGE_TITLE_RE = /^bridge: RQ-PHX-/;
 const PULL_HEAD_RE = /pull\/(\d+)\/head/g;
 const PROMPT_FILE_RE = /^(RQ-[A-Za-z0-9_-]+)\.(?:md|prompt)$/;
 const ROOT_PROMPT_RE = /^RQ-PHX-[A-Z0-9]+\.prompt$/;
@@ -149,10 +151,10 @@ export interface RecutLoopDeps {
    */
   readUnionSafe?: (pr: { number: number; headSha: string }) => Promise<boolean>;
   /**
-   * Dirty-landed class of this head. Defaults to `inspectDirtyLanded` in a
-   * scratch repo. Only 'landed' skips; anything else, or a throw, proceeds.
+   * Fresh inspection of this head. Legacy readers may return only a class.
+   * Landed/anomalous work skips; a failed read preserves recut eligibility.
    */
-  readLanded?: (pr: { number: number; headSha: string; title: string }) => Promise<DirtyLandedClass | 'diff-anomaly'>;
+  readLanded?: (pr: { number: number; headSha: string; title: string }) => Promise<DirtyLandedPr | DirtyLandedClass | 'diff-anomaly' | null>;
   now?: () => number;
   /** Publish one job file (name + rendered body). Defaults to the drop-folder publish below. */
   writeJob?: (file: string, body: string) => Promise<void>;
@@ -168,6 +170,8 @@ export interface RecutLoopSkipped {
   pr: number;
   /** superseded | recent | in-flight | capped | no-head | leased | lease-failed | empty-yield | landed | no-id | exists | write-failed */
   reason: string;
+  /** Recoverable conflict evidence when repeated empty work is suppressed. */
+  evidence?: { headSha: string; baseSha?: string; remainingPaths: string[]; remainingPathCount: number | null };
 }
 
 export interface RecutLoopTickResult {
@@ -185,6 +189,7 @@ export interface RecutLoopLedgerEntry {
   pr: number;
   id: string;
   headSha: string;
+  baseSha?: string;
   file: string;
   /** Present only on pre-publication reservations, not successful-write entries. */
   leaseUntil?: number;
@@ -198,6 +203,8 @@ export interface RecutLoopState {
   lastError: string | null;
   /** The last 20 written jobs, oldest first. */
   written: RecutLoopWritten[];
+  /** Last tick's first 20 skips, including evidence for suppressed conflicts. */
+  skipped: RecutLoopSkipped[];
   /** Ledger writes inside the rolling hour at the last completed tick. */
   hourCount: number;
   off: boolean;
@@ -258,9 +265,8 @@ function defaultReadHeadSha(repo: string, states: ReadonlyMap<number, FleetMerge
  */
 function defaultReadLanded(repo: string): NonNullable<RecutLoopDeps['readLanded']> {
   const remote = `https://github.com/${repo}.git`;
-  return ({ number, headSha, title }) => withScratchRepo(async dir =>
-    { const inspection = await inspectDirtyLanded(dir, { number, title, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', headSha, baseRef: 'master' }, remote);
-      return inspection.diffAnomaly ? 'diff-anomaly' : inspection.class; });
+  return ({ number, headSha, title }) => withScratchRepo(dir =>
+    inspectDirtyLanded(dir, { number, title, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', headSha, baseRef: 'master' }, remote));
 }
 
 function defaultReadUnionSafe(repo: string): (pr: { number: number; headSha: string }) => Promise<boolean> {
@@ -331,6 +337,7 @@ const parseLedgerLine = (line: string): RecutLoopLedgerEntry | null => {
     pr: row['pr'] as number,
     id: typeof row['id'] === 'string' ? row['id'] : '',
     headSha: typeof row['headSha'] === 'string' ? row['headSha'] : '',
+    ...(typeof row['baseSha'] === 'string' && SHA_RE.test(row['baseSha']) ? { baseSha: row['baseSha'] } : {}),
     file: typeof row['file'] === 'string' ? row['file'] : '',
     ...(typeof row['leaseUntil'] === 'number' && Number.isFinite(row['leaseUntil'])
       ? { leaseUntil: row['leaseUntil'] } : {}),
@@ -460,9 +467,12 @@ async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs:
   for (const line of metrics.text.split('\n')) {
     try {
       const row: unknown = JSON.parse(line);
-      if (!object(row) || typeof row['job'] !== 'string') continue;
-      if (row['event'] === 'finish') states.set(row['job'], false);
-      else if (row['event'] === 'enqueue' || row['event'] === 'launch' || row['event'] === 'claim') states.set(row['job'], true);
+      if (!object(row)) continue;
+      const job = ledgerJobId(row);
+      if (job === null) continue;
+      const event = ledgerEventName(row);
+      if (event === 'finish') states.set(job, false);
+      else if (event === 'enqueue' || event === 'launch' || event === 'claim') states.set(job, true);
     } catch { /* incomplete or malformed metric */ }
   }
   const prs = new Set<number>();
@@ -487,16 +497,23 @@ async function readInflightPrs(runsDir: string, dropDir: string): Promise<{ prs:
  * Consecutive newest-first loop attempts for `pr` minted on `headSha` whose
  * collapsed outcome came back empty. A different-head entry is different work
  * and skipped; a missing, unmeasured, productive or merged outcome ends the
- * run — only proven empty repeats count.
+ * run. When the base is known, only attempts on that base count.
  */
 function emptyYieldStreak(
   ledger: readonly RecutLoopLedgerEntry[], pr: number, headSha: string,
-  outcomes: ReadonlyMap<string, JobOutcome>,
+  outcomes: ReadonlyMap<string, readonly JobOutcome[]>,
+  baseSha?: string,
 ): number {
   let streak = 0;
+  const seen = new Set<string>();
   for (const entry of ledger) {
     if (entry.pr !== pr || entry.headSha !== headSha) continue;
-    const outcome = outcomes.get(`${DROP_JOB_FILE_PREFIX}${entry.id}`);
+    // A changed or unrecorded base cannot prove this is the same conflict.
+    if (baseSha !== undefined && entry.baseSha !== baseSha) break;
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const job = `${DROP_JOB_FILE_PREFIX}${entry.id}`;
+    const outcome = collapseJobOutcomes((outcomes.get(job) ?? []).filter(row => row.at >= Date.parse(entry.at))).get(job);
     if (outcome === undefined || outcome.empty !== true || outcome.merged === true) break;
     streak += 1;
   }
@@ -530,14 +547,14 @@ async function defaultWriteJob(file: string, body: string): Promise<void> {
   const name = basename(file);
   const id = DROP_JOB_FILE.exec(name)?.[1];
   if (id === undefined) throw new DropJobValidationError(['id-shape']);
-  const verdict = validateDropJob({ id, lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
+  const verdict = validateDropJob({ id, repo: 'phantom', lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
   if (!verdict.ok) {
     const reasons = verdict.reasons.filter((reason) => reason !== 'denied-content');
     if (reasons.length > 0) throw new DropJobValidationError(reasons);
   }
   const dir = dirname(file);
   await mkdir(dir, { recursive: true });
-  const content = composeDropJobFile({ lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
+  const content = composeDropJobFile({ repo: 'phantom', lane: RECUT_LOOP_LANE, tier: RECUT_LOOP_TIER, body });
   if (Buffer.byteLength(content, 'utf8') > DROP_JOB_MAX_FILE_BYTES) throw new DropJobValidationError(['too-large']);
   const temp = join(dir, `.${name}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
   const handle = await open(temp, 'wx', 0o600);
@@ -599,8 +616,9 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
   }
 
   const candidates = backlog.items.filter((item) =>
-    item.suggestedAction === 'recut' && BRIDGE_TITLE_RE.test(item.title));
+    item.suggestedAction === 'recut' && FLEET_BRIDGE_TITLE_RE.test(item.title));
   if (candidates.length === 0) return result;
+  const familyStats = await readLaunchFamilies(runsDir, nowMs);
 
   let merged: MergedFleetPr[];
   try {
@@ -624,7 +642,12 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
   }
   const [prompts, ledger, inflightRead, leases] = guardReads;
   const inflight = inflightRead.prs;
-  const outcomes = collapseJobOutcomes(parseJobOutcomeRows(inflightRead.metricsText, nowMs, EMPTY_YIELD_WINDOW_MS));
+  const outcomes = new Map<string, JobOutcome[]>();
+  for (const row of parseJobOutcomeRows(inflightRead.metricsText, nowMs, EMPTY_YIELD_WINDOW_MS)) {
+    const history = outcomes.get(row.job) ?? [];
+    history.push(row);
+    outcomes.set(row.job, history);
+  }
 
   const superseded = new Set(findSupersededPrs(backlog.items, merged, prompts).map((row) => row.pr.number));
   const recent = new Set(ledger.filter((entry) => Date.parse(entry.at) >= nowMs - RECENT_WINDOW_MS).map((entry) => `${entry.pr}:${entry.headSha}`));
@@ -654,18 +677,32 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
         && written.headSha === entry.headSha && Date.parse(written.at) >= Date.parse(entry.at)))) { skip('leased'); continue; }
     if (inflight.has(pr)) { skip('in-flight'); continue; }
     if (allowance <= 0) { skip('capped'); capped = true; continue; }
-    if (emptyYieldStreak(ledger, pr, headSha, outcomes) >= EMPTY_YIELD_STREAK) { skip('empty-yield'); continue; }
     // Fail open: a degraded landed read must never block a real recut.
-    const landed = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
+    const read = await readLanded({ number: pr, headSha, title: item.title }).catch(() => null);
+    const inspection = typeof read === 'object' && read !== null ? read : undefined;
+    // Do not schedule against a moved head or consume another PR's evidence.
+    if (inspection && (inspection.number !== pr || inspection.head !== headSha || inspection.reason === 'head-moved')) {
+      skip('head-moved'); continue;
+    }
+    const landed = inspection ? (inspection.diffAnomaly ? 'diff-anomaly' : inspection.class) : read;
     if (landed === 'landed' || landed === 'diff-anomaly') { skip(landed); continue; }
+    const baseSha = inspection?.baseSha && SHA_RE.test(inspection.baseSha) ? inspection.baseSha : undefined;
+    if (emptyYieldStreak(ledger, pr, headSha, outcomes, baseSha) >= EMPTY_YIELD_STREAK) {
+      result.skipped.push({ pr, reason: 'empty-yield', evidence: {
+        headSha, baseSha, remainingPaths: inspection?.remainingPaths.slice(0, 20) ?? [],
+        remainingPathCount: inspection && inspection.class !== 'unknown' ? inspection.remainingPaths.length : null,
+      } });
+      continue;
+    }
     const id = await nextFreeId(runsDir, dropDir, pr);
     if (id === null) { skip('no-id'); continue; }
+    if (pausedFamily(familyStats, `RQ-PHX-${id}`)) { skip('family-paused'); continue; }
     const file = join(dropDir, `${DROP_JOB_FILE_PREFIX}${id}.md`);
     const unionSafe = await readUnionSafe({ number: pr, headSha }).catch(() => false);
     const body = renderBacklogRecutJob(pr, headSha, item.title, { unionSafe });
     // Persist intent before any external publication. Failure or process death
     // leaves a bounded reservation; the process lock fences live publishers.
-    const lease: RecutLoopLedgerEntry = { at, pr, id, headSha, file, leaseUntil: now() + LEASE_MS };
+    const lease: RecutLoopLedgerEntry = { at, pr, id, headSha, baseSha, file, leaseUntil: now() + LEASE_MS };
     try {
       // A leading separator isolates any torn append left by a dead publisher.
       await appendLine(join(runsDir, LEASE_FILE), `\n${JSON.stringify(lease)}\n`);
@@ -683,7 +720,7 @@ async function recutLoopTickLocked(deps: RecutLoopDeps): Promise<RecutLoopTickRe
     result.written.push({ pr, id, file });
     try {
       await mkdir(join(runsDir, 'queue'), { recursive: true });
-      await appendLine(join(runsDir, LEDGER_FILE), `${JSON.stringify({ at, pr, id, headSha, file } satisfies RecutLoopLedgerEntry)}\n`);
+      await appendLine(join(runsDir, LEDGER_FILE), `${JSON.stringify({ at, pr, id, headSha, baseSha, file } satisfies RecutLoopLedgerEntry)}\n`);
     } catch {
       // The in-flight scan still guards the next tick; only the 24 h window thins.
     }
@@ -704,10 +741,11 @@ interface RecutLoopRuntime {
   lastOutcome: RecutLoopTickResult['outcome'] | null;
   lastError: string | null;
   written: RecutLoopWritten[];
+  skipped: RecutLoopSkipped[];
   hourCount: number;
 }
 
-const loopState: RecutLoopRuntime = { armed: false, lastTickAt: null, lastOutcome: null, lastError: null, written: [], hourCount: 0 };
+const loopState: RecutLoopRuntime = { armed: false, lastTickAt: null, lastOutcome: null, lastError: null, written: [], skipped: [], hourCount: 0 };
 let timer: NodeJS.Timeout | null = null;
 let tickInFlight: Promise<void> | null = null;
 let armedRunsDir: string | null = null;
@@ -739,6 +777,7 @@ export function startRecutLoop(opts: { runsDir?: string; now?: () => number; int
         loopState.lastTickAt = run.at;
         loopState.lastOutcome = run.outcome;
         loopState.hourCount = run.hourCount;
+        loopState.skipped = run.skipped.slice(0, 20);
         if (run.written.length > 0) loopState.written = [...loopState.written, ...run.written].slice(-20);
         loopState.lastError = null;
       })
@@ -774,6 +813,7 @@ export function getRecutLoopState(): RecutLoopState {
     lastOutcome: loopState.lastOutcome,
     lastError: loopState.lastError,
     written: [...loopState.written],
+    skipped: structuredClone(loopState.skipped),
     hourCount: loopState.hourCount,
     off: liveOff(),
   };
@@ -791,5 +831,6 @@ export function stopRecutLoopForTest(): void {
   loopState.lastOutcome = null;
   loopState.lastError = null;
   loopState.written = [];
+  loopState.skipped = [];
   loopState.hourCount = 0;
 }

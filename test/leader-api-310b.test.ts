@@ -139,6 +139,15 @@ describe('GET', () => {
     expect(body.health).toMatchObject({ status: 'unknown', lastRunAt: null, consecutiveFailures: 0 });
   });
 
+  it('adds the seat line for the Leader card, and leaves it out when the seat read fails', async () => {
+    const { buildLeaderSeat } = await import('../src/core/fleet/leader-seat.js');
+    setLeaderApiHooksForTest({ loadRunDeps: async () => runDeps, leaderSeat: async () => buildLeaderSeat(null, null, null, Date.now()) });
+    expect((await getState()).body.seat).toMatchObject({ ok: false, pool: null, line: 'Leader: no seat available. Lane health is unknown.' });
+    setLeaderApiHooksForTest({ loadRunDeps: async () => runDeps, leaderSeat: async () => { throw new Error('fixture down'); } });
+    const { status, body } = await getState();
+    expect(status).toBe(200); expect(body.seat).toBeUndefined();
+  });
+
   it('refuses query parameters and unknown sub-paths', async () => {
     expect((await call('GET', '/api/verse/leader?x=1')).status).toBe(400);
     expect((await call('GET', '/api/verse/leader/memos/lm-20260924120000-zzzzzz')).status).toBe(404);

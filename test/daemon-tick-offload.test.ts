@@ -17,12 +17,14 @@ import { cancelOffTickJobs, offTickJobsSnapshot, resetOffTickJobsForTests } from
 import { tickPhasesSnapshot } from '../src/core/daemon/tick-phases.js';
 
 let fx: H1Fixture;
+let initialRepo: string;
 let release: () => void;
 beforeEach(() => {
   vi.clearAllMocks();
   fx = makeFixture();
   const repo = fx.makeRepo();
   repo.enroll();
+  initialRepo = repo.dir;
   let serial = 0;
   mocks.backlog.mockImplementation(async () => ({ generatedAt: new Date().toISOString(), repos: [repo.dir], items: [{ id: `offload-${++serial}`, repo: repo.dir, source: 'todo', title: 'test task', detail: 'test task detail', value: 3, effort: 1, score: 3, tags: [], ts: new Date().toISOString() }] }));
   mocks.dispatch.mockResolvedValue({ id: 'offload-run', status: 'done', usage: { totalTokens: 0, estCostUsd: 0, steps: 1 } });
@@ -137,4 +139,35 @@ it('ignores offloading for dry runs', async () => {
   expect(result.phases?.some((row) => row.status === 'off-tick')).toBe(false);
   expect(mocks.heal).not.toHaveBeenCalled();
   expect(offTickJobsSnapshot()).toEqual([]);
+});
+
+it.each([false, true])('invalidates only checked repos after self-heal (stale backlog: %s)', async (staleBacklog) => {
+  const repoA = fx.makeRepo(); repoA.enroll();
+  const repoB = { dir: initialRepo };
+  const stale = { id: 'incremental-heal', repo: repoA.dir, source: 'self', title: 'Repair build failure', detail: 'Fix the failing build', value: 3, effort: 1, score: 3, tags: ['self-heal'], ts: new Date().toISOString() };
+  let refresh = 0;
+  mocks.backlog.mockImplementation(async () => ({ generatedAt: new Date().toISOString(), repos: [repoA.dir, repoB.dir], items: ++refresh === 1 && staleBacklog ? [stale] : [] }));
+  mocks.heal.mockResolvedValue({ checked: 1, checkedRepos: [repoA.dir], broken: [], healItems: [] });
+
+  await tickWithLedger(true);
+
+  expect(mocks.heal).toHaveBeenCalledTimes(1);
+  expect(mocks.backlog).toHaveBeenCalledTimes(2);
+  const [initial] = mocks.backlog.mock.calls[0]!;
+  const [afterHeal] = mocks.backlog.mock.calls[1]!;
+  expect(initial.repos).toContain(repoB.dir);
+  expect(afterHeal.invalidate).toEqual({ repos: [repoA.dir], scanners: ['queued-autonomy'] });
+  expect(afterHeal.snapshot).toBe(initial.snapshot);
+  expect(afterHeal.signal).toBeInstanceOf(AbortSignal);
+  expect(mocks.dispatch).not.toHaveBeenCalled();
+});
+
+it.each(['empty', 'missing', 'throws'])('handles %s self-heal results conservatively', async (kind) => {
+  mocks.backlog.mockResolvedValue({ generatedAt: new Date().toISOString(), repos: [], items: [] });
+  if (kind === 'throws') mocks.heal.mockRejectedValueOnce(new Error('self-heal failed'));
+  else mocks.heal.mockResolvedValueOnce(kind === 'empty' ? { checked: 0, checkedRepos: [], broken: [], healItems: [] } : undefined);
+  await tickWithLedger(true);
+  const [initial] = mocks.backlog.mock.calls[0]!;
+  const [afterHeal] = mocks.backlog.mock.calls[1]!;
+  expect(afterHeal.invalidate).toEqual({ repos: kind === 'empty' ? [] : initial.repos, scanners: ['queued-autonomy'] });
 });

@@ -114,7 +114,7 @@ workers), wiring `onChange` to `publishSharedQuotaEvidence` so the evidence file
 
 Constraints that are not optional:
 - **The lock is exclusive per root and shared by both collectors** (`quota-refresh-lease.ts`). If
-  `ashlr resource-console` holds it, acquisition fails with `collector-owned`. Handle that by falling
+  `ashlr resources pool console` holds it, acquisition fails with `collector-owned`. Handle that by falling
   back to **read-only** `readSharedQuotaEvidence` and surfacing a plain banner saying another collector
   owns the data, rather than crashing or silently showing nothing.
 - **Release the lease on shutdown**, and note that `ResourceConnectionMonitor.close()` *throws* if any

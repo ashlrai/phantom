@@ -1,0 +1,8 @@
+> phantom@0.0.0 build
+> npm run check:version && tsc -p tsconfig.json && node scripts/authority-surface.mjs && node scripts/copy-assets.mjs && node scripts/build-preparation-builtin.mjs && vite build --config vite.config.web.ts && node scripts/build-release-dependency-inventory.mjs && node scripts/build-identity.mjs
+
+
+> phantom@0.0.0 check:version
+> node scripts/sync-candidate-version.mjs --check
+
+{"version":"0.0.1","changed":["package-lock.json","desktop/src-tauri/Cargo.toml","README.md"],"matches":false,"check":true}

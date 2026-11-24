@@ -11,10 +11,12 @@ const reward = (value: number | null): string => (value === null ? 'n/a' : value
 const cost = (value: number | null): string => (value === null ? 'unknown' : `${Math.round(value)} tok/verified`);
 
 function formatLanes(report: LaneRewardV1): string {
+  const notes = [report.source === 'healthy' ? null : `source ${report.source}`,
+    report.truncated ? 'truncated' : null].filter(note => note !== null).join(', ');
   const header = `fleet lane-reward: ${report.attempts} attempts, ${report.scored} scored, ` +
     `${report.unscored} unscored, mean reward ${reward(report.meanReward)}, ` +
     `cost/verified ${cost(report.tokensPerVerifiedResult)}` +
-    (report.source === 'healthy' ? '' : ` (source ${report.source})`);
+    (notes === '' ? '' : ` (${notes})`);
   return [header, ...report.lanes.map(lane =>
     `${lane.lane}: ${lane.attempts} attempts, ${lane.scored} scored, ${lane.unscored} unscored, ` +
     `mean reward ${reward(lane.meanReward)}, ${lane.tokensMeasured} tok measured, ` +

@@ -2,7 +2,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+  readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -40,9 +40,11 @@ it('npm installs both real workbench launchers without taking the Secrets phanto
   for (const path of ['user.npmrc', 'global.npmrc']) writeFileSync(join(root, path), '');
   const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], HOME: root, USERPROFILE: root,
     TMPDIR: root, TMP: root, TEMP: root, SystemRoot: process.env['SystemRoot'] };
-  const npmCli = process.env['npm_execpath'];
-  expect(npmCli, 'run through the existing npm test:ci harness').toBeTruthy();
-  const result = spawnSync(process.execPath, [npmCli!, 'install', '--offline', '--ignore-scripts',
+  const npmCli = process.env['npm_execpath'] ?? join(dirname(process.execPath),
+    ...(process.platform === 'win32' ? ['node_modules'] : ['..', 'lib', 'node_modules']), 'npm', 'bin', 'npm-cli.js');
+  expect(existsSync(npmCli), 'npm CLI must exist beside the Node installation or at npm_execpath').toBe(true);
+  expect(statSync(npmCli).isFile()).toBe(true);
+  const result = spawnSync(process.execPath, [npmCli, 'install', '--offline', '--ignore-scripts',
     '--no-audit', '--no-fund', '--install-links', '--prefix', install, '--cache', join(root, 'cache'),
     '--userconfig', join(root, 'user.npmrc'), '--globalconfig', join(root, 'global.npmrc'), hub, secrets],
   { cwd: install, env, encoding: 'utf8', timeout: 4_000 });

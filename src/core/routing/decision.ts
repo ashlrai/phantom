@@ -11,8 +11,9 @@ export async function decideRoute(raw: unknown, sources: RouteSources, options: 
 } = {}): Promise<RouteReport | ReturnType<typeof decidePairing>> {
   const started = performance.now();
   const request = routeRequestSchema.parse(raw);
+  const local_models_refused: RouteReport['local_models_refused'] = [];
   const nowMs = options.nowMs ?? Date.now();
-  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources), nowMs);
+  const candidates = rankRouteCandidates(request, enumerateRouteCandidates(request, sources, local_models_refused), nowMs, sources.familyYield);
   if (request.mode === 'fusion') return decidePairing(candidates.map(c => ({
     lane: c.lane, model: c.model, mode_tier: c.mode_tier,
     laneClass: c.mode_tier === 'ultra' ? 'frontier' : 'cheap', available: true,
@@ -23,7 +24,7 @@ export async function decideRoute(raw: unknown, sources: RouteSources, options: 
   const report = (decision: ReturnType<typeof candidateDecision>, path: RouteReport['path']): RouteReport => ({
     ...routeDecisionSchema.parse(decision), requested_mode: request.mode ?? null, schema: 'route.decision.v1', advisory: true, path,
     capacity: candidates.find(c => c.lane === decision.lane)?.capacity ?? null,
-    duration_ms: Math.round(performance.now() - started), attempts, candidate_count: candidates.length,
+    duration_ms: Math.round(performance.now() - started), attempts, candidate_count: candidates.length, local_models_refused,
   });
   const fallback = (): RouteReport => report(candidates[0] ? {
     ...candidateDecision(candidates[0]), reason_codes: [...new Set([...reasons, 'deterministic-fallback' as const])],

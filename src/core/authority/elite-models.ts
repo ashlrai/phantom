@@ -109,6 +109,8 @@ const ELITE_MODEL_TABLE: readonly EliteModelEntry[] = [
   { id: 'claude-fable-5', label: 'Claude Fable 5', vendor: 'anthropic', engines: [...ANTHROPIC_ENGINES, ...DEVIN_ENGINES], ids: ['claude-fable-5', 'fable-5'] },
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', vendor: 'anthropic', engines: [...ANTHROPIC_ENGINES, ...DEVIN_ENGINES], ids: ['claude-sonnet-5', 'sonnet-5'] },
   // Exact current Codex native ID; older gpt-6-sol narrowing never implies this version.
+  { id: 'gpt-6.2-sol', label: 'GPT-6.2 Sol', vendor: 'openai', engines: [...OPENAI_ENGINES], ids: ['gpt-6.2-sol'] },
+  { id: 'gpt-6.2-astra', label: 'GPT-6.2 Astra', vendor: 'openai', engines: [...OPENAI_ENGINES], ids: ['gpt-6.2-astra'] },
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', vendor: 'openai', engines: [...OPENAI_ENGINES], ids: ['gpt-6.1-sol'] },
   { id: 'gpt-6-astra', label: 'GPT-6 Astra', vendor: 'openai', engines: [...OPENAI_ENGINES, ...DEVIN_ENGINES], ids: gpt6Ids('astra') },
   { id: 'gpt-6-sol', label: 'GPT-6 Sol', vendor: 'openai', engines: [...OPENAI_ENGINES, ...DEVIN_ENGINES], ids: gpt6Ids('sol') },
