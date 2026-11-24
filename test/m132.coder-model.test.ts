@@ -36,6 +36,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import './helpers/local-memory.js';
 import { pickModel, KNOWN_MODELS } from '../src/core/run/model-catalog.js';
 import { routeTask } from '../src/core/run/router.js';
 import type { AshlrConfig, WorkItem } from '../src/core/types.js';
