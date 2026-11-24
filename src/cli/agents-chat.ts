@@ -1,6 +1,7 @@
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readAgentChat, type ChatQuery, type ChatResult } from '../core/agents/chat.js';
-const HELP = 'phm agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] --json';
+import { parseSince } from '../core/fleet/agent-messages.js';
+const HELP = 'phm agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] --json';
 export function runAgentsChat(args: string[], out = console.log, err = console.error,
   read: (query: ChatQuery) => ChatResult = readAgentChat): number {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
@@ -17,7 +18,16 @@ export function runAgentsChat(args: string[], out = console.log, err = console.e
     const value = rest[++i];
     if (!value) { invalid = true; break; }
     if (arg === '--channel') query.channel = value;
-    else if ((arg === '--after' || arg === '--limit') && /^\d+$/.test(value)) {
+    else if (arg === '--from') query.from = value;
+    else if (arg === '--exclude-from') query.excludeFrom = value;
+    else if (arg === '--contains') query.contains = value;
+    else if (arg === '--id') query.id = value;
+    else if (arg === '--in-reply-to') query.inReplyTo = value;
+    else if (arg === '--since' || arg === '--before') {
+      const ms = parseSince(value);
+      if (ms === null) { invalid = true; break; }
+      if (arg === '--since') query.since = ms; else query.before = ms;
+    } else if ((arg === '--after' || arg === '--limit') && /^\d+$/.test(value)) {
       query[arg === '--after' ? 'after' : 'limit'] = Number(value);
     } else invalid = true;
   }
