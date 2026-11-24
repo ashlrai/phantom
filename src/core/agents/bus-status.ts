@@ -7,8 +7,11 @@
  * bot-seat store `work mine`'s seats section, `id list`'s seat participants
  * and the unified inbox seats source read, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
- * and the claim-store drift verdict comparing the claim journal with the
- * coordination table it is dual-written to. Each
+ * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
+ * `peers dispatch` and `phm fleet peer-ledger` parse, the claim-store
+ * drift verdict comparing the claim journal with the coordination table it
+ * is dual-written to, and the outbound send gate `localWriteGate` applies
+ * before every bus write lands. Each
  * section reports its own real state; a section that cannot be read reports
  * unavailable or null, never zero, and the whole read never throws. Read-only:
  * takes no writer lock, writes nothing, makes no network calls and grants
@@ -30,6 +33,9 @@ import { inspectSeatStore } from '../bots/seats.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import { ownerChatRoot, ownerReceiptDir, readOwnerChatReceipts } from './chat-owner-receipts.js';
 import { readWorkDispatchJournal } from '../agentnet/work-dispatch-journal.js';
+import { readPeerLedger } from '../agentnet/peer-ledger.js';
+import { probePauseState } from '../comms/pause.js';
+import { readKillSwitch } from '../sandbox/policy.js';
 import { realHome } from '../real-home.js';
 import type { BusWorkMineBoardOptions } from './bus-work-mine.js';
 
@@ -194,6 +200,53 @@ export interface UnifiedBusStatus {
      * inbox peer-dispatch source lists; same null rule as `receipts`. */
     unpublished: number | null;
   };
+  /** Agentnet peer coordination ledger
+   * (`<busRoot>/agentnet/coordination.json`) behind `phm agentnet peers
+   * send|post|read|dispatch` admission, dedupe and rate limits, `phm fleet
+   * peer-ledger`/`fleet_peer_ledger` and the peer-bus budget gate — read by
+   * `readPeerLedger`, the same reader those surfaces use, under the same
+   * root `agentnetPaths().busRoot` resolves (`realHome()/.ashlr/fleet`, or
+   * the probe's `root` override), so a corrupt, public-mode or otherwise
+   * unreadable ledger is named here instead of leaving status green while
+   * every peer verb refuses closed. Counts only, never peer names, claim
+   * keys, digests, threads or bodies. */
+  peerLedger: {
+    source: 'missing' | 'available' | 'unavailable';
+    /** Live (unexpired) coordination rows the peer send budget still
+     * counts; 0 on a verified-missing ledger, null when it cannot be read. */
+    liveRows: number | null;
+  };
+  /** Outbound send gate behind every bus write verb — the kill-switch
+   * sentinel and the comms soft-pause flag `localWriteGate` consults
+   * before `dm`, `post`, `channel post`, `handoff`, `wake` and the work
+   * verbs append, under `realHome()` (the same paths the send path
+   * resolves, never the probe's `root` override). `state` is the verdict
+   * an agent can check before sending: 'open' neither gate blocks,
+   * 'blocked' at least one gate provably refuses (kill active or pause
+   * set), 'unknown' no gate provably blocks but at least one source
+   * could not be inspected — the send path still fails closed on both,
+   * so unknown is never open. Each gate keeps its own inspection verdict
+   * rather than collapsing into the other's: an uninspectable KILL
+   * sentinel is not a pause, and an unreadable pause.json is not an
+   * armed kill switch. */
+  sendGate: {
+    state: 'open' | 'blocked' | 'unknown';
+    /** Kill-switch sentinel (`readKillSwitch`, the same read
+     * `killSwitchOn` projects onto its boolean): 'active' the sentinel is
+     * present, 'inactive' proven absent, 'unknown' uninspectable or
+     * unsafe — the send gate treats anything but 'inactive' as on.
+     * `reason` is the read's own verdict ('present', 'missing',
+     * 'uninspectable', 'unsafe'). */
+    kill: { state: 'active' | 'inactive' | 'unknown'; reason: string };
+    /** Comms soft-pause flag (`probePauseState`, the same inspection
+     * `isPaused` fails closed on): 'paused' a valid flag is set,
+     * 'clear' the file was inspected and holds no pause, 'unknown' the
+     * file could not be inspected — the send gate treats it as paused.
+     * `since` is the recorded pause start (epoch ms) when the flag
+     * carried one; `reason` is the fail-closed cause when unknown —
+     * fixed phrases only, never a path or file contents. */
+    pause: { state: 'paused' | 'clear' | 'unknown'; since: number | null; reason: string | null };
+  };
 }
 
 /** The board probe: shared task board state plus the fleet queue claim index
@@ -357,15 +410,20 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     seats = { source: 'unavailable', seats: null, states: null, handoffs: null };
   }
 
-  // `consumePeerWork` writes the journal under `agentnetPaths().busRoot` —
+  // `consumePeerWork` writes the journal and `sendPeerMessage`/`readPeerInbox`
+  // keep the coordination ledger under `agentnetPaths().busRoot` —
   // `realHome()/.ashlr/fleet`, deliberately not `ashlrHome()` — unless a
   // `busRoot` override selects another root; the probe resolves the same way
   // and reports unavailable rather than guessing when no real home exists.
+  // `realHome()` is total (every resolver path catches), so this stays
+  // outside the per-section try blocks without risking the never-throw
+  // contract.
+  const agentnetHome = realHome();
+  const agentnetBusRoot = options.root ?? (agentnetHome === null ? undefined : join(agentnetHome, '.ashlr', 'fleet'));
+
   let peerDispatch: UnifiedBusStatus['peerDispatch'];
   try {
-    const home = realHome();
-    const busRoot = options.root ?? (home === null ? undefined : join(home, '.ashlr', 'fleet'));
-    const journal = busRoot === undefined ? undefined : readWorkDispatchJournal(busRoot);
+    const journal = agentnetBusRoot === undefined ? undefined : readWorkDispatchJournal(agentnetBusRoot);
     peerDispatch = journal === undefined || journal.status === 'unavailable'
       ? { source: 'unavailable', receipts: null, unpublished: null }
       : { source: journal.status, receipts: journal.receipts.length,
@@ -374,5 +432,56 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
     peerDispatch = { source: 'unavailable', receipts: null, unpublished: null };
   }
 
-  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch };
+  // The ledger reader folds a missing file and an all-expired ledger into the
+  // same 'empty' report, so existence is probed first — the same convention
+  // `ownerChat` applies — and a never-written store reports missing rather
+  // than available-with-zero.
+  let peerLedger: UnifiedBusStatus['peerLedger'];
+  try {
+    if (agentnetBusRoot === undefined) {
+      peerLedger = { source: 'unavailable', liveRows: null };
+    } else {
+      const report = readPeerLedger({ busRoot: agentnetBusRoot, now });
+      peerLedger = report.status === 'unavailable'
+        ? { source: 'unavailable', liveRows: null }
+        : busPathMissing(join(agentnetBusRoot, 'agentnet', 'coordination.json'))
+          ? { source: 'missing', liveRows: 0 }
+          : { source: 'available', liveRows: report.liveRows };
+    }
+  } catch {
+    peerLedger = { source: 'unavailable', liveRows: null };
+  }
+
+  // The send gate every bus write passes through. Both readers are total
+  // by contract, but each keeps its own try so one throwing probe cannot
+  // hide the other's verdict — and an uninspectable source reports
+  // unknown, matching the fail-closed rule the send path itself applies
+  // (killSwitchOn treats anything but 'inactive' as on, isPaused treats
+  // anything but a clean read as paused).
+  let kill: UnifiedBusStatus['sendGate']['kill'];
+  try {
+    const read = readKillSwitch();
+    kill = { state: read.state, reason: read.reason };
+  } catch {
+    kill = { state: 'unknown', reason: 'uninspectable' };
+  }
+  let pause: UnifiedBusStatus['sendGate']['pause'];
+  try {
+    pause = probePauseState();
+  } catch {
+    pause = { state: 'unknown', since: null, reason: 'could not be checked' };
+  }
+  // 'blocked' needs a positive verdict — kill 'active' or pause 'paused';
+  // an 'unknown' sub-state alone leaves the top level 'unknown' because
+  // the send path refuses without the probe being able to say which gate
+  // or why it is really engaged.
+  const killBlocks = kill.state !== 'inactive';
+  const pauseBlocks = pause.state !== 'clear';
+  const sendGate: UnifiedBusStatus['sendGate'] = {
+    state: !killBlocks && !pauseBlocks ? 'open'
+      : kill.state === 'active' || pause.state === 'paused' ? 'blocked' : 'unknown',
+    kill, pause,
+  };
+
+  return { asOf, store, registry, wakes, coordination, workClaims, claimDrift, feed, mailbox, ownerChat, board, seats, peerDispatch, peerLedger, sendGate };
 }

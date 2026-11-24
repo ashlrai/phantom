@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
+import { realHome } from '../src/core/real-home.js';
 import { readUnifiedBusStatus, type UnifiedBusStatusOptions } from '../src/core/agents/bus-status.js';
 import { announceWork, sendDirectMessage, sendWakeRequest, type UnifiedBusOptions } from '../src/core/agents/bus-unified.js';
 import { writeOwnerChatReceipts, type OwnerChatReceipt } from '../src/core/agents/chat-owner-receipts.js';
@@ -56,6 +57,8 @@ describe('readUnifiedBusStatus', () => {
     expect(status.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
     // A verifiably absent dispatch journal holds no receipts: 0 is proven.
     expect(status.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
+    // A verifiably absent coordination ledger holds no live rows: 0 is proven.
+    expect(status.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
     expect(Number.isNaN(Date.parse(status.asOf))).toBe(false);
   });
 
@@ -491,6 +494,145 @@ describe('peerDispatch section', () => {
   });
 });
 
+describe('peerLedger section', () => {
+  const NOW = 1_800_000_000_000, HOUR = 3_600_000;
+  const UUID = '123e4567-e89b-12d3-a456-426614174000';
+  let n = 0;
+  const ledgerRow = (from: string, target: string, at: number, over: Record<string, unknown> = {}) => ({
+    id: `peer-${UUID.slice(0, 35)}${n++ % 10}`, fromAgent: from, target,
+    origin: `peer-${UUID}`, digest: 'a'.repeat(64), hopCount: 1,
+    threadId: 'thread', at, ...over });
+  /** The ledger `sendPeerMessage`/`readPeerInbox` parse under
+   * `<busRoot>/agentnet/` — the same path the probe resolves from `root`. */
+  const writeLedger = (options: UnifiedBusStatusOptions, rows: unknown[]) => {
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'coordination.json'), JSON.stringify(rows), { mode: 0o600 });
+  };
+
+  it('counts live ledger rows without creating the store', () => {
+    const options = setup(NOW);
+    writeLedger(options, [
+      ledgerRow('agent0', 'agent1', NOW - 1_000),
+      ledgerRow('agent0', 'agent2', NOW - 2_000),
+      // Older than the 24h live window — retained but no longer budgeted.
+      ledgerRow('agent0', 'agent1', NOW - 25 * HOUR),
+    ]);
+
+    const status = readUnifiedBusStatus(options);
+    expect(status.peerLedger).toEqual({ source: 'available', liveRows: 2 });
+    expect(status.store.source).toBe('missing');
+
+    // Read-only: a fresh probe over a never-written root reports missing and
+    // leaves no agentnet directory behind.
+    const fresh = setup(NOW);
+    expect(readUnifiedBusStatus(fresh).peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    expect(existsSync(join(fresh.root!, 'agentnet'))).toBe(false);
+  });
+
+  it('keeps a present-but-fully-expired ledger available with a real zero', () => {
+    const options = setup(NOW);
+    writeLedger(options, [ledgerRow('agent0', 'agent1', NOW - 25 * HOUR)]);
+
+    const status = readUnifiedBusStatus(options);
+    // The file exists and parses — available — but no row sits inside the
+    // live window, so 0 is the proven count, not a missing-store placeholder.
+    expect(status.peerLedger).toEqual({ source: 'available', liveRows: 0 });
+  });
+
+  it('keeps a corrupt ledger unavailable with a null count while the rest of the bus stays readable', () => {
+    const options = setup(NOW);
+    const dir = join(options.root!, 'agentnet');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, 'coordination.json'), '{not json', { mode: 0o600 });
+
+    const status = readUnifiedBusStatus(options);
+    // The same corrupt ledger that makes sendPeerMessage/readPeerInbox throw
+    // closed is named here; null, never zero.
+    expect(status.peerLedger).toEqual({ source: 'unavailable', liveRows: null });
+    expect(status.store.source).toBe('missing');
+    expect(status.feed.status).toBe('ok');
+  });
+});
+
+describe('sendGate section', () => {
+  // The gate reads realHome() — the worker's isolated HOME under the test
+  // harness — never the probe's `root`, exactly like the send path.
+  const killPath = () => join(realHome()!, '.ashlr', 'KILL');
+  const pausePath = () => join(realHome()!, '.ashlr', 'comms', 'pause.json');
+  afterEach(() => {
+    // unlinkSync, not rmSync: rmSync leaves a dangling symlink in place
+    // (existsSync follows the dead target and reports it absent), and a
+    // later writeFileSync would write through the leftover link.
+    for (const path of [killPath(), pausePath()]) {
+      try { unlinkSync(path); } catch { /* absent or not a link/file */ }
+    }
+    rmSync(dirname(pausePath()), { recursive: true, force: true });
+  });
+
+  it('reports open when neither gate source is engaged', () => {
+    const status = readUnifiedBusStatus(setup());
+    expect(status.sendGate).toEqual({ state: 'open',
+      kill: { state: 'inactive', reason: 'missing' },
+      pause: { state: 'clear', since: null, reason: null } });
+  });
+
+  it('reports blocked with the kill verdict when the sentinel is present', () => {
+    mkdirSync(dirname(killPath()), { recursive: true });
+    writeFileSync(killPath(), 'kill switch active\n', { mode: 0o600 });
+    const status = readUnifiedBusStatus(setup());
+    expect(status.sendGate).toEqual({ state: 'blocked',
+      kill: { state: 'active', reason: 'present' },
+      pause: { state: 'clear', since: null, reason: null } });
+    // The same read the send path makes agrees: localWriteGate refuses.
+    expect(status.store.source).toBe('missing');
+  });
+
+  it('reports blocked with the pause verdict and its recorded start', () => {
+    mkdirSync(dirname(pausePath()), { recursive: true });
+    writeFileSync(pausePath(), JSON.stringify({ paused: true, since: 1_700_000_000_000 }));
+    const status = readUnifiedBusStatus(setup());
+    expect(status.sendGate).toEqual({ state: 'blocked',
+      kill: { state: 'inactive', reason: 'missing' },
+      pause: { state: 'paused', since: 1_700_000_000_000, reason: null } });
+  });
+
+  it('keeps an uninspectable pause file unknown — never clear — while sends still fail closed', () => {
+    mkdirSync(dirname(pausePath()), { recursive: true });
+    writeFileSync(pausePath(), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(setup());
+    // isPaused() fails closed on the same file, so the gate refuses; the
+    // probe says unknown with the reason rather than calling it a pause.
+    expect(status.sendGate).toEqual({ state: 'unknown',
+      kill: { state: 'inactive', reason: 'missing' },
+      pause: { state: 'unknown', since: null, reason: 'is not valid JSON' } });
+  });
+
+  it('keeps an unsafe kill sentinel unknown rather than folding it into inactive', () => {
+    mkdirSync(dirname(killPath()), { recursive: true });
+    // A symlink fails safeAuthorityFile — the same 'unsafe' verdict
+    // readKillSwitch reports, which killSwitchOn treats as engaged.
+    symlinkSync(join(realHome()!, '.ashlr', 'missing-target'), killPath());
+    const status = readUnifiedBusStatus(setup());
+    expect(status.sendGate).toEqual({ state: 'unknown',
+      kill: { state: 'unknown', reason: 'unsafe' },
+      pause: { state: 'clear', since: null, reason: null } });
+  });
+
+  it('stays blocked when one gate is provably engaged and the other is unknown', () => {
+    mkdirSync(dirname(killPath()), { recursive: true });
+    writeFileSync(killPath(), 'kill switch active\n', { mode: 0o600 });
+    mkdirSync(dirname(pausePath()), { recursive: true });
+    writeFileSync(pausePath(), '{not json', { mode: 0o600 });
+    const status = readUnifiedBusStatus(setup());
+    // The armed kill switch is a positive block; the degraded pause file
+    // keeps its own unknown verdict instead of being hidden by it.
+    expect(status.sendGate).toEqual({ state: 'blocked',
+      kill: { state: 'active', reason: 'present' },
+      pause: { state: 'unknown', since: null, reason: 'is not valid JSON' } });
+  });
+});
+
 describe('phm agents bus status', () => {
   it('prints one honest line per section in human mode and the object as JSON', async () => {
     const options = setup();
@@ -512,6 +654,10 @@ describe('phm agents bus status', () => {
       pendingDeliveries: 0, claims: 'readable' });
     expect(json.seats).toEqual({ source: 'missing', seats: 0, states: 0, handoffs: 0 });
     expect(json.peerDispatch).toEqual({ source: 'missing', receipts: 0, unpublished: 0 });
+    expect(json.peerLedger).toEqual({ source: 'missing', liveRows: 0 });
+    expect(json.sendGate).toEqual({ state: 'open',
+      kill: { state: 'inactive', reason: 'missing' },
+      pause: { state: 'clear', since: null, reason: null } });
 
     const text: string[] = [];
     expect(await runAgentsBusUnified(['status', '--root', options.root!], t => text.push(t), () => {}, {})).toBe(0);
@@ -525,6 +671,8 @@ describe('phm agents bus status', () => {
     expect(lines.join('\n')).toContain('board missing threads=0 tasks=0 pending=0 claims=readable');
     expect(lines.join('\n')).toContain('seats missing seats=0 states=0 handoffs=0');
     expect(lines.join('\n')).toContain('peerDispatch missing receipts=0 unpublished=0');
+    expect(lines.join('\n')).toContain('peerLedger missing liveRows=0');
+    expect(lines.join('\n')).toContain('sendGate open kill=inactive:missing pause=clear');
     expect(lines.join('\n')).toContain('wakes missing hints=0 truncated=false');
   });
 });

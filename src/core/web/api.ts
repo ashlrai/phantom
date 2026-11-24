@@ -1900,9 +1900,10 @@ export async function handleApi(
     }
 
     if (path === '/api/fleet/releases' && method === 'GET') {
-      // The same report as `phm releases --json`: local clones only, never tags or publishes.
+      // Legacy PR cadence plus the commit status shared with `phm release status --json`.
       const { getReleases } = await import('../release/status.js');
-      sendJson(res, 200, getReleases());
+      const { readReleaseRepos } = await import('../release/release-repos.js');
+      sendJson(res, 200, { ...getReleases(), releaseRepos: await readReleaseRepos() });
       return true;
     }
 

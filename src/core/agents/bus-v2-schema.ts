@@ -248,11 +248,21 @@ export function mayMutateClaim(claim: Claim, presentedToken: string, now: number
 const refs = z.array(z.string().min(1).max(256)).max(32);
 const jobId = label;
 
+/**
+ * `inReplyTo` cites the envelope id a conversational body answers — the same
+ * citation `postBusReply`, `comms bus post --reply-to` and the fleet reply
+ * verbs stamp, which `busReplyCitations`, the conversation projection and the
+ * pending-work sections already credit. It is a routing label, never proof
+ * the cited message existed or was received.
+ */
+const replyCitation = { inReplyTo: label.optional() } as const;
 export const noteBodySchema = z.object({
   kind: z.literal('note'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
 export const contextBodySchema = z.object({
   kind: z.literal('context'), text, thread: label.optional(), refs: refs.optional(),
+  ...replyCitation,
 }).strict();
 /** The optional dispatch spec a work.post may carry; the feed job keeps it verbatim. */
 export const workDispatchSchema = z.object({

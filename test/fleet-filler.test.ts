@@ -45,6 +45,18 @@ describe('fleet filler', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('private detail');
   });
 
+  it('counts the live skipped_empty+code spelling and ignores empty-gate declines', async () => {
+    const report = await fleetFiller(async () => [
+      row('skipped_empty', { code: 10 }), row('skipped_empty', { code: 14 }),
+      row('skipped_empty', { reason: 'task_empty_repeat_24h' }),
+      row('skipped_empty', { code: 10, applied: false }),
+      row('precheck_parked', { code: 13 }),
+    ], now);
+    expect(report.groups).toEqual([
+      { prefix: 'RQ-PS', launches: 0, skips: 2, skips_by_code: { unknown: 2 }, empty_finishes: 0, merged: 0 },
+    ]);
+  });
+
   it('handles absent metrics, empty input, unsafe codes and prototype keys', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     expect(await cmdFleetFiller(['--json'], async () => { throw new Error('private'); }, now)).toBe(1);

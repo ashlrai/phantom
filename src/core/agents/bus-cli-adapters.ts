@@ -14,7 +14,7 @@
  * the runner keeps its own admission, sandbox and launcher checks.
  */
 import {
-  BUS_CLIS, registerAgentIdentity, readAgentRegistry, resolveAgent,
+  BUS_CLIS, agentAddress, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
 import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker, type InboxMessage } from './bus-unified.js';
@@ -125,6 +125,55 @@ export function busSelfFromEnv(env: NodeJS.ProcessEnv = process.env, options: Ag
   const identity = resolveAgent(read.registry, env['PHM_AGENT_ID']!);
   if (!identity) return { status: 'unknown', reason: 'PHM_AGENT_ID is not a registered identity.' };
   return { status: 'ok', identity, cli: detectBusCli(env)?.cli ?? null };
+}
+
+/** The printable routing-label grammar every resolveAgent ref shares — aliases cap at the same 1-128 bound. */
+const AGENT_REF = /^[\x21-\x7e]{1,128}$/;
+
+/**
+ * One agent's bus card: the registered identity a ref resolves to, the
+ * `agent:<handle>` address mail to it carries, the registry channels whose
+ * member list names its handle (the `group:<channel>:*` addresses pending
+ * work also matches), and — only on the self view — the CLI this process
+ * detected. `ref` omitted reads PHM_AGENT_ID, so `agents bus id show`
+ * answers "who am I" and `id show <ref>` resolves any handle,
+ * `agent:<handle>`, stable id or alias `resolveAgent` accepts — the same
+ * exact-label rule every bus read applies, never case-folded. An
+ * unresolvable ref is `unknown` (a well-formed label that names no
+ * identity), a malformed one `invalid`, an unreadable registry
+ * `unavailable` and a missing PHM_AGENT_ID on the self path `unset` —
+ * unknown identity state is reported, never guessed. Read-only: takes no
+ * lock, writes nothing and grants nothing.
+ */
+export type BusAgentView =
+  | { status: 'ok'; ref: string; self: true; identity: AgentIdentity; channels: string[];
+      address: string; cli: BusCli | null }
+  | { status: 'ok'; ref: string; self: false; identity: AgentIdentity; channels: string[]; address: string }
+  | { status: 'unknown' | 'invalid'; ref: string; self: boolean; reason: string }
+  | { status: 'unset'; reason: string }
+  | { status: 'unavailable'; ref: string; self: boolean; reason: string };
+
+export function busAgentView(ref: string | undefined, env: NodeJS.ProcessEnv = process.env,
+  options: AgentRegistryOptions = {}): BusAgentView {
+  const self = ref === undefined;
+  const query = self ? (set(env, 'PHM_AGENT_ID') ? env['PHM_AGENT_ID']! : undefined) : ref;
+  if (query === undefined) return { status: 'unset', reason: 'PHM_AGENT_ID is not set.' };
+  if (!AGENT_REF.test(query)) {
+    return { status: 'invalid', ref: query, self, reason: 'Agent ref must be a printable routing label of 1-128 characters.' };
+  }
+  const read = readAgentRegistry(options);
+  if (read.status !== 'ok') return { status: 'unavailable', ref: query, self, reason: read.reason };
+  const identity = resolveAgent(read.registry, query);
+  if (identity === undefined) {
+    return { status: 'unknown', ref: query, self,
+      reason: self ? 'PHM_AGENT_ID is not a registered identity.' : 'Agent is not a registered identity.' };
+  }
+  const channels = read.registry.channels.filter(channel => channel.members.includes(identity.handle))
+    .map(channel => channel.name);
+  const address = agentAddress(identity.handle);
+  return self
+    ? { status: 'ok', ref: query, self: true, identity, channels, address, cli: detectBusCli(env)?.cli ?? null }
+    : { status: 'ok', ref: query, self: false, identity, channels, address };
 }
 
 export const BUS_INBOX_FRAME_BEGIN =

@@ -219,6 +219,7 @@ import {
   TICK_PHASE_SKILL_NUDGE_MS,
   TICK_PHASE_EMPTY_TAG_SYNC_MS,
   TICK_PHASE_VISIT_SYNC_MS,
+  TICK_PHASE_SWAPOUT_SYNC_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
 import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
@@ -446,7 +447,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { withApprovedKnowledge, knowledgeBlockFor } from '../learn/retro/inject.js';
 import { revertedPrKeys } from '../improve/reverted.js';
-import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { recordKnowledgeHits, recordKnowledgeRuns } from '../learn/retro/store.js';
 import { withFleetPlaybook, prepareFleetPlaybook, type PreparedFleetPlaybook } from '../playbooks/lanes.js';
 import { recordPlaybookUse } from '../playbooks/store.js';
 import { ROUTING_SESSION_OVERHEAD_TOKENS } from '../fleet/dispatch-router.js';
@@ -4778,6 +4779,17 @@ export async function tick(
       settleObservation(observationOutcome, enqueued === undefined ? undefined : { backlogItems: enqueued });
     }
   };
+  // Lessons whose every cited PR was reverted are withheld, and the
+  // skill-nudge fold discounts merges the standing set proves did not
+  // hold; the reverted set is read at most once a minute. Declared before
+  // runReflectionMaintenance: the off-tick jobs it launches can run before
+  // later const declarations in this scope initialize.
+  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
+  const revertedKeys = (): ReadonlySet<string> => {
+    const now = Date.now();
+    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
+    return revertedCache.keys;
+  };
   const runReflectionMaintenance = async (): Promise<void> => {
     const ci = liveCfg.ciRerun;
     const lastCiLaunch = offTickJobsSnapshot().find(job => job.name === 'ci-rerun');
@@ -4787,6 +4799,18 @@ export async function tick(
         const { runCiRerunMaintenance } = await import('../fleet/ci-rerun.js');
         await runCiRerunMaintenance({ repos: ci.repos!, maxPerHour: ci.maxPerHour, signal });
       }, { deadlineMs: TICK_PHASE_CI_RERUN_MS, parentSignal: opts.signal, log: phaseLog });
+    }
+    // Host memory samples: fold the bridge's latest memstat.json reading
+    // into metrics/swapout-rate.jsonl — the tuning ledger MEMORY_GUARD's
+    // constants name but nothing wrote. One small file plus a bounded
+    // ledger tail per resident tick; dedup by sampled_at keeps appends at
+    // the bridge's own cadence. Best-effort and single-flight; writes only
+    // under the runs dir.
+    if (offTickMaintenance && !stopRequested()) {
+      launchOffTickJob('swapout-sync', async signal => {
+        const { syncSwapoutSamples } = await import('../fleet/swapout-sync.js');
+        await syncSwapoutSamples({ signal });
+      }, { deadlineMs: TICK_PHASE_SWAPOUT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     }
     if (
       stopRequested() ||
@@ -4804,18 +4828,21 @@ export async function tick(
         log: phaseLog,
       });
       // Reward substrate producer: fold the jobs-ledger tail into
-      // reward-signals.jsonl on the same self-improvement cadence. The sync is
-      // best-effort and append-only; launchOffTickJob keeps it single-flight.
+      // reward-signals.jsonl on the same self-improvement cadence, with the
+      // standing revert set so a merge git history proves did not hold never
+      // counts as held. The sync is best-effort and append-only;
+      // launchOffTickJob keeps it single-flight.
       launchOffTickJob('reward-sync', async signal => {
         const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
-        await syncRewardSignalsFromJobsLedger({ signal });
+        await syncRewardSignalsFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
       }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
       // Shadow skill learning: fold the same jobs-ledger tail into candidate
-      // recovery skill cards. Best-effort and deduplicated by skill id;
-      // launchOffTickJob keeps it single-flight.
+      // recovery skill cards, with the standing revert set so a merge that
+      // did not hold never seeds a "recovery" draft. Best-effort and
+      // deduplicated by skill id; launchOffTickJob keeps it single-flight.
       launchOffTickJob('skill-nudge', async signal => {
         const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
-        await syncSkillNudgesFromJobsLedger({ signal });
+        await syncSkillNudgesFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
       }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
       // Empty-job evidence: fold the same tail into empty-tags.jsonl and the
       // dupcheck outcome rows `phm jobs empty --record` used to write only
@@ -5124,19 +5151,13 @@ export async function tick(
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
   };
-  // Lessons whose every cited PR was reverted are withheld; the reverted set is read at most once a minute.
-  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
-  const revertedKeys = (): ReadonlySet<string> => {
-    const now = Date.now();
-    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
-    return revertedCache.keys;
-  };
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
     return withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview, revertedPrKeys: revertedKeys });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview,
+        trajectoryId: `run:${runId}`, revertedPrKeys: revertedKeys });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -8409,7 +8430,10 @@ export async function tick(
               // no second resolution can substitute guidance or attribution.
               const prepared = preparedManagerPrompts.get(item.id)!;
               if (prepared.playbookUse) void recordPlaybookUse({ lane: 'fleet', key: attemptId, ...prepared.playbookUse });
-              if (prepared.knowledgeNoteIds.length) void recordKnowledgeHits(prepared.knowledgeNoteIds);
+              if (prepared.knowledgeNoteIds.length) {
+                void recordKnowledgeHits(prepared.knowledgeNoteIds);
+                void recordKnowledgeRuns(`run:${attemptId}`, prepared.knowledgeNoteIds);
+              }
             }
             recordUse(backend!);
             return { kind: 'started' as const, run };

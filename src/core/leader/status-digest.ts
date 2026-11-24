@@ -55,6 +55,8 @@ export interface StatusDigestInput {
   authLine?: string;
   /** `Not live yet: 2 merged fleet files (...)` when merged fleet scripts differ from the installed copies; absent when all are live or the check cannot run. */
   notLiveLine?: string;
+  /** Warning for a lane still cut after its cause cleared; absent when unknown. */
+  adaptLine?: string;
 }
 
 export const TOP_P0_MAX_CHARS = 120;
@@ -121,6 +123,7 @@ export function buildStatusDigest(input: StatusDigestInput): string[] {
   if (input.supplyLine) lines.push(input.supplyLine);
   if (input.yieldLine) lines.push(input.yieldLine);
   if (input.notLiveLine) lines.push(input.notLiveLine);
+  if (input.adaptLine) lines.push(truncateP0(input.adaptLine));
   const runs = input.nodeRuns;
   if (runs) lines.push(nodeRunsLine(runs));
   return lines;
