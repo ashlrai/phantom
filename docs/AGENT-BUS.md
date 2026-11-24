@@ -1605,7 +1605,7 @@ from now and may not exceed the acquired length. `phm agents bus claim
 acquire|renew|release` runs the same core path locally with `--key`,
 `--lease-ms`, `--owner` (defaults to `PHM_AGENT_ID`), `--token`, `--outcome`
 and optional `--id`; exit 0 on success, 2 on invalid arguments, 1 otherwise.
-`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--jobs]` is
+`phm agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--jobs]` is
 the read
 side: it prints the live coordination claims (owner, origin, lease end, source
 id — never tokens) across every origin, narrowed by `--key` to those that
@@ -1619,7 +1619,17 @@ rule, inverted (the JSON `excludeOwner` field reports the same resolution,
 so "what do the other seats hold" is one read) — by `--contains` to claims
 whose `key`, `sourceId` or `repo`/`branch`/`path` target fields carry the
 needle as a case-insensitive substring, the same `--contains` rule every
-bus read shares — or by `--origin`
+bus read shares — by `--since`/`--before` to claims whose recorded `started`
+— the lease's ISO acquisition time, stable across renewals — lands inside
+the `[since, before)` window: `since` keeps starts at or after the cutoff
+and `before` keeps starts strictly before it, the same inclusive/exclusive
+bounds and 15m/2h/1d/epoch-ms/ISO grammar every bus read's time filters
+apply and the same field `work mine`'s claims section already bounds, so
+"which claims started lately" or "what was held before time T" is one
+filtered read of the claim table itself — a claim whose origin keeps no
+start stamp (team, message and board claims and pre-stamp resource rows
+keep `started` null) is unknown and never matches, the same "unknown stays
+out" rule every other section's missing timestamp follows — or by `--origin`
 to one claim class (`resource` work leases, `message` message-id claims,
 `team` leases, `board` claims; queue path observations are never live and
 never list). A missing table
@@ -1632,9 +1642,11 @@ and the JSON `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
 `fleet_bus_claims` (the isolated fleet MCP tool) serves the same
 `listBusClaims` read with `key`, `owner`, `excludeOwner`, `contains`,
-`origin` and `jobs` as its only
+`origin`, `since`, `before` and `jobs` as its only
 arguments — the same `parseClaimKey` grammar, printable-label owner bound,
-shared `--contains` bound, `COORDINATION_ORIGINS` class filter and feed join
+shared `--contains` bound, `COORDINATION_ORIGINS` class filter, shared
+`--since`/`--before` grammar resolved through `parseSince` onto the claim's
+recorded `started` and feed join
 the CLI flags share, under
 the identical validation — so an MCP-connected agent reads the claim table's
 own projection without shelling out. Every coordination and feed root stays
