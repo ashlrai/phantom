@@ -508,6 +508,16 @@
  *     pair the policy kept denying, a tool whose approval gate kept
  *     stalling calls, and calls that kept arriving on dead session
  *     records never became work;
+ *   - the desktop friction-flag journal's reported surfaces: the
+ *     per-flag {v, id, createdAt, repo, tier, lead, flag, source,
+ *     surface, description} rows the console's Flag UI friction action
+ *     appends to ~/.ashlr/router/feedback.jsonl through
+ *     enqueueFrictionFlag — one deliberate authenticated user report
+ *     per row, folded per surface over every retained row inside the
+ *     bounded tail (frictionFlagBacklogItems below). Until now the
+ *     journal had no reader at all — queue-writer.mjs only re-exports
+ *     the writer — so every report a user filed sat in an append-only
+ *     file nobody opened, never work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -586,6 +596,7 @@ import { repairHandoffBacklogItems } from './repair-handoff-backlog.js';
 import { catalogRefreshBacklogItems } from './catalog-refresh-backlog.js';
 import { automationBacklogItems } from './automation-backlog.js';
 import { gatewayActivityBacklogItems } from './gateway-activity-backlog.js';
+import { frictionFlagBacklogItems } from './friction-flag-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1374,6 +1385,22 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's gateway and carries no repository column.
   items.push(...await gatewayActivityBacklogItems({ repo }));
+
+  // Desktop friction-flag journal: the console's Flag UI friction action
+  // appends one row per deliberate authenticated user report to
+  // ~/.ashlr/router/feedback.jsonl through enqueueFrictionFlag — until
+  // now the journal had no reader at all, so every report a user filed
+  // sat in an append-only file nobody opened, never work. Rows count
+  // only under the writer's contract (the RQ-DESKTOP-FRICTION id shape,
+  // the fixed repo/tier/lead/flag/source literals, the surface pattern
+  // and description bound), flags carry no expiry so the fold covers
+  // every retained row, each surface with at least one report emits —
+  // a deliberate human flag needs no machine-telemetry recurrence bar —
+  // descriptions are scrubbed, deduped, capped and quoted inside a DATA
+  // fence, truncated tails are stated as lower bounds, and only the
+  // fleet's own repository inherits the items since the journal
+  // describes this install's console and carries no repository column.
+  items.push(...await frictionFlagBacklogItems({ repo }));
   return { items, errors };
 }
 

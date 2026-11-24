@@ -611,6 +611,7 @@
 /test/improve-disk-backlog.test.ts @masonwyatt23
 /test/improve-dupcheck-gate-backlog.test.ts @masonwyatt23
 /test/improve-empty-tag-backlog.test.ts @masonwyatt23
+/test/improve-friction-flag-backlog.test.ts @masonwyatt23
 /test/improve-gap-proposal-backlog.test.ts @masonwyatt23
 /test/improve-gateway-activity-backlog.test.ts @masonwyatt23
 /test/improve-gateway-shadow-backlog.test.ts @masonwyatt23
