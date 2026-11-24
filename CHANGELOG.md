@@ -111,6 +111,48 @@ Merged after #7384 (#7385 to #7604). Bridge, recovery and release bookkeeping is
 - Require live account evidence for Devin previews and use unique shim temp paths (#7532).
 - Regenerate the CLI reference, quickstart version pins and the site LLM digest so they match master.
 
+### Since #7604
+
+Merged after #7604 (#7605 to #7924). Bridge, recovery and release bookkeeping is left out.
+
+**CLI**
+
+- Add `phm today` for a phone: one sentence on merges, running jobs, empty pools and open asks, with the same data on the phone Today screen (#7873).
+- Add `phm jobs dupcheck <prompt-file>` to check whether the work in a job prompt is already on master, read-only (#7794).
+- Add `phm self-update --check` and `--plan` to say whether this host's `phm` is current and print the blue/green steps without running them (#7824).
+- Add `phm lanes pressure` to show per lane whether memory pressure is throttling it (#7751), and make `phm lanes` say when rows wait on a used-up pool (#7838).
+- Skip low-yield lanes when remapping jobs; `phm lanes yield` shows the verdict per lane (#7675).
+- Add `phm releases` with configurable clone roots and an unknown verdict with the paths it tried for repos it cannot read (#7757), and make release cadence read in plain words (#7859).
+- Add `phm worktrees --reap --plan` and a faster age rule (#7711), reap stale worktrees that never published (#7852), and classify a worktree whose state cannot be read as state-unknown (#7808).
+- Add `phm doctor build` to tell whether the running `phm` is the merged code, with an alert when the live build is stale (#7700, #7742).
+- Add a pace gate for self-supply: a pool ahead of pace gets no new rows (#7882).
+- Show which seat the leader can move to in `phm leader seat` (#7867).
+- Treat `"ceiling": null` in `slots.json` as no fixed ceiling (#7754).
+
+**Fleet**
+
+- Run queue autofill for an idle lane that has work (#7776), move the planner to a lane that still has room (#7777) and say plainly when no fallback exists (#7804).
+- Run a gap hook inside the self-tick (#7779), queue gaps for lanes that can run them (#7802) and count only rows that can launch in the gap feed (#7909).
+- Reap worktrees inside the self-tick (#7737) and make the fleet count its own merges (#7897).
+- Report one honest work state per job (#7841), put an honest state word on chat replies (#7713) and stop inbox acks showing pending forever (#7840, #7871).
+- Send the owner only asks that software cannot answer (#7708) and group empty jobs by plain reason in the digest (#7856).
+- Make memory pressure throttle local lanes first (#7751), and make stray-stop and meter-drop always report a reason (#7836, #7835, #7866).
+- Make the landed sweep read git when `gh` is out (#7822, #7887) and show Tailscale computers as not joined (#7716).
+
+**Desktop and mobile**
+
+- Show agent messages as live edges on the fleet map (#7770), group agents by org on the map (#7689) and show lane capability badges (#7691).
+- Add a lane yield board and a lane supply glance (#7898, #7786).
+- Show pace verdicts and spend-down on the Pools card, and whether refilled pools are being used (#7889, #7857, #7680).
+- Add map click-through to a session tail that shows only the delta (#7899), and a leader thread delta (#7881).
+- Add a phone Today screen (#7873).
+
+**Fixes**
+
+- Harden the unified comms inbox against malformed rows and secret-shaped outbox names (#7644).
+- Green three suites that were red on master: caps context7 parity, empties API clock and dashboard timeout (#7643).
+- Stop the build failing on some Node versions (#7785).
+
 ### Added
 
 - Add `phm devin autoland` with capped dry-run/apply passes, principal filtering, bundle deduplication, retry backoff, superseding PRs, pause/resume and a single-flight resident timer. Successful landings terminate and archive their Devin sessions.

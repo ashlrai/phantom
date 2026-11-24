@@ -42,7 +42,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees); reference in [verify-changed.md](verify-changed.md) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, the duplicate test-name check scoped to the merge-base when scanned tests, the checker or its baseline change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -52,7 +52,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Web console tests | `npm run test:web` |
 | Safety invariant suites | `npm run test:invariants` |
 | Documentation links and anchors (offline) | `npm run check:docs` |
-| Duplicate test names across `test/` (describe path + title) | `node scripts/check-test-names.mjs` |
+| Duplicate test names across `test/` (describe path + title) | `node scripts/check-test-names.mjs`; `--base <ref>` rejects increased collision counts while retaining stale-baseline checks |
 | Fast local gate: build, static checks, related tests, smoke set | `npm run gate` (`-- --base <ref>`, `-- --json`) |
 | Full gate: complete backend and web suites | `npm run gate:full` |
 | Release-readiness subset | `npm run check:release` |

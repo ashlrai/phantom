@@ -252,6 +252,8 @@ find the opt-in failure-first ordering and duration-weighted Mac partition
 hints in [CI test feedback](docs/CI-TEST-FEEDBACK.md#duration-weighted-partition-hints);
 both are off by default.
 
+Duplicate test-name checks run when scanned files under `test/`, the checker or its baseline change. `node scripts/check-test-names.mjs --base <merge-base>` and the related-test gate reject collisions whose occurrence count increased. Stale baseline entries still fail. The full gate retains the strict scan.
+
 ### Definition of green
 
 #### Keep development and release checks economical

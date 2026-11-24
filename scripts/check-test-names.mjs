@@ -23,6 +23,7 @@
  * Usage:
  *   node scripts/check-test-names.mjs [--dir test] [--bare-it] [--verbose]
  *                                      [--baseline FILE] [--no-baseline]
+ *                                      [--base REF]
  *
  *   --dir DIR       scan DIR instead of test/ (fixtures, node_modules and
  *                   dist directories are always skipped)
@@ -32,19 +33,32 @@
  *   --baseline FILE read known-collision names from FILE instead of the
  *                   default scripts/check-test-names-baseline.json
  *   --no-baseline   report every collision, ignoring any baseline
+ *   --base REF      diff scope: scan the worktree as usual, then archive the
+ *                   same directory at REF and fail only on collisions whose
+ *                   full name occurs MORE often than it did at REF. Collisions
+ *                   inherited unchanged from the base (including every
+ *                   baseline-known name) do not fail, so a branch can be gated
+ *                   on the duplicates it introduces instead of the legacy
+ *                   debt already on the base. Stale baseline entries still
+ *                   fail. File renames and moves of an unchanged collision
+ *                   keep the same occurrence count and pass.
  *   --verbose, -v   list baseline-known collision sites instead of a count
  *
  * Names in the baseline file are pre-existing duplicates that live in
  * owner-locked files and cannot be renamed here; they are reported under
  * "known" and do not fail the check. Baseline entries that no longer collide
  * are stale and DO fail, so the list must be pruned when a duplicate is
- * fixed. Exit code is 0 with no new collisions and no stale entries,
- * 1 otherwise.
+ * fixed. Without --base, exit code is 0 with no new collisions and no stale
+ * entries, 1 otherwise. With --base, exit code is 0 when no collision grew
+ * past its base count and no baseline entry is stale, 1 otherwise, and 2
+ * when REF cannot be resolved or archived.
  */
 
 import ts from 'typescript';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -54,6 +68,7 @@ let scanDir = 'test';
 let bareIt = false;
 let verbose = false;
 let baselinePath = 'scripts/check-test-names-baseline.json';
+let baseRef = null;
 for (let i = 0; i < args.length; i += 1) {
   if (args[i] === '--dir') {
     scanDir = args[i + 1];
@@ -65,10 +80,17 @@ for (let i = 0; i < args.length; i += 1) {
     i += 1;
   } else if (args[i] === '--no-baseline') {
     baselinePath = null;
+  } else if (args[i] === '--base') {
+    baseRef = args[i + 1];
+    i += 1;
+    if (!baseRef || baseRef.startsWith('--')) {
+      console.error('--base needs a git ref');
+      process.exit(2);
+    }
   } else if (args[i] === '--verbose' || args[i] === '-v') {
     verbose = true;
   } else if (args[i] === '--help' || args[i] === '-h') {
-    console.log('usage: node scripts/check-test-names.mjs [--dir test] [--bare-it] [--verbose] [--baseline FILE] [--no-baseline]');
+    console.log('usage: node scripts/check-test-names.mjs [--dir test] [--bare-it] [--verbose] [--baseline FILE] [--no-baseline] [--base REF]');
     process.exit(0);
   } else {
     console.error(`unknown argument: ${args[i]}`);
@@ -360,23 +382,54 @@ function collect(file) {
 }
 
 const absDir = isAbsolute(scanDir) ? scanDir : join(repoRoot, scanDir);
-const byFull = new Map();
-const byBare = new Map();
-let fileCount = 0;
-let testCount = 0;
 
-for (const file of walk(absDir)) {
-  fileCount += 1;
-  for (const t of collect(file)) {
-    testCount += 1;
-    const rel = relative(repoRoot, file);
-    const push = (map, key) => {
-      const arr = map.get(key) || [];
-      arr.push({ file: rel, line: t.line });
-      map.set(key, arr);
-    };
-    push(byFull, t.full);
-    push(byBare, t.title);
+/**
+ * Scan one tree: full-name -> occurrence sites for collision reporting, plus
+ * the total emitted instances per full name that --base compares against the
+ * archived base tree (occurrence count is file-rename stable).
+ */
+function scanNames(dir) {
+  const byFull = new Map();
+  const byBare = new Map();
+  const totals = new Map();
+  let fileCount = 0;
+  let testCount = 0;
+
+  for (const file of walk(dir)) {
+    fileCount += 1;
+    for (const t of collect(file)) {
+      testCount += 1;
+      const rel = relative(repoRoot, file);
+      const push = (map, key) => {
+        const arr = map.get(key) || [];
+        arr.push({ file: rel, line: t.line });
+        map.set(key, arr);
+      };
+      push(byFull, t.full);
+      push(byBare, t.title);
+      totals.set(t.full, (totals.get(t.full) ?? 0) + 1);
+    }
+  }
+  return { byFull, byBare, totals, fileCount, testCount };
+}
+
+/**
+ * Occurrence totals for every full name at REF. The scanned directory's
+ * repo-relative subtree is archived out of the git worktree containing it, so
+ * --dir fixtures inside throwaway repositories work unchanged. Realpaths on
+ * both sides keep `relative` honest when tmpdir() crosses a symlink (macOS
+ * /var -> /private/var).
+ */
+function baseTotals(ref, dir) {
+  const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  const subtree = relative(realpathSync(top), realpathSync(dir)).split(sep).join('/');
+  const tmp = mkdtempSync(join(tmpdir(), 'check-test-names-base-'));
+  try {
+    const archive = execFileSync('git', ['-C', top, 'archive', ref, ...(subtree ? [subtree] : [])], { maxBuffer: 1 << 30 });
+    execFileSync('tar', ['-x', '-C', tmp], { input: archive, maxBuffer: 1 << 30 });
+    return scanNames(subtree ? join(tmp, subtree) : tmp).totals;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 }
 
@@ -416,30 +469,58 @@ if (baselinePath) {
   }
 }
 
-const full = collisions(byFull);
-const split = (list) => ({
-  known: list.filter((c) => baseline.has(c.name)),
-  unknown: list.filter((c) => !baseline.has(c.name)),
-});
-const cross = split(full.cross);
-const intra = split(full.intra);
+const head = scanNames(absDir);
+const full = collisions(head.byFull);
 const stale = [...baseline].filter(
   (name) => !full.cross.some((c) => c.name === name) && !full.intra.some((c) => c.name === name),
 );
 let failed = false;
+let knownCount = 0;
+const scope = baseRef ? ` vs ${baseRef}` : '';
 
-const report = (label, { known, unknown }) => {
-  if (unknown.length) {
-    failed = true;
-    console.log(`${label} (${unknown.length}):\n${format(unknown)}`);
+if (baseRef) {
+  let base;
+  try {
+    base = baseTotals(baseRef, absDir);
+  } catch (error) {
+    console.error(`check-test-names: cannot read test tree at ${baseRef}: ${error.message}`);
+    process.exit(2);
   }
-  if (known.length) {
-    const detail = verbose ? `\n${format(known)}` : ' (pass --verbose to list)';
-    console.log(`${label.replace('duplicate', 'known duplicate')} (baseline, ${known.length}):${detail}`);
+  // Fail only collisions the change made worse: the full name must occur MORE
+  // often in the worktree than at the base. Inherited collisions, including
+  // baseline-known names and pure file renames, keep their count and pass.
+  const grew = (list) => list.filter((c) => (head.totals.get(c.name) ?? 0) > (base.get(c.name) ?? 0));
+  for (const [label, list] of [
+    ['new duplicate test names across files', grew(full.cross)],
+    ['new duplicate test names within one file', grew(full.intra)],
+  ]) {
+    if (list.length) {
+      failed = true;
+      console.log(`${label}${scope} (${list.length}):\n${format(list)}`);
+    }
   }
-};
-report('duplicate test names across files', cross);
-report('duplicate test names within one file', intra);
+} else {
+  const split = (list) => ({
+    known: list.filter((c) => baseline.has(c.name)),
+    unknown: list.filter((c) => !baseline.has(c.name)),
+  });
+  const cross = split(full.cross);
+  const intra = split(full.intra);
+  knownCount = cross.known.length + intra.known.length;
+
+  const report = (label, { known, unknown }) => {
+    if (unknown.length) {
+      failed = true;
+      console.log(`${label} (${unknown.length}):\n${format(unknown)}`);
+    }
+    if (known.length) {
+      const detail = verbose ? `\n${format(known)}` : ' (pass --verbose to list)';
+      console.log(`${label.replace('duplicate', 'known duplicate')} (baseline, ${known.length}):${detail}`);
+    }
+  };
+  report('duplicate test names across files', cross);
+  report('duplicate test names within one file', intra);
+}
 
 if (stale.length) {
   failed = true;
@@ -448,7 +529,7 @@ if (stale.length) {
 }
 
 if (bareIt) {
-  const bare = collisions(byBare);
+  const bare = collisions(head.byBare);
   const advisory = bare.cross.filter(
     (c) => !full.cross.some((f) => f.name.endsWith(c.name)),
   );
@@ -457,11 +538,10 @@ if (bareIt) {
   }
 }
 
-const knownCount = cross.known.length + intra.known.length;
 console.log(
   failed
-    ? `\ncheck-test-names: FAIL (${fileCount} files, ${testCount} tests scanned)`
-    : `\ncheck-test-names: OK (${fileCount} files, ${testCount} tests scanned, ` +
+    ? `\ncheck-test-names: FAIL (${head.fileCount} files, ${head.testCount} tests scanned${scope})`
+    : `\ncheck-test-names: OK (${head.fileCount} files, ${head.testCount} tests scanned${scope}, ` +
       `${knownCount ? `${knownCount} baseline-known, ` : ''}no new duplicate full names)`,
 );
 process.exit(failed ? 1 : 0);
