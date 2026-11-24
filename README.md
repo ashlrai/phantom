@@ -220,7 +220,7 @@ To watch it work, run `phm org --text` for the live leader, lanes and running jo
 
 AshlrAI is an engineering firm. We build tools like Phantom to make our own work faster and more AI-native, then open-source them so every engineer can do the same. If you build with coding agents, build this with us.
 
-- **Start here:** read [CONTRIBUTING.md](CONTRIBUTING.md). Your coding agent can follow [AGENTS.md](AGENTS.md) and [llms.txt](llms.txt).
+- **Start here:** read [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md). Your coding agent can follow [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md) and [llms.txt](https://github.com/ashlrai/phantom/blob/master/llms.txt).
 - **Pick an issue:** [`good first issue`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [`help wanted`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
 - **See the whole lineup:** [ashlr.ai/open-source](https://ashlr.ai/open-source).
 - **Talk with us:** [The Dev Shack](https://discord.gg/jBQrSU6XeD) on Discord.
