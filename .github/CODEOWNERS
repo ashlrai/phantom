@@ -625,6 +625,7 @@
 /test/improve-jev-backlog.test.ts @masonwyatt23
 /test/improve-job-control-backlog.test.ts @masonwyatt23
 /test/improve-judge-backlog.test.ts @masonwyatt23
+/test/improve-launch-cost-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial-backlog.test.ts @masonwyatt23
 /test/improve-lesson-trial.test.ts @masonwyatt23
 /test/improve-load-backlog.test.ts @masonwyatt23

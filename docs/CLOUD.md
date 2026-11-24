@@ -1216,7 +1216,37 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   writer's own read bound is stated as a lower bound when it
   truncates, and rows emit only for the fleet's own repository since
   the ledger describes this install's spawn machinery and carries no
-  repository column.
+  repository column, and the launch-cost probe journal's silent,
+  coverage and storm cells, the fleet.launch-cost.v1 rows
+  contrib/mac/launch_cost.py appends to
+  <runs>/metrics/launch-cost.jsonl — the fleet's only per-attempt
+  first-minute process/CPU probe and the only resource-cost evidence
+  subscription lanes record, since their finish rows carry no
+  cost_usd — read until now only by `phm fleet vitals`, `phm router
+  outcomes` and `phm fleet router-weights`, reports that never queued
+  work (launchCostBacklogItems). A silent cell becomes an item when
+  the jobs ledger proves at least three distinct launches inside the
+  window while the probe file yields zero in-window valid rows — the
+  producer exists and is tested but nothing in the launch path invokes
+  it; per-lane coverage cells become items when non-measured rows
+  ('unknown'/'partial' — the probe ran but could not fully measure)
+  reach the recurring bars of three rows across two distinct UTC days
+  of dated evidence, a lane whose non-measured evidence is entirely
+  undated emitting on attempt count instead with the unrecorded dates
+  stated; and per-lane cost cells become items when measured launches
+  keep crossing the feed's documented storm bar (>=100 session
+  processes or >=800% of one core for the full minute) across two
+  distinct UTC days. Rows count only under the producer's closed
+  contract (exact schema, bounded lane/launchId identifiers,
+  windowSeconds 60, the measured/partial/unknown vocabulary, metric
+  figures inside their shapes — unknown rows carry none, measured rows
+  require nearly-full coverage with at least 12 samples, mean CPU never
+  exceeds peak); dated rows window on startedAt inside the 7-day
+  window, undated rows join only by append order after the window's
+  first dated row — or wholesale when the file holds no dated row at
+  all, the probe-blind case — truncated tails are stated as lower
+  bounds, and items emit only for the fleet's own repository since the
+  probe is this install's launch machinery.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1227,7 +1257,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review and custody items carry priority 3;
+  devin-review, custody and launch-cost items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
