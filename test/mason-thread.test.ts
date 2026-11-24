@@ -118,6 +118,48 @@ it('filters outbound replies by the same ceiling and reads an inverted window as
   expect(inverted.items).toEqual([]);
 });
 
+it('slices the merged thread by channel, keeping a two-channel request whole', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-slice-1', 'Ship the docs fix', NOW - 300_000);
+  await f.inbound('desktop', 'key-slice-2', 'ship the  docs fix', NOW - 290_000);
+  await f.inbound('imessage', 'key-slice-3', 'Check the inbox please', NOW - 200_000);
+  const base = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, sinceMs: NOW - 86_400_000, now: NOW, trace: noTrace };
+  const byDesktop = await readMasonThread({ ...base, channel: 'desktop' });
+  expect(byDesktop.items.map(i => i.text)).toEqual(['Ship the docs fix']);
+  expect(byDesktop.items[0]).toMatchObject({ channel: 'imessage', also_on: ['desktop'] });
+  const byImessage = await readMasonThread({ ...base, channel: 'imessage' });
+  expect(byImessage.items.map(i => i.text)).toEqual(['Ship the docs fix', 'Check the inbox please']);
+  expect((await readMasonThread({ ...base, channel: 'slack' })).items).toEqual([]);
+});
+
+it('slices the merged thread by direction and matches a reply under every channel it was sent to', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-dir-1', 'please answer this', NOW - 300_000);
+  await sendOwnerReply({ text: 'Answering now.', idempotencyKey: 'reply-dir' }, f.owner);
+  const base = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, sinceMs: NOW - 86_400_000, now: NOW, trace: noTrace };
+  const inboundOnly = await readMasonThread({ ...base, direction: 'inbound' });
+  expect(inboundOnly.items.map(i => i.dir)).toEqual(['in']);
+  const outboundOnly = await readMasonThread({ ...base, direction: 'outbound' });
+  expect(outboundOnly.items.map(i => [i.dir, i.channel, i.also_on, i.text])).toEqual([['out', 'imessage', ['desktop'], 'Answering now.']]);
+  // The reply fanned out to imessage and desktop: --channel desktop keeps it.
+  const replyOnDesktop = await readMasonThread({ ...base, channel: 'desktop', direction: 'outbound' });
+  expect(replyOnDesktop.items.map(i => i.text)).toEqual(['Answering now.']);
+});
+
+it('slices the merged thread by contains over the printed text', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-find-1', 'Ship the docs fix', NOW - 300_000);
+  await f.inbound('imessage', 'key-find-2', 'Check the   inbox please', NOW - 200_000);
+  const base = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, sinceMs: NOW - 86_400_000, now: NOW, trace: noTrace };
+  const found = await readMasonThread({ ...base, contains: 'DOCS fix' });
+  expect(found.items.map(i => i.text)).toEqual(['Ship the docs fix']);
+  // Whitespace collapses on both sides, the same rule every comms --contains applies.
+  const spaced = await readMasonThread({ ...base, contains: 'the   inbox' });
+  expect(spaced.items).toHaveLength(1);
+  expect(spaced.items[0]!.text).toContain('inbox');
+  expect((await readMasonThread({ ...base, contains: 'nothing matches this' })).items).toEqual([]);
+});
+
 it('parses --before on the thread command and refuses a bad value', async () => {
   const f = fixture();
   await f.inbound('imessage', 'key-cli-old', 'cli older note', NOW - 300_000);
@@ -132,4 +174,32 @@ it('parses --before on the thread command and refuses a bad value', async () => 
   expect(thread.before).toBe('2026-11-19T11:58:00.000Z');
   expect(thread.items.map((i: { text: string }) => i.text)).toEqual(['cli older note']);
   expect(await cmdMason(['thread', '--before', 'soon'], deps)).toBe(2);
+});
+
+it('parses --channel, --direction and --contains on the thread command and refuses bad values', async () => {
+  const f = fixture();
+  await f.inbound('imessage', 'key-cli-f1', 'cli channel note', NOW - 300_000);
+  await f.inbound('desktop', 'key-cli-f2', 'cli desktop note', NOW - 200_000);
+  await sendOwnerReply({ text: 'cli reply note', idempotencyKey: 'reply-cli-f' }, f.owner);
+  const deps = { runsDir: f.runsDir, busRoot: join(f.runsDir, 'bus'), owner: f.owner, now: NOW, trace: noTrace };
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const read = async (args: string[]) => {
+    log.mockClear();
+    // An explicit --since keeps the read inside the fixture window whatever the real clock says.
+    expect(await cmdMason(['thread', '--json', '--since', '2026-11-18T00:00:00.000Z', ...args], deps)).toBe(0);
+    return JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+  };
+  // The reply went to the desktop inbound, so it is a desktop outbound item.
+  expect((await read(['--channel', 'desktop'])).items.map((i: { text: string }) => i.text))
+    .toEqual(['cli desktop note', 'cli reply note']);
+  expect((await read(['--direction', 'outbound'])).items.map((i: { text: string }) => i.text))
+    .toEqual(['cli reply note']);
+  expect((await read(['--contains', 'CHANNEL'])).items.map((i: { text: string }) => i.text))
+    .toEqual(['cli channel note']);
+  expect((await read(['--channel', 'slack'])).items).toEqual([]);
+  expect(await cmdMason(['thread', '--channel', 'Bad Channel'], deps)).toBe(2);
+  expect(await cmdMason(['thread', '--direction', 'sideways'], deps)).toBe(2);
+  expect(await cmdMason(['thread', '--contains', '   '], deps)).toBe(2);
+  expect(await cmdMason(['thread', '--contains', '--json'], deps)).toBe(2);
 });
