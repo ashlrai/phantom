@@ -36,7 +36,7 @@ describe('order-merged notification engine', () => {
       Response.json(path === '/api/verse/leader/orders' ? trace : sources[path] ?? null)));
     await act(async () => { render(<Harness />); });
     expect(mine()).toEqual([expect.objectContaining({ id: 'order-merged:11-01 00:08',
-      title: 'Your 11-01 00:08 order: 1 of 2 merged', detail: 'merged #12, running' })]);
+      title: 'Your 11-01 00:08 order: 1 of 2 merged', detail: 'merged #12, launched' })]);
   });
 
   it.each(['404', 'network error'])('raises nothing on a %s trace read', async failure => {

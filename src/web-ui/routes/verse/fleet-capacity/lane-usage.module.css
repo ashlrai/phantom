@@ -1,0 +1,16 @@
+/* The usage window under a Capacity card's slot readings: a hairline, a title that opens Pools, the reading, the shared bar, one line on how it ends. */
+.usage { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 var(--space-2); min-width: 0; }
+.title { color: var(--text-tertiary); font-family: var(--font-display); font-size: var(--text-2xs-size); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+.open { padding: 0; border: 0; border-radius: var(--radius-xs); background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.open:hover { color: var(--text-primary); text-decoration: underline; }
+.open:focus-visible { outline: none; box-shadow: var(--shadow-focus-ring); }
+.figure { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.figure b { color: var(--text-primary); font-weight: var(--font-weight-semibold); }
+/* No reading is set like every other unknown: gray and italic, never a number. */
+.figure b[data-unknown] { color: var(--status-unknown-fg); font-style: italic; font-weight: var(--font-weight-regular); }
+.note { margin: 0; color: var(--text-tertiary); }
+.note[data-tone='warning'] { color: var(--status-warning-fg); }
+.key { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; color: var(--text-tertiary); }
+.key span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.key code { font: inherit; color: var(--text-secondary); }

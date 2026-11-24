@@ -8,7 +8,15 @@ import { useDocumentVisible, usePollWhileVisible, useSectionVisible } from '../s
 import styles from './fleet-host.module.css';
 
 const PATH = '/api/verse/apps/control';
-const query = { key: 'allowed-apps', fetch: (signal?: AbortSignal) => apiGet<AppsListReport>(PATH, signal) };
+const query = { key: 'allowed-apps', fetch: async (signal?: AbortSignal) => {
+  const data = await apiGet<AppsListReport>(PATH, signal);
+  if (!data || typeof data.connected !== 'boolean' || !Array.isArray(data.apps)
+    || data.apps.some(app => !app || typeof app.name !== 'string' || !Array.isArray(app.actions)
+      || app.actions.some(action => typeof action !== 'string'))) {
+    throw new Error('Invalid allowed apps response');
+  }
+  return data;
+} };
 
 /** The console uses the same per-app policy and results as phm apps. */
 export function AllowedAppsCard({ visible }: { visible: boolean }) {
@@ -36,7 +44,7 @@ export function AllowedAppsCard({ visible }: { visible: boolean }) {
   return <section className={styles.section} aria-label="Allowed apps">
     <h3 className={styles.title}>Allowed apps</h3>
     {read.status === 'error' ? <p role="status">Allowed apps are unavailable. Controls are disabled.</p> : null}
-    {!read.data ? <p className={styles.muted}>Reading allowed apps...</p> : <>
+    {!read.data ? read.status === 'error' ? null : <p className={styles.muted}>Reading allowed apps...</p> : <>
       {!read.data.connected ? <p className={styles.muted}>Desktop connection unavailable. App state is unknown; requests can still go to Needs you.</p> : null}
       {read.data.apps.length === 0 ? <p className={styles.muted}>No apps allowed. Configure apps-allow.json to enable app control.</p> : null}
       <ul>{read.data.apps.map(app => <li className={styles.line} key={app.name}>

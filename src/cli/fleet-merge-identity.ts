@@ -8,6 +8,8 @@
 import { assertRepo, defaultGh, type Gh } from '../core/autopilot/github.js';
 import { readMerges, summarizeMerges } from '../core/prs/merge-identity.js';
 
+export const FLEET_MERGE_IDENTITY_USAGE = 'Usage: ashlr fleet merge-identity --since <ISO> [--until <ISO>] [--repo <owner/name>] [--json]';
+
 const USAGE = [
   'Usage: ashlr fleet merge-identity --since <ISO> [--until <ISO>] [--repo <owner/name>] [--automation-login <login>]... [--json]',
   'Count merged PRs in a window by actor class: automation (a Bot, or a login you name), human, or unknown.',

@@ -63,7 +63,11 @@ describe('readFleetGmailTriageLatest', () => {
   });
 
   it('reports missing for an absent, invalid-JSON or wrong-schema file', () => {
-    const missing = { schema: 'fleet.mcp.gmail-triage-latest.v1', state: 'missing', latest: null, overTarget: null, ageSeconds: null };
+    const missing = {
+      schema: 'fleet.mcp.gmail-triage-latest.v1', state: 'missing', latest: null, overTarget: null,
+      overTargetScope: 'unknown', ageSeconds: null, liveInboxTargetState: 'unknown', inboxes: [],
+      inboxLabelIdentity: 'directory-basename-unverified',
+    };
     expect(readFleetGmailTriageLatest(root)).toEqual(missing);
     saveRaw('{not json');
     expect(readFleetGmailTriageLatest(root)).toEqual(missing);

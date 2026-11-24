@@ -46,6 +46,73 @@ system Python and macOS Gatekeeper acceptance remain fresh-Mac prerequisites.
 The app is locally signed, not Developer ID notarized; this command never bypasses
 Gatekeeper or changes system security settings.
 
+### Upgrade an existing managed install
+
+On macOS arm64, use a CLI containing the upgrade verb to inspect the newest
+qualified paired release. An owner whose installed release lacks this verb runs
+it from a newer installed CLI, for example the npm package containing it. This
+does not convert an unmanaged npm install into a managed installation: the
+existing managed current pointer and both managed command links must verify.
+
+```sh
+phm desktop install --upgrade                       # dry-run plan, default
+phm authority stop --json                           # engage Stop and drain work
+phm desktop install --upgrade --apply               # fresh inspection and switch
+phm desktop install --upgrade --require-app         # require a verified existing app
+phm desktop install --upgrade --to 3.30.35           # select a qualified version
+phm desktop install --rollback                     # inspect journaled previous CLI
+phm desktop install --rollback --apply              # explicitly switch back
+```
+
+Flags may appear in any order. `--require-app` and `--to` require `--upgrade`;
+rollback accepts only optional `--apply`. Inspection downloads and verifies
+signed app and CLI artifacts into the private staging directory but changes no
+installation and never stops the resident. Equal versions report `current`;
+older candidates are refused. Apply requires Stop/drain and normal Quit of
+Phantom, verifies and smoke-tests the new CLI, then uses resident stop before an
+atomic managed-pointer switch. It keeps the previous release and records a
+private rollback journal. Rollback requires that journal's current release still
+matches the managed pointer; a successful rollback swaps the journal entries.
+Neither operation writes to `/Applications`, builds, signs or edits shell setup.
+
+The JSON `app.state` is `current` for the manifest's signed inventory,
+`update-available` for a different verified signed inventory (`native-signed-update`),
+`needs-owner` for an unverified identity (`app-identity-unverified`, including an
+ad-hoc signature), `absent` when no app is found, or `unknown` when not inspected.
+An owner must reinstall the signed Phantom.app for `needs-owner`; by default
+this does not block the CLI switch. `--require-app` holds on `needs-owner` or
+`absent` instead of silently treating an unverified app as updated.
+
+Resident restart and any Touch ID grant stay with the owner. The plan includes
+`phm authority grant (Touch ID)` if the authority surface changed, before
+`phm authority resident start (owner confirmation)`. These are owner-action plan
+labels, not automatically executed commands: use `phm authority grant` for the
+Touch ID ceremony and `phm authority resident start` only after owner confirmation.
+Upgrade uses resident stop with no confirmation and never grants or starts
+authority. A successful CLI switch does not claim native-app update or restart.
+
+Common `reason` codes (and `stop.reason` for drain state):
+
+| Reason | Meaning / owner action |
+| --- | --- |
+| `not-installed` | No managed current pointer; use consumer first install. |
+| `unmanaged-current` | Current is unsafe, incomplete or not an owned release; preserve it for explicit recovery. |
+| `unmanaged-links` | Both command links must already be managed; resolve collisions explicitly. |
+| `downgrade-refused` | Candidate is older; use journaled rollback rather than `--to` to downgrade. |
+| `already-current` | Candidate equals the installed version; no switch needed. |
+| `release-exists` | Candidate release directory already exists; preserve it for explicit recovery. |
+| `artifact-mismatch` | Downloaded size, digest or signature failed verification. |
+| `app-artifact` | Signed app verification, inventory or paired release record failed. |
+| `launcher-identity` | Candidate launcher differs from the running package's canonical launcher. |
+| `app-needs-owner` | `--require-app` found an absent or unverified app; install the signed app. |
+| `stop-required` / `drain-required` | Engage Stop, drain work and close Phantom normally before applying. |
+| `smoke-failed` | Previous/candidate CLI version smoke failed; no pointer switch accepted. |
+| `resident-stop-failed` | Resident stop failed; current pointer was not switched. |
+| `post-switch-smoke` | Post-switch verification failed; pointer restored, state `rolled-back`. |
+| `rollback-held` | Pointer restoration failed; state `held`. Preserve both releases and resolve pointer ownership explicitly; do not restart. |
+| `no-rollback` | No usable rollback journal/previous release; preserve existing installation. |
+| `current-changed` | Current no longer matches the inspected or journaled release; inspect again and resolve the change. |
+
 ### Historical DMG: 3.27.0
 
 The published canonical 3.27.0 release includes `Phantom.app`, with
@@ -87,7 +154,7 @@ For routine drift detection, `node scripts/sync-candidate-version.mjs --check`
 uses the root package version as the expected value; writing still requires an
 explicit version.
 
-This source tree targets version 3.30.35; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.72; check canonical release availability and exact matching assets before installation.
 
 Canonical releases use `ashlrai/phantom` and `@ashlr/phantom`.
 Its fixed discovery endpoint is
@@ -309,7 +376,9 @@ the item is simply inert — nothing breaks.
 window.__ASHLR_DESKTOP__?.reportTheme(resolvedTheme); // 'light' | 'dark'
 ```
 
-Call it once the theme resolves and on every change. The native window stores it
+Call it once the theme resolves and on every change, including the OS flipping
+light/dark while the preference is System (`trackThemeForShell` in
+`app/desktop-shell.ts` does both). The native window stores it
 next to the window geometry and paints the window background with the matching
 canvas colour (`#0b0b0d` dark / `#fafafa` light) **before the webview has
 painted** on the next launch. Without this call the app falls back to the macOS
@@ -331,6 +400,14 @@ fails if one is ever added, and the web catalog's key test parses `app_menu.rs`
 for the same reason. The one system-wide key, ⌃⌥Space, is registered by the app
 (`hotkey.rs`), never by the page; a vitest checks it equals the catalog's
 `app.summon`.
+
+**⌘K also lists every CLI command.** The palette's Commands group is the same
+catalog `phm commands --json` prints (name, description, argument forms,
+whether it changes state), so the two cannot drift. Return on a command shows
+its CLI line (⌘C copies it). A read-only command that needs no input runs
+right there and shows its output. One that changes state asks first; Return
+then puts the line in the Terminal, where you run it. The server never runs a
+state-changing command for the palette.
 
 ### 6. Desktop state (Settings ▸ Desktop)
 
@@ -966,11 +1043,11 @@ node desktop/scripts/prepare-sidecar.mjs    # → desktop/src-tauri/binaries/ash
                                             #   desktop/src-tauri/resources/public/
 
 # 3. (Once, or after editing the Phantom icon source icons/icon.svg.)
-cd desktop && npm run icons                 # = cargo tauri icon src-tauri/icons/icon.svg
+(cd desktop && npm run icons)               # = cargo tauri icon src-tauri/icons/icon.svg
 
-# 4. Release build — the .app and the .dmg.
-#    beforeBundleCommand runs the bundle policy assertion, then dmg-preflight.
-cd desktop && cargo tauri build
+# 4. Local release build — requires the existing Ashlr Local identity.
+#    Builds the .app only, signs the completed bundle once, then verifies it.
+npm --prefix desktop run build
 ```
 
 The native app icon is generated from the tracked Phantom ghost SVG on the existing rounded-square canvas. The five bundle icon outputs are generated locally, not checked in; the monochrome `tray.png` remains a separate tracked template icon. See [icon generation and provenance](src-tauri/icons/PLACEHOLDER.md). This artwork change preserves the stable `ai.ashlr.desktop` bundle identifier and signing identity.
@@ -979,7 +1056,7 @@ Timing on this Mac: about 6 minutes cold (the release profile is `lto = true`,
 `codegen-units = 1`, `panic = "abort"`), about 90 seconds when only the bundling
 needs to be redone. Nothing in step 4 needs the network.
 
-> **Step 4 alone re-bundles stale web assets.** `cargo tauri build` ships
+> **Step 4 alone re-bundles stale web assets.** The Tauri build ships
 > whatever is sitting in `src-tauri/binaries/` and `src-tauri/resources/public/`.
 > Those only change when steps 1–2 are re-run. After any change to `src/web-ui`
 > or `src/core`, run steps 1–2 again or the new build will contain the old
@@ -990,13 +1067,28 @@ needs to be redone. Nothing in step 4 needs the network.
 
 Output under `desktop/src-tauri/target/release/bundle/`:
 
-- `macos/Phantom.app` — the installable app
-- `dmg/Phantom_<version>_aarch64.dmg` — the disk image; `<version>` matches the root package version
+- `macos/Phantom.app` — the locally signed, strictly verified app
+
+The local producer (`scripts/build-local.mjs`) resolves the existing valid
+`Ashlr Local` certificate with `security find-identity` before compiling. It runs
+Tauri with `--no-sign --bundles app`, then signs the completed bundle with the
+certificate hash and existing entitlements. It requires the resource seal and
+verifies `--deep --strict` against `ai.ashlr.desktop` and that exact certificate.
+No file is copied or changed in the bundle after signing. Missing/untrusted keys,
+signing failures and verification failures stop the build; there is no identity
+creation or ad-hoc fallback. Run `npm run ship:local -- --native` from the repo
+root after the supported Stop/drain and normal Quit procedure.
+
+This command also works from `desktop/src-tauri` as
+`node ../scripts/build-local.mjs`. It always builds for the native host into this
+checkout's `target`, ignoring inherited `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET`
+and `TAURI_CONFIG` overrides so the installer consumes the verified output.
+DMGs are distribution packaging and are not needed for local installation.
 
 A debug bundle (unoptimized, faster to build, under `target/debug/bundle/`):
 
 ```sh
-cd desktop && cargo tauri build --debug
+npm --prefix desktop run build:debug
 ```
 
 > `npm run build` at the **repo root** cannot pass on this machine: its
@@ -1071,19 +1163,29 @@ cd desktop && CI=1 cargo tauri build
 ```
 
 That produces a DMG with default icon positions and no custom window layout. The
-`Phantom.app` inside is identical either way. Prefer this over
-`cargo tauri build --bundles app`, which skips the DMG entirely.
+`Phantom.app` inside is identical either way. This raw distribution/development
+build does not add the local signing identity. For local installation, use
+`npm --prefix desktop run build` from the repo root; it skips the DMG entirely
+and signs and verifies the completed app.
 
 **The .app is the artifact that matters.** Even when the DMG step fails, the
-bundler has already written
-`target/release/bundle/macos/Phantom.app` — it is complete and installable, and
-the failure is only about the disk image wrapped around it.
+bundler may already have written `target/release/bundle/macos/Phantom.app`.
+Its presence does not prove a valid signature. Rebuild with the local producer
+before using it for a first local installation.
 
 ### First open on an unsigned build (Gatekeeper)
 
-The raw `cargo tauri build` artifact may be unsigned. The supported local
-install through `ship:local --native` signs `/Applications/Phantom.app` with
-"Ashlr Local", a stable identity trusted for code signing on this Mac. It is
+The raw Tauri config has `bundle.macOS.signingIdentity: null`. With no explicit
+identity, Tauri skips app signing after copying resources. On Apple Silicon the
+linker can leave an ad-hoc executable signature (with a generated identifier),
+which has no bundle resource seal. This is not evidence that resources were
+copied after app signing: the app was never signed as a bundle. `ship:local`
+correctly refuses such a prebuilt app; do not bypass its verification.
+
+The local producer signs the completed prebuilt app with "Ashlr Local". The
+supported `ship:local --native` installation signs its private staging copy
+exactly once after all resource copies and plist edits, then verifies it before
+replacing `/Applications/Phantom.app`. This stable local identity is
 **not** an Apple Developer ID signature or notarization. Gatekeeper can still
 block its first open with *"Ashlr" cannot be opened because the developer
 cannot be verified*; a quarantined DMG may show a different warning.
@@ -1344,7 +1446,8 @@ probing the port, so just launch Phantom again. To clear it by hand:
 `pkill -f "Contents/MacOS/ashlr verse"`.
 
 **`cargo tauri build` fails at `bundle_dmg.sh`**
-The `.app` is already built and installable; only the disk image failed. See
+For local installation run `npm --prefix desktop run build` from the repo root;
+it builds, signs and verifies the app without a DMG. For distribution see
 [Is the DMG step broken?](#is-the-dmg-step-broken). Run
 `node scripts/dmg-preflight.mjs` and build again, or `CI=1 cargo tauri build` to
 skip the Finder layout step.

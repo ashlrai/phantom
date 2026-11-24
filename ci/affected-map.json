@@ -373,7 +373,6 @@
     "test/m514.release-canary-workflow.test.ts",
     "test/m515.release-publish-authority-split.test.ts",
     "test/m519.release-candidate-supersession.test.ts",
-    "test/m522.production-promotion-admission.test.ts",
     "test/m522.production-promotion-docs.test.ts",
     "test/m523.github-stable-release-finalization.test.ts",
     "test/m55.commands.test.ts",

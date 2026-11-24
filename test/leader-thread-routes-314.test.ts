@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import './helpers/local-memory.js';
 
 import {
   buildLeaderNeedsYou,
@@ -394,29 +395,19 @@ describe('ashlr leader say / thread / answer / approve / directives', () => {
     return { out, err };
   }
 
-  it('say prints the reply; thread lists the conversation', async () => {
+  // `say` and `thread` moved to the MASON-INBOX Leader chat (test/leader-chat.test.ts);
+  // here they must stay off the in-process Leader conversation.
+  it('help, usage errors, and say/thread never touch the in-process conversation', async () => {
     const io = capture();
     expect(await runLeaderCli(['--help'])).toBe(0);
     expect(io.out.join('\n')).toContain('Phantom Leader');
     expect(io.out.join('\n')).toContain('phm leader show [--json]');
     expect(io.out.join('\n')).toContain('Compatible alias: ashlr leader <command>');
-    replies.push(JSON.stringify({ reply: 'Cut scope.' }));
-    expect(await runLeaderCli(['say', 'What', 'now?'])).toBe(0);
-    expect(io.out).toContain('Cut scope.');
-    expect(listThread().map((m) => m.channel)).toEqual(['cli', 'cli']);
-    expect(await runLeaderCli(['thread', '--limit', '5'])).toBe(0);
-    expect(io.out.join('\n')).toMatch(/You \(cli\)[\s\S]*What now\?[\s\S]*Leader \(cli\)[\s\S]*Cut scope\./);
-    expect(await runLeaderCli(['thread', '--json'])).toBe(0);
-    expect(JSON.parse(io.out[io.out.length - 1]!).messages).toHaveLength(2);
     expect(await runLeaderCli(['say'])).toBe(2);
     expect(await runLeaderCli(['thread', '--limit'])).toBe(2);
-  });
-
-  it('say with a directive prefix reports the directive', async () => {
-    const io = capture();
-    replies.push(JSON.stringify({ reply: 'Noted.' }));
-    expect(await runLeaderCli(['say', 'focus: billing'])).toBe(0);
-    expect(io.out.join('\n')).toMatch(/Standing directive recorded: od-\d{14}-[a-f0-9]{6} \(focus\) Focus on billing/);
+    expect(await runLeaderCli(['thread', '--text', '--json'])).toBe(2);
+    expect(await runLeaderCli(['thread', '--limit', '5', '--text'])).toBe(0);
+    expect(listThread()).toEqual([]);
   });
 
   it('answer records; unknown / malformed ids fail with the right exit code', async () => {

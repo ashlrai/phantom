@@ -40,6 +40,7 @@ import {
   recordDecision,
 } from './ledger.js';
 import { DECISION_KINDS } from './registry.js';
+import { decideOption, type DecideDeps, type DecideInput, type DecideResult } from './options.js';
 import type {
   DecideOptions,
   Decision,
@@ -283,10 +284,35 @@ function gate<T>(g: GateInput<T>): Decision<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Ask Jev a batch of typed questions about one piece of state and return the
- * gated decision. NEVER THROWS — every failure is the fallback plus a reason.
+ * The one typed-decision entry point, in two forms.
+ *
+ * Option form: `decide({ question, options, context? })` asks the router's
+ * cheapest verified model to pick one of `options` and returns
+ * `{ version, choice, confidence, reason, model, latency_ms }`, with "unknown"
+ * instead of a guess (see options.ts). Only bad input throws.
+ *
+ * Kind form: ask Jev a batch of typed questions about one piece of state and
+ * return the gated decision. NEVER THROWS — every failure is the fallback plus
+ * a reason.
  */
-export async function decide<T>(
+export function decide<const O extends readonly string[]>(input: DecideInput<O>, deps?: DecideDeps): Promise<DecideResult<O[number]>>;
+export function decide<T>(
+  kind: DecisionKind,
+  state: string,
+  questions: Readonly<Record<string, TypeSafeQuestion>>,
+  opts: DecideOptions<T>,
+): Promise<Decision<T>>;
+export function decide<T>(
+  kind: DecisionKind | DecideInput,
+  state?: string | DecideDeps,
+  questions?: Readonly<Record<string, TypeSafeQuestion>>,
+  opts?: DecideOptions<T>,
+): Promise<Decision<T> | DecideResult> {
+  if (typeof kind !== 'string') return decideOption(kind, state as DecideDeps | undefined);
+  return decideKind(kind, state as string, questions!, opts!);
+}
+
+async function decideKind<T>(
   kind: DecisionKind,
   state: string,
   questions: Readonly<Record<string, TypeSafeQuestion>>,

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { requireBuiltDist } from './helpers/require-built-dist.js';
 import {
   readCutoffCaptureSchedulerState,
   scheduleCutoffCheckpointCapture,
@@ -24,6 +25,7 @@ describe('M385 Windows cutoff capture portability', () => {
   });
 
   it('recognizes packaged Node hidden entrypoints and rejects invalid tokens silently', () => {
+    requireBuiltDist(['dist/cli/index.js']);
     const cli = resolve('dist/cli/index.js');
     for (const flag of ['--_cutoff-checkpoint-supervisor', '--_cutoff-checkpoint-worker']) {
       const result = spawnSync(process.execPath, [cli, flag, 'invalid', 'invalid'], {

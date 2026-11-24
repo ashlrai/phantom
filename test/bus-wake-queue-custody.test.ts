@@ -63,7 +63,7 @@ it('uses a 0755 protected parent with a strict 0700 bus child, leaving the paren
   expect(mode(root)).toBe(0o755);
   expect(mode(join(root, 'bus'))).toBe(0o700);
   expect(mode(busWakeQueuePath(root))).toBe(0o600);
-  expect(readBusWakes({ root })).toEqual({ state: 'ok', wakes: [{ kind: 'bus.send', id: 'fake-id', from: 'mason', to: 'leaders', at: 7 }] });
+  expect(readBusWakes({ root })).toEqual({ state: 'ok', wakes: [{ kind: 'bus.send', id: 'fake-id', from: 'mason', to: 'leaders', at: 7 }], matched: 1, truncated: false });
   expect(mode(root)).toBe(0o755);
 });
 
@@ -152,7 +152,7 @@ it('rejects a reader whose directory is swapped between open and read (no false 
     renameSync(join(root, 'bus'), join(base, 'moved-bus'));
     mkdirSync(join(root, 'bus'), { mode: 0o700 });
   };
-  expect(readBusWakes({ root })).toEqual({ state: 'unreadable', wakes: [] });
+  expect(readBusWakes({ root })).toEqual({ state: 'unreadable', wakes: [], matched: null, truncated: null });
 });
 
 it('refuses a queue file name swapped to an external symlink before open; sentinel is untouched', () => {

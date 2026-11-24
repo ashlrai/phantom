@@ -6,6 +6,82 @@ import tempfile
 import unittest
 
 
+class LaunchState(unittest.TestCase):
+    def test_duplicate_events_keep_one_attempt_until_terminal(self):
+        from launch_precheck import update_launch_state
+        for terminal in ('finish', 'launch_terminal'):
+            with self.subTest(terminal=terminal):
+                active = set()
+                for event in ('claim', 'launch', 'launch'):
+                    update_launch_state(active, dict(event=event, job='RQ-ONE', launch_dedupe=True))
+                self.assertEqual(active, {'RQ-ONE'})
+                update_launch_state(active, dict(event=terminal, job='RQ-OTHER'))
+                self.assertEqual(active, {'RQ-ONE'})
+                update_launch_state(active, dict(event=terminal, job='RQ-ONE'))
+                self.assertEqual(active, set())
+                update_launch_state(active, dict(event='launch', job='RQ-ONE'))
+                self.assertEqual(active, {'RQ-ONE'})
+
+    def test_old_pr_resolution_and_legacy_claim_do_not_change_active_attempt(self):
+        from launch_precheck import update_launch_state
+        active = set()
+        for row in (None, {}, dict(event='launch', job=[]), dict(event='claim', job='RQ-OLD')):
+            update_launch_state(active, row)
+        self.assertEqual(active, set())
+        update_launch_state(active, dict(event='launch', job='RQ-ONE'))
+        update_launch_state(active, dict(event='outcome', job='RQ-ONE', state='MERGED', url='https://github.com/o/r/pull/1'))
+        self.assertEqual(active, {'RQ-ONE'})
+
+
+class RepairFreshness(unittest.TestCase):
+    def test_only_current_complete_matching_evidence_retires_a_repair(self):
+        from launch_precheck import repair_freshness
+        base = dict(number=42, state="OPEN", headRefOid="a" * 40, mergeable="MERGEABLE",
+                    statusCheckRollup=[dict(__typename="CheckRun", name="Merge Gate", status="COMPLETED", conclusion="SUCCESS"),
+                                       dict(__typename="StatusContext", state="SUCCESS")])
+        for kind, patch, expected in (
+            ("FIXUP", {}, "target_pr_checks_resolved"),
+            ("REBASE", {}, "target_pr_conflicts_resolved"),
+            ("RECUT", {}, "target_pr_conflicts_resolved"),
+            ("FIXUP", dict(state="CLOSED"), "target_pr_closed"),
+            ("FIXUP", dict(state="MERGED"), "target_pr_merged"),
+            ("FIXUP", dict(number=43), None),
+            ("FIXUP", dict(headRefOid="b" * 40), None),
+            ("FIXUP", dict(statusCheckRollup=[]), None),
+            ("FIXUP", dict(statusCheckRollup=None), None),
+            ("FIXUP", dict(statusCheckRollup=[{}]), None),
+            ("FIXUP", dict(statusCheckRollup=[dict(__typename="StatusContext", context="other", state="SUCCESS")]), None),
+            ("FIXUP", dict(statusCheckRollup=[dict(__typename="CheckRun", status="IN_PROGRESS", conclusion="SUCCESS")]), None),
+            ("FIXUP", dict(statusCheckRollup=[dict(__typename="StatusContext", state="PENDING")]), None),
+            ("FIXUP", dict(statusCheckRollup=[dict(__typename="CheckRun", status="COMPLETED", conclusion="FAILURE")]), None),
+            ("REBASE", dict(mergeable="UNKNOWN"), None),
+            ("RECUT", dict(mergeable="CONFLICTING"), None),
+        ):
+            with self.subTest(kind=kind, patch=patch):
+                def runner(cmd, timeout, **kwargs):
+                    self.assertEqual(cmd[:4], ["locus", "exec", "--", "gh"])
+                    self.assertEqual(timeout, 3)
+                    self.assertIn("ashlrai/phantom", cmd)
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps(dict(base, **patch)), "")
+                job = f"RQ-{kind}-phantom-42-aaaaaaa"
+                self.assertEqual(repair_freshness(job, "phantom", f'{job} (P1): check="Merge Gate"', "/fixture", runner), expected)
+
+    def test_unknown_output_and_unrelated_targets_never_retire_work(self):
+        from launch_precheck import repair_freshness, terminal_target
+        for code, output in [(1, "private output"), (0, "{"), (0, "[]"), (0, "x" * 65537)]:
+            self.assertIsNone(repair_freshness("RQ-FIXUP-phantom-42-aaaaaaa", "phantom", "", "/fixture",
+                lambda *a, **k: subprocess.CompletedProcess([], code, output, "")))
+        def unavailable(*args, **kwargs): raise subprocess.TimeoutExpired([], 3)
+        self.assertIsNone(repair_freshness("RQ-REBASE-phantom-42-aaaaaaa", "phantom", "", "/fixture", unavailable))
+        for job, repo in [("RQ-FIXUP-phantom-42-aaaaaaa-more", "phantom"),
+                          ("RQ-FIXUP-locus-42-aaaaaaa", "phantom"), ("RQ-FEATURE-42", "phantom")]:
+            self.assertIsNone(repair_freshness(job, repo, "", "/fixture", lambda *a, **k: self.fail("unexpected read")))
+        states = {"https://github.com/ashlrai/phantom/pull/42": "CLOSED"}
+        self.assertEqual(terminal_target("RQ-REBASE-phantom-42-aaaaaaa", "phantom", "", states), "target_pr_closed")
+        self.assertIsNone(terminal_target("RQ-REBASE-phantom-42-aaaaaaa", "phantom",
+                                        "RQ-REBASE-phantom-42-aaaaaaa (pr=43): repair", states))
+
+
 class RestockPrecheck(unittest.TestCase):
     def test_only_completed_work_is_retired(self):
         script = Path(__file__).with_name('restock.py').resolve()

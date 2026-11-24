@@ -42,6 +42,23 @@ describe('seatSubscription — the binding window leads', () => {
     expect(view.extended).toBe(true);
   });
 
+  it('carries a window\'s start only where the seat\'s reset provenance names that same reset', () => {
+    const at = '2026-09-25T23:00:00.000Z';
+    const provenance = { kind: 'weekly-deadline' as const, at, description: null, source: 'claude-native-usage-report', plan: 'max' as const };
+    const week = seatWindow({ id: 'seven_day', usedPercent: 62, resetsAt: at, resetProvenance: provenance });
+    const view = seatSubscription(nativeSeat(capacity({ planType: 'max', windows: [week], binding: week })));
+    expect(view.binding?.period).toEqual({ startsAt: '2026-09-18T23:00:00.000Z', basis: 'weekly' });
+    // A provenance for another reset, a rolling release, or none at all: no start, and no key that could be read as one.
+    for (const resetProvenance of [{ ...provenance, at: '2026-09-26T23:00:00.000Z' }, { ...provenance, kind: 'rolling-release' as const }, undefined]) {
+      const other = seatWindow({ id: 'seven_day', usedPercent: 62, resetsAt: at, ...(resetProvenance ? { resetProvenance } : {}) });
+      const binding = seatSubscription(nativeSeat(capacity({ planType: 'max', windows: [other], binding: other }))).binding!;
+      expect('period' in binding).toBe(false);
+    }
+    // The provider's own period start is kept as reported.
+    const billed = seatWindow({ id: 'billing', usedPercent: 10, resetsAt: at, resetProvenance: { kind: 'fixed-period', at, startsAt: '2026-08-25T23:00:00.000Z', description: null, source: 'grok-native-billing' } });
+    expect(seatSubscription(nativeSeat(capacity({ windows: [billed], binding: billed }))).binding?.period).toEqual({ startsAt: '2026-08-25T23:00:00.000Z', basis: 'reported' });
+  });
+
   it('calls a flagged limit "limit reached" and publishes no percentage for it', () => {
     const view = seatSubscription(CLAUDE_MAX_SEAT);
     expect(view.binding?.limitReached).toBe(true);

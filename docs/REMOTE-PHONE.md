@@ -40,7 +40,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 - **Watch** — owner thread with the Leader (send a message), live world-model summary (lanes, pull outcomes, releases, bottlenecks), and agent activity. The screen polls while it is visible.
 - **Fleet** — fleet switches, lanes, and holds; read fleet activity and live bus.
 - **Runs** — fleet runs list and current state.
-- **Inbox** — fleet inbox messages with optional source filter.
+- **Inbox** — fleet inbox messages with optional source, contains, priority and time-window filters.
 - **Leader** — leader threads, directives, resources, and unanswered questions.
 - **Needs-you** — tasks awaiting your approval: session cancellations, task dismissals, agent plan decisions.
 - **Workers** — worker status, live bus output, and telling workers things.
@@ -76,6 +76,7 @@ The phone shell URL is the gateway's public origin followed by `/verse/m`, serve
 | `/api/verse/fleet/live/bus` | Fleet live bus streams real-time status updates |
 | `/api/verse/fleet/live/drop-jobs` | Fleet drop jobs waiting for a lane |
 | `/api/verse/agent-bus` | Agent bus messages |
+| `/api/verse/agent-bus/needs-mason/asks/batch` | Needs you: the asks only Mason can answer, one tap each (`phm asks list --json`) |
 | `/api/verse/fleet/live/queue` | Fleet live queue shows currently pending items |
 | `/api/verse/fleet/control/switches` | Fleet switches manages toggleable fleet controls |
 | `/api/verse/fleet/control/lanes` | Fleet lanes manages lane routing assignments |

@@ -161,22 +161,27 @@ export function verifyCanonicalProvenance(record, audit, revision, currentRun, c
   assert.equal(invocations.size, 1, 'ambiguous npm publisher invocation');
   const uri = [...invocations][0], match = /\/runs\/(\d+)\/attempts\/(\d+)$/.exec(uri);
   const runId = match[1], runAttempt = match[2]; integer(runId); integer(runAttempt);
-  verifyNpmReleaseProvenance({audit, packageName: record.name, version: record.version, integrity: record.integrity,
-    repository: 'https://github.com/ashlrai/phantom', workflowPath: '.github/workflows/publish-canonical-npm.yml',
-    ref: 'refs/heads/master', revision, runId, runAttempt, eventName: 'workflow_dispatch'});
   const base = `repos/${REPO}`;
   requireRepositoryMetadata(REPO, read(base));
   const observed = read(`${base}/actions/runs/${runId}/attempts/${runAttempt}`);
   requireRepositoryReference(REPO, observed.repository);
+  // A null revision means "the publisher run that produced this version": a
+  // later daily run on a newer master re-verifies an already published version,
+  // so the current GITHUB_SHA is not the commit the provenance was built from.
+  // GitHub's own record of that exact run supplies it, and the checks below bind it.
+  const expectedRevision = revision ?? observed.head_sha;
+  verifyNpmReleaseProvenance({audit, packageName: record.name, version: record.version, integrity: record.integrity,
+    repository: 'https://github.com/ashlrai/phantom', workflowPath: '.github/workflows/publish-canonical-npm.yml',
+    ref: 'refs/heads/master', revision: expectedRevision, runId, runAttempt, eventName: 'workflow_dispatch'});
   assert.equal(observed.id, Number(runId)); assert.equal(observed.run_attempt, Number(runAttempt));
-  assert.equal(observed.head_sha, revision); assert.equal(observed.head_branch, 'master');
+  assert.equal(observed.head_sha, expectedRevision); assert.equal(observed.head_branch, 'master');
   assert.equal(observed.path, '.github/workflows/publish-canonical-npm.yml'); assert.equal(observed.event, 'workflow_dispatch');
   if (runId !== currentRun || runAttempt !== currentAttempt) assert.equal(observed.status, 'completed');
   const jobs = read(`${base}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100`);
   assert.ok(Array.isArray(jobs.jobs) && jobs.total_count === jobs.jobs.length && jobs.jobs.length <= 100);
   const admissions = jobs.jobs.filter(job => job.name === 'admit');
   assert.equal(admissions.length, 1); assert.equal(admissions[0].conclusion, 'success');
-  assert.equal(admissions[0].head_sha, revision);
+  assert.equal(admissions[0].head_sha, expectedRevision);
   return {runId, runAttempt};
 }
 
@@ -367,7 +372,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     await installPublishedPackage(record, process.argv[4]);
   } else if (command === 'provenance') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
-    console.log(JSON.stringify(verifyCanonicalProvenance(record, readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-signatures.json')), process.env.GITHUB_SHA, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)));
+    console.log(JSON.stringify(verifyCanonicalProvenance(record, readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-signatures.json')), null, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)));
   } else if (command === 'latest') {
     const record = verifyHandoff(directory, process.env.ADMISSION_SHA256, process.env.PACKAGE_SHA256);
     const packument = readBoundedJson(join(process.env.RUNNER_TEMP, 'phantom-packument.json'));

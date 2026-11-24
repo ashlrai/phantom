@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordSlackObservation, slackJournalPath, type SlackObservation } from '../src/core/agents/slack-journal.js';
 import { readSlackRequestTrace } from '../src/core/agents/slack-request-trace.js';
+import { fakeRequestId, replyKey } from './helpers/slack-causal.js';
 import { writePrivateFileAtomic } from '../src/core/verse/preferences.js';
 
 const channel = 'C0FAKE4671';
@@ -17,7 +18,7 @@ it.each(['posted', 'duplicate'] as const)('reopens a failed ingress and %s retry
   const runsDir = join(root, 'runs');
   const stateRoot = join(root, 'state');
   const row = (at: string, messageTs: string, ingress?: SlackObservation['bus']): SlackObservation => ({
-    at, channelId: channel, threadTs: thread, messageTs, decision: 'ingested',
+    at, channelId: channel, threadTs: thread, messageTs, decision: 'ingested', requestId: fakeRequestId(messageTs),
     ...(ingress === undefined ? {} : { bus: ingress }),
   });
   const target = '1700000001.000000';
@@ -38,8 +39,8 @@ it.each(['posted', 'duplicate'] as const)('reopens a failed ingress and %s retry
     expiresAt: 9000000000000, channel, thread, state: 'sent', ts });
   // The transport's private atomic writer and v1 receipt schema, without invoking delivery.
   writePrivateFileAtomic(storePath, JSON.stringify({ version: 1, messages: {
-    ['a'.repeat(64)]: receipt('a'.repeat(64), targetReply),
-    ['b'.repeat(64)]: receipt('b'.repeat(64), siblingReply),
+    [replyKey(fakeRequestId(target))]: receipt('a'.repeat(64), targetReply),
+    [replyKey(fakeRequestId(sibling))]: receipt('b'.repeat(64), siblingReply),
   } }));
   const journalPath = slackJournalPath(runsDir);
   const before = [readFileSync(journalPath), readFileSync(storePath)];

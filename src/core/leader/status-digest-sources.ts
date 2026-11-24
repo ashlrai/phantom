@@ -3,6 +3,7 @@
  * dir lane state, merge truth, release facts, NEEDS-MASON, MASON-INBOX); any
  * reader that throws or reports itself unavailable becomes an "unknown" fact.
  */
+import { join } from 'node:path';
 import { readInstalledBundleVersion, versionNewer } from '../app-update-status.js';
 import { readPeerLedger, type PeerLedgerReport } from '../agentnet/peer-ledger.js';
 import { gatherBriefFacts, type BriefFacts } from '../comms/leader-brief.js';
@@ -11,6 +12,10 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { readFleetRunsDirState, type FleetRunsDirState } from '../fleet/runs-dir-state.js';
 import { readInboxEntries, type InboxEntry } from '../fleet/mason-inbox.js';
 import { defaultReleasePublicReader, verifyLatestWorkbenchRelease } from '../release-public-facts.js';
+import { readBlocker, type DigestBlocker } from '../fleet/digest-blocker.js';
+import { readMergeLatency, type MergeLatencyReport } from '../fleet/merge-latency.js';
+import { readDiskLowLine } from '../fleet/host-disk.js';
+import { DIGEST_GAP_MINUTES, readFleetGaps } from '../fleet/sleep-gaps.js';
 import { readNodeResults, type NodeResultsSummary } from '../drive/nodes/results-read.js';
 import type { Fact, StatusDigestInput, StatusDigestPeers, StatusDigestWorkClaims } from './status-digest.js';
 
@@ -19,6 +24,8 @@ export interface StatusDigestSources {
   /** Newest published release with its desktop asset; throws when unreadable. */
   publishedVersion: (nowMs: number) => Promise<string>;
   mergeFacts: (sinceMs: number, nowMs: number) => Promise<Pick<BriefFacts, 'shipped' | 'mergeCountUnavailable'>>;
+  /** True open-to-merge time over the last 24h from the job metrics file under the runs dir. Override with undefined to drop the line. */
+  mergeLatency?: (runsDir: string, nowMs: number) => Promise<MergeLatencyReport>;
   runsState: (runsDir: string, nowMs: number) => Promise<Pick<FleetRunsDirState, 'lanes' | 'sources' | 'runsDirPresent'>>;
   needs: (runsDir: string) => { status: string; items: Array<{ text: string }> };
   inbox: (runsDir: string) => Promise<{ sourceState: string; entries: InboxEntry[] }>;
@@ -28,6 +35,24 @@ export interface StatusDigestSources {
   peers?: (nowMs: number) => PeerLedgerReport;
   /** Read-only node runner results on this computer; a throw becomes an unknown Node runs line. */
   nodeRuns?: (nowMs: number) => NodeResultsSummary;
+  /** The one plain line for the longest gap over 30 minutes that ended in the last 6 hours and left work waiting; null when none. */
+  gapLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The `disk_low` line from recorded free-disk samples when under 24 hours remain before the lane freeze line; null when fine or unknown. */
+  diskLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The single biggest cost in the last hour (asleep, host load, empty queue, drained pool, low disk); lanes are the ones the digest already read. */
+  /** The `supply_low` line when a pool at risk of waste has under an hour of work queued; null when none or unknown. */
+  supplyLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Worst judged source yield, or null for unknown/low sample. */
+  yieldLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The top `pools.waste.v1` alert as one line; also raises the Asks card when the fix needs Mason. Null when none. */
+  wasteLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Sign-in state for the most-wasted blocked lane; also raises its Asks card. */
+  authLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** The `Not live yet` line from `fleet.drift.v1` when merged fleet files are not installed; null when all live or unreadable. */
+  notLiveLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  /** Read-only warning for a lane still cut after its cause cleared. */
+  adaptLine?: (runsDir: string, nowMs: number) => Promise<string | null>;
+  blocker?: (runsDir: string, nowMs: number, lanes: Array<{ lane: string; running: number; target: number; held: boolean }> | null) => Promise<DigestBlocker>;
 }
 
 const HOUR = 3_600_000;
@@ -44,12 +69,52 @@ const defaults: StatusDigestSources = {
     return release.version;
   },
   mergeFacts: (sinceMs, nowMs) => gatherBriefFacts(sinceMs, nowMs),
+  mergeLatency: (runsDir, nowMs) => readMergeLatency({ metricsPath: join(runsDir, 'metrics', 'jobs.jsonl'), hours: 24, by: 'lane', now: nowMs }),
   runsState: (runsDir, nowMs) => readFleetRunsDirState({ runsDir, now: () => nowMs }),
   needs: runsDir => readNeedsMason({ runsDir }),
   inbox: runsDir => readInboxEntries({ runsDir, limit: 200 }),
   workClaims: () => inspectBusWorkClaims(),
   peers: nowMs => readPeerLedger({ now: () => nowMs }),
   nodeRuns: nowMs => readNodeResults({ nowMs }),
+  gapLine: async (runsDir, nowMs) => {
+    const report = await readFleetGaps({ runsDir, now: nowMs, sinceMs: 6 * HOUR, minMinutes: DIGEST_GAP_MINUTES + 1, claudeLeftPct: null });
+    const worst = report.gaps.filter(g => g.lostWork !== false).sort((a, b) => b.minutes - a.minutes)[0];
+    return worst?.line ?? null;
+  },
+  diskLine: readDiskLowLine,
+  supplyLine: async (runsDir, nowMs) => {
+    const { readQueueSupply, supplyLowLine } = await import('../fleet/queue-supply.js');
+    return supplyLowLine(await readQueueSupply({ runsDir, now: () => nowMs }));
+  },
+  wasteLine: async (runsDir, nowMs) => {
+    const { readPoolsWaste, wasteDigestLine } = await import('../fleet/pools-waste.js');
+    const waste = await readPoolsWaste({ runsDir, now: () => nowMs });
+    await (await import('../fleet/asks-sync.js')).syncAsks({ runsDir, now: () => nowMs }).catch(() => null);
+    return wasteDigestLine(waste);
+  },
+  authLine: async (runsDir, nowMs) => {
+    const { readLaneAuth, raiseLaneAuthAsks, laneAuthDigestLine } = await import('../fleet/lane-auth.js');
+    const auth = await readLaneAuth({ runsDir, now: () => nowMs });
+    await raiseLaneAuthAsks(auth, { runsDir, now: () => nowMs });
+    return laneAuthDigestLine(auth);
+  },
+  notLiveLine: async runsDir => {
+    const { findFleetRepo, fleetDrift, notLiveLine } = await import('../fleet/drift.js');
+    const { access } = await import('node:fs/promises');
+    const bin = process.env.ASHLR_RUNS_BIN || join(runsDir, 'bin');
+    const repo = await findFleetRepo();
+    // No runtime directory means this is not a fleet host: nothing to compare, so no line.
+    return repo && await access(bin).then(() => true, () => false) ? notLiveLine(await fleetDrift(repo, bin)) : null;
+  },
+  yieldLine: async (runsDir, nowMs) => {
+    const { readYieldBy, yieldDigestLine } = await import('../fleet/yield-by.js');
+    return yieldDigestLine(await readYieldBy({ by: 'source', now: nowMs, metrics: join(runsDir, 'metrics', 'jobs.jsonl'), queue: join(runsDir, 'queue', 'router-queue.md') }));
+  },
+  adaptLine: async (runsDir, nowMs) => {
+    const { readLaneAdapt, laneAdaptDigestLine } = await import('../fleet/lane-adapt.js');
+    return laneAdaptDigestLine(await readLaneAdapt({ runsDir, now: () => nowMs }));
+  },
+  blocker: readBlocker,
 };
 
 function gatherNodeRuns(read: ((nowMs: number) => NodeResultsSummary) | undefined, nowMs: number): NodeResultsSummary | undefined {
@@ -120,6 +185,12 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
     return facts.shipped.filter(item => /^ashlrai\/phantom#\d+/.test(item.text)).length;
   }, 'GitHub merge count unavailable or incomplete');
 
+  const readMergeTime = src.mergeLatency;
+  const mergeTime: StatusDigestInput['mergeTime'] = readMergeTime === undefined ? undefined : await fact(async () => {
+    const report = await readMergeTime(runsDir, nowMs);
+    if (report.metrics !== 'ok' || !report.open_to_merge) throw new Error('unreadable');
+    return { medianSeconds: report.open_to_merge.p50_s, known: report.open_to_merge.known, merged: report.merged ?? 0 };
+  }, 'job metrics file not readable');
   const [installed, published, hour, day, runs, inbox, workClaims] = await Promise.all([
     fact(() => { const v = src.installedVersion(); if (!v) throw new Error('none'); return v; }, 'installed app version not readable'),
     fact(() => src.publishedVersion(nowMs), 'published release not readable'),
@@ -149,6 +220,15 @@ export async function gatherStatusDigestInput(runsDir: string, now: Date, overri
     topP0 = { ok: true, value: entry ? { text: entry.text, ageMs: at === null ? null : Math.max(0, nowMs - at) } : null };
   }
 
+  const gap = await fact(() => src.gapLine?.(runsDir, nowMs) ?? null, 'gap check failed');
+  const disk = await fact(() => src.diskLine?.(runsDir, nowMs) ?? null, 'disk check failed');
+  const yieldFact = await fact(() => src.yieldLine?.(runsDir, nowMs) ?? null, 'yield check failed');
+  const supply = await fact(() => src.supplyLine?.(runsDir, nowMs) ?? null, 'supply check failed');
+  const waste = await fact(() => src.wasteLine?.(runsDir, nowMs) ?? null, 'waste check failed');
+  const auth = await fact(() => src.authLine?.(runsDir, nowMs) ?? null, 'sign-in check failed');
+  const notLive = await fact(() => src.notLiveLine?.(runsDir, nowMs) ?? null, 'drift check failed');
+  const adapt = await fact(() => src.adaptLine?.(runsDir, nowMs) ?? null, 'adapt check failed');
+  const blocker = await fact(() => src.blocker?.(runsDir, nowMs, lanes.ok ? lanes.value : null) ?? undefined, 'blocker check failed');
   const updatePending = installed.ok && published.ok ? versionNewer(published.value, installed.value) : null;
-  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs) };
+  return { installedVersion: installed, publishedVersion: published, updatePending, mergesLastHour: hour, mergesLast24h: day, ...(mergeTime ? { mergeTime } : {}), lanes, needsMason: needsFact, topP0, workClaims, peers: gatherPeers(src.peers, nowMs), nodeRuns: gatherNodeRuns(src.nodeRuns, nowMs), ...(gap.ok && gap.value ? { gapLine: gap.value } : {}), ...(disk.ok && disk.value ? { diskLine: disk.value } : {}), ...(supply.ok && supply.value ? { supplyLine: supply.value } : {}), ...(yieldFact.ok && yieldFact.value ? { yieldLine: yieldFact.value } : {}), ...(waste.ok && waste.value ? { wasteLine: waste.value } : {}), ...(auth.ok && auth.value ? { authLine: auth.value } : {}), ...(notLive.ok && notLive.value ? { notLiveLine: notLive.value } : {}), ...(adapt.ok && adapt.value ? { adaptLine: adapt.value } : {}), ...(blocker.ok && blocker.value ? { blocker: blocker.value } : {}) };
 }

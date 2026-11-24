@@ -35,5 +35,6 @@ Read .github/CODEOWNERS and repository instructions first. Exclude protected
 paths from edits; stop for owner review if they are necessary. Do not expose
 secrets or copy raw PR body text into the work. Add a new regression test,
 rerun the applicable checks, and report results and limitations in BRIDGE_NOTES.md.
-Leave the resulting changes uncommitted. Do not merge, push, or publish.`;
+Leave the resulting changes uncommitted. Do not merge, push, or publish.
+Keep required merge-queue checks; never use an admin bypass or change branch protections.`;
 }

@@ -3,7 +3,7 @@
  * each such verdict into one 'meter-flat' P1 envelope per provider per clock
  * hour — the desktop bus view, the phone and agents already read the bus, and
  * the hour bucket inside the id makes reruns 'duplicate' instead of repeat
- * incidents. Verdicts other than 'flat_with_work' never raise an incident, so
+ * incidents. Verdicts other than 'flat' never raise an incident, so
  * missing evidence stays silent. */
 import { appendBusInbox, type BusInboxOptions, type BusInboxPost } from './bus-inbox.js';
 import type { BusEnvelope } from './bus-envelope.js';
@@ -58,7 +58,7 @@ export function buildMeterIncidentEnvelope(provider: MeterDropProvider, nowMs: n
 }
 
 export function planMeterIncidents(report: MeterDropReport): MeterDropProvider[] {
-  return report.providers.filter(provider => provider.verdict === 'flat_with_work');
+  return report.providers.filter(provider => provider.verdict === 'flat');
 }
 
 export type MeterIncidentPost = { provider: string; status: BusInboxPost['status'] };

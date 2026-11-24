@@ -20,7 +20,11 @@ async function fixture() {
   await save('RQ-A.base', 'abc123 work/fleet /private/worktree\n');
   await save('RQ-A.log', 'working\nAuthorization: Bearer private-fixture-value\n');
   await save('metrics/jobs.jsonl', JSON.stringify({ job: 'RQ-A', event: 'launch', ts: new Date(now - 60_000).toISOString(), model: 'fixture-model' }) + '\n');
-  await save('RQ-A.publish', 'RESULT PR https://github.com/ashlrai/phantom/pull/123\n');
+  // RQ-A is still running (no RESULT line yet). RQ-CLOUD is a published cloud job: base record, no log, RESULT PR.
+  await save('RQ-A.publish', 'TEST pending\n');
+  await save('queue/run/RQ-CLOUD.line', 'RQ-CLOUD phantom devin work /private/prompt\n');
+  await save('RQ-CLOUD.base', 'abc123 work/cloud /private/worktree\n');
+  await save('RQ-CLOUD.publish', 'RESULT PR https://github.com/ashlrai/phantom/pull/123\n');
   const compute = await readFleetCompute({ home: join(root, 'home'), runsDir: root, now, sample: () => { throw new Error('no telemetry'); } });
   const inventory = await getFleetSessions({ runsDir: root, now: () => now, runPs: async () => '' });
   return { root, save, compute, inventory };
@@ -35,8 +39,9 @@ it('composes fixture claims, launch, queue, PR and scrubbed worktree/activity re
   expect(view.sessions).toEqual(f.inventory.sessions);
   expect(view.recent).toEqual(f.inventory.recent);
   expect(view.mapSessions.find(s => s.job === 'RQ-A')).toMatchObject({ model: 'fixture-model', branch: 'work/fleet',
-    worktree: 'recorded', nodeId: null, placement: 'unknown', mapState: 'running', elapsedSeconds: 60,
-    prUrl: 'https://github.com/ashlrai/phantom/pull/123' });
+    worktree: 'recorded', nodeId: null, placement: 'unknown', mapState: 'running', elapsedSeconds: 60 });
+  expect(view.mapSessions.find(s => s.job === 'RQ-CLOUD')).toBeUndefined();
+  expect(view.mapRecent.find(s => s.job === 'RQ-CLOUD')).toMatchObject({ status: 'finished', outcome: 'pr', prUrl: 'https://github.com/ashlrai/phantom/pull/123' });
   expect(view.mapSessions.find(s => s.job === 'RQ-WAIT')).toMatchObject({ nodeId: null, mapState: 'queued', activity: null });
   expect(view.mapSessions.find(s => s.job === 'RQ-HOLD')).toMatchObject({ nodeId: null, mapState: 'held' });
   expect(JSON.stringify(view)).not.toMatch(/private-fixture-value|\/private\//);
@@ -84,4 +89,33 @@ it('bounds detail work and marks omitted details partial while preserving unknow
   expect(view.mapSessions.every(s => s.activity === null)).toBe(true);
   expect(['queued', 'parked', 'running', 'launching', 'publishing', 'exited', 'stale'].map(s => sessionMapState(s as typeof row.status)))
     .toEqual(['queued', 'held', 'running', 'running', 'running', 'idle', 'unknown']);
+});
+
+
+it('does not manufacture an active claim-only duplicate of a recently finished job', async () => {
+  const f = await fixture();
+  const view = await readFleetSessionMap({ compute: { ...f.compute, nodes: [{ ...node(f.compute.localNodeId, 'RQ-CLOUD'), local: true }] },
+    sessions: f.inventory, runsDir: f.root, now });
+  expect(view.mapSessions.filter(s => s.job === 'RQ-CLOUD')).toEqual([]);
+  expect(view.mapRecent.filter(s => s.job === 'RQ-CLOUD')).toEqual([expect.objectContaining({ status: 'finished',
+    outcome: 'pr', branch: 'work/cloud', prUrl: 'https://github.com/ashlrai/phantom/pull/123' })]);
+});
+
+it('keeps a new active attempt ahead of an older terminal receipt with the same id', async () => {
+  const f = await fixture(), row = f.inventory.sessions.find(s => s.job === 'RQ-A')!;
+  const view = await readFleetSessionMap({ compute: f.compute, sessions: { ...f.inventory,
+    recent: [{ ...row, status: 'finished', model: 'older-attempt' }] }, runsDir: f.root, now });
+  expect(view.mapSessions.filter(s => s.job === 'RQ-A')).toHaveLength(1);
+  expect(view.mapSessions.find(s => s.job === 'RQ-A')).toMatchObject({ model: 'fixture-model', mapState: 'running' });
+  expect(view.mapRecent.filter(s => s.job === 'RQ-A')).toEqual([]);
+});
+
+
+it('never hydrates a recent job from local files when its claim is on another host', async () => {
+  const f = await fixture(), detail = vi.fn();
+  const view = await readFleetSessionMap({ compute: { ...f.compute, nodes: [node('remote', 'RQ-CLOUD')] },
+    sessions: { ...f.inventory, sessions: [] }, runsDir: f.root, now, readDetail: detail });
+  expect(view.mapSessions).toEqual([]);
+  expect(view.mapRecent.find(s => s.job === 'RQ-CLOUD')).toMatchObject({ status: 'finished', nodeId: 'remote', branch: null, activity: null });
+  expect(detail).not.toHaveBeenCalled();
 });

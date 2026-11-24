@@ -15,6 +15,7 @@ import { resetGuard } from '../shell/guard-store.js';
 import { resetResolvedForTest } from '../shell/resolved-store.js';
 import { refreshActivity, resetActivityForTest } from '../shell/useActivity.js';
 import { mockCompactViewport } from '../shell/viewport.test-support.js';
+import { homeSummary } from './home.test-support.js';
 import { activityResponse, json, needsItem, runningRow, stubFetch, TOKEN } from './mobile.test-support.js';
 import { resetMobileToastsForTest } from './mobile-toast.js';
 import { ReachStrip } from './MobileRuntime.js';
@@ -63,10 +64,7 @@ function mac(over: { control?: unknown; activity?: unknown; dispatch?: boolean; 
     'GET /api/verse/activity': over.activity ?? ACTIVITY,
     'GET /api/verse/control': over.control ?? control(),
     'GET /api/verse/fleet/live': fleetLive(),
-    'GET /api/verse/fleet/runs/glance': {
-      v: 1, at: '2026-11-02T15:00:00.000Z', running: 4, target: 6, usagePct: 62,
-      resetsAt: '2026-11-02T18:00:00.000Z', mergesToday: 2, main: 'down', incidents: ['Ship needs a human'],
-    },
+    'GET /api/verse/fleet/runs/home': homeSummary('red'),
     'GET /api/verse/cloud': json({ error: 'not found' }, 404),
     'POST /api/verse/daemon': (body: Record<string, unknown> | null) => over.onDaemon?.(body) ?? { ok: true, action: body?.action, note: 'Done on your Mac.' },
   });
@@ -93,7 +91,7 @@ afterEach(() => {
 });
 
 async function glanceLoaded() {
-  await screen.findByText('Running 4 of 6.');
+  await screen.findByText(/main red: phantom/);
 }
 
 async function openFleet() {
@@ -145,7 +143,7 @@ describe('the shell', () => {
       await refreshActivity();
     });
     expect(await screen.findByText(/Can’t reach your Mac\. Updated just now\./)).toBeInTheDocument();
-    expect(screen.getByText('Running 4 of 6.')).toBeInTheDocument();
+    expect(screen.getByText(/main red: phantom/)).toBeInTheDocument();
   });
 
   it('says the phone is offline when the browser reports it', async () => {

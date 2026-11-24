@@ -111,33 +111,28 @@ ashlr worker status
 Prints identity, enrolled repos, daemon running state, and whether a shared
 queue is configured.
 
-## 8 GB Mac: use subscription engines only
+## Small-memory Mac: choose remote providers
 
 An 8 GB Mac does not have enough RAM to run large local models alongside the
-OS and the repos under edit.  Configure subscription-backed engines instead:
+OS and the repos under edit. Configure the provider chain for remote APIs:
 
 ```sh
 # Point the provider chain at remote APIs
-ashlr config set engines.providerChain claude,openai
-
-# Set API keys (stored in ~/.ashlr/config.json, never in source)
-ashlr config set engines.claudeApiKey  sk-ant-...
-ashlr config set engines.openaiApiKey  sk-...
+ashlr config set models.providerChain --json '["anthropic","openai"]'
 ```
 
-The built-in provider chain already falls back gracefully — if a key is
-absent the engine is skipped.  For a bare worker node with no local model
-tooling, remove the local entries entirely:
-
-```sh
-ashlr config set engines.providerChain claude,openai
-```
+These are API providers, with API billing and authentication separate from
+subscription CLI engines. Supply credentials through Phantom Secrets using
+`phantom exec`; do not store them in config keys. The provider probe checks
+credential presence, which does not establish successful authentication or
+available quota. The chain above removes the local providers for a bare worker
+node. For subscription CLI engines, follow the [local fleet guide](LOCAL-FLEET.md).
 
 A 16 GB Air can run a small local model (e.g. `llama3:8b` via Ollama) if you
 prefer:
 
 ```sh
-ashlr config set engines.providerChain ollama,claude
+ashlr config set models.providerChain --json '["ollama","anthropic"]'
 ashlr config set models.ollama llama3:8b
 ```
 

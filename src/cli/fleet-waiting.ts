@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { isPrecheckSkipRow } from '../core/fleet/jobs-ledger-dialect.js';
 
 export interface FleetWaitingRow {
   id: string;
@@ -44,8 +45,8 @@ export function explainFleetWaiting(queue: string, jobs: string, events: string,
   if (metricLines.at(-1) === '') metricLines.pop();
   for (const line of metricLines.slice(-3000)) {
     try {
-      const row = JSON.parse(line) as { event?: string; job?: string; job_id?: string; jobId?: string };
-      if (row.event === 'launch' || row.event === 'precheck_skip') {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      if (row.event === 'launch' || isPrecheckSkipRow(row)) {
         const id = row.job ?? row.job_id ?? row.jobId;
         if (typeof id === 'string') started.add(id);
       }

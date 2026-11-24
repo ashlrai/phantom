@@ -524,10 +524,15 @@ export async function listLeaderThread(opts: LeaderThreadQuery = {}): Promise<Le
   }
   const { entries } = await readOutboxEntries({ limit: THREAD_LIMITS.listMax });
   const seen = new Set(posts.filter(post => post.from === 'leader').map(post => replyTextHash(post.text)));
-  const files: LeaderThreadMessage[] = entries.filter(entry => !seen.has(replyTextHash(entry.text))).map(entry => ({
-    id: `leader-file-${replyTextHash(entry.text).slice(0, 48)}`, at: Number.isFinite(replyTime(entry.at)) ? new Date(replyTime(entry.at)).toISOString() : '', text: entry.text,
-    from: 'leader', channel: 'system', kind: 'answer',
-  }));
+  // File replies get the same scrubbing a posted leader message gets, so a
+  // reply already copied by `phm leader replies sync` matches its post.
+  const files: LeaderThreadMessage[] = entries.flatMap(entry => {
+    const text = cleanModelText(entry.text, THREAD_LIMITS.leaderTextMax);
+    if (!text || seen.has(replyTextHash(text))) return [];
+    seen.add(replyTextHash(text));
+    const at = replyTime(entry.at);
+    return [{ id: `leader-file-${replyTextHash(text).slice(0, 48)}`, at: Number.isFinite(at) ? new Date(at).toISOString() : '', text, from: 'leader', channel: 'system', kind: 'answer' }];
+  });
   let messages = [...posts, ...files].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
   if (opts.before !== undefined) {
     const index = messages.findIndex(message => message.id === opts.before);
@@ -1222,9 +1227,10 @@ export async function approveLeaderAction(
 export { OPERATOR_DIRECTIVE_KINDS };
 
 /** Typed API shared by the CLI. Receipts survive rotation; uncertain writes never replay. */
-export async function syncLeaderReplies(): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
+export async function syncLeaderReplies(planLog?: string, file?: string): Promise<{ sourceState: 'healthy' | 'missing' | 'unknown'; posted: string[]; skipped: string[]; unknown: string[] }> {
   const { readPlanLogReplies, replyTextHash } = await import('../fleet/mason-outbox.js');
-  const source = await readPlanLogReplies();
+  // `planLog` is the comms.leaderPlanLogPath config value; PHANTOM_PLAN_LOG still wins.
+  const source = await readPlanLogReplies({ planLog, ...(file ? { file } : {}) });
   const result = { sourceState: source.sourceState, posted: [] as string[], skipped: [] as string[], unknown: [] as string[] };
   withThreadLock(() => {
     const index = readIndex();

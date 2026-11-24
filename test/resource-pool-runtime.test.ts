@@ -512,7 +512,7 @@ describe.skipIf(process.platform === 'win32')('durable resource task runtime acc
     } }, { type: 'result', subtype: 'success', is_error: false, result: 'PRIVATE_NATIVE_OUTPUT',
       usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 } }];
     // The exact enrolled wrapper must pass the real version gate before a task.
-    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.309 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
+    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.311 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
     const poolValue: ResourcePool = { schemaVersion: 1, id: 'claude-pool', workers: [worker('claude-a', { provider: 'claude', allowUnknownQuota: true })] };
     const bindings: ResourceBinding[] = [{ workerId: 'claude-a', capacityKey: 'claude-account', kind: 'native-cli', command: [process.execPath, script] }];
     const taskValue = f.task('task-a', { allowedWorkerIds: ['claude-a'] });
@@ -539,7 +539,7 @@ describe.skipIf(process.platform === 'win32')('durable resource task runtime acc
     } }, { type: 'result', subtype: 'success', is_error: false, result: 'PRIVATE_OVERFLOW_OUTPUT',
       usage: { input_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 3 } }];
     // The exact enrolled wrapper must pass the real version gate before a task.
-    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.309 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
+    writeFileSync(script, `if(process.argv.includes('--version')){console.log('2.1.311 (Claude Code)');}else{process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(rows.map((row) => JSON.stringify(row)).join('\n') + '\n')}));}`, { mode: 0o600 });
     const poolValue: ResourcePool = { schemaVersion: 1, id: 'claude-overflow-pool',
       workers: [worker('claude-a', { provider: 'claude', allowUnknownQuota: true })] };
     const bindings: ResourceBinding[] = [{ workerId: 'claude-a', capacityKey: 'claude-account',

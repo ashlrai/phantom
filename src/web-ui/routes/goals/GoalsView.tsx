@@ -22,6 +22,7 @@ import { RefreshIndicator } from '../../components/primitives/RefreshIndicator.j
 import { SkeletonLine } from '../../components/primitives/Skeleton.js';
 import { usedPercentText } from '../verse/percent-text.js';
 import styles from './GoalsView.module.css';
+import compact from '../../components/layout/compact-view.module.css';
 
 export function GoalsView() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,7 +35,7 @@ export function GoalsView() {
   const mission = missionResult.data;
 
   return (
-    <div ref={containerRef} className={styles.view}>
+    <div ref={containerRef} className={`${styles.view} ${compact.view}`}>
       <header className={styles.header}>
         <h1 className={styles.title}>Goals</h1>
         <div className={styles.freshness} aria-live="polite">

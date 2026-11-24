@@ -2,6 +2,7 @@
 """Sample disk consumption without modifying any sampled path."""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -35,30 +36,27 @@ def read_json(path, default):
 
 
 def targets(home):
-    wt = home / 'Projects/ashlrai/wt'
-    paths = [wt, home / '.ashlr-runs/logs', home / '.ashlr-runs/releases',
-             home / '.local/share/ashlr/releases', home / '.ashlr/updates/staged', home / '.ashlr/updates/consumer-staging',
-             home / '.ashlr/updates/manual-staging', home / '.bun/install/cache',
-             home / '.cargo/registry', home / '.cargo/git']
-    try:
-        for child in sorted(wt.iterdir()):
-            if child.is_dir():
-                paths.extend([child / 'node_modules', child / 'target'])
-    except OSError:
-        pass
+    paths = []
+    for relative in ('.ashlr-runs', 'Projects/ashlrai/wt'):
+        root = home.resolve() / relative
+        try:
+            if root.resolve() != root: raise OSError('aliased root')
+            paths.extend(child for child in sorted(root.iterdir()) if child.is_dir() and not child.is_symlink())
+        except OSError:
+            paths.append(root)  # An unreadable root is unknown, never an empty inventory.
     return paths
 
 
 def sample_sizes(paths, budget, clock=time.monotonic, run=subprocess.run):
     deadline = clock() + budget
-    sizes = {}
+    sizes = {str(path): None for path in paths}
     timed_out = False
     for path in paths:
         remaining = deadline - clock()
         if remaining <= 0:
             timed_out = True
             break
-        if not path.exists():
+        if not path.exists() or path.resolve() != path.absolute():
             continue
         try:
             result = run(['du', '-sk', str(path)], capture_output=True, text=True,
@@ -73,7 +71,13 @@ def sample_sizes(paths, budget, clock=time.monotonic, run=subprocess.run):
 
 
 def calculate(history, current):
-    previous = next((row for row in history if row.get('at', 0) < current['at']), None)
+    previous = max((row for row in history if isinstance(row, dict) and
+                    isinstance(row.get('at'), (int, float)) and math.isfinite(row['at']) and row['at'] < current['at']),
+                   key=lambda row: row['at'], default=None)
+    valid_size = lambda value: isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+    if previous and (not valid_size(previous.get('free_gb')) or not isinstance(previous.get('sizes_gb'), dict)
+                     or any(v is not None and not valid_size(v) for v in previous['sizes_gb'].values())):
+        previous = None  # Damaged prior evidence must not prevent the next healthy sample.
     rate = projection = None
     growers = []
     if previous:
@@ -84,14 +88,19 @@ def calculate(history, current):
         elif rate > 0:
             projection = (current['free_gb'] - FLOOR_GB) / rate
         for path, size in current['sizes_gb'].items():
-            if path in previous.get('sizes_gb', {}):
+            if size is not None and previous.get('sizes_gb', {}).get(path) is not None:
                 growth = (size - previous['sizes_gb'][path]) / hours
                 if growth > 0:
                     growers.append({'path': path, 'growth_gb_per_h': round(growth, 3)})
         growers.sort(key=lambda row: (-row['growth_gb_per_h'], row['path']))
     elif current['free_gb'] <= FLOOR_GB:
         projection = 0.0
-    return {'free_gb': current['free_gb'], 'growth_gb_per_h': round(rate, 3) if rate is not None else None,
+    prior = previous.get('sizes_gb', {}) if previous else {}
+    directories = [{'path': path, 'size_gb': size,
+                    'delta_gb': size - prior[path] if size is not None and prior.get(path) is not None else None}
+                   for path, size in current['sizes_gb'].items()]
+    return {'directories': directories, 'previous_sampled_at': previous['at'] if previous else None,
+            'free_gb': current['free_gb'], 'growth_gb_per_h': round(rate, 3) if rate is not None else None,
             'hours_to_reuse_only': round(projection, 2) if projection is not None else None,
             'top_growers': growers[:10], 'sampled_at': current['at'],
             'timed_out': current['timed_out']}
@@ -105,9 +114,13 @@ def main():
     args = parser.parse_args()
     if not 0 < args.budget_seconds <= 300:
         parser.error('budget must be greater than 0 and at most 300 seconds')
-    root = args.home / '.ashlr-runs'
+    root = args.home.resolve() / '.ashlr-runs'
     queue = root / 'queue'
+    if queue.resolve() != queue:
+        parser.error('sample storage must not contain symlinks')
     history_path = queue / 'disk-growth-history.json'
+    if history_path.is_symlink():
+        parser.error('sample history must not be a symlink')
     history = read_json(history_path, [])
     if not isinstance(history, list):
         raise ValueError('invalid disk growth history')

@@ -19,7 +19,10 @@ export function HomeSurface({ paneId, visible, compact }: { paneId: string; visi
   if (!pane) return null;
   const Pane = pane.component;
   return (
-    <div className={styles.home} data-home-pane={paneId} data-compact={compact || undefined}>
+    // Hidden like any other surface once a section is showing. Without this the
+    // landing pane stayed in the column and took half the window from Command,
+    // Fleet and Chat. It stays mounted so the draft and scroll position survive.
+    <div className={styles.home} data-home-pane={paneId} data-compact={compact || undefined} hidden={!visible} inert={!visible}>
       <Pane paneId={paneId} sessionId={null} session={null} roots={[]} events={[]} turnFiles={[]}
         visible={visible} presentation="column" requests={REQUESTS} host={HOST} />
     </div>

@@ -176,13 +176,13 @@ describe('expired owner cannot return or release the replacement claim', () => {
       expectNoLeaseMaterial(text, [claimA.lease, claimB.lease]);
     }
 
-    // The durable ledger proves the lifecycle: claim, reap, claim, release, post.
+    // The durable ledger proves the lifecycle: claim, reap, claim, return, post.
     const events = ledgerEvents();
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'reap', 'claim', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'reap', 'claim', 'return', 'post']);
     expect(events[0]).toMatchObject({ kind: 'claim', claim: { id: claimA.claim.id, agent: AGENT_A, repo: REPO, task: TASK } });
     expect(events[1]).toMatchObject({ kind: 'reap', id: claimA.claim.id, owner: AGENT_A, state: 'RELEASED', reason: 'lease-expired', at: t0 + TTL_A_MS });
     expect(events[2]).toMatchObject({ kind: 'claim', claim: { id: claimB.claim.id, agent: AGENT_B, repo: REPO, task: TASK } });
-    expect(events[3]).toMatchObject({ kind: 'release', id: claimB.claim.id });
+    expect(events[3]).toMatchObject({ kind: 'return', id: claimB.claim.id });
     expect(events[4]).toMatchObject({ kind: 'post', message: { id: `return-${claimB.claim.id}`, from: AGENT_B, to: 'all' } });
     const raw = readFileSync(ledgerPath, 'utf8');
     expect(raw).not.toContain(claimA.lease);
@@ -221,7 +221,7 @@ describe('expired owner cannot return or release the replacement claim', () => {
       claimId: claimB.claim.id, repo: REPO, result: 'BLOCKED', evidenceKind: 'dependency', from: AGENT_B,
     })]);
     const events = ledgerEvents();
-    expect(events.map(event => event['kind'])).toEqual(['claim', 'reap', 'claim', 'release', 'post']);
+    expect(events.map(event => event['kind'])).toEqual(['claim', 'reap', 'claim', 'return', 'post']);
     expect(events[1]).toMatchObject({ kind: 'reap', id: claimA.claim.id, owner: AGENT_A, reason: 'lease-expired', at: t0 + TTL_A_MS });
     const raw = readFileSync(ledgerPath, 'utf8');
     expect(raw).not.toContain(claimA.lease);

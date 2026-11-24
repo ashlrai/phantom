@@ -9,12 +9,14 @@
  *   discover [--repo owner/name] [--dry-run] [--json]        add backlog items from member issues, a red default branch and proposals
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
  *   lessons  [--json]                                        lessons trial: cloud runs with lessons vs the holdout without them
+ *   nightly  [--json] [--limit <1-200>]                      read-only report of the nightly self-improvement state
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gatherProposals, openProposalPr, renderProposal } from '../core/improve/loop.js';
 import { defaultStewardPolicy, runSteward } from '../core/steward/disk.js';
 import { rejectUnknownOptions } from './args.js';
+import type { NightlyReport } from '../core/learn/retro/store.js';
 
 const USAGE = `Usage:
   phm improve propose [--team <id>] [--open-pr --repo <dir>] [--json]
@@ -25,7 +27,8 @@ const USAGE = `Usage:
   phm improve discover [--repo <owner/name>] [--dry-run] [--json]
   phm improve observe --repo <dir>
   phm improve promote <id> --repo <dir> [--queue-merge] [--json]
-  phm improve lessons [--json]`;
+  phm improve lessons [--json]
+  phm improve nightly [--json] [--limit <1-200>]`;
 
 export async function cmdImprove(argv: string[]): Promise<number> {
   const args = [...argv];
@@ -40,6 +43,7 @@ export async function cmdImprove(argv: string[]): Promise<number> {
     case 'discover': return discover(val('--repo'), args.includes('--dry-run'), args.includes('--json'));
     case 'promote': return promote(args[1], val('--repo'), !args.includes('--queue-merge'), args.includes('--json'));
     case 'lessons': return lessons(args.includes('--json'));
+    case 'nightly': return nightly(args.slice(1));
     default: console.error(USAGE); return 2;
   }
 }
@@ -137,18 +141,13 @@ async function measure(id: string | undefined, repo: string | undefined, repeatA
 }
 
 async function syncBacklog(): Promise<number> {
-  const { appendLedger, readLedger } = await import('../core/improve/outcomes.js');
-  const { backlogRegistrations } = await import('../core/improve/backlog-sync.js');
-  const { listCloudTasks } = await import('../core/cloud/store.js');
-  const { readCloudBacklog } = await import('../core/cloud/backlog.js');
   try {
-    const read = readLedger();
-    if (!read.intact) { console.error(`! outcome ledger is not intact: ${read.reasons.join(', ')}`); return 1; }
-    const tasks = listCloudTasks();
-    const events = backlogRegistrations(tasks, readCloudBacklog(tasks, new Date()).items, read.records);
-    for (const e of events) appendLedger(e);
-    const n = events.filter((e) => e.type === 'registered').length;
-    console.log(n ? `ok registered ${n} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
+    const { syncCloudBacklogOutcomes } = await import('../core/improve/backlog-sync.js');
+    const res = syncCloudBacklogOutcomes();
+    if (!res.intact) { console.error(`! outcome ledger is not intact: ${res.reasons.join(', ')}`); return 1; }
+    if (res.reason === 'append-failed') { console.error('! could not append to the outcome ledger'); return 1; }
+    if (res.reason === 'source-unavailable') { console.error('! could not read the cloud task store, backlog or outcome ledger'); return 1; }
+    console.log(res.registered ? `ok registered ${res.registered} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
     return 0;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
 }
@@ -279,4 +278,61 @@ async function lessons(json: boolean): Promise<number> {
   for (const e of report.byNote) console.log(`  ${trial.renderLessonEffect(e)}`);
   if (report.excluded.launchFailed || report.excluded.unfinished) console.log(`Not counted: ${report.excluded.launchFailed} launch failure(s), ${report.excluded.unfinished} still running.`);
   return 0;
+}
+
+const NIGHTLY_USAGE = 'Usage: phm improve nightly [--json] [--limit <1-200>]';
+
+async function nightly(args: string[]): Promise<number> {
+  const bad = rejectUnknownOptions(args, { flags: ['--json'], values: ['--limit'] });
+  const limitRaw = args.includes('--limit') ? args[args.indexOf('--limit') + 1] : undefined;
+  const limit = limitRaw === undefined ? undefined : Number(limitRaw);
+  if (bad) { console.error(bad.message); console.error(NIGHTLY_USAGE); return 2; }
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)) {
+    console.error(NIGHTLY_USAGE);
+    return 2;
+  }
+  const { readNightlyReport } = await import('../core/learn/retro/store.js');
+  const report = await readNightlyReport(limit);
+  if (args.includes('--json')) { console.log(JSON.stringify(report, null, 2)); return report.state === 'unreadable' ? 1 : 0; }
+  console.log(nightlyLines(report).join('\n'));
+  return report.state === 'unreadable' ? 1 : 0;
+}
+
+function nightlyLines(report: NightlyReport): string[] {
+  if (report.state !== 'read') {
+    return report.state === 'missing'
+      ? ['nightly self-improvement: no completed run yet', `state ${report.path} absent; the first eligible nightly tick has not completed`]
+      : ['nightly self-improvement: state unreadable or unsafe', `state ${report.path}; last completed night unknown`];
+  }
+  const c = report.counts!;
+  const lines = [
+    `nightly self-improvement completed=${report.completedNight} advisory-only`,
+    `state ${report.path}`,
+    `jobs=${c.jobs} reviews=${c.reviews} priors=${c.priors} lessons=${c.lessons} proposals=${c.proposals}`,
+  ];
+  if (c.proposals > 0) {
+    lines.push(`proposals (${c.proposals}):`);
+    for (const p of report.proposals) {
+      lines.push(`  [${p.status}] ${p.title} (${p.repo})`);
+      lines.push(`    id=${p.id} lesson=${p.lessonId}`);
+      lines.push(`    prompt=${p.prompt}`);
+      lines.push(`    evaluation=${p.evaluation}`);
+      lines.push(`    metric=${p.metric}`);
+    }
+    if (c.proposals > report.proposals.length) lines.push(`  … ${c.proposals - report.proposals.length} more (raise --limit or --json)`);
+  }
+  if (c.lessons > 0) {
+    lines.push(`lessons (${c.lessons} pending):`);
+    for (const l of report.lessons) {
+      lines.push(`  [${l.cause}] ${l.repo}${l.playbook ? ` playbook=${l.playbook}` : ''} — ${l.text}`);
+      lines.push(`    id=${l.id} evidence=${l.evidence.join(', ') || 'none'}`);
+    }
+    if (c.lessons > report.lessons.length) lines.push(`  … ${c.lessons - report.lessons.length} more (raise --limit or --json)`);
+  }
+  if (c.priors > 0) {
+    lines.push(`priors (${c.priors}):`);
+    for (const p of report.priors) lines.push(`  ${p.repo} / ${p.arm}: successes=${p.successes} failures=${p.failures} alpha=${p.alpha} beta=${p.beta}`);
+    if (c.priors > report.priors.length) lines.push(`  … ${c.priors - report.priors.length} more (raise --limit or --json)`);
+  }
+  return lines;
 }

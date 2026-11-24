@@ -59,6 +59,17 @@ describe('fleet parked unmet deps (RQ-QUEUE-AUTOUNPARK-1)', () => {
     )).toEqual(new Set(['RQ-A']));
   });
 
+  it('reads MERGED outcomes across the jobs-ledger field dialect', () => {
+    expect(mergedJobsFromJsonl(
+      `${JSON.stringify({ type: 'outcome', outcome: 'MERGED', job_id: 'RQ-C' })}\n`
+      + `${JSON.stringify({ kind: 'outcome', status: 'MERGED', jobId: 'RQ-D' })}\n`
+      + `${JSON.stringify({ event: 'publish', outcome: 'MERGED', source: 'metrics-outcomes-reconciler', id: 'RQ-E' })}\n`
+      + `${JSON.stringify({ outcome: 'MERGED', job: 'RQ-F' })}\n`
+      + `${JSON.stringify({ event: 'outcome', state: 'CLOSED', job: 'RQ-G' })}\n`
+      + `${JSON.stringify({ event: 'launch', state: 'MERGED', job: 'RQ-H' })}\n`,
+    )).toEqual(new Set(['RQ-C', 'RQ-D', 'RQ-E', 'RQ-F']));
+  });
+
   it('lists PARKED-DEP rows whose gate ids are not all MERGED', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fleet-unmet-deps-'));
     try {

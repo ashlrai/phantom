@@ -1,7 +1,9 @@
 /**
  * routes/verse/sections/AppearancePanel.tsx — the "Linux" part of the design
  * language: theme, accent, display size, density, display face, radius,
- * layout, motion.
+ * layout, motion. Theme, accent, density and display size are also the four
+ * keys of `phm settings appearance` (core/settings-appearance.ts), written to
+ * the same shared record, so an agent and this panel change one setting.
  *
  * Every control applies IMMEDIATELY (design doc §3: live preview, no save
  * button) because the whole app is the preview — the panel writes through
@@ -15,7 +17,7 @@
  * under 4.5:1 — the operator keeps the hue they asked for, but is never
  * allowed to make it unreadable without being told.
  */
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { PRODUCT_NAME } from '../../../app/product-brand.js';
 import { Button, Input, Meter, Segmented, Slider, StatusBadge, Switch, Tag } from '../../../components/primitives/index.js';
 import { IconAlert, IconCheck, IconMonitor, IconMoon, IconSun } from '../../../components/primitives/icons.js';
@@ -131,6 +133,9 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
   const motionId = useId();
 
   const preset = matchingAccentPreset(appearance);
+  // Uncontrolled after mount: dragging back onto a preset must not snap the
+  // sliders shut under the pointer.
+  const [customOpen, setCustomOpen] = useState(() => preset === null);
   const readability = accentReadability(appearance.accentH, appearance.accentS, appearance.accentL);
 
   return (
@@ -202,56 +207,58 @@ export function AppearancePanel({ appearance, onChange, onReset }: AppearancePan
             })}
           </div>
         </div>
-      </SettingRow>
-
-      <SettingRow
-        label="Accent channels"
-        description="Hue, saturation and lightness are written straight onto the root element — the whole app follows as you drag."
-        stacked
-      >
-        <div className={styles.sliderStack}>
-          <Slider
-            id={hueId}
-            label="Hue"
-            min={0}
-            max={359}
-            value={appearance.accentH}
-            valueLabel={`${appearance.accentH}°`}
-            valueText={`${appearance.accentH} degrees`}
-            trackImage={hueTrack(appearance.accentS, appearance.accentL)}
-            onChange={(e) => onChange({ accentH: Number(e.currentTarget.value) })}
-          />
-          <Slider
-            id={satId}
-            label="Saturation"
-            min={0}
-            max={100}
-            value={appearance.accentS}
-            valueLabel={`${appearance.accentS}%`}
-            valueText={`${appearance.accentS} percent`}
-            onChange={(e) => onChange({ accentS: Number(e.currentTarget.value) })}
-          />
-          <Slider
-            id={lightId}
-            label="Lightness"
-            min={ACCENT_LIGHTNESS_RANGE.min}
-            max={ACCENT_LIGHTNESS_RANGE.max}
-            value={appearance.accentL}
-            valueLabel={`${appearance.accentL}%`}
-            valueText={`${appearance.accentL} percent`}
-            onChange={(e) => onChange({ accentL: Number(e.currentTarget.value) })}
-          />
-          {readability.failing.length > 0 ? (
-            <p className={styles.contrastWarning} role="status">
-              <IconAlert size={14} />
-              <span>
-                This accent falls below 4.5:1 as link text in{' '}
-                {readability.failing.length === 2 ? 'both themes' : `${readability.failing[0]} mode`}. Raise or lower
-                the lightness to keep it readable.
-              </span>
-            </p>
-          ) : null}
-        </div>
+        {/*
+          One obvious control per setting: the swatches ARE the accent
+          control. The hue/saturation/lightness sliders are the escape hatch
+          for a color the swatches do not offer, so they sit behind a
+          disclosure that starts open only when the accent is already custom.
+        */}
+        <details className={styles.customAccent} open={customOpen} onToggle={(event) => setCustomOpen(event.currentTarget.open)}>
+          <summary>Custom color</summary>
+          <div className={styles.sliderStack}>
+            <Slider
+              id={hueId}
+              label="Hue"
+              min={0}
+              max={359}
+              value={appearance.accentH}
+              valueLabel={`${appearance.accentH}°`}
+              valueText={`${appearance.accentH} degrees`}
+              trackImage={hueTrack(appearance.accentS, appearance.accentL)}
+              onChange={(e) => onChange({ accentH: Number(e.currentTarget.value) })}
+            />
+            <Slider
+              id={satId}
+              label="Saturation"
+              min={0}
+              max={100}
+              value={appearance.accentS}
+              valueLabel={`${appearance.accentS}%`}
+              valueText={`${appearance.accentS} percent`}
+              onChange={(e) => onChange({ accentS: Number(e.currentTarget.value) })}
+            />
+            <Slider
+              id={lightId}
+              label="Lightness"
+              min={ACCENT_LIGHTNESS_RANGE.min}
+              max={ACCENT_LIGHTNESS_RANGE.max}
+              value={appearance.accentL}
+              valueLabel={`${appearance.accentL}%`}
+              valueText={`${appearance.accentL} percent`}
+              onChange={(e) => onChange({ accentL: Number(e.currentTarget.value) })}
+            />
+            {readability.failing.length > 0 ? (
+              <p className={styles.contrastWarning} role="status">
+                <IconAlert size={14} />
+                <span>
+                  This accent falls below 4.5:1 as link text in{' '}
+                  {readability.failing.length === 2 ? 'both themes' : `${readability.failing[0]} mode`}. Raise or lower
+                  the lightness to keep it readable.
+                </span>
+              </p>
+            ) : null}
+          </div>
+        </details>
       </SettingRow>
 
       <SettingRow

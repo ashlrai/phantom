@@ -18,7 +18,7 @@ it('reads the guardian path through injection and returns every field in red-fir
   expect(report.repos.map((row: { repo: string }) => row.repo)).toEqual(['phantom', 'lexicon', 'locus']);
   expect(report.repos[0]).toEqual({ repo: 'phantom', branch: 'master', sha: 'abcdef2', state: 'red',
     checkedAt: expect.stringMatching(/^2026-11-03T11:58:00/), failingCheck: 'typecheck',
-    fixJobs: ['FIX-A', 'FIX-B'], nightlyRed: 'nightly tests' });
+    fixJobs: ['FIX-A', 'FIX-B'], emptyAttempts: 0, retryHold: false, nightlyRed: 'nightly tests' });
   expect((await FLEET_SUBCOMMAND_LOADERS.mains!()).cmdFleetMains).toBe(cmdFleetMains);
 });
 

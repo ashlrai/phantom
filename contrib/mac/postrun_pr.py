@@ -25,6 +25,12 @@ PUBLISH_TIMEOUT_S = 900
 LOOKUP_TIMEOUT_S = 60
 MAX_ATTEMPTS = 3   # lookup failures only; a publish outcome (any RESULT line) is final for the job
 OFF_SWITCH = "POSTRUN_PR_OFF"   # touch ~/.ashlr-runs/POSTRUN_PR_OFF to disable
+PUBLISH_POLICY_ENV = (
+    "PUBLISH_FULL_TESTS",
+    "PUBLISH_JUDGE_CMD",
+    "PUBLISH_JUDGE_THRESHOLD",
+    "PUBLISH_JUDGE_TIMEOUT",
+)
 
 
 def eligible(res):
@@ -32,9 +38,11 @@ def eligible(res):
     return bool(res) and res.startswith("RESULT EMPTY")
 
 
-def child_env(home):
+def child_env(home, parent=os.environ):
     """Fixed environment: gh needs HOME for its own config, which is read here, outside any lane sandbox."""
-    return {"HOME": home, "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "NO_COLOR": "1"}
+    env = {"HOME": home, "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "NO_COLOR": "1"}
+    env.update({name: parent[name] for name in PUBLISH_POLICY_ENV if name in parent})
+    return env
 
 
 def _stamp(): return time.strftime("%F %T")

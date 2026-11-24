@@ -16,7 +16,7 @@ the Security pin package in staging/RQ-BATCH-SESSIONS-2.
 
 Model mix (subscriptions only, no API-credit lanes): Sonnet is Claude's workhorse, Opus takes hard or
 architectural lines, Fable stays under the broker's own `fable-share` control (never assigned here). Codex lanes
-run Terra. Devin runs the free flash model first; lines from repos Devin is not set up for, or without a declared
+run GPT-6.2 Astra for frontier and GPT-6.2 Sol otherwise. Devin runs the free flash model first; lines from repos Devin is not set up for, or without a declared
 small size, are routed to other lanes.
 
 Also: northstar metrics (tasks finished per session, iterations per hour, merged PRs per iteration) computed from
@@ -43,7 +43,7 @@ DEFAULTS = {
     "lanes": ["claude", "codex-personal", "codex-cmp", "devin"],
     "models": {
         "claude": {"workhorse": "sonnet", "hard": "opus"},
-        "codex": {"default": "gpt-6.1-terra"},
+        "codex": {"default": "gpt-6.2-sol", "frontier": "gpt-6.2-astra"},
         "devin": {"default": "swe-2-flash"},
     },
     # A line is "hard" for the Opus pick when its tier is frontier or its prompt names one of these.
@@ -75,6 +75,8 @@ def load_config(path):
         cfg["hard_markers"] = [m for m in raw["hard_markers"] if isinstance(m, str) and m.strip()]
     for fam, picks in (raw.get("models") or {}).items():
         if fam in cfg["models"] and isinstance(picks, dict):
+            if fam == "codex" and "default" in picks and "frontier" not in picks and isinstance(picks["default"], str) and JID.fullmatch(picks["default"]):
+                cfg["models"]["codex"].pop("frontier", None)
             cfg["models"][fam].update({k: v for k, v in picks.items() if isinstance(v, str) and JID.match(v)})
     dv = raw.get("devin")
     cfg["devin"]["route"] = True
@@ -110,7 +112,7 @@ def model_for(lane, tier, prompt, cfg):
         pick = "hard" if is_hard(tier, prompt, cfg) else "workhorse"
         return cfg["models"]["claude"][pick], "claude %s" % pick
     if lane.startswith("codex") and lane != "codex-local":
-        return cfg["models"]["codex"]["default"], "codex default"
+        return cfg["models"]["codex"].get(tier, cfg["models"]["codex"]["default"]), "codex default"
     if lane == "devin":
         return cfg["models"]["devin"]["default"], "devin free flash"
     return None, "lane default"

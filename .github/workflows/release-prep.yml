@@ -1,0 +1,59 @@
+# Starts the existing release-gate CI run, which is the only place Desktop
+# release smoke and Release suites run. One run per master sha: a push starts
+# it, and the five-minute schedule retries the current master sha if that
+# push did not. Signing and notarization stay in the sanctioned Mac wrapper.
+name: Release prep
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions: {}
+
+concurrency:
+  group: release-prep-master
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    if: github.repository == 'ashlrai/phantom'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    outputs:
+      dispatch: ${{ steps.plan.outputs.dispatch }}
+    steps:
+      - name: Checkout release prep script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/release-prep-dedup.mjs
+          sparse-checkout-cone-mode: false
+      - name: Decide whether this sha still needs release-gate CI
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: node .github/scripts/release-prep-dedup.mjs
+
+  dispatch:
+    needs: decide
+    if: needs.decide.outputs.dispatch == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch release-gate CI on master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/dispatches" --input - <<'EOF'
+          {"ref":"master","inputs":{"release_gate":"true"}}
+          EOF

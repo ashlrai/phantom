@@ -1,13 +1,18 @@
 import ast
+import json
 from pathlib import Path
 import unittest
 
 source = Path(__file__).resolve().parents[1] / 'dispatchd.py'
 nodes = [n for n in ast.parse(source.read_text()).body
-         if isinstance(n, ast.FunctionDef) and n.name in ('waste_risk', 'waste_boost')]
+         if isinstance(n, ast.FunctionDef) and n.name in ('waste_risk', 'waste_boost', 'pace_behind')]
 namespace = {}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
-boost = namespace['waste_boost']
+EXECUTOR = {'cost_class': 'included', 'tiers': ['fast', 'mid', 'work', 'frontier']}
+
+
+def boost(projection, lane, tier, executor=EXECUTOR):
+    return namespace['waste_boost'](projection, lane, tier, executor)
 
 
 class WasteBoost(unittest.TestCase):
@@ -41,3 +46,59 @@ class WasteBoost(unittest.TestCase):
         receipt = json.loads((root / 'queue/route-state.json').read_text())['RQ-WASTE-1']
         self.assertEqual(receipt['waste_reason'], 'use-it-all high waste risk: work -> frontier')
         self.assertEqual((root / 'dispatch-events.log').read_text().count('ROUTE_BOOST RQ-WASTE-1 '), 1)
+
+    def test_behind_requires_fresh_boolean_evidence_and_available_included_tier(self):
+        evidence = {'known': True, 'stale': False, 'behind': True}
+        for lane in ('claude', 'codex-personal', 'gemini'):
+            self.assertEqual(boost(evidence, lane, 'work')[0], 'frontier')
+        for patch in ({'behind': False}, {'behind': None}, {'behind': 'true'}, {'known': False}, {'stale': True}):
+            self.assertIsNone(boost({**evidence, **patch}, 'claude', 'work'))
+        for value in (None, {}, [], {'known': True, 'stale': False}):
+            self.assertIsNone(namespace['pace_behind'](value))
+            self.assertIsNone(boost(value, 'claude', 'work'))
+        self.assertIs(namespace['pace_behind']({**evidence, 'behind': False}), False)
+        for patch in ({'held': True}, {'auth_failed': True}, {'backoff': True}, {'quota': 0},
+                      {'cost_class': 'metered'}, {'cost_class': None}, {'tiers': ['work']}):
+            self.assertIsNone(boost(evidence, 'claude', 'work', {**EXECUTOR, **patch}))
+        for tier in ('mid', 'fast', 'frontier'):
+            self.assertIsNone(boost(evidence, 'claude', tier))
+
+    def test_behind_tick_preserves_holds_zero_paid_models_and_unknown(self):
+        from test_dispatchd import build, held_lanes, lane_slot, launch_stubs, queue_job, tick
+        cases = [('behind', True, {}, {}, 0, 'frontier'), ('on-pace', False, {}, {}, 0, 'work'),
+                 ('held', True, {'held': True}, {}, 0, None),
+                 ('paid', True, {'cost_class': 'metered'}, {}, 0, 'work'),
+                 ('no-frontier', True, {}, {'claude.work': 'sonnet'}, 0, 'work'),
+                 ('expired', True, {}, {}, -3600, 'work'), ('unknown', None, {}, {}, 0, 'work')]
+        for name, behind, slot, models, age, expected in cases:
+            with self.subTest(name=name):
+                slots = held_lanes(); slots['claude'] = lane_slot(target=2, **slot)
+                with build(slots=slots) as tmp:
+                    home = Path(tmp).resolve(); root = home / '.ashlr-runs'; env = launch_stubs(home)
+                    (root / 'models.json').write_text(json.dumps(models or {'claude.work': 'sonnet', 'claude.frontier': 'opus'}))
+                    # Batchable peers must receive the upgraded tier themselves.
+                    (root / 'queue/BATCH_OFF').unlink()
+                    (root / 'bin/batch-launch.sh').write_text('#!/bin/bash\nexit 0\n')
+                    for job in ('RQ-YIELD-A', 'RQ-YIELD-B'):
+                        queue_job(home, job, 'claude')
+                        (root / f'queue/prompts/{job}.md').write_text('Edit src/core/queue/store.ts.')
+                    payload = {'schema': 'use-it-all.v1', 'lanes': {'claude':
+                               {'known': True, 'stale': False, 'behind': behind}}}
+                    (root / 'bin/use-it-all.py').write_text('import json,time\np=' + repr(payload)
+                        + f'\np["ts"]=int(time.time())+{age}\nprint(json.dumps(p))\n')
+                    result = tick(home, env); self.assertEqual(result.returncode, 0, result.stderr)
+                    status = json.loads((root / 'queue/status.json').read_text())
+                    launches = [r for r in map(json.loads, (root / 'metrics/jobs.jsonl').read_text().splitlines())
+                                if r.get('event') == 'launch']
+                    self.assertEqual({r['tier'] for r in launches}, {expected} if expected else set())
+                    self.assertEqual(status['use_it_all_behind']['claude'], None if age else behind)
+                    upgrades = status['tier_upgrades_this_tick']
+                    self.assertEqual(len(upgrades), 2 if expected == 'frontier' else 0)
+                    if upgrades:
+                        self.assertEqual({r['job'] for r in launches}, {'RQ-YIELD-A', 'RQ-YIELD-B'})
+                        self.assertEqual({r['model'] for r in launches}, {'opus'})
+                        for row in upgrades:
+                            self.assertEqual((row['lane'], row['from_tier'], row['to_tier']), ('claude', 'work', 'frontier'))
+                            self.assertIn('behind pace', row['reason'])
+                            receipt = json.loads((root / 'queue/route-state.json').read_text())[row['job']]
+                            self.assertEqual(receipt['waste_reason'], row['reason'])

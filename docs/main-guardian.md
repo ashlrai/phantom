@@ -11,6 +11,13 @@ is keyed so the next loop iteration skips already-verified work.
 
 ## CLI commands
 
+Run `phm fleet status` for guardian freshness, launch service state, last exit
+code and recent log error counts together. `phm fleet status --json` and
+`phm fleet status-api --json` expose the same typed `guardian` evidence
+(`age`, `service`, `log`, `level`, `reason`, `nextStep`). Stale or unavailable
+evidence includes one next step; missing evidence stays unknown. This only
+reads status, launchd and a bounded log tail; it never starts guardian jobs.
+
 | Command | Role |
 |---------|------|
 | `ashlr fleet guardian-verify` | Runs verification passes until all manifest entries are pass or fail |
@@ -74,6 +81,23 @@ ashlr fleet main-repair-time --json
 
 Agents read this data to decide whether to enqueue a retry, investigate a
 code failure, or flag infrastructure for a fleet member.
+
+`main-health` reconciles listed repair jobs with the bounded tail of the
+dispatcher ledger. A recorded launch followed by an empty finish no longer
+counts as an active repair, even if the worker exited successfully. If the
+branch is still red, the existing urgent “red with no fix job” alert applies.
+A newer attempt, a published PR, or uncertain evidence retains the assignment;
+only the guardian's observed CI state establishes recovery. This is read-only:
+it does not retry jobs, bypass the kill switch, or change dispatch policy.
+
+Each red repo in `ashlr fleet main-health --json` also carries `emptyAttempts`
+(empty fix attempts for that failure since its last published fix or non-empty
+finish; duplicate ledger rows count once) and `retryHold`. At two empty
+attempts with no other active repair, `retryHold` is `true`: do not enqueue
+the same fix again. Needs-you then says the branch is red after N empty
+attempts and to fix or revert by hand. Counts are per repo, so one repo's
+empty attempts never hold another's. `bin/main-guardian.py` is unchanged;
+dispatchers read `retryHold` instead of guessing.
 
 `guardian-stuck` reads `guardian/state.json` under `ASHLR_RUNS_DIR` (or
 `~/.ashlr-runs` by default). It exits 1 for stuck entries or unread/invalid

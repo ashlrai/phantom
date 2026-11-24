@@ -387,3 +387,6 @@
 .engine-codex { --verse-engine: var(--engine-codex, #10a37f); }
 .engine-grok { --verse-engine: var(--engine-grok, #6b7280); }
 .engine-local { --verse-engine: var(--engine-local, #7c5cff); }
+
+/* Phone width: inline code keeps its sentence's size, so it never drops under 12 px (held by `phm mobile check`). */
+@media (max-width: 479.98px) { .hint code, .locked code { font-size: 1em; } }

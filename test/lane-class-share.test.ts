@@ -1,6 +1,9 @@
+import { appendFileSync, mkdirSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { classifyLaneJob, laneClassShare } from '../src/core/fleet/lane-class-share.js';
-import { cmdFleetClassShare } from '../src/cli/fleet-class-share.js';
+import { cmdFleetClassShare, readClassShareJobs } from '../src/cli/fleet-class-share.js';
 
 const now = Date.parse('2026-10-31T12:00:00Z');
 const row = (job: string, event: string, extra = {}) => ({ job, event, ts: '2026-10-31T11:00:00Z', lane: 'codex-personal', ...extra });
@@ -8,8 +11,8 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('lane class share', () => {
   it('classifies bounded identifiers including generated filler', () => {
-    expect(['RQ-PHX-LANECLASSSHARE31', 'RQ-FIXUP-123Q8', 'RQ-PHX2A20261031Q8', 'RQ-STACK12A20261031Q8', 'RQ-FILL-2', 'RQ-FILL-2-retry', 'RQ-unknown', 'RQ-STACK12A20261031Q8-retry'].map(classifyLaneJob))
-      .toEqual(['phx', 'fixup', 'filler', 'filler', 'filler', 'other', 'other', 'other']);
+    expect(['RQ-PHX-LANECLASSSHARE31', 'RQ-FIXUP-123Q8', 'RQ-PREFLIGHT-test-m30.ci.test.ts', 'RQ-PHX2A20261031Q8', 'RQ-STACK12A20261031Q8', 'RQ-FILL-2', 'RQ-FILL-2-retry', 'RQ-unknown', 'RQ-STACK12A20261031Q8-retry'].map(classifyLaneJob))
+      .toEqual(['phx', 'fixup', 'fixup', 'filler', 'filler', 'filler', 'other', 'other', 'other']);
   });
 
   it('reports every class, missing finishes, per-lane totals and unique PRs', () => {
@@ -49,6 +52,24 @@ describe('lane class share', () => {
     read.mockClear();
     for (const args of [['--hours', '0'], ['--hours'], ['--wat'], ['--json', '--json']]) expect(await cmdFleetClassShare(args, read, now)).toBe(2);
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it('reads the newest ledger tail when jobs.jsonl exceeds the read bound', async () => {
+    const dir = join(homedir(), '.ashlr-runs', 'metrics');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, 'jobs.jsonl');
+    try {
+      writeFileSync(path, '');
+      truncateSync(path, 32 * 1024 * 1024 + 1);
+      appendFileSync(path, `\n${JSON.stringify(row('RQ-PHX-TAILBOUND', 'launch'))}\n${JSON.stringify(row('RQ-PHX-TAILBOUND', 'finish', { tokens_total: 50 }))}\n`);
+      expect(await readClassShareJobs()).toContain('RQ-PHX-TAILBOUND');
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      expect(await cmdFleetClassShare(['--json'], undefined, now)).toBe(0);
+      const report = JSON.parse(String(output.mock.calls[0]![0]));
+      expect(report.rows).toContainEqual({ lane: 'codex-personal', class: 'phx', launches: 1, tokens_total: 50, prs_opened: 0, prs_merged: 0 });
+    } finally {
+      rmSync(path, { force: true });
+    }
   });
 
   it('reports unavailable metrics without leaking the source error', async () => {

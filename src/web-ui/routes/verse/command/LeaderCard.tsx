@@ -15,6 +15,8 @@ import { asSentence, formatRelative } from '../autonomy/format.js';
 import { STATUS_WORD, expectedDeltaText, isApprovable, isVetoable, memoActions } from '../mind/leader-model.js';
 import { approveLeaderAction } from '../leader/thread-data.js';
 import { LeaderLine } from '../leader/LeaderLine.js';
+import { LiveBuildLine } from '../home/LiveBuildLine.js';
+import { ReleasesLine } from '../home/ReleasesLine.js';
 import { CountdownRing } from './CountdownRing.js';
 import { anchorId, goToSection } from './nav.js';
 import { postLeader, type OptionalRead } from './surface-data.js';
@@ -106,7 +108,7 @@ export function ActionRow({ action, actions, compact = false, approve = false, d
   );
 }
 
-export function LeaderCard({ read, loading, actions, seatNames }: { read: OptionalRead<LeaderStateV1> | undefined; loading: boolean; actions: SurfaceActions; seatNames?: ReadonlyMap<string, string> }) {
+export function LeaderCard({ read, loading, actions, seatNames, burnLine }: { burnLine?: string | null; read: OptionalRead<LeaderStateV1> | undefined; loading: boolean; actions: SurfaceActions; seatNames?: ReadonlyMap<string, string> }) {
   const state = read?.value ?? null;
   const memo = state?.latest ?? null;
   const list = memoActions(state);
@@ -179,6 +181,12 @@ export function LeaderCard({ read, loading, actions, seatNames }: { read: Option
           ) : null}
         </>
       )}
+      {/* Server-built plain line (`phm leader seat`): where the leader runs and where it moves next. */}
+      {state?.seat ? <p className={styles.muted} aria-label="Leader seat">{state.seat.line}</p> : null}
+      {/* Server-written plain sentence from `phm fleet burn`: who is spending the Claude plan and when it runs out. */}
+      {burnLine ? <p className={styles.muted} role="status">{burnLine}</p> : null}
+      <LiveBuildLine className={styles.muted} />
+      <ReleasesLine className={styles.muted} />
       <LeaderLine />
     </Card>
   );

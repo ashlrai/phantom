@@ -32,6 +32,7 @@ import { readBody, sendJson } from '../web/api.js';
 import { resolveLlamaServerOrigin } from '../local-runtime/llama/config.js';
 import type { AshlrConfig } from '../types.js';
 import type { ApiModule } from './api-modules.js';
+import { handleAppsBrowserApi } from './apps-browser-api.js';
 import { handleAppsControlApi } from './apps-control-api.js';
 import {
   createAppsService,
@@ -159,6 +160,7 @@ function sendAction(res: ServerResponse, result: AppsActionResult): void {
 export const handleAppsApi: ApiModule = async (ctx, req, res, path, method) => {
   if (path !== VERSE_APPS_PATH && !path.startsWith(`${VERSE_APPS_PATH}/`)) return false;
   if (await handleAppsControlApi(ctx, req, res, path, method)) return true;
+  if (await handleAppsBrowserApi(ctx, req, res, path, method)) return true;
   const service = ensureService(ctx.cfg);
 
   if (path === VERSE_APPS_PATH) {

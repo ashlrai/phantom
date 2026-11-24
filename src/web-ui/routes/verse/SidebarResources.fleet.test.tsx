@@ -39,8 +39,10 @@ describe('sidebar Fleet entry', () => {
     expect(getDockState()).toMatchObject({ open: false, tabs: [] });
   });
 
-  it('opens the curated fleet workspace in the chat dock without any server calls', async () => {
-    const { calls } = installFetch(() => json({ error: 'unexpected read' }, 500));
+  it('opens the curated fleet workspace with only the runtime identity read', async () => {
+    const { calls } = installFetch(({ path }) => path === '/api/verse/fleet/runtime-identity/snapshot'
+      ? json({ v: 1, snapshot: { host: 'fixture-host', installedVersion: '1.0.0', asOf: new Date().toISOString() } })
+      : json({ error: 'unexpected read' }, 500));
     await import('./fleet-lanes/fleet-lanes.pane.js');
     await import('./fleet-merges/fleet-merges.pane.js');
     setFocusMode(true);
@@ -57,7 +59,9 @@ describe('sidebar Fleet entry', () => {
       active: 'fleet-lanes',
       splitWith: 'fleet-merges',
     });
-    expect(calls).toHaveLength(0);
+    expect(calls.map(({ path, method }) => ({ path, method }))).toEqual([
+      { path: '/api/verse/fleet/runtime-identity/snapshot', method: 'GET' },
+    ]);
   });
 
   it('dismisses the floating phone sidebar like the other entries', async () => {

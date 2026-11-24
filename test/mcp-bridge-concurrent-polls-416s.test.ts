@@ -23,7 +23,10 @@ it('keeps concurrent bridge checks independent across a stalled runtime read', a
         runtime: () => index === 0 ? stalledRuntime : Promise.resolve({
           host: `fake-host-${index}`, asOf, lastFleetStateRead: { ageSeconds: 1 },
         }),
-        claims: () => ({ state: 'known', asOf, claims: Array.from({ length: index + 1 }, () => ({ claimedAt: asOf })) }),
+        claims: () => ({ state: 'known', asOf, claims: Array.from({ length: index + 1 }, (_, row) => ({
+          id: `claim-${index}-${row}`, repo: 'example/fixture', task: 'fixture task', agent: 'fake-agent',
+          claimedAt: asOf, expiresAt: '2026-11-15T02:00:00.000Z', expiresInSeconds: 3600,
+        })) }),
         peers: () => ({ status: 'ok', asOf, liveRows: index + 10 }),
       });
     },

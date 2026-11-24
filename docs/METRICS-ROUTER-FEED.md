@@ -39,6 +39,21 @@ Unknown fields are ignored and never copied to the output. Missing fields must
 be omitted, not set to `null`. Empty jobs need an explicit `empty` outcome;
 missing PR evidence is not proof that a job was empty.
 
+Claude Code result records can supply `type: "result"` and `usage` alongside
+the required job identity fields, or alongside `id` in a status entry:
+
+```json
+{"schemaVersion":1,"id":"RQ-claude","lane":"claude","tier":"work","outcome":"failed","type":"result","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":20,"cache_creation_input_tokens":3}}
+```
+
+The total is 38: input, output, cache read and cache creation tokens counted
+once. All four counts must be nonnegative safe integers and their sum must be
+safe. Missing, partial or invalid usage is unknown; explicit zeros are known.
+Only final result usage is read; assistant-message usage is ignored. An explicit
+`tokens` total takes precedence, allowing producers to supply an across-attempt
+total. A status result with incomplete usage clears an earlier token measurement.
+Truncated JSON still refuses the report. Output fields and ordering are unchanged.
+
 The status file is an explicit overlay on those exact JSONL bytes:
 
 ```json
@@ -153,7 +168,12 @@ and CLI exits. Run tests with a temporary HOME as required by the repository.
 ### Merge leverage mix
 
 `phm metrics leverage-mix --json` reports the last 24 hours of merged fleet
-PRs from `~/.ashlr-runs/metrics/jobs.jsonl`. Add `--prs prs.json` to enrich
+PRs from `~/.ashlr-runs/metrics/jobs.jsonl`. `phm metrics leverage [--hours N]`
+does the same per-class-per-hour count. Both read the ledger's newest bounded
+tail — the same 16 MiB window the other fleet readers use — so an oversized
+append-only ledger still reports recent merges and sets
+`sources.jobsTruncated: true` in the JSON (and a `(jobs ledger truncated)`
+note in text output) instead of implying full coverage. Add `--prs prs.json` to enrich
 those merges with paths from a GitHub export, for example
 `gh pr list --state merged --limit 1000 --json url,mergedAt,files > prs.json`.
 Export each relevant repository and combine the arrays for a fleet-wide view.
@@ -166,3 +186,8 @@ fleet share sums feature, fleet and fix over all observed merges, including
 unknowns in the denominator; it is a known minimum when classifications are
 missing. Missing ledgers and empty windows return null shares. The report
 reflects available ledger and export evidence, not proof of complete coverage.
+
+## Self-awareness loop and bets lane
+
+`phm metrics loop` and `phm bets` (loop report, selection hints, bets share and
+the kill-fast ledger) are documented in [BETS-LANE.md](BETS-LANE.md).

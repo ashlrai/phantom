@@ -44,6 +44,9 @@ import type { SurfaceActions } from '../command/actions.js';
 import type { OptionalRead } from '../command/surface-data.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { DirectivesStrip } from './DirectivesStrip.js';
+import { LeaderActivityCard } from './LeaderActivityCard.js';
+import { LaneSupplyLine } from './LaneSupplyLine.js';
+import { PhoneUpdatesLine } from './PhoneUpdatesLine.js';
 import { LeaderBriefCard } from './LeaderBriefCard.js';
 import { useLeaderThreadPush } from './use-leader-thread-push.js';
 import { getLeaderFocus, isLeaderFocusLive, subscribeLeaderFocus, takeLeaderFocus } from './leader-focus.js';
@@ -452,7 +455,10 @@ export function LeaderConversation({ leader, actions, dormant }: LeaderConversat
         ) : null}
       </header>
 
+      <LeaderActivityCard />
       <LeaderBriefCard />
+      <LaneSupplyLine className={styles.laneSupply} />
+      <PhoneUpdatesLine className={styles.laneSupply} />
 
       <DirectivesStrip read={directives.data} actions={actions} adding={addingDirective} onAddingChange={setAddingDirective} />
 

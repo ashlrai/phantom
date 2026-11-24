@@ -10,6 +10,7 @@ export interface ReturnRow {
   from: string;
   at: string;
   expiresAt: string;
+  temporal?: 'current' | 'expired' | 'future' | 'invalid' | 'unknown';
 }
 
 export interface ReturnsResponse {
@@ -40,6 +41,18 @@ const text = (value: unknown, max = 300): value is string =>
 const date = (value: unknown): value is string => text(value, 64) && Number.isFinite(Date.parse(value));
 const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 
+function windowAt(row: ReturnRow, now: number): NonNullable<ReturnRow['temporal']> {
+  const at = Date.parse(row.at), expiry = Date.parse(row.expiresAt);
+  if (![at, expiry, new Date(now).getTime()].every(Number.isFinite) || expiry <= at) return 'invalid';
+  return now < at ? 'future' : now >= expiry ? 'expired' : 'current';
+}
+
+/** Missing legacy qualification stays background; never infer verification from dates alone. */
+export function returnTemporal(row: ReturnRow, now: number): NonNullable<ReturnRow['temporal']> {
+  if (row.temporal === undefined || row.temporal === 'unknown') return 'unknown';
+  return row.temporal === 'invalid' ? 'invalid' : windowAt(row, now);
+}
+
 function validRow(row: unknown): row is ReturnRow {
   if (!record(row) || !text(row.claimId, 128) || !text(row.repo, 220)
     || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(row.repo)
@@ -59,7 +72,10 @@ export function parseReturns(body: unknown): ParsedReturns {
     || !date(body.generatedAt) || !date(body.asOf) || !text(body.source, 100)
     || (body.state !== 'known' && body.state !== 'unknown') || !Array.isArray(body.returns)
     || !count(body.unparsed)) return unknown;
-  const rows = body.returns.filter(validRow);
+  const rows = body.returns.filter(validRow).map(row => row.temporal === undefined ? row : {
+    ...row,
+    temporal: row.temporal === windowAt(row, Date.parse(body.asOf as string)) ? row.temporal : 'invalid' as const,
+  });
   return {
     state: body.state as 'known' | 'unknown',
     rows: body.state === 'known' ? rows : [],
@@ -69,9 +85,11 @@ export function parseReturns(body: unknown): ParsedReturns {
   };
 }
 
-export function returnsHeadline(parsed: ParsedReturns): { text: string; tone: 'neutral' | 'success' | 'danger' } {
+export function returnsHeadline(parsed: ParsedReturns, now = Date.now()): { text: string; tone: 'neutral' | 'success' | 'danger' } {
   if (parsed.state === 'unknown') return { text: `Results unknown: ${parsed.reason}`, tone: 'neutral' };
-  const verified = parsed.rows.filter(row => row.result === 'VERIFIED').length;
-  const blocked = parsed.rows.length - verified;
-  return { text: `${verified} verified, ${blocked} blocked`, tone: blocked > 0 ? 'danger' : verified > 0 ? 'success' : 'neutral' };
+  const current = parsed.rows.filter(row => returnTemporal(row, now) === 'current');
+  const verified = current.filter(row => row.result === 'VERIFIED').length;
+  const blocked = current.length - verified;
+  return { text: `${verified} current verified, ${blocked} current blocked · ${parsed.rows.length - current.length} background`,
+    tone: blocked > 0 ? 'danger' : verified > 0 ? 'success' : 'neutral' };
 }

@@ -52,6 +52,7 @@ const fakes = (): StatusDigestSources => ({
   inbox: async () => ({ sourceState: 'healthy', entries: [] }),
   workClaims: () => ({ source: 'missing', claims: [] }),
   nodeRuns: undefined, // the Node runs line postdates this suite's line counts
+  mergeLatency: undefined, // so does the time-to-merge line
 });
 
 describe('buildStatusDigest claims line', () => {

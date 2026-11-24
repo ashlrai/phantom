@@ -25,7 +25,7 @@ describe('iMessage acknowledgement row selection', () => {
     writeFileSync(file, `${row(7)}\n${row(7, 'duplicate')}\n${row(8)}\n${row(9)}\n`);
     const report = JSON.parse((await run(dir, ['--rowid', '7', '--limit', '2', '--json'])).out);
     expect(report).toMatchObject({ rowid: 7, match: 'matched', sourceState: 'ok', malformedRows: 0, deliveryProof: false,
-      rows: [{ rowid: 7, status: 'accepted', delivery: 'recorded-not-sent' }, { rowid: 7, status: 'duplicate', delivery: 'recorded-not-sent' }] });
+      rows: [{ rowid: 7, status: 'accepted', delivery: 'unknown' }, { rowid: 7, status: 'duplicate', delivery: 'unknown' }] });
     const human = await run(dir, ['--rowid', '7']);
     expect(human.out).toContain('Matching acknowledgement recorded');
     expect(human.out).toContain('Delivery proof: false');
@@ -62,7 +62,7 @@ describe('iMessage acknowledgement row selection', () => {
   it('preserves the unfiltered JSON and human output', async () => {
     const { dir, file } = fixture();
     writeFileSync(file, `${row(1)}\n${row(2, 'duplicate')}\n`);
-    expect(JSON.parse((await run(dir, ['--limit', '1', '--json'])).out)).toEqual({ sourceState: 'ok', rows: [{ timestamp: '2026-01-02T03:04:05.000Z', rowid: 2, status: 'duplicate', delivery: 'recorded-not-sent' }], malformedRows: 0, deliveryProof: false });
-    expect((await run(dir, ['--limit', '1'])).out).toBe('iMessage acknowledgement source: ok; malformed rows: 0\n2026-01-02T03:04:05.000Z rowid 2 duplicate recorded-not-sent\nRecorded-not-sent does not establish delivery. Delivery proof: false.');
+    expect(JSON.parse((await run(dir, ['--limit', '1', '--json'])).out)).toEqual({ sourceState: 'ok', rows: [{ timestamp: '2026-01-02T03:04:05.000Z', rowid: 2, status: 'duplicate', delivery: 'unknown' }], malformedRows: 0, deliveryProof: false });
+    expect((await run(dir, ['--limit', '1'])).out).toBe('iMessage acknowledgement source: ok; malformed rows: 0\n2026-01-02T03:04:05.000Z rowid 2 duplicate unknown\nAcknowledgement journal records do not establish delivery or non-delivery. Delivery status: unknown. Delivery proof: false.');
   });
 });

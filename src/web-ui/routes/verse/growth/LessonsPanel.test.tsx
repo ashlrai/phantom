@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { LessonsPanel } from './LessonsPanel.js';
-import { causeChart, parseScopeForm } from './lessons-model.js';
+import { causeChart, parseScopeForm, trialLine, trialSummary } from './lessons-model.js';
 import { narrowLessons } from './lessons-data.js';
 import { evictAll } from '../../../data/cache.js';
 import { clearMutationToken, setMutationToken } from '../../../data/auth-store.js';
@@ -32,10 +32,18 @@ function lessons(over: Partial<LessonsStateV1> = {}): LessonsStateV1 {
     windowDays: 30,
     knowledge: {
       pending: [note('kn_0000000000000001', 'Run npm test in widget before proposing parser fixes.', 'pending', { seen: 3 })],
-      approved: [note('kn_0000000000000002', 'Widget parser PRs stay under 400 lines.', 'approved', { hits: 7 })],
+      approved: [note('kn_0000000000000002', 'Widget parser PRs stay under 400 lines.', 'approved', {
+        hits: 7,
+        trial: { served: { tasks: 8, landed: 7, rate: 0.875 }, holdout: { tasks: 3, landed: 1, rate: 1 / 3 }, delta: 0.875 - 1 / 3, ci95: [0.1, 0.9], verdict: 'helps' },
+      })],
       rejected: 0,
       approvedBytes: 40,
       capBytes: 16384,
+      trial: {
+        holdout: 0.2,
+        overall: { scope: 'all', served: { tasks: 8, landed: 7, rate: 0.875 }, holdout: { tasks: 3, landed: 1, rate: 1 / 3 }, delta: 0.5, ci95: [0.05, 0.95], verdict: 'helps' },
+        excluded: { launchFailed: 1, unfinished: 2 },
+      },
     },
     playbook: [{ text: 'Mason vetoed the Leader\'s "Open 4 Grok lanes" (lane.set).', hits: 1, addedAt: NOW }],
     sweptAt: NOW,
@@ -61,6 +69,9 @@ describe('LessonsPanel', () => {
     expect(screen.getByText('Widget parser PRs stay under 400 lines.')).toBeInTheDocument();
     expect(screen.getByText(/used 7×/)).toBeInTheDocument();
     expect(screen.getByText(/Leader veto lesson/)).toBeInTheDocument();
+    // The holdout trial's causal read shows per note and for the whole queue.
+    expect(screen.getByText(/lesson trial served 7\/8 landed · holdout 1\/3 landed · \+54 pts \(helps\)/)).toBeInTheDocument();
+    expect(screen.getByText(/20% of launches held out · 2 unfinished, 1 launch failure not counted/)).toBeInTheDocument();
     // A retro expands to its cause, next steps and better prompt.
     fireEvent.click(screen.getByRole('button', { name: /Fix flaky parser test/ }));
     expect(screen.getByText('Tests failed', { selector: 'strong' })).toBeInTheDocument();
@@ -109,5 +120,16 @@ describe('lessons model', () => {
     expect(parseScopeForm('a/b', '', 'nonsense')).toBeNull();
     expect(narrowLessons({ v: 1 })).toBeNull();
     expect(narrowLessons(lessons())).not.toBeNull();
+  });
+
+  it('trialLine shows arm counts always and the verdict only once measured', () => {
+    const measured = { served: { tasks: 5, landed: 4, rate: 0.8 }, holdout: { tasks: 4, landed: 1, rate: 0.25 }, delta: 0.55, ci95: [0.05, 0.9] as [number, number], verdict: 'helps' as const };
+    expect(trialLine(measured)).toBe('lesson trial served 4/5 landed · holdout 1/4 landed · +55 pts (helps)');
+    const measuring = { served: { tasks: 2, landed: 2, rate: 1 }, holdout: { tasks: 1, landed: 0, rate: 0 }, delta: null, ci95: null, verdict: 'unknown' as const };
+    expect(trialLine(measuring)).toBe('lesson trial served 2/2 landed · holdout 0/1 landed — measuring');
+    const summary = lessons().knowledge.trial!;
+    expect(trialSummary(summary)).toContain('50 pts (helps)');
+    expect(trialSummary(summary)).toContain('20% of launches held out');
+    expect(trialSummary(summary)).toContain('not counted');
   });
 });

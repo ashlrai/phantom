@@ -26,7 +26,6 @@ import fcntl
 import json
 import math
 import os
-import re
 import time
 from datetime import datetime, timezone
 

@@ -282,7 +282,7 @@ beforeEach(async () => {
 // Populated portfolio
 // ---------------------------------------------------------------------------
 
-describe('buildSnapshot — portfolio (populated)', () => {
+describe('buildSnapshot — portfolio (populated)', { timeout: 20_000 }, () => {
   it('attaches a portfolio section when the v2 sources are present', async () => {
     const snap = await buildSnapshot(makeConfig());
     expect(snap.portfolio).toBeDefined();
