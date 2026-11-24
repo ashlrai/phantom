@@ -51,7 +51,7 @@ effects and infer safety from a lease check before the effect.
 
 `queue-v1.ts` is the explicitly provisional `queue.v1` interface for
 RQ-PHANTOM-DRIVER-1-QUEUE, which is absent from this checkout. Its adapter here
-owns queue status in the same transaction as lease state. When the real queue
+owns queue status in the same transaction as lease state. Routing and pull require a matching owner scope; a live leader may deliberately assign a foreign or ownerless job with `claim`. Direct assignment still checks declined sessions, required capabilities and local `gh` auth. When the real queue
 lands, replace the stub only with an adapter that atomically checks the fence
 and commits queue completion at its authority. Calling a remote completion API
 after releasing the local lock would violate this contract.
