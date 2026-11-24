@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { classifyJobLine } from '../core/fleet/job-tail-words.js';
 import { isFleetJobId } from '../core/fleet/runs-job-detail.js';
 import { getFleetJobCost, type FleetJobCostV1 } from '../core/fleet/runs-job-cost.js';
 import { followFleetJobTail, getFleetJobTail, type FleetJobTailEvent } from '../core/fleet/runs-job-tail.js';
@@ -17,7 +18,9 @@ const controlHelp = 'Steer one fleet job. move needs --lane and refuses a lane t
   'Repeating a request changes nothing and returns the first receipt. --json emits fleet.job.control.v1 ' +
   'with status requested, applied, refused or unknown. Exit 0 requested or applied, 1 refused, unknown or unavailable, 2 bad usage.';
 const showHelp = 'Show one fleet job as one window: its state in plain words, its facts, then its last N log lines (1..200, default 40); --follow prints new lines while it runs.';
-const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints one {ts, source, text} object per line (source log, event or status). Exit 1 when the job is unknown on this machine.';
+const TAIL_LINE_SCHEMA = 'fleet.job.tail.line.v1';
+const NO_JOB = 'No job with that id.';
+const tailHelp = 'Tail one fleet job: status, lane, model, start time and PR, then its newest ledger events and last N log lines (1..120, default 40), every line redacted. --follow streams new lines until the job finishes or Ctrl-C. --json prints fleet.job.tail.line.v1 records with ts, kind, text and source; kind is heuristically inferred. Exit 1 when the job is unknown on this machine.';
 
 /**
  * `phm job|jobs pause|resume|stop|move <id>`: one control request for one job
@@ -252,19 +255,26 @@ export async function cmdJobTail(args: string[], deps: JobTailDeps = {}, mode: '
   if (!id) return invalid();
   const json = flags.has('--json');
   const print = (e: FleetJobTailEvent): void => {
-    if (json) out(JSON.stringify(e));
+    if (json) out(JSON.stringify(session ? e : { ...e, schema: TAIL_LINE_SCHEMA, kind: classifyJobLine(e.source, e.text) }));
     else out(e.source === 'log' ? e.text : `${e.source === 'event' ? `[event${e.ts ? ` ${e.ts}` : ''}]` : '»'} ${e.text}`);
   };
   try {
     if (session) lines ??= maxLines;
     const tail = await (deps.snapshot ?? getFleetJobTail)(id, { ...(runsDir ? { runsDir } : {}), ...(lines ? { lines } : {}) });
     if (session && tail.status === 'unknown') { err(`No session ${id} on this computer. See: phm sessions`); return 2; }
-    const head = tail.message ? `${tail.headline}\n${tail.message}` : tail.headline;
-    if (json) out(JSON.stringify({ ts: tail.generatedAt, source: 'status', text: head, status: tail.status, ...(session ? { detail: tail.detail, controls: tail.controls } : {}) }));
+    if (!session && tail.status === 'unknown') {
+      if (json) out(JSON.stringify({ schema: TAIL_LINE_SCHEMA, ts: tail.generatedAt, kind: 'error', text: NO_JOB, source: 'status', status: tail.status }));
+      else err(NO_JOB);
+      return 1;
+    }
+    const resultLast = json && !session && tail.status === 'finished' && tail.message !== null;
+    const head = tail.message && !resultLast ? `${tail.headline}\n${tail.message}` : tail.headline;
+    const header = { ts: tail.generatedAt, source: 'status' as const, text: head, status: tail.status };
+    if (json) out(JSON.stringify(session ? { ...header, detail: tail.detail, controls: tail.controls } : { ...header, schema: TAIL_LINE_SCHEMA, kind: 'say' }));
     else out(head);
     if (tail.truncated && !json) out('… earlier lines not shown');
     for (const event of tail.events) print(event);
-    if (tail.status === 'unknown') return 1;
+    if (resultLast) out(JSON.stringify({ schema: TAIL_LINE_SCHEMA, ts: tail.generatedAt, kind: 'result', text: tail.message, source: 'status', status: tail.status }));
     if (!flags.has('--follow') || tail.status === 'finished') return 0;
     const controller = new AbortController();
     const stop = () => controller.abort();
