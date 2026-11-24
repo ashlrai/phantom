@@ -7,6 +7,7 @@
  * them (pacing rows) and otherwise from the same document's observe window.
  * This module does not fetch, and it does not fill a gap with zero.
  */
+import { laneBar, sameLaneBar, type LaneBar } from './world-lane-bar.js';
 import { USAGE_SENSOR_STALE_MS } from '../../../../core/usage/sensor-reading.js';
 
 /** Same bound as usage.sensors.v1. A reading this old is not current. */
@@ -32,8 +33,8 @@ export interface WorldLaneRow {
   burn: string;
   forecast: LaneForecast;
   forecastText: string;
-  /** Hours-from-now of exhaustion, divided by hours-to-reset. Null when either time is unknown. */
-  exhaustFraction: number | null;
+  /** Measured usage and projected shares of the lane limit. */
+  bar: LaneBar;
   source: string;
   observedAt: string | null;
   freshness: LaneFreshness;
@@ -282,14 +283,8 @@ function verdictOf(signal: Signal): LaneForecast {
   }
 }
 
-function fractionOf(exhaustAt: Signal, resetAt: Signal, nowMs: number): number | null {
-  if (exhaustAt.freshness !== 'fresh' || resetAt.freshness !== 'fresh') return null;
-  if (typeof exhaustAt.value !== 'string' || typeof resetAt.value !== 'string') return null;
-  const exhaust = Date.parse(exhaustAt.value);
-  const reset = Date.parse(resetAt.value);
-  const span = reset - nowMs;
-  if (!Number.isFinite(exhaust) || !Number.isFinite(reset) || !(span > 0)) return null;
-  return (exhaust - nowMs) / span;
+function freshNumber(signal: Signal): number | null {
+  return signal.freshness === 'fresh' && typeof signal.value === 'number' ? signal.value : null;
 }
 
 function unitOf(lane: Record<string, unknown>, windows: readonly Record<string, unknown>[], nowMs: number): string | null {
@@ -319,7 +314,8 @@ function unknownRow(lane: string, label: string, engine: LaneEngine, key: string
   const summary = `${label}: usage unknown, remaining unknown, reset unknown, burn unknown, forecast unknown. Source unknown. Observed unknown.`;
   return {
     key, lane, label, engine, history: null, usage: 'unknown', remaining: 'unknown', reset: 'unknown', resetAt: null, resetIn: null,
-    burn: 'unknown', forecast: 'unknown', forecastText: 'unknown', exhaustFraction: null,
+    burn: 'unknown', forecast: 'unknown', forecastText: 'unknown',
+    bar: laneBar({ used: null, limit: null, unit: null, burn: null, resetAt: null, verdict: 'unknown', nowMs: 0 }),
     source: 'unknown', observedAt: null, freshness: 'unknown', age: 'unknown', summary,
   };
 }
@@ -348,7 +344,6 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const remaining = measure(lane, windows, 'remaining', nowMs);
   const burn = measure(lane, windows, 'burnRate', nowMs);
   const reset = measure(lane, windows, 'resetAt', nowMs);
-  const exhaust = measure(lane, windows, 'forecastExhaustAt', nowMs);
   const verdict = verdictOf(measure(lane, windows, 'forecastVsReset', nowMs));
   const unit = unitOf(lane, windows, nowMs);
   const primary = used.present ? used : remaining;
@@ -367,7 +362,8 @@ function project(lane: Record<string, unknown>, label: string, engine: LaneEngin
   const summary = `${label}: usage ${usage}, remaining ${remainingText}, reset ${resetText}, burn ${burnText}, forecast ${text}. Source ${source}. Observed ${badge.freshness}${badge.observedAt ? ` ${badge.observedAt}` : ''}.`;
   return {
     key, lane: laneName, label, engine, history: parseHistory(lane['history']), usage, remaining: remainingText, reset: resetText, resetAt,
-    resetIn: resetCountdown(resetAt, nowMs), burn: burnText, forecast: verdict, forecastText: text, exhaustFraction: fractionOf(exhaust, reset, nowMs),
+    resetIn: resetCountdown(resetAt, nowMs), burn: burnText, forecast: verdict, forecastText: text,
+    bar: laneBar({ used: freshNumber(used), limit: freshNumber(limit), unit, burn: freshNumber(burn), resetAt, verdict, nowMs }),
     source, observedAt: badge.observedAt, freshness: badge.freshness, age: badge.age, summary,
   };
 }
@@ -451,7 +447,7 @@ export function sameWorldLaneRow(left: WorldLaneRow, right: WorldLaneRow): boole
     && left.engine === right.engine && left.usage === right.usage && left.remaining === right.remaining
     && left.reset === right.reset && left.resetAt === right.resetAt && left.resetIn === right.resetIn && left.burn === right.burn
     && left.forecast === right.forecast && left.forecastText === right.forecastText
-    && left.exhaustFraction === right.exhaustFraction && left.source === right.source
+    && sameLaneBar(left.bar, right.bar) && left.source === right.source
     && left.observedAt === right.observedAt && left.freshness === right.freshness && left.age === right.age
     && left.summary === right.summary && JSON.stringify(left.history) === JSON.stringify(right.history);
 }
