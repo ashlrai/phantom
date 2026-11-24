@@ -618,6 +618,15 @@ export interface OwnerThreadReadFilter {
    * honest empty slice.
    */
   replyTo?: string;
+  /**
+   * Keep only live inbound messages no recorded outbound reply cites — the
+   * awaiting-reply mark this read reports, applied as a slice so "what is
+   * the owner still waiting on" is one filtered read composing with every
+   * other dimension. It is inherently inbound-only and live-window-only:
+   * archived messages are outside the awaiting window by contract, so
+   * `readOwnerThreadHistory` answers an awaiting page honestly empty.
+   */
+  awaiting?: boolean;
 }
 
 /**
@@ -667,7 +676,9 @@ export function ownerThreadViewPredicate(filter?: OwnerThreadReadFilter): (messa
  * secret-shaped text, so the match runs over the same scrubbed content the
  * row prints. `replyTo` keeps only the exchange rooted at one message key —
  * the message carrying that `idempotencyKey` plus every reply citing it —
- * across every channel the reply fanned out to. An unreadable thread still
+ * across every channel the reply fanned out to. `awaiting` keeps only the
+ * live inbound messages the awaiting-reply mark names — the same set
+ * `awaitingReply` reports, sliced into the view itself. An unreadable thread still
  * reports `unavailable` with
  * `awaitingReply: null` — unknown stays unknown, never an empty filtered
  * list passed off as fact.
@@ -679,7 +690,12 @@ export function readOwnerThread(options: OwnerThreadOptions, limit = 200, filter
   const inView = ownerThreadViewPredicate(filter);
   try {
     const state = readState(options);
-    const messages = state.messages.filter(inView).slice(-cap);
+    const awaiting = filter?.awaiting === true
+      ? new Set(awaitingReplyMessages(state).map(message => message.id))
+      : undefined;
+    const messages = state.messages
+      .filter(message => inView(message) && (awaiting === undefined || awaiting.has(message.id)))
+      .slice(-cap);
     return {
       schema: 'comms.owner-thread.v1', threadId: OWNER_THREAD_ID, messages,
       receipts: readReceipts(options.runsDir, messages.filter(m => m.direction === 'outbound').map(m => m.id)),

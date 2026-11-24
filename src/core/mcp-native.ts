@@ -1425,7 +1425,7 @@ const TOOLS: NativeToolImpl[] = [
 
   {
     name: 'ashlr_comms_thread',
-    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. channel keeps one channel\'s lines; direction keeps inbound or outbound lines; since keeps messages at or after 15m, 2h, 1d, epoch ms or an ISO time; beforeAt keeps messages strictly before that cutoff — the exclusive ceiling that pairs with since; contains keeps only messages whose text carries the needle as a case-insensitive substring — the only text search, since iMessage bodies are redacted on the bus mirror; replyTo keeps only the exchange rooted at one message key — the message carrying that idempotency key plus every reply citing it, the same key comms send-owner --reply-to takes. No credentials. Read-only.',
+    description: 'Read the single owner thread (desktop, Telegram, email, iMessage, Slack) with per-channel delivery receipts. channel keeps one channel\'s lines; direction keeps inbound or outbound lines; since keeps messages at or after 15m, 2h, 1d, epoch ms or an ISO time; beforeAt keeps messages strictly before that cutoff — the exclusive ceiling that pairs with since; contains keeps only messages whose text carries the needle as a case-insensitive substring — the only text search, since iMessage bodies are redacted on the bus mirror; replyTo keeps only the exchange rooted at one message key — the message carrying that idempotency key plus every reply citing it, the same key comms send-owner --reply-to takes; awaiting keeps only the live inbound messages the awaiting-reply mark names — the same set awaitingReply reports, a live-window mark archived history never satisfies. No credentials. Read-only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1436,6 +1436,7 @@ const TOOLS: NativeToolImpl[] = [
         beforeAt: { type: 'string' },
         contains: { type: 'string' },
         replyTo: { type: 'string' },
+        awaiting: { type: 'boolean' },
       },
     },
     safety: 'read',
@@ -1482,8 +1483,14 @@ const TOOLS: NativeToolImpl[] = [
         }
         filter.replyTo = args.replyTo;
       }
+      if (args.awaiting !== undefined) {
+        if (args.awaiting !== true && args.awaiting !== false) {
+          return { error: 'invalid awaiting — takes true or false' };
+        }
+        if (args.awaiting === true) filter.awaiting = true;
+      }
       return readOwnerThread(ownerThreadRuntime(loadOwnerThreadSettings(fixedOwnerConfigDir())), limit,
-        filter.channel === undefined && filter.direction === undefined && filter.since === undefined && filter.beforeAt === undefined && filter.contains === undefined && filter.replyTo === undefined ? undefined : filter);
+        filter.channel === undefined && filter.direction === undefined && filter.since === undefined && filter.beforeAt === undefined && filter.contains === undefined && filter.replyTo === undefined && filter.awaiting === undefined ? undefined : filter);
     },
   },
   {

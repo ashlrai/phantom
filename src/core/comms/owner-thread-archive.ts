@@ -67,6 +67,13 @@ export interface OwnerThreadHistoryPage extends OwnerThreadReadFilter {
 }
 
 export function readOwnerThreadHistory(options: { runsDir: string }, page: OwnerThreadHistoryPage = {}) {
+  // `awaiting` is a live-window mark: archived inbound messages are outside
+  // the awaiting window by contract (`awaitingReplyMessages` reads live
+  // state only), so an awaiting slice of history is honestly empty — never
+  // archived rows passed off as still waiting.
+  if (page.awaiting === true) {
+    return { schema: 'comms.owner-thread-history.v1' as const, messages: [], archives: listOwnerThreadArchives(options).length, skipped: 0 };
+  }
   const inView = ownerThreadViewPredicate(page);
   const archives = listOwnerThreadArchives(options);
   const limit = Number.isSafeInteger(page.limit) && page.limit! > 0 ? Math.min(page.limit!, 500) : 50;
