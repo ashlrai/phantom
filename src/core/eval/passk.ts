@@ -606,6 +606,35 @@ export function loadLastPassKReport(opts: PassKStoreOptions = {}): PassKReport |
   return loadPassKReports(opts).at(-1);
 }
 
+/**
+ * Load only the newest published report through the atomic latest.json
+ * pointer — the O(1) read for consumers that need current state without
+ * parsing every persisted report (loadLastPassKReport scans and parses the
+ * whole reports dir). Undefined when the pointer or the pointed-at report
+ * is absent or malformed — the same never-throw stance as the other readers.
+ */
+export function loadLatestPassKReport(opts: PassKStoreOptions = {}): PassKReport | undefined {
+  let pointer: unknown;
+  try {
+    pointer = JSON.parse(readFileSync(passkLatestPath(opts), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const rec = asRecord(pointer);
+  const id = rec?.['id'];
+  // The id becomes a filename under reports/; refuse anything that could
+  // escape it, exactly like the dataset's own path hygiene.
+  if (!rec || rec['schema'] !== PASSK_REPORT_SCHEMA || typeof id !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path.join(passkReportsDir(opts), `${id}.json`), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  return isPassKReport(parsed) && parsed.id === id ? parsed : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Lane-scores projection — the advisory feed lane routing reads
 // ---------------------------------------------------------------------------

@@ -168,8 +168,10 @@ macOS and the login keychain.
 `GATE PASS` or `GATE FAIL`:
 
 - in parallel: the root build (tsc, then `scripts/copy-assets.mjs` from `npm run build`, so
-  `dist/core/web/public/` exists in a fresh worktree), the web typecheck, eslint (cached), the
-  real-I/O lane guard and the docs check;
+  `dist/core/web/public/` exists in a fresh worktree), the typecheck
+  (`npm run typecheck:fast` — the native compiler on both tsconfig projects), eslint
+  (cached), the real-I/O lane guard, the Verse sync-I/O guard, the quarantine-ledger
+  verifier, the docs check and the test-name check;
 - then the web build and the first-paint budget;
 - then backend and web vitest in parallel, limited to the tests whose import graph reaches a
   file changed since the merge-base with `origin/master` (`--base <ref>` to change that),
@@ -197,9 +199,14 @@ or a script edit does not widen the run; a dependency change in either file, or 
 file, runs that suite in full. Logs, the eslint cache and vitest JSON reports go to `.ashlr-gate/` (gitignored).
 `--json` prints a machine-readable result instead of the table.
 
-The import graph cannot see a test that reads a changed file as text instead of importing it.
-Known dependencies are listed in `scripts/gate-text-reads.json`; add an entry when
-introducing a text-reading test. The gate validates mapped test paths before running.
+The import graph cannot see a test that reads a changed file as text instead of importing it,
+so the gate greps the test trees for each changed path: every test file naming the
+repo-relative path runs, plus a bare basename when it adds few enough readers to be a
+reliable signal, plus the corpus guards that walk a whole tree (`CORPUS_GUARDS` in
+`scripts/gate.mjs`: the docs link guards, the pane/design walkers and the schema registry).
+Curated entries in `scripts/gate-text-reads.json` still cover readers neither finds; add an
+entry when introducing a text-reading test the grep cannot see (for example a path built
+from segments). The gate validates mapped test paths before running.
 The web smoke set explicitly includes the existing density, UI-scale, style-token,
 micro-label-font and theme-contrast modules because they read stylesheet/token files.
 These fast design contracts run alongside the shell checks even when related selection

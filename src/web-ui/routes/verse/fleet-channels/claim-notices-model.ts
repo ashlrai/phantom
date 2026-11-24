@@ -18,7 +18,14 @@ export interface ClaimNoticesView {
   unbound: { state: 'known' | 'unknown'; total: number;
     rows: Array<{ claimId: string; repo: string; agent: string; claimedAt: number }> };
   slackConfigured: boolean | 'unknown';
+  /** Server `generatedAt`, only when it parses; null reads as "as of unknown". */
+  asOf: string | null;
+  /** Under 'unknown', `pending` carries no information: an empty list is not "0 waiting". */
+  pendingObservation: { state: 'known' } | { state: 'unknown'; reason: string };
 }
+
+const PENDING_REASONS = ['state-missing', 'ledger-unavailable', 'board-unavailable',
+  'bindings-unavailable', 'prev-unavailable', 'observation-failed'];
 
 export const CLAIM_NOTICE_ROWS = 20;
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -41,6 +48,14 @@ function narrowUnbound(raw: unknown): ClaimNoticesView['unbound'] {
   return { state: 'known', total: Math.max(count(raw.total), rows.length), rows };
 }
 
+/** Known only on an explicit `known`; a missing field (old server) or any other shape stays unknown. */
+function narrowPendingObservation(raw: unknown): ClaimNoticesView['pendingObservation'] {
+  if (object(raw) && raw.state === 'known') return { state: 'known' };
+  const reason = object(raw) && typeof raw.reason === 'string' && PENDING_REASONS.includes(raw.reason)
+    ? raw.reason : 'not-reported';
+  return { state: 'unknown', reason };
+}
+
 export function narrowClaimNotices(raw: unknown): ClaimNoticesView | null {
   if (!object(raw) || raw.v !== 1) return null;
   if (raw.source !== 'ok' && raw.source !== 'missing' && raw.source !== 'unreadable') return null;
@@ -58,5 +73,7 @@ export function narrowClaimNotices(raw: unknown): ClaimNoticesView | null {
     object(row) && str(row.state) ? [{ state: str(row.state), threadKey: str(row.threadKey), text: str(row.text) }] : []);
   return { source: raw.source, bindings: count(raw.bindings), sentTotal: count(sent.total), recent,
     delivery: summary, pending, unbound: narrowUnbound(raw.unbound),
-    slackConfigured: typeof raw.slackConfigured === 'boolean' ? raw.slackConfigured : 'unknown' };
+    slackConfigured: typeof raw.slackConfigured === 'boolean' ? raw.slackConfigured : 'unknown',
+    asOf: typeof raw.generatedAt === 'string' && !Number.isNaN(Date.parse(raw.generatedAt)) ? raw.generatedAt : null,
+    pendingObservation: narrowPendingObservation(raw.pendingObservation) };
 }

@@ -8,7 +8,7 @@ it('composes exact personal Codex argv and searches binaries in priority order',
   const ctx = { home, runsRoot, exists: () => true };
   const codex = resolvePlannerPreset('codex-personal', ctx);
   expect(codex.binary).toBe('/opt/homebrew/bin/codex');
-  expect(codex.argv).toEqual(['/usr/bin/env', `CODEX_HOME=${join(home, '.codex-2')}`, codex.binary, 'exec', '-m', 'gpt-6.1-sol', '--sandbox', 'danger-full-access', '--skip-git-repo-check', '-C', join(home, 'Projects', 'ashlrai', '.orch-drop', 'sol'), '-']);
+  expect(codex.argv).toEqual(['/usr/bin/env', `CODEX_HOME=${join(home, '.codex-2')}`, codex.binary, 'exec', '-m', 'gpt-6.2-sol', '--sandbox', 'danger-full-access', '--skip-git-repo-check', '-C', join(home, 'Projects', 'ashlrai', '.orch-drop', 'sol'), '-']);
   expect(resolvePlannerPreset('codex-personal', { ...ctx, exists: path => path === join(home, '.local', 'bin', 'codex') }).binary).toBe(join(home, '.local', 'bin', 'codex'));
   expect(composePlannerSlate(['codex-personal'], join(runsRoot, 'brief'), ctx)).toMatchObject({ v: 1, promptPath: join(runsRoot, 'brief') });
 });

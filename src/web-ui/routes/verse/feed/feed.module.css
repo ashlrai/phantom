@@ -13,11 +13,21 @@
 .chip[aria-pressed='true'] { color: var(--text-primary); background: var(--status-info-bg); border-color: transparent; }
 .chip:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
 .list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
-.line { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: var(--space-3); align-items: baseline; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle); }
-.line time { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
-.line a { color: var(--text-primary); text-decoration: none; overflow-wrap: anywhere; }
-.line a:hover { color: var(--accent-500); text-decoration: underline; }
-.line a:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 3px; }
+/* Feed cards (SharedFeed): icon column + text; wraps at 390 px without horizontal scroll. */
+.card { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); gap: var(--space-2); align-items: start; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-subtle); }
+.icon { display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; font-size: var(--text-xs-size); color: var(--status-info-fg); background: var(--status-info-bg); }
+.icon[data-kind='merged'] { color: var(--status-success-fg); background: var(--status-success-bg); }
+.icon[data-kind='failed'] { color: var(--status-danger-fg); background: var(--status-danger-bg); }
+.icon[data-kind='lane'], .icon[data-kind='incident'] { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.cardBody { display: grid; gap: var(--space-1); min-width: 0; }
+.cardBody a, .cardBody > span:first-child { color: var(--text-primary); text-decoration: none; overflow-wrap: anywhere; }
+.cardBody a:hover { color: var(--accent-500); text-decoration: underline; }
+.cardBody a:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 3px; }
+.meta { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.group summary { color: var(--accent-500); font-size: var(--text-xs-size); cursor: pointer; }
+.group ul { display: grid; gap: var(--space-1); margin: var(--space-1) 0 0; padding-left: var(--space-4); font-size: var(--text-sm-size); overflow-wrap: anywhere; }
+.more { align-self: center; min-height: 2.75rem; padding: 0 var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); cursor: pointer; }
+.more:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
 .kind { border-radius: var(--radius-sm); padding: 0 var(--space-1); font-size: var(--text-xs-size); color: var(--status-info-fg); background: var(--status-info-bg); }
 .kind[data-kind='alert'] { color: var(--status-warning-fg); background: var(--status-warning-bg); }
 .kind[data-kind='merge'] { color: var(--status-success-fg); background: var(--status-success-bg); }
@@ -32,3 +42,15 @@
 .newBar { display: flex; align-items: center; gap: var(--space-2); color: var(--text-primary); font-size: var(--text-xs-size); }
 .divider { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs-size); }
 .divider::before, .divider::after { content: ''; flex: 1; border-top: 1px solid var(--border-subtle); }
+
+@media (width < 720px) {
+  .line { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .root header { flex-direction: column; }
+  .root header > span { max-width: 100%; flex-wrap: wrap; }
+  .newBar { flex-wrap: wrap; }
+}
+
+.betsCard { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); min-width: 0; overflow-wrap: anywhere; }
+.betsCard h2 { margin: 0; color: var(--text-secondary); font-size: var(--text-sm-size); }
+.betsHead, .betsRate { margin: 0; color: var(--text-primary); }
+.betsRate[data-known='false'] { color: var(--text-secondary); }

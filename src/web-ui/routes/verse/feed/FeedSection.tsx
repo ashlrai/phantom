@@ -13,7 +13,7 @@
  * note that some updates are missing. Only when every source is down does it
  * say the Feed is unavailable.
  */
-import type { FeedReport } from '../../../../core/feed.js';
+import type { FeedReport } from '../../../../core/feed-schema.js';
 import { apiGet } from '../../../data/client.js';
 import type { QueryDef } from '../../../data/queries.js';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
@@ -43,6 +43,7 @@ import { useActivity } from '../shell/useActivity.js';
 import { buildFeed, feedPaneLabel, filterFeed, isSharedFeedReport, type FeedFilter, type FeedKind } from './feed-model.js';
 import { buildAwayDigest } from './away-digest.js';
 import { AwayDigestCard } from './AwayDigestCard.js';
+import { LeaderBetsCard } from './LeaderBetsCard.js';
 import { FeedAskButton } from './FeedAskButton.js';
 import { feedTellText } from './feed-tell-text.js';
 import { releaseFeedItems } from './release-feed-items.js';
@@ -51,7 +52,9 @@ import { countNew, firstOlderIndex, useFeedSeen } from './feed-seen-store.js';
 import { useVerseUi } from '../useVerseUi.js';
 import { setFeedMutedKinds } from '../verse-ui-store.js';
 import { isFeedItemVisible } from './feed-mute.js';
+import { SharedFeed } from './SharedFeed.js';
 import styles from './feed.module.css';
+import compact from '../../../components/layout/compact-view.module.css';
 
 const unifiedInboxQuery: QueryDef<unknown> = { key: 'verse-fleet-comms-unified-inbox', fetch: signal => apiGet(UNIFIED_INBOX_PATH, signal) };
 const inboxPlansQuery: QueryDef<unknown> = { key: 'verse-feed-gmail-archive-plan', fetch: signal => apiGet('/api/verse/comms/gmail-triage/archive-plan', signal) };
@@ -118,12 +121,10 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   const ownerPaused = owner.data?.paused === true;
   const ownerLines = ownerPaused ? undefined : owner.data?.lines;
   const sharedReady = isSharedFeedReport(shared.data);
-  const unknownSources = isSharedFeedReport(shared.data) ? Object.entries(shared.data.sources).filter(([, state]) => state === 'unknown').map(([name]) => name === 'leaderReplies' ? 'Leader replies' : name === 'incidents' ? 'blocked jobs' : name) : [];
   const failed = [leaderFailed, runsFailed, alertsFailed, ownerFailed].filter(Boolean).length;
   // Down means no source gave anything: the owner source only counts as up when it returned lines.
-  const allDown = (sharedReady && unknownSources.length === 4 && shared.data?.items.length === 0)
-    || (!sharedReady && leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length));
-  const loading = !sharedReady && leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
+  const allDown = leaderFailed && runsFailed && alertsFailed && (ownerFailed || !ownerLines?.length);
+  const loading = leader.data === undefined && !leaderFailed && runs.data === undefined && !runsFailed && !activity.data && !alertsFailed && owner.data === undefined && !ownerFailed;
 
   const updateItems = useMemo(
     () => deriveUpdateNotifications(update.data ?? null, Date.now(), nativeUpdates),
@@ -149,7 +150,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     return drafts?.oldestPendingAt ? { runId: `drafts:${drafts.oldestPendingAt}`, at: drafts.oldestPendingAt, drafts } : null;
   }, [commsRead]);
 
-  const feed = useMemo(() => buildFeed(sharedReady ? { shared: shared.data } : {
+  const feed = useMemo(() => sharedReady ? [] : buildFeed({
     leader: leader.data?.value?.messages,
     runs: runsFailed ? undefined : runs.data,
     needsYou: activity.data?.needsYou,
@@ -159,13 +160,13 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
     teammate: teammate?.error ? null : inboxView,
     comms,
     inboxPlans: inboxPlans.error ? undefined : inboxPlans.data,
-  }), [sharedReady, shared.data, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
+  }), [sharedReady, leader.data, runs.data, runsFailed, activity.data, ownerLines, updateItems, bus.data, inboxView, teammate?.error, comms, inboxPlans.data, inboxPlans.error]);
   const releaseItems = useMemo(() => releaseFeedItems(releaseStages.data, nativeUpdates, new Date().toISOString()), [releaseStages.data, nativeUpdates]);
-  const combinedFeed = useMemo(() => sharedReady ? feed : [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [sharedReady, feed, releaseItems]);
+  const combinedFeed = useMemo(() => sharedReady ? [] : [...feed, ...releaseItems].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 100), [sharedReady, feed, releaseItems]);
   const filtered = filterFeed(combinedFeed.filter(item => isFeedItemVisible(item, feedMutedKinds)), filter);
-  const shown = sharedReady ? feed : filtered.filter(item => !isDismissed(item, dismissedMap));
-  const dismissed = sharedReady ? [] : filtered.filter(item => isDismissed(item, dismissedMap));
-  const newCount = sharedReady ? 0 : countNew(shown, seenAt);
+  const shown = filtered.filter(item => !isDismissed(item, dismissedMap));
+  const dismissed = filtered.filter(item => isDismissed(item, dismissedMap));
+  const newCount = countNew(shown, seenAt);
   const olderAt = firstOlderIndex(shown, seenAt);
   // The away summary covers the whole stream, not the filtered view; dismissed items are already seen.
   const awayDigest = useMemo(
@@ -176,15 +177,19 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
   // so the count stays while he reads and is gone next time.
   const newestAt = useRef<string | undefined>(undefined);
   // Only while visible: the render that hides the Feed must not replace what it last showed.
-  if (visible) newestAt.current = sharedReady ? feed[0]?.at : combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
+  if (visible) newestAt.current = sharedReady ? (isSharedFeedReport(shared.data) ? shared.data.items[0]?.at : undefined) : combinedFeed.find(item => isFeedItemVisible(item, feedMutedKinds) && !isDismissed(item, dismissedMap))?.at;
   useEffect(() => {
     if (!visible) return undefined;
     return () => { if (newestAt.current) markSeen(newestAt.current); };
   }, [visible, markSeen]);
 
-  return <div className={styles.root}>
-    {!sharedReady && awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
-    {!sharedReady ? <section aria-labelledby="feed-running-title" className={styles.running}>
+  // The API answered: the Feed is exactly what `phm feed` returns. The rest below is the fallback for an older hub.
+  if (sharedReady) return <SharedFeed visible={visible} now={now} openPane={openPane} openJob={openJob} />;
+
+  return <div className={`${styles.root} ${compact.view}`}>
+    <LeaderBetsCard visible={visible} />
+    {awayDigest ? <AwayDigestCard digest={awayDigest} onFilter={setFilter} onDismiss={() => markSeen(awayDigest.newestAt)} /> : null}
+    <section aria-labelledby="feed-running-title" className={styles.running}>
       <h2 id="feed-running-title">Running chats</h2>
       {activity.status === 'stale' ? <CardNote tone="unknown">Activity is stale; showing the last successful read.</CardNote> : null}
       {activityData && activityData.sources.chats !== 'ok' ? <CardNote tone="unknown">Chat activity could not be fully read.</CardNote> : null}
@@ -198,19 +203,17 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
               </button>
             </li>)}
           </ul>}
-    </section> : null}
-    {!sharedReady ? <div className={styles.filters} role="group" aria-label="Filter the feed">
+    </section>
+    <div className={styles.filters} role="group" aria-label="Filter the feed">
       {FILTERS.map(f => <button key={f.id} type="button" className={styles.chip} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
-    </div> : null}
+    </div>
     {allDown
       ? <CardNote tone="unknown">The Feed is unavailable: none of its sources answered. It retries on its own.</CardNote>
-      : !sharedReady && failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
-    {unknownSources.length ? <CardNote tone="unknown">Some updates are unavailable: {unknownSources.join(', ')}. The feed will retry.</CardNote> : null}
-    {sharedReady && shared.error ? <CardNote tone="unknown">Feed updates could not be refreshed. Showing the last successful read.</CardNote> : null}
-    {!sharedReady && ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
+      : failed > 0 ? <CardNote tone="unknown">Some updates could not be loaded.</CardNote> : null}
+    {ownerPaused ? <CardNote tone="unknown">Owner channels are paused; their messages are hidden.</CardNote> : null}
     {loading ? <CardNote>Loading the feed…</CardNote>
       : !allDown && shown.length === 0
-        ? <CardNote>{sharedReady || filter === 'all' ? 'Nothing new yet. Merges, releases, blocked jobs and Leader replies appear here.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
+        ? <CardNote>{filter === 'all' ? 'Nothing new yet. Merges, releases, failures, incidents and Leader replies appear here.' : `No ${FILTERS.find(f => f.id === filter)!.label.toLowerCase()} in the feed right now.`}</CardNote>
         : null}
     {newCount > 0 ? <div className={styles.newBar}>
       <span>{newCount} new since you last looked</span>
@@ -220,11 +223,7 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
       {shown.map((item, i) => <Fragment key={item.id}>
         {newCount > 0 && i === olderAt ? <li role="separator" aria-label="Earlier" className={styles.divider}>Earlier</li> : null}
         <li data-kind={item.kind}>
-        {item.shared ? <div className={styles.line}>
-          <time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>
-          <a href={item.href} target={item.href?.startsWith('https://') ? '_blank' : undefined} rel="noopener noreferrer"
-            onClick={event => { if (item.href?.startsWith('/verse/?pane=')) { event.preventDefault(); openPane(item.href.slice('/verse/?pane='.length)); } }}>{item.title}</a>
-        </div> : <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
+        <Card title={<JobRefs text={item.title} onOpenJob={openJob} />} caption={<time dateTime={item.at} title={new Date(item.at).toLocaleString('en-US')}>{formatRelative(item.at, now)}</time>}
           actions={<><FeedAskButton item={item} /><details><summary aria-label={`More actions for ${item.title}`}>⋯</summary><button type="button" onClick={() => setFeedMutedKinds([...feedMutedKinds, item.kind])}>Mute {KIND_LABEL[item.kind]}</button></details><span className={styles.kind} data-kind={item.kind}>{item.label ?? KIND_LABEL[item.kind]}</span></>}>
           {item.body ? <p className={styles.body}><JobRefs text={item.body} onOpenJob={openJob} /></p> : null}
           {/* Dot's texts keep their older "Open inbox" wording; every other owned item says where it goes. */}
@@ -234,11 +233,11 @@ export function FeedSection({ visible = true, host }: { visible?: boolean; host?
           {item.href ? <a className={styles.link} href={item.href} target="_blank" rel="noopener noreferrer">Open</a> : null}
           <button type="button" className={styles.dismiss} aria-label={`Tell the Leader about ${item.title}`} onClick={() => openInterjectDialog({ prefill: feedTellText(item) })}>Tell the Leader</button>
           <button type="button" className={styles.dismiss} aria-label={`Dismiss ${item.title}`} onClick={() => dismissItem(item)}>Dismiss</button>
-        </Card>}
+        </Card>
         </li>
       </Fragment>)}
     </ol> : null}
-    {!sharedReady && feedMutedKinds.length ? <div className={styles.dismissedBar}>
+    {feedMutedKinds.length ? <div className={styles.dismissedBar}>
       <span>{feedMutedKinds.length} kinds muted</span> · <button type="button" className={styles.dismiss} aria-expanded={showMuted} onClick={() => setShowMuted(v => !v)}>{showMuted ? 'Hide' : 'Show'}</button>
       {showMuted ? feedMutedKinds.map(kind => <button key={kind} type="button" className={styles.dismiss} onClick={() => setFeedMutedKinds(feedMutedKinds.filter(k => k !== kind))}>Unmute {kind}</button>) : null}
     </div> : null}

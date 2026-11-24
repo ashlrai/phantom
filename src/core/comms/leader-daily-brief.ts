@@ -3,6 +3,7 @@ import { readNeedsMason } from '../fleet/needs-mason-resolve.js';
 import { BUDGET_POOLS, type PoolBudgetSnapshot } from '../fleet/pool-budget.js';
 import { readPoolBudgets } from '../fleet/pool-budget-store.js';
 import { listProposalsDetailed } from '../inbox/store.js';
+import { getReleases, releaseDueLine, type ReleasesReport } from '../release/status.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { gatherBriefFacts, type BriefFacts } from './leader-brief.js';
 
@@ -11,6 +12,8 @@ export interface LeaderDailySources {
   needs: () => { status: string; items: Array<{ text: string }> };
   budgets: () => Promise<PoolBudgetSnapshot>;
   proposals: () => { complete: boolean; proposals: Array<{ id: string; title: string }> };
+  /** Release cadence from local clones; read-only. */
+  releases: () => ReleasesReport;
 }
 
 /** No new execution or approval authority is conveyed by this text. */
@@ -20,6 +23,7 @@ export async function leaderDailyBrief(runsDir: string, now: Date, overrides: Pa
     needs: () => readNeedsMason({ runsDir }),
     budgets: () => readPoolBudgets(undefined, now),
     proposals: () => listProposalsDetailed({ status: 'pending' }),
+    releases: () => getReleases({ now: now.getTime() }),
     ...overrides,
   };
   const clean = (s: string, limit = 110): string => scrubSecrets(s).replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -47,5 +51,6 @@ export async function leaderDailyBrief(runsDir: string, now: Date, overrides: Pa
     const proposals = result.proposals.slice(0, 2).map(p => `${clean(p.title, 80)} [${clean(p.id, 80)}]`);
     lines.push(`Pending proposals (newest): ${proposals.join('; ') || (result.complete ? 'none' : 'unavailable')}${!result.complete && proposals.length ? ' (incomplete)' : ''}`);
   } catch { lines.push('Pending proposals: unavailable'); }
+  try { lines.push(releaseDueLine(sources.releases())); } catch { lines.push(releaseDueLine(null)); }
   return lines.join('\n');
 }

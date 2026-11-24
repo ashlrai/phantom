@@ -2,11 +2,43 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyEmpty } from '../src/core/fleet/empty-jobs.js';
+import { classifyEmpty, readEmptyJobs } from '../src/core/fleet/empty-jobs.js';
 import { cmdJobsRetryEmpty, planEmptyRetries } from '../src/cli/jobs-retry-empty.js';
 
 const queue = ['A', 'B', 'C', 'D'].map(id => `- READY RQ-${id} (P1, pool=codex-personal, tier=work, repo=phantom): Implement ${id}. Acceptance: tests pass.`).join('\n') + '\n';
 describe('retry empty jobs', () => {
+  it('deduplicates repeated records and renamed recuts by exact source without mutating receipts', () => {
+    const job = { id: 'RQ-A', lane: 'x', ...classifyEmpty('Task is too broad', null) };
+    const receipts = new Set<string>();
+    expect(planEmptyRetries(queue, [job, job], receipts)).toHaveLength(1);
+    for (const outcome of ['already-implemented', 'duplicate', 'empty'] as const) {
+      expect(planEmptyRetries(queue, [{ ...job, outcome }], receipts)).toEqual([]);
+    }
+    for (const state of ['READY', 'CLAIMED codex-personal now', 'DONE']) {
+      const recut = `- ${state} RQ-RENAMED (P1, pool=claude, tier=work, repo=phantom): Retry. retry-empty-source=RQ-A`;
+      expect(planEmptyRetries(queue + recut, [job], receipts)).toEqual([]);
+      expect(planEmptyRetries(queue + recut + '0', [job], receipts)).toHaveLength(1);
+    }
+    expect(receipts.size).toBe(0);
+  });
+  it('routes only eligible outcomes from ledger and note fixtures', async () => {
+    const now = Date.parse('2026-11-17T12:00:00Z');
+    const fixtures = [
+      ['A', 'Already implemented.', 0, 'already-implemented'],
+      ['B', 'Open PR #42 covers this request.', 0, 'duplicate'],
+      ['C', 'Task is too broad.', 1, 'failed'],
+      ['D', 'No changes produced.', 0, 'empty'],
+      ['E', 'Tests timed out.', 124, 'failed'],
+    ] as const;
+    const ledger = fixtures.map(([id, , exit_code]) => JSON.stringify({ job: `RQ-${id}`, event: 'finish', empty: true, exit_code, ts: new Date(now).toISOString() })).join('\n');
+    const report = await readEmptyJobs(24, '/fixture/runs', '/fixture/wt', now, { read: async path =>
+      path.endsWith('jobs.jsonl') ? ledger : fixtures.find(([id]) => path.endsWith(`/RQ-${id}/BRIDGE_NOTES.md`))?.[1] ?? null });
+    expect(report?.jobs.map(job => job.outcome)).toEqual(fixtures.map(row => row[3]));
+    const routes = fixtures.map(([id]) => `- READY RQ-${id} (P1, pool=claude, tier=work, repo=phantom): Implement ${id}.`).join('\n');
+    const lines = planEmptyRetries(routes, report!.jobs, new Set());
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('retry-empty-source=RQ-E');
+  });
   it.each([['Task is too broad', 'too-broad'], ['Tests timed out', 'tests-timeout'], ['No changes needed', 'already-done'], ['Duplicate of an earlier job', 'duplicate']])('classifies %s', (text, reason) => {
     expect(classifyEmpty(text, null).class).toBe(reason);
   });

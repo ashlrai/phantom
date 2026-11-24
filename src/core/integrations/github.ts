@@ -8,10 +8,11 @@
  *  - NEVER handle, read, log, or print raw tokens. `gh` owns its own auth.
  *  - createPr is EXPLICIT + MUTATING. The CLI layer (cli/gh.ts) MUST gate it
  *    behind an explicit `ashlr gh pr create` + confirmation prompt before calling.
- *  - All spawns use spawnSync (no shell) with a tight timeout.
+ *  - All spawns use argv (no shell) with a tight timeout.
  */
 
-import { credentialSpawnSync as spawnSync } from './secrets.js';
+import { credentialSpawnSync as spawnSync, credentialExecFile as execFile } from './secrets.js';
+import { backlogScanContext } from '../portfolio/scan-snapshot.js';
 import { createHash } from 'node:crypto';
 import type { GithubStatus, ProtectedPrObservedBypass, ProtectedRemoteRepositoryExpectation } from '../types.js';
 import { normalizeProtectedPrObservedBypass, normalizeProtectedRemoteRegistry, PROTECTED_PR_HANDOFF_OPERATION } from '../autonomy/protected-pr-handoff.js';
@@ -414,6 +415,28 @@ function runGh(cwd: string, args: string[]): string | null {
 /**
  * Parse a JSON string safely. Returns null on any parse error.
  */
+export async function runGhAsync(cwd: string, args: string[], signal?: AbortSignal): Promise<string | null> {
+  const context = backlogScanContext.getStore();
+  signal ??= context?.signal;
+  if (signal?.aborted) return null;
+  const key = JSON.stringify([cwd, args]);
+  const cached = context?.snapshot?.remote.get(key);
+  if (cached) return cached;
+  const pending = new Promise<string | null>((resolve) => {
+    try {
+      execFile(GH_BIN, args, {
+        cwd, timeout: TIMEOUT_MS, encoding: 'utf8', signal,
+        env: { ...process.env, GH_HOST: 'github.com', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' },
+      }, (error, stdout) => resolve(error || typeof stdout !== 'string' ? null : stdout.trim()));
+    } catch { resolve(null); }
+  });
+  context?.snapshot?.remote.set(key, pending);
+  void pending.then((value) => {
+    if (value === null && context?.snapshot?.remote.get(key) === pending) context.snapshot.remote.delete(key);
+  });
+  return pending;
+}
+
 function safeJson(raw: string | null): unknown {
   if (!raw) return null;
   try {
@@ -441,6 +464,10 @@ function resolveCiStatus(cwd: string): GithubStatus['ci'] {
     '--json',
     'status,conclusion',
   ]);
+  return parseCiStatus(raw);
+}
+
+function parseCiStatus(raw: string | null): GithubStatus['ci'] {
   const parsed = safeJson(raw);
   if (!Array.isArray(parsed) || parsed.length === 0) return 'none';
 
@@ -487,6 +514,16 @@ function resolveCiStatus(cwd: string): GithubStatus['ci'] {
  * Read-only repo snapshot via `gh`. NEVER throws — degrades to a not-a-repo
  * shape when cwd is not a GitHub repo or gh is unavailable / not authed.
  */
+export async function githubCiStatusAsync(cwd: string, signal?: AbortSignal): Promise<Pick<GithubStatus, 'isRepo' | 'repo' | 'ci'>> {
+  try {
+    const parsed = safeJson(await runGhAsync(cwd, ['repo', 'view', '--json', 'nameWithOwner'], signal));
+    const repo = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)['nameWithOwner'] : null;
+    if (typeof repo !== 'string' || !repo) return { isRepo: false, repo: null, ci: 'none' };
+    return { isRepo: true, repo, ci: parseCiStatus(await runGhAsync(cwd, ['run', 'list', '--limit', '5', '--json', 'status,conclusion'], signal)) };
+  } catch { return { isRepo: false, repo: null, ci: 'none' }; }
+}
+
 export function githubStatus(cwd: string): GithubStatus {
   const NOT_A_REPO: GithubStatus = {
     isRepo: false,
@@ -714,8 +751,20 @@ export function listIssues(
   cwd: string,
   options: ListIssuesOptions = {},
 ): IssueSummary[] | LabeledIssueSummary[] {
-  if (options === null || typeof options !== 'object' || Array.isArray(options)) return [];
-  if (options.includeLabels !== undefined && typeof options.includeLabels !== 'boolean') return [];
+  const query = issueQuery(options);
+  return query ? parseIssues(runGh(cwd, query.args), query.includeLabels, query.localLimit) : [];
+}
+
+export async function listIssuesAsync(cwd: string, options: ListIssuesOptions & { includeLabels: true }, signal?: AbortSignal): Promise<LabeledIssueSummary[]>;
+export async function listIssuesAsync(cwd: string, options?: ListIssuesOptions, signal?: AbortSignal): Promise<IssueSummary[]>;
+export async function listIssuesAsync(cwd: string, options: ListIssuesOptions = {}, signal?: AbortSignal): Promise<IssueSummary[]> {
+  const query = issueQuery(options);
+  return query ? parseIssues(await runGhAsync(cwd, query.args, signal), query.includeLabels, query.localLimit) : [];
+}
+
+function issueQuery(options: ListIssuesOptions): { args: string[]; includeLabels: boolean; localLimit: number } | null {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) return null;
+  if (options.includeLabels !== undefined && typeof options.includeLabels !== 'boolean') return null;
   const includeLabels = options.includeLabels === true;
   if (
     options.limit !== undefined &&
@@ -723,7 +772,7 @@ export function listIssues(
       !Number.isSafeInteger(options.limit) ||
       options.limit < 1 ||
       options.limit > 100)
-  ) return [];
+  ) return null;
   const requestedLimit = options.limit;
   const localLimit = requestedLimit ?? (includeLabels ? 100 : 30);
   const args = [
@@ -737,7 +786,10 @@ export function listIssues(
     '--json',
     includeLabels ? 'number,title,url,state,author,labels' : 'number,title,url,state,author',
   );
-  const raw = runGh(cwd, args);
+  return { args, includeLabels, localLimit };
+}
+
+function parseIssues(raw: string | null, includeLabels: boolean, localLimit: number): Array<IssueSummary | LabeledIssueSummary> {
   const parsed = safeJson(raw);
   if (!Array.isArray(parsed)) return [];
 

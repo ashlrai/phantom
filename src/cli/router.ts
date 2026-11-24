@@ -1,19 +1,25 @@
 import { readFile, stat } from 'node:fs/promises';
+import { cmdRouterCatalog, ROUTER_CATALOG_USAGE } from './router-catalog.js';
 import { readPoolBudgets } from '../core/fleet/pool-budget-store.js';
 import { BUDGET_POOLS, type BudgetPool } from '../core/fleet/pool-budget.js';
-import { LANE_BACKENDS, rankLanes, type LaneEvalScores, type LaneResourceSnapshot, type LaneSlots } from '../core/fleet/lane-rank.js';
+import { LANE_BACKENDS, rankLanes, selfHeldSkips, type LaneEvalScores, type LaneResourceSnapshot, type LaneSlots } from '../core/fleet/lane-rank.js';
+import { readDispatchEventsLog } from '../core/fleet/dispatch-events-read.js';
+import { computeLanesHeld } from '../core/fleet/lane-held.js';
 import { readLaneScores } from '../core/eval/passk.js';
 import type { EngineTier } from '../core/types.js';
 import { cmdRouterGateway, ROUTER_GATEWAY_USAGE, ROUTER_GATEWAY_VERBS } from './router-gateway.js';
+import { cmdRouterOutcomes, ROUTER_OUTCOMES_USAGE } from './router-outcomes.js';
 
 const USAGE = 'Usage: ashlr router rank --tier local|mid|frontier [--routes FILE] [--slots pool=count ...] [--json]\n' +
   'Slots are currently free slots supplied by the dispatcher; omitted pools are unknown.\n' +
   'FILE maps pools to routeBackend decisions. Omitted routes are unknown. Reads budgets; prioritizes lanes without imminent forecast exhaustion. Never reserves or dispatches.';
 
 export async function cmdRouter(args: string[]): Promise<number> {
+  if (args[0] === 'catalog') return cmdRouterCatalog(args.slice(1));
+  if (args[0] === 'outcomes') return cmdRouterOutcomes(args.slice(1));
   if ((ROUTER_GATEWAY_VERBS as readonly string[]).includes(args[0] ?? '')) return cmdRouterGateway(args);
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!) || ['rank --help', 'rank -h'].includes(args.join(' '))) {
-    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}`); return 0;
+    console.log(`${USAGE}\n\n${ROUTER_GATEWAY_USAGE}\n\n${ROUTER_CATALOG_USAGE}\n\n${ROUTER_OUTCOMES_USAGE}`); return 0;
   }
   let tier: EngineTier | undefined; let json = false; let routesFile: string | undefined;
   const slots: LaneSlots = {};
@@ -63,9 +69,15 @@ export async function cmdRouter(args: string[]): Promise<number> {
         }
       }
     }
-    const lanes = rankLanes(tier, { budgets, routes, evalScores }, slots);
-    console.log(json ? JSON.stringify({ schema: 'fleet.lane-rank.v1', tier, lanes }) :
-      lanes.map(l => `${l.pool}\t${l.availableSlots}\t${l.resetAt ?? 'unknown reset'}${l.evalScore ? `\tpass^k ${l.evalScore.passPowK === null ? 'n/a' : l.evalScore.passPowK.toFixed(3)} (${l.evalScore.trials} trials)` : ''}`).join('\n') || 'No eligible lanes.');
+    // A lane whose own wrapper holds every launch is skipped until a launch there finishes or 60 min pass.
+    const selfHeld: Record<string, string> = {};
+    for (const row of computeLanesHeld(await readDispatchEventsLog().catch(() => null), Date.now()).lanes) {
+      if (row.reason) selfHeld[row.lane] = row.reason;
+    }
+    const lanes = rankLanes(tier, { budgets, routes, evalScores, selfHeld }, slots);
+    const skipped = selfHeldSkips(selfHeld);
+    console.log(json ? JSON.stringify({ schema: 'fleet.lane-rank.v1', tier, lanes, skipped }) :
+      [...skipped.map(s => `skipped ${s.pool}: ${s.reason}`), ...lanes.map(l => `${l.pool}\t${l.availableSlots}\t${l.resetAt ?? 'unknown reset'}${l.evalScore ? `\tpass^k ${l.evalScore.passPowK === null ? 'n/a' : l.evalScore.passPowK.toFixed(3)} (${l.evalScore.trials} trials)` : ''}`)].join('\n') || 'No eligible lanes.');
     return 0;
   } catch { console.error('Router rank unavailable.'); return 1; }
 }

@@ -1047,6 +1047,7 @@ async function cmdDaemonStatus(jsonMode: boolean): Promise<number> {
             : null,
           // Additive: the tick in progress right now, or null.
           tickInProgress: tickProgress,
+          ciReruns: (await import('../core/fleet/ci-rerun.js')).readCiRerunStatus(),
           todayDate: stateKnown ? state.todayDate : null,
           todaySpentUsd: stateKnown ? state.todaySpentUsd : null,
           dailyBudgetUsd: dailyCap ?? null,

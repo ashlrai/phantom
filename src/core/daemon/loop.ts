@@ -102,7 +102,8 @@ import { resolveManagerSessionTargets } from '../verse/manager-scope.js';
 import { OutcomeManagerDispatch, isOutcomeManagerWorkItem, outcomeManagerWorkItems, readOutcomeManagerWorkItemContext, readOutcomeManagerPrompt, reconcileOutcomeManagerTerminals } from './outcome-manager.js';
 import { managerConversation, managerHostAdmission } from './outcome-manager-host.js';
 import type { OutcomeManagerRoute } from '../goals/outcome-manager-types.js';
-import { buildBacklog, loadBacklog } from '../portfolio/backlog.js';
+import { buildBacklog, loadBacklog, type BacklogScanInvalidation } from '../portfolio/backlog.js';
+import { createBacklogScanSnapshot } from '../portfolio/scan-snapshot.js';
 import { loadQueuedAutonomyItems } from '../portfolio/queued-autonomy.js';
 import {
   acquireDaemonLock,
@@ -206,15 +207,22 @@ import {
   tickPhasesSnapshot,
   TICK_PHASE_BACKLOG_REFRESH_MS,
   TICK_PHASE_CAPACITY_MS,
+  TICK_PHASE_NODE_BRIDGE_MS,
   TICK_PHASE_DISPATCH_PLAN_MS,
   TICK_PHASE_FRONTIER_PROBE_MS,
   TICK_PHASE_GRACE_MS,
   TICK_PHASE_INVENT_MS,
   TICK_PHASE_MAINTENANCE_MS,
   TICK_PHASE_REFLECTION_MS,
+  TICK_PHASE_CI_RERUN_MS,
+  TICK_PHASE_REWARD_SYNC_MS,
+  TICK_PHASE_SKILL_NUDGE_MS,
+  TICK_PHASE_EMPTY_TAG_SYNC_MS,
+  TICK_PHASE_VISIT_SYNC_MS,
+  TICK_PHASE_SWAPOUT_SYNC_MS,
   TICK_BUDGET_MS,
 } from './tick-phases.js';
-import { launchOffTickJob, cancelOffTickJobs } from './off-tick-jobs.js';
+import { launchOffTickJob, cancelOffTickJobs, offTickJobsSnapshot } from './off-tick-jobs.js';
 import {
   consumeDaemonActivationPermit,
   isDaemonActivationCapability,
@@ -296,11 +304,12 @@ import {
   MAX_BEST_OF_N_CANDIDATE_SPECS_INSPECTED,
   resolveBestOfNCount,
 } from '../run/best-of-n-policy.js';
-import { runSelfHealCycle, runSelfHealCycleForRepos } from '../fleet/self-heal.js';
+import { runSelfHealCycle, runSelfHealCycleForRepos, type SelfHealCycleResult } from '../fleet/self-heal.js';
 import { startTickLoopWatchdog, writeTickLoopBeacon, type TickLoopBeaconV1, type TickLoopStage, type TickLoopWatchdog } from './tick-loop.js';
 import { runInventCycle } from '../generative/invent-cycle.js'; // M186
 import { resolvePlanningClient } from '../generative/invent.js';
 import { runCounterfactualReplay } from '../fleet/counterfactual.js'; // M187
+import { createAncillaryObservationBudget } from '../fleet/ancillary-budget.js';
 import { detectRegression, bisectAndRevert } from '../fleet/regression-sentinel.js'; // M189
 import { observePostMergeStability } from '../fleet/post-merge-stability-observer.js';
 import {
@@ -381,6 +390,9 @@ import {
 } from '../fleet/proposal-matching.js';
 import { loadConfig, resolveSubscriptionMaxPercent } from '../config.js';
 import { homedir, hostname as osHostname } from 'node:os';
+import { spawn as spawnChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { ashlrHome } from '../cloud/store.js';
 import {
   buildResourceStrategyReport,
   fleetStatusForDirection,
@@ -417,6 +429,7 @@ import {
 } from '../fleet/generated-repair-lifecycle.js';
 import { generatedRepairLifecycleAttemptHash } from '../fleet/generated-repair-identity.js';
 import {
+  childRuntimeArgs,
   scheduleResolutionObserverChild,
   type ScheduledResolutionObserverChild,
 } from './resolution-observer-scheduler.js';
@@ -434,7 +447,7 @@ import { readStableRegularFile } from '../util/stable-file-read.js';
 import { fsyncDirectory } from '../util/durability.js';
 import { withApprovedKnowledge, knowledgeBlockFor } from '../learn/retro/inject.js';
 import { revertedPrKeys } from '../improve/reverted.js';
-import { recordKnowledgeHits } from '../learn/retro/store.js';
+import { recordKnowledgeHits, recordKnowledgeRuns } from '../learn/retro/store.js';
 import { withFleetPlaybook, prepareFleetPlaybook, type PreparedFleetPlaybook } from '../playbooks/lanes.js';
 import { recordPlaybookUse } from '../playbooks/store.js';
 import { ROUTING_SESSION_OVERHEAD_TOKENS } from '../fleet/dispatch-router.js';
@@ -1384,6 +1397,39 @@ const SEAT_SHADOW_MAX_IN_FLIGHT = 2;
  * make it Tier-1 code. No snapshot ⇒ no shadow (nothing honest to compare).
  * `foundry.seatRouterShadow: false` turns it off. Never throws, never awaited.
  */
+/**
+ * One `node-bridge` pass in a child spawned by path, not imported: the bridge and node router
+ * stay out of this module's Tier-1 import closure. Abort sends SIGTERM, then SIGKILL after 2 s.
+ */
+function runNodeBridgeChild(signal: AbortSignal): Promise<Record<string, unknown> | TickPhaseSkipped> {
+  const entry = fileURLToPath(new URL(import.meta.url.endsWith('.ts')
+    ? '../drive/nodes/ready-bridge-child.ts' : '../drive/nodes/ready-bridge-child.js', import.meta.url));
+  return new Promise((resolveChild, rejectChild) => {
+    const child = spawnChildProcess(process.execPath, [...childRuntimeArgs(), entry],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    let out = '';
+    let hardKill: ReturnType<typeof setTimeout> | undefined;
+    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { if (out.length < 65_536) out += chunk; });
+    const abort = () => {
+      child.kill('SIGTERM');
+      hardKill = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      hardKill.unref();
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    const done = () => { signal.removeEventListener('abort', abort); if (hardKill) clearTimeout(hardKill); };
+    child.once('error', (error) => { done(); rejectChild(error); });
+    child.once('close', (code) => {
+      done();
+      if (signal.aborted) return rejectChild(signal.reason);
+      let summary: unknown = null;
+      try { summary = JSON.parse(out); } catch { /* reported below */ }
+      if (code !== 0 || !summary || typeof summary !== 'object') return rejectChild(new Error(`node-bridge child exited ${code}`));
+      const inert = (summary as Record<string, unknown>)['inert'];
+      resolveChild(typeof inert === 'string' ? skipTickPhase(inert) : summary as Record<string, unknown>);
+    });
+  });
+}
+
 function shadowSeatRouteBeside(cfg: AshlrConfig, item: WorkItem, backend: string): void {
   if ((cfg.foundry as Record<string, unknown> | undefined)?.['seatRouterShadow'] === false) return;
   if (seatShadowInFlight >= SEAT_SHADOW_MAX_IN_FLIGHT) return;
@@ -4025,13 +4071,14 @@ export async function tick(
   // second scan over it in the same tick only stacks work. Later refreshes
   // this tick are skipped and the next tick resumes the scan.
   let backlogRefreshTimedOut = false;
-  const runBacklogRefreshPhase = async (): Promise<WorkItem[]> => {
+  const backlogScanSnapshot = createBacklogScanSnapshot();
+  const runBacklogRefreshPhase = async (invalidate?: BacklogScanInvalidation): Promise<WorkItem[]> => {
     if (backlogRefreshTimedOut) {
       await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS,
         async () => skipTickPhase('an earlier backlog refresh this tick timed out'));
       return [];
     }
-    const refreshed = await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, () => refreshBacklogForTick());
+    const refreshed = await runPhase('backlog-refresh', TICK_PHASE_BACKLOG_REFRESH_MS, (signal) => refreshBacklogForTick(signal, invalidate));
     if (refreshed.status === 'timeout') backlogRefreshTimedOut = true;
     return refreshed.value ?? [];
   };
@@ -4346,6 +4393,7 @@ export async function tick(
   let zeroDollarOnlyTick = false;
   let meteredUsdExhaustedForMaintenance = false;
   let selfHealMaintenanceRan = false;
+  let selfHealMaintenanceResult: SelfHealCycleResult | undefined;
   let inventMaintenanceRan = false;
   let ancillaryMaintenanceRan = false;
   let proposalRepairMaintenanceRan = false;
@@ -4600,6 +4648,7 @@ export async function tick(
           postMergeCreditReleased: postMergeCreditSweepResult.released,
           postMergeCreditSkipped: postMergeCreditSweepResult.skipped,
           postMergeCreditSourceComplete: postMergeCreditSweepResult.sourceComplete,
+          postMergeCreditSkippedByReason: postMergeCreditSweepResult.skippedByReason,
         }
         : {}),
       ...(producerMaintenanceSkippedByCadence ? { skippedByCadence: true } : {}),
@@ -4630,9 +4679,9 @@ export async function tick(
     try {
       const healOpts = phaseSignal ? { signal: phaseSignal } : {};
       if (targetRepos && targetRepos.length > 0) {
-        await runSelfHealCycleForRepos(targetRepos, liveCfg, healOpts);
+        selfHealMaintenanceResult = await runSelfHealCycleForRepos(targetRepos, liveCfg, healOpts);
       } else {
-        await runSelfHealCycle(liveCfg, healOpts);
+        selfHealMaintenanceResult = await runSelfHealCycle(liveCfg, healOpts);
       }
     } catch (err) {
       // Best-effort — self-heal must never crash the tick.
@@ -4730,7 +4779,39 @@ export async function tick(
       settleObservation(observationOutcome, enqueued === undefined ? undefined : { backlogItems: enqueued });
     }
   };
+  // Lessons whose every cited PR was reverted are withheld, and the
+  // skill-nudge fold discounts merges the standing set proves did not
+  // hold; the reverted set is read at most once a minute. Declared before
+  // runReflectionMaintenance: the off-tick jobs it launches can run before
+  // later const declarations in this scope initialize.
+  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
+  const revertedKeys = (): ReadonlySet<string> => {
+    const now = Date.now();
+    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
+    return revertedCache.keys;
+  };
   const runReflectionMaintenance = async (): Promise<void> => {
+    const ci = liveCfg.ciRerun;
+    const lastCiLaunch = offTickJobsSnapshot().find(job => job.name === 'ci-rerun');
+    if (offTickMaintenance && !stopRequested() && ci?.enabled !== false && ci?.repos?.length &&
+        (!lastCiLaunch || Date.now() - Date.parse(lastCiLaunch.since) >= Math.max(1, ci.intervalMinutes ?? 10) * 60_000)) {
+      launchOffTickJob('ci-rerun', async signal => {
+        const { runCiRerunMaintenance } = await import('../fleet/ci-rerun.js');
+        await runCiRerunMaintenance({ repos: ci.repos!, maxPerHour: ci.maxPerHour, signal });
+      }, { deadlineMs: TICK_PHASE_CI_RERUN_MS, parentSignal: opts.signal, log: phaseLog });
+    }
+    // Host memory samples: fold the bridge's latest memstat.json reading
+    // into metrics/swapout-rate.jsonl — the tuning ledger MEMORY_GUARD's
+    // constants name but nothing wrote. One small file plus a bounded
+    // ledger tail per resident tick; dedup by sampled_at keeps appends at
+    // the bridge's own cadence. Best-effort and single-flight; writes only
+    // under the runs dir.
+    if (offTickMaintenance && !stopRequested()) {
+      launchOffTickJob('swapout-sync', async signal => {
+        const { syncSwapoutSamples } = await import('../fleet/swapout-sync.js');
+        await syncSwapoutSamples({ signal });
+      }, { deadlineMs: TICK_PHASE_SWAPOUT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+    }
     if (
       stopRequested() ||
       (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] !== true ||
@@ -4746,53 +4827,107 @@ export async function tick(
         parentSignal: opts.signal,
         log: phaseLog,
       });
+      // Reward substrate producer: fold the jobs-ledger tail into
+      // reward-signals.jsonl on the same self-improvement cadence, with the
+      // standing revert set so a merge git history proves did not hold never
+      // counts as held. The sync is best-effort and append-only;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('reward-sync', async signal => {
+        const { syncRewardSignalsFromJobsLedger } = await import('../metrics/reward-feed.js');
+        await syncRewardSignalsFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
+      }, { deadlineMs: TICK_PHASE_REWARD_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+      // Shadow skill learning: fold the same jobs-ledger tail into candidate
+      // recovery skill cards, with the standing revert set so a merge that
+      // did not hold never seeds a "recovery" draft. Best-effort and
+      // deduplicated by skill id; launchOffTickJob keeps it single-flight.
+      launchOffTickJob('skill-nudge', async signal => {
+        const { syncSkillNudgesFromJobsLedger } = await import('../fleet/skill-nudge.js');
+        await syncSkillNudgesFromJobsLedger({ signal, revertedPrKeys: revertedKeys() });
+      }, { deadlineMs: TICK_PHASE_SKILL_NUDGE_MS, parentSignal: opts.signal, log: phaseLog });
+      // Empty-job evidence: fold the same tail into empty-tags.jsonl and the
+      // dupcheck outcome rows `phm jobs empty --record` used to write only
+      // when run by hand. Best-effort and deduplicated by job id;
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('empty-tag-sync', async signal => {
+        const { syncEmptyTagsFromJobsLedger } = await import('../fleet/empty-tag-sync.js');
+        await syncEmptyTagsFromJobsLedger({ signal });
+      }, { deadlineMs: TICK_PHASE_EMPTY_TAG_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
+      // Queue station visits: fold the same jobs-ledger tail plus live READY
+      // rows into visits.jsonl, the journal `phm queue stats` and
+      // /api/queue/stats read. Best-effort and idempotent — planVisitSync
+      // refuses regressions and dedups against the journal; an unreadable
+      // journal skips the append rather than risking duplicates.
+      // launchOffTickJob keeps it single-flight.
+      launchOffTickJob('visit-sync', async signal => {
+        const { syncQueueVisits } = await import('../queue/visit-sync.js');
+        await syncQueueVisits({ signal });
+      }, { deadlineMs: TICK_PHASE_VISIT_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
     } else {
       await runPhase('reflection', TICK_PHASE_REFLECTION_MS, run);
     }
   };
-  const runAncillaryMaintenance = async (): Promise<void> => {
+  const runAncillaryMaintenance = async (signal: AbortSignal): Promise<void> => {
     if (meteredUsdExhaustedForMaintenance || proposalOnlyActivation || opts.dryRun || stopRequested() || ancillaryMaintenanceRan) return;
     ancillaryMaintenanceRan = true;
 
-    // M187: Counterfactual replay — low-cadence judge calibration.
-    if (
-      !stopRequested() &&
-      (liveCfg.foundry as Record<string, unknown>)?.counterfactual === true &&
-      state.ticks.length % 20 === 0
-    ) {
-      try { await runCounterfactualReplay(liveCfg); } catch (err) { console.warn('[ashlr] daemon:tick runCounterfactualReplay failed:', (err as Error)?.message ?? err); }
-    }
-
-    // Outcome findings remain signed observation-only evidence. They are not
-    // allowed to rewrite judge labels or skill lifecycle state while cohort
-    // enumeration is incomplete.
-    if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['outcomeWatcher'] !== false) {
-      try {
-        const { scanRealWorldOutcomes } = await import('../fleet/outcome-watcher.js');
-        await scanRealWorldOutcomes(liveCfg, { enrolledRepos: enrolled });
-      } catch (err) {
-        console.warn('[ashlr] daemon:tick outcomeWatcher failed:', (err as Error)?.message ?? err);
+    const budget = createAncillaryObservationBudget({
+      signal,
+      onSkip: (stage, reason) => {
+        if (stage === 'counterfactual-replay') state.counterfactualReplayPending = true;
+        noteTickPhase('ancillary', `${stage} skipped: ${reason}`);
+        audit({ action: 'daemon:ancillary-skip', repo: null, sandboxId: null, summary: `${stage} skipped: ${reason}`, result: 'error' });
+      },
+    });
+    try {
+      // M187: Counterfactual replay — low-cadence judge calibration.
+      if (
+        !stopRequested() &&
+        (liveCfg.foundry as Record<string, unknown>)?.counterfactual === true &&
+        (state.counterfactualReplayPending === true || state.ticks.length % 20 === 0)
+      ) {
+        await budget.run('counterfactual-replay', async (controls) => {
+          state.counterfactualReplayPending = false;
+          try { await runCounterfactualReplay(liveCfg, controls); } catch (err) { console.warn('[ashlr] daemon:tick runCounterfactualReplay failed:', (err as Error)?.message ?? err); }
+        });
       }
-    }
 
-    // M505: Learning-loop sweeps. Each of these was previously unreachable in a
-    // live tick — rejection learning sat behind `autoMerge.enabled`, post-merge
-    // credit was a stubbed `false`, and reflection was a manual CLI command — so
-    // the fleet observed every run and learned from none of them.
-    if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true) {
-      try {
-        const { sweepRejectionLearning } = await import('../fleet/self-improve.js');
-        const result = sweepRejectionLearning(liveCfg);
-        rejectionLearningSweepResult = result;
-        if (result.scanned > 0 || result.written > 0) {
-          console.warn(
-            `[ashlr] daemon:tick sweepRejectionLearning: scanned=${result.scanned} ` +
-            `written=${result.written} skipped=${result.skipped} sourceComplete=${result.sourceComplete}`,
-          );
-        }
-      } catch (err) {
-        console.warn('[ashlr] daemon:tick sweepRejectionLearning failed:', (err as Error)?.message ?? err);
+      // Outcome findings remain signed observation-only evidence. They are not
+      // allowed to rewrite judge labels or skill lifecycle state while cohort
+      // enumeration is incomplete.
+      if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['outcomeWatcher'] !== false) {
+        await budget.run('outcome-watcher', async (controls) => {
+          try {
+            const { scanRealWorldOutcomes } = await import('../fleet/outcome-watcher.js');
+            await scanRealWorldOutcomes(liveCfg, { enrolledRepos: enrolled, ...controls });
+          } catch (err) {
+            console.warn('[ashlr] daemon:tick outcomeWatcher failed:', (err as Error)?.message ?? err);
+          }
+        });
       }
+
+      // M505: Learning-loop sweeps. Each of these was previously unreachable in a
+      // live tick — rejection learning sat behind `autoMerge.enabled`, post-merge
+      // credit was a stubbed `false`, and reflection was a manual CLI command — so
+      // the fleet observed every run and learned from none of them.
+      if (!stopRequested() && (liveCfg.foundry as Record<string, unknown>)?.['selfImprove'] === true) {
+        await budget.run('rejection-learning', async (controls) => {
+          try {
+            const { sweepRejectionLearning } = await import('../fleet/self-improve.js');
+            const result = sweepRejectionLearning(liveCfg, controls);
+            rejectionLearningSweepResult = result;
+            if (result.scanned > 0 || result.written > 0) {
+              console.warn(
+                `[ashlr] daemon:tick sweepRejectionLearning: scanned=${result.scanned} ` +
+                `written=${result.written} skipped=${result.skipped} sourceComplete=${result.sourceComplete}`,
+              );
+            }
+          } catch (err) {
+            console.warn('[ashlr] daemon:tick sweepRejectionLearning failed:', (err as Error)?.message ?? err);
+          }
+        });
+      }
+    } finally {
+      budget.dispose();
     }
 
     // Credit is released only by the M505 protocol's own fail-closed checks
@@ -5016,19 +5151,13 @@ export async function tick(
     return resolveNativeSeatLaunch({ accountsRoot: resolveAccountsRoot(routingCfg), provider, seatId: route.seatId,
       ...(provider === 'claude' ? { requireClaudeBrokerSafety: true } : {}) }).ok;
   };
-  // Lessons whose every cited PR was reverted are withheld; the reverted set is read at most once a minute.
-  let revertedCache: { at: number; keys: ReadonlySet<string> } | null = null;
-  const revertedKeys = (): ReadonlySet<string> => {
-    const now = Date.now();
-    if (!revertedCache || now - revertedCache.at > 60_000) revertedCache = { at: now, keys: revertedPrKeys() };
-    return revertedCache.keys;
-  };
   const producerGoalWithGuidance = (prompt: string, item: WorkItem, runId: string, preview = false): string => {
     const harnessGoal = standingTick ? withHarnessProducerPrompt(prompt, hooks) : prompt;
     const baseGoal = withFleetPlaybook(harnessGoal, item, runId, { recordUse: !preview });
     return withApprovedKnowledge(baseGoal,
       { repo: item.repo, paths: [], kind: null, text: `${item.title}\n${item.detail}` },
-      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview, revertedPrKeys: revertedKeys });
+      { fromLeader: item.tags.includes('fleet-source:leader'), recordHits: !preview,
+        trajectoryId: `run:${runId}`, revertedPrKeys: revertedKeys });
   };
   // Per-tick private prompt bytes, never persisted in the backlog, tags or trace.
   // A context tag carries only the existing conservative routing forecast.
@@ -5053,7 +5182,7 @@ export async function tick(
     const current = readPreparedManagerPrompt(item);
     return !!prepared && !!current && outcomeDigest(prepared) === outcomeDigest(current);
   };
-  const refreshBacklogForTick = async (): Promise<WorkItem[]> => {
+  const refreshBacklogForTick = async (signal: AbortSignal, invalidate?: BacklogScanInvalidation): Promise<WorkItem[]> => {
     if (stopRequested()) return [];
     const settleObservation = beginTickStageObservation('backlog-refresh');
     let observationOutcome: 'ok' | 'failed' = 'ok';
@@ -5116,7 +5245,7 @@ export async function tick(
           }
         }
       }
-      const backlog = await buildBacklog({ repos: enrolled });
+      const backlog = await buildBacklog({ repos: enrolled, snapshot: backlogScanSnapshot, signal, invalidate });
       backlogSnapshotAt = backlog.generatedAt;
       backlogSnapshotId = backlog.snapshotId;
       const resolution = resolveDiagnosticResliceParents([...backlog.items, ...managerItems]);
@@ -5132,6 +5261,8 @@ export async function tick(
       settleObservation(observationOutcome);
     }
   };
+  const refreshAfterSelfHeal = (touchedRepos?: string[]): Promise<WorkItem[]> =>
+    runBacklogRefreshPhase({ repos: touchedRepos ?? enrolled, scanners: ['queued-autonomy'] });
   const prunableSelfHealRepos = (items: WorkItem[]): string[] => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -5457,7 +5588,7 @@ export async function tick(
     (proposalRepairResult?.dispatchRepairPruned ?? 0) > 0
   ) {
     backlogItems =
-      await runBacklogRefreshPhase();
+      await runBacklogRefreshPhase({ scanners: ['queued-autonomy'] });
   }
   for (const key of proposalRepairResult?.blockedItemKeys ?? []) blockedRepairKeys.add(key);
   for (const key of proposalRepairResult?.blockedRootKeys ?? []) blockedRepairRootKeys.add(key);
@@ -5510,14 +5641,14 @@ export async function tick(
     if (!opts.dryRun && shouldRunProducerMaintenance(state)) {
       producerMaintenanceBeforeSelection = true;
       await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(undefined, signal));
-      backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
+      backlogItems = filterGeneratedRepairDispatch(await refreshAfterSelfHeal(selfHealMaintenanceResult?.checkedRepos));
       if (backlogItems.length > 0) {
         skipInventAfterSelfHealRefill = true;
       } else {
         const invented =
           (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
         if (invented) backlogItems = filterGeneratedRepairDispatch(
-          await runBacklogRefreshPhase());
+          await runBacklogRefreshPhase({ repos: enrolled }));
       }
       await runMaintenancePhase('ancillary', runAncillaryMaintenance);
     }
@@ -5575,11 +5706,11 @@ export async function tick(
   ) {
     producerMaintenanceBeforeSelection = true;
     await runMaintenancePhase('self-heal', (signal) => runSelfHealMaintenance(selfHealReposBeforeSelection, signal));
-    backlogItems = filterGeneratedRepairDispatch(await runBacklogRefreshPhase());
+    backlogItems = filterGeneratedRepairDispatch(await refreshAfterSelfHeal(selfHealMaintenanceResult?.checkedRepos));
     const invented =
       (await runPhase('invent', TICK_PHASE_INVENT_MS, (signal) => runInventMaintenance(signal))).value === true;
     if (invented) backlogItems = filterGeneratedRepairDispatch(
-      await runBacklogRefreshPhase());
+      await runBacklogRefreshPhase({ repos: enrolled }));
     await runMaintenancePhase('ancillary', runAncillaryMaintenance);
 
     if (backlogItems.length === 0) {
@@ -6494,6 +6625,11 @@ export async function tick(
   const batchParallelCeiling = dcfg.mode !== 'continuous' &&
     typeof liveCfg.daemon?.parallel === 'number' && Number.isSafeInteger(liveCfg.daemon.parallel) && liveCfg.daemon.parallel > 0
     ? liveCfg.daemon.parallel : null;
+  // RQ-NODE-BRIDGE-1: offload eligible ready.tsv rows to idle node-router workers. No
+  // awaited stage (and no phase record) until ~/.ashlr/node-bridge.json exists.
+  if (existsSync(join(ashlrHome(), 'node-bridge.json'))) {
+    await runPhase('node-bridge', TICK_PHASE_NODE_BRIDGE_MS, runNodeBridgeChild);
+  }
   const fleetMonitor = localFleetMonitor();
   const localFleet: LocalFleetSettings = readLocalFleetSettings(routingCfg);
   fleetMonitor.setSettings(localFleet);
@@ -8294,7 +8430,10 @@ export async function tick(
               // no second resolution can substitute guidance or attribution.
               const prepared = preparedManagerPrompts.get(item.id)!;
               if (prepared.playbookUse) void recordPlaybookUse({ lane: 'fleet', key: attemptId, ...prepared.playbookUse });
-              if (prepared.knowledgeNoteIds.length) void recordKnowledgeHits(prepared.knowledgeNoteIds);
+              if (prepared.knowledgeNoteIds.length) {
+                void recordKnowledgeHits(prepared.knowledgeNoteIds);
+                void recordKnowledgeRuns(`run:${attemptId}`, prepared.knowledgeNoteIds);
+              }
             }
             recordUse(backend!);
             return { kind: 'started' as const, run };
@@ -10471,6 +10610,9 @@ async function runDaemonInEnrollmentScope(
   // Stopped in the shutdown block below (see startResidentCapacityPublisher).
   const residentPublisherRun = { dryRun: opts.dryRun, once: opts.once, standing: standing !== null };
   await startResidentCapacityPublisher(activationCfg, residentPublisherRun);
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).ensureDevinAutolandTimer(); } catch { /* Optional resident maintenance. */ }
+  }
 
   // Refresh independently of dispatch ticks; a slow GitHub call cannot overlap itself.
   let factsBusy = false;
@@ -11339,6 +11481,9 @@ async function runDaemonInEnrollmentScope(
   // Also stops a publisher the standing pass started in a one-shot run:
   // nothing publishes for a daemon that is no longer running.
   if (!opts.dryRun) await stopResidentCapacityPublisher();
+  if (!opts.dryRun && !opts.once) {
+    try { (await import('../devin/autoland-timer.js')).stopDevinAutolandTimer(); } catch { /* Nothing to stop. */ }
+  }
   await cancelOffTickJobs();
   await cancelDaemonPostTickChildren(
     scheduledResolutionObserver,

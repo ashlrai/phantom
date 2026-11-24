@@ -26,4 +26,18 @@ describe('contributing verify-changed row', () => {
     const section = content.slice(sectionStart, sectionEnd);
     expect(section).toContain('node scripts/verify-changed.mjs');
   });
+
+  // CONTRIBUTING.md once said Merge Gate "runs the full check" and that a
+  // `ci:full-mac` label starts the Mac lanes on a pull request. ci.yml runs only
+  // the fast gate on pull requests and never runs macOS lanes there, so hold
+  // the guide to the workflow instead of letting that drift come back.
+  it('describes hosted CI the way ci.yml runs it', () => {
+    const content = readFileSync(contributingPath, 'utf-8');
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf-8');
+    expect(workflow).toContain('macOS lanes never run on PR or merge_group');
+    expect(content).not.toMatch(/Merge Gate`? (still |stays |remains )?(runs )?the full (CI )?check/);
+    expect(content).not.toMatch(/full CI check remains the merge gate/);
+    expect(content).not.toContain('ci:full-mac');
+    expect(content).toContain('docs/CONTRIBUTE-WITH-AN-AGENT.md#6-what-ci-requires');
+  });
 });

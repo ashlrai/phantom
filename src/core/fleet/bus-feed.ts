@@ -20,7 +20,8 @@ export interface FleetBusFeedV1 {
   events: BusFeedEvent[];
   sources: { hops: BusFeedSourceState; events: BusFeedSourceState };
 }
-export interface BusFeedOptions { runsDir?: string; hopsFile?: string; limit?: number }
+/** `eventsFile` overrides the default `<runsDir>/dispatch-events.log`, for callers that walk the candidate paths. */
+export interface BusFeedOptions { runsDir?: string; hopsFile?: string; eventsFile?: string; limit?: number }
 const MAX_READ_BYTES = 256 * 1024;
 /** Parse complete newline-terminated rows, like the durable hop log reader.
  * An unfinished final row is excluded and counted as dropped. */
@@ -57,7 +58,7 @@ export function parseDispatchEvents(text: string): BusFeedEvent[] {
     const atIso = `${timestamp}${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
     const token = match[2];
     const kinds: Record<string, BusFeedEventKind> = { INBOX: 'inbox', INCIDENT: 'incident',
-      LANE_HOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published', PARKED: 'blocked' };
+      LANE_HOLD: 'lane-hold', LANE_UNHOLD: 'lane-hold', LAUNCH: 'launch', PUBLISHED: 'published', PARKED: 'blocked' };
     const kind = token.startsWith('ORCH-') ? 'orch' : (Object.hasOwn(kinds, token) ? kinds[token] : 'other');
     // Some historical offsets contain seconds and cannot be represented by an ISO minute offset.
     events.push({ at: scrubSecrets(match[1]), ...(Date.parse(atIso) === parsed.getTime() ? { atIso } : {}),
@@ -95,7 +96,7 @@ async function tail(file: () => string): Promise<{ state: BusFeedSourceState; te
 export async function readFleetBusFeed(opts: BusFeedOptions = {}): Promise<FleetBusFeedV1> {
   const limit = Math.min(500, Math.max(1, Math.floor(Number.isNaN(opts.limit) ? 100 : opts.limit ?? 100)));
   const hops = readBusHopsDetailed({ file: opts.hopsFile, maxBytes: MAX_READ_BYTES, maxRows: limit });
-  const events = await tail(() => join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'dispatch-events.log'));
+  const events = await tail(() => opts.eventsFile ?? join(opts.runsDir ?? join(homedir(), '.ashlr-runs'), 'dispatch-events.log'));
   const hopState: BusFeedSourceState = hops.status === 'missing' ? 'missing' :
     hops.status === 'unreadable' || hops.invalidRows > 0 || hops.partialFinalRow ||
     hops.byteTruncated || hops.rowTruncated ? 'degraded' : 'healthy';

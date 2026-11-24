@@ -1,3 +1,4 @@
+import './helpers/local-memory.js';
 /**
  * local-only-dispatch-paths.test.ts — OWNER L: prove NO dispatch path bypasses
  * the local-only predicate.
@@ -253,7 +254,7 @@ describe('§A dispatch-path inventory', () => {
     'core/visual/grounding.ts',      // completionsUrl() — the only one that can carry a token
   ];
 
-  /** Files whose only mention of the path is a comment, a type, or a registry URL. */
+  /** Files where the path names a contract or ingress, not an outbound model transport. */
   const CHAT_PATH_NON_TRANSPORT: ReadonlyArray<string> = [
     'core/run/engine-registry.ts',
     'core/run/engines.ts',
@@ -273,6 +274,10 @@ describe('§A dispatch-path inventory', () => {
     // measurement that explains why this lane carries the value in
     // `chat_template_kwargs` at all.
     'core/local-runtime/llama/anthropic-shim.ts',
+    // The gateway is an inbound 127.0.0.1 route with local Host/Origin and
+    // bearer-token checks; its production handler delegates to routedComplete
+    // for local-only or account-bound, grant-admitted provider dispatch.
+    'core/router-gateway/server.ts',
   ];
 
   it('no module outside the audited residual builds a raw /chat/completions request', () => {
@@ -290,6 +295,23 @@ describe('§A dispatch-path inventory', () => {
       `NEW unguarded chat transport (route it through buildOpenAICompatibleClient ` +
         `or endpointPermitted): ${offenders.join(', ')}`,
     ).toEqual([]);
+  });
+
+  it('the router gateway keeps chat ingress loopback-bound and routed through policy', () => {
+    const server = readFileSync(join(SRC, 'core/router-gateway/server.ts'), 'utf8');
+    const gateway = readFileSync(join(SRC, 'core/router-gateway/index.ts'), 'utf8');
+    const completion = readFileSync(join(SRC, 'core/router-gateway/complete.ts'), 'utf8');
+    const deps = readFileSync(join(SRC, 'core/router-gateway/deps.ts'), 'utf8');
+
+    expect(server).toContain("export const ROUTER_GATEWAY_HOST = '127.0.0.1'");
+    expect(server).toContain('server.listen(opts.port, ROUTER_GATEWAY_HOST');
+    expect(server).toContain('if (!isLoopbackHost(address.address))');
+    expect(server).toContain('if (!isLocalClientRequest(req.headers))');
+    expect(server).toContain('if (!authorized(req, opts.token))');
+    expect(gateway).toContain('handlers: { complete: (req) => routedComplete(deps, req)');
+    expect(completion).toContain('if (!loopbackBase(candidate.ollamaBaseUrl))');
+    expect(completion).toContain('if (!grantAdmits(standing, seat.id, engine, nowMs)) return false;');
+    expect(deps).toContain("role: 'worker', seatId, engine, model, accountHint");
   });
 
   it('every raw-transport site is still a LOOPBACK-resolving local path', () => {

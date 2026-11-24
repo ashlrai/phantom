@@ -404,6 +404,8 @@ function parseDaemonState(
         ? obj['lastTickOutcome']
         : undefined,
     lastTickPhases: parseTickPhases(obj['lastTickPhases']),
+    counterfactualReplayPending:
+      typeof obj['counterfactualReplayPending'] === 'boolean' ? obj['counterfactualReplayPending'] : undefined,
     lastTickError:
       obj['lastTickError'] === null
         ? null

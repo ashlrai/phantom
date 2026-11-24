@@ -12,8 +12,8 @@ import { readLocalSendPolicy } from '../src/core/agents/send-gate.js';
 import { COMMS_TRANSPORTS, decideSend, readKillState, type CommsTransport, type SendAttempt } from '../src/core/comms-agent/policy.js';
 import { COMMS_AGENT_ROLE } from '../src/core/comms-agent/role.js';
 import { selectCommsLane } from '../src/core/comms-agent/route.js';
-import { envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
-import { appendSendLog, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
+import { commsDrafts, envelopeExternal, executeSend, preservedIds, runCommsAgent } from '../src/core/comms-agent/run.js';
+import { appendSendLog, listDrafts, ownerApprovalsPath, privateOwnerFile, readApprovalsFile, readInbox, readOwnerApprovals, readSendLog, writeInbox } from '../src/core/comms-agent/store.js';
 import { triageInbox, type InboxMessage } from '../src/core/comms-agent/triage.js';
 import { isPaused } from '../src/core/comms/pause.js';
 import { realHome, useAccountHomeForTest } from '../src/core/real-home.js';
@@ -177,6 +177,72 @@ describe('Comms role and triage', () => {
     const triage = triageInbox(messages, []);
     expect(preservedIds(messages, triage.kept, triage.archived)).toBe(true);
     expect(triage.deleted).toBe(0);
+  });
+
+  it('resolves a delivered reply out of the pending inbox and never resends it', async () => {
+    const runsDir = temp();
+    const message = { id: 'person-1', transport: 'email' as const, from: 'ada@example.com', subject: 'Question', body: 'Can you look?' };
+    await writeInbox(runsDir, [message]);
+    const calls: string[] = [];
+    const options = {
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected' as const,
+      approvals: [{ transport: 'email' as const, recipient: 'ada@example.com' }],
+      kill: () => 'inactive' as const,
+      paused: () => false,
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    };
+    const first = await runCommsAgent(options);
+    expect(first.sends).toEqual([expect.objectContaining({ status: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    // The answered message left the pending inbox for the archive; nothing deleted.
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect(readFileSync(join(runsDir, 'comms-agent', 'archive.jsonl'), 'utf8')).toContain('Question');
+    expect((await listDrafts(runsDir)).some(draft => draft.status === 'sent')).toBe(true);
+    expect(first.triage).toMatchObject({ kept: 0, archived: 1, deleted: 0 });
+    // A re-delivered copy of the same mail resolves on the sent mark — no resend.
+    await writeInbox(runsDir, [message]);
+    const second = await runCommsAgent(options);
+    expect(second.sends).toEqual([expect.objectContaining({ status: 'sent', reason: expect.stringContaining('already delivered') })]);
+    expect(calls).toHaveLength(1);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    // An empty inbox produces no sends at all.
+    const third = await runCommsAgent(options);
+    expect(third.sends).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('keeps an unanswered message pending until its reply is delivered', async () => {
+    const runsDir = temp();
+    await writeInbox(runsDir, [
+      { id: 'person-1', transport: 'email', from: 'ada@example.com', subject: 'Question', body: 'Can you look?' },
+    ]);
+    const base = {
+      runsDir,
+      lanes: [],
+      teamIdentities: [],
+      approvalsSource: 'injected' as const,
+      kill: () => 'inactive' as const,
+      paused: () => false,
+    };
+    // Pass 1: no standing approval — the reply stays a pending draft and the
+    // message stays in the inbox awaiting delivery.
+    const drafted = await runCommsAgent({ ...base, approvals: [] });
+    expect(drafted.sends[0]?.status).toBe('drafted');
+    expect((await readInbox(runsDir)).messages).toHaveLength(1);
+    // Pass 2: the approval lands — the reply delivers once and the message resolves.
+    const calls: string[] = [];
+    const sent = await runCommsAgent({
+      ...base,
+      approvals: [{ transport: 'email' as const, recipient: 'ada@example.com' }],
+      deliver: async () => { calls.push('sent'); return { status: 'sent' as const, reason: 'accepted by adapter' }; },
+    });
+    expect(sent.sends).toEqual([expect.objectContaining({ status: 'sent' })]);
+    expect(calls).toHaveLength(1);
+    expect((await readInbox(runsDir)).messages).toEqual([]);
+    expect(sent.triage).toMatchObject({ kept: 0, archived: 1 });
   });
 });
 
@@ -435,5 +501,62 @@ describe('delivery guards', () => {
     const kept = JSON.parse(readFileSync(join(dir, 'inbox.json'), 'utf8')) as { messages: Array<{ id: string; note?: string }> };
     expect(kept.messages).toEqual([expect.objectContaining({ id: 'person-1', note: 'keep-me' })]);
     expect(readFileSync(join(dir, 'archive.jsonl'), 'utf8')).toContain('spring');
+  });
+});
+
+describe('Comms draft lifecycle', () => {
+  const lines = (runsDir: string, name: string): string[] =>
+    readFileSync(join(runsDir, 'comms-agent', name), 'utf8').split('\n').filter(Boolean);
+
+  it('records one pending draft and one owner notice across repeated drafted passes', async () => {
+    const runsDir = temp();
+    for (let pass = 0; pass < 2; pass += 1) {
+      const result = await executeSend(attempt('imessage'), { runsDir, approvals: [], ...quiet });
+      expect(result.status).toBe('drafted');
+    }
+    const drafts = await listDrafts(runsDir);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({ status: 'pending', transport: 'imessage', recipient: 'ada@example.com' });
+    expect(lines(runsDir, 'drafts.jsonl')).toHaveLength(1);
+    expect(lines(runsDir, 'owner-thread.jsonl')).toHaveLength(1);
+    expect((await commsDrafts(runsDir)).drafts).toHaveLength(1);
+  });
+
+  it('resolves the pending draft when the reply is delivered', async () => {
+    const runsDir = temp();
+    expect((await executeSend(attempt('slack'), { runsDir, approvals: [], ...quiet })).status).toBe('drafted');
+    expect((await listDrafts(runsDir))[0]?.status).toBe('pending');
+    const approved = {
+      runsDir,
+      approvals: [{ transport: 'slack' as const, recipient: 'ada@example.com' }],
+      ...quiet,
+      deliver: async () => ({ status: 'sent' as const, reason: 'accepted by adapter' }),
+    };
+    expect((await executeSend(attempt('slack'), approved)).status).toBe('sent');
+    const drafts = await listDrafts(runsDir);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({ status: 'sent' });
+    expect(typeof drafts[0]?.resolvedAt).toBe('string');
+    // The drafts verb lists only what still waits on the owner.
+    expect((await commsDrafts(runsDir)).drafts).toEqual([]);
+  });
+
+  it('records a fresh pending draft when the same reply is drafted again after a send', async () => {
+    const runsDir = temp();
+    const approved = {
+      runsDir,
+      approvals: [{ transport: 'telegram' as const, recipient: 'ada@example.com' }],
+      ...quiet,
+      deliver: async () => ({ status: 'sent' as const, reason: 'accepted by adapter' }),
+    };
+    expect((await executeSend(attempt('telegram'), { runsDir, approvals: [], ...quiet })).status).toBe('drafted');
+    expect((await executeSend(attempt('telegram'), approved)).status).toBe('sent');
+    // The approval is gone again: the identical reply drafts once more and the
+    // collapsed record reads pending, not a stale 'sent'.
+    expect((await executeSend(attempt('telegram'), { runsDir, approvals: [], ...quiet })).status).toBe('drafted');
+    const drafts = await listDrafts(runsDir);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]?.status).toBe('pending');
+    expect((await commsDrafts(runsDir)).drafts).toHaveLength(1);
   });
 });

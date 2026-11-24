@@ -1,0 +1,5 @@
+  PID  PPID  %CPU      RSS COMM
+    1     0   0.5    20480 /sbin/launchd
+  460     1 400.0 12582912 /Applications/Phantom.app/Contents/MacOS/Phantom
+  450     1 120.0  8388608 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  430     1  20.0  1048576 /Applications/Cursor.app/Contents/MacOS/Cursor

@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { draftIdeas, IdeasDraftError, ideasDraftId, type IdeasDraftDeps } from '../src/core/web/ideas-draft-route.js';
+import { DROP_JOB_QUEUE_LIMIT } from '../src/core/fleet/drop-job-writer.js';
 
 let runsDir: string;
 beforeEach(async () => { runsDir = await mkdtemp(join(tmpdir(), 'ideas-draft-')); });
@@ -21,6 +22,25 @@ const deps = (extra: IdeasDraftDeps = {}): IdeasDraftDeps => ({
 const dropped = () => readdir(join(runsDir, 'leader', 'drop', 'claude')).catch(() => []);
 
 describe('draftIdeas', () => {
+  it('ignores retained prompts and parked rows when admitting a draft', async () => {
+    const prompts = join(runsDir, 'queue/prompts');
+    await mkdir(prompts, { recursive: true });
+    await Promise.all(Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => writeFile(join(prompts, `RQ-PHX-OLD${i}.md`), 'old')));
+    const ready = Array.from({ length: DROP_JOB_QUEUE_LIMIT - 1 }, (_, i) => `RQ-WAIT${i}\tphantom\tclaude\twork\tWaiting ${i}`);
+    const parked = Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => `RQ-HELD${i}\tphantom\tPARKED-HOLD.claude\twork\tHeld ${i}`);
+    await writeFile(join(runsDir, 'queue/ready.tsv'), [...ready, ...parked].join('\n'));
+    expect(await draftIdeas({ ideaIds: ['idea-1'] }, deps())).toMatchObject({ written: true, existing: false });
+  });
+
+  it('refuses a full ready queue without prompt files, but still finds existing drafts', async () => {
+    const existing = await draftIdeas({ ideaIds: ['idea-1'] }, deps());
+    await mkdir(join(runsDir, 'queue'), { recursive: true });
+    await writeFile(join(runsDir, 'queue/ready.tsv'), Array.from({ length: DROP_JOB_QUEUE_LIMIT }, (_, i) => `RQ-WAIT${i}\tphantom\tclaude\twork\tWaiting ${i}`).join('\n'));
+    await expect(draftIdeas({ ideaIds: ['idea-2'] }, deps())).rejects.toMatchObject({ status: 507 });
+    expect(await draftIdeas({ ideaIds: ['idea-1'] }, deps())).toEqual({ ...existing, written: false, existing: true });
+    expect(await dropped()).toHaveLength(1);
+  });
+
   it('writes one draft for a single idea', async () => {
     const result = await draftIdeas({ ideaIds: ['idea-1'] }, deps());
     expect(result).toMatchObject({ written: true, existing: false, collisions: [] });

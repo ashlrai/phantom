@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LANE_BACKENDS, rankLanes, type LaneResourceSnapshot } from '../src/core/fleet/lane-rank.js';
+import { LANE_BACKENDS, rankLanes, selfHeldSkips, type LaneResourceSnapshot } from '../src/core/fleet/lane-rank.js';
 import { projectPoolBudgets, type BudgetPool } from '../src/core/fleet/pool-budget.js';
 import { cmdRouter } from '../src/cli/router.js';
 import { readFile, stat } from 'node:fs/promises';
@@ -26,6 +26,12 @@ describe('lane ranking', () => {
   });
   it.each([[null, soon], [later, later], [null, null]])('orders unknown resets last and ties deterministically: %s / %s', (a, b) => {
     expect(rankLanes('frontier', snapshot([a, b]), slots)[0]?.pool).toBe(a === null && b !== null ? 'codex-personal' : 'codex-cmp');
+  });
+  it('skips a self-held lane and names it in selfHeldSkips', () => {
+    const reason = 'lane codex-personal holds every launch (3 in 60 min)';
+    const input = { ...snapshot(), selfHeld: { 'codex-personal': reason } };
+    expect(rankLanes('frontier', input, slots).map(l => l.pool)).toEqual(['codex-cmp']);
+    expect(selfHeldSkips(input.selfHeld)).toEqual([{ pool: 'codex-personal', reason }]);
   });
   it.each([0, -1, NaN, Infinity, 1.5, null, undefined])('excludes unavailable or invalid slots: %s', count => {
     expect(rankLanes('frontier', snapshot(), { 'codex-cmp': count })).toEqual([]);

@@ -1,0 +1,7 @@
+/* One colored pill per lane verdict. The word is always printed, so color is never the only signal. */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid currentColor; border-radius: var(--radius-full); font-size: 0.7rem; line-height: 1.4; font-weight: 600; white-space: nowrap; }
+.badge[data-state='ok'] { color: var(--status-success-fg); }
+.badge[data-state='held'] { color: var(--status-warning-fg); }
+.badge[data-state='starved'] { color: var(--status-info-fg, #4a7bd0); }
+.badge[data-state='wasteful'] { color: var(--status-caution-fg, #d9822b); }
+.badge[data-state='drained'] { color: var(--status-danger-fg); }

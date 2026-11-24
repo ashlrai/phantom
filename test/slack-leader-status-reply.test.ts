@@ -20,6 +20,7 @@ let options: { configDir: string; runsDir: string; busRoot: string; now: () => n
 const configText = `[mason]\nidentities=[{channel="slack",id="U0FAKEOWNER"}]\n[team]\nidentities=[{channel="slack",id="U0FAKEOWNER"},{channel="slack",id="U0FAKEPEER"}]\n[slack]\nbridge_id="slack"\nteam_id="T0FAKETEAM"\nown_user_id="U0FAKEBOT"\nown_bot_id="B0FAKEBOT"\nbot_token_ref="phm_SLACK_AGENTNET_BOT_TOKEN"\napp_token_ref="phm_SLACK_AGENTNET_APP_TOKEN"\n[[slack.map]]\ntopic="leaders"\nchannel="D0FAKELEADER"\n`;
 const threadRef = 'slack:T0FAKETEAM:D0FAKELEADER:1793920000.000001';
 const STATUS_TEXT = 'Phantom status, 21:00 ET\nShipped (last 12h): none';
+const RECEIPT_LINES = 'RECEIVED · receipt slack-owner-9f17e59f64d0eeeb9d2c2c782c91f980 · as of 2026-11-06T02:00:00.000Z · source bus-inbox/messages.json + bus-work-claims/claims.json; evidence: receivedAt\nowner unassigned; claim none; missing: named owner, durable claim receipt';
 const WORK_LINE = 'Work items as of 21:00 ET: 0 BLOCKED, 0 RUNNING, 0 ASSIGNED, 0 RECEIVED, 0 VERIFIED';
 const SNAPSHOT_LINES = [
   'Runtime: fake-host (unknown) vUNKNOWN as of 2026-11-06T02:00:00.000Z',
@@ -92,10 +93,10 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     await vi.waitFor(() => expect(posts(call)).toHaveLength(1), { timeout: WAIT_MS });
     expect(statusReply).toHaveBeenCalledOnce();
     expect(statusReply).toHaveBeenCalledWith(options.runsDir, new Date(options.now()));
-    expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}\n${WORK_LINE}\n${SNAPSHOT_LINES}` });
+    expect(posts(call)[0]?.[1]).toMatchObject({ channel: 'D0FAKELEADER', thread_ts: '1793920000.000001', text: `Leader: ${STATUS_TEXT}\n${WORK_LINE}\n${SNAPSHOT_LINES}\n${RECEIPT_LINES}` });
     expect((await readLeaderInbox(options)).inbox.entries[0]?.text).toContain('Phantom status');
     expect(posts(call)[0]?.[1]?.attachments).toEqual([{ text:
-      'RECEIVED; owner unknown; claim unknown; fleet as of 2026-11-06T01:59:00.000Z', mrkdwn_in: [] }]);
+      'RECEIVED · owner unknown · as of 2026-11-06T02:00:00.000Z · source receivedAt · missing: named owner, durable claim receipt · owner unknown; claim unknown', mrkdwn_in: [] }]);
     const statusOptions = { ...options, configPath: join(options.configDir, 'agent-network.toml'),
       commsPath: join(options.configDir, 'comms.toml'), stateRoot: join(options.runsDir, 'slack-transport'), now: () => new Date(options.now() + 2000) };
     await vi.waitFor(() => expect(buildSlackBridgeStatus(statusOptions).replies.answered).toBe(1), { timeout: WAIT_MS });
@@ -159,7 +160,7 @@ describe('owner "Phantom status" auto-answer over Slack', () => {
     const socket = await receive(call, statusReply, slackEvent('status?'));
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ envelope_id: 'Ev-status-delivery' }));
     await vi.waitFor(() => expect(posts(call)).toHaveLength(1), { timeout: WAIT_MS });
-    expect(posts(call)[0]?.[1]).toMatchObject({ text: `Leader: ${OWNER_STATUS_FALLBACK}\n${SNAPSHOT_LINES}` });
+    expect(posts(call)[0]?.[1]).toMatchObject({ text: `Leader: ${OWNER_STATUS_FALLBACK}\n${SNAPSHOT_LINES}\n${RECEIPT_LINES}` });
   });
 
   it('keeps the ask durable and acknowledged when the status post itself fails', async () => {

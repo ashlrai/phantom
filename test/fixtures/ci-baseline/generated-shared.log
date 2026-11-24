@@ -1,0 +1,17 @@
+##[group]Run set -euo pipefail
+shell: /usr/bin/bash -e {0}
+##[endgroup]
+canonical launcher digest check passed: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+TAP version 13
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 12.5
+generated files are stale; commit the regenerated tree:
+ M docs/llms.txt
+##[error]Process completed with exit code 1.

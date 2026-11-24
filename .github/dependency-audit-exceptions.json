@@ -1,0 +1,16 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "graph": "full",
+    "expires": "2026-12-17T00:00:00Z",
+    "reason": "No fixed picomatch release; dev-only (tinyglobby/build tooling), absent from the production graph. Remove when upstream ships a fix."
+  },
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "graph": "raycast-production",
+    "expires": "2026-12-17T00:00:00Z",
+    "reason": "No fixed picomatch release; reaches the Raycast production graph only through the @raycast/api CLI toolchain (oclif, tinyglobby), never the root production graph. Remove when upstream ships a fix."
+  }
+]

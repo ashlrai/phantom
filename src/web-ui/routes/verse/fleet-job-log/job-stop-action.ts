@@ -4,30 +4,24 @@ import { VerseControlLockedError } from '../autonomy/control-queries.js';
 import type { FleetJobDetailV1 } from './worker-log-model.js';
 
 /**
- * One-job stop for the Worker log pane — the pure parts (request shape, the
- * two-click confirm window, outcome text) plus the mutation POST, shaped
+ * One-job stop for the composer's stop command — the pure parts (request
+ * shape, outcome text) plus the mutation POST, shaped
  * like the lane-release client: the held control token, a touch on success,
  * and the control-token sentences the client already produces. The server
  * side is core/fleet/job-stop.ts behind POST /api/verse/fleet/runs/stop:
  * 202 with the result, 409 when nothing was running, 400 for an invalid id.
  */
 export const JOB_STOP_PATH = '/api/verse/fleet/runs/stop';
-/** First click arms the button for this window; the second click posts. */
-export const STOP_CONFIRM_MS = 5_000;
 
 export type JobStopOutcome = 'stopped' | 'not-running' | 'refused';
 export interface JobStopResult { id: string; pids: number[]; outcome: JobStopOutcome; at: string }
 
 export function jobStopBody(id: string): { id: string } { return { id }; }
 
-/** The pane shows Stop while the selected job is not finished (the liveness
+/** The job detail shows its controls (JobControls.tsx) while the selected job is not finished (the liveness
  * model's finished is published|archived; 'unknown' can still be live). */
 export function jobStopEligible(state: FleetJobDetailV1['state'] | null | undefined): boolean {
   return state === 'running' || state === 'unknown';
-}
-
-export function stopConfirmLabel(id: string, armed: boolean): string {
-  return armed ? `Stop ${id}? click again` : 'Stop';
 }
 
 export function stopOutcomeText(result: JobStopResult): string {

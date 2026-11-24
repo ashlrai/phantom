@@ -94,6 +94,16 @@ function timestamp(value: unknown): number {
   if (!Number.isFinite(time) || new Date(time).toISOString() !== value) refuse('Invalid timestamp.');
   return time;
 }
+/** Claude result usage is cumulative; count cache input once, never per-message usage. */
+function claudeTokens(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return undefined;
+  const row = usage as Record<string, unknown>;
+  const counts = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+    .map(key => row[key]);
+  if (!counts.every((value): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) return undefined;
+  const total = counts.reduce((a, b) => a + b, 0);
+  return Number.isSafeInteger(total) ? total : undefined;
+}
 function fields(row: Record<string, unknown>): Partial<MetricsJob> {
   const result: Partial<MetricsJob> = {};
   for (const key of ['retries', 'recuts'] as const) {
@@ -110,6 +120,9 @@ function fields(row: Record<string, unknown>): Partial<MetricsJob> {
   if (row.tokens !== undefined) {
     result.tokens = number(row.tokens);
     if (!Number.isSafeInteger(result.tokens)) refuse('Tokens must be a safe integer.');
+  } else if (row.type === 'result') {
+    // An incomplete final result invalidates any earlier partial measurement.
+    result.tokens = claudeTokens(row.usage);
   }
   if (row.impact !== undefined) result.impact = number(row.impact);
   if (row.startedAt !== undefined) result.startedAt = timestamp(row.startedAt);

@@ -30,3 +30,25 @@
 .peerDot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--status-unknown-fg); }
 .peerDot[data-state='online'] { background: var(--status-success-solid); }
 .peerDot[data-state='offline'] { background: var(--status-danger-solid); }
+.peerDot[data-state='ready'] { background: var(--status-success-solid); }
+.peerDot[data-state='busy'], .peerDot[data-state='held'], .peerDot[data-state='not-running'] { background: var(--status-warning-solid); }
+.computers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.computer { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.peerDot[data-state='not-joined'] { background: var(--status-unknown-fg); opacity: 0.6; }
+.computer[data-state='not-joined'] { border-style: dashed; color: var(--text-secondary); }
+.computer[data-state='offline'] { border-color: var(--status-danger-solid); }
+/* Apps (MacAppsCard): name and state on the left, one button on the right; wraps cleanly at 390px. */
+.appList { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.appRow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); min-height: 32px; }
+.appName { flex: 0 0 auto; min-width: 5.5rem; font-weight: 600; }
+.appState { flex: 1 1 8rem; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.appState[data-unknown='true'] { color: var(--status-unknown-fg); }
+.appRow > button { margin-left: auto; }
+/* Browser (BrowserCard): tab title over its address; the screenshot never outgrows a 390px column. */
+.tabTitle { flex: 1 1 100%; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.shot { margin: var(--space-2) 0; min-width: 0; }
+.shot img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); }
+.loadBar { display: flex; gap: 2px; height: var(--space-3); margin: var(--space-2) 0; border-radius: var(--radius-sm); overflow: hidden; }
+.loadBar > span { min-width: 2px; flex-basis: 0; }
+.loadLegend { margin: 0; padding: 0; list-style: none; }
+.loadKey { display: inline-block; width: var(--space-2); height: var(--space-2); margin-right: var(--space-2); border-radius: 2px; }

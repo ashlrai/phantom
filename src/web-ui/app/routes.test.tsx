@@ -13,6 +13,9 @@ vi.mock('../routes/fleet-dashboard/FleetDashboardView.js', () => ({
 vi.mock('../routes/control/fleet/FleetView.js', () => ({
   FleetView: () => <h1>Fleet loaded</h1>,
 }));
+vi.mock('../routes/pages/PagesView.js', () => ({
+  PagesView: () => <h1>Published pages loaded</h1>,
+}));
 
 function Navigation() {
   const navigate = useNavigate();
@@ -20,6 +23,12 @@ function Navigation() {
 }
 
 describe('AppRoutes', () => {
+  it.each(['/pages', '/pages/weekly'])('loads the published pages route %s', async (route) => {
+    render(<MemoryRouter initialEntries={[route]}><AppRoutes /></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Published pages loaded' })).toBeInTheDocument();
+    expect(screen.getByText('Persistent shell')).toBeInTheDocument();
+  });
+
   it('loads routes on navigation while retaining the shell', async () => {
     render(<MemoryRouter initialEntries={['/overview']}><AppRoutes /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Overview loaded' })).toBeInTheDocument();

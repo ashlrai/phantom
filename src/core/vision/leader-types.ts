@@ -591,6 +591,8 @@ export interface LeaderStateV1 {
   directives: LeaderDirectivesV1 | null;
   /** 3.14 (additive): run health for the UI / Telegram. */
   health?: LeaderHealth;
+  /** Additive: the seat `leader run --seat auto` would use, its fallback, and one plain line for the card. Absent = unknown. */
+  seat?: import('../fleet/leader-seat.js').LeaderSeatChoice & { line: string; chip?: import('../fleet/leader-seat.js').LeaderChip };
 }
 
 /** POST /api/verse/leader — exactly one form per request. */

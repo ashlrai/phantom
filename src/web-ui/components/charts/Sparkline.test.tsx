@@ -20,4 +20,13 @@ describe('Sparkline', () => {
     expect(container.querySelector('line')).not.toBeNull();
     expect(sparklineSummary([null, null], String)).toBe('no data');
   });
+
+  it('draws a target line inside the scale, even when every point is below it', () => {
+    const { container } = render(<Sparkline points={[1, 2, 1]} width={100} height={24} ariaLabel="Merges" target={4} />);
+    const rule = container.querySelector('line[data-target]')!;
+    expect(rule.getAttribute('data-target')).toBe('4');
+    // The target is the max, so it sits at the top pad, above every point.
+    expect(Number(rule.getAttribute('y1'))).toBeCloseTo(3.5);
+    expect(render(<Sparkline points={[1, 2]} ariaLabel="none" />).container.querySelector('line[data-target]')).toBeNull();
+  });
 });

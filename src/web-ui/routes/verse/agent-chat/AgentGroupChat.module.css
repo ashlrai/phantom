@@ -1,0 +1,13 @@
+.panel { display: grid; gap: var(--space-3); color: var(--text-primary); padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.panel h2, .panel p { margin: 0; }
+.panel button, .panel select { font: inherit; color: inherit; min-height: 44px; max-width: 100%; }
+.panel button:focus-visible, .panel select:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 2px; }
+.note { color: var(--text-secondary); }
+.roster { display: flex; flex-wrap: wrap; gap: var(--space-3); list-style: none; padding: 0; }
+.roster li { display: flex; align-items: center; gap: var(--space-2); }
+.avatar { display: inline-grid; place-items: center; border: 2px solid; border-radius: var(--radius-full); min-width: 32px; min-height: 32px; }
+.messages { display: grid; gap: var(--space-3); padding-inline-start: var(--space-5); }
+.messages li { min-width: 0; overflow-wrap: anywhere; }
+.messages p { white-space: pre-wrap; }
+.messages time { color: var(--text-secondary); }
+/* Deliberately no animation, smooth scrolling, auto-scroll or presence pulse. */

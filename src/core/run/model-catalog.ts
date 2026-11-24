@@ -206,9 +206,9 @@ export type ModelRoutingTier = 'fast' | 'mid' | 'computer' | 'work' | 'frontier'
 
 /** Current native defaults, verified against installed catalogs on 2026-10-09. */
 export const DEFAULT_CLAUDE_MODEL_ID = 'claude-opus-5-5';
-export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.1-sol';
+export const DEFAULT_CODEX_MODEL_ID = 'gpt-6.2-sol';
 export const CODEX_TERRA_MODEL_ID = 'gpt-6.1-terra';
-export const CODEX_ASTRA_MODEL_ID = 'gpt-6-astra';
+export const CODEX_ASTRA_MODEL_ID = 'gpt-6.2-astra';
 export const DEFAULT_FABLE_MODEL_ID = 'claude-fable-5-1';
 /** Registered for lookup only until its subscription admission safeguards are wired. */
 export const FABLE_52_MODEL_ID = 'claude-fable-5-2';
@@ -237,20 +237,17 @@ const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
     minEffort: 5, apiModelId: DEFAULT_FABLE_MODEL_ID, qualityRank: 5,
   },
   {
-    id: `codex:${DEFAULT_CODEX_MODEL_ID}`, engine: 'codex', tier: 'large',
+    id: 'codex:gpt-6.1-sol', engine: 'codex', tier: 'large',
     costPerMTokIn: 2, costPerMTokOut: 10,
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
-    minEffort: 2, apiModelId: DEFAULT_CODEX_MODEL_ID,
+    minEffort: 2, apiModelId: 'gpt-6.1-sol',
     relativeSpeed: 1, planAllowanceWeight: 1,
   },
   {
     // https://openai.com/index/introducing-gpt-6-1-terra/
     // API prices are published. Speed is workload-dependent; allowance is a
     // conservative policy prior, never a replacement for subscriptionAllows.
-    // Single merged entry: the API transport fields (apiContextWindow, toolApi)
-    // used to live on a second 'codex:gpt-6.1-terra' literal that every id
-    // lookup shadowed. Terra stays implicitly pickable — catalogFor, pickModel
-    // preferCheap, banditCandidateArms and codexArmPriors all rely on that.
+    // Keep the legacy transport and experiment identity available for exact lookup.
     id: `codex:${CODEX_TERRA_MODEL_ID}`, engine: 'codex', tier: 'mid',
     costPerMTokIn: 1, costPerMTokOut: 5,
     capabilities: ['fast', 'general', 'coder', 'reasoning', 'long-context'],
@@ -260,11 +257,27 @@ const MODEL_ENTRIES: readonly Omit<ModelEntry, 'modeTier'>[] = [
     relativeSpeed: 3, planAllowanceWeight: 0.5,
   },
   {
-    id: `codex:${CODEX_ASTRA_MODEL_ID}`, engine: 'codex', tier: 'large',
+    id: 'codex:gpt-6-astra', engine: 'codex', tier: 'large',
     costPerMTokIn: 10, costPerMTokOut: 50,
     capabilities: ['general', 'coder', 'reasoning', 'long-context'],
-    minEffort: 4, apiModelId: CODEX_ASTRA_MODEL_ID,
+    minEffort: 4, apiModelId: 'gpt-6-astra',
     relativeSpeed: 1, planAllowanceWeight: 5,
+  },
+  {
+    id: `codex:${CODEX_ASTRA_MODEL_ID}`, engine: 'codex', tier: 'large',
+    costPerMTokIn: 8, costPerMTokOut: 40,
+    capabilities: ['general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 4, apiModelId: 'gpt-6.2-astra', apiContextWindow: 1_050_000, toolApi: 'responses',
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    relativeSpeed: 1, planAllowanceWeight: 5,
+  },
+  {
+    id: `codex:${DEFAULT_CODEX_MODEL_ID}`, engine: 'codex', tier: 'large',
+    costPerMTokIn: 2, costPerMTokOut: 10,
+    capabilities: ['general', 'coder', 'reasoning', 'long-context'],
+    minEffort: 2, apiModelId: 'gpt-6.2-sol', apiContextWindow: 1_050_000, toolApi: 'responses',
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    relativeSpeed: 1, planAllowanceWeight: 1,
   },
   // Current concrete Haiku entry; preserve legacy aliases for exact lookup.
   // Pricing is a routing estimate, not account admission or spending authority.
@@ -631,6 +644,7 @@ export function pickModel(opts: {
   const excluded = opts.excludeIds ?? CLAUDE5_CATALOG_IDS;
   let pool = KNOWN_MODELS.filter((m) => {
     if (m.historical || m.explicitOnly || excluded.has(m.id)) return false;
+    if (m.engine === 'codex' && m.apiModelId !== DEFAULT_CODEX_MODEL_ID && m.apiModelId !== CODEX_ASTRA_MODEL_ID) return false;
     if (opts.engine && m.engine !== (opts.engine as EngineId)) return false;
     // V3.10: a seat-routed entry is reachable only by naming its engine.
     if (m.seatRouted && !opts.engine) return false;
@@ -715,9 +729,9 @@ export function fableEnabled(cfg?: Claude5Cfg): boolean {
  * claude5 off ⇒ optional Sonnet/Fable entries excluded;
  * fable off ⇒ current and historical Fable entries excluded; otherwise nothing excluded.
  */
-export function claude5ExcludeIds(cfg?: Claude5Cfg): ReadonlySet<string> {
+export function claude5ExcludeIds(cfg?: Claude5Cfg, cappedModels: readonly string[] = []): ReadonlySet<string> {
   if (!claude5Enabled(cfg)) return CLAUDE5_CATALOG_IDS;
-  if (!fableEnabled(cfg)) return FABLE_ONLY_EXCLUDES;
+  if (!fableEnabled(cfg) || cappedModels.includes('fable')) return FABLE_ONLY_EXCLUDES;
   return EMPTY_EXCLUDES;
 }
 
