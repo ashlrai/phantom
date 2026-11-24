@@ -21,6 +21,29 @@ export function failedTestFiles(log) {
   return [...found].sort();
 }
 
+export function firstFailureLocation(log) {
+  const lines = stripVTControlCharacters(log).split('\n');
+  let message = 'affected test failed';
+  let file = '';
+  let lineNo = '';
+  for (const line of lines) {
+    const fail = /^\s*(?:FAIL|×|✗)\s+\S/.exec(line);
+    if (fail) message = line.trim().slice(0, 300);
+    const at = /((?:test|\.github\/tests)\/\S+\.test\.(?:ts|mjs)):(\d+)/.exec(line);
+    if (at && !file) {
+      file = at[1];
+      lineNo = at[2];
+    }
+  }
+  if (!file || !lineNo) return null;
+  return { file, line: lineNo, message };
+}
+
+export function failureAnnotation(failure) {
+  const text = failure.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  return `::error file=${failure.file},line=${failure.line}::${text}`;
+}
+
 // Fallback shards run at once. Each one must take a share of the machine,
 // not all of it: three shards at full width is 12 forks on a 4-vCPU runner,
 // and suites that pass alone then hit the 5000 ms timeout.
@@ -28,16 +51,39 @@ export function shardWorkers(cpus, shards) {
   return Math.max(1, Math.floor(cpus / Math.max(1, shards)));
 }
 
-function run(command, args) {
+function run(command, args, stream) {
   return new Promise((done) => {
     let log = '';
     const child = spawn(command, args, { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const take = (stream, sink) => stream.on('data', (chunk) => { log += chunk; sink.write(chunk); });
+    const take = (incoming, sink) => incoming.on('data', (chunk) => {
+      log += chunk;
+      if (stream) sink.write(chunk);
+    });
     take(child.stdout, process.stdout);
     take(child.stderr, process.stderr);
     child.on('error', (error) => done({ code: 1, log: `${log}\nspawn error: ${error.message}` }));
     child.on('close', (code) => done({ code: code ?? 1, log }));
   });
+}
+
+function commandsFor(plan, bail) {
+  const commands = [];
+  const bailArg = bail ? ['--bail=1'] : [];
+  if (plan.mode === 'fallback') {
+    const live = plan.shards.filter((shard) => shard.length);
+    const workers = shardWorkers(availableParallelism(), bail ? 1 : live.length);
+    for (const shard of live) commands.push([process.execPath, ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...bailArg, ...shard]]);
+  } else if (plan.tests.length) {
+    commands.push([process.execPath, ['scripts/test-ci.mjs', ...bailArg, ...plan.tests]]);
+  }
+  if (plan.node.length) {
+    if (bail) {
+      for (const file of plan.node) commands.push([process.execPath, ['--test', file]]);
+    } else {
+      commands.push([process.execPath, ['--test', ...plan.node]]);
+    }
+  }
+  return commands;
 }
 
 function reusedPriorGreen() {
@@ -59,20 +105,27 @@ export async function main(planPath, outPath) {
     return 0;
   }
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
-  const jobs = [];
-  if (plan.mode === 'fallback') {
-    const live = plan.shards.filter((shard) => shard.length);
-    const workers = shardWorkers(availableParallelism(), live.length);
-    for (const shard of live) jobs.push(run(process.execPath, ['scripts/test-ci.mjs', `--maxWorkers=${workers}`, ...shard]));
-  } else if (plan.tests.length) {
-    jobs.push(run(process.execPath, ['scripts/test-ci.mjs', ...plan.tests]));
+  const bail = process.env.CI_FAST_BAIL === '1';
+  const commands = commandsFor(plan, bail);
+  const results = [];
+  if (bail) {
+    for (const [command, args] of commands) {
+      const result = await run(command, args, false);
+      results.push(result);
+      if (result.code !== 0) break;
+    }
+  } else {
+    results.push(...await Promise.all(commands.map(([command, args]) => run(command, args, true))));
   }
-  if (plan.node.length) jobs.push(run(process.execPath, ['--test', ...plan.node]));
-  const results = await Promise.all(jobs);
-  const failed = failedTestFiles(results.map((r) => r.log).join('\n'));
-  const bad = results.some((r) => r.code !== 0);
+  const log = results.map((result) => result.log).join('\n');
+  const failed = failedTestFiles(log);
+  const bad = results.some((result) => result.code !== 0);
   writeFileSync(outPath, JSON.stringify({ failed, ok: !bad }, null, 2));
   if (bad) {
+    if (bail) {
+      const located = firstFailureLocation(log);
+      console.error(located ? failureAnnotation(located) : '::error::affected test failed');
+    }
     console.error(`fast-gate tests failed${failed.length ? `: ${failed.join(', ')}` : ' (no file name parsed)'}`);
     return 1;
   }

@@ -320,7 +320,7 @@ describe('M30 CI workflow', () => {
       job['runs-on'] === '${{ matrix.os }}'
         ? (job.strategy?.matrix?.include ?? []).map((row) => row.os)
         : [job['runs-on']];
-    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = '', release = 'false', ready = 'false'): boolean => {
+    const evaluateIf = (condition: string | undefined, event: string, lane: string, ref = '', release = 'false', ready = 'false', osSensitive = 'false', installSmoke = false, xplatInstall = 'false'): boolean => {
       if (condition === undefined) return true;
       const expression = condition
         .replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '')
@@ -329,14 +329,17 @@ describe('M30 CI workflow', () => {
         .replace(/\bgithub\.ref\b/g, 'ref')
         .replace(/\bgithub\.event\.schedule\b/g, 'schedule')
         .replace(/\bgithub\.event\.pull_request\.draft\b/g, 'draft')
+        .replace(/\bneeds\.classify\.outputs\.xplat_install\b/g, 'xplatInstall')
+        .replace(/\bneeds\.classify\.outputs\.os_sensitive\b/g, 'osSensitive')
         .replace(/\bneeds\.classify\.outputs\.lane\b/g, 'lane')
         .replace(/\bneeds\.classify\.outputs\.release_gate\b/g, 'release')
-        .replace(/\bneeds\.release-build\.outputs\.ready\b/g, 'ready');
+        .replace(/\bneeds\.release-build\.outputs\.ready\b/g, 'ready')
+        .replace(/\binputs\.install_smoke\b/g, 'installSmoke');
       // A condition form this evaluator does not know must fail loudly rather
       // than fall through to a guessed result.
       expect(expression).not.toMatch(/\$\{\{|\}\}|github\.|needs\.|always|contains|fromJSON/);
       return Boolean(runInNewContext(`(${expression})`, {
-        event, lane, draft: false, ref, release, ready, schedule: '17 */6 * * *',
+        event, lane, draft: false, ref, release, ready, osSensitive, installSmoke, xplatInstall, schedule: '17 */6 * * *',
         startsWith: (value: unknown, prefix: unknown) => String(value).startsWith(String(prefix)),
       }));
     };
@@ -345,6 +348,7 @@ describe('M30 CI workflow', () => {
     // The fast gate: secret-shape scan, classification, the quick typecheck and
     // the required Merge Gate — Ubuntu runners only.
     const approvedFast = ['secret-shape', 'secret-scan', 'classify', 'clean-tree', 'authority-drift', 'quick', 'fast-gate', 'merge-gate'];
+    const osReporters = ['gate-linux', 'gate-windows', 'gate-macos'];
     for (const [id, job] of Object.entries(jobs)) {
       const oses = runners(job);
       expect(oses.length, `${id} declares no runner`).toBeGreaterThan(0);
@@ -354,11 +358,22 @@ describe('M30 CI workflow', () => {
           const runs = evaluateIf(job.if, event, lane);
           const why = `${id} on ${event} (${lane} lane)`;
           if (paid) expect(runs, `${why} would hold ${oses.join(', ')}`).toBe(false);
-          if (!approvedFast.includes(id)) expect(runs, `${why} is not a fast-gate job`).toBe(false);
+          if (!approvedFast.includes(id) && !osReporters.includes(id)) expect(runs, `${why} is not a fast-gate job`).toBe(false);
         }
       }
       if (approvedFast.includes(id)) {
         expect(oses, `${id} must stay on Linux`).toEqual(['ubuntu-latest']);
+      }
+    }
+    for (const id of osReporters) expect(runners(jobs[id]!), id).toEqual(['ubuntu-latest']);
+    for (const event of fastEvents) {
+      for (const id of ['fast-windows', 'fast-macos']) {
+        expect(evaluateIf(jobs[id]!.if, event, 'full', '', 'false', 'false', 'false'), `${id} skipped when the diff is not OS-sensitive`).toBe(false);
+        expect(evaluateIf(jobs[id]!.if, event, 'full', '', 'false', 'false', 'true'), `${id} runs when the diff is OS-sensitive`).toBe(true);
+      }
+      for (const id of ['install-smoke-linux', 'install-smoke-windows', 'install-smoke-macos']) {
+        expect(evaluateIf(jobs[id]!.if, event, 'full', '', 'false', 'false', 'false', false, 'false'), `${id} skipped outside the install filter`).toBe(false);
+        expect(evaluateIf(jobs[id]!.if, event, 'full', '', 'false', 'false', 'false', false, 'true'), `${id} runs for the install filter`).toBe(true);
       }
     }
     // Classification cannot serialize or suppress the longest fast job.
@@ -434,7 +449,9 @@ describe('M30 CI workflow', () => {
     expect(receipt.name).toBe('Master full qualification');
     expect(receipt.permissions).toBeUndefined();
     expect(receipt.needs.slice().sort()).toEqual(Object.keys(jobs).filter(id =>
-      !['master-full', 'fixup-queue', 'release-suites', 'release-gate-autotag'].includes(id)).sort());
+      !['master-full', 'fixup-queue', 'release-suites', 'release-gate-autotag',
+        'fast-windows', 'fast-macos', 'install-smoke-linux', 'install-smoke-windows', 'install-smoke-macos',
+        'gate-linux', 'gate-windows', 'gate-macos'].includes(id)).sort());
     expect(runs('master-full', 'schedule', 'refs/heads/master')).toBe(true);
     expect(runs('master-full', 'schedule', 'refs/heads/master', '0,30 * * * *')).toBe(false);
     for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
@@ -800,7 +817,8 @@ echo pending=true; exit 2
     expect(greenSaves.length).toBeGreaterThan(0);
     const graphSave = saves.find((step) => (step.with?.key ?? '').startsWith('phantom-dep-graph-v2-'));
     expect(graphSave, 'fast-gate saves the dependency graph for the checked-out head').toBeDefined();
-    expect(graphSave?.if).toBe("steps.dep_graph.outputs.cache-hit != 'true'");
+    expect(graphSave?.if).toContain("steps.dep_graph.outputs.cache-hit != 'true'");
+    expect(graphSave?.if).toContain('github.event.pull_request.head.repo.full_name == github.repository');
     expect(graphSave?.with?.key).toContain('pull_request.head.sha');
     expect(graphSave?.with?.key).toContain('merge_group.head_sha');
     const graphRestore = job.steps.find((step) => step.name === 'Restore dependency graph');
@@ -1066,6 +1084,8 @@ echo pending=true; exit 2
     const shared = jobs['ci-shared-macos']!;
     expect(jobs.classify?.outputs).toEqual({
       lane: '${{ steps.lane.outputs.lane }}',
+      os_sensitive: '${{ steps.os.outputs.os_sensitive }}',
+      xplat_install: '${{ steps.paths.outputs.xplat_install }}',
       release_gate: "${{ github.event_name == 'workflow_dispatch' && inputs.release_gate == true }}",
       mac_slice: '${{ steps.mac.outputs.mac_slice }}',
       mac_general_exclude: '${{ steps.mac.outputs.mac_general_exclude }}',
@@ -1073,7 +1093,7 @@ echo pending=true; exit 2
     expect(jobs.classify?.needs).toBeUndefined();
     expect(jobs.classify?.if).toBeUndefined();
     expect(jobs.site?.needs).toBe('classify');
-    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'");
+    expect(jobs.site?.if).toBe("needs.classify.outputs.lane == 'site' && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')");
     expect(shared, 'shared Mac still requires its own complete named gate').toBeDefined();
     // Each Mac gate queues straight after classify: chaining one Mac job behind
     // another adds a whole Mac queue wait to the PR's wall clock.
@@ -1087,9 +1107,9 @@ echo pending=true; exit 2
     for (const id of ['ci', 'ci-shared-macos', 'mac-general', 'mac-isolated', 'native-macos-broker-foundation', 'windows-service-authority']) {
       expect(jobs[id]!.needs).toBe('classify');
       const push = id === 'ci' ? " && !(github.event_name == 'push' && github.ref == 'refs/heads/master')" : " && github.event_name != 'push'";
-      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true'`);
+      expect(jobs[id]!.if).toBe(`needs.classify.outputs.lane == 'full'${push} && github.event_name != 'pull_request' && github.event_name != 'merge_group' && needs.classify.outputs.release_gate != 'true' && (github.event_name != 'schedule' || github.event.schedule == '17 */6 * * *')`);
     }
-    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }]);
+    expect((parse(ciYml) as { on: { schedule: unknown } }).on.schedule).toEqual([{ cron: '17 */6 * * *' }, { cron: '17 11 * * *' }]);
     expect(jobs['mac-general']!.strategy!.matrix.shard).toEqual([1, 2, 3, 4]);
     expect(jobs['mac-general']!.strategy!['max-parallel']).toBe(2);
     // Daily Mac rotation (RQ-DAILY-15-PHANTOM-2): only the scheduled or a sliced
@@ -1118,8 +1138,16 @@ echo pending=true; exit 2
       if (matrix?.shard) return matrix.shard.map((shard) => job.name.replace('${{ matrix.shard }}', String(shard)));
       return [job.name];
     });
-    expect(names).toHaveLength(30);
-    expect(new Set(names).size).toBe(30);
+    expect(names).toHaveLength(38);
+    expect(new Set(names).size).toBe(38);
+    expect(names).toContain('Gate (linux)');
+    expect(names).toContain('Gate (windows)');
+    expect(names).toContain('Gate (macos)');
+    expect(names).toContain('install smoke (linux)');
+    expect(names).toContain('install smoke (windows)');
+    expect(names).toContain('install smoke (macos)');
+    expect(names).toContain('Fast gate (windows)');
+    expect(names).toContain('Fast gate (macos)');
     expect(names).toContain('Release suites (build + signing path)');
     expect(names).toContain('Dispatch Auto-tag for green release-gate SHA');
     expect(names).toContain('Check generated files');

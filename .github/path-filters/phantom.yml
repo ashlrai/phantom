@@ -1,0 +1,64 @@
+# Shared path filters. Consumed by dorny/paths-filter with an empty token
+# so detection stays on git and does not need pull-requests permission.
+# Neither filter is a required check. signer_proof has no job in this repo yet.
+
+xplat_install:
+  # Root installer: ./install.sh builds Phantom and links phm into ~/.local/bin.
+  - install.sh
+  # Installed CLI shim the root installer and npm pack both publish.
+  - bin/**
+  # Custody helper installer (macOS Swift helper the daemon can call).
+  - scripts/install-custody.sh
+  # Desktop artifact installer used when shipping the packaged app.
+  - scripts/install-desktop-artifacts.mjs
+  # Mac dispatcher installer and its install gate.
+  - contrib/mac/install.sh
+  - contrib/mac/install-gate.py
+  # Router installer.
+  - contrib/router/install.sh
+  # In-product installers: fleet install, bridge install, and the desktop consumer install.
+  - src/core/fleet/install.ts
+  - src/core/fleet/bridge-install.ts
+  - src/core/desktop/consumer-install.ts
+  - src/core/desktop/consumer-upgrade.ts
+  # Daemon service manager (M93): launchd, systemd --user, and schtasks.
+  - src/core/daemon/service.ts
+  - src/core/daemon/service-activity.ts
+  - src/core/daemon/service-config.ts
+  - src/core/daemon/service-install-authority.ts
+  - src/core/daemon/service-lifecycle-fence.ts
+  - src/core/daemon/resident-service-readiness.ts
+  # launchd plist transaction used by the service manager on macOS.
+  - src/core/daemon/launchd-plist-transaction.ts
+  # Windows Task Scheduler scripts and file authority used by the service manager.
+  - src/core/daemon/windows-task-scripts.ts
+  - src/core/daemon/windows-file-authority.ts
+  # Other launchd unit writers outside the daemon service manager.
+  - src/core/fleet/self-tick-schedule.ts
+  - src/core/eval/passk-schedule.ts
+  - src/core/autofix/launchd.ts
+  - src/core/local-runtime/llama/launchd.ts
+  - src/core/local-runtime/llama/proxy-launchd.ts
+  # macOS desktop app tree.
+  - desktop/**
+  # Mac dispatcher and launchd helpers.
+  - contrib/mac/**
+  # macOS custody helper (Swift signer host).
+  - tools/custody/**
+
+signer_proof:
+  # Custody helper signer: the key that produces the standing-grant signature.
+  - tools/custody/Sources/ashlr-custody/SigningKey.swift
+  - tools/custody/Sources/CustodyCore/KeyMaterial.swift
+  - tools/custody/Sources/CustodyCore/StandingGrant.swift
+  # Node client that asks the helper to sign and checks the returned envelope.
+  - src/core/authority/custody-client.ts
+  # Authority surface digest the grant pins, and the build step that writes it.
+  - src/core/authority/surface.ts
+  - scripts/authority-surface.mjs
+  # Canonical JSON encoder shared by the signer, the verifier, and the surface digest.
+  - src/core/authority/canonical-json.ts
+  # Verifier for a signed standing grant.
+  - src/core/authority/standing-grant.ts
+  # Placeholder workflow Core will add for the M3-13 signer-proof job. Not created here.
+  - .github/workflows/signer-proof.yml
