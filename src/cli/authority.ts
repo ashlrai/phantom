@@ -34,6 +34,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { CUSTODY_HELPER_PATH } from '../core/authority/custody-client.js';
+import type { GrantScopeEdit } from '../core/authority/grant-scope-types.js';
 import { HUB_REPOSITORY_IDENTITY } from '../core/authority/repository-binding.js';
 import { STANDING_GRANT_PATTERNS } from '../core/authority/types.js';
 import { checkClaudeAuth, renewClaudeToken } from '../core/resources/claude-resignin.js';
@@ -348,7 +349,7 @@ interface Parsed {
 
 // `--source` is still accepted (and ignored) so older setup invocations parse:
 // the trust-root PR no longer uses a local checkout.
-const VALUE_FLAGS = new Set(['--reason', '--payload', '--switch', '--limit', '--kind', '--repo', '--org', '--source', '--max-files', '--max-lines', '--repo-max-merges-per-day']);
+const VALUE_FLAGS = new Set(['--reason', '--payload', '--switch', '--limit', '--kind', '--repo', '--org', '--source', '--max-files', '--max-lines', '--repo-max-merges-per-day', '--reserve-floor', '--session-window']);
 
 function parseArgs(args: readonly string[]): Parsed | string {
   const out: Parsed = { positional: [], flags: new Set(), values: new Map() };
@@ -392,6 +393,10 @@ Compatible alias: ashlr authority <command>
   Volume choices on draft/grant/re-approve:
     --max-files N|none --max-lines N|none --repo-max-merges-per-day owner/name=N|none
     (explicitly signed; none means No volume cap; old grants/renewals keep their limits)
+  Seat choices on draft/grant/re-approve:
+    --reserve-floor N --session-window N|none
+    (0 reserve uses included allowance and does not authorize paid overage;
+     session window 100 uses the included window; none clears the ceiling)
   (--elite-direct: elite models land on green tests with no judge; see docs/AUTHORITY.md §1a)
   ledger verify [--json]                 Verify the whole authority ledger chain
   ledger tail [--limit N] [--kind K] [--json]
@@ -645,9 +650,9 @@ async function eliteDirectChoice(parsed: Parsed, deps: AuthorityCliDeps, interac
   return deps.confirm('Make this grant elite-direct (one rung, no ramp; you can always Stop, switch down or revoke)?');
 }
 
-/** Explicit volume flags only; omission must not opt a renewal into a wider policy. */
-function volumeScopeFromArgs(parsed: Parsed): import('../core/authority/grant-scope-types.js').GrantScopeEdit {
-  const edit: import('../core/authority/grant-scope-types.js').GrantScopeEdit = {};
+/** Explicit volume and seat flags only; omission must not opt a renewal into a wider policy. */
+function volumeScopeFromArgs(parsed: Parsed): GrantScopeEdit {
+  const edit: GrantScopeEdit = {};
   const limit = (text: string, allowZero: boolean): number => {
     if (text === 'none') return Number.MAX_SAFE_INTEGER;
     if (!/^(0|[1-9][0-9]*)$/u.test(text)) throw new Error('Volume limits must be whole numbers or none');
@@ -669,6 +674,23 @@ function volumeScopeFromArgs(parsed: Parsed): import('../core/authority/grant-sc
       if (!STANDING_GRANT_PATTERNS.nameWithOwner.test(repo)) throw new Error('Repository merge limits require owner/name');
       if (seen.has(repo.toLowerCase())) throw new Error('A repository merge limit was supplied twice');
       seen.add(repo.toLowerCase()); edit.repoMaxMergesPerDay[repo] = limit(value, true);
+    }
+  }
+  const reserve = one(parsed, '--reserve-floor');
+  if (reserve !== null) {
+    if (!/^(0|[1-9][0-9]*)$/u.test(reserve)) throw new Error('Seat reserve must be a whole percent from 0 to 100');
+    const value = Number(reserve);
+    if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error('Seat reserve must be a whole percent from 0 to 100');
+    edit.reserveFloorPercent = value;
+  }
+  const session = one(parsed, '--session-window');
+  if (session !== null) {
+    if (session === 'none') edit.maxSessionWindowPercent = null;
+    else {
+      if (!/^[1-9][0-9]*$/u.test(session)) throw new Error('Session window must be a whole percent from 1 to 100, or none');
+      const value = Number(session);
+      if (!Number.isInteger(value) || value < 1 || value > 100) throw new Error('Session window must be a whole percent from 1 to 100, or none');
+      edit.maxSessionWindowPercent = value;
     }
   }
   return edit;

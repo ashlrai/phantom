@@ -25,9 +25,9 @@
  *  - `reservePercent` keeps that share of the LONG (weekly / billing-period)
  *    window for Mason: autonomy stops at `100 − reserve` used. A seat that
  *    reports only a short window applies the reserve to that one.
- *  - `maxSessionWindowPercent` is the ceiling on the SHORT (5-hour) window, so
- *    a live interactive session is never starved ("never touch Claude while
- *    its 5-hour window is above 70%").
+ *  - `maxSessionWindowPercent` is the ceiling on the SHORT (5-hour) window.
+ *    The balanced default is 100, so the included window can be used fully.
+ *    On-demand billing stays blocked at every reserve, including zero.
  *  - The binding window is whichever of the two leaves autonomy LESS room.
  *
  * BROWSER-SAFE and PURE: type-only imports, no clock reads (callers pass
@@ -456,6 +456,14 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
     });
   }
 
+  const paidOverage = capacity.onDemandEnabled === true;
+  if (paidOverage) {
+    details.push({
+      kind: 'spend-cap',
+      text: 'On-demand billing is paid overage. A seat reserve, including zero, does not authorize it.',
+    });
+  }
+
   const usdCap = policy.dailyUsdCap;
   let overUsd = false;
   if (usdCap !== undefined) {
@@ -500,7 +508,7 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
     }
   }
 
-  const eligible = policy.enabled && !capacity.signedOut && !exhausted && !unknownUsage && !overUsd
+  const eligible = policy.enabled && !capacity.signedOut && !exhausted && !unknownUsage && !overUsd && !paidOverage
     && room !== null && room > 0;
   if (eligible && bindingRow) {
     const name = windowName(capacity.engine, bindingRow.window, bindingRow.cls);
@@ -523,7 +531,7 @@ export function assessSeat(capacity: SeatCapacity, policy: SeatBudgetPolicy, opt
     },
     // A seat that is merely switched off, signed out, or unknown has no
     // known reopening — only a window reset is a date we can name.
-    reopensAt: !policy.enabled || capacity.signedOut || unknownUsage || overUsd ? null : reopensAt,
+    reopensAt: !policy.enabled || capacity.signedOut || unknownUsage || overUsd || paidOverage ? null : reopensAt,
     exhausted,
     unknownUsage,
     spentReasons: reasonSentences(spentDetails),

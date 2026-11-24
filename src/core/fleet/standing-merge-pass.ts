@@ -1106,7 +1106,7 @@ async function evaluateProposal(proposal: Proposal, ctx: PassContext): Promise<v
     const testsImporting = selfRepo && scope.ok
       ? tier1TestImports(scratch, mirrorBase, scope.touchedPaths, diff)
       : new Set<string>();
-    const g1 = evaluateG1({ paths: scope.ok ? scope.touchedPaths : null, selfRepo, testsImportingTier1: testsImporting });
+    const g1 = evaluateG1({ paths: scope.ok ? scope.touchedPaths : null, selfRepo, testsImportingTier1: testsImporting, repo });
     if (!recordGate(ctx, state, 'G1', g1, null)) {
       persist(ctx, state);
       return;

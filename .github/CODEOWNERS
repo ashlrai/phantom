@@ -311,6 +311,7 @@
 /test/bus-mirror-dispatch.test.ts @masonwyatt23
 /test/bus-transport-router.test.ts @masonwyatt23
 /test/bus-wake-queue-custody.test.ts @masonwyatt23
+/test/cap-removal.test.ts @masonwyatt23
 /test/caps-dispatch-schema-original-6225-844s.test.ts @masonwyatt23
 /test/caps-route-doc-original-6225-846s.test.ts @masonwyatt23
 /test/channel-mirror-deadline-soln1.test.ts @masonwyatt23

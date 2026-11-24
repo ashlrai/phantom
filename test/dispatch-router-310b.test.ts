@@ -224,14 +224,22 @@ describe('exact candidate model identity', () => {
   });
 });
 
-describe('Claude and the 5-hour window (balanced: 70% ceiling, 40% weekly reserve)', () => {
-  it('excludes Claude while its 5-hour window is above 70% and routes hard work elsewhere', () => {
+describe('Claude and the 5-hour window (balanced: 100% ceiling, 0% weekly reserve)', () => {
+  it('keeps Claude eligible under the included window and does not treat reserve 0 as paid overage', () => {
     const route = routeWorkItem(item({ tags: ['difficulty:high'] }), LEGACY_LOCAL, ctx([claude(75, 20), grok(), local()]));
     expect(route.hold).toBeNull();
+    expect(route.seatDecision?.exclusions.find((e) => e.seatId === 'claude')).toBeUndefined();
     expect(route.backend).toBe('grok-cli');
-    expect(route.lane).toBe('grok-cli');
+  });
+
+  it('still excludes Claude when on-demand billing is on, even at reserve 0', () => {
+    const seats = [claude(10, 10), grok(), local()];
+    const claudeSeat = seats[0]!;
+    (claudeSeat as { onDemandEnabled?: boolean }).onDemandEnabled = true;
+    const route = routeWorkItem(item({ tags: ['difficulty:high'] }), LEGACY_LOCAL, ctx(seats));
     const excluded = route.seatDecision?.exclusions.find((e) => e.seatId === 'claude');
-    expect(excluded?.reasons.join(' ')).toMatch(/5-hour window is 75% used; autonomy stops at 70%/);
+    expect(excluded?.reasons.join(' ')).toMatch(/paid overage/);
+    expect(route.backend).not.toBe('claude');
   });
 
   it('uses Claude for hard work when the 5-hour window is under the ceiling and the reserve holds', () => {
@@ -456,7 +464,7 @@ describe('presence caps', () => {
     const planned = await planLanes({ policy: policy(), directives: null, presence: { present, reason: 'Interactive state', evidenceAt: null }, localServingSlots: 4, engineUnavailable: {} });
     const work = item({ tags: ['difficulty:high', 'context:150000'] });
     expect(routeWorkItem(work, LEGACY_LOCAL, ctx([claude(20, 20)], { lanes: planned })).backend).toBe('claude');
-    for (const reading of [claude(75, 20), claude(20, 70)]) {
+    for (const reading of [claude(100, 20), claude(20, 100)]) {
       const held = routeWorkItem(work, LEGACY_LOCAL, ctx([reading], { lanes: planned }));
       expect(held.hold?.kind).toBe('park');
       expect(held.backend).toBe('builtin');
@@ -542,12 +550,22 @@ describe('routing weights reach the seat ranking', () => {
       { ...grok(10), costBasis: 'credits' },
       { ...claude(10, 10), costBasis: 'subscription' },
     ];
+    const pinned = {
+      mode: 'balanced' as const,
+      updatedAt: NOW_ISO,
+      seats: {
+        claude: { seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 },
+        grok: { seatId: 'grok', enabled: true, reservePercent: 0 },
+      },
+    };
     const baseline = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, {
+      budget: pinned,
       weights: { lambdaCost: 1, lambdaPressure: 1, lambdaLatency: 0.25 },
     }));
     expect(baseline.lane).toBe('grok-cli');
     expect(baseline.seatDecision?.candidates).toEqual(['grok', 'claude']);
     const cheap = routeWorkItem(item({ effort: 3 }), LEGACY_LOCAL, ctx(capacity, {
+      budget: pinned,
       weights: { lambdaCost: 3, lambdaPressure: 1, lambdaLatency: 0.25 },
     }));
     expect(cheap.lane).toBe('claude-cli');

@@ -216,11 +216,11 @@ describe('readiness — once readings reach the snapshot (the fix working)', () 
     return seat;
   });
 
-  it('Claude: "Ready" with the 40% reserve carried as data and what is LEFT for the fleet in words', () => {
+  it('Claude: "Ready" with the signed reserve carried as data and what is LEFT for the fleet in words', () => {
     const r = buildResourceReadiness(input({ capacity: live }));
     const claude = row(r, 'claude');
     expect(claude.fleet).toMatchObject({ ready: true, tone: 'ok', word: 'Ready', reservePercent: 40 });
-    // weekly: 100 − 40 reserve − 25 used = 35 · session: 70 ceiling − 22 = 48 → weekly binds.
+    // The signed floor is 40. weekly: 100 - 40 reserve - 25 used = 35. session ceiling is the higher of the mode window and the grant.
     expect(claude.fleet.detail).toBe('35% of the weekly window is left for the fleet. Roles: judges, leads.');
   });
 

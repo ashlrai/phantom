@@ -282,7 +282,7 @@ export const STANDING_GRANT_CEILINGS = Object.freeze({
   maxFiles: Number.MAX_SAFE_INTEGER,
   maxLines: Number.MAX_SAFE_INTEGER,
   maxMergesPerRepoPerDay: Number.MAX_SAFE_INTEGER,
-  /** Local-authored risk bound and legacy size defaults (marker-absent grants). */
+  /** Local-authored risk bound and the configured 4-file / 150-line size bound (marker-absent grants). */
   localAuthored: Object.freeze({ maxRisk: 'low', maxFiles: 4, maxLines: 150 } as const),
   /** Local-enforcement risk bound and legacy volume defaults (marker-absent grants). */
   localEnforcement: Object.freeze({ maxRisk: 'low', maxFiles: 4, maxLines: 150, maxMergesPerDay: 4 } as const),

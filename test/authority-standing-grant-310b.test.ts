@@ -280,13 +280,14 @@ describe('drafts', () => {
     expect(parseStandingGrantPayload(payload).ok).toBe(true);
   });
 
-  it('seats follow the budget decisions: Claude 40% reserve and 70% session ceiling, one local wildcard', () => {
-    const { seats } = buildDefaultGrantPayload(draftInput).spend;
-    expect(seats['claude']).toEqual({ enabled: true, reserveFloorPercent: 40, maxSessionWindowPercent: 70, roles: ['producer', 'judge', 'leader'] });
-    expect(seats['grok']).toMatchObject({ reserveFloorPercent: 0 });
-    expect(seats['codex-personal']).toMatchObject({ enabled: true, reserveFloorPercent: 40 });
-    expect(seats[LOCAL_SEAT_WILDCARD]).toMatchObject({ reserveFloorPercent: 0 });
-    expect(seats['local:qwen3']).toBeUndefined();
+  it('seats follow the budget decisions: reserve 0 and a 100% session window, one local wildcard, no paid overage', () => {
+    const spend = buildDefaultGrantPayload(draftInput).spend;
+    expect(spend.meteredUsdPerDay).toBe(0);
+    expect(spend.seats['claude']).toEqual({ enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: 100, roles: ['producer', 'judge', 'leader'] });
+    expect(spend.seats['grok']).toMatchObject({ reserveFloorPercent: 0 });
+    expect(spend.seats['codex-personal']).toMatchObject({ enabled: true, reserveFloorPercent: 0, maxSessionWindowPercent: 100 });
+    expect(spend.seats[LOCAL_SEAT_WILDCARD]).toMatchObject({ reserveFloorPercent: 0 });
+    expect(spend.seats['local:qwen3']).toBeUndefined();
   });
 
   it('a re-approval continues at the current rung, with fresh ids, dates and bindings', () => {
@@ -305,7 +306,7 @@ describe('drafts', () => {
   it('describes the scope in plain lines (the Touch ID sheet)', () => {
     const lines = describeGrantScope(buildDefaultGrantPayload(draftInput));
     expect(lines[0]).toMatch(/^Grant #7 /);
-    expect(lines.some((l) => l.includes('seat claude: on, keep 40% for Mason, idle while 5 h > 70%'))).toBe(true);
+    expect(lines.some((l) => l.includes('seat claude: on, keep 0% for Mason, idle while 5 h > 100%'))).toBe(true);
     expect(lines.some((l) => l.includes('stage 1 shadow') && l.includes('propose only'))).toBe(true);
   });
 });
