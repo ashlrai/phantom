@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Thirty-eight sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -331,6 +331,28 @@
  *     keep finishing without the work holding, and which the narrow
  *     dedupe windows let through again on later ticks, never became
  *     work;
+ *   - the merge-bottleneck recut loop's own journals: the {at, pr, id,
+ *     headSha, baseSha?, file} rows recutLoopTick appends to
+ *     queue/recut-loop.jsonl for every published recut job, plus the
+ *     pre-publication reservations in queue/recut-loop-leases.jsonl —
+ *     per PR, the publishes recurring across distinct UTC days, and the
+ *     expired reservations that never produced a matching
+ *     published-job row (recutLoopBacklogItems below). Until now the
+ *     journals' only readers were the in-tick guards and the
+ *     last-tick outcome kept in module state, so recurring re-cuts
+ *     and unverifiable publishes never became work;
+ *   - the judge-trace ledger's recurring adverse ship verdicts: the
+ *     metadata-only JudgeTrace rows judgeProposal appends to
+ *     ~/.ashlr/judge-traces/YYYY-MM-DD.jsonl for every proposal the
+ *     inbox merge path judges before auto-merge, with outcome patches
+ *     materialized by readJudgeTracesDetailed — per judge engine, the
+ *     'ship' verdicts whose qualified realized outcomes stayed adverse
+ *     inside the window (rejected before landing, or reverted /
+ *     followed-up after) (judgeBacklogItems below). Until now the
+ *     ledger's only readers were `phm fleet judge-traces` and
+ *     `phm fleet judge-health` — reports someone had to run — plus the
+ *     build-only counterfactual replay nothing schedules, so a judge
+ *     engine whose approvals kept not holding never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -396,6 +418,7 @@ import { jevBacklogItems } from './jev-backlog.js';
 import { worktreeReapBacklogItems } from './worktree-reap-backlog.js';
 import { gapProposalBacklogItems } from './gap-proposal-backlog.js';
 import { recutLoopBacklogItems } from './recut-loop-backlog.js';
+import { judgeBacklogItems } from './judge-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -936,6 +959,24 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the loop is hardcoded to this
   // install's repository.
   items.push(...await recutLoopBacklogItems({ repo }));
+
+  // Judge-trace ledger: the inbox merge path's own verdict record —
+  // per judge engine, the 'ship' verdicts whose qualified realized
+  // outcomes stayed adverse inside the window (rejected before
+  // landing, reverted or followed-up after) — become backlog items
+  // too. Until now the ledger's only readers were `phm fleet
+  // judge-traces` and `phm fleet judge-health`, reports someone had
+  // to run, plus the build-only counterfactual replay nothing
+  // schedules. Same bounded materializing read the calibration
+  // readers share; the window anchors on each trace's realized-
+  // evidence time (outcomeAt ?? ts), an engine emits only at the
+  // recurring bars of adverse outcomes across distinct UTC days, a
+  // degraded or incomplete read yields nothing rather than folding
+  // partial evidence, review/noise/harmful verdicts tally as context
+  // only since their outcomes record validated caution, and only the
+  // fleet's own repository inherits the items since every
+  // judgeProposal call site is this install's merge path.
+  items.push(...await judgeBacklogItems({ repo }));
   return { items, errors };
 }
 

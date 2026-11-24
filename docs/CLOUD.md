@@ -786,15 +786,40 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   suppressing the journal evidence or zero-filling it, truncated tails
   are stated as lower bounds, and items emit only for the fleet's own
   repository since the loop is hardcoded to this install's
-  repository.
+  repository,
+  and the judge-trace ledger's recurring adverse ship verdicts, the
+  metadata-only JudgeTrace rows `judgeProposal` in
+  `src/core/fleet/manager.ts` appends to
+  `~/.ashlr/judge-traces/YYYY-MM-DD.jsonl` for every proposal the
+  inbox merge path judges before auto-merge, with append-only outcome
+  patches materialized by `readJudgeTracesDetailed` — 'rejected' when
+  `setStatus` turns the proposal rejected, 'reverted' and
+  'followed-up' reserved for the post-merge observation writers,
+  'merged' reserved for the proof-bound release writer (otherwise
+  only visible through `phm fleet judge-traces` and
+  `phm fleet judge-health` — reports someone had to run — plus the
+  build-only counterfactual replay nothing schedules, so a judge
+  engine whose ship verdicts kept resolving to work that did not
+  hold never became work). A judge engine becomes an item only while
+  its qualified adverse ship outcomes — rejected before landing, or
+  reverted/followed-up after — reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window anchored on
+  each trace's realized-evidence time; review, noise and harmful
+  verdicts tally as validated-caution context only, a qualified
+  merged outcome counts as held work rather than adverse, the
+  bounded materializing read treats a degraded or incomplete ledger
+  as no evidence rather than folding partial rows, unqualified
+  outcome labels never guess, and rows emit only for the fleet's own
+  repository since every judgeProposal call site is this install's
+  merge path.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
   source-yield, gateway-shadow, recheck, stuck-job, lesson-trial,
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
-  incident-gate, jev-decisions, worktree-reap, gap-proposal and
-  recut-loop items carry priority 3;
+  incident-gate, jev-decisions, worktree-reap, gap-proposal,
+  recut-loop and judge-verdicts items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -957,7 +982,17 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   leg that cannot see the landing — with the same owner-side
   no-change escape for legitimate re-discovery of a recurring gap, and
   emit only for the fleet's own repository since the proposer and its
-  dedupe are this install's machinery. They
+  dedupe are this install's machinery. Judge items name the
+  judge-trace ledger, `phm fleet judge-traces`,
+  `phm fleet judge-health` and the judgeProposal call site in
+  src/core/fleet/manager.ts, keep the find-which-side-is-wrong
+  framing — a miscalibrated verdict, rubric or engine-resolution
+  drift versus rejections that trace to pipeline gates orthogonal to
+  judge quality — with the same owner-side no-change escape for a
+  retired engine, a rolled-forward window or healthy judge-health
+  evidence, and emit only for the fleet's own repository since the
+  ledger records this install's merge-path verdicts and carries no
+  repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
