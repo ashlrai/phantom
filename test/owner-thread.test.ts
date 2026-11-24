@@ -666,6 +666,40 @@ describe('owner thread', () => {
     expect(inbound.messages.map(message => message.direction)).toEqual(['inbound']);
     expect(outbound.messages.map(message => message.direction)).toEqual(['outbound']);
   });
+
+  it('filters the thread read by awaiting, keeping only unanswered inbound in the slice', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    await sendOwnerReply({ text: 'answer', replyTo: 'telegram-msg-1', idempotencyKey: 'reply-owner-01' }, options);
+    await acceptOwnerInbound({ channel: 'desktop', senderId: 'local-owner', text: 'desk note', idempotencyKey: 'desktop-msg-001', at: 1_700_000_200_000 }, options);
+    // m1 telegram inbound answered, m2 email inbound awaiting, m3 outbound reply, m4 desktop inbound awaiting.
+    const awaiting = readOwnerThread(options, 200, { awaiting: true });
+    expect(awaiting.messages.map(message => message.seq)).toEqual([2, 4]);
+    expect(awaiting.awaitingReply).toEqual(['m2', 'm4']);
+    // Awaiting composes with the other slices and is inherently inbound-only.
+    const emailAwaiting = readOwnerThread(options, 200, { awaiting: true, channel: 'email' });
+    expect(emailAwaiting.messages.map(message => message.seq)).toEqual([2]);
+    expect(readOwnerThread(options, 200, { awaiting: true, direction: 'outbound' }).messages).toEqual([]);
+    expect(readOwnerThread(options, 200, { awaiting: true, contains: 'ping' }).messages.map(message => message.seq)).toEqual([2]);
+    expect(readOwnerThread(options, 200, { awaiting: true, contains: 'answer' }).messages).toEqual([]);
+  });
+
+  it('serves awaiting on the thread CLI', async () => {
+    const { options } = fixture();
+    await acceptOwnerInbound({ channel: 'telegram', senderId: 'telegram:100', text: 'tg question', idempotencyKey: 'telegram-msg-1', at: 1_700_000_000_000 }, options);
+    await sendOwnerReply({ text: 'answer', idempotencyKey: 'reply-owner-01' }, options);
+    await acceptOwnerInbound({ channel: 'email', senderId: 'email:owner@example.com', text: 'em ping', idempotencyKey: 'email-msg-0001', at: 1_700_000_100_000 }, options);
+    const lines: string[] = [];
+    const write = console.log;
+    console.log = (line?: unknown) => { lines.push(String(line)); };
+    try {
+      expect(await cmdCommsOwner(['thread', '--awaiting', '--json'], options)).toBe(0);
+    } finally { console.log = write; }
+    const view = JSON.parse(lines[0] ?? '{}') as { messages: Array<{ seq: number; direction: string }>; awaitingReply: string[] };
+    expect(view.messages.map(message => [message.seq, message.direction])).toEqual([[3, 'inbound']]);
+    expect(view.awaitingReply).toEqual(['m3']);
+  });
 });
 
 function writeForgedHome(root: string, email: string, slackId: string, handle: string): void {
