@@ -187,6 +187,14 @@ from the runs leader inbox above. See the [fleet CLI](../src/cli/fleet.ts) and
 `phm fleet status` also reports disk use and the ten largest proven cleanup
 candidates. `--json` adds typed `disk` data (`fleet.disk-attribution.v1`):
 categories, per-job entries, source health and ranked `cleanupCandidates`.
+Each category's `reclaimable` gives `bytes`, `provenBytes`, `candidates` and
+`complete`. Totals cover every candidate, including those beyond the top ten.
+Incomplete safety evidence or sizes leave `bytes: null`; `provenBytes` counts
+only fully measured safe candidates. Artifact eligibility is not assessed,
+so its reclaimable total stays unknown. Each candidate's typed `via` names
+the existing `reap-one` or `worktree-remove` mechanism; retained entries have
+`via: null`. Preview standing cleanup with `phm disk-maint --json`; it checks
+its own policy before any later apply. Status never starts a cleanup.
 Sizes are logical bytes, not promised physical savings; missing or partial
 totals are `null` with a measured lower bound. Worktrees use the census safety
 checks; job logs, publish results, prompts and notes are measured by metadata
