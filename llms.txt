@@ -1,5 +1,7 @@
 # Phantom
 
+<!-- Hand-maintained repository entry point; docs/llms.txt is generated from docs/llms-source.txt. -->
+
 > Phantom (`@ashlr/phantom`) is an open-source workbench for running coding agents, coordinating a fleet and reviewing their work: CLI `phm` (alias `ashlr`), MCP gateway, agent bus and web console. Repository-root index for agents; not an execution API or authorization.
 
 ## Mission
@@ -21,9 +23,17 @@ phm verse --no-open --json
 phm docs --agent --json
 ```
 
+`phm docs --agent --json` prints the installed command registry, the reference
+for your version. `phm verse` serves the console on 127.0.0.1 (default port
+7777, `/verse/`); its JSON output includes the URL and tokens. Keep tokens private.
+
 ## Start here
 
 - [README](README.md): overview, quickstart and CLI reference
+- [Quickstart](docs/QUICKSTART.md): install Phantom, open the console and make a first turn
+- [Claude, Cursor and Codex setup](docs/AGENT-MCP-CLI.md): connect a coding agent through MCP and the CLI
+- [Full copy-paste reference](docs/llms-full.txt): install, JSON commands and MCP setup
+- [CLI reference](docs/CLI-REFERENCE.md): generated from the command registries
 - [Documentation map](docs/README.md): canonical guides by task
 - [Full docs index](docs/llms.txt): every docs page, generated and checked for completeness
 - [Agent operations](docs/AGENT-OPERATIONS.md): cold-start checklist for building and operating Phantom from source
@@ -35,6 +45,8 @@ phm docs --agent --json
 Outside contributors and their agents work on a focused branch, run local checks, and open a pull request from a fork. `Merge Gate` checks the pull request; see the guide for current required checks and merge-queue details.
 
 - [Contribute with an agent](docs/CONTRIBUTE-WITH-AN-AGENT.md): the fork, checks and merge path
+- [CLAUDE.md](CLAUDE.md): commands and rules for coding agents
+- [CONSTITUTION.md](CONSTITUTION.md): the project constitution referenced by AGENTS.md
 - [Which tests the fast gate runs](docs/CONTRIBUTE-WITH-AN-AGENT.md#which-tests-the-fast-gate-runs): how changed paths select tests
 - [Protected paths wait for the owner](docs/CONTRIBUTE-WITH-AN-AGENT.md#protected-paths-wait-for-the-owner): review for protected changes
 - [Changed-files verification](docs/verify-changed.md): verifier steps and pass records
@@ -56,6 +68,9 @@ gh pr create --repo ashlrai/phantom --base master --head <you>:<topic-branch>
 ## Ecosystem
 
 Companions install separately; each has its own capabilities and authorization boundaries. The repo's `.mcp.json` declares `phantom-secrets`, `locus`, `lexicon`, `stack`, `context7` and `ashlr`; registration does not prove readiness (see the [toolchain guide](docs/AGENT-TOOLCHAIN.md)).
+
+- [Companion setup](docs/COMPANIONS.md): installation and readiness checks
+- [Ecosystem map](docs/ECOSYSTEM-MAP.md): how Phantom and its companions fit together
 
 - [Phantom](https://github.com/ashlrai/phantom): the factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work (this repo)
 - [Phantom Secrets](https://github.com/ashlrai/phantom-secrets): local vault, placeholders and a proxy for supported API credential use
