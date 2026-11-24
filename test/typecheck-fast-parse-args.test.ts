@@ -32,7 +32,7 @@ describe('parseArgs', () => {
 
 describe('selectProjects', () => {
   it('returns both projects when projectFlag is all', () => {
-    expect(selectProjects([], 'all')).toEqual(['backend', 'web']);
+    expect(selectProjects([], 'all')).toEqual(['backend', 'web', 'desktop']);
   });
 
   it('returns only the requested project when explicitly specified', () => {

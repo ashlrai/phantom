@@ -6,7 +6,7 @@
 
 Mission: chasing open-source RSI (recursive self-improvement). Phantom and its companion tools aim to form a fully autonomous, code-first, agent-native software factory. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the human owner acts as a passive board member, needed only for passwords, 2FA, device approvals and payments. Agents follow `AGENTS.md` at the repository root. Strategy: [recursive self-improvement and an open fleet](strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md).
 
-Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown review) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
+Ecosystem: Phantom is the hub. Separately installed companions are phantom-secrets (secrets), ashlr-plugin (token-efficient agent tools), Locus (identity scoping), lexicon (vocabulary), ashlr-md (Markdown editing) and ashlr-stack (service provisioning). See [companion setup](COMPANIONS.md) and the [ecosystem map](ECOSYSTEM-MAP.md).
 
 Agents: install with `npm install -g @ashlr/phantom`, then run `phm docs --agent --json`. The copy-paste install, JSON commands, and MCP setup are in [llms-full.txt](llms-full.txt).
 
@@ -209,6 +209,7 @@ Every other page under `docs/`. Each is also served as Markdown at `/docs/<path>
 - [Idle allowance](IDLE-ALLOWANCE.md): phm metrics idle --status status.json --jobs jobs.jsonl --json reads local files and reports idle slot-minutes per lane and running jobs exceeding twice their lane's median comp...
 - [Impact reward v1](IMPACT-METRICS.md): phm metrics impact --json reads local evidence and emits the single reward contract phantom-impact/v1. It makes no network requests or model calls, writes no state, and cannot d...
 - [Ashlr Ecosystem Improvement Backlog](IMPROVEMENT-BACKLOG.md): ALL 4 MAPS COMPLETE (2026-06-28). ~60 opportunities across 13 repos. Highest-value safe picks for upcoming waves: binshield path-traversal (security), stack timeout guards (reli...
+- [Install a tool with Phantom](INSTALL-TOOLS.md): From a project directory, install a public Node.js tool and its declared MCP server with one command:
 - [Private intent ledger](INTENT.md): The local ashlr.intent-ledger/v1 ledger tracks directives and ideas, their RQ keys, pulls, evidence and provenance. It lives at ~/.ashlr-runs/intent/ledger.json, or $ASHLRRUNSDI...
 - [Small interaction moments](INTERACTION-MOMENTS.md): Phantom's operational state stays literal. Decorative feedback helps explain a change; it never supplies evidence that a task, provider, or power assertion works.
 - [TypeSafe AI (Jev) integration contract](JEV-INTEGRATION.md): Jev is a "System One" decision model: you send state plus typed questions and get back a label, a probability distribution over the options, and a separate confidence value. The...

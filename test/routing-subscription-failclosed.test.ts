@@ -90,19 +90,21 @@ describe('Claude: the fail-open is closed', () => {
     const r = subscriptionAllows('claude', { nowMs: NOW });
     expect(r.allowed).toBe(true);
     expect(r.reason).toContain('within the balanced budget');
-    expect(r.reason).toContain('40% of the weekly window is left for autonomy');
+    expect(r.reason).toContain('80% of the weekly window is left for autonomy');
   });
 
-  it('5-hour window above 70% protects the live session', () => {
+  it('a spent included window blocks, and 71% of the session does not', () => {
     writeCapacitySnapshot([claudeSeat(71, 20)], new Date(NOW));
-    const r = subscriptionAllows('claude', { nowMs: NOW });
-    expect(r.allowed).toBe(false);
-    expect(r.reason).toContain('protect your live session');
+    expect(subscriptionAllows('claude', { nowMs: NOW }).allowed).toBe(true);
+    writeCapacitySnapshot([claudeSeat(100, 20)], new Date(NOW));
+    const spent = subscriptionAllows('claude', { nowMs: NOW });
+    expect(spent.allowed).toBe(false);
+    expect(spent.reason).toContain('spent');
   });
 
-  it('weekly usage past the 40% reserve blocks', () => {
+  it('weekly usage at 61% stays inside a zero reserve', () => {
     writeCapacitySnapshot([claudeSeat(10, 61)], new Date(NOW));
-    expect(subscriptionAllows('claude', { nowMs: NOW }).allowed).toBe(false);
+    expect(subscriptionAllows('claude', { nowMs: NOW }).allowed).toBe(true);
   });
 
   it('a stale reading blocks (older than 15 minutes)', () => {

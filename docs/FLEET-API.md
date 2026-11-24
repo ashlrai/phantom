@@ -52,7 +52,7 @@ named nested type. Relative source links refer to the source checkout.
 | GET | `/api/fleet` | none | [FleetStatus](../src/core/fleet/status.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet'` |
 | GET | `/api/fleet/lanes` | none | [FleetLaneSnapshot](../src/core/fleet/lane-console.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/lanes'` |
 | GET | `/api/fleet/message-graph` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound) | [FleetMessageGraph](../src/core/fleet/message-graph.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/message-graph?since=1h'` |
-| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20) | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
+| GET | `/api/fleet/map/messages` | since (10m, 2h, 1d, epoch ms or ISO; default 15m), before (10m, 2h, 1d, epoch ms or ISO; exclusive upper bound), limit (1 to 100; default 20), plus the `phm messages` filters agent, with, kind, priority, job, thread, channel, contains, from, excludeFrom, inReplyTo, id, bodyKind | [MapMessages](../src/core/fleet/map-messages.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/map/messages?limit=10'` |
 | GET | `/api/fleet/activity` | hours, limit | [AgentActivityReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/activity?hours=6'` |
 | GET | `/api/fleet/verified-completion` | hours (claim window, default 24, max 168) | [VerifiedCompletionReport](../src/core/fleet/agent-activity.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/verified-completion'` |
 | GET | `/api/fleet/sessions` | none | [FleetSessionsV1](../src/core/fleet/runs-sessions.ts) | [source](../src/core/web/api.ts) | `curl -sS -H 'X-Ashlr-Token: <read-token>' 'http://127.0.0.1:7777/api/fleet/sessions'` |
@@ -518,7 +518,7 @@ these frames, with a "Back to live" button.
 
 #### Recent bus messages
 
-`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--json]` lists
+`phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--body-kind <kind>] [--json]` lists
 agent-to-agent messages, newest
 first, as `bus.recent.v1`: `{schema, as_of, messages:[{at, from, to, kind,
 summary}]}`. `--before` keeps only messages received strictly before its
@@ -575,7 +575,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -631,7 +631,15 @@ least one member message's body cites that envelope id through its own
 read|watch --in-reply-to`, `fleet bus-follow --in-reply-to` and
 `fleet_bus_inbox`'s `inReplyTo` apply, never the `replyTo` alias or a
 substring — so "which thread is the answer to envelope X in" is one
-filtered read. `--channel <name>` keeps only the threads where at least one
+filtered read. `--id <envelope-id>` keeps only the thread one member
+message's own wire id strictly equals — at most one thread, since every
+member message sits in exactly one — the same exact-envelope match `phm
+messages --id`, `agents bus inbox`/`channel read --id`, `agents bus wakes
+--id`, `comms bus read|watch --id`, `fleet bus-follow --id` and
+`fleet_bus_inbox`'s `id` apply, never a substring or a thread-key or body
+citation — so "which thread is envelope X in" is one filtered read
+returning the whole thread where `phm messages --id` reports only the
+one row. `--channel <name>` keeps only the threads where at least one
 member message is addressed to `group:<name>:*` — the room's whole traffic
 under every topic, the same raw `to`-prefix rule `phm messages --channel`,
 `agents bus inbox --channel` and `channel read --channel` match — so "which
@@ -648,7 +656,14 @@ member message's `from` so a thread the agent only receives in never
 passes; `--exclude-from <name>` drops every thread where any member message
 was sent under that agent's labels — the same sender-exclusion rule,
 composing with `--from` so a sender both included and excluded matches
-nothing. Every one of these is a member-level test: whole threads survive,
+nothing. `--with <name>` narrows `--agent` to the threads holding the
+two-way exchange between the two named agents — the same pairwise rule
+`phm messages --agent <a> --with <b>` applies, decided on each member
+message's from/to endpoints in either direction, each side matching by
+the same name/identity-key rule — so "our thread" is one filtered read
+while a thread where the two only share a third party or a room never
+passes; `--with` without `--agent` is a usage error, never a widened
+read. Every one of these is a member-level test: whole threads survive,
 never partial message lists, and the matched member stays in `messages[]`.
 `--limit <1..1024>`
 caps the threads returned, longest-waiting order kept, while `matched` still
@@ -667,12 +682,13 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&priority=P0&from=claude&excludeFrom=bot&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
-the same filters as arguments (`agent`, `waiting`/`blocked` booleans,
+the same filters as arguments (`agent`, `with` — the other agent in a
+two-way exchange, which needs `agent` — `waiting`/`blocked` booleans,
 `state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
-`channel`, `priority`, `from`, `excludeFrom`, `limit`), so an
+`id`, `channel`, `priority`, `from`, `excludeFrom`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
 
@@ -697,7 +713,7 @@ what is blocked, what moved lately — without shelling out to `phm`.
 
 #### Agent messages
 
-`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]` lists recent
+`phm agents messages [--since 1h] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]` lists recent
 agent-to-agent messages from the same bus read (no new store), newest first.
 `--before` keeps only messages received strictly before its cutoff, so
 `--since` and `--before` read one closed `[since, before)` window.
@@ -708,13 +724,14 @@ classified kind, `--priority` one envelope band, `--job` the traffic naming
 one job, `--thread` note/context bodies carrying that v2 thread label,
 `--channel` posts addressed to `group:<name>:*`, `--contains` summaries
 carrying that text, `--from`/`--exclude-from` one sender's mail kept or
-dropped, `--in-reply-to` envelopes citing that id — with the same matching
+dropped, `--in-reply-to` envelopes citing that id, `--body-kind` bodies
+carrying that exact kind discriminator — with the same matching
 rules and registered-identity resolution `phm messages --help` describes, so
 `matched` and `pairs` count exactly the rows every filter accepts.
 `--json` prints `agents.messages.v1` (`version` 1), and
 `GET /api/verse/fleet/control/agent-messages[?since=1h&before=2h&limit=50&kind=ask&from=claude]` serves the
 same read with a current read session; dashed flags arrive camelCase
-(`excludeFrom`, `inReplyTo`), each param once.
+(`excludeFrom`, `inReplyTo`, `bodyKind`), each param once.
 
 - `messages[]`: `at`, `from`, `to`, `kind`, `summary` (at most 160
   characters), `threadId` when the message names a thread, then `fromName` and

@@ -54,6 +54,7 @@ import {
   protectedPathHits,
   type ProtectedPathHit,
 } from '../authority/protected-paths.js';
+import { isSpendCeilingPath } from '../authority/spend-ceiling.js';
 import { ELITE_DIRECT_G6_CODE, ELITE_DIRECT_STAGE_ID, matchEliteModel } from '../authority/elite-models.js';
 import { hashDiff, verifyJudgeAttestation } from '../foundry/provenance.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -437,6 +438,8 @@ export interface G1Input {
   paths: readonly string[] | null;
   selfRepo: boolean;
   testsImportingTier1?: ReadonlySet<string>;
+  /** owner/name when known. ashlr-cost spend ceilings stay on the owner lane. */
+  repo?: string;
 }
 
 export function evaluateG1(input: G1Input): GateEvaluation & { hits: ProtectedPathHit[] } {
@@ -447,8 +450,17 @@ export function evaluateG1(input: G1Input): GateEvaluation & { hits: ProtectedPa
     selfRepo: input.selfRepo,
     ...(input.testsImportingTier1 ? { testsImportingTier1: input.testsImportingTier1 } : {}),
   });
+  if (input.repo) {
+    for (const raw of input.paths) {
+      if (!isSpendCeilingPath(input.repo, raw)) continue;
+      const path = raw.replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
+      if (hits.some((hit) => hit.path === path)) continue;
+      hits.push({ path, ruleId: 'spend-ceiling', why: 'ashlr-cost merges cannot change spend ceilings' });
+    }
+  }
   const inputs = {
     selfRepo: input.selfRepo,
+    ...(input.repo ? { repo: input.repo.toLowerCase() } : {}),
     paths: [...input.paths].map((p) => p.toLowerCase()).sort(),
     hits: hits.map((hit) => `${hit.ruleId}:${hit.path.toLowerCase()}`).sort(),
   };

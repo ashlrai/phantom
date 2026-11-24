@@ -19,13 +19,16 @@ const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack 
  * without the flag the output is unchanged.
  */
 /** Live board claims joined to their claim-thread bindings (read-only: no reap, no writes). */
-export function readSlackTraceClaims(): SlackTraceClaim[] {
-  const board = readFleetBoard({ reap: false });
+export function readSlackTraceClaims(deps: {
+  readBoard?: typeof readFleetBoard;
+  readBindings?: () => ReturnType<typeof readClaimThreadBindings>;
+} = {}): SlackTraceClaim[] {
+  const board = (deps.readBoard ?? readFleetBoard)({ reap: false });
   if (board.state !== 'known') return [];
-  const bindings = readClaimThreadBindings(claimNoticePaths(claimNoticeDir()).bindings);
+  const bindings = deps.readBindings?.() ?? readClaimThreadBindings(claimNoticePaths(claimNoticeDir()).bindings);
   return board.claims.flatMap((claim) => {
-    const bound = bindings.find((b) => b.claimId === claim.id && b.repo === claim.repo);
-    return bound ? [{ claimId: claim.id, repo: claim.repo, agent: claim.agent, threadKey: bound.threadKey }] : [];
+    return bindings.filter((b) => b.claimId === claim.id && b.repo === claim.repo)
+      .map((bound) => ({ claimId: claim.id, repo: claim.repo, agent: claim.agent, threadKey: bound.threadKey }));
   });
 }
 

@@ -38,6 +38,17 @@ The Resources rail selects the last real point per hour and leaves gaps unconnec
 Burn requires at least fifteen minutes of contiguous measurements within six hours
 in one reset window; a decrease or gap over thirty minutes breaks the window.
 
+Each lane row in the rail draws its window on the same bar as the Pools and Usage
+boards. The solid part is the share used: the amount used over the lane's limit, or
+over 100 for a percent reading. The lighter part is what the measured burn adds in
+the hours left before the reset, and the outlined part is what is left unused then.
+That projection is drawn only when the lane's reading carries its burn, its reset
+and the sensor's own forecast verdict; without them the bar stops at the share used
+and the row says `not projected`. A lane forecast to run out early fills to the end
+in amber, and a lane at its limit is red. A lane with no usage reading, a stale one,
+or usage with no limit to divide it by is hatched and shows no percentage. The
+collapsed rail draws the used and projected parts as a thin rule under each mark.
+
 Phantom keeps each account's subscription windows, native credit units, captured dollar balances, and operator estimates separate. The resource sidebar uses the same live capacity model as the resource drawer. Refreshing a reading does not renew its original observation or expiration.
 
 Summary counts describe accounts **with current usage** and accounts whose usage is
@@ -224,6 +235,8 @@ The visible resource bar and the open **Credit balances** disclosure share one r
 Credit records project only their account ID, pool kind, exact amount, original capture time, scope, source, and expiration. Private identity digests, credential paths, and collection generations do not enter the response. Native account evidence verifies the association, not a manually captured monetary balance. Internal capture requires paired fresh native witnesses and a matching generation at publication. A changed or unknown identity hides the amounts. This read surface neither captures new balances nor changes provider billing.
 
 The endpoint reads fixed local stores. Opening it does not start a model, provider probe, cloud scheduler, or dispatch. Missing records mean **unknown**, not zero dollars. A recorded deadline passing does not establish a newly refreshed balance or prove that a provider actually expired a grant.
+
+In the Resources drawer the open disclosure draws one card per recorded balance: the provider mark beside the kind of balance, the account, the recorded figure, and the same usage bar the lane allowance and pool cards use. The bar's filled share is the part of the recorded grant that was gone when the balance was captured, and a sentence under it says so ("75% of the recorded grant was gone at capture"); a subscription window draws the share recorded as used. The share comes only from the two recorded figures. A balance whose grant or total is not recorded gets no bar and the line "No total is recorded, so the share spent is unknown"; a balance that is unknown, or hidden because the account is not verified, keeps its card with a hatched bar and no value. Each card counts down to its recorded deadline beside the local time, gives the age of the capture, and draws the bar faint once the deadline has passed. An API promotion counts down to the time Phantom stops new API work, and says "stopped" after it. Above the cards one line counts the balances that carry a figure out of those listed and names the first credit deadline ahead; a subscription reset is not counted as a credit deadline, and balances are never added together.
 
 ## Every-resource usage aggregate
 

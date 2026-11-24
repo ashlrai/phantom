@@ -560,8 +560,8 @@ red and opened are shown. Empty reads
 show “Nothing new yet.”
 
 The resource boards are one surface. Pools, Usage, Router, Models, Lanes,
-Capacity and Supply each open with the same row of names across the top, in
-that order: what the fleet has, where work is sent, how the lanes are running.
+Capacity, Supply and Throughput each open with the same row of names across the top, in
+that order: what the fleet has, where work is sent, how the lanes are running, what came out.
 The board on screen is marked. Choosing another name puts that board in the
 same dock tab, so looking across them does not pile up tabs; a board that
 already has a tab of its own is brought forward instead. The row is one Tab
@@ -570,6 +570,17 @@ stop: Left and Right move along it, Home and End jump to the ends, and `[` and
 text field. The row stays in view while the board scrolls. It lists only the
 boards this build has, and it is not drawn while the dock is tiled as the agent
 workspace.
+
+Inside a board the cards answer the keyboard the same way on every board. `J`
+moves to the next card and `K` to the previous one (a pool, an account, a seat
+in the try order, a model, a lane), `G` jumps to the first and `Shift+G` to the
+last. The card that holds the keyboard is outlined and brought into view below
+the row, and the row says which one it is (`3 of 9`). With no card held, `J` or
+`K` starts at the first card still on screen instead of scrolling back to the
+top; the keys stop at the first and last card. Tab from a card goes to its own
+controls. Like `[` and `]`, the keys are ignored in a text field and with
+Command, Control or Option held. A board that has drawn no card yet takes no
+key.
 
 Every name in the row can carry a live reading, so the row is the status line
 of the whole surface and says where to look before a board is opened. Pools shows how many pools will run empty before
@@ -590,11 +601,15 @@ lanes kept filled over the last 24 hours (`83.3% filled`), the board's own
 figure, and nothing for a window nobody sampled. Supply shows how many slots
 opening in the next 15 minutes have no job waiting (`3 short`), from the same
 snapshot Lanes reads; when the drop folder could not be read the figure is an
-upper bound and says so (`up to 3 short`).
+upper bound and says so (`up to 3 short`). Throughput shows how many PRs
+merged in the last 24 hours (`42 merged`, a measured zero included), from the
+`phm throughput` report the board draws, or `main red` when the main guardian
+reports a default branch red; when the job metrics file could not be read the
+count is unknown and the name stands alone.
 
 Each reading comes from the same read its board draws from, refreshed while
-the row is on screen (Pools, Lanes and Supply every 30 seconds; the others
-every 60), and the board's own headline is the name's tooltip. Amber marks a
+the row is on screen (Pools, Lanes and Supply every 30 seconds; the others,
+Throughput among them, every 60), and the board's own headline is the name's tooltip. Amber marks a
 reading that asks to be looked at; a plain figure is only a figure. A board
 with nothing to flag, or whose read has not answered or last failed, shows no
 reading: the name stands alone, never a zero.

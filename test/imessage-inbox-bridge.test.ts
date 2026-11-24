@@ -12,7 +12,7 @@ import { readAgentChat } from '../src/core/agents/chat.js';
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -38,7 +38,7 @@ vi.mock('../src/core/comms/imessage-outbox.js', async (importOriginal) => {
 });
 
 import { imessageAllowlist, pollInboundSince, readCursor, readOnlyUri, writeCursor } from '../src/core/integrations/imessage.js';
-import { imessageChannelMessage, ingestIMessages, senderIdFor } from '../src/core/comms/imessage-inbox-bridge.js';
+import { imessageChannelMessage, imessageInboxHealth, ingestIMessages, senderIdFor } from '../src/core/comms/imessage-inbox-bridge.js';
 import { QueueStore } from '../src/core/queue/store.js';
 import { formatChannelAck } from '../src/core/fleet/channel-ack-text.js';
 import type { AshlrConfig } from '../src/core/types.js';
@@ -161,6 +161,27 @@ describe('cursor file', () => {
 });
 
 describe('ingestIMessages', () => {
+  it('reports an unwritable owner inbox and stops without advancing or deferring', async () => {
+    writeCursor(10, runsDir);
+    mkdirSync(join(runsDir, 'leader'), { recursive: true });
+    const path = join(runsDir, 'leader', 'MASON-INBOX.md');
+    writeFileSync(path, '');
+    chmodSync(path, 0o444);
+    const busRoot = join(home, 'fleet');
+    expect(await imessageInboxHealth(runsDir, busRoot)).toEqual({ inboxHealth: 'permission-denied' });
+    stdoutFor = () => JSON.stringify([row(11, 'check the build')]);
+    const result = await ingestIMessages(cfg(), { ...ingestDeps(), busRoot });
+    expect(result).toMatchObject({ ok: false, inboxHealth: 'permission-denied', deferred: false, cursor: 10 });
+    expect(readCursor(runsDir)).toBe(10);
+    chmodSync(path, 0o644);
+    expect(await imessageInboxHealth(runsDir, busRoot)).toEqual({});
+    expect(await ingestIMessages(cfg(), { ...ingestDeps(), busRoot })).toMatchObject({ ok: true, accepted: 1, cursor: 11 });
+  });
+
+  it('reports a missing inbox', async () => {
+    expect(await imessageInboxHealth(runsDir, join(home, 'fleet'))).toEqual({ inboxHealth: 'missing' });
+  });
+
   it('first run baselines to the newest ROWID and ingests no history', async () => {
     stdoutFor = (args) => (args.some((a) => /MAX\(ROWID\)/.test(a)) ? '120\n' : JSON.stringify([row(1, 'old history')]));
     const result = await ingestIMessages(cfg(), ingestDeps());
@@ -286,9 +307,10 @@ describe('owner thread recording', () => {
     const mirror = JSON.parse(readFileSync(join(busRoot, 'bus-inbox', 'messages.json'), 'utf8')) as {
       rows: Array<{ envelope: { body: Record<string, unknown> } }>;
     };
-    expect(mirror.rows).toHaveLength(1);
-    expect(mirror.rows[0]!.envelope.body).toMatchObject({ kind: 'owner-thread', channel: 'imessage', redacted: true });
-    expect(JSON.stringify(mirror.rows[0]!.envelope.body)).not.toContain('ship the fix');
+    const ownerMirror = mirror.rows.filter(row => row.envelope.body.kind === 'owner-thread');
+    expect(ownerMirror).toHaveLength(1);
+    expect(ownerMirror[0]!.envelope.body).toMatchObject({ kind: 'owner-thread', channel: 'imessage', redacted: true });
+    expect(JSON.stringify(ownerMirror[0]!.envelope.body)).not.toContain('ship the fix');
   });
 
   it('leaves intake untouched when the owner-thread adapter is not configured', async () => {

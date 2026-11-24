@@ -28,6 +28,7 @@ import { join } from 'node:path';
 
 import type { ApiModule } from './api-modules.js';
 import type { VerseApiContext } from './verse-api.js';
+import { agentActorForToken } from '../approvals/actor.js';
 import { passesMutationGate, readBody, sendJson } from '../web/api.js';
 import { ashlrHome } from '../cloud/store.js';
 import { listTasks, type TaskQueueRead } from '../fleet/task-source.js';
@@ -43,8 +44,7 @@ import { buildLearningState } from '../learn/harness-registry.js';
 import type { LearningStateV1 } from '../learn/harness-types.js';
 import { listEnrolled } from '../sandbox/policy.js';
 import { DEFAULT_TEAM } from '../teams/tools.js';
-import { localHumanActor } from '../teams/identity.js';
-import { validId, type TeamEvent } from '../teams/protocol.js';
+import { validId, type TeamActor, type TeamEvent } from '../teams/protocol.js';
 import { appendEvent, readEvents } from '../teams/store.js';
 import { foldTeam, type Handoff, type Member } from '../teams/state.js';
 import { describeAccessAction } from '../teams/workspace.js';
@@ -99,7 +99,7 @@ export interface OpsApiDeps {
   learning?: () => LearningStateV1;
   enrolled?: () => string[];
   releases?: (paths: readonly string[]) => Promise<OpsReleasesV1['repos']>;
-  postMessage?: (team: string, text: string) => { ok: boolean; reason?: string };
+  postMessage?: (team: string, text: string, actor?: TeamActor) => { ok: boolean; reason?: string };
   releaseDeps?: OpsReleaseProbeDeps;
 }
 
@@ -405,10 +405,13 @@ function buildLeaders(events: TeamEvent[], team: string, canPost: boolean, now: 
   };
 }
 
-function defaultPost(team: string, text: string): { ok: boolean; reason?: string } {
+function defaultPost(team: string, text: string, actor?: TeamActor): { ok: boolean; reason?: string } {
+  // The route principal is an agent. A human id from the server process is refused.
+  if (!actor || actor.kind !== 'agent' || !actor.id.startsWith('web-token.') || actor.principal !== actor.id) {
+    return { ok: false, reason: 'The message was refused.' };
+  }
   try {
-    const actor = localHumanActor();
-    appendEvent(team, actor, 'message.posted', { channel: OPS_LEADERS_CHANNEL, text });
+    appendEvent(team, { kind: 'agent', id: actor.id, principal: actor.principal }, 'message.posted', { channel: OPS_LEADERS_CHANNEL, text });
     return { ok: true };
   } catch {
     return { ok: false, reason: 'The message was refused. Secret-shaped text cannot be posted to the team channel.' };
@@ -612,7 +615,7 @@ export function createOpsApi(deps: OpsApiDeps = {}): ApiModule {
       if (text.length > OPS_MESSAGE_MAX_CHARS) { sendInvalid(res, `text is limited to ${OPS_MESSAGE_MAX_CHARS} characters`); return true; }
       const team = typeof body.team === 'string' && body.team.trim() ? body.team.trim() : DEFAULT_TEAM;
       if (!validId(team)) { sendInvalid(res, 'unknown team'); return true; }
-      const result = post(team, scrubSecrets(text).slice(0, OPS_MESSAGE_MAX_CHARS));
+      const result = post(team, scrubSecrets(text).slice(0, OPS_MESSAGE_MAX_CHARS), agentActorForToken(ctx.token));
       if (!result.ok) {
         sendJson(res, 422, { code: 'OPS_MESSAGE_REFUSED', error: result.reason ?? 'The message was refused.' });
         return true;

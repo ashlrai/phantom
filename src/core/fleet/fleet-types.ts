@@ -87,10 +87,14 @@ export type RepoStage = 'propose' | 'merge';
 /** Ordering for min(): a stage can only ever be lowered by an outer bound. */
 export const REPO_STAGE_RANK: Readonly<Record<RepoStage, number>> = Object.freeze({ propose: 0, merge: 1 });
 
-/** The highest risk class autonomy may ever merge. `high` exists (merge.ts RiskClass) but is never mergeable. */
+/** The highest risk class autonomy may ever merge. `high` is path-class only and is never mergeable. */
 export type MergeRisk = 'low' | 'medium';
 
-/** Ordering for risk comparisons, including merge.ts's unmergeable `high`. */
+/**
+ * Ordering for risk comparisons, including merge.ts's unmergeable `high`.
+ * Size is not a rank. Ordinary source of any size stays medium and is bounded
+ * by maxFiles and maxLines. Auth, secrets, signing, CI and shell stay high.
+ */
 export const MERGE_RISK_RANK: Readonly<Record<MergeRisk | 'high', number>> = Object.freeze({
   low: 0,
   medium: 1,

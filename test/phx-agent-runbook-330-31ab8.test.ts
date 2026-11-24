@@ -100,24 +100,24 @@ describe('agent-first-run-330 documented local bus exchange', () => {
     const root = store();
     const directory = join(root, 'bus-inbox');
     mkdirSync(directory, { mode: 0o700 });
-    const rows = Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, i) => ({
+    const rows = Array.from({ length: 1024 }, (_, i) => ({
       cursor: i + 1, receivedAt: 0,
       envelope: { id: `fake-${i}`, from: 'fake-agent', to: 'fake-coordinator', priority: 'P3', ttl: 1, body: null },
     }));
     writeFileSync(join(directory, 'messages.json'), JSON.stringify(rows), { mode: 0o600 });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // retainedCount reaching maxMessages is the documented full-store signal.
+    // The inspection distinguishes retained and expired receipts.
     expect(await cmdCommsBus(['status'], { root, now: () => 1 })).toBe(0);
     expect(lastJson(log)).toMatchObject({
-      source: 'available', retainedCount: BUS_INBOX_MAX_MESSAGES,
-      maxMessages: BUS_INBOX_MAX_MESSAGES, liveCount: 0, expiredCount: BUS_INBOX_MAX_MESSAGES,
+      source: 'available', retainedCount: 1024,
+      maxMessages: BUS_INBOX_MAX_MESSAGES, liveCount: 0, expiredCount: 1024,
     });
 
     // Live records are never evicted; expired ones are reclaimed by the next
     // post, which accepts again and keeps advancing the cursor.
     const file = writeEnvelope(root, 'fake-extra.json', { ...envelope, id: 'fake-extra' });
     expect(await cmdCommsBus(['post', '--file', file], { root, now: () => 1 })).toBe(0);
-    expect(lastJson(log)).toEqual({ status: 'posted', id: 'fake-extra', cursor: BUS_INBOX_MAX_MESSAGES + 1 });
+    expect(lastJson(log)).toEqual({ status: 'posted', id: 'fake-extra', cursor: 1024 + 1 });
   });
 });

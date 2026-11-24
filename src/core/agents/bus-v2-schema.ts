@@ -323,6 +323,36 @@ export function busBodyThread(body: unknown): string | null {
   return typeof thread === 'string' && thread.length > 0 ? thread : null;
 }
 
+/**
+ * The kind discriminator a retained body carries — the same discriminator
+ * `busBodySummary` switches on, read verbatim and unvalidated: the v2 `kind`
+ * field (`note`, `context`, `work.post`, `work.claim`, `work.status`,
+ * `work.result`, `work.release`, `wake`), a `worker-handoff` assignment or a
+ * notice kind that shares the store; failing that, the `protocol.kind` a
+ * bus-transport v1 envelope wraps, then the `type`/`schema` discriminator the
+ * kindless notices key on. A body carrying none of those fields returns null
+ * and never matches a body-kind filter. The match is exact and
+ * case-sensitive like every other own-field bus filter — an unrecognized but
+ * printable value is an honest empty match, never an error and never a
+ * widened one.
+ */
+export function busBodyKind(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  const field = (key: string): string | null => {
+    const value = record[key];
+    return typeof value === 'string' && value.trim() ? value : null;
+  };
+  const kind = field('kind');
+  if (kind !== null) return kind;
+  const proto = record['protocol'];
+  if (proto !== null && typeof proto === 'object' && !Array.isArray(proto)) {
+    const pk = (proto as Record<string, unknown>)['kind'];
+    if (typeof pk === 'string' && pk.trim()) return pk;
+  }
+  return field('type') ?? field('schema');
+}
+
 // ─── Work feed ──────────────────────────────────────────────────────
 
 export const workJobSchema = z.object({

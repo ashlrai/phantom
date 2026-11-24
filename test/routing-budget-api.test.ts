@@ -138,7 +138,7 @@ describe('allowance before resets settings', () => {
       const read = (await get<BudgetView>('/api/verse/budget')).body;
       expect(read.resetSpending).toEqual({ enabled });
       expect(read.resetSpendingStatus?.mode).toBe(enabled ? 'enabled' : 'disabled');
-      expect(read.effective.claude?.reservePercent).toBe(40);
+      expect(read.effective.claude?.reservePercent).toBe(0);
       expect(read.resetSpendingStatus?.accounts.claude?.effectiveReservePercent).toBeNull();
     }
   });
@@ -163,10 +163,10 @@ describe('allowance before resets settings', () => {
     } } }));
     const read = (await post<BudgetView>({ resetSpending: { enabled: true } })).body;
     expect(read.resetSpendingStatus).toMatchObject({ mode: 'enabled', authorityState: 'paused', accounts: {
-      claude: { savedReservePercent: 40, signedFloorPercent: 40, effectiveReservePercent: null, state: 'authority-paused', subscriptionOnly: 'unknown' },
+      claude: { savedReservePercent: 0, signedFloorPercent: 40, effectiveReservePercent: null, state: 'authority-paused', subscriptionOnly: 'unknown' },
     } });
     expect(read.resetSpendingStatus?.accounts.claude?.constraints).toContain('This account has no signed coding-producer role.');
-    expect(read.resetSpendingStatus?.accounts.claude?.constraints).toContain('Short-window usage ceiling is 70%.');
+    expect(read.resetSpendingStatus?.accounts.claude?.constraints).toContain('Short-window usage ceiling is 100%.');
   });
 
   it('does not turn a historical scheduling forecast into a current task admission', async () => {
@@ -204,10 +204,10 @@ describe('GET /api/verse/budget', () => {
     expect(body.mode).toBe('balanced');
     expect(body.seats).toEqual({});
     expect(body.seatInfo.map((s) => s.seatId)).toEqual(['claude', 'codex-personal', 'grok', 'local:qwen3.8:27b-ctx64k']);
-    expect(body.effective['claude']).toEqual({ seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 });
+    expect(body.effective['claude']).toEqual({ seatId: 'claude', enabled: true, reservePercent: 0, maxSessionWindowPercent: 100 });
     expect(body.effective['codex-personal']!.enabled).toBe(true);
     const byId = Object.fromEntries(body.headroom.map((h) => [h.seatId, h]));
-    expect(byId['claude']).toMatchObject({ eligibleForAutonomy: true, autonomyHeadroomPercent: 40, bindingWindow: 'weekly' });
+    expect(byId['claude']).toMatchObject({ eligibleForAutonomy: true, autonomyHeadroomPercent: 80, bindingWindow: 'weekly' });
     expect(byId['codex-personal']).toMatchObject({ eligibleForAutonomy: false });
     expect(byId['codex-personal']!.reasons[0]).toContain('weekly window is spent');
     expect(byId['grok']).toMatchObject({ eligibleForAutonomy: true, autonomyHeadroomPercent: 88 });

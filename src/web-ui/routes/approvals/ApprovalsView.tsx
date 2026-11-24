@@ -3,9 +3,9 @@
  * (RQ-DESK-APPROVALS-1). Renders GET /api/approvals, the same projection as
  * `phm approvals --json`; nothing here parses logs or scrapes anything.
  *
- *   1. Team approvals — Approve/Deny post to the server, which decides with the
- *      identity derived from the local OS user (decideApproval). The click IS
- *      the approval; the app never supplies or fakes an actor.
+ *   1. Team approvals: Approve/Deny post the decision only. The server uses
+ *      the authenticated principal and never an actor from this page. A web
+ *      token is not a human; a human decision needs presence evidence.
  *   2. Inbox proposals — a row with a `revision` can be decided through the
  *      same revision-bound POST /api/inbox/:id/decision the approval card uses:
  *      ConfirmDialog → MutationTokenDialog → consent only, NEVER execution.

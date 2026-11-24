@@ -129,6 +129,7 @@ exit code is non-zero if any of them failed.
 | Python syntax check | A `.py` file or an extensionless script with a python shebang changed | Fix the reported `SyntaxError`. The files are compiled with `python3` without writing bytecode; with no working `python3` the step prints `SKIP`. |
 | Shell syntax check | A `.sh` file or an extensionless script with a `sh`/`bash`/`dash` shebang changed | Fix the parse error `bash -n` reports. With no working `bash` the step prints `SKIP`. |
 | Perl syntax check | A `.pl` file or an extensionless script with a `perl` shebang changed | Fix the compile error `perl -c` reports; `perl -c` compiles the script without running its body — the same check CI's secret-shape job applies to `scrub.pl`. With no working `perl` the step prints `SKIP`. |
+| PowerShell syntax check | A `.ps1`, `.psm1` or `.psd1` file changed | Fix the `path:line:column` parse error `System.Management.Automation.Language.Parser.ParseFile` reports — parse only, the script never executes (this covers `scripts/install.ps1`, the shipped Windows installer). `pwsh` is probed first, then `powershell`; with neither host the step prints `SKIP`. |
 | Node syntax check | An extensionless script with a `node` shebang changed | Fix the parse error `node --check` reports; launchers like `bin/ashlr` carry no extension, so the shebang decides. The check runs under the same node runtime, so it never prints `SKIP`. |
 | Detached script syntax check | A script file under `src/raycast/` or `examples/universe-site/` changed | Fix the `path:line:column` parse error the bundled `typescript` parser reports; those trees own their toolchains, so ESLint and the root type check never read them. With no installed `typescript` package the step prints `SKIP`. |
 | JSON syntax check | A `.json`, `.webmanifest` or `.tsbuildinfo` file changed | Fix the parse error `JSON.parse` reports; every failing file is named. The check needs no external tool, so it never prints `SKIP` for a changed `.json`, `.webmanifest` or `.tsbuildinfo` file. |
@@ -146,6 +147,7 @@ exit code is non-zero if any of them failed.
 | Quarantine ledger | A `*.test.*` or `*.spec.*` file or `queue/quarantine.tsv` changed | An added skip marker or `.only`, or a stale or expired ledger row; see [Skipping a flaky test](#skipping-a-flaky-test). |
 | Real-I/O lane lint | Always | A changed test that spawns processes or does real I/O must be listed in `test/config/realio-lane-membership.mjs` (a protected path), or carry a comment near the match saying why it is safe in the fast lane. Files you did not change only print a `WARN`. |
 | Verse sync-I/O lint | Always | No new synchronous filesystem or child-process call in a Verse route file (`src/core/verse/**/*-api.ts`) unless a `// sync-io-ok: <reason>` comment explains it. |
+| Contrib router type check | A `.ts` file under `contrib/router/`, `src/core/authority/protected-paths.ts`, or `package.json`/`package-lock.json` changed | Fix the `path:line:col` type errors the documented `tsc --noEmit` run reports; the router executes under `tsx`, which transpiles without checking types, and no `tsconfig` project covers the tree. With no installed `typescript` package the step prints `SKIP`. |
 | Type check | Backend project when the diff touches a root `tsconfig*.json`, `src/` (outside `src/web-ui/` and `src/raycast/`), `test/` or `scripts/`; web project when it touches `src/web-ui/`; both when `package.json` or `package-lock.json` changed. Docs-only diffs skip it. Runs incrementally with `tsgo`, falling back to `tsc` | Fix the reported errors. With many parallel worktrees, `FAIL tsc slot wait` means no type-check slot freed in time (`PHANTOM_TSC_TIMEOUT_SECONDS`, default 900). |
 
 `SKIP eslint`, `SKIP docs check` or `SKIP css syntax check` with "run npm ci to restore it" means the
@@ -227,11 +229,17 @@ and the fast gate never skips tests silently:
 - **Docs-only diff** (every path is under `docs/` or ends in `.md`):
   `test/docs-repo-links.test.ts` always runs, plus each test whose source
   names a changed file by its path or its bare file name, even in a comment,
-  up to 25 in total. A page no test names runs only the link suite; a
+  up to the same related cap. A page no test names runs only the link suite; a
   docs-only diff never takes the fallback set below.
-- **Code diff**: changed test files and a few tests named by path (below)
-  always run; tests whose name matches a changed file and tests that import a
-  changed module directly fill the rest, up to 25 files in total. Named tests:
+- **Code diff, fresh graph**: the dependency graph for this commit
+  (schema `phantom-dep-graph.v1`, `commit` equal to `HEAD` or an ancestor of
+  the base, blob hashes matching) selects tests by transitive reverse-import
+  reachability, nearest first, up to the related cap in
+  `.github/fast-gate-budget.json` (25 in the measured file). Name-matched
+  `test/**/<stem>.test.ts` files fill in after that closure. A web test that
+  reaches a changed file, and the colocated `src/web-ui/**/*.test.ts` or
+  `*.test.tsx` for a changed web file, run under `vitest.config.web.ts`
+  (`npm run test:web -- <files>`). Changed test files always run. Named tests:
   - `.github/CODEOWNERS`, `src/core/authority/`, a `test/authority-*310b*`
     suite or `.github/tests/secret-shape/` adds the two
     `test/authority-*-310b.test.ts` suites.
@@ -244,13 +252,25 @@ and the fast gate never skips tests silently:
   - `.github/workflows/ci.yml` adds `test/m30.ci.test.ts`.
   - A changed `.github/scripts/<name>.mjs` adds its
     `.github/tests/<name>.test.mjs`.
+  A changed `.github/tests/secret-shape/` path is one of the Tier-1 paths
+  above, so those two authority suites stay in the selection. The
+  secret-shape scan itself is a separate required job and is not selected
+  here.
+- **No importers**: a changed source the fresh graph shows with no importers
+  and no colocated test runs the versioned smoke set in
+  `.github/fast-gate-smoke.json` (`phantom-fast-gate-smoke.v1`) instead
+  of a stride sample. The two Tier-1 authority suites are always in that set.
 - **Fallback**: a change to `package.json` or `package-lock.json`, a
   `tsconfig*.json`, a Vite or Vitest config, `test/setup/`, `test/config/` or
-  `scripts/test-ci*.mjs`, a diff that maps to no test (a `src/web-ui/`-only
-  change, for example), or a selection error runs an even spread of up to 120
-  backend tests across the repository (three shards of 40) that always
+  `scripts/test-ci*.mjs`, a missing, unparsable, or stale graph (its `commit`
+  is not `HEAD` and not an ancestor of the base), a changed file with a
+  dynamic import or other specifier the graph cannot resolve, a docs diff
+  that maps to no test, or a selection error runs an even spread of the
+  fallback budget in `.github/fast-gate-budget.json` (three shards of 40 in
+  the measured file) that always
   includes the two authority suites. A `package.json` change also adds
-  `test/package-files-allowlist.test.ts`.
+  `test/package-files-allowlist.test.ts`. Uncertain inputs run this broader
+  set, never a smaller one.
 
 Tests that need the built `dist/`, and the slow real-I/O and serial suites
 picked up indirectly, are left to the scheduled `master` run. `npm run check:docs` is not part of the pull request
@@ -259,13 +279,18 @@ gate, so run it yourself whenever you touch markdown.
 To see the plan for your branch, commit and run:
 
 ```sh
-RUNNER_TEMP="$(mktemp -d)" ASHLR_CI_BASE_SHA="$(git rev-parse origin/master)" \
-  ASHLR_CI_HEAD_SHA="$(git rev-parse HEAD)" node .github/scripts/ci-fast-select.mjs
+graph="$(mktemp)"
+node .github/scripts/ci-dep-graph.mjs update --out "$graph"
+RUNNER_TEMP="$(mktemp -d)" CI_DEP_GRAPH="$graph" \
+  ASHLR_CI_BASE_SHA="$(git rev-parse origin/master)" \
+  ASHLR_CI_HEAD_SHA="$(git rev-parse HEAD)" \
+  node .github/scripts/ci-fast-select.mjs
 ```
 
 It prints the mode and test counts and writes the list to
-`$RUNNER_TEMP/fast-gate-plan.json`. Run those files with
-`npm run test:ci -- <files>` before you push.
+`$RUNNER_TEMP/fast-gate-plan.json`. Run the vitest files with
+`npm run test:ci -- <files>` and any `src/web-ui` tests with
+`npm run test:web -- <files>` before you push.
 
 ## 7. Auto-merge
 
@@ -297,8 +322,8 @@ do not block auto-merge:
   the file's tolerance (20% unless a target sets its own). A red result means your change may have slowed startup, or the
   shared runner was slow; look before you dismiss it.
 - `Dependency audit (root + Raycast)` runs only when a manifest, lockfile or
-  audit configuration changes. Those paths are protected, so the owner reviews
-  that pull request anyway; see
+  audit configuration changes. Dependency manifests and lockfiles are protected;
+  other audit inputs need not be. See
   [docs/DEPENDENCY-SECURITY.md](DEPENDENCY-SECURITY.md).
 - `PR topology observation (non-authoritative)` is telemetry, and the
   `Merge Queue Reaper` only cancels queue runs whose queue entry is gone.

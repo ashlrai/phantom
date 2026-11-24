@@ -98,6 +98,23 @@ describe('release directory update', () => {
     ]);
     expect(run.mock.calls.find(call => call[0] !== 'gh')?.[1]).toEqual(['--version']);
   });
+  it('installs but resumes services in place when the restart gate holds', async () => {
+    const gate = vi.fn(() => ({ restart: false, reason: 'authority-digest-changed' }));
+    const result = await update({ services, restartGate: gate });
+    expect(result).toMatchObject({ updated: true, error: null, restart_held: true, held_reason: 'authority-digest-changed' });
+    expect(gate).toHaveBeenCalledWith(fs.realpathSync(join(base, 'current')), '1.0.1');
+    expect(run.mock.calls.filter(call => call[0] === 'launchctl').map(call => call[1])).toEqual([
+      ...services().map(target => ['kill', 'SIGSTOP', target]), ...services().map(target => ['kill', 'SIGCONT', target]),
+    ]);
+  });
+  it('never relaunches a held daemon, even while other services restart', async () => {
+    const result = await update({ services, restartGate: () => ({ restart: true, reason: 'held', hold: ['ai.ashlr.daemon'] }) });
+    expect(result).toMatchObject({ updated: true, restart_held: true });
+    expect(run.mock.calls.filter(call => call[0] === 'launchctl').map(call => call[1])).toEqual([
+      ['kill', 'SIGSTOP', 'gui/owner/ai.ashlr.daemon'], ['kill', 'SIGSTOP', 'gui/owner/ai.ashlr.serve'],
+      ['kill', 'SIGCONT', 'gui/owner/ai.ashlr.daemon'], ['kickstart', '-k', 'gui/owner/ai.ashlr.serve'],
+    ]);
+  });
   it('rolls back both links and restarts old services after restart failure', async () => {
     let failed = false;
     run.mockImplementation((command: string, args: string[]) => {

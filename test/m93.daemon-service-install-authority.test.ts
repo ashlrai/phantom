@@ -48,6 +48,19 @@ describe('daemon service production install authority', () => {
     expect(spawnSyncMock).not.toHaveBeenCalled();
   });
 
+  it('refuses darwin per-user registration before any mutation', async () => {
+    await expect(service.registerPerUserDaemon({
+      platform: 'darwin',
+      homeDir: home,
+      nodePath: process.execPath,
+      binPath: path.join(home, 'bin', 'ashlr'),
+    })).rejects.toThrow(/resident service/);
+
+    expect(fs.readdirSync(home)).toEqual([]);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
   it('does not export a production-callable install bypass', () => {
     expect(Object.keys(service).filter((name) => /install.*verification|verification.*install/iu.test(name)))
       .toEqual([]);

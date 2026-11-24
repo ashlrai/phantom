@@ -25,7 +25,7 @@
 }
 .list::-webkit-scrollbar { display: none; }
 .item { display: flex; flex: none; align-items: center; }
-/* A hairline where one question ends and the next begins (has / routes / runs). */
+/* A hairline where one question ends and the next begins (has / routes / runs / came out). */
 .item[data-group-start] { margin-inline-start: var(--space-2); padding-inline-start: var(--space-2); background: linear-gradient(var(--border-default), var(--border-default)) left center / 1px 40% no-repeat; }
 .link {
   position: relative;
@@ -81,6 +81,12 @@
   border-radius: var(--radius-xs);
   font-size: var(--text-2xs-size);
 }
+/* Which card holds the keyboard, beside the keys that move it. */
+.position { margin-inline-end: var(--space-1); font-size: var(--text-2xs-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A card reached with J or K: the ring is drawn inside it, so a clipping list never cuts it, and the card stops
+   clear of this sticky row when it is brought into view. */
+:global([data-board-card]) { scroll-margin-block: 3rem var(--space-3); }
+:global([data-board-card]:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: -2px; box-shadow: none; }
 /* The hint is for a keyboard; a phone-width dock gives the row to the names. */
 :global([data-console-layout='compact']) .keys { display: none; }
 @media (prefers-reduced-motion: reduce) { .link, .link::after { transition: none; } }

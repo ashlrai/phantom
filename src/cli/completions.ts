@@ -20,7 +20,7 @@ import { makeColors, isTty } from './ui.js';
 export const TOP_LEVEL_COMMANDS: string[] = [
   'graph',
   'index', 'go', 'status', 'ls', 'open', 'tidy', 'config', 'doctor', 'companions', 'team', 'approvals', 'decisions', 'org', 'lanes', 'steward', 'improve', 'autopilot', 'metrics', 'jobs', 'recut', 'self', 'empties', 'shipped', 'mobile', 'throughput', 'merges', 'home', 'today', 'asks', 'needs-you', 'subagent', 'init',
-  'setup', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
+  'setup', 'install', 'mcp', 'run', 'runs', 'eval', 'pulse', 'pulse-export', 'pulse-test', 'land',
   'new', 'ship', 'recall', 'learn', 'genome',
   'self-swap', 'self-update', 'update', 'upgrade', 'desktop', 'desktop-update', 'desktopctl', 'apps', 'browser', 'app', 'spec', 'swarm', 'swarms', 'tui', 'dash', 'dashboard', 'serve', 'models',
   'gh', 'vercel', 'website', 'wire', 'notify', 'telemetry', 'router', 'router-calibration', 'node', 'sandbox', 'audit',
@@ -169,7 +169,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     // passes test/cli-help-no-side-effects; a registry verb whose --help still
     // misbehaves stays out until it is fixed.
     'activity', 'admission', 'api-pools', 'apps-follow', 'apps-status', 'apps-watch', 'asks',
-    'bin-diff', 'brains', 'bridge-check', 'brief-send', 'bus-claim', 'channel-health', 'ci-plan',
+    'bin-diff', 'brains', 'bridge-check', 'brief-send', 'bus-claim', 'caps-route', 'channel-health', 'ci-plan',
     'claim-bind', 'claim-drift', 'claim-notices', 'config', 'conflict-risk', 'coordination',
     'cos-decline', 'cos-loop', 'cos-reconcile', 'cos-work', 'dep-gate', 'dirty-landed', 'disk',
     'disk-forecast', 'disk-sweep', 'done-evaluate', 'done-plan', 'dot-handoff', 'drift', 'edges',

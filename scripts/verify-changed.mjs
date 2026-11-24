@@ -60,6 +60,23 @@ const DETACHED_SCRIPT_TREE = /^(?:src\/raycast|examples\/universe-site)\//;
 const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
 
 /**
+ * contrib/router/*.ts is the Ashlr issue→PR router supervisor — operational
+ * fleet machinery that dispatches, reviews and merges pull requests. It runs
+ * under tsx, which transpiles without type checking, and no tsconfig project
+ * covers the tree: the backend project includes only src/, the web and
+ * desktop projects their own trees. ESLint's flat config still lints the
+ * files, but no check ever type-checked them — SUPERVISOR.md documents a
+ * manual `tsc --noEmit` invocation nothing ran on a diff. The program's only
+ * reach outside the directory is src/core/authority/protected-paths.ts, and
+ * a dependency bump can break it through the shared manifests, so the
+ * trigger names those inputs; a new cross-boundary import must extend it.
+ */
+const CONTRIB_ROUTER_DIR = 'contrib/router';
+const ROUTER_PROGRAM_FILE = /\.ts$/;
+const ROUTER_SRC_BOUNDARY = 'src/core/authority/protected-paths.ts';
+const SHARED_MANIFEST_FILE = /^package(?:-lock)?\.json$/;
+
+/**
  * Shipped .html pages embed three grammars no other check reads: classic and
  * module <script> bodies, JSON script payloads (ld+json, importmap,
  * speculationrules) and <style> rules. ESLint never looks inside markup, the
@@ -70,6 +87,16 @@ const DETACHED_SCRIPT_FILE = /\.(?:[cm]?[jt]sx?)$/;
  */
 const HTML_FILE = /\.html?$/i;
 
+/**
+ * PowerShell script/module/manifest extensions share one grammar: the
+ * Language.Parser API parses all three without executing. The repo's only
+ * member today is scripts/install.ps1 — the shipped Windows per-user
+ * installer `irm ... | iex` runs on user machines — which no tsconfig,
+ * eslint grammar or other step ever reads, so a syntax error would ship
+ * silently to every Windows install.
+ */
+const POWERSHELL_FILE = /\.ps[dm]?1$/i;
+
 /** Pure selection: keep deleted paths for the web decision, but never lint them. */
 export function selectChangedFiles(changedPaths, existingPaths) {
   const changed = [...new Set(changedPaths)].filter(Boolean).sort();
@@ -79,6 +106,7 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     pythonFiles: changed.filter((path) => existing.has(path) && /\.py$/.test(path)),
     shellFiles: changed.filter((path) => existing.has(path) && /\.sh$/.test(path)),
     perlFiles: changed.filter((path) => existing.has(path) && /\.pl$/i.test(path)),
+    powershellFiles: changed.filter((path) => existing.has(path) && POWERSHELL_FILE.test(path)),
     jsonFiles: changed.filter((path) => existing.has(path) && (/\.(?:json|webmanifest)$/.test(path) || TSBUILDINFO_FILE.test(path))),
     jsonlFiles: changed.filter((path) => existing.has(path) && /\.jsonl$/.test(path)),
     xmlFiles: changed.filter((path) => existing.has(path) && /\.(?:xml|plist(?:\.in)?|svg)$/.test(path)),
@@ -96,6 +124,9 @@ export function selectChangedFiles(changedPaths, existingPaths) {
     patchFiles: changed.filter((path) => existing.has(path) && /\.(?:patch|diff)$/i.test(path)),
     htmlFiles: changed.filter((path) => existing.has(path) && HTML_FILE.test(path) && !path.startsWith('test/fixtures/')),
     detachedScriptFiles: changed.filter((path) => existing.has(path) && DETACHED_SCRIPT_TREE.test(path) && DETACHED_SCRIPT_FILE.test(path)),
+    contribRouterTypecheck: changed.some((path) =>
+      (path.startsWith(`${CONTRIB_ROUTER_DIR}/`) && ROUTER_PROGRAM_FILE.test(path)) ||
+      path === ROUTER_SRC_BOUNDARY || SHARED_MANIFEST_FILE.test(path)),
   };
 }
 
@@ -338,7 +369,7 @@ export function collectChangedPaths(root, comparison = verificationBase(root)) {
 
 /** Select projects conservatively for source, validation tooling and shared compiler inputs. */
 export function typecheckProjects(changed) {
-  const shared = changed.some((path) => /^package(?:-lock)?\.json$/.test(path));
+  const shared = changed.some((path) => SHARED_MANIFEST_FILE.test(path));
   return {
     backend: shared || changed.some((path) => /^(?:tsconfig[^/]*\.json$|src\/(?!web-ui\/|raycast\/)|test\/|scripts\/)/.test(path)),
     web: shared || changed.some((path) => path.startsWith('src/web-ui/')),
@@ -465,6 +496,79 @@ export function runPerlSyntaxCheck(root, files, spawn = spawnSync) {
     }
   }
   console.log('PASS perl syntax check');
+  return true;
+}
+
+/**
+ * Probe for a working PowerShell host: pwsh (PowerShell 7+, cross-platform)
+ * first, then Windows PowerShell 5.1's powershell.exe — the interpreter
+ * names differ per platform and only one may exist. `-NoProfile
+ * -NonInteractive -Command "exit 0"` is the lightest invocation both
+ * accept; a host that errors, is killed or exits non-zero does not count.
+ * The returned exe feeds runPowerShellSyntaxCheck so the same host that
+ * answered the probe parses the files.
+ */
+export function powershellPreflight(spawn = spawnSync, subject = 'changed PowerShell files') {
+  for (const exe of ['pwsh', 'powershell']) {
+    const probe = spawn(exe, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8', timeout: 15000 });
+    if (!probe.error && !probe.signal && probe.status === 0) return { ok: true, exe };
+  }
+  return { ok: false, reason: `pwsh/powershell is unavailable or did not run; ${subject} cannot be syntax-checked locally` };
+}
+
+/**
+ * Parse changed .ps1/.psm1/.psd1 files with the PowerShell language
+ * parser — [System.Management.Automation.Language.Parser]::ParseFile is
+ * the grammar step the host itself applies, and it parses without
+ * executing the script (unlike `powershell -File`, which would run
+ * install.ps1's body). The target path travels in PHANTOM_VERIFY_PS1_FILE
+ * rather than argv: an environment variable carries any repo path
+ * verbatim on both hosts, where $args marshalling after -Command differs
+ * between pwsh and powershell.exe. Parse errors print
+ * `path:line:column: message` on stderr and exit 1; a missing env var
+ * exits 2 so an arg-passing surprise fails closed instead of vacuously
+ * passing an unparsed batch. One spawn per file keeps the diagnostic
+ * pointed at the failing path, matching the perl and node checks.
+ */
+const POWERSHELL_SYNTAX_CHECK = [
+  '$path = $env:PHANTOM_VERIFY_PS1_FILE',
+  'if (-not $path) { exit 2 }',
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+  '$tokens = $null',
+  '$errors = $null',
+  'try {',
+  '  [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)',
+  '} catch {',
+  '  [Console]::Error.WriteLine($_.Exception.Message)',
+  '  exit 1',
+  '}',
+  '$failed = $false',
+  'if ($null -ne $errors) {',
+  '  foreach ($parseError in $errors) {',
+  '    [Console]::Error.WriteLine((\'{0}:{1}:{2}: {3}\' -f $parseError.Extent.File, $parseError.Extent.StartLineNumber, $parseError.Extent.StartColumnNumber, $parseError.Message))',
+  '    $failed = $true',
+  '  }',
+  '}',
+  'if ($failed) { exit 1 }',
+  'exit 0',
+].join('\n');
+
+/** Syntax-check changed PowerShell files with Language.Parser.ParseFile; returns false on any parse failure. */
+export function runPowerShellSyntaxCheck(root, files, exe = 'pwsh', spawn = spawnSync) {
+  for (const path of files) {
+    const result = spawn(exe, ['-NoProfile', '-NonInteractive', '-Command', POWERSHELL_SYNTAX_CHECK], {
+      cwd: root, encoding: 'utf8', timeout: 120000,
+      env: { ...process.env, PHANTOM_VERIFY_PS1_FILE: resolve(root, path) },
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      if (result.stdout) console.log(result.stdout.trimEnd());
+      if (result.stderr) console.error(result.stderr.trimEnd());
+      if (result.error) console.error(result.error.message);
+      console.log(`FAIL powershell syntax check: ${path}`);
+      return false;
+    }
+  }
+  console.log('PASS powershell syntax check');
   return true;
 }
 
@@ -1098,6 +1202,54 @@ export function runDetachedScriptCheck(root, files, spawn = spawnSync) {
   return true;
 }
 
+/**
+ * The contrib/router program files, sorted for a deterministic command
+ * line. SUPERVISOR.md documents a non-recursive `contrib/router/*.ts`
+ * file-list tsc run; lib/ holds shell helpers and router_io.cjs (a spawned
+ * subprocess payload, never imported) and test/ a bash suite, so top-level
+ * *.ts is the whole TypeScript program boundary. An absent or unreadable
+ * tree yields an empty list — the caller skips rather than fails.
+ */
+export function contribRouterProgramFiles(root, readdir = readdirSync) {
+  let entries;
+  try {
+    entries = readdir(resolve(root, CONTRIB_ROUTER_DIR), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isFile() && ROUTER_PROGRAM_FILE.test(entry.name))
+    .map((entry) => `${CONTRIB_ROUTER_DIR}/${entry.name}`)
+    .sort();
+}
+
+/**
+ * Type-check the whole contrib/router program in one tsc run with the flags
+ * SUPERVISOR.md documents — file-list mode ignores tsconfig.json, so the
+ * flags are the contract, and tsc follows the program's
+ * ../../src/core/authority/protected-paths.js import into src/ on its own.
+ * Diagnostics already carry path:line. The child gets a generous heap: the
+ * src import closure peaks near 1.5 GB, which the default ceiling clips
+ * under load. The caller holds a typecheck slot like the project checks —
+ * a compiler is a compiler on a shared machine.
+ */
+export function runContribRouterTypecheck(root, files, spawn = spawnSync) {
+  const result = spawn(process.execPath,
+    ['--max-old-space-size=4096', 'node_modules/typescript/bin/tsc', '--noEmit',
+     '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022',
+     '--strict', '--skipLibCheck', ...files],
+    { cwd: root, encoding: 'utf8', timeout: 300000, killSignal: 'SIGKILL' });
+  if (result.status !== 0) {
+    if (result.stdout) console.log(result.stdout.trimEnd());
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL contrib router typecheck');
+    return false;
+  }
+  console.log('PASS contrib router typecheck');
+  return true;
+}
+
 /** Shared root for the typecheck cache and slots; worktrees resolve to the git common dir. */
 export function tscSharedRoot(root, env = process.env, exec = execFileSync) {
   return env.PHANTOM_TSC_CACHE_DIR
@@ -1492,6 +1644,7 @@ function main() {
   let pythonFiles = [];
   let shellFiles = [];
   let perlFiles = [];
+  let powershellFiles = [];
   let nodeFiles = [];
   let conflictFiles = [];
   try {
@@ -1507,12 +1660,14 @@ function main() {
     selection = selectChangedFiles(changed, existing);
     conflictFiles = selectConflictScanFiles(changed, existing);
     projects = typecheckProjects(changed);
-    const scope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend only' : projects.web ? 'web only' : 'typecheck skipped';
+    const projectScope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend' : projects.web ? 'web' : null;
+    const scope = [projectScope, selection.contribRouterTypecheck && 'contrib router'].filter(Boolean).join(' and ') || 'typecheck skipped';
     console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
     perlFiles = [...new Set([...selection.perlFiles, ...shebangScripts.perl])];
+    powershellFiles = selection.powershellFiles;
     nodeFiles = shebangScripts.node;
     console.log('PASS file selection');
     const emptyTests = emptyChangedTests(existing.map((path) => resolve(root, path)));
@@ -1614,6 +1769,16 @@ function main() {
     if (!perl.ok) {
       console.log(`SKIP perl syntax check: ${perl.reason}`);
     } else if (!runPerlSyntaxCheck(root, perlFiles)) {
+      process.exitCode = 1;
+    }
+  }
+  if (powershellFiles.length === 0) {
+    console.log('PASS powershell syntax check skipped: no powershell change');
+  } else {
+    const powershell = powershellPreflight();
+    if (!powershell.ok) {
+      console.log(`SKIP powershell syntax check: ${powershell.reason}`);
+    } else if (!runPowerShellSyntaxCheck(root, powershellFiles, powershell.exe)) {
       process.exitCode = 1;
     }
   }
@@ -1739,13 +1904,28 @@ function main() {
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
-  if (projects.backend || projects.web) try {
+  if (projects.backend || projects.web || selection.contribRouterTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
     }
     const held = withTscSlot(tscSlotsDir(root), { count: tscSlotCount(), maxWaitMs: timeout * 1000 }, () => {
       mkdirSync(resolve(root, '.ashlr-gate/verify'), { recursive: true });
+      if (!selection.contribRouterTypecheck) {
+        console.log('PASS contrib router typecheck skipped: no router program input changed');
+      } else {
+        const router = parserPackagePreflight(root, 'typescript');
+        if (!router.ok) {
+          console.log(`SKIP contrib router typecheck: ${router.reason}`);
+        } else {
+          const routerFiles = contribRouterProgramFiles(root);
+          if (routerFiles.length === 0) {
+            console.log('PASS contrib router typecheck skipped: no program files under contrib/router/');
+          } else if (!runContribRouterTypecheck(root, routerFiles)) {
+            process.exitCode = 1;
+          }
+        }
+      }
       if (projects.backend) {
         const native = runNativeTypecheck(root, timeout);
         if (native !== null) {

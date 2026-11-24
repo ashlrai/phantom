@@ -120,8 +120,43 @@ export interface DiskMaintPlan {
   jobsSource: Source;
   classes: MaintClassPlan[];
   totals: { candidates: number; bytes: number; complete: boolean };
+  reclaimAdvice: ReclaimAdvice;
   /** Paths the protect-list refused during the scan - evidence, not errors. */
   refused: { path: string; reason: string }[];
+}
+
+export interface ReclaimAdvice {
+  scope: 'listed-job-artifacts';
+  basis: 'pre-apply-logical-bytes';
+  targetFreeGb: 150;
+  neededBytes: number | null;
+  candidateBytes: number | null;
+  estimatedShortfallBytes: number | null;
+  status: 'above-target' | 'insufficient' | 'review' | 'unknown';
+  message: string;
+}
+
+/** Only archived results have both completion and activity checks here.
+ * Compression input sizes and age-only directory candidates are not savings.
+ * Insufficient means this known shortlist, never every possible host cleanup. */
+function reclaimAdvice(classes: MaintClassPlan[], freeBytes: number | null, completionKnown: boolean): ReclaimAdvice {
+  const artifacts = classes.find(c => c.id === 'job-artifacts' && c.enabled && c.complete);
+  const candidateBytes = artifacts && completionKnown
+    ? artifacts.candidates.reduce((sum, c) => sum + c.bytes, 0) : null;
+  const neededBytes = freeBytes === null ? null : Math.max(0, 150e9 - freeBytes);
+  const estimatedShortfallBytes = neededBytes === null || candidateBytes === null
+    ? null : Math.max(0, neededBytes - candidateBytes);
+  const status = neededBytes === 0 ? 'above-target'
+    : estimatedShortfallBytes === null ? 'unknown'
+    : estimatedShortfallBytes > 0 ? 'insufficient' : 'review';
+  const shortfall = estimatedShortfallBytes !== null && estimatedShortfallBytes > 0 && estimatedShortfallBytes < 1e6
+    ? '<0.001' : ((estimatedShortfallBytes ?? 0) / 1e9).toFixed(3);
+  const message = status === 'above-target' ? 'Free space is at or above the 150 GB review target.'
+    : status === 'unknown' ? 'Archived-result recovery is unknown; free space or candidate evidence is unavailable.'
+    : status === 'insufficient' ? `Known archived job results cannot cover the gap to 150 GB free; estimated shortfall: ${shortfall} GB. Inspect disk-growth history for other sources.`
+    : 'Review the listed archived job results; their logical size covers the gap to 150 GB free, but physical savings are unverified.';
+  return { scope: 'listed-job-artifacts', basis: 'pre-apply-logical-bytes', targetFreeGb: 150,
+    neededBytes, candidateBytes, estimatedShortfallBytes, status, message };
 }
 
 export interface MaintDeps {
@@ -161,6 +196,10 @@ interface ScanCtx {
  * event|type|kind, phase aliases and eventless reconciler outcome rows. The
  * last resolved outcome wins; a phase-less outcome row records nothing. */
 export function completedArtifactJobs(text: string): Set<string> {
+  return parseCompletedArtifactJobs(text) ?? new Set();
+}
+
+function parseCompletedArtifactJobs(text: string): Set<string> | null {
   const states = new Map<string, { finished: boolean; merged: boolean }>();
   for (const line of text.split(/\r?\n/)) {
     try {
@@ -181,7 +220,7 @@ export function completedArtifactJobs(text: string): Set<string> {
         if (state !== null) entry.merged = state === 'MERGED';
         states.set(id, entry);
       }
-    } catch { if (line.trim()) return new Set(); }
+    } catch { if (line.trim()) return null; }
   }
   return new Set([...states].filter(([, state]) => state.finished && state.merged).map(([id]) => id));
 }
@@ -579,6 +618,7 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
   // Unreadable ledger means unknown states everywhere: logs fall to orphan
   // ages and no worktree is ever claimed on a guess.
   const ledger = jobs.state === 'healthy' ? parseJobLedger(jobs.text) : null;
+  const completedJobs = jobs.state === 'healthy' ? parseCompletedArtifactJobs(jobs.text) : null;
 
   let pins: KeptWorktrees;
   try { pins = await (deps.readPins ?? readKeptWorktrees)(); } catch { pins = { paths: [], valid: false }; }
@@ -592,7 +632,7 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
 
   const ctx: ScanCtx = {
     roots, now, policy, ledger, kept, measure, deadlineMs,
-    completedJobs: jobs.state === 'healthy' ? completedArtifactJobs(jobs.text) : new Set(),
+    completedJobs: completedJobs ?? new Set(),
     protectedRoots: protectedRoots(roots),
     refused: [],
   };
@@ -633,6 +673,7 @@ export async function planDiskMaint(deps: MaintDeps = {}): Promise<DiskMaintPlan
       bytes: all.reduce((s, c) => s + c.bytes, 0),
       complete: classes.every(c => c.complete),
     },
+    reclaimAdvice: reclaimAdvice(classes, freeBytes, completedJobs !== null),
     refused: ctx.refused,
   };
 }

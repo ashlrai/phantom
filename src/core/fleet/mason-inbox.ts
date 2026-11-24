@@ -32,7 +32,7 @@ export interface InboxAppendOptions {
 
 export type InboxAppendResult =
   | { ok: true; at: string; bytes: number; id: string; attachment?: string }
-  | { ok: false; reason: 'empty' | 'flag-only' | 'too-long' | 'secret-shaped' | 'write-failed' };
+  | { ok: false; reason: 'empty' | 'flag-only' | 'too-long' | 'secret-shaped' | 'write-failed' | 'inbox-permission-denied' };
 
 export const INBOX_MAX_CHARS = 6000;
 const MAX_READ_BYTES = 256 * 1024;
@@ -145,6 +145,21 @@ export function parseInbox(markdown: string, limit = 20): InboxEntry[] {
   return entries.reverse().slice(0, Math.floor(limit));
 }
 
+/** Read-only check of the existing owner inbox, including mode bits when run as root. */
+export async function inboxWriteHealth(runsDir?: string): Promise<'missing' | 'permission-denied' | null> {
+  const file = join(runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'), 'leader', 'MASON-INBOX.md');
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    // r+ does not create a missing file or write any content.
+    handle = await open(file, 'r+');
+    const stat = await handle.stat();
+    return stat.isFile() && (stat.mode & 0o200) !== 0 ? null : 'permission-denied';
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? 'missing' : 'permission-denied';
+  } finally { await handle?.close().catch(() => undefined); }
+}
+
 export async function appendInboxEntry(text: string, opts: InboxAppendOptions = {}): Promise<InboxAppendResult> {
   const clean = normaliseText(text);
   if (!clean) return { ok: false, reason: 'empty' };
@@ -167,10 +182,16 @@ export async function appendInboxEntry(text: string, opts: InboxAppendOptions = 
     const { entry } = formatChannelEntry(long ? summariseForInbox(clean, INBOX_ATTACH_SUMMARY_CHARS, id, text.length) : clean, source, now, clean);
     const result = { ok: true as const, at, id, bytes: Buffer.byteLength(entry, 'utf8'), ...(attachment ? { attachment } : {}) };
     if (opts.dryRun === true) return result;
+    if (await inboxWriteHealth(runsDir) === 'permission-denied') return { ok: false, reason: 'inbox-permission-denied' };
     // Exclusive create first: a collision fails the append rather than overwriting or pointing at foreign content.
     if (attachment) await writeInboxAttachment(runsDir, id, text);
     await mkdir(join(runsDir, 'leader'), { recursive: true });
-    await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
+    try {
+      await appendFile(join(runsDir, 'leader', 'MASON-INBOX.md'), entry, { encoding: 'utf8', flag: 'a' });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return { ok: false, reason: code === 'EACCES' || code === 'EPERM' ? 'inbox-permission-denied' : 'write-failed' };
+    }
     // The inbox owns acceptance; the dispatch event is only observational.
     await appendFile(join(runsDir, 'dispatch-events.log'), `${eventTimestamp} INBOX new entry from ${source}\n`, { encoding: 'utf8', flag: 'a' }).catch(() => undefined);
     return result;

@@ -140,12 +140,14 @@ function makeJudgeMock(scores: { local: number; frontier: number }) {
 
 describe('M166 — EXPORT', () => {
   it('raceTask is exported from src/core/fleet/model-racing.ts', async () => {
-    const mod = await import('../src/core/fleet/model-racing.js?export=' + randomUUID());
+    // Export checks do not need a cache-busted import. A unique query string
+    // re-transforms the whole module graph and timed out the 5s default on CI.
+    const mod = await import('../src/core/fleet/model-racing.js');
     expect(typeof mod.raceTask).toBe('function');
   });
 
   it('racingStats is exported from src/core/fleet/model-racing.ts', async () => {
-    const mod = await import('../src/core/fleet/model-racing.js?export2=' + randomUUID());
+    const mod = await import('../src/core/fleet/model-racing.js');
     expect(typeof mod.racingStats).toBe('function');
   });
 });

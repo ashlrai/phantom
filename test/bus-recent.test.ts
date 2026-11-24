@@ -81,6 +81,27 @@ describe('phm bus recent', () => {
       .toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
   });
 
+  it('the body-kind filter keeps only bodies carrying that discriminator', () => {
+    const root = store();
+    const post = (id: string, at: number, body: Record<string, unknown>) =>
+      expect(appendBusInbox({ id, from: 'claude', to: 'leader', priority: 'P2', ttl: 86_400_000, body },
+        { root, now: () => at }).status).toBe('posted');
+    post('k1', T0, { text: 'kindless mail' });
+    post('k2', T0 + 1_000, { kind: 'note', text: 'a note' });
+    post('k3', T0 + 2_000, { kind: 'work.post', jobId: 'RQ-BKR', title: 'ship it', repo: 'a/b',
+      provider: 'devin', claimKeys: ['repo:a/b'] });
+    const notes = readBusRecent({ bodyKind: 'note' }, { root, now: () => NOW });
+    expect(notes.ok && notes.result.messages!.map(m => m.summary)).toEqual(['a note']);
+    const posts = readBusRecent({ bodyKind: 'work.post' }, { root, now: () => NOW });
+    expect(posts.ok && posts.result.messages).toHaveLength(1);
+    // A discriminator no body carries is an honest empty page; a malformed
+    // value is refused like every other bus read's body-kind filter.
+    const none = readBusRecent({ bodyKind: 'wake' }, { root, now: () => NOW });
+    expect(none.ok && none.result.messages).toEqual([]);
+    expect(readBusRecent({ bodyKind: 'has space' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' });
+  });
+
   it('the CLI: help exits 0, a bad flag exits 2', async () => {
     const lines: string[] = [];
     expect(await cmdBusRecent(['--help'], t => lines.push(t))).toBe(0);

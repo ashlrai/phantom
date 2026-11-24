@@ -1,9 +1,9 @@
 /**
  * routes/verse/dock/resource-boards.ts — the resource boards as one surface.
  *
- * Pools, Usage, Router, Models, Lanes, Capacity and Supply are separate panes
- * that answer one question between them: what does the fleet have, where is
- * work sent, and how are the lanes running. This is the order the switcher
+ * Pools, Usage, Router, Models, Lanes, Capacity, Supply and Throughput are
+ * separate panes that answer one question between them: what does the fleet
+ * have, where is work sent, how are the lanes running, and what came out. This is the order the switcher
  * above each of them lists them in. Only ids live here; a board's name comes
  * from its own registration, and a board that is not registered (an older
  * build, a pane removed by another unit) is simply left out.
@@ -11,12 +11,13 @@
  * Pure data and functions; no React.
  */
 
-export type ResourceBoardGroup = 'have' | 'route' | 'run';
+export type ResourceBoardGroup = 'have' | 'route' | 'run' | 'out';
 
 export const RESOURCE_BOARD_GROUPS: Readonly<Record<ResourceBoardGroup, string>> = {
   have: 'What the fleet has',
   route: 'Where work is sent',
   run: 'How the lanes are running',
+  out: 'What came out',
 };
 
 export const RESOURCE_BOARDS: readonly { readonly id: string; readonly group: ResourceBoardGroup }[] = [
@@ -27,6 +28,7 @@ export const RESOURCE_BOARDS: readonly { readonly id: string; readonly group: Re
   { id: 'fleet-lanes', group: 'run' },
   { id: 'fleet-capacity', group: 'run' },
   { id: 'fleet-supply', group: 'run' },
+  { id: 'fleet-throughput', group: 'out' },
 ];
 
 export interface ResourceBoard {

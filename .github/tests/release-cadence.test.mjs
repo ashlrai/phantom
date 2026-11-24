@@ -414,6 +414,20 @@ test('green release PR checks stay frozen for the train enqueue; only decisive r
   assert.equal((await planReleaseCadence(red.input)).due, true);
 });
 
+test('a ghost in_progress check run with a failure conclusion is settled red and releases the freeze', async () => {
+  const f = fixture();
+  const head = openReleasePr(f);
+  f.data[CHECK_RUNS_KEY(head)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: 'failure', app: { id: 15368 } },
+  ] };
+  assert.equal((await planReleaseCadence(f.input)).due, true);
+  // An unsettled row that already claims success is still pending, never green.
+  f.data[CHECK_RUNS_KEY(head)] = { total_count: 1, check_runs: [
+    { name: 'Merge Gate', status: 'in_progress', conclusion: 'success', app: { id: 15368 } },
+  ] };
+  assert.deepEqual(await planReleaseCadence(f.input), { due: false, reason: 'release-pr-checks-in-flight' });
+});
+
 test('a pending verdict freezes only once every required context has reported on the head', async () => {
   const f = fixture();
   const head = openReleasePr(f);

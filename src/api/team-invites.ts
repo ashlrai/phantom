@@ -1,6 +1,6 @@
 /** HTTP adapter; retains the host's dispatch, token and JSON-body gates. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { localHumanActor } from '../core/teams/identity.js';
+import { humanActorForPresence, invitePresenceBytes, verifyPresenceSignature } from '../core/approvals/actor.js';
 import { acceptTeamInvite, createTeamInvite, InviteError } from '../core/teams/invites.js';
 import { passesMutationGate, readBody, sendJson } from '../core/web/api.js';
 
@@ -18,12 +18,19 @@ export async function handleTeamInvites(req: IncomingMessage, res: ServerRespons
   if (!input || typeof input !== 'object' || Array.isArray(input)) { sendJson(res, 400, { error: 'Expected an object.' }); return true; }
   const body = input as Record<string, unknown>;
   const accept = !!match[2];
-  if (Object.keys(body).some(k => k !== (accept ? 'token' : 'ttlMs')) || (accept ? typeof body.token !== 'string' : body.ttlMs !== undefined && typeof body.ttlMs !== 'number')) {
+  const allowed = accept ? ['token', 'assertion'] : ['ttlMs', 'assertion'];
+  if (Object.keys(body).some(k => !allowed.includes(k))
+    || (accept ? typeof body.token !== 'string' : body.ttlMs !== undefined && typeof body.ttlMs !== 'number')
+    || (body.assertion !== undefined && typeof body.assertion !== 'string')) {
     sendJson(res, 400, { error: 'Invalid invitation fields.' }); return true;
   }
+  const op = accept ? 'accept' as const : 'create' as const;
+  if (typeof body.assertion !== 'string' || !await verifyPresenceSignature(invitePresenceBytes(match[1]!, op), body.assertion)) {
+    sendJson(res, 403, { error: 'human-presence-required', code: 'human-presence-required' }); return true;
+  }
   let actor;
-  try { actor = localHumanActor(); }
-  catch { sendJson(res, 403, { error: 'Local human identity required.' }); return true; }
+  try { actor = humanActorForPresence(ctx.token); }
+  catch { sendJson(res, 403, { error: 'human-presence-required', code: 'human-presence-required' }); return true; }
   try {
     if (accept) sendJson(res, 200, acceptTeamInvite(match[1]!, body.token as string, actor));
     else {

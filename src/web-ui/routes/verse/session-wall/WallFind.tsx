@@ -5,13 +5,16 @@
  * are filtered at once from what is on screen; this asks the server once the
  * box has rested, and finds what the cards cannot: a word said earlier than a
  * card's three newest messages, or in a session past the forty on screen.
- * Choosing a result opens that session's conversation. Down from the find box
+ * Choosing a result opens that session's conversation at the newest line
+ * shown, and choosing one of its lines opens it at that line, with the words
+ * marked there too (fleet-sessions/thread-found.ts). Down from the find box
  * lands on the first result; arrows (or J and K) move between results and
  * past the last one go on to the cards.
  */
 import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { ProviderBadge } from '../../../components/primitives/ProviderBadge.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
+import { openThreadAtFound } from '../fleet-sessions/thread-found.js';
 import { clockTime } from '../leader/thread-model.js';
 import type { WallScope } from './session-wall-model.js';
 import { FIND_FRESH_MS, FIND_REST_MS, findFailure, findQuery, foundHeadline, foundMeta, markParts, sessionFindQuery, type FoundSession, type SessionFindRead } from './wall-find.js';
@@ -33,8 +36,16 @@ function Marked({ text, words }: { text: string; words: readonly string[] }) {
 
 function Result({ result, words, onOpen }: { result: FoundSession; words: readonly string[]; onOpen: (id: string) => void }) {
   const more = result.hitCount - result.hits.length;
+  // The line clicked, or the newest one shown for a click on the session's name and for the keyboard. A result with no line opens as any session does.
+  const open = (line: string | undefined) => {
+    const key = line ?? result.hits[result.hits.length - 1]?.key;
+    if (key !== undefined) openThreadAtFound(result.id, words, key);
+    onOpen(result.id);
+  };
   return <li className={styles.result} data-state={result.state}>
-    <button type="button" className={styles.open} data-found={result.id} onClick={() => onOpen(result.id)} aria-label={`Open ${result.id}: ${foundMeta(result)}`}>
+    <button type="button" className={styles.open} data-found={result.id} aria-label={`Open ${result.id}: ${foundMeta(result)}`}
+      title={result.hits.length > 0 ? 'Opens at the newest line shown. Click a line to open at that one.' : undefined}
+      onClick={event => open((event.target as Element).closest<HTMLElement>('[data-hit]')?.dataset.hit)}>
       <span className={styles.top}>
         {result.kind === 'worker' && result.lane !== 'unknown' && <ProviderBadge of={result.lane} iconOnly size={14} />}
         <strong className={styles.id}><Marked text={result.id} words={words} /></strong>
@@ -44,7 +55,7 @@ function Result({ result, words, onOpen }: { result: FoundSession; words: readon
         {result.summary ? <Marked text={result.summary} words={words} /> : 'Summary unknown: the read returned none.'}
       </span></span>}
       {more > 0 && <span className={styles.more}>{more} earlier message{more === 1 ? '' : 's'} hold{more === 1 ? 's' : ''} them too</span>}
-      {result.hits.map(hit => <span key={hit.key} className={styles.line} data-side={hit.side}>
+      {result.hits.map(hit => <span key={hit.key} className={styles.line} data-side={hit.side} data-hit={hit.key}>
         <span className={styles.label}>{hit.label}{hit.at && ` · ${clockTime(hit.at)}`}</span>
         <span className={styles.text}><Marked text={hit.text} words={words} /></span>
       </span>)}

@@ -2427,6 +2427,12 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'install': {
+        const { cmdInstall } = await import('./install.js');
+        process.exitCode = await cmdInstall(rest);
+        break;
+      }
+
       case 'mcp': {
         const cmdMcp = await loadMcpCmd();
         process.exitCode = await cmdMcp(rest);

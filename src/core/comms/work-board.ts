@@ -75,10 +75,13 @@ export interface WorkBoardResult {
   /** Echo of the applied state filter; present only when `state` was given
    * and the inbox scan settled — an unreadable inbox reports neither. */
   state?: WorkItemState;
-  /** Requests whose classified state equals the applied `state`, counted
-   * across the whole settled scan before the display cap: the true filtered
-   * total, so `items` may be a newest-first slice of it. Present only
-   * alongside `state`; never a count of just the shown window. */
+  /** The true filtered total across the whole settled scan before the
+   * display cap: requests passing every applied filter — the channel_ref
+   * scope, the `since`/`before` receivedAt window and the `state` match —
+   * counted before the newest-first slice, so `items` may be a slice of it.
+   * Present whenever `state` or a `since`/`before` bound narrowed the read;
+   * a `channelRef`-only read keeps the unfiltered shape. Never a count of
+   * just the shown window. */
   matched?: number;
 }
 
@@ -103,7 +106,20 @@ function limit(opts: { limit?: number }): number {
     ? Math.min(opts.limit!, WORK_BOARD_MAX_LIMIT) : WORK_BOARD_DEFAULT_LIMIT;
 }
 
-export function listWorkBoard(opts: { root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState }): WorkBoardResult {
+export function listWorkBoard(opts: {
+  root: string; now: number; limit?: number; channelRef?: string; state?: WorkItemState;
+  /** Epoch-ms floor on the request's recorded receivedAt — the same
+   * inclusive `receivedAt >= since` rule every bus read's `--since` applies.
+   * Epoch-ms bounds are self-consistent under plain comparison: a bound at
+   * or below zero keeps every stored receipt, and an unparseable caller
+   * value never reaches here — the CLI, MCP and API surfaces resolve the
+   * shared `15m|2h|1d|epoch-ms|ISO` grammar and refuse what does not parse. */
+  since?: number;
+  /** Epoch-ms ceiling on the request's recorded receivedAt — the same
+   * exclusive `receivedAt < before` rule every bus read's `--before`
+   * applies, composing with `since` into one `[since, before)` window. */
+  before?: number;
+}): WorkBoardResult {
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   // One claims inspection for the whole board, taken even when the inbox
   // scan fails so the result still reports the table's real state. A missing
@@ -131,6 +147,11 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
     for (const row of read.receipts) {
       if (!isRequest(row)) continue;
       if (opts.channelRef !== undefined && row.envelope.channel_ref !== opts.channelRef) continue;
+      // The same [since, before) window on receivedAt every bus read applies:
+      // `since` keeps rows at or after the cutoff, `before` keeps rows
+      // strictly before its own — a request exactly on `before` is outside.
+      if (opts.since !== undefined && row.receivedAt < opts.since) continue;
+      if (opts.before !== undefined && row.receivedAt >= opts.before) continue;
       requests.push(row);
     }
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
@@ -153,13 +174,20 @@ export function listWorkBoard(opts: { root: string; now: number; limit?: number;
         ...(result ? { result } : {}),
       };
     };
+    // A time bound narrows the read exactly like a state filter does, so it
+    // earns the same `matched` total: the count of requests inside the
+    // window before the display cap, never just the shown slice.
+    const bounded = opts.since !== undefined || opts.before !== undefined;
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
-      return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length, claims: claimsSource };
+      return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,
+        claims: claimsSource, ...(bounded ? { matched: requests.length } : {}) };
     }
     // A state filter must classify every request before the display cap so
     // `matched` is the true filtered total across the settled scan, never a
     // count of the shown window — the same honesty rule `truncated` follows.
+    // The time window already narrowed `requests`, so state+window composes
+    // into one filtered total for free.
     const matching = requests.map(toItem).filter(item => item.state === opts.state);
     const kept = matching.slice(0, limit(opts));
     return { items: kept, inbox: 'ok', truncated: matching.length > kept.length,

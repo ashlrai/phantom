@@ -150,7 +150,7 @@ describe('team protocol', () => {
     const h = requestHandoff(T, codex, { title: 'Release 3.30', action: 'release' }) as { handoffId: string; approvalId: string; state: string };
     expect(h.state).toBe('awaiting-approval');
     expect(() => transitionHandoff(T, grok, h.handoffId, 'accept')).toThrow(/approval/);
-    expect(() => decideApproval(T, grok, h.approvalId, 'approve')).toThrow(/humans/);
+    expect(() => decideApproval(T, grok, h.approvalId, 'approve')).toThrow(/human-presence-required/);
     expect(() => decideApproval(T, evan, h.approvalId, 'approve')).toThrow();
     expect(decideApproval(T, mason, h.approvalId, 'approve').state).toBe('approved');
     expect(transitionHandoff(T, grok, h.handoffId, 'accept').state).toBe('accepted');

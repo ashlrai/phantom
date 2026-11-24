@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
@@ -30,23 +30,23 @@ export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
 ashlr agents bus id show [<ref>]
-ashlr agents bus dm --to <agent> --text <text> [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
+ashlr agents bus dm --to <agent> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus post --to <label> --text <text> [--kind note|context] [--from <agent>] [--priority P0..P3] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
-ashlr agents bus channel post <name> --text <text> [--from <agent>] [--topic <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--wake|--no-wake]
+ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--after <cursor>] [--limit <1..100>]
-ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--no-wake]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
+ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
-ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--id <id>]
+ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--frame <cli>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
 ashlr agents bus claim release --key <claimKey> --token <64hex> --outcome released|completed
-ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--origin <resource|message|team|board>] [--jobs]
+ashlr agents bus claim list [--key <claimKey>] [--owner <label>] [--exclude-owner <label>] [--origin <resource|message|team|board>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--jobs]
 ashlr agents bus claim message acquire --id <envelope-id> --lease-ms <1..3600000> [--owner <label>]
 ashlr agents bus claim message renew|release|complete --id <envelope-id> --token <64hex>
 ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--claim <key>]... [--to <label>]
@@ -66,9 +66,14 @@ wakes, P1 and handoffs wake by default, and wake always records its hint.
 post sends a v2 note (or context with --kind context) to any printable routing
 label outside the reserved agent:/group:/dm:/handoff: prefixes — the sink and
 topic mail dm, channel post and the work verbs cannot carry; the sender is
-still a registered identity under the same scrub and wake rules.
---thread on dm, post, channel post, inbox and channel read is the v2 conversation
-label carried by note/context bodies; reads match that field only. --from on
+still a registered identity under the same scrub and wake rules. --kind on
+dm, post and channel post picks the v2 conversational body kind — note by
+default, context for reference material; the delivery-kind enum inbox reads
+filter by is a different --kind.
+--thread on dm, post, channel post, inbox, channel read and wakes is the v2
+conversation label carried by note/context bodies; reads match that field
+only — on wakes the verdict is the resolved referent's own thread, so a
+claim-holder hint's work.status citation never matches. --from on
 inbox and channel read narrows to one sender — a handle, agent:<handle>,
 stable id or alias; an unresolvable ref keeps exact-label matching.
 --reply-to on dm, post and channel post stamps the v2 inReplyTo citation —
@@ -158,12 +163,13 @@ substring, so "did anyone send me mail about X" and "has anyone posted
 about X in this room" are one filtered read; matching runs over the
 rendered summary, never the raw body, so a secret-shaped value stays
 unfindable even though it sits in the stored envelope. --in-reply-to on
-inbox and channel read keeps only rows whose object body cites that
+inbox, channel read and wakes keeps only rows whose object body cites that
 envelope id through its own inReplyTo field — the same own-property
 exact match phm messages --in-reply-to, comms bus read|watch
 --in-reply-to, fleet bus-follow --in-reply-to and fleet_bus_inbox's
 inReplyTo apply, never the replyTo alias or a substring — so "which of
-my pending mail / which room posts answer envelope X" is one filtered
+my pending mail / which room posts answer envelope X" and "did the reply
+to envelope X trigger a wake" is one filtered
 read, composing with every other filter. --id on inbox, channel read and
 wakes keeps only the row whose own id is strictly equal to the value —
 the same exact-envelope match comms bus read|watch --id, fleet
@@ -174,6 +180,20 @@ filtered read each; on wakes the matched id is the hint's own id — the
 triggering envelope's wire id on a bus.send hint, the wh-… claim-holder
 id on those — decided on the queue row alone, so it needs no referent
 resolution and counts in matched like the other queue-tail filters.
+--body-kind on inbox, channel read and wakes keeps only rows whose body
+carries that exact kind discriminator — the v2 kind field (note,
+context, work.post, work.claim, work.status, work.result, work.release,
+wake), a worker-handoff assignment or a notice kind, a bus-transport v1
+protocol.kind, or a type/schema notice discriminator, the same
+discriminator the row summary switches on — matched exactly and
+case-sensitively, so "which of my pending mail are work results" or
+"which room posts are wake requests" is one filtered read; on wakes the
+verdict is the resolved referent's own body kind — a claim-holder
+wh-… hint's citing work.status receipt provably carries work.status,
+so those hints match only that kind — a body carrying no discriminator
+never matches, and an unrecognized but printable value is an honest
+empty match, never an error. It composes with every other filter and
+counts in matched like the rest.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -385,7 +405,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
-  '--kind', '--channel', '--contains', '--exclude-from', '--reply-to', '--in-reply-to']);
+  '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
 const MESSAGE_CLAIM_ACTIONS = ['acquire', 'renew', 'release', 'complete'] as const;
@@ -552,6 +572,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       return value as InboxKind | undefined;
     };
+    // Send-side --kind on dm, post and channel post is the v2 body-kind enum:
+    // a bad value is a usage error here and an 'invalid' result inside the
+    // core send, the same split the read-side enum keeps.
+    const bodyKindArg = (): 'note' | 'context' | undefined => {
+      const value = one('--kind');
+      if (value !== undefined && value !== 'note' && value !== 'context') {
+        throw new UsageError('--kind must be note or context.');
+      }
+      return value as 'note' | 'context' | undefined;
+    };
     // Read-side --origin on claim list is the claim-origin enum: a bad
     // value is a usage error here and an 'invalid' result inside the core read.
     const originArg = (): CoordinationOrigin | undefined => {
@@ -614,7 +644,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           `tasks=${result.board.tasks ?? unknown} pending=${result.board.pendingDeliveries ?? unknown} ` +
           `claims=${result.board.claims ?? unknown}`,
         `seats ${result.seats.source} seats=${result.seats.seats ?? unknown} ` +
-          `states=${result.seats.states ?? unknown} handoffs=${result.seats.handoffs ?? unknown}`,
+          `states=${result.seats.states ?? unknown} handoffs=${result.seats.handoffs ?? unknown} ` +
+          `notices=${result.seats.notices ?? unknown}`,
         `peerDispatch ${result.peerDispatch.source} receipts=${result.peerDispatch.receipts ?? unknown} ` +
           `unpublished=${result.peerDispatch.unpublished ?? unknown}`,
         `peerLedger ${result.peerLedger.source} liveRows=${result.peerLedger.liveRows ?? unknown}`,
@@ -683,17 +714,13 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'dm') {
       noExtra(1);
       const result = await sendDirectMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
-        thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
+        kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
     if (verb === 'post') {
       noExtra(1);
-      const kind = one('--kind');
-      if (kind !== undefined && kind !== 'note' && kind !== 'context') {
-        throw new UsageError('--kind must be note or context.');
-      }
       const result = await postLabelMessage({ ...send, from: actor('--from'), to: required('--to'), text: required('--text'),
-        kind: kind as 'note' | 'context' | undefined, thread: one('--thread'), refs: p.values.get('--ref'),
+        kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'),
         replyTo: one('--reply-to') }, options);
       return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
     }
@@ -718,13 +745,16 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       if (sub === 'post') {
         const result = await postChannelMessage({ ...send, from: actor('--from'), channel: arg, topic: one('--topic'),
-          text: required('--text'), thread: one('--thread'), refs: p.values.get('--ref'), replyTo: one('--reply-to') }, options);
+          text: required('--text'), kind: bodyKindArg(), thread: one('--thread'), refs: p.values.get('--ref'),
+          replyTo: one('--reply-to') }, options);
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
       if (sub === 'read') {
+        const frame = one('--frame');
+        if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
           thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
-          contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'),
+          contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
           matched: p.bools.has('--matched'),
           after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit') }, options);
         if (result.status !== 'ok') return finish(result, '');
@@ -733,6 +763,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         // point is the newest shown row's cursor (the same rule inbox applies).
         const nextCursor = busPageResumeCursor(result);
         const shown = { ...result, nextCursor };
+        if (frame) { out(json ? JSON.stringify({ ...shown, framed: frameBusChannelRead(frame as BusCli, shown.channel, result.messages) }) : frameBusChannelRead(frame as BusCli, shown.channel, result.messages)); return 0; }
         out(json ? JSON.stringify(shown) : [
           ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
             (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
@@ -768,7 +799,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const page = readAgentInbox(agent, { after: integer(one('--after'), '--after'), limit: integer(one('--limit'), '--limit'),
         thread: one('--thread'), from: one('--from'), excludeFrom: one('--exclude-from'), priority: priorityArg(),
         kind: kindArg(), job: one('--job'), since: sinceArg(), before: beforeArg(), channel: one('--channel'),
-        contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), matched: p.bools.has('--matched') }, options);
+        contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
+        matched: p.bools.has('--matched') }, options);
       if (page.status !== 'ok') return finish(page, '');
       // --matched scans the whole store, so the core nextCursor is the store's
       // end — resuming there would skip unshown matches. The honest resume
@@ -814,7 +846,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
     if (verb === 'wakes') {
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
-        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id') };
+        channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
+        thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind') };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {
@@ -1010,9 +1043,11 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       }
       noExtra(2);
       if (sub === 'list') {
-        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'), origin: originArg(), jobs: p.bools.has('--jobs') });
+        const result = listBusClaims({ root: options.root, key: one('--key'), owner: one('--owner'),
+          excludeOwner: one('--exclude-owner'), contains: one('--contains'), origin: originArg(),
+          since: sinceArg(), before: beforeArg(), jobs: p.bools.has('--jobs') });
         if (result.status === 'invalid') {
-          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner must be a printable label; --origin must be resource, message, team or board');
+          out(json ? JSON.stringify(result) : 'invalid: --key must be a v2 claim key (repo:, path:, queue: or pr:); --owner and --exclude-owner must be printable labels; --origin must be resource, message, team or board; --contains must be non-empty text of at most 512 characters; --since and --before must resolve to non-negative epoch-ms cutoffs');
           return 2;
         }
         if (result.status !== 'ok') {
@@ -1021,6 +1056,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         }
         const ownerNote = result.owner === undefined ? '' :
           ` owner=${result.owner.ref} identity=${result.owner.identity ?? 'label'} registry=${result.owner.registry}`;
+        const excludeNote = result.excludeOwner === undefined ? '' :
+          ` excludeOwner=${result.excludeOwner.ref} identity=${result.excludeOwner.identity ?? 'label'} registry=${result.excludeOwner.registry}`;
         const feedNote = result.feed === undefined ? '' : ` feed=${result.feed}`;
         out(json ? JSON.stringify(result) : [
           ...result.claims.map(row => {
@@ -1030,7 +1067,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
             const blocked = row.jobs ?? [];
             return `${base} jobs=${blocked.length === 0 ? 'none' : blocked.map(claimJobLabel).join(',')}`;
           }),
-          `claims=${result.claims.length} source=${result.source}${ownerNote}${feedNote} as-of=${result.asOf}`,
+          `claims=${result.claims.length} source=${result.source}${ownerNote}${excludeNote}${feedNote} as-of=${result.asOf}`,
         ].join('\n'));
         return 0;
       }

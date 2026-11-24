@@ -14,6 +14,7 @@ const effects = vi.hoisted(() => ({
   pendingCount: vi.fn(),
   diagnoseGuardHealth: vi.fn(),
   install: vi.fn(),
+  registerPerUserDaemon: vi.fn(),
   uninstall: vi.fn(),
   ensureRunning: vi.fn(),
   serviceStatus: vi.fn(),
@@ -83,6 +84,7 @@ vi.mock('../src/core/daemon/service.js', () => {
   moduleLoads.service++;
   return {
     install: effects.install,
+    registerPerUserDaemon: effects.registerPerUserDaemon,
     uninstall: effects.uninstall,
     ensureRunning: effects.ensureRunning,
     serviceStatus: effects.serviceStatus,
@@ -187,6 +189,7 @@ beforeEach(async () => {
     blocks: [],
   });
   effects.serviceStatus.mockReturnValue(serviceStatus);
+  effects.registerPerUserDaemon.mockResolvedValue(undefined);
   effects.ensureRunning.mockResolvedValue({ ...serviceStatus, running: true });
   effects.serviceOptions.mockImplementation((_cfg: unknown, extras: Record<string, unknown> = {}) => ({
     budget: 5,
@@ -513,9 +516,14 @@ describe('daemon valid flags remain supported', () => {
     const result = await capture(['service-status']);
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('Resident service installation is temporarily unavailable');
-    expect(result.stdout).toContain('One-shot admitted workflows remain available');
-    expect(result.stdout).not.toContain('Run `ashlr daemon install`');
+    if (process.platform === 'linux' || process.platform === 'win32') {
+      expect(result.stdout).toContain('ashlr daemon install');
+      expect(result.stdout).not.toContain('Resident service installation is temporarily unavailable');
+    } else {
+      expect(result.stdout).toContain('Resident service installation is temporarily unavailable');
+      expect(result.stdout).toContain('One-shot admitted workflows remain available');
+      expect(result.stdout).not.toContain('Run `ashlr daemon install`');
+    }
   });
 
   it.each(['running', 'queued'] as const)(
@@ -638,8 +646,17 @@ describe('daemon install authority boundary', () => {
   it.each([
     { args: ['install'], autostart: true },
     { args: ['install', '--no-autostart'], autostart: false },
-  ])('reports the shared service refusal for $args', async ({ args }) => {
+  ])('keeps macOS resident install denied and registers a per-user daemon elsewhere for $args', async ({ args, autostart }) => {
     const result = await capture(args);
+
+    if (process.platform === 'linux' || process.platform === 'win32') {
+      expect(result.code).toBe(0);
+      expect(effects.registerPerUserDaemon).toHaveBeenCalledWith(expect.objectContaining({ autostart }));
+      expect(effects.install).not.toHaveBeenCalled();
+      expect(effects.ensureRunning).not.toHaveBeenCalled();
+      expect(effects.serviceStatus).toHaveBeenCalled();
+      return;
+    }
 
     expect(result.code).toBe(1);
     expect(result.stdout).toBe('');
@@ -656,6 +673,7 @@ describe('daemon install authority boundary', () => {
     expect(effects.loadConfigReadOnlyStrict).not.toHaveBeenCalled();
     expect(effects.serviceOptions).not.toHaveBeenCalled();
     expect(effects.install).not.toHaveBeenCalled();
+    expect(effects.registerPerUserDaemon).not.toHaveBeenCalled();
     expect(effects.ensureRunning).not.toHaveBeenCalled();
     expect(effects.serviceStatus).not.toHaveBeenCalled();
     expect(fs.readdirSync(tmpHome)).toEqual([]);

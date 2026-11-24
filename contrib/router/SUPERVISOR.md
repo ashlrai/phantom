@@ -196,6 +196,9 @@ HOME=$(mktemp -d) npm run lint
 HOME=$(mktemp -d) npm run check:docs
 ```
 
-Root TypeScript and Vitest discovery do not include `contrib/router`; run both
-explicit commands above. Passing local tests is source evidence, not Security
-approval, separate-account commissioning or live merge acceptance.
+Root TypeScript and Vitest discovery do not include `contrib/router`;
+`node scripts/verify-changed.mjs` runs the `tsc` invocation above whenever a
+router `.ts` file, `src/core/authority/protected-paths.ts` or
+`package.json`/`package-lock.json` changes, but run both explicit commands
+above for the full local pass. Passing local tests is source evidence, not
+Security approval, separate-account commissioning or live merge acceptance.

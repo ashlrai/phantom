@@ -9,10 +9,10 @@ import { sanitizePublicJson } from '../core/util/public-json.js';
 import { AGENTS_BUS_UNIFIED_HELP, AGENTS_BUS_UNIFIED_VERBS, runAgentsBusUnified } from './agents-bus-unified.js';
 
 const HELP = `ashlr agents list|show <id>|validate <id>|versions <id> [--json]
-ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--json]
+ashlr agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] [--json]
 ashlr agents mesh status [--root <abs>] [--json]
 ashlr agents edges [--json]
-ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--limit N] [--json]
+ashlr agents messages [--since 1h] [--before <10m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--in-reply-to <id>] [--body-kind <kind>] [--limit N] [--json]
 ashlr agents conversations [--agent <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1..1024>] [--json]
 ashlr agents roster [--json]
 ashlr agents bus contract [--json]

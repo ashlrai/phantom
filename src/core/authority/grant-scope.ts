@@ -31,6 +31,7 @@
 import { BUDGET_MODES, type BudgetMode } from '../routing/types.js';
 import { engineOfSeatId } from '../routing/policy.js';
 import { GRANT_LANE_ENGINES, DEVIN_GRANT_ENGINE, type GrantEngine } from '../fleet/fleet-types.js';
+import { reserveEnablesPaidOverage } from './cap-policy.js';
 import { parseStandingGrantPayload } from './standing-grant.js';
 import { STANDING_GRANT_CEILINGS, volumeLimitLabel, type LeaderGrantClass, type StandingGrantV1, type StandingGrantSeat, type SeatRole, STANDING_GRANT_PATTERNS } from './types.js';
 import type { GrantDiffLine, GrantScopeEdit, GrantSeatPolicyEdit } from './grant-scope-types.js';
@@ -38,7 +39,7 @@ import type { GrantDiffLine, GrantScopeEdit, GrantSeatPolicyEdit } from './grant
 export type { GrantDiffDirection, GrantDiffLine, GrantScopeEdit } from './grant-scope-types.js';
 
 export const GRANT_SCOPE_EDIT_KEYS: readonly (keyof GrantScopeEdit)[] = Object.freeze([
-  'repos', 'engines', 'leaderClasses', 'startingStageLeaderClasses', 'maxMode', 'meteredUsdPerDay', 'days', 'conductorGoals', 'maxFiles', 'maxLines', 'repoMaxMergesPerDay', 'seatPolicies',
+  'repos', 'engines', 'leaderClasses', 'startingStageLeaderClasses', 'maxMode', 'meteredUsdPerDay', 'days', 'conductorGoals', 'maxFiles', 'maxLines', 'repoMaxMergesPerDay', 'seatPolicies', 'reserveFloorPercent', 'maxSessionWindowPercent',
 ]);
 
 const LEADER_CLASSES: readonly LeaderGrantClass[] = ['A', 'B'];
@@ -130,6 +131,16 @@ export function parseGrantScopeEdit(value: unknown): { ok: true; edit: GrantScop
       seen.add(repo.toLowerCase());
     }
     edit.repoMaxMergesPerDay = Object.fromEntries(entries) as Record<string, number>;
+  }
+  if (raw['reserveFloorPercent'] !== undefined) {
+    const n = raw['reserveFloorPercent'];
+    if (!Number.isInteger(n) || (n as number) < 0 || (n as number) > 100) return { ok: false, reason: 'reserveFloorPercent must be a whole percent from 0 to 100' };
+    edit.reserveFloorPercent = n as number;
+  }
+  if (raw['maxSessionWindowPercent'] !== undefined) {
+    const n = raw['maxSessionWindowPercent'];
+    if (n !== null && (!Number.isInteger(n) || (n as number) < 1 || (n as number) > 100)) return { ok: false, reason: 'maxSessionWindowPercent must be null or a whole percent from 1 to 100' };
+    edit.maxSessionWindowPercent = n as number | null;
   }
   if (raw['seatPolicies'] !== undefined) {
     const policies = raw['seatPolicies'];
@@ -231,6 +242,22 @@ export function applyGrantScopeEdit(draft: StandingGrantV1, requestedEdit: Grant
     if (!first || choice.stageId !== draft.rollout.stages[0]?.id || choice.stageId !== first.id) return { ok: false, reason: 'the starting stage changed — review a fresh draft before choosing Leader permissions' };
     if (choice.classes.some((c) => !next.leader.classes.includes(c))) return { ok: false, reason: 'starting stage classes must be within the Leader permission ceiling' };
     first.leaderClasses = LEADER_CLASSES.filter((c) => choice.classes.includes(c));
+  }
+
+  const setsReserveToZero = edit.reserveFloorPercent === 0
+    || Object.values(edit.seatPolicies ?? {}).some((seat) => seat.reserveFloorPercent === 0);
+  if (setsReserveToZero && !reserveEnablesPaidOverage(0) && edit.meteredUsdPerDay !== undefined && edit.meteredUsdPerDay > draft.spend.meteredUsdPerDay) {
+    return { ok: false, reason: 'a zero seat reserve does not authorize paid overage' };
+  }
+  if (edit.reserveFloorPercent !== undefined || edit.maxSessionWindowPercent !== undefined) {
+    for (const [id, seat] of Object.entries(next.spend.seats)) {
+      const engine = engineOfSeatId(id);
+      if (engine === 'local') continue;
+      if (edit.reserveFloorPercent !== undefined) seat.reserveFloorPercent = edit.reserveFloorPercent;
+      if (engine === 'devin') continue;
+      if (edit.maxSessionWindowPercent === null) delete seat.maxSessionWindowPercent;
+      else if (edit.maxSessionWindowPercent !== undefined) seat.maxSessionWindowPercent = edit.maxSessionWindowPercent;
+    }
   }
 
   if (edit.seatPolicies !== undefined) {

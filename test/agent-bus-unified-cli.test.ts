@@ -246,6 +246,38 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['wakes', '--all', '--channel='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters wakes by the resolved referent thread label and reply citation', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // dm carries the v2 thread label and --reply-to citation; --wake queues the hint.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plan',
+      '--thread', 'release-plan', '--id', 'wt-th', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 're: plan',
+      '--reply-to', 'env-orig', '--id', 'wt-re', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain',
+      '--id', 'wt-plain', '--wake'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+
+    expect((await run(['wakes', 'nova'])).json).toMatchObject({ matched: 3 });
+    const thread = await run(['wakes', 'nova', '--thread', 'release-plan']);
+    expect(thread.json).toMatchObject({ matched: 1, truncated: false });
+    expect(thread.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-th']);
+    const cited = await run(['wakes', 'nova', '--in-reply-to', 'env-orig']);
+    expect(cited.json).toMatchObject({ matched: 1 });
+    expect(cited.json.wakes.map((w: { id: string }) => w.id)).toEqual(['wt-re']);
+    expect((await run(['wakes', 'nova', '--thread', 'absent'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    expect((await run(['wakes', '--all', '--thread', 'release-plan'])).json)
+      .toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    expect((await run(['wakes', '--all', '--in-reply-to', 'env-orig'])).json.wakes
+      .map((w: { id: string }) => w.id)).toEqual(['wt-re']);
+    expect(await run(['wakes', 'nova', '--thread', 'has space']))
+      .toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--in-reply-to='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
   it('lists channels for discovery and filters by agent', async () => {
     // Before any registry exists the list is verified-empty, not an error.
     expect(await run(['channel', 'list'])).toMatchObject({ code: 0,
@@ -297,6 +329,22 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['channel', 'read', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
     expect(text.join('\n')).toContain('#release:deploy rd-2 from nova');
     expect(text.join('\n')).toContain('nextCursor');
+    // --frame prints the same bounded untrusted block inbox --frame does,
+    // each post's #channel:topic as the where marker; --json carries it on
+    // `framed` alongside the page.
+    const framed = await run(['channel', 'read', 'release', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framed.json.framed).toContain('#release:general id=rd-1 from agent:atlas');
+    expect(framed.json.framed).toContain('#release:deploy id=rd-2 from agent:nova');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'read', 'release', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('#release:deploy id=rd-2 from agent:nova');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
   it('resolves one retained envelope by id without needing an identity', async () => {
@@ -370,6 +418,65 @@ describe('phm agents bus (unified)', () => {
     // A thread label must be a printable v2 label; anything else fails closed.
     expect(await run(['inbox', 'nova', '--thread', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['channel', 'read', 'release', '--thread', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters inbox and channel reads by --body-kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    // Real sends carry the note discriminator; raw posts cover the rest.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'note dm', '--id', 'c-dm-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'release', '--from', 'atlas', '--text', 'note ch', '--id', 'c-ch-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, { root }).status).toBe('posted');
+    post('c-wp', 'agent:nova', { kind: 'work.post', jobId: 'RQ-1', title: 't', repo: 'o/n' });
+    post('c-wake', 'agent:nova', { kind: 'wake', target: 'agent:nova', reason: 'look' });
+    post('c-ch-wr', 'group:release:general', { kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome: 'released' });
+    post('c-plain', 'agent:nova', { inReplyTo: 'c-dm-note', text: 'kindless' });
+
+    const ids = (json: { messages: { envelope: { id: string } }[] }) =>
+      json.messages.map(m => m.envelope.id).sort();
+    const inbox = await run(['inbox', 'nova', '--body-kind', 'note']);
+    expect(inbox.code).toBe(0);
+    expect(ids(inbox.json)).toEqual(['c-ch-note', 'c-dm-note']);
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'work.post'])).json)).toEqual(['c-wp']);
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'wake'])).json)).toEqual(['c-wake']);
+    // A kindless body never matches; an unrecognized kind is an honest empty page.
+    expect(ids((await run(['inbox', 'nova', '--body-kind', 'nonexistent'])).json)).toEqual([]);
+    const channel = await run(['channel', 'read', 'release', '--body-kind', 'note']);
+    expect(ids(channel.json)).toEqual(['c-ch-note']);
+    expect(ids((await run(['channel', 'read', 'release', '--body-kind', 'work.result'])).json)).toEqual(['c-ch-wr']);
+    expect(ids((await run(['channel', 'read', 'release', '--body-kind', 'work.post'])).json)).toEqual([]);
+    // A body kind must be a printable label; anything else fails closed.
+    expect(await run(['inbox', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['channel', 'read', 'release', '--body-kind', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters wakes by --body-kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    // Real sends queue bus.send hints whose referents carry these kinds.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'note dm', '--priority', 'P0', '--id', 'wk-note'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'ctx dm', '--kind', 'context', '--priority', 'P0', '--id', 'wk-ctx'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    expect((await run(['handoff', '--from', 'atlas', '--to', 'nova', '--task', 'RQ-WK-1', '--prompt', 'take over', '--id', 'wk-ho'])).json)
+      .toMatchObject({ status: 'posted', wake: 'queued' });
+    const ids = (json: { wakes: { id: string }[] }) => json.wakes.map(w => w.id);
+    expect((await run(['wakes', 'nova', '--body-kind', 'note'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'note'])).json)).toEqual(['wk-note']);
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'context'])).json)).toEqual(['wk-ctx']);
+    expect(ids((await run(['wakes', 'nova', '--body-kind', 'worker-handoff'])).json)).toEqual(['wk-ho']);
+    // A kind no referent carries is an honest empty page.
+    expect((await run(['wakes', 'nova', '--body-kind', 'work.post'])).json).toMatchObject({ matched: 0, wakes: [] });
+    // The fleet-wide read resolves the same referent kinds.
+    expect((await run(['wakes', '--all', '--body-kind', 'note'])).json).toMatchObject({ matched: 1 });
+    // A body kind must be a printable label; anything else fails closed.
+    expect(await run(['wakes', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['wakes', 'nova', '--body-kind='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
   it('filters inbox and channel reads by --priority', async () => {
@@ -928,6 +1035,34 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['inbox', 'fleet.mesh'])).toMatchObject({ code: 1, json: { status: 'unknown-agent' } });
   });
 
+  it('posts v2 context bodies on dm and channel post with --kind', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'ops', '--from', 'atlas', '--member', 'nova'])).json).toMatchObject({ status: 'created' });
+    // The same --kind note|context choice post already had now rides the
+    // other conversational sends; the default stays note.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--kind', 'context', '--text', '{"spec":1}',
+      '--thread', 'rq-kind', '--id', 'cli-dm-ctx'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['channel', 'post', 'ops', '--from', 'atlas', '--kind', 'context', '--text', 'see spec',
+      '--id', 'cli-ch-ctx'])).json).toMatchObject({ status: 'posted' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'plain', '--id', 'cli-dm-note'])).json)
+      .toMatchObject({ status: 'posted' });
+    const dmCtx = await run(['show', 'cli-dm-ctx']);
+    expect(dmCtx.json.message.envelope.body).toEqual({ kind: 'context', text: '{"spec":1}', thread: 'rq-kind' });
+    const chCtx = await run(['show', 'cli-ch-ctx']);
+    expect(chCtx.json.message.envelope.body).toEqual({ kind: 'context', text: 'see spec' });
+    const dmNote = await run(['show', 'cli-dm-note']);
+    expect(dmNote.json.message.envelope.body).toEqual({ kind: 'note', text: 'plain' });
+    // A kind outside note|context is a usage error on every conversational send.
+    for (const args of [
+      ['dm', '--from', 'atlas', '--to', 'nova', '--text', 'x', '--kind', 'work.post'],
+      ['post', '--from', 'atlas', '--to', 'fleet.mesh', '--text', 'x', '--kind', 'handoff'],
+      ['channel', 'post', 'ops', '--from', 'atlas', '--text', 'x', '--kind', 'dm'],
+    ]) {
+      expect(await run(args)).toMatchObject({ code: 2 });
+    }
+  });
+
   it('announces and updates v2 work on the same bus, owner-only for status', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -1077,6 +1212,38 @@ describe('phm agents bus (unified)', () => {
       // Unparseable and duplicate cutoffs are usage errors, never silently widened.
       expect(await run(['work', 'feed', '--before', 'bogus'])).toMatchObject({ code: 2 });
       expect(await run(['work', 'feed', '--before', '1m', '--before', '2m'])).toMatchObject({ code: 2 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('filters claim list by --since/--before on the lease started stamp', async () => {
+    const spy = vi.spyOn(Date, 'now');
+    let clock = 1_800_000_000_000;
+    spy.mockImplementation(() => clock);
+    try {
+      // Two live claims taken two minutes apart; both leases stay live.
+      expect((await run(['claim', 'acquire', '--key', 'repo:a/old', '--lease-ms', '600000',
+        '--owner', 'atlas', '--id', 'cl-old'])).json).toMatchObject({ status: 'acquired' });
+      clock += 120_000;
+      expect((await run(['claim', 'acquire', '--key', 'repo:a/new', '--lease-ms', '600000',
+        '--owner', 'atlas', '--id', 'cl-new'])).json).toMatchObject({ status: 'acquired' });
+      const keys = (list: { json: { claims: { key: string }[] } }) => list.json.claims.map(row => row.key);
+      expect(keys(await run(['claim', 'list']))).toEqual(['repo:a/old', 'repo:a/new']);
+      // A cutoff between the two acquisition times keeps only the newer claim.
+      expect(keys(await run(['claim', 'list', '--since', String(clock - 60_000)]))).toEqual(['repo:a/new']);
+      expect(keys(await run(['claim', 'list', '--since', '1m']))).toEqual(['repo:a/new']);
+      // --before is the exclusive upper bound on the same started stamp.
+      expect(keys(await run(['claim', 'list', '--before', String(clock - 60_000)]))).toEqual(['repo:a/old']);
+      expect(keys(await run(['claim', 'list', '--since', String(clock - 180_000), '--before', String(clock - 60_000)])))
+        .toEqual(['repo:a/old']);
+      // The window composes with the other claim filters.
+      expect((await run(['claim', 'list', '--since', '1m', '--origin', 'resource'])).json.claims)
+        .toHaveLength(1);
+      expect((await run(['claim', 'list', '--since', '1m', '--owner', 'nobody'])).json.claims).toEqual([]);
+      // Unparseable cutoffs are usage errors, never a silent widen.
+      expect(await run(['claim', 'list', '--since', 'bogus'])).toMatchObject({ code: 2 });
+      expect(await run(['claim', 'list', '--before', 'bogus'])).toMatchObject({ code: 2 });
     } finally {
       spy.mockRestore();
     }

@@ -29,6 +29,14 @@ export interface BusWorkItemEvidenceResult {
 
 const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
+/** Both aliases, when present, must name the same exact request. */
+function replyTargets(body: Record<string, unknown>, id: string): boolean {
+  const camel = Object.hasOwn(body, 'inReplyTo');
+  const snake = Object.hasOwn(body, 'in_reply_to');
+  return (camel || snake) && (!camel || body['inReplyTo'] === id) &&
+    (!snake || body['in_reply_to'] === id) && id !== '';
+}
+
 /** A reply names its request through the `inReplyTo` key that
  * bus-reply-post.ts stamps (`in_reply_to` is accepted for peer-protocol
  * bodies). Only a `verified` object carrying pr+head, tests or an artifact is
@@ -36,7 +44,7 @@ const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() 
 function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['verified'] {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
-  if (body['inReplyTo'] !== id && body['in_reply_to'] !== id) return undefined;
+  if (!replyTargets(body, id)) return undefined;
   const verified = body['verified'];
   if (verified === null || verified === undefined || typeof verified !== 'object' || Array.isArray(verified)) return undefined;
   const pr = typeof verified['pr'] === 'number' && Number.isInteger(verified['pr']) && verified['pr'] > 0 ? verified['pr'] : undefined;
@@ -53,7 +61,7 @@ function replyVerifiedEvidence(row: BusInboxReceipt, id: string): WorkItemEviden
 function replyBlockedEvidence(row: BusInboxReceipt, id: string): WorkItemEvidence['blocker'] {
   const body = row.envelope.body;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
-  if (body['inReplyTo'] !== id && body['in_reply_to'] !== id) return undefined;
+  if (!replyTargets(body, id)) return undefined;
   const blocked = body['blocked'];
   if (blocked === null || blocked === undefined || typeof blocked !== 'object' || Array.isArray(blocked)) return undefined;
   const dep = blocked['dependency'];
@@ -121,15 +129,26 @@ export function deriveBusWorkItemEvidence(
   id: string, receipts: BusInboxReceipt[], claims: BusWorkClaimView[], now: number,
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
-  let request: BusInboxReceipt | undefined;
+  const request = receipts.find(row => row.envelope.id === id);
+  let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
-    if (row.envelope.id === id) request = row;
+    if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    // Match the classifier's private five-minute future-skew boundary; it has
+    // no historical TTL. Check Date validity before reply conversion to ISO.
+    if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
+      !(row.receivedAt - now <= 5 * 60 * 1000)) continue;
     const verified = replyVerifiedEvidence(row, id);
-    if (verified) evidence.verified = verified;
+    if (verified && row.cursor > verifiedCursor) {
+      evidence.verified = verified;
+      verifiedCursor = row.cursor;
+    }
     // Newest blocked reply wins; a later reply without `blocked` does not
     // clear it (no "unblocked" semantics yet).
     const blocker = replyBlockedEvidence(row, id);
-    if (blocker) evidence.blocker = blocker;
+    if (blocker && row.cursor > blockerCursor) {
+      evidence.blocker = blocker;
+      blockerCursor = row.cursor;
+    }
   }
   if (request) {
     evidence.receivedAt = new Date(request.receivedAt).toISOString();

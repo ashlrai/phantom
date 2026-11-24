@@ -109,11 +109,16 @@ describe('phm agents messages', () => {
     expect(summaries({ job: 'RQ-ONE-1' })).toEqual(['RQ-ONE-1 shipped the patch']);
     expect(summaries({ thread: 'build' })).toEqual(['build notes here']);
     // --channel keeps the room's posts; --in-reply-to keeps the citation;
-    // --id keeps the one envelope carrying that wire id.
+    // --id keeps the one envelope carrying that wire id; --body-kind keeps
+    // only bodies carrying that exact discriminator — the kindless mail
+    // never matches.
     expect(summaries({ channel: 'build' })).toEqual(['build notes here']);
     expect(summaries({ inReplyTo: 'm1' })).toEqual(['answering you']);
     expect(summaries({ id: 'm1' })).toEqual(['on it?']);
     expect(summaries({ id: 'm-gone' })).toEqual([]);
+    expect(summaries({ bodyKind: 'note' })).toEqual(['build notes here']);
+    expect(summaries({ bodyKind: 'note', agent: 'codex' })).toEqual(['build notes here']);
+    expect(summaries({ bodyKind: 'work.post' })).toEqual([]);
     // --agent/--with scope to the named participants.
     expect(read(root, { agent: 'codex' }).matched).toBe(2);
     expect(summaries({ agent: 'claude', with: 'codex' })).toEqual(['RQ-ONE-1 shipped the patch']);
@@ -127,6 +132,8 @@ describe('phm agents messages', () => {
       .toEqual({ ok: false, error: '--with takes the other agent and needs --agent.' });
     expect(readAgentsMessages({ kind: 'bogus' }, { root, now: () => NOW }))
       .toEqual({ ok: false, error: '--kind takes one of ask, reply, handoff, status, blocker.' });
+    expect(readAgentsMessages({ bodyKind: 'has space' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' });
   });
 
   it('aggregates edge weights per node pair over the whole window, keeping the last 5 summaries', () => {
@@ -193,8 +200,11 @@ describe('phm agents messages', () => {
     const byId = await call(`${AGENT_MESSAGES_PATH}?id=m1`);
     expect(byId).toMatchObject({ handled: true, status: 200, body: { matched: 1 } });
     expect(byId.body!.messages!.map(m => m.summary)).toEqual(['on it?']);
+    const byBodyKind = await call(`${AGENT_MESSAGES_PATH}?bodyKind=note`);
+    expect(byBodyKind).toMatchObject({ handled: true, status: 200, body: { matched: 0 } });
     expect((await call(`${AGENT_MESSAGES_PATH}?bogus=1`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=has%20space`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?bodyKind=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=a&id=b`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');
     expect((await call(`${AGENT_MESSAGES_PATH}?before=never`)).body!.error).toContain('--before');

@@ -182,7 +182,7 @@ export function cloudPrDiffChecks(input: CloudPrDiffInput): CloudPrCheck[] {
   const scope = measureAutoMergeDiffScope(diff);
   const out: CloudPrCheck[] = [];
 
-  const g1 = evaluateG1({ paths: scope.ok ? scope.touchedPaths : null, selfRepo: input.selfRepo });
+  const g1 = evaluateG1({ paths: scope.ok ? scope.touchedPaths : null, selfRepo: input.selfRepo, repo: input.repo });
   if (g1.verdict === 'pass') out.push({ id: 'protected', ok: true, text: 'No protected paths' });
   else if (g1.hits.length > 0) {
     const more = g1.hits.length > 1 ? ` +${g1.hits.length - 1}` : '';

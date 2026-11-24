@@ -1,8 +1,8 @@
 /** Host-load history: fixture ps text and a temp runs dir in, rows and plain lines out. Nothing runs ps or reads the real home. */
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { cmdHost } from '../src/cli/host.js';
 import { collectDigestFacts, planChangeDigest } from '../src/core/comms/change-digest.js';
 import { buildPulse, pulseText } from '../src/core/fleet/pulse.js';
@@ -15,7 +15,9 @@ const T0 = Date.UTC(2026, 10, 19, 12, 0, 0);
 const MIN = 60_000;
 const ps = readFileSync(join(__dirname, 'fixtures', 'host-load', 'fleet-heavy.txt'), 'utf8');
 const BLOCKED = JSON.stringify({ why: 'over_host load1=75 host_max=36 owned=0.0', settle_s: 30 });
-const dirs = (): string => mkdtempSync(join(tmpdir(), 'load-history-'));
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const dirs = (): string => { const root = mkdtempSync(join(tmpdir(), 'load-history-')); roots.push(root); return root; };
 const row = (at: number, load1: number | null, contributors: [string, number][]): LoadSnapshotRow =>
   ({ at, load1, hostMax: 36, contributors: contributors.map(([name, sharePercent]) => ({ name, sharePercent })) });
 const deps = (now: number, admission: string | null) => ({ now: () => now, ps: async () => ps, jobRoots: () => [{ jobId: 'RQ-ONE', pid: 400 }], owners: () => ({}), admission: () => admission });

@@ -38,6 +38,7 @@ import {
   type RepoStage,
 } from '../fleet/fleet-types.js';
 import { isHubRepositoryLabel } from './repository-binding.js';
+import { configuredGrantLifetimeMs, configuredLocalEnforcementRisk, CAP_POLICY } from './cap-policy.js';
 import { canonicalJson } from './canonical-json.js';
 import { ELITE_DIRECT_ONE_LINE, ELITE_DIRECT_STAGE_ID, grantHasEliteDirect } from './elite-models.js';
 import { draftEnforcementFor, reapprovalDowngrades, type ServerEnforcementState } from './server-enforcement.js';
@@ -652,6 +653,12 @@ const DEFAULT_REPO_PLAN: Readonly<Record<string, PlannedRepo>> = Object.freeze({
   measurably: { enter: '3d', mergeFrom: '3d', risk: 'low', perDay: 4 },
   'ashlr-cortex': { enter: '3d', mergeFrom: '3d', risk: 'low', needsVerify: true, perDay: 4 },
   'ashlr-hub': { enter: '3d', mergeFrom: '3d', risk: 'medium', perDay: 12 },
+  // Path rules stay: auth, secrets, signing, CI and shell remain high.
+  // ashlr-cost spend-ceiling files are owner-lane (spend-ceiling.ts).
+  'ashlr-auth': { enter: '3d', mergeFrom: '3d', risk: 'low', perDay: 12 },
+  'ashlr-config': { enter: '3d', mergeFrom: '3d', risk: 'medium', perDay: 12 },
+  'ashlr-cost': { enter: '3d', mergeFrom: '3d', risk: 'medium', perDay: 12 },
+  'ashlr-core-efficiency': { enter: '3d', mergeFrom: '3d', risk: 'medium', needsVerify: true, perDay: 12 },
 });
 
 interface PlannedStage {
@@ -695,13 +702,13 @@ function repoName(nameWithOwner: string): string {
   return nameWithOwner.slice(nameWithOwner.indexOf('/') + 1).toLowerCase();
 }
 
-/** Seat defaults by engine (addendum §11): Claude 40% weekly reserve and never while 5 h > 70%; Grok 0%; Codex like Claude; local unlimited. */
+/** Seat defaults by engine. Included seats use CAP_POLICY. Reserve 0 never authorizes paid overage. */
 function defaultSeat(engine: BudgetEngine): StandingGrantSeat {
   switch (engine) {
     case 'claude':
-      return { enabled: true, reserveFloorPercent: 40, maxSessionWindowPercent: 70, roles: ['producer', 'judge', 'leader'] };
+      return { enabled: true, reserveFloorPercent: CAP_POLICY.reserveFloorPercent, maxSessionWindowPercent: CAP_POLICY.maxSessionWindowPercent, roles: ['producer', 'judge', 'leader'] };
     case 'codex':
-      return { enabled: true, reserveFloorPercent: 40, maxSessionWindowPercent: 70, roles: ['producer', 'judge', 'leader'] };
+      return { enabled: true, reserveFloorPercent: CAP_POLICY.reserveFloorPercent, maxSessionWindowPercent: CAP_POLICY.maxSessionWindowPercent, roles: ['producer', 'judge', 'leader'] };
     case 'grok':
       return { enabled: true, reserveFloorPercent: 0, roles: ['producer', 'judge', 'leader'] };
     case 'local':
@@ -749,7 +756,7 @@ export const LOCAL_SEAT_WILDCARD = 'local';
  */
 export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV1 {
   const issuedAt = new Date(input.nowMs).toISOString();
-  const expiresAt = new Date(input.nowMs + STANDING_GRANT_CEILINGS.maxTtlMs).toISOString();
+  const expiresAt = new Date(input.nowMs + configuredGrantLifetimeMs()).toISOString();
   const seen = new Set<string>();
   const planned: { repo: StandingGrantRepo; enter: number; mergeFrom: number }[] = [];
   for (const candidate of input.repos) {
@@ -760,7 +767,7 @@ export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV
     const local = candidate.visibility === 'private'
       || draftEnforcementFor(candidate.serverEnforcement ? { state: candidate.serverEnforcement } : null) === 'local';
     const canMerge = plan !== undefined && !(plan.needsVerify && candidate.hasVerify !== true);
-    const risk: MergeRisk = local ? 'low' : plan?.risk ?? 'low';
+    const risk: MergeRisk = local ? configuredLocalEnforcementRisk() : plan?.risk ?? 'low';
     planned.push({
       repo: {
         nameWithOwner: candidate.nameWithOwner,
@@ -833,7 +840,7 @@ export function buildDefaultGrantPayload(input: GrantDraftInput): StandingGrantV
     authoritySurfaceDigest: input.authoritySurfaceDigest,
     repos: planned.map((p) => p.repo),
     merge: { maxFiles: STANDING_GRANT_DEFAULT_VOLUME_LIMITS.maxFiles, maxLines: STANDING_GRANT_DEFAULT_VOLUME_LIMITS.maxLines, selfRepo: 'merge-non-authority' },
-    spend: { maxMode: 'balanced', meteredUsdPerDay: 0, seats },
+    spend: { maxMode: 'balanced', meteredUsdPerDay: CAP_POLICY.meteredUsdPerDay, seats },
     engines: devin ? withDevin(PHASE3_ENGINES) : [...PHASE3_ENGINES],
     leader: { classes: ['A', 'B'], vetoMinutes: 30 },
     conductorGoals: true,
@@ -899,7 +906,7 @@ export function buildReapprovalGrantPayload(
     grantSeq: input.grantSeq,
     keyId: input.keyId,
     issuedAt: new Date(input.nowMs).toISOString(),
-    expiresAt: new Date(input.nowMs + STANDING_GRANT_CEILINGS.maxTtlMs).toISOString(),
+    expiresAt: new Date(input.nowMs + configuredGrantLifetimeMs()).toISOString(),
     hostBinding: input.hostBinding,
     authoritySurfaceDigest: input.authoritySurfaceDigest,
     rollout: { stages: structuredClone(current.rollout.stages.slice(from)), autoAdvance: true },

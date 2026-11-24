@@ -29,6 +29,7 @@ const approvedActions = new Set([
   'actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809',
   'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
+  'dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d',
 ]);
 
 function actionRefs(value: unknown): string[] {
@@ -158,6 +159,40 @@ describe('M481 CI workflow action trust chain', () => {
         'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
       ],
       classify: [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d',
+      ],
+      'fast-windows': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
+      'fast-macos': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
+      'install-smoke-linux': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
+      'install-smoke-windows': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
+      'install-smoke-macos': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+        'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+      ],
+      'gate-linux': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      ],
+      'gate-windows': [
+        'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      ],
+      'gate-macos': [
         'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
       ],
       site: [

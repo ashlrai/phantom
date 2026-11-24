@@ -712,14 +712,12 @@ function isSecuritySensitive(p: string): boolean {
 /**
  * Classify the merge risk of a proposal from its diff + kind. PURE.
  *
- *   low    — ONLY docs (*.md / LICENSE), lockfiles (*.lock / package-lock.json),
- *            and/or test-only files.
- *   medium — config files (*.json/*.yml/*.toml/.github/*) and/or small source
- *            changes (a single source file with a modest diff).
- *   high   — any source change touching an auth/security path, a large diff
- *            (many files or many changed lines), or anything we can't classify
- *            as low/medium. Empty / unparsable diffs are treated as HIGH
- *            (fail-safe — an unknown change is the most dangerous kind).
+ *   low: ONLY docs (*.md / LICENSE), lockfiles (*.lock / package-lock.json),
+ *         and/or test-only files.
+ *   medium: config files and ordinary source, at any size. File and line
+ *           counts are maxFiles and maxLines, not a risk class.
+ *   high: auth, secrets, signing, CI, shell, or anything we cannot
+ *         classify as low or medium. Empty or unparsable diffs are HIGH.
  */
 export function classifyRisk(proposal: Proposal): RiskClass {
   const diff = proposal.diff ?? '';
@@ -746,10 +744,6 @@ export function classifyRisk(proposal: Proposal): RiskClass {
     return 'high';
   }
 
-  const LARGE_FILES = 10;
-  const LARGE_LINES = 400;
-  if (scope.files > LARGE_FILES || scope.lines > LARGE_LINES) return 'high';
-
   const sourceFiles = files.filter(isSourceFile);
 
   // ── LOW: every file is docs / lockfile / test ──────────────────────────────
@@ -758,16 +752,9 @@ export function classifyRisk(proposal: Proposal): RiskClass {
   );
   if (allLowTrust) return 'low';
 
-  // ── MEDIUM: ordinary source changes ─────────────────────────────────────────
-  // M295: ordinary source changes are MEDIUM, not HIGH. The genuinely-dangerous
-  // cases already returned 'high' ABOVE this point: security/secret/auth/sandbox
-  // surfaces, build/CI/dependency-manifest files, shell scripts, and LARGE diffs
-  // (>10 files or >400 changed lines). What remains here is normal application
-  // source — a multi-file feature/fix — whose real protection for autonomous
-  // merge is the judge-ship verdict + verify (typecheck + tests-delta + lint-delta)
-  // + frontier-authority + HMAC attestation, NOT a crude file-count heuristic.
-  // Classifying every 2-file change as HIGH made maxRisk:'low' block essentially
-  // all real work. (maxRisk default raised to 'medium' to match.)
+  // ── MEDIUM: ordinary source changes of any size ────────────────────────────
+  // Size is maxFiles/maxLines on the grant, not a risk class. Path rules above
+  // stay high: auth, secrets, signing, CI, manifests and shell.
   if (sourceFiles.length > 0) {
     return 'medium';
   }

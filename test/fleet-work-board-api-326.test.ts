@@ -116,6 +116,37 @@ describe('fleet work-board api', () => {
     }
   });
 
+  it('passes since/before bounds resolved from the shared time grammar', async () => {
+    const seen: { since?: number; before?: number } = {};
+    const api = createFleetWorkBoardApi({
+      read: (opts) => { seen.since = opts.since; seen.before = opts.before; return board([]); },
+      now: () => NOW,
+    });
+    // Relative spellings anchor on the server clock; epoch ms and ISO pass through.
+    const r = await call(api, 'GET',
+      `${PATH}?since=15m&before=${NOW.getTime() + 60_000}`);
+    expect(r.status).toBe(200);
+    expect(seen.since).toBe(NOW.getTime() - 900_000);
+    expect(seen.before).toBe(NOW.getTime() + 60_000);
+    await call(api, 'GET', `${PATH}?since=${encodeURIComponent('2026-11-13T17:30:00.000Z')}`);
+    expect(seen.since).toBe(Date.parse('2026-11-13T17:30:00.000Z'));
+    expect(seen.before).toBeUndefined();
+  });
+
+  it('rejects unparseable or negative since/before with 400', async () => {
+    const api = createFleetWorkBoardApi({ read: () => board([]), now: () => NOW });
+    for (const [param, error] of [
+      ['since', 'since takes 15m, 2h, 1d, epoch ms or an ISO time.'],
+      ['before', 'before takes 15m, 2h, 1d, epoch ms or an ISO time.'],
+    ] as const) {
+      for (const bad of ['bogus', '1.5.2', '', '1900-01-01']) {
+        const r = await call(api, 'GET', `${PATH}?${param}=${bad}`);
+        expect(r.status, `${param}=${bad}`).toBe(400);
+        expect(r.body).toEqual({ error });
+      }
+    }
+  });
+
   it('rejects non-GET with 405 and ignores other paths', async () => {
     const api = createFleetWorkBoardApi({ read: () => board([]), now: () => NOW });
     const post = await call(api, 'POST');

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Phantom install manifest version 1",
+  "description": "Declarative Node.js tool installation. Credential values and executable setup scripts are forbidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "install"],
+  "properties": {
+    "version": { "const": 1 },
+    "id": { "type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9-]*$", "not": { "enum": ["__proto__", "prototype", "constructor"] } },
+    "install": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "package", "version", "bin"],
+          "properties": {
+            "kind": { "const": "npm" },
+            "package": { "type": "string", "maxLength": 214, "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$" },
+            "version": { "type": "string", "maxLength": 128, "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$" },
+            "bin": { "type": "string", "maxLength": 80, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "not": { "enum": ["__proto__", "prototype", "constructor"] } }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "repo", "commit", "bin"],
+          "properties": {
+            "kind": { "const": "git" },
+            "repo": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" },
+            "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "bin": { "type": "string", "maxLength": 256, "pattern": "^(?!/)(?!.*(?:^|/)(?:\\.|\\.\\.)(?:/|$))(?!.*//)[A-Za-z0-9_./-]+\\.(?:js|cjs|mjs)$" }
+          }
+        }
+      ]
+    },
+    "mcp": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "args": { "type": "array", "maxItems": 32, "default": [], "items": { "type": "string", "maxLength": 512, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" } }
+      }
+    },
+    "secrets": {
+      "type": "array", "maxItems": 32, "default": [],
+      "description": "Binding names only. Each env must be unique. The runtime also rejects secret-shaped metadata and credential arguments.",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["env", "name"],
+        "properties": {
+          "env": { "type": "string", "maxLength": 80, "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "name": { "type": "string", "maxLength": 80, "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$", "not": { "enum": ["__proto__", "prototype", "constructor"] } }
+        }
+      }
+    }
+  }
+}

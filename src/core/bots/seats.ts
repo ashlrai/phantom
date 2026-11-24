@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { BOT_ID_PATTERN } from '../agents/bot-templates.js';
 import { participantSchema, providerSchema, type Participant } from '../agents/bus-v2-schema.js';
-import { agentIdentityKeys, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
+import { readAgentRegistry, resolveAgent, type AgentIdentityKeyFor } from '../agents/bus-identity.js';
 import { coordinationRoot, listCoordination, releaseCoordinationBySource, type CoordinationView } from '../agents/claim-store.js';
 import { sendDirectMessage } from '../agents/bus-unified.js';
 import { localWriteGate } from '../agents/send-gate.js';
@@ -144,7 +144,24 @@ export function advisorySeatAdapter(s: BotSeat, usage: () => Promise<QuotaEviden
 function nodes(o: SeatOptions): NodesStore {
   return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
 }
-async function openWork(s: BotSeat, o: SeatOptions, identityOf?: AgentIdentityKeyFor) {
+interface SeatClaimOwners {
+  identityOf: AgentIdentityKeyFor | undefined;
+  registry: 'missing' | 'available' | 'unavailable';
+}
+
+/** One registry snapshot for matching and diagnostics; labels are never authentication. */
+function claimOwnerResolver(o: SeatOptions): SeatClaimOwners {
+  const read = readAgentRegistry({ root: fleet(o), now: o.now });
+  if (read.status !== 'ok') return { registry: 'unavailable', identityOf: undefined };
+  const cache = new Map<string, string | undefined>();
+  return { registry: read.source, identityOf: label => {
+    if (!cache.has(label)) cache.set(label, (resolveAgent(read.registry, label) ?? resolveAgent(read.registry, label.toLowerCase()))?.id);
+    return cache.get(label);
+  } };
+}
+
+async function openWork(s: BotSeat, o: SeatOptions, owners: SeatClaimOwners) {
+  const { identityOf } = owners;
   const coordination = listCoordination(fleet(o), (o.now ?? Date.now)());
   if (coordination.source === 'unavailable') throw new Error('Coordination store unavailable.');
   // A seat's open claims are the live rows its participantId owns — or any
@@ -166,15 +183,15 @@ async function openWork(s: BotSeat, o: SeatOptions, identityOf?: AgentIdentityKe
     if (exists) jobs = nodes(o).transaction(state => structuredClone(state.jobs));
     jobs = jobs.filter(j => j.state === 'running' && j.claim?.nodeId === s.nodeId);
   }
-  return { claims, jobs };
+  return { claims, jobs, claimsOwner: { ref: s.participantId, identity: ownerKey ?? null, registry: owners.registry } };
 }
 async function snapshot(o: SeatOptions) {
   const states = JSON.parse(await read(o, 'seat-state.json') ?? '{}') as Record<string, SeatState>;
   const history = (await read(o, 'handoffs.jsonl') ?? '').split('\n').filter(Boolean).map(line => JSON.parse(line) as SeatHandoff);
   const now = new Date((o.now ?? Date.now)()).toISOString();
-  const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
+  const owners = claimOwnerResolver(o);
   const seats = await Promise.all((await roster(o)).map(async seat => {
-    const evidence = await quota(seat, o), work = await openWork(seat, o, identityOf);
+    const evidence = await quota(seat, o), work = await openWork(seat, o, owners);
     const state = nextSeatState(states[seat.id] ?? { state: 'active', since: now, exhaustedReset: null }, { quota: evidence, openWork: work.claims.length + work.jobs.length, now });
     return { seat, quota: evidence, work, state };
   }));
@@ -192,7 +209,7 @@ async function seatsView(o: SeatOptions, persistProjected: boolean) {
   const seats = await Promise.all(data.seats.map(async ({ seat, quota: evidence, state, work }) => {
     const adapter = seat.kind === 'devin-bot' ? createDevinBotAdapter({ ...seat, readUsage: async () => evidence }) : advisorySeatAdapter(seat, async () => evidence);
     return { ...seat, provider: provider(seat), participant: participant(seat, state), state: state.state, acceptsNewWork: state.state === 'active' && evidence.status === 'measured', quota: evidence,
-      claims: work.claims, inFlight: work.jobs.map(j => ({ id: j.id, state: j.state })), handoffs: data.history.filter(h => h.seatId === seat.id).slice(-20), adapter: await adapter.status() };
+      claims: work.claims, claimsOwner: work.claimsOwner, inFlight: work.jobs.map(j => ({ id: j.id, state: j.state })), handoffs: data.history.filter(h => h.seatId === seat.id).slice(-20), adapter: await adapter.status() };
   }));
   const output = { schema: 'phantom-bot-seats.v1' as const, seats };
   assertMetadata(JSON.stringify({ ...output, seats: output.seats.map(s => ({ ...s, handoffs: s.handoffs.map(({ handoffId: _id, ...h }) => h) })) }));
@@ -231,7 +248,7 @@ export async function seatParticipants(o: SeatOptions = {}): Promise<Participant
   return (await listSeats(o)).seats.map(s => s.participant);
 }
 
-/** What `inspectSeatStore` reports about the three files under
+/** What `inspectSeatStore` reports about the four files under
  * `<home>/.phantom/bots` — retained counts only, never seat contents. */
 export interface SeatStoreInspection {
   /** 'missing' when the bots directory itself is absent — a verified-empty
@@ -251,6 +268,12 @@ export interface SeatStoreInspection {
    * read or holds a line `snapshot()` cannot parse — `null` parses but
    * throws on the `.seatId`/`.handoffId` lookups downstream. */
   handoffs: number | null;
+  /** handoff-notices.json receipt-map entries; null when the file could not
+   * be read or does not parse to the plain object `applySeatHandoff` indexes
+   * and rewrites — every other JSON shape throws on a receipt lookup or
+   * silently drops receipts on the next `saveReceipts`, so applies would
+   * fail or resend while a seats/states/handoffs-only probe stayed green. */
+  notices: number | null;
 }
 
 type SeatFileInspection = { kind: 'absent' } | { kind: 'unsafe' } | { kind: 'text'; text: string };
@@ -271,18 +294,20 @@ function inspectSeatFile(dir: string, name: string): SeatFileInspection {
 }
 
 /**
- * Read-only probe of the seat store `planSeatHandoffs`, `listSeats` and the
- * unified bus's seats surfaces share — the synchronous counterpart of the
- * file half of `snapshot()`. Never throws and never writes: an absent bots
+ * Read-only probe of the seat store `planSeatHandoffs`, `listSeats`, the
+ * unified bus's seats surfaces and the apply path's notice receipts share —
+ * the synchronous counterpart of the file half of `snapshot()` plus the
+ * `handoff-notices.json` map `applySeatHandoff` indexes and rewrites.
+ * Never throws and never writes: an absent bots
  * directory is a verified-empty store (real zeros); a directory or file
  * failing the `safe()` checks, or a file whose contents `roster()`/
- * `snapshot()` would reject, reports `unavailable` with that file's count
- * null while the other files still report what they really hold. Seat
- * contents, live claims and quota evidence are never read here — this
- * names store health only.
+ * `snapshot()`/the receipts read would reject, reports `unavailable` with
+ * that file's count null while the other files still report what they
+ * really hold. Seat contents, live claims and quota evidence are never
+ * read here — this names store health only.
  */
 export function inspectSeatStore(home?: string): SeatStoreInspection {
-  const unavailable: SeatStoreInspection = { source: 'unavailable', seats: null, states: null, handoffs: null };
+  const unavailable: SeatStoreInspection = { source: 'unavailable', seats: null, states: null, handoffs: null, notices: null };
   const phantomDir = join(home ?? homedir(), '.phantom');
   const dir = join(phantomDir, 'bots');
   // The same directory rule safe() enforces on every read: each existing
@@ -299,7 +324,7 @@ export function inspectSeatStore(home?: string): SeatStoreInspection {
     if (!stat.isDirectory()) return unavailable;
     if (path === dir) dirPresent = true;
   }
-  if (!dirPresent) return { source: 'missing', seats: 0, states: 0, handoffs: 0 };
+  if (!dirPresent) return { source: 'missing', seats: 0, states: 0, handoffs: 0, notices: 0 };
 
   let degraded = false;
 
@@ -338,7 +363,26 @@ export function inspectSeatStore(home?: string): SeatStoreInspection {
     } catch { handoffs = null; degraded = true; }
   }
 
-  return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs };
+  const noticesFile = inspectSeatFile(dir, 'handoff-notices.json');
+  let notices: number | null = 0;
+  if (noticesFile.kind === 'unsafe') { notices = null; degraded = true; }
+  else if (noticesFile.kind === 'text') {
+    try {
+      const parsed: unknown = JSON.parse(noticesFile.text);
+      // applySeatHandoff keeps this file as a receipts map it indexes by
+      // handoff id and rewrites through saveReceipts: only a plain object
+      // survives that round trip. `null` throws on the lookup, primitives
+      // throw on the write and an array silently drops the string-keyed
+      // receipts on stringify — all three leave applies failing or
+      // resending notices the file was meant to suppress.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Invalid handoff notices.');
+      }
+      notices = Object.keys(parsed).length;
+    } catch { notices = null; degraded = true; }
+  }
+
+  return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs, notices };
 }
 function handoff(seatId: string, kind: SeatHandoff['work']['kind'], ref: string, identity: string, now: string, claim?: CoordinationView): SeatHandoff {
   return { schema: 'phantom-bot-handoff.v1', handoffId: createHash('sha256').update(JSON.stringify([seatId, kind, ref, identity])).digest('hex'), seatId,
@@ -477,7 +521,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
   if (!lock) throw new Error('Seat handoff store unavailable or contended.');
   try {
     const { data, row, records } = await plan(id, o);
-    const identityOf = agentIdentityKeys({ root: fleet(o), now: o.now });
+    const owners = claimOwnerResolver(o);
     const receipts = JSON.parse(await read(o, 'handoff-notices.json') ?? '{}') as Record<string, NoticeReceipt>;
     const pending = [...records];
     for (const old of data.history.filter(h => h.seatId === id)) {
@@ -497,7 +541,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       if (held && record.work.kind === 'node-job') {
         const claim = row.work.jobs.find(j => j.id === record.work.ref)!.claim!;
         const released = o.releaseNode ? o.releaseNode(claim) : new DriveNodes(nodes(o), { now: o.now }).release(claim, true);
-        if (!released && (await openWork(row.seat, o, identityOf)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
+        if (!released && (await openWork(row.seat, o, owners)).jobs.some(j => j.claim?.token === claim.token && j.id === claim.jobId)) throw new Error('Node claim release refused.');
       } else if (held) {
         const claim = row.work.claims.find(c => c.key === record.work.ref)!;
         if (claim.origin === 'queue') throw new Error('Bus claim release refused.');
@@ -523,7 +567,7 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       }
       applied.push({ ...record, notifications });
     }
-    const remaining = await openWork(row.seat, o, identityOf);
+    const remaining = await openWork(row.seat, o, owners);
     data.states[id] = nextSeatState(row.state, { quota: row.quota, openWork: remaining.claims.length + remaining.jobs.length, now: data.now });
     await persist(data.states, o);
     return { schema: 'phantom-bot-handoff-plan.v1', seatId: id, state: data.states[id]!.state, apply: true, handoffs: applied };

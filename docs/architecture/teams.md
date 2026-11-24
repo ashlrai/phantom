@@ -164,8 +164,10 @@ The view is evidence to review, not a readiness or access certification.
 
 Phase 1 logs are local to `$ASHLR_HOME`: matching team IDs on different machines
 do not share state. Confirm the authoritative log before joining an empty view;
-the first joining human becomes owner. Join/approval identity is derived from
-the local OS user and optional owner configuration, never from `--as`.
+the first joining human becomes owner. CLI join and `phm team approve|deny`
+derive identity from the local OS user and optional owner configuration, never
+from `--as`. The web decision route uses the authenticated principal: a bare
+token is not a human, and a human decision needs presence evidence.
 A member cannot self-promote with `join --role admin`.
 
 Keep two questions separate: protocol role controls team operations; repository

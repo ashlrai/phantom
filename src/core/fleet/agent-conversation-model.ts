@@ -47,6 +47,15 @@ export interface ConversationMessage {
    * own-property exact match every bus read's `--in-reply-to` shares. Absent
    * when the body cites nothing through that field. */
   inReplyTo?: string;
+  /** The body's own kind discriminator — the same `busBodyKind` read every
+   * bus read's body-kind filter applies: the v2 `kind` (`note`, `context`,
+   * `work.post`, `work.claim`, `work.status`, `work.result`, `work.release`,
+   * `wake`), a `worker-handoff` or notice kind, a bus-transport v1
+   * `protocol.kind`, else the `type`/`schema` a kindless notice keys on.
+   * Absent when the body carries none, so it never matches a `bodyKind`
+   * filter — the same "unknown stays out" rule every other own-field filter
+   * keeps. */
+  bodyKind?: string;
 }
 
 export interface ConversationAgent { name: string; label: string; known: boolean; node: string | null }
@@ -57,6 +66,10 @@ export interface ConversationItem {
   priority?: BusPriority;
   /** The body's own `inReplyTo` citation, verbatim — never the `replyTo` alias; absent when the body cites nothing through that field. */
   inReplyTo?: string;
+  /** The member's declared conversation bucket — a thread label, `threadId`, `job:<id>` or origin key — verbatim; absent when the message declared none and joined its thread by reply chain alone, so it never matches a `thread` filter. */
+  thread?: string;
+  /** The member's body kind discriminator, verbatim — the same `busBodyKind` field the thread-level `bodyKind` filter reads; absent when the body carries none. */
+  bodyKind?: string;
 }
 /** Two agents that exchanged messages in this thread, for the map's line. */
 export interface ConversationLink { a: string; b: string; count: number; lastAt: string }
@@ -133,6 +146,20 @@ export interface ConversationQuery {
    * substring — so "which thread is the answer to envelope X in" is one
    * filtered read. Whole threads, never partial message lists. */
   inReplyTo?: string;
+  /** Keep only the thread envelope `id` belongs to — at most one thread,
+   * since every member message sits in exactly one — decided on each
+   * member message's own wire id strictly equal to the value, the same
+   * exact-envelope match every other bus read's `--id` applies
+   * (`phm messages --id`, `agents bus inbox`/`channel read --id`,
+   * `agents bus wakes --id`, `comms bus read|watch --id`, `fleet
+   * bus-follow --id`, `fleet_bus_inbox`'s `id`), never a substring or a
+   * thread-key or body citation — so "which thread is envelope X in" is
+   * one filtered read returning the whole thread, where `phm messages
+   * --id` reports only the one row. A declared thread bucket (`job:<id>`,
+   * a thread label) is no member id and never matches; an id nothing on
+   * the bus carries is an honest empty list. Whole threads, never
+   * partial message lists. */
+  id?: string;
   /** Keep only threads where at least one member message is addressed to
    * `group:<channel>:*` — the room's whole traffic under every topic, the
    * same raw `to`-prefix rule `phm messages --channel`, `agents bus inbox
@@ -157,6 +184,41 @@ export interface ConversationQuery {
    * sender both included and excluded matches nothing, the same rule every
    * bus read's `--exclude-from` applies. Whole threads. */
   excludeFrom?: string;
+  /** Keep only threads holding the two-way exchange `agent` and `with` name
+   * — the same pairwise rule `phm messages --agent <a> --with <b>` applies,
+   * decided on each member message's from/to endpoints: a member counts when
+   * one endpoint is the `agent` ref and the other the `with` ref, in either
+   * direction, each side matching by the same name/identity-key rule the
+   * `agent` participant filter and the `from`/`excludeFrom` sender filters
+   * use, so a thread where the two only ever talk through a third party or a
+   * room never passes. `with` narrows `agent` and means nothing without it:
+   * a `with` with no `agent` is an honest empty list, never a widened one —
+   * the same needs-`--agent` rule the messages read enforces. Whole threads,
+   * never partial message lists. */
+  with?: string;
+  /** Keep only threads where at least one member message declared this exact
+   * conversation bucket — a thread label, `threadId`, `job:<id>` or origin
+   * key, the same declared-key space the projection groups on — strictly
+   * equal to the value, never a substring or a reply-chain root: an
+   * undeclared chain whose members carry no bucket names no provable thread
+   * and never matches (its root envelope id is `--id`'s match, not this
+   * one's). The same exact own-field rule every bus read's `--thread`
+   * applies — `phm messages --thread`, `agents bus inbox --thread`,
+   * `channel read --thread` and `agents bus wakes --thread` — so "the
+   * conversation labelled X" is one filtered read. Whole threads, never
+   * partial message lists. */
+  thread?: string;
+  /** Keep only threads where at least one member message's body carries this
+   * exact kind discriminator — the same `busBodyKind` field and own-field
+   * exact match every bus read's body-kind filter applies (`agents bus
+   * inbox --body-kind`, `channel read --body-kind`, `agents bus wakes
+   * --body-kind`): the v2 `kind` (`note`, `context`, `work.post`,
+   * `work.claim`, `work.status`, `work.result`, `work.release`, `wake`), a
+   * `worker-handoff` or notice kind, a bus-transport v1 `protocol.kind`,
+   * else the `type`/`schema` a kindless notice keys on. A member message
+   * whose body carries no discriminator names no provable kind and never
+   * matches. Whole threads, never partial message lists. */
+  bodyKind?: string;
   /** Cap the returned threads, newest order kept (longest-waiting first,
    * then newest); absent means every matched thread. `matched` still
    * reports the full filtered count. */
@@ -212,7 +274,9 @@ export function groupConversations(messages: readonly ConversationMessage[], now
       links: [...links.values()],
       messages: items.map(m => ({ id: m.id, at: new Date(m.at).toISOString(), from: m.from, to: m.to, kind: m.kind, subject: m.subject,
         ...(m.priority === undefined ? {} : { priority: m.priority }),
-        ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }) })),
+        ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }),
+        ...(m.thread === null || m.thread === undefined ? {} : { thread: m.thread }),
+        ...(m.bodyKind === undefined ? {} : { bodyKind: m.bodyKind }) })),
     });
   }
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
@@ -252,7 +316,13 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * the threads where at least one member message's body cites that envelope
  * id through its own `inReplyTo` field — the same own-property exact match
  * every bus read's `--in-reply-to` applies, never the `replyTo` alias or a
- * substring. `channel` keeps only the threads where at least one member
+ * substring. `id` keeps only the thread one member message's own wire id
+ * strictly equals — at most one thread, since every member sits in exactly
+ * one — the same exact-envelope match every bus read's `--id` applies,
+ * never a substring or a thread-key or body citation, so "which thread is
+ * envelope X in" is one filtered read returning the whole thread where
+ * `phm messages --id` reports only the row. `channel` keeps only the
+ * threads where at least one member
  * message is addressed to `group:<channel>:*` — the same raw `to`-prefix
  * rule every bus read's `--channel` matches. `priority` keeps only the
  * threads where at least one member message carries that exact P0..P3 band
@@ -263,7 +333,26 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * name/lane/identity-key match `agent` uses, so a thread the ref only
  * receives in never passes; `excludeFrom` drops every thread where any
  * member message was sent under that ref's labels, composing with `from`
- * so a sender both included and excluded matches nothing. Every one of
+ * so a sender both included and excluded matches nothing. `with` keeps
+ * only the threads holding the two-way exchange `agent` and the `with`
+ * ref name — the same pairwise rule `phm messages --agent <a> --with
+ * <b>` applies, decided on each member message's from/to endpoints (one
+ * endpoint the `agent` ref, the other the `with` ref, either direction,
+ * each side through the same name/identity-key match) — so "our thread"
+ * is one filtered read while a thread where the two only share a third
+ * party or a room never passes; a `with` with no `agent` is an honest
+ * empty list, never a widened one. `thread` keeps only the threads where
+ * at least one member message declared that exact conversation bucket —
+ * the same declared-key space the projection groups on (a thread label,
+ * `threadId`, `job:<id>` or origin key), strictly equal, never a
+ * substring — so "the conversation labelled X" is one filtered read
+ * while an undeclared reply chain, whose members carry no bucket, names
+ * no provable thread and never matches (its root envelope id stays
+ * `--id`'s match). `bodyKind` keeps only the threads where at least one
+ * member message's body carries that exact kind discriminator — the
+ * same `busBodyKind` own-field exact match every bus read's body-kind
+ * filter applies — so "which threads carry work.post traffic" is one
+ * filtered read. Every one of
  * these is a member-level test: whole threads survive, never partial
  * message lists, and the matched member stays in `messages[]`.
  */
@@ -278,6 +367,8 @@ export function filterConversations(list: readonly Conversation[], query: Conver
   const fromKey = from !== undefined ? keyFor?.(query.from!) : undefined;
   const excludeFrom = query.excludeFrom?.toLowerCase();
   const excludeKey = excludeFrom !== undefined ? keyFor?.(query.excludeFrom!) : undefined;
+  const peer = query.with?.toLowerCase();
+  const peerKey = peer !== undefined ? keyFor?.(query.with!) : undefined;
   // --contains normalizes once per read — lowercase, whitespace collapsed,
   // trimmed — the same needle form every other bus read's --contains applies;
   // a needle that normalizes to nothing imposes no constraint.
@@ -292,16 +383,30 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     name.toLowerCase() === wanted || (wantedKey !== undefined && identityOf?.(name) === wantedKey);
   const fromMatch = from === undefined ? undefined : senderIs(from, fromKey);
   const excludeMatch = excludeFrom === undefined ? undefined : senderIs(excludeFrom, excludeKey);
+  // `with` narrows `agent` to the threads holding the pairwise exchange —
+  // the same from/to endpoint test `phm messages --with` applies, run over
+  // each member message's labels through the same sender matcher. A `with`
+  // with no `agent` proves nothing and matches nothing.
+  const agentMatch = agent === undefined ? undefined : senderIs(agent, key);
+  const peerMatch = peer === undefined ? undefined : senderIs(peer, peerKey);
+  const pairwise = peer === undefined ? undefined
+    : agentMatch === undefined || peerMatch === undefined ? () => false
+    : (c: Conversation) => c.messages.some(m =>
+      (agentMatch(m.from) && peerMatch(m.to)) || (peerMatch(m.from) && agentMatch(m.to)));
   const channelPrefix = query.channel === undefined ? undefined : `group:${query.channel}:`;
   return list.filter(c => (query.job === undefined || c.jobs.includes(query.job))
     && (query.since === undefined || Date.parse(c.lastAt) >= query.since)
     && (query.before === undefined || Date.parse(c.lastAt) < query.before)
     && mentions(c)
     && (query.inReplyTo === undefined || c.messages.some(m => m.inReplyTo === query.inReplyTo))
+    && (query.id === undefined || c.messages.some(m => m.id === query.id))
+    && (query.thread === undefined || c.messages.some(m => m.thread === query.thread))
+    && (query.bodyKind === undefined || c.messages.some(m => m.bodyKind === query.bodyKind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))
     && (excludeMatch === undefined || !c.messages.some(m => excludeMatch(m.from)))
+    && (pairwise === undefined || pairwise(c))
     && (!agent || c.participants.some(p => p.name.toLowerCase() === agent
       || (key !== undefined && identityOf?.(p.name) === key)))
     && (!query.waitingOnly || c.state === 'waiting')

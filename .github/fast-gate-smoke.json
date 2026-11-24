@@ -1,0 +1,9 @@
+{
+  "schema": "phantom-fast-gate-smoke.v1",
+  "version": 1,
+  "tests": [
+    "test/authority-codeowners-310b.test.ts",
+    "test/authority-tier1-closure-310b.test.ts"
+  ],
+  "note": "Version 1 is the two Tier-1 authority suites. It is not a stride sample of the unit lane."
+}

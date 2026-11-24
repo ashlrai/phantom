@@ -32,11 +32,13 @@ Exports:
   is inert; local is loopback-only.
 - `listSeats(opts?: SeatOptions)` returns `{schema:'phantom-bot-seats.v1', seats}`.
   Each row includes provider, bus-v2 participant, state, acceptsNewWork, quota,
-  claims, inFlight, recent handoffs and advisory adapter status. Only lifecycle
+  claims, claimsOwner, inFlight, recent handoffs and advisory adapter status. Only lifecycle
   transitions may persist during listing; missing node stores stay missing.
   Open work counts live coordination claims owned by `participantId` or by any
   other label of the same registered bus identity; an unreadable identity
-  registry keeps exact-label matching.
+  registry keeps exact-label matching. `claimsOwner` reports `{ref, identity,
+  registry}`: the participant label, stable identity id (null when unresolved),
+  and registry source (`missing`, `available` or `unavailable`).
 - `seatMayClaim(id: string, opts?): Promise<boolean>` accepts only active seats
   with measured quota. The module acquires no claims.
 - `seatParticipants(opts?): Promise<Participant[]>` projects poll participants;
@@ -79,11 +81,15 @@ Exports:
   owner-thread notice). Unknown seats/secret-shaped text are refused.
 - `inspectSeatStore(home?: string): SeatStoreInspection` is the synchronous,
   never-throwing file probe behind `agents bus status`'s seats section — the
-  file half of the same `snapshot()` `planSeatHandoffs` reads. It reports
+  file half of the same `snapshot()` `planSeatHandoffs` reads plus the
+  `handoff-notices.json` receipts map `applySeatHandoff` indexes and
+  rewrites. It reports
   `source` (`missing` for an absent bots directory with real zero counts,
   `unavailable` when the directory or any present file fails the `safe()`
-  checks or roster/journal validation, `available` otherwise) plus retained
-  `seats`/`states`/`handoffs` counts, each null only for the file that cannot
+  checks or roster/journal/receipts-map validation, `available` otherwise)
+  plus retained
+  `seats`/`states`/`handoffs`/`notices` counts, each null only for the file
+  that cannot
   be read or validated. It reads no seat contents, claims or quota evidence
   and writes nothing.
 
@@ -2801,11 +2807,12 @@ undefined for non-claim bodies so opaque mail still appends),
 `BusClaimJobRef` claim views share — id, announcer, status, title, newest
 detail and the `postId`/`statusId` receipt citations.
 `listBusClaims(BusClaimsListOptions)` (`root?`, `now?`, `key?`, `owner?`,
-`origin?`, `jobs?`) is the
+`excludeOwner?`, `contains?`, `since?`, `before?`, `origin?`, `jobs?`) is the
 read-side companion: it returns the live coordination claims as
 `CoordinationView` rows (fencing tokens never leave the store) with `source`
 of `missing` (verified empty), `available` or `unavailable` (holds unknown,
-not free), plus `asOf`. A malformed `key`, `owner` or `origin` answers
+not free), plus `asOf`. A malformed `key`, `owner`, `excludeOwner`,
+`contains`, `origin`, `since` or `before` answers
 `invalid`; a set
 `key` narrows the list through the same `coordinationRowBlocks` overlap rule
 an acquire applies, previewing the claims that would block it. A set `owner`
@@ -2814,7 +2821,21 @@ resolves through the identity registry matches every label of that identity;
 an unresolvable ref or unreadable registry falls back to the exact owner
 label, and the result's `owner` field (`ref`, resolved `identity` or null,
 `registry` state) reports which mode applied so a label match is never
-mistaken for identity proof. A set `origin` narrows to one claim class —
+mistaken for identity proof. A set `excludeOwner` drops one holder under the
+same identity-label rule, inverted — the result's `excludeOwner` field
+reports the same resolution — so "what do the other seats hold" is one
+read. A set `contains` keeps claims whose `key`, `sourceId` or
+`repo`/`branch`/`path` target fields carry the needle as a case-insensitive
+substring — the same `busReadContains`/`busReadContainsMatch` rule every
+bus read's `--contains` applies. A set `since`/`before` keeps claims whose
+recorded `started` — the lease's ISO acquisition time, stable across
+renewals — lands inside the `[since, before)` window: `since` is the
+inclusive `>=` bound and `before` the exclusive `<` bound every bus read's
+time filters share, on the same field `work mine`'s claims section already
+bounds; a claim whose `started` is null or unparseable — team, message and
+board claims and pre-stamp resource rows keep no start time — is unknown
+and never matches, the same "unknown stays out" rule every other section's
+missing timestamp follows. A set `origin` narrows to one claim class —
 `resource`, `message`, `team` or `board`, the `CoordinationOrigin` values
 `COORDINATION_ORIGINS` lists (queue path observations are never live and
 never list). With `jobs:true` each claim
@@ -2825,7 +2846,7 @@ the retained `work.post`/`work.status` receipt wire ids `agents bus show`
 reads, the reverse of the feed's `--claims` hold join) and the
 result's `feed` field reports the feed read state; a non-`ok` feed leaves
 `jobs` absent so blocked work stays unknown, never an empty list.
-`phm agents bus claim list [--key] [--owner] [--origin] [--jobs]`
+`phm agents bus claim list [--key] [--owner] [--exclude-owner] [--origin] [--contains] [--since] [--before] [--jobs]`
 prints it.
 `claimBusWorkJob(BusWorkJobClaimOptions)` (`job`, `owner`, `leaseMs`, the
 `BusClaimOptions` `root?`/`now?`, and optional `key?`/`id?`) is the job-level
@@ -3422,7 +3443,9 @@ with a `reason`); they never throw for bad input or storage faults.
 `cursor`, `to`, `wake`, or a refusal with `reason`; the posted shape may also
 carry `claimHoldersWoken`; the three conversational sends accept `replyTo`,
 stamped as the body's `inReplyTo` citation after the same printable-label
-check `thread` gets), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?}, options?)`
+check `thread` gets, and `kind` — `note` or `context`, the v2 conversational
+body kind `postLabelMessage` already exposed, now shared by all three so a
+DM or channel post can carry reference material too), `readAgentInbox(ref, {after, limit, thread?, from?, excludeFrom?, priority?, kind?, job?, matched?, since?, before?, channel?, contains?, inReplyTo?, id?, bodyKind?}, options?)`
 (`thread` keeps only `note`/`context` bodies carrying that v2 thread label,
 `from` filters by sender through identity-label matching, an unresolvable ref
 keeping exact-label matching, `excludeFrom` drops mail sent under every
@@ -3458,7 +3481,16 @@ is one filtered read; `id` keeps only the row whose own wire id is
 strictly equal to the value — the same exact-envelope match `comms bus
 read|watch --id`, `fleet bus-follow --id` and `fleet_bus_inbox`'s `id`
 apply, never a substring or a body citation — so "is envelope X still
-pending for me" is one filtered read; `matched: true` scans the whole retained store
+pending for me" is one filtered read; `bodyKind` keeps only mail whose
+body carries that discriminator — the same one `busBodySummary` switches
+on, read verbatim by `busBodyKind`: the v2 `kind` (`note`, `context`,
+`work.post`, `work.result`, `wake`, `worker-handoff`, …), else a
+bus-transport v1 `protocol.kind`, else the `type`/`schema` a kindless
+notice keys on — matched exactly and case-sensitively like every other
+own-field filter, an unrecognized but printable value an honest empty
+match and a body with no discriminator never matching, so "only the
+`work.post` announcements" or "only `worker-handoff` assignments" is one
+filtered read; `matched: true` scans the whole retained store
 and returns `matched`, the count of every filter-matched row, while
 `messages` still caps at `limit`; `group.presence` heartbeats are observations
 with their own read and never appear as mail of any kind; claimable work and
@@ -3474,8 +3506,9 @@ when a returned message cites a jobId, so the citation answers where its
 job stands (status, claim coverage, `job:null` on an orphaned citation, or
 the feed's own refused/unavailable state) without a `show` per message),
 `readAgentWakes(ref, sinceAt, options?, filter?)` (the ok page carries `scope` —
-`'identity'` when the ref resolved through the registry and every label of
-that identity plus its member channels matched, `'label'` when the ref
+`'identity'` when the ref resolved through the registry and every spelling
+that resolves to that identity — exact label first, then lowercase — plus
+its member channels matched, `'label'` when the ref
 resolved to no identity and only hints whose `to` is the queried label
 verbatim matched, the same exact-label fallback the claim/next/owner
 filters keep so bare coordination labels like claim-owner fan-out targets
@@ -3538,6 +3571,34 @@ receipt's band behind a claim-holder `wh-…` hint), with
 `unresolved`/`unknown` referents never matching, `matched` counting the
 proven matches on the resolved page, an unreadable bus store answering
 `unavailable`, and a band outside P0..P3 answering `invalid`;
+`filter.thread` keeps only hints whose resolved referent is a
+`note`/`context` body carrying that v2 thread label — the same
+`busBodyThread` own-field match the inbox and channel reads' `thread`
+apply to the message a hint refers to — with claim-holder `wh-…` hints
+never matching (a `work.status` receipt carries no thread label) and
+`unresolved`/`unknown` referents never matching, `matched` counting the
+proven matches on the resolved page, an unreadable bus store answering
+`unavailable`, and a malformed label answering `invalid`;
+`filter.inReplyTo` keeps only hints whose resolved referent body cites
+that envelope id through its own `inReplyTo` field — the same
+own-property exact match the inbox/channel `inReplyTo`, `phm messages
+--in-reply-to`, `comms bus read|watch --in-reply-to`, `fleet
+bus-follow --in-reply-to` and `fleet_bus_inbox`'s `inReplyTo` apply,
+never the `replyTo` alias or a substring — with claim-holder hints and
+`unresolved`/`unknown` referents never matching under the same
+unreadable-store/`matched` rules, and a malformed id answering
+`invalid`;
+`filter.bodyKind` keeps only hints whose resolved referent body carries
+that exact kind discriminator — the same `busBodyKind` match the
+inbox/channel `bodyKind` filters apply, decided on the resolved
+referent (the v2 `kind` field, a `worker-handoff` assignment, a
+bus-transport v1 `protocol.kind` or a `type`/`schema` notice
+discriminator, exact and case-sensitive) — with a resolved claim-holder
+`wh-…` hint matching only `work.status` (its citing receipt provably
+carries that kind) and `unresolved`/`unknown` referents never matching,
+`matched` counting the proven matches on the resolved page, an
+unreadable bus store answering `unavailable`, and a malformed value
+answering `invalid`;
 `filter.before` keeps only hints recorded strictly before that
 epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
 applies on the hint's own queue time, composing with `sinceAt`'s
@@ -3558,7 +3619,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,
@@ -3572,7 +3633,7 @@ handles in join order — all of them, or only those one resolved identity
 belongs to; `source` is `missing` for a verified-empty registry or
 `available`, `agent` the resolved handle or null, and an unknown ref or
 unreadable registry answers `unknown-agent`/`unavailable`, never an empty
-list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, id, after, limit}, options?)`
+list), `readAgentChannel(name, {topic, from, excludeFrom, thread, priority, job, matched, since, before, contains, inReplyTo, id, bodyKind, after, limit}, options?)`
 (one oldest-first page of a registry channel's live posts addressed to
 `group:<name>:*` — or one topic — with `group.presence` heartbeats
 excluded; `from` filters by sender through identity-label matching,
@@ -3601,7 +3662,13 @@ substring — so "which room posts answer envelope X" is one filtered read;
 `id` keeps only the post whose own wire id is strictly equal to the
 value — the same exact-envelope match `readAgentInbox`'s `id` and the
 raw bus reads' `--id` apply, never a substring or a body citation — so
-"did envelope X reach the room" is one filtered read;
+"did envelope X reach the room" is one filtered read; `bodyKind` keeps
+only posts whose body carries that discriminator — the same
+`busBodyKind` read `readAgentInbox`'s `bodyKind` applies: the v2 `kind`,
+else a bus-transport v1 `protocol.kind`, else the `type`/`schema` a
+kindless notice keys on, matched exactly and case-sensitively, a body
+with no discriminator never matching — so "only the room's `work.result`
+posts" is one filtered read;
 `matched: true` scans the whole retained store and returns `matched`, the
 count of every filter-matched post, while `messages` still caps at
 `limit`; claimable work and worker-handoff posts additionally carry
@@ -3787,7 +3854,8 @@ a feed lookup. `postLabelMessage(LabelPostInput)` posts a schema-checked v2
 `note` (or `context` with `kind`) to any printable routing label outside
 `RESERVED_PREFIXES` — the sink/topic mail the identity and channel verbs
 cannot carry — under the same registered-sender, scrub, wake and dedupe rules;
-a `to` matching one of a registered identity's labels lands in its inbox as
+a `to` that resolves to a registered identity — any of its labels, exact
+first then lowercase — lands in its inbox as
 legacy mail.
 
 `src/core/agents/bus-cli-adapters.ts`: `listBusCliAdapters()`, `getBusCliAdapter(cli)`,
@@ -3805,7 +3873,9 @@ falling back to `busBodyFallbackSummary` for unrecognized bodies; items
 carrying `held` show it inside the line's bracket, and items carrying `job`
 show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `result=<outcome>`
 when the feed job cites a `work.result`, and `claimable=`
-when the claims join computed it) the same way. Identities
+when the claims join computed it) the same way. `frameBusChannelRead(cli,
+channel, messages)` renders a channel page through the same markers, scrub
+and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one
@@ -4031,8 +4101,31 @@ See [the resolver guide](docs/PR-CONFLICT-RESOLVER.md).
 reader's newest-first
 `{from,to,kind,at,summary}` rows (null and exit 1 when unreadable); `--before`
 keeps only rows received strictly before its cutoff, composing with `--since`
-into one `[since, before)` window. The existing
+into one `[since, before)` window. `phm fleet map messages`, `phm fleet
+messages` and GET `/api/fleet/map/messages` share the `phm messages` filter
+vocabulary — agent/with, kind, priority, job, thread, channel, contains,
+from/exclude-from, in-reply-to, id and body-kind — applied by the same
+`matchAgentMessages` pipeline every bus read uses, so a filtered question
+gets the same answer on each. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts
 are deduplicated by id before the since filter. The desktop's existing 2D/3D
 map overlays these messages for 10 seconds; clicking opens the text in place.
 `fleet.live-map.v1` also draws standing planners as `kind: "planner"` nodes.
+
+## Approval actor (RQ-APPROVAL-ACTOR-1)
+
+`src/core/approvals/actor.ts` exports `principalFromWebToken(token)`,
+`agentActorForToken(token)`, `humanActorForPresence(token)`,
+`approvalPresenceBytes(approvalId, decision)`, `invitePresenceBytes(team, op)`,
+`verifyPresenceSignature(message, signature)` and `HumanPresenceRequired`.
+A web token's principal id is `web-token.` plus 32 hex characters of SHA-256.
+The raw token is never an actor id. `verifyPresenceSignature` checks a P-256
+signature against the custody public key and does not sign.
+`decideApproval(team, actor, approvalId, decision, options?)` records an agent
+principal only when the pending approval is not human-required; otherwise it
+throws `HumanPresenceRequired`. `options.presenceProven` accepts the enrolled
+device human after that signature check and does not read agent env markers.
+`decideTeamApproval` takes the resolved actor and does not call `localHumanActor`.
+`POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
+optional `assertion`. An `actor` field is refused. A bare token on a
+human-required decision is HTTP 403 `human-presence-required`.

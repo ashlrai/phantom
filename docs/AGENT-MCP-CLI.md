@@ -37,7 +37,7 @@ phm authority status --json
 phm authority setup --dry-run --json
 ```
 
-`phm mcp doctor` exits 1 when a required server is down. That is a health result. `phm authority status --json` reports the grant. Autonomy ships dormant and is macOS-only. Status does not turn it on. `phm authority setup --dry-run --json` prints the setup plan and does not sign a grant.
+`phm mcp doctor` exits 1 when a required server is down. That is a health result. `phm authority status --json` reports the grant. Autonomy ships dormant. Status does not turn it on. The per-user daemon is launchd on macOS, systemd --user on Linux, and a schtasks logon task on Windows. `phm authority setup --dry-run --json` prints the setup plan and does not sign a grant.
 
 ## 4. Open the console
 

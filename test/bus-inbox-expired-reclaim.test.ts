@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  appendBusInbox, BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES,
+  appendBusInbox, BUS_INBOX_MAX_BYTES,
   inspectBusInbox, listBusInboxAfter,
 } from '../src/core/fleet/bus-inbox.js';
 
+const LEGACY_COUNT = 1024; // Historical count-full snapshot, still readable.
 const roots: string[] = [];
 const setup = () => {
   const root = mkdtempSync(join(tmpdir(), 'bus-reclaim-'));
@@ -38,7 +39,7 @@ const seed = (root: string, rows: StoredRow[]) => {
 it('posts past the count bound after the first records expire and resumes a saved cursor', () => {
   const root = setup();
   // The original failure: every receipt of a full version-1 store has expired.
-  seed(root, Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, i) =>
+  seed(root, Array.from({ length: LEGACY_COUNT }, (_, i) =>
     ({ cursor: i + 1, receivedAt: 0, envelope: message(`fake-first-${i}`, 50) })));
   // A consumer drains the store while it is still live and saves its cursor.
   let saved = 0;
@@ -50,17 +51,17 @@ it('posts past the count bound after the first records expire and resumes a save
     if (page.messages.length === 0) break;
     saved = after;
   }
-  expect(saved).toBe(BUS_INBOX_MAX_MESSAGES);
-  expect(listBusInboxAfter(0, 100, at(root, 200))).toMatchObject({ messages: [], nextCursor: BUS_INBOX_MAX_MESSAGES });
+  expect(saved).toBe(LEGACY_COUNT);
+  expect(listBusInboxAfter(0, 100, at(root, 200))).toMatchObject({ messages: [], nextCursor: LEGACY_COUNT });
   // The post that used to answer 'full' forever now reclaims and is delivered.
   expect(appendBusInbox(message('fake-second', 1_000_000), at(root, 200)))
-    .toEqual({ status: 'posted', id: 'fake-second', cursor: BUS_INBOX_MAX_MESSAGES + 1 });
-  expect(stored(root)).toMatchObject({ highWater: BUS_INBOX_MAX_MESSAGES + 1 });
+    .toEqual({ status: 'posted', id: 'fake-second', cursor: LEGACY_COUNT + 1 });
+  expect(stored(root)).toMatchObject({ highWater: LEGACY_COUNT + 1 });
   expect(stored(root).rows).toHaveLength(1);
-  expect(listBusInboxAfter(saved, 100, at(root, 200))).toEqual({ status: 'ok', nextCursor: BUS_INBOX_MAX_MESSAGES + 1,
-    messages: [{ cursor: BUS_INBOX_MAX_MESSAGES + 1, receivedAt: 200, envelope: message('fake-second', 1_000_000) }] });
-  expect(listBusInboxAfter(0, 100, at(root, 200))).toMatchObject({ messages: [{ cursor: BUS_INBOX_MAX_MESSAGES + 1 }] });
-  expect(listBusInboxAfter(BUS_INBOX_MAX_MESSAGES + 2, 100, at(root, 200)).status).toBe('invalid');
+  expect(listBusInboxAfter(saved, 100, at(root, 200))).toEqual({ status: 'ok', nextCursor: LEGACY_COUNT + 1,
+    messages: [{ cursor: LEGACY_COUNT + 1, receivedAt: 200, envelope: message('fake-second', 1_000_000) }] });
+  expect(listBusInboxAfter(0, 100, at(root, 200))).toMatchObject({ messages: [{ cursor: LEGACY_COUNT + 1 }] });
+  expect(listBusInboxAfter(LEGACY_COUNT + 2, 100, at(root, 200)).status).toBe('invalid');
 }, 60_000);
 
 it('reclaims byte capacity once retained records expire but never evicts live data', () => {
@@ -80,15 +81,15 @@ it('reclaims byte capacity once retained records expire but never evicts live da
     .toMatchObject({ messages: [{ cursor: 17, envelope: { id: 'fake-after-expiry' } }], nextCursor: 17 });
 }, 60_000);
 
-it('keeps refusing a count-full live store without changing bytes', () => {
+it('accepts beyond the historical count cap and preserves deduplication', () => {
   const root = setup();
-  seed(root, Array.from({ length: BUS_INBOX_MAX_MESSAGES }, (_, i) =>
+  seed(root, Array.from({ length: LEGACY_COUNT }, (_, i) =>
     ({ cursor: i + 1, receivedAt: 0, envelope: message(`fake-live-${i}`, 1_000_000) })));
   const before = readFileSync(fileOf(root), 'utf8');
-  expect(appendBusInbox(message('fake-extra'), at(root, 10)).status).toBe('full');
   expect(appendBusInbox(message('fake-live-7', 1_000_000), at(root, 10)))
     .toEqual({ status: 'duplicate', id: 'fake-live-7', cursor: 8 });
   expect(readFileSync(fileOf(root), 'utf8')).toBe(before);
+  expect(appendBusInbox(message('fake-extra'), at(root, 10)).status).toBe('posted');
 }, 60_000);
 
 it('migrates a legacy array preserving live receipts, dedupe and cursor continuity', () => {

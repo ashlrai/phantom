@@ -1,12 +1,13 @@
 /** Workspace mutations and their audit records are the same locked append. */
-import { assertLocalHuman } from './identity.js';
+import { HumanPresenceRequired } from '../approvals/actor.js';
+import { assertLocalHuman, enrolledHumanActor } from './identity.js';
 import {
   parseAccessRequestAction, validHumanMemberId, REPO_NAME_RE,
   type AccessRequestAction, type TeamActor, type TeamEvent,
 } from './protocol.js';
 import { appendUnlocked, readEvents, withTeamLock } from './store.js';
 import { releaseCoordinationBySource } from '../agents/claim-store.js';
-import { teamState, type TeamState } from './state.js';
+import { approvalRequiresHuman, teamState, type TeamState } from './state.js';
 
 export type WorkspaceAction =
   | AccessRequestAction
@@ -110,25 +111,48 @@ export function requestAccess(team: string, actor: TeamActor, request: unknown, 
   });
 }
 
-export function decideApproval(team: string, actor: TeamActor, approvalId: string, decision: 'approve' | 'deny') {
-  if (actor.kind !== 'human') throw new Error('Only humans can decide approvals.');
-  actor = assertLocalHuman(actor);
+export function decideApproval(
+  team: string,
+  actor: TeamActor,
+  approvalId: string,
+  decision: 'approve' | 'deny',
+  options?: { presenceProven?: boolean },
+) {
+  const suppliedPrincipal = actor.principal;
+  if (actor.kind === 'human') {
+    if (options?.presenceProven) {
+      const enrolled = enrolledHumanActor();
+      if (actor.id !== enrolled.id) {
+        throw new Error(`Approval identity is the enrolled human (${enrolled.id}); a caller-supplied identity (${actor.id}) is not accepted.`);
+      }
+    } else {
+      actor = assertLocalHuman(actor);
+    }
+  } else if (actor.kind !== 'agent') {
+    const unexpected: never = actor.kind;
+    throw new Error(`Unknown actor kind ${String(unexpected)}.`);
+  }
+  const principal = suppliedPrincipal ?? actor.id;
+  // CLI decisions keep the actor object they already had. A web principal is
+  // recorded on the decision and is not invented for a local human.
+  const recorded: TeamActor = suppliedPrincipal ? { ...actor, principal: suppliedPrincipal } : actor;
   return withTeamLock(team, () => {
-    if (decision === 'approve') {
-      const before = teamState(team);
-      const pending = before.approvals.find((x) => x.id === approvalId && x.state === 'pending');
-      const caller = before.members.find(m => m.id === actor.id);
+    const before = teamState(team);
+    const pending = before.approvals.find((x) => x.id === approvalId && x.state === 'pending');
+    if (recorded.kind === 'agent' && (!pending || approvalRequiresHuman(pending))) throw new HumanPresenceRequired();
+    if (decision === 'approve' && recorded.kind === 'human') {
+      const caller = before.members.find(m => m.id === recorded.id);
       if (pending?.access && caller?.kind === 'human' && ['owner', 'admin'].includes(caller.role)) {
         // An access request that went stale stays pending for a deny rather
         // than recording an approval whose mutation can no longer apply.
-        workspacePayload(before, actor, pending.access);
+        workspacePayload(before, recorded, pending.access);
       }
     }
-    appendUnlocked(team, actor, 'approval.decided', { approvalId, decision });
+    appendUnlocked(team, recorded, 'approval.decided', { approvalId, decision, principal });
     const a = teamState(team).approvals.find((x) => x.id === approvalId);
-    if (!a || a.decidedBy !== actor.id) throw new Error('Approval not applied (unknown id, already decided, or you are not an owner/admin).');
+    if (!a || a.decidedBy !== recorded.id) throw new Error('Approval not applied (unknown id, already decided, or you are not an owner/admin).');
     if (a.state === 'approved' && a.access) {
-      const applied = applyWorkspaceAction(team, actor, a.access, { approvalId: a.id });
+      const applied = applyWorkspaceAction(team, recorded, a.access, { approvalId: a.id });
       return { approvalId, state: a.state, applied: { type: applied.type, eventId: applied.id } };
     }
     return { approvalId, state: a.state };

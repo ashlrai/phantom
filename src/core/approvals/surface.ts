@@ -18,9 +18,9 @@
  *   - asks:          one-tap decisions only Mason can make (fleet/approvals.ts,
  *                    the NEEDS-MASON ledger), schema approvals.asks.v1
  *
- * Deciding a team approval goes through `decideApproval` with the identity
- * derived from the local OS user (`localHumanActor`), exactly like
- * `phm team approve|deny`. The caller never supplies an identity.
+ * Deciding a team approval from the web uses the authenticated principal
+ * (`src/core/approvals/actor.ts`). `phm team approve|deny` still uses the
+ * local human process. The caller never supplies an identity.
  */
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -32,7 +32,7 @@ import { listDrafts } from '../cos/drafts.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { listApprovals, type ApprovalsList } from '../fleet/approvals.js';
 import {
-  DEFAULT_TEAM, decideApproval, describeAccessAction, localHumanActor, teamState,
+  DEFAULT_TEAM, decideApproval, describeAccessAction, teamState, type TeamActor,
 } from '../teams/index.js';
 
 export type SectionState = 'ok' | 'unavailable';
@@ -295,7 +295,13 @@ export async function buildApprovalsProjection(team = DEFAULT_TEAM, now = Date.n
   };
 }
 
-/** The human's click is the approval: identity comes from the local OS user, never the caller. */
-export function decideTeamApproval(team: string, approvalId: string, decision: 'approve' | 'deny') {
-  return decideApproval(team, localHumanActor(), approvalId, decision);
+/** Record a decision for an actor the caller already resolved. Never reads the process env. */
+export function decideTeamApproval(
+  team: string,
+  approvalId: string,
+  decision: 'approve' | 'deny',
+  actor: TeamActor,
+  options?: { presenceProven?: boolean },
+) {
+  return decideApproval(team, actor, approvalId, decision, options);
 }

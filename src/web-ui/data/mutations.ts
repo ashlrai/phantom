@@ -74,7 +74,7 @@ export async function decideApprovalRequest(id: string, revision: string, decisi
   invalidate('approvals');
 }
 
-/** The click is the approval: the server derives the human identity locally and never reads one from here. */
+/** Posts the decision only. The server derives the actor from the authenticated principal and never reads one from this body. */
 export async function decideTeamApproval(id: string, decision: 'approve' | 'deny', team?: string): Promise<void> {
   await post(`/api/approvals/team/${encodeURIComponent(id)}/decision`, team ? { decision, team } : { decision });
   invalidate('approvals');

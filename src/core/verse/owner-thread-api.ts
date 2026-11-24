@@ -165,6 +165,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     let beforeAt: number | undefined;
     let contains: string | undefined;
     let replyTo: string | undefined;
+    let awaiting: boolean | undefined;
+    let undelivered: boolean | undefined;
     try {
       const params = new URL(req.url ?? path, 'http://localhost').searchParams;
       limit = parseLimit(params.get('limit'));
@@ -218,6 +220,22 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
         }
         replyTo = replyToRaw;
       }
+      const awaitingRaw = params.get('awaiting');
+      if (awaitingRaw !== null) {
+        if (awaitingRaw !== 'true' && awaitingRaw !== 'false') {
+          sendJson(res, 400, { error: 'awaiting takes true or false.' });
+          return true;
+        }
+        awaiting = awaitingRaw === 'true';
+      }
+      const undeliveredRaw = params.get('undelivered');
+      if (undeliveredRaw !== null) {
+        if (undeliveredRaw !== 'true' && undeliveredRaw !== 'false') {
+          sendJson(res, 400, { error: 'undelivered takes true or false.' });
+          return true;
+        }
+        undelivered = undeliveredRaw === 'true';
+      }
     } catch {
       limit = null;
     }
@@ -227,8 +245,8 @@ export function createOwnerThreadApi(deps: OwnerThreadApiDeps = {}): ApiModule {
     }
     try {
       const options = runtime(deps);
-      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined || replyTo !== undefined
-        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}), ...(replyTo !== undefined ? { replyTo } : {}) }
+      const filter = channel !== undefined || direction !== undefined || since !== undefined || beforeAt !== undefined || contains !== undefined || replyTo !== undefined || awaiting !== undefined || undelivered !== undefined
+        ? { ...(channel !== undefined ? { channel } : {}), ...(direction !== undefined ? { direction } : {}), ...(since !== undefined ? { since } : {}), ...(beforeAt !== undefined ? { beforeAt } : {}), ...(contains !== undefined ? { contains } : {}), ...(replyTo !== undefined ? { replyTo } : {}), ...(awaiting !== undefined ? { awaiting } : {}), ...(undelivered !== undefined ? { undelivered } : {}) }
         : undefined;
       const thread = readOwnerThread(options, limit, filter);
       const { adapters, kill, paused } = readOwnerCommsStatus(options);

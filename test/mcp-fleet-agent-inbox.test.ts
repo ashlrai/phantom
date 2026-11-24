@@ -92,7 +92,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
       since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
-      inReplyTo: 'm-0', id: 'm-9',
+      inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
     });
     expect(parsed).toMatchObject({
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
@@ -100,7 +100,7 @@ describe('fleet_agent_inbox argument parsing', () => {
         thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
         since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
-        inReplyTo: 'm-0', id: 'm-9',
+        inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
       },
     });
   });
@@ -113,6 +113,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', job: 'has space' },
       { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 }, { agent: 'a', id: 'x'.repeat(129) },
+      { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 }, { agent: 'a', bodyKind: 'x'.repeat(129) },
       { agent: 'a', priority: 'P9' }, { agent: 'a', priority: 1 }, { agent: 'a', priority: 'p0' },
       { agent: 'a', kind: 'bogus' }, { agent: 'a', kind: 'work' }, { agent: 'a', kind: 3 },
       { agent: 'a', channel: 'Bad Channel!' }, { agent: 'a', channel: 'x'.repeat(33) },
@@ -187,12 +188,12 @@ describe('fleet_agent_inbox reader', () => {
     await readFleetAgentInbox(parseFleetAgentInboxArgs({
       agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
     })!, { read });
     expect(seenPage).toMatchObject({
       since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
     });
   });
 

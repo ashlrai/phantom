@@ -10,7 +10,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { acquireCoordination, COORDINATION_ORIGINS, coordinationRowBlocks, listCoordination, renewCoordination, settleCoordination, type CoordinationOrigin, type CoordinationView } from './claim-store.js';
 import { CLAIM_MAX_LEASE_MS, parseClaimKey, workClaimBodySchema, workReleaseBodySchema, type WorkJob } from './bus-v2-schema.js';
-import { readAgentRegistry, resolveAgent } from './bus-identity.js';
+import { readAgentRegistry, resolveAgent, type AgentRegistry } from './bus-identity.js';
+import { busReadContains, busReadContainsMatch } from './bus-unified.js';
 import { BUS_FEED_OPEN_STATUSES, readBusWorkFeed, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 
 export interface BusClaimOptions {
@@ -34,6 +35,42 @@ export interface BusClaimsListOptions {
    * ref, or an unreadable registry, matches the exact owner label only.
    */
   owner?: string;
+  /**
+   * When set, drop live claims owned by this routing ref — the same
+   * identity-label resolution `owner` applies, inverted: a handle,
+   * `agent:<handle>`, stable id or alias that resolves through the identity
+   * registry excludes every label of that identity; an unresolvable ref or
+   * unreadable registry excludes the exact owner label only. Composes with
+   * `owner` — a holder both included and excluded lists nothing.
+   */
+  excludeOwner?: string;
+  /**
+   * When set, keep only live claims whose row text carries this needle — the
+   * same `busReadContains`/`busReadContainsMatch` rule every bus read's
+   * `--contains` applies, matched over the claim fields the list renders:
+   * `key`, `sourceId` and the `repo`/`branch`/`path` target fields, so a
+   * match is always visible in the row it selects.
+   */
+  contains?: string;
+  /**
+   * When set, keep only live claims whose recorded `started` — the lease's
+   * ISO acquisition time, stable across renewals — is at or after this
+   * epoch-ms cutoff: the same inclusive `>=` rule every bus read's `--since`
+   * applies and the same field `work mine`'s claims section bounds. A claim
+   * whose `started` is null or unparseable is unknown and never matches —
+   * the same "unknown stays out" rule every other section's missing
+   * timestamp follows.
+   */
+  since?: number;
+  /**
+   * When set, keep only live claims whose recorded `started` is strictly
+   * before this epoch-ms cutoff — the exclusive upper bound composing with
+   * `since` into one `[since, before)` window, the same rule every bus
+   * read's `--before` applies. A null or unparseable `started` never
+   * matches, and a claim still held but started inside the window stays
+   * listed.
+   */
+  before?: number;
   /**
    * When set, only live claims of this origin class — `resource` for v2
    * work.claim leases, `message` for bus message-id claims, `team` for
@@ -211,16 +248,34 @@ export type BusClaimsFeedState = 'ok' | 'refused' | 'unavailable' | 'retryable' 
  * With `origin`, the list narrows to one claim class — the same rows the
  * claim's own `origin` field reports — so "which message-id claims do I
  * hold" is one filtered read instead of paging every team's leases and
- * board claims. With `jobs`, each claim also names the announced feed jobs
+ * board claims. With `excludeOwner`, the list drops one holder under the
+ * same identity-label rule `owner` applies, inverted — "what do the other
+ * seats hold" is one read. With `contains`, the list keeps claims whose
+ * rendered fields carry the needle under the shared bus `--contains` rule.
+ * With `since`/`before`, the list keeps claims whose recorded `started`
+ * lands inside the `[since, before)` window — the same inclusive/exclusive
+ * bounds every bus read's time filters apply, on the same field
+ * `work mine`'s claims section already bounds — so "which claims started
+ * lately" or "what was held before time T" is one filtered read of the
+ * claim table itself. With `jobs`, each claim also names the announced feed jobs
  * it blocks and `feed` reports the read state; a non-ok feed leaves
  * `jobs` absent.
  */
 export type BusClaimsListResult =
   | { status: 'ok'; source: 'missing' | 'available'; claims: BusClaimsListClaim[]; asOf: string;
-      owner?: BusClaimsOwnerMatch; feed?: BusClaimsFeedState }
+      owner?: BusClaimsOwnerMatch; excludeOwner?: BusClaimsOwnerMatch; feed?: BusClaimsFeedState }
   | { status: 'invalid' | 'unavailable'; asOf: string };
 
 const OWNER_LABEL = /^[\x21-\x7e]{1,256}$/;
+
+/** The claim fields `contains` searches: the row's own rendered text, never a field the list hides. */
+function busClaimRowContains(row: CoordinationView, needle: string): boolean {
+  return busReadContainsMatch(row.key, needle) ||
+    busReadContainsMatch(row.sourceId, needle) ||
+    (row.repo !== null && busReadContainsMatch(row.repo, needle)) ||
+    (row.branch !== null && busReadContainsMatch(row.branch, needle)) ||
+    (row.path !== null && busReadContainsMatch(row.path, needle));
+}
 
 export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsListResult {
   const now = options.now ?? Date.now();
@@ -229,30 +284,61 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   if (key !== undefined && parseClaimKey(key) === undefined) return { status: 'invalid', asOf };
   const owner = options.owner;
   if (owner !== undefined && !OWNER_LABEL.test(owner)) return { status: 'invalid', asOf };
+  const excludeOwner = options.excludeOwner;
+  if (excludeOwner !== undefined && !OWNER_LABEL.test(excludeOwner)) return { status: 'invalid', asOf };
+  const containsNeedle = busReadContains(options.contains);
+  if (containsNeedle === null) return { status: 'invalid', asOf };
   const origin = options.origin;
   if (origin !== undefined && !COORDINATION_ORIGINS.includes(origin)) return { status: 'invalid', asOf };
+  const since = options.since;
+  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) return { status: 'invalid', asOf };
+  const before = options.before;
+  if (before !== undefined && (!Number.isSafeInteger(before) || before < 0)) return { status: 'invalid', asOf };
   const listed = listCoordination(options.root, now);
   if (listed.source === 'unavailable') return { status: 'unavailable', asOf };
   let live = listed.claims.filter(row => row.live);
   let ownerMatch: BusClaimsOwnerMatch | undefined;
+  let excludeOwnerMatch: BusClaimsOwnerMatch | undefined;
+  // One registry read serves both owner filters; each reports how its ref resolved.
+  const registryRead = owner === undefined && excludeOwner === undefined ? undefined : readAgentRegistry({ root: options.root });
+  const registry: AgentRegistry | undefined = registryRead?.status === 'ok' ? registryRead.registry : undefined;
+  const registryState = registryRead === undefined ? 'missing' : registryRead.status === 'ok' ? registryRead.source : 'unavailable';
+  const resolved = new Map<string, string | undefined>();
+  const ownerId = (label: string): string | undefined => {
+    if (!resolved.has(label)) resolved.set(label, registry === undefined ? undefined : resolveAgent(registry, label)?.id);
+    return resolved.get(label);
+  };
+  // A ref that resolves through the registry matches every label of that
+  // identity; an unresolvable ref or unreadable registry keeps exact-label
+  // matching, so unknown identity state never widens or narrows a filter.
+  const identityOf = (ref: string): string | undefined =>
+    registry === undefined ? undefined : resolveAgent(registry, ref)?.id;
   if (owner !== undefined) {
-    const read = readAgentRegistry({ root: options.root });
-    const registry = read.status === 'ok' ? read.registry : undefined;
-    const identity = registry === undefined ? undefined : resolveAgent(registry, owner)?.id;
-    ownerMatch = { ref: owner, identity: identity ?? null,
-      registry: read.status === 'ok' ? read.source : 'unavailable' };
-    if (registry === undefined || identity === undefined) {
-      live = live.filter(row => row.owner === owner);
-    } else {
-      const resolved = new Map<string, string | undefined>();
-      const ownerId = (label: string): string | undefined => {
-        if (!resolved.has(label)) resolved.set(label, resolveAgent(registry, label)?.id);
-        return resolved.get(label);
-      };
-      live = live.filter(row => ownerId(row.owner) === identity);
-    }
+    const identity = identityOf(owner);
+    ownerMatch = { ref: owner, identity: identity ?? null, registry: registryState };
+    live = live.filter(row => identity === undefined ? row.owner === owner : ownerId(row.owner) === identity);
+  }
+  if (excludeOwner !== undefined) {
+    const identity = identityOf(excludeOwner);
+    excludeOwnerMatch = { ref: excludeOwner, identity: identity ?? null, registry: registryState };
+    live = live.filter(row => !(identity === undefined ? row.owner === excludeOwner : ownerId(row.owner) === identity));
   }
   if (origin !== undefined) live = live.filter(row => row.origin === origin);
+  if (containsNeedle !== undefined) live = live.filter(row => busClaimRowContains(row, containsNeedle));
+  if (since !== undefined || before !== undefined) {
+    // A claim lists under a time window only when its recorded start lands
+    // inside it — `started` is the lease's ISO acquisition time, and a null
+    // or unparseable start is unknown, never a match: the same "unknown
+    // stays out" rule work mine's claims section and every other section's
+    // missing timestamp follow. A claim first taken before the window stays
+    // live but is not new; a claim still held but started inside it lists.
+    live = live.filter(row => {
+      if (row.started === null) return false;
+      const startedAt = Date.parse(row.started);
+      if (!Number.isFinite(startedAt)) return false;
+      return (since === undefined || startedAt >= since) && (before === undefined || startedAt < before);
+    });
+  }
   const claims = key === undefined ? live : live.filter(row => coordinationRowBlocks(row, key));
   let feed: BusClaimsFeedState | undefined;
   let annotated: BusClaimsListClaim[] = claims;
@@ -272,6 +358,7 @@ export function listBusClaims(options: BusClaimsListOptions = {}): BusClaimsList
   }
   return { status: 'ok', source: listed.source, claims: annotated, asOf,
     ...(ownerMatch === undefined ? {} : { owner: ownerMatch }),
+    ...(excludeOwnerMatch === undefined ? {} : { excludeOwner: excludeOwnerMatch }),
     ...(feed === undefined ? {} : { feed }) };
 }
 

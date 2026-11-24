@@ -78,8 +78,12 @@
 .hint, .failure { grid-column: 1 / -1; margin: 0; }
 .failure { color: var(--status-danger-fg); }
 
+/* Opened at a found line (ThreadFound.tsx): the entry the reader is at is ringed, and the ring closes in on it as it lands so the eye finds it. */
+.log [data-found='here'] { scroll-margin-block: calc(var(--space-6) * 3); }
+.entry[data-found='here'] .bubble, .record[data-found='here'], .routing[data-found='here'] { outline: 2px solid var(--accent-500); outline-offset: 2px; border-radius: var(--radius-md); animation: session-thread-found var(--duration-slow) var(--ease-decelerate); }
+@keyframes session-thread-found { from { outline-color: transparent; outline-offset: 10px; } }
 @keyframes session-thread-live { 50% { opacity: 0.3; } }
 @keyframes session-thread-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .entry, .newPill, .said, .standing[data-status='requested'], .state[data-state='running']::before, .entry[data-kind='output'] .mono::after { animation: none; }
+  .entry, .entry[data-found='here'] .bubble, .record[data-found='here'], .routing[data-found='here'], .newPill, .said, .standing[data-status='requested'], .state[data-state='running']::before, .entry[data-kind='output'] .mono::after { animation: none; }
 }

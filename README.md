@@ -7,6 +7,10 @@ Bring your signed-in coding CLIs and local models into one console. Follow each 
 [![CI](https://github.com/ashlrai/phantom/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/phantom/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/%40ashlr%2Fphantom)](https://www.npmjs.com/package/@ashlr/phantom)
 [![License: MIT](https://img.shields.io/github/license/ashlrai/phantom)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/ashlrai/phantom?logo=github)](https://github.com/ashlrai/phantom/stargazers)
+[![npm downloads](https://img.shields.io/npm/dm/%40ashlr%2Fphantom?logo=npm&label=npm%20downloads)](https://www.npmjs.com/package/@ashlr/phantom)
+[![Latest release](https://img.shields.io/github/v/release/ashlrai/phantom?sort=semver)](https://github.com/ashlrai/phantom/releases/latest)
+[![Discord](https://img.shields.io/badge/Discord-The%20Dev%20Shack-5865F2?logo=discord&logoColor=white)](https://discord.gg/jBQrSU6XeD)
 
 [Quickstart](#quickstart) · [Documentation](docs/README.md) · [For agents](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-MCP-CLI.md) · [Desktop](#the-desktop-app-macos) · [Guided onboarding](https://phm.dev/connect)
 
@@ -35,7 +39,7 @@ Agents run the factory; the human owner acts as a passive board member. Agents p
 | **Secrets** | Connect the separately installed Phantom Secrets companion through MCP; use secret references in agent work. [Companion setup](docs/COMPANIONS.md). |
 | **Release train** | Inspect release status, qualification and publication evidence. Releases use the repository's sanctioned workflow. [Release guide](https://github.com/ashlrai/phantom/blob/master/docs/RELEASING.md). |
 
-**Work with me** is interactive agent work. **Work for me** is the fleet. Resident autonomy ships **dormant**, requires a signed grant and is macOS-only. Saving an outcome does not activate it. [Set up autonomy](docs/AUTONOMY-SETUP.md).
+**Work with me** is interactive agent work. **Work for me** is the fleet. Resident autonomy ships **dormant** until you register the per-user daemon. macOS uses launchd through a signed grant. Linux uses systemd --user. Windows uses a per-user schtasks logon task. Saving an outcome does not activate it. [Set up autonomy](docs/AUTONOMY-SETUP.md).
 
 ## Quickstart
 
@@ -48,6 +52,20 @@ phm --version
 phm verse --no-open --json
 ```
 
+Windows, per user, no Administrator prompt:
+
+```powershell
+irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1 | iex
+```
+
+Linux and macOS can use the same checks with `scripts/install-release.sh`. From a source checkout, `./install.sh` still builds and links `phm`. Then register the daemon:
+
+| OS | Daemon | Command |
+| --- | --- | --- |
+| macOS | launchd | `phm authority resident start` after a signed grant |
+| Linux | systemd --user | `phm daemon install` |
+| Windows | schtasks logon task, limited and interactive | `phm daemon install` |
+
 Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the printed read token. The console asks for the mutation token when needed. Keep both tokens private.
 
 1. Open **Resources** and check an account's chat readiness. Sign in through its vendor CLI or connect a tool-capable local model.
@@ -56,7 +74,7 @@ Open [http://127.0.0.1:7777/verse/](http://127.0.0.1:7777/verse/) and paste the 
 
 Provider installation and sign-in may take longer. [Full first-session guide](docs/QUICKSTART.md#make-your-first-useful-turn) · [Troubleshooting](docs/QUICKSTART.md#troubleshoot-account-setup-and-return-to-the-tour).
 
-This source tree targets version 3.30.72; check canonical release availability and exact matching assets before installation.
+This source tree targets version 3.30.73; check canonical release availability and exact matching assets before installation.
 The npm badge reads the registry; source version and published release can differ. [Qualified releases](https://github.com/ashlrai/phantom/releases/latest).
 
 ### Connect your coding agent
@@ -110,7 +128,7 @@ A completed run, a merged PR and a published release are separate evidence. Phan
 
 The macOS desktop app wraps the same console and bundles the CLI. Download from [GitHub releases](https://github.com/ashlrai/phantom/releases/latest). See the [desktop installation guide](https://github.com/ashlrai/phantom/blob/master/desktop/README.md#install) for signed Apple silicon archives, matching manifests and platform limitations. The screenshots here show the browser console, not an installed native window.
 
-The CLI and browser console also run on Linux and Windows; resident autonomy remains macOS-only.
+The CLI, browser console, and per-user daemon run on macOS, Linux, and Windows.
 
 ## CLI reference
 
@@ -197,6 +215,31 @@ Phantom is built mostly by coding agents, including Phantom's own fleet. The rul
 - **Evidence over claims**: a completed run, a merged PR and a published release are recorded separately, and unknown readings stay unknown.
 
 To watch it work, run `phm org --text` for the live leader, lanes and running jobs, or `phm improve propose --json` for evidence-backed improvement proposals.
+
+## Join the mission
+
+AshlrAI is an engineering firm. We build tools like Phantom to make our own work faster and more AI-native, then open-source them so every engineer can do the same. If you build with coding agents, build this with us.
+
+- **Start here:** read [CONTRIBUTING.md](CONTRIBUTING.md). Your coding agent can follow [AGENTS.md](AGENTS.md) and [llms.txt](llms.txt).
+- **Pick an issue:** [`good first issue`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [`help wanted`](https://github.com/ashlrai/phantom/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
+- **See the whole lineup:** [ashlr.ai/open-source](https://ashlr.ai/open-source).
+- **Talk with us:** [The Dev Shack](https://discord.gg/jBQrSU6XeD) on Discord.
+
+### Star history
+
+<a href="https://star-history.com/#ashlrai/phantom&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date" />
+    <img alt="Phantom star history" src="https://api.star-history.com/svg?repos=ashlrai/phantom&type=Date" width="600" />
+  </picture>
+</a>
+
+### Contributors
+
+<a href="https://github.com/ashlrai/phantom/graphs/contributors">
+  <img alt="Phantom contributors" src="https://contrib.rocks/image?repo=ashlrai/phantom" />
+</a>
 
 ## Documentation and contributing
 

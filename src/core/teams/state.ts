@@ -21,6 +21,11 @@ export interface TeamState { team: string; repos: string[]; members: Member[]; c
 
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v : d);
 
+/** Access requests and consequential handoffs are human-required. Neither field means the decision may be recorded as an agent. */
+export function approvalRequiresHuman(approval: Pick<Approval, 'action' | 'access'>): boolean {
+  return approval.action !== null || approval.access !== null;
+}
+
 export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): TeamState {
   const members = new Map<string, Member>();
   const repos = new Set<string>();
@@ -92,7 +97,14 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.requested': {
         const h = handoffs.get(str(p.handoffId));
-        if (h?.action) { approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null }); h.approvalId = ev.id; }
+        if (h?.action) {
+          // A consequential handoff stays human-required. An audience flag cannot downgrade it.
+          approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: h.action, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null });
+          h.approvalId = ev.id;
+        } else if (h && p['audience'] === 'agent') {
+          // No workspace effect and no handoff transition. An agent principal may record the decision.
+          approvals.set(ev.id, { id: ev.id, handoffId: h.id, action: null, access: null, note: null, requestedBy: ev.actor.id, state: 'pending', decidedBy: null });
+        }
         break;
       }
       case 'access.requested': {
@@ -104,11 +116,16 @@ export function foldTeam(team: string, events: TeamEvent[], now = Date.now()): T
       }
       case 'approval.decided': {
         const a = approvals.get(str(p.approvalId));
-        // Only humans with owner/admin role can decide; agents never self-approve.
-        if (a && a.state === 'pending' && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role)) {
-          a.state = p.decision === 'approve' ? 'approved' : 'denied'; a.decidedBy = ev.actor.id;
-          const h = a.handoffId ? handoffs.get(a.handoffId) : undefined;
-          if (h) { h.state = a.state === 'approved' ? 'open' : 'declined'; h.updatedAt = ev.ts; }
+        const humanDecider = !!a && ev.actor.kind === 'human' && m.kind === 'human' && ['owner', 'admin'].includes(m.role);
+        // Agents record only approvals that are not human-required. They do not move the handoff.
+        const agentDecider = !!a && ev.actor.kind === 'agent' && !approvalRequiresHuman(a);
+        if (a && a.state === 'pending' && (humanDecider || agentDecider)) {
+          a.state = p.decision === 'approve' ? 'approved' : 'denied';
+          a.decidedBy = ev.actor.id;
+          if (humanDecider) {
+            const h = a.handoffId ? handoffs.get(a.handoffId) : undefined;
+            if (h) { h.state = a.state === 'approved' ? 'open' : 'declined'; h.updatedAt = ev.ts; }
+          }
         }
         break;
       }

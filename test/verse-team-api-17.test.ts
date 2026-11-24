@@ -111,6 +111,13 @@ describe('verse team api', () => {
     expect((await call(api, { path: '/api/verse/team/other', method: 'GET' })).handled).toBe(false);
   });
 
+  it('does not invite as the local human from the server environment', async () => {
+    ownerJoined();
+    const r = await call(createTeamApi(), { path: INVITE, body: { team: T, githubUser: 'octocat' } });
+    expect(r.status).toBe(403);
+    expect(r.wire).toEqual({ code: 'TEAM_REFUSED', error: 'Only a team owner or admin can invite.' });
+  });
+
   it('POST invite with the mutation token returns a membership-only invite', async () => {
     ownerJoined();
     const r = await call(make(), { path: INVITE, body: { team: T, githubUser: 'octocat' } });

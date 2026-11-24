@@ -17,10 +17,11 @@
  *   nothing back), so it is not carried across.
  *
  * DEFAULTS (Mason's decisions, recorded 2026-09-24 — binding):
- *   balanced (default) — Claude keeps 40% of its weekly window for Mason and
- *                        is never touched while its 5-hour window is above 70%
- *                        (protects his live session). Grok 0% reserve. Local
- *                        unlimited. Codex OFF (no usage) until switched on.
+ *   balanced (default): included seats use CAP_POLICY (reserve 0, session
+ *                        window 100). A zero reserve uses the included window
+ *                        only and never authorizes paid overage. Grok 0%
+ *                        reserve. Local unlimited. Codex follows the same
+ *                        included-allowance default.
  *   all-in             — autonomy may use all available usage (no reserve, no
  *                        session ceiling). Codex stays OFF by default.
  *   reserve            — free local models plus only a small paid cap: every
@@ -32,6 +33,7 @@
  * defaults from here so the "reset to default" hint can never drift from the
  * server.
  */
+import { CAP_POLICY } from '../authority/cap-policy.js';
 import {
   COMPLEXITY_ROLES,
   COMPLEXITY_TASK_KINDS,
@@ -149,9 +151,9 @@ export const MODE_DEFAULTS: Readonly<Record<BudgetMode, Readonly<Record<BudgetEn
       devin: Object.freeze({ enabled: true, reservePercent: 0 }),
     }),
     balanced: Object.freeze({
-      claude: Object.freeze({ enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 }),
+      claude: Object.freeze({ enabled: true, reservePercent: CAP_POLICY.reserveFloorPercent, maxSessionWindowPercent: CAP_POLICY.maxSessionWindowPercent }),
       'claude-api': Object.freeze({ enabled: false, reservePercent: 0 }),
-      codex: Object.freeze({ enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 }),
+      codex: Object.freeze({ enabled: true, reservePercent: CAP_POLICY.reserveFloorPercent, maxSessionWindowPercent: CAP_POLICY.maxSessionWindowPercent }),
       grok: Object.freeze({ enabled: true, reservePercent: 0 }),
       local: Object.freeze({ enabled: true, reservePercent: 0 }),
       devin: Object.freeze({ enabled: true, reservePercent: 0 }),

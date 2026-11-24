@@ -22,7 +22,7 @@ account metadata, never billing; a passing `phm doctor` does not prove provider 
 ## Requirements
 
 - Node.js >=22.15.0 (`package.json` `engines`), npm and Git.
-- CLI and console run on macOS, Linux and Windows; resident runtime and Universe experiment execution are macOS-only.
+- CLI, console, and the per-user daemon run on macOS (launchd), Linux (systemd --user), and Windows (schtasks). Universe experiment execution still needs macOS `sandbox-exec`.
 
 ## Install
 
@@ -43,6 +43,30 @@ cd phantom
 ./install.sh
 phm --version      # re-open your shell if ~/.local/bin is not yet on PATH
 ```
+
+On Windows, from PowerShell, without an Administrator prompt:
+
+```powershell
+irm https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install.ps1 | iex
+```
+
+On Linux or macOS, the same checks are in `scripts/install-release.sh`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ashlrai/phantom/master/scripts/install-release.sh | bash
+```
+
+That script detects the architecture, downloads a published per-OS release asset when one exists, and otherwise installs the npm package after verifying its sha512 integrity (and a GitHub attestation when `gh` is installed). It puts `phm` on your user PATH, runs `phm doctor`, and on Linux runs `phm daemon install`.
+
+The per-user daemon:
+
+| OS | Manager | Register | Stop |
+| --- | --- | --- | --- |
+| macOS | launchd | `phm authority resident start` | `phm authority resident stop` |
+| Linux | systemd --user | `phm daemon install` | `phm daemon uninstall` |
+| Windows | schtasks, per-user logon task, limited and interactive | `phm daemon install` | `phm daemon uninstall` |
+
+`phm daemon service-status` reads the service. It does not start a SYSTEM service and it does not ask for Administrator.
 
 Or build and run without touching PATH: `npm ci && npm run build`, then
 `node bin/ashlr --version` (or `npm run dev -- --version` straight from

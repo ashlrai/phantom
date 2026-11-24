@@ -92,6 +92,8 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(tool?.inputSchema.properties?.['thread']).toMatchObject({ type: 'string', maxLength: 512 });
     expect(tool?.inputSchema.properties?.['state'])
       .toMatchObject({ type: 'string', enum: ['RECEIVED', 'ASSIGNED', 'RUNNING', 'BLOCKED', 'VERIFIED'] });
+    expect(tool?.inputSchema.properties?.['since']).toMatchObject({ type: 'string' });
+    expect(tool?.inputSchema.properties?.['before']).toMatchObject({ type: 'string' });
   });
 
   it.each([
@@ -99,6 +101,9 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     [{ limit: '5' }], [{ limit: null }], [{ thread: 5 }], [{ thread: null }],
     [{ thread: 'x'.repeat(513) }], [{ state: 'bogus' }], [{ state: 'running' }],
     [{ state: 5 }], [{ state: null }], [{ path: '/tmp/x' }], [{ command: 'read' }],
+    [{ since: 5 }], [{ since: 'bogus' }], [{ since: '' }], [{ since: null }],
+    [{ before: 5 }], [{ before: 'not-a-time' }], [{ before: null }],
+    [{ since: '15m', before: 'bogus' }],
     [{ extra: 1 }], [{ limit: 1, root: '/tmp/fake-root' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const workBoard = vi.fn();
@@ -118,6 +123,14 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(workBoard).toHaveBeenLastCalledWith({ limit: 5, thread: REF_A, state: undefined });
     await callBoard(client, { state: 'BLOCKED' });
     expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: 'BLOCKED' });
+    // since/before arrive as the shared time grammar and reach the reader as
+    // resolved epoch-ms bounds — relative spellings anchor on the server clock.
+    await callBoard(client, { since: '15m', before: String(now + 60_000) });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
+      since: now - 900_000, before: now + 60_000 });
+    await callBoard(client, { since: iso(now - 1_000) });
+    expect(workBoard).toHaveBeenLastCalledWith({ limit: 20, thread: undefined, state: undefined,
+      since: now - 1_000, before: undefined });
   });
 
   it('filters real board items by classified state with a true matched total', async () => {
@@ -132,6 +145,24 @@ describe('RQ-PHX-WORKBOARDMCP318 fleet_work_board MCP tool', () => {
     expect(items).toHaveLength(1);
     expect(items[0]!['id']).toBe('bus-request-c');
     expect(items[0]!['state']).toBe('RECEIVED');
+  });
+
+  it('filters real board items by the [since, before) receivedAt window', async () => {
+    post(slackRequest('slack-request-a', REF_A));
+    post(busRequest('bus-request-b'));
+    post(busRequest('bus-request-c'));
+    // receivedAt: a=now-3000, b=now-2000, c=now-1000 after the stepped clock.
+    const client = await connect();
+    const { parsed } = await callBoard(client, { since: String(now - 2_000), before: String(now - 1_000) });
+    expect(parsed['matched']).toBe(1);
+    expect(parsed['truncated']).toBe(false);
+    const items = parsed['items'] as Array<Record<string, unknown>>;
+    expect(items.map(item => item['id'])).toEqual(['bus-request-b']);
+    // `since` alone is inclusive and still reports the true filtered total.
+    const tail = await callBoard(client, { since: String(now - 2_000) });
+    expect(tail.parsed['matched']).toBe(2);
+    expect((tail.parsed['items'] as Array<Record<string, unknown>>).map(item => item['id']))
+      .toEqual(['bus-request-c', 'bus-request-b']);
   });
 
   it('reports an empty board on an empty store, never inventing items', async () => {

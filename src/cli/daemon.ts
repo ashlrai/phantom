@@ -161,6 +161,7 @@ const DAEMON_SUBCOMMANDS = new Set<DaemonSubcommand>([
 
 const NO_FLAGS = new Set<string>();
 const JSON_FLAG = new Set(['--json']);
+const STATUS_FLAGS = new Set(['--json', '--fast']);
 const DOCTOR_FLAGS = new Set(['--json', '--clear-stale']);
 const INSTALL_FLAGS = new Set(['--no-autostart']);
 const RESOLVE_STATE_VALUE_FLAGS = new Set([
@@ -181,7 +182,7 @@ const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   stop: 'Usage: ashlr daemon stop',
   pause: 'Usage: ashlr daemon pause',
   resume: 'Usage: ashlr daemon resume',
-  status: 'Usage: ashlr daemon status [--json]',
+  status: 'Usage: ashlr daemon status [--fast] [--json]',
   health: 'Usage: ashlr daemon health [--json]',
   doctor:
     'Usage: ashlr daemon doctor [--clear-stale] [--json]\n' +
@@ -197,7 +198,8 @@ const DAEMON_USAGE: Record<DaemonSubcommand, string> = {
   'resolve-state':
     'Usage: ashlr daemon resolve-state --dry-run --quarantine-plan-id <uuid> --quarantine-receipt-sha256 <sha256> [--json]\n' +
     '   or: ashlr daemon resolve-state --execute --plan-id <uuid> --plan-sha256 <sha256> --authorize <plan-sha256> --confirm <plan-sha256> [--json]',
-  install: 'Usage: ashlr daemon install [--no-autostart] (temporarily unavailable)',
+  install: 'Usage: ashlr daemon install [--no-autostart]\n'
+    + 'On Linux and Windows this registers the per-user daemon. macOS resident install is temporarily unavailable; use ashlr authority resident start.',
   uninstall: 'Usage: ashlr daemon uninstall',
   'service-status': 'Usage: ashlr daemon service-status [--json]',
 };
@@ -209,14 +211,14 @@ Subcommands:
   pause           Halt autonomous dispatch only (your own write tools keep working)
   resume          Lift the pause
   stop            Request an orderly daemon shutdown (WIDE: sets the global kill switch)
-  status          Show daemon state [--json]
+  status          Show daemon state [--fast] [--json]
   health          Show liveness, log freshness, frontier clients and restart recommendation [--json]
   doctor          Prove the daemon is really running; --clear-stale fixes a stale record
   activation-preflight  Verify operator-custodied signed release and rollback evidence (read-only)
   activate        Permit-gated 3.2.7 selection while preserving the exact stopped service state
   recover-state   Preview or explicitly execute one exact state quarantine
   resolve-state   Preview or explicitly resolve one exact quarantine
-  install         Temporarily unavailable (resident service mutation restricted)
+  install         Register the per-user daemon on Linux and Windows
   uninstall       Remove the OS service
   service-status  Show OS service state [--json]
 
@@ -1490,6 +1492,7 @@ async function cmdDaemonResolveState(flags: ResolveStateFlags): Promise<number> 
 
 async function importServiceManager(): Promise<{
   install: (opts: ServiceInstallOptions) => Promise<void>;
+  registerPerUserDaemon: (opts: ServiceInstallOptions) => Promise<void>;
   uninstall: (opts: ServiceInstallOptions) => Promise<void>;
   ensureRunning: (opts: ServiceInstallOptions) => Promise<ServiceStatusResult>;
   serviceStatus: (opts: ServiceInstallOptions) => ServiceStatusResult;
@@ -1498,6 +1501,7 @@ async function importServiceManager(): Promise<{
     const mod = await import('../core/daemon/service.js');
     return {
       install: mod.install,
+      registerPerUserDaemon: mod.registerPerUserDaemon,
       uninstall: mod.uninstall,
       ensureRunning: mod.ensureRunning,
       serviceStatus: mod.serviceStatus,
@@ -1511,21 +1515,28 @@ async function importServiceManager(): Promise<{
 // Subcommand: install
 // ---------------------------------------------------------------------------
 
+function perUserDaemonPlatform(platform = process.platform): boolean {
+  return platform === 'linux' || platform === 'win32';
+}
+
 async function cmdDaemonInstall(autostart: boolean): Promise<number> {
   const tty = process.stdout.isTTY === true;
   const col = makeColors(tty);
+  const perUser = perUserDaemonPlatform();
 
-  try {
-    assertResidentServiceInstallAuthorized();
-  } catch (error) {
-    console.error(
-      col.red('error: ')
-      + 'daemon service installation is temporarily unavailable: '
-      + (error instanceof Error ? error.message : String(error))
-      + '. No config or service state was inspected or changed. '
-      + 'Existing services support status and uninstall only.',
-    );
-    return 1;
+  if (!perUser) {
+    try {
+      assertResidentServiceInstallAuthorized();
+    } catch (error) {
+      console.error(
+        col.red('error: ')
+        + 'daemon service installation is temporarily unavailable: '
+        + (error instanceof Error ? error.message : String(error))
+        + '. No config or service state was inspected or changed. '
+        + 'Existing services support status and uninstall only.',
+      );
+      return 1;
+    }
   }
 
   const svcMod = await importServiceManager();
@@ -1553,13 +1564,16 @@ async function cmdDaemonInstall(autostart: boolean): Promise<number> {
   const opts: ServiceInstallOptions = daemonServiceInstallOptions(cfg, { autostart });
 
   try {
-    await svcMod.install(opts);
+    if (perUser) await svcMod.registerPerUserDaemon(opts);
+    else await svcMod.install(opts);
   } catch (e) {
     console.error(col.red('error: ') + 'Service installation failed: ' + (e instanceof Error ? e.message : String(e)));
     return 1;
   }
 
-  const status = autostart ? await svcMod.ensureRunning(opts) : svcMod.serviceStatus(opts);
+  // ensureRunning stays behind the resident-service denial. The per-user
+  // transaction already applied the requested activation state.
+  const status = !perUser && autostart ? await svcMod.ensureRunning(opts) : svcMod.serviceStatus(opts);
   console.log('');
   console.log(col.green('  ✓ daemon service installed') + col.dim(` [${status.platformSpec}]`));
   if (status.serviceFilePath) {
@@ -1686,8 +1700,17 @@ async function cmdDaemonServiceStatus(jsonMode: boolean): Promise<number> {
   }
   console.log('');
   if (!status.installed) {
-    console.log(col.dim('  Resident service installation is temporarily unavailable.'));
-    console.log(col.dim('  One-shot admitted workflows remain available.'));
+    if (perUserDaemonPlatform()) {
+      console.log(col.dim('  Register the per-user daemon with `ashlr daemon install`.'));
+      console.log(col.dim(
+        process.platform === 'linux'
+          ? '  Linux uses systemd --user in your user session.'
+          : '  Windows uses a per-user schtasks logon task (limited, interactive).',
+      ));
+    } else {
+      console.log(col.dim('  Resident service installation is temporarily unavailable.'));
+      console.log(col.dim('  One-shot admitted workflows remain available.'));
+    }
     console.log('');
   }
   return 0;
@@ -1747,7 +1770,9 @@ export async function cmdDaemon(args: string[]): Promise<number> {
   } else {
     const allowed = sub === 'install'
       ? INSTALL_FLAGS
-      : sub === 'status' || sub === 'health' || sub === 'service-status'
+      : sub === 'status'
+        ? STATUS_FLAGS
+        : sub === 'health' || sub === 'service-status'
         ? JSON_FLAG
         : sub === 'doctor'
           ? DOCTOR_FLAGS
@@ -1766,6 +1791,10 @@ export async function cmdDaemon(args: string[]): Promise<number> {
     case 'resume':
       return cmdDaemonPause(false);
     case 'status':
+      if (rest.includes('--fast')) {
+        const { cmdDaemonStatusFast } = await import('./daemon-status-fast.js');
+        return cmdDaemonStatusFast(rest.includes('--json'));
+      }
       return cmdDaemonStatus(rest.includes('--json'));
     case 'health':
       return cmdDaemonHealth(rest.includes('--json'));

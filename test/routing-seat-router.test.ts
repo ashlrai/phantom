@@ -107,11 +107,11 @@ describe('budget policy defaults (Mason, 2026-09-24)', () => {
     expect(decision.exclusions[0]?.details).toContainEqual(expect.objectContaining({ kind: 'grant' }));
   });
 
-  it('defaults to balanced with Claude 40% weekly reserve + 70% 5-hour ceiling, Grok 0%, local unlimited and included Codex eligible', () => {
+  it('defaults to balanced with reserve 0 and a 100% session window, Grok 0%, local unlimited and included Codex eligible', () => {
     const p = balanced();
     expect(p.mode).toBe('balanced');
     expect(p.seats).toEqual({});
-    expect(effectiveSeatPolicy(p, 'claude')).toEqual({ seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 });
+    expect(effectiveSeatPolicy(p, 'claude')).toEqual({ seatId: 'claude', enabled: true, reservePercent: 0, maxSessionWindowPercent: 100 });
     expect(effectiveSeatPolicy(p, 'grok')).toEqual({ seatId: 'grok', enabled: true, reservePercent: 0 });
     expect(effectiveSeatPolicy(p, 'local:qwen')).toEqual({ seatId: 'local:qwen', enabled: true, reservePercent: 0 });
     expect(effectiveSeatPolicy(p, 'codex-personal').enabled).toBe(true);
@@ -140,8 +140,8 @@ describe('budget policy defaults (Mason, 2026-09-24)', () => {
   });
 
   it.each(['constructor', 'toString'])('uses a real default for an unstored prototype-like seat ID %s', (seatId) => {
-    expect(effectiveSeatPolicy(balanced(), seatId)).toEqual({ seatId, enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 });
-    expect(effectiveSeatPolicy(balanced(), seatId, 'codex')).toEqual({ seatId, enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 });
+    expect(effectiveSeatPolicy(balanced(), seatId)).toEqual({ seatId, enabled: true, reservePercent: 0, maxSessionWindowPercent: 100 });
+    expect(effectiveSeatPolicy(balanced(), seatId, 'codex')).toEqual({ seatId, enabled: true, reservePercent: 0, maxSessionWindowPercent: 100 });
   });
 });
 
@@ -190,7 +190,7 @@ describe('applying updates', () => {
 
   it('a seat patch stores the full effective policy and stamps updatedAt', () => {
     const next = applyBudgetUpdate(balanced(), { seatId: 'codex-personal', policy: { enabled: true } }, now);
-    expect(next.seats['codex-personal']).toEqual({ seatId: 'codex-personal', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 });
+    expect(next.seats['codex-personal']).toEqual({ seatId: 'codex-personal', enabled: true, reservePercent: 0, maxSessionWindowPercent: 100 });
     expect(next.updatedAt).toBe(now);
   });
 
@@ -198,7 +198,7 @@ describe('applying updates', () => {
     const withCap = applyBudgetUpdate(balanced(), { seatId: 'claude', policy: { dailyUsdCap: 5 } }, now);
     expect(withCap.seats['claude']!.dailyUsdCap).toBe(5);
     const cleared = applyBudgetUpdate(withCap, { seatId: 'claude', policy: { dailyUsdCap: null, maxSessionWindowPercent: null } } as never, now);
-    expect(cleared.seats['claude']).toEqual({ seatId: 'claude', enabled: true, reservePercent: 40 });
+    expect(cleared.seats['claude']).toEqual({ seatId: 'claude', enabled: true, reservePercent: 0 });
   });
 
   it('a mode switch re-bases reserves but keeps on/off and a hard USD cap', () => {
@@ -285,17 +285,17 @@ describe('assessSeat — autonomy headroom', () => {
       sessionUsedPercent: 15,
       weeklyUsedPercent: 20,
       bindingWindow: 'weekly',
-      autonomyHeadroomPercent: 40,
+      autonomyHeadroomPercent: 80,
       eligibleForAutonomy: true,
       resetAt: null,
     });
-    expect(a.headroom.reasons[0]).toBe('40% of the weekly window is left for autonomy (40% kept for you).');
+    expect(a.headroom.reasons[0]).toBe('80% of the weekly window is left for autonomy.');
     expect(a.headroom.reasons.some((r) => r.includes('Fable-only weekly window is spent') && r.includes('that model only'))).toBe(true);
     expect(a.exhausted).toBe(false);
   });
 
-  it('never touches Claude while its 5-hour window is above 70% — quoting the provider reset verbatim', () => {
-    const a = assessSeat(claude(82, 20), claudePolicy, opts);
+  it('a configured 70% session ceiling quotes the provider reset verbatim', () => {
+    const a = assessSeat(claude(82, 20), { ...claudePolicy, reservePercent: 40, maxSessionWindowPercent: 70 }, opts);
     expect(a.headroom.eligibleForAutonomy).toBe(false);
     expect(a.headroom.bindingWindow).toBe('session');
     expect(a.headroom.autonomyHeadroomPercent).toBe(0);
@@ -305,8 +305,8 @@ describe('assessSeat — autonomy headroom', () => {
     expect(a.reopensAt).toBeNull();
   });
 
-  it('stops at the weekly reserve', () => {
-    const a = assessSeat(claude(10, 61), claudePolicy, opts);
+  it('stops at a configured weekly reserve', () => {
+    const a = assessSeat(claude(10, 61), { ...claudePolicy, reservePercent: 40, maxSessionWindowPercent: 70 }, opts);
     expect(a.headroom.eligibleForAutonomy).toBe(false);
     expect(a.headroom.reasons[0]).toContain('The weekly window is 61% used; 40% is kept for you, so autonomy stops at 60%');
   });
@@ -490,10 +490,15 @@ describe('routeSeat — today’s machine in balanced mode', () => {
     }
   });
 
-  it('protects a live Claude session: 5-hour above 70% sends high work elsewhere', () => {
-    const d = routeSeat(auto('code', 'high'), [claude(75, 20), grok(12), local()], balanced(), opts);
-    expect(d.seatId).toBe('local:qwen3.8:27b-ctx64k');
-    expect(d.exclusions[0]!.reasons[0]).toContain('autonomy stops at 70% to protect your live session');
+  it('uses the included window at the default ceiling and still honors an explicit 70% stop', () => {
+    const open = routeSeat(auto('code', 'high'), [claude(75, 20), grok(12), local()], balanced(), opts);
+    expect(open.exclusions.find((row) => row.seatId === 'claude')).toBeUndefined();
+    const held = routeSeat(auto('code', 'high'), [claude(75, 20), grok(12), local()], {
+      ...balanced(),
+      seats: { claude: { seatId: 'claude', enabled: true, reservePercent: 0, maxSessionWindowPercent: 70 } },
+    }, opts);
+    expect(held.seatId).not.toBe('claude');
+    expect(held.exclusions.find((row) => row.seatId === 'claude')?.reasons[0]).toContain('autonomy stops at 70% to protect your live session');
   });
 
   it('closes the Claude fail-open: unknown Claude usage is never routed autonomous work', () => {
@@ -648,7 +653,7 @@ describe('seat reasons as data (3.10.1)', () => {
   });
 
   it('keeps Claude\'s reset as the provider\'s words, never an instant', () => {
-    const a = assessSeat(claude(15, 70), effectiveSeatPolicy(balanced(), 'claude'), opts);
+    const a = assessSeat(claude(15, 70), { seatId: 'claude', enabled: true, reservePercent: 40, maxSessionWindowPercent: 70 }, opts);
     const reserve = a.details.find((r) => r.kind === 'reserve')!;
     expect(reserve).toEqual({
       kind: 'reserve',
@@ -674,7 +679,7 @@ describe('seat reasons as data (3.10.1)', () => {
     const d = routeSeat(auto('code', 'medium'), [claude(15, 70), codexSpent('codex-cmp', 40), codexSpent('codex-personal', 30), grok(6)], balanced(), opts);
     expect(d.summary).toBe('grok — 94% of its weekly window left; balanced mode ranks by admitted headroom and funding category; quality and comparable latency are unmeasured.');
     expect(d.why).toBe('Routed autonomous medium-difficulty code work to grok (grok) with 94% of its weekly window left for autonomy: '
-      + 'balanced mode ranks by admitted headroom and funding category; quality and comparable latency are unmeasured; held back 3 seats (claude, codex-cmp, codex-personal).');
+      + 'balanced mode ranks by admitted headroom and funding category; quality and comparable latency are unmeasured; held back 2 seats (codex-cmp, codex-personal).');
     expect(d.why).not.toMatch(/…|\(resets/);
   });
 

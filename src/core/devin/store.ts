@@ -78,6 +78,15 @@ export function devinHome(): string {
   return join(ashlrHome(), DEVIN_DIR);
 }
 
+/**
+ * pr-reviews.jsonl's own read bound (src/core/devin/pr-review.ts
+ * journalRows): past it the writer refuses every trigger as
+ * 'unavailable'. Kept here — the devin directory's layout owner — so
+ * journal readers share the writer's bound without importing the
+ * trigger module.
+ */
+export const PR_REVIEW_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
+
 export function devinTasksDir(): string {
   return join(devinHome(), DEVIN_TASKS_DIR);
 }

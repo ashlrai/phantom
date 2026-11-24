@@ -5,6 +5,8 @@
  * shared gates (dispatch flag, mutation token, strict bodies and queries).
  */
 import { describe, expect, it, vi } from 'vitest';
+import { readEvents } from '../src/core/teams/store.js';
+import { principalFromWebToken } from '../src/core/approvals/actor.js';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -230,6 +232,18 @@ describe('ops api', () => {
     expect(leaders.leaders.find((m) => m.id === 'agent:grok-bot/mason')?.leader).toBe(true);
     expect(leaders.pendingApprovals[0]).toMatchObject({ handoffId: 'e9', action: 'merge' });
     expect(leaders.canPost).toBe(true);
+  });
+
+  it('records a leaders post as the web token principal, never as a human from the environment', async () => {
+    const { postMessage: _ignored, ...rest } = deps();
+    const api = createOpsApi(rest);
+    const forged = await request(api, { path: VERSE_OPS_LEADERS_MESSAGES_PATH, method: 'POST', body: { text: 'Go', actor: 'human:mason' } });
+    expect(forged.status).toBe(400);
+    const ok = await request(api, { path: VERSE_OPS_LEADERS_MESSAGES_PATH, method: 'POST', body: { text: 'Hold for green' } });
+    expect(ok.status).toBe(201);
+    const posted = readEvents('default').find((event) => event.type === 'message.posted');
+    expect(posted?.actor).toMatchObject({ kind: 'agent', id: principalFromWebToken(TOKEN).id, principal: principalFromWebToken(TOKEN).id });
+    expect(JSON.stringify(posted)).not.toContain(TOKEN);
   });
 
   it('posts to the leaders channel through the shared gate', async () => {

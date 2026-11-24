@@ -4,8 +4,9 @@
  * shared task board and fleet queue `work mine`'s board section reads, the
  * owner-chat share receipts ledger `inbox` consults for `agent-chat-owner`
  * envelopes, the legacy `phm bus` mailbox `work mine` still reads, the
- * bot-seat store `work mine`'s seats section, `id list`'s seat participants
- * and the unified inbox seats source read, the agentnet peer work-dispatch
+ * bot-seat store `work mine`'s seats section, `id list`'s seat participants,
+ * the unified inbox seats source read and the seat apply path's notice
+ * receipts, the agentnet peer work-dispatch
  * journal `consumePeerWork` and the unified inbox peer-dispatch source read,
  * the agentnet peer coordination ledger `sendPeerMessage`, `readPeerInbox`,
  * `peers dispatch` and `phm fleet peer-ledger` parse, the claim-store
@@ -169,12 +170,15 @@ export interface UnifiedBusStatus {
     claims: 'readable' | 'unreadable' | null;
   };
   /** Bot-seat store (`<home>/.phantom/bots`) behind `work mine`'s seats
-   * section, `id list`'s seat participants and the unified inbox seats
-   * source — probed by `inspectSeatStore`, the file half of the same
-   * `snapshot()` `planSeatHandoffs` reads, so a sick roster or journal is
-   * named here instead of leaving status green while those reads report
-   * unavailable. `source` plus retained counts: `seats` roster rows,
-   * `states` seat-state entries, `handoffs` journaled records — 0 on a
+   * section, `id list`'s seat participants, the unified inbox seats
+   * source and the `bots handoff(s) --apply` notice receipts — probed by
+   * `inspectSeatStore`, the file half of the same `snapshot()`
+   * `planSeatHandoffs` reads plus the `handoff-notices.json` receipts map
+   * `applySeatHandoff` indexes and rewrites, so a sick roster, journal or
+   * receipts file is named here instead of leaving status green while
+   * those reads report unavailable. `source` plus retained counts:
+   * `seats` roster rows, `states` seat-state entries, `handoffs`
+   * journaled records, `notices` receipt-map entries — 0 on a
    * verified-missing store, null for a file that cannot be read or
    * validated, never a plan verdict, seat contents or quota evidence. */
   seats: {
@@ -182,6 +186,7 @@ export interface UnifiedBusStatus {
     seats: number | null;
     states: number | null;
     handoffs: number | null;
+    notices: number | null;
   };
   /** Agentnet peer work-dispatch journal (`<busRoot>/agentnet/work-dispatch.json`)
    * behind `phm agentnet peers dispatch` and the unified inbox peer-dispatch
@@ -407,7 +412,7 @@ export function readUnifiedBusStatus(options: UnifiedBusStatusOptions = {}): Uni
   try {
     seats = inspectSeatStore(options.seats?.home);
   } catch {
-    seats = { source: 'unavailable', seats: null, states: null, handoffs: null };
+    seats = { source: 'unavailable', seats: null, states: null, handoffs: null, notices: null };
   }
 
   // `consumePeerWork` writes the journal and `sendPeerMessage`/`readPeerInbox`
