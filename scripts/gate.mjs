@@ -527,10 +527,10 @@ export function buildCommands({ nodeBin, tscBin, tsBuildInfoFile }) {
 }
 
 /**
- * Phase A step specs, run in parallel by runStatic. The web-ui project is
- * typechecked inside `typecheck-fast` — `npm run typecheck:fast` runs tsgo on
- * both tsconfig projects, the same compiler `npm run typecheck` and hosted
- * fast-gate use — so there is no separate web step here.
+ * Phase A step specs, run in parallel by runStatic. The web-ui and desktop
+ * projects are typechecked inside `typecheck-fast` — `npm run typecheck:fast`
+ * runs tsgo on every tsconfig project, the same compiler `npm run typecheck`
+ * and hosted fast-gate use — so there is no separate project step here.
  */
 export function phaseASpecs({ nodeBin, npmCmd, tscBin, eslintBin, gateDir }) {
   const gate = (file) => join(gateDir, file);
@@ -562,6 +562,7 @@ export function checkTypeSpecs({ nodeBin, tsgoBin }) {
   return [
     { name: 'typecheck', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'tsconfig.json'] },
     { name: 'typecheck-web', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'src/web-ui/tsconfig.json'] },
+    { name: 'typecheck-desktop', cmd: nodeBin, args: [tsgoBin, '--noEmit', '-p', 'desktop/tsconfig.json'] },
   ];
 }
 

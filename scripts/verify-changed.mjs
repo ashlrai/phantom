@@ -342,12 +342,20 @@ export function typecheckProjects(changed) {
   return {
     backend: shared || changed.some((path) => /^(?:tsconfig[^/]*\.json$|src\/(?!web-ui\/|raycast\/)|test\/|scripts\/)/.test(path)),
     web: shared || changed.some((path) => path.startsWith('src/web-ui/')),
+    // desktop/tsconfig.json extends src/web-ui's and every src import the
+    // desktop sources make lives under src/core (graph, routing, fleet,
+    // verse); src/web-ui files never reach the project, but the inherited
+    // tsconfig does. Widen this if a desktop source ever imports outside
+    // src/core.
+    desktop: shared || changed.some((path) => path.startsWith('desktop/')
+      || path.startsWith('src/core/')
+      || path === 'src/web-ui/tsconfig.json'),
   };
 }
 
 /** Explicit worktree-local caches stay separate even when node_modules is shared. */
 export function typecheckArgs(root, config = 'tsconfig.json') {
-  const project = config === 'tsconfig.json' ? 'backend' : 'web';
+  const project = config === 'tsconfig.json' ? 'backend' : config === 'desktop/tsconfig.json' ? 'desktop' : 'web';
   return ['--noEmit', '-p', config, '--incremental', '--tsBuildInfoFile', resolve(root, '.ashlr-gate/verify', `${project}.tsbuildinfo`)];
 }
 
@@ -1303,6 +1311,53 @@ export function runWebTypecheck(root, timeout, run, spawn = spawnSync, exists = 
   return native;
 }
 
+/** Run the desktop compiler with the backend's native-first diagnostic policy. */
+export function runDesktopTypecheck(root, timeout, run, spawn = spawnSync, exists = existsSync) {
+  const config = 'desktop/tsconfig.json';
+  const native = runNativeTypecheck(root, timeout, spawn, exists, config);
+  if (native === null) return run('desktop typecheck', 'node_modules/typescript/bin/tsc', typecheckArgs(root, config), timeout);
+  console.log(`${native ? 'PASS' : 'FAIL'} desktop typecheck`);
+  return native;
+}
+
+/**
+ * The desktop fleet-map suite's declared inputs: authored desktop TypeScript
+ * (the test file plus the modules it imports), the src/core/graph registry it
+ * exercises, and the dependency manifests that provide vitest/jsdom. Deleted
+ * paths still count — a missing module must fail the suite, not skip it.
+ */
+export function desktopSuiteInputs(changed) {
+  return changed.some((path) => /^desktop\/.+\.(?:[cm]?tsx?)$/.test(path)
+    || path.startsWith('src/core/graph/')
+    || /^package(?:-lock)?\.json$/.test(path));
+}
+
+/** Preflight for the desktop suite: the vitest entry and its jsdom environment must be installed. */
+export function desktopSuitePreflight(root, exists = existsSync) {
+  for (const entry of ['node_modules/vitest/vitest.mjs', 'node_modules/jsdom/package.json']) {
+    if (!exists(resolve(root, entry))) {
+      return { ok: false, reason: `${entry} is absent; run npm ci to restore it` };
+    }
+  }
+  return { ok: true };
+}
+
+/** Run the standalone desktop vitest config; false on any suite failure. */
+export function runDesktopSuite(root, spawn = spawnSync) {
+  const result = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'desktop/vitest.config.mts'], {
+    cwd: root, encoding: 'utf8', timeout: 120_000,
+  });
+  if (result.stdout) console.log(result.stdout.trimEnd());
+  if (result.error || result.signal || result.status !== 0) {
+    if (result.stderr) console.error(result.stderr.trimEnd());
+    if (result.error) console.error(result.error.message);
+    console.log('FAIL desktop vitest suite');
+    return false;
+  }
+  console.log('PASS desktop vitest suite');
+  return true;
+}
+
 /** Scope the guard's failing file lists while preserving unexpected failures. */
 export function runRealioCheck(root, changed, spawn = spawnSync) {
   const result = spawn(process.execPath, ['scripts/check-realio-lane-membership.mjs'], {
@@ -1406,6 +1461,8 @@ export function verifyDedupeInput(root, exec = execFileSync, exists = existsSync
     eslint: eslintPreflight(root, exists).ok ? version('eslint') : '',
     typescript: version('typescript'),
     tsgo: exists(resolve(root, 'node_modules/.bin/tsgo')),
+    vitest: version('vitest'),
+    jsdom: version('jsdom'),
     node: process.version,
     platform: process.platform,
   };
@@ -1507,8 +1564,8 @@ function main() {
     selection = selectChangedFiles(changed, existing);
     conflictFiles = selectConflictScanFiles(changed, existing);
     projects = typecheckProjects(changed);
-    const scope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend only' : projects.web ? 'web only' : 'typecheck skipped';
-    console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
+    const scope = [projects.backend && 'backend', projects.web && 'web', projects.desktop && 'desktop'].filter(Boolean).join(' + ') || 'typecheck skipped';
+    console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
@@ -1739,7 +1796,17 @@ function main() {
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
-  if (projects.backend || projects.web) try {
+  if (!desktopSuiteInputs(changed)) {
+    console.log('PASS desktop vitest suite skipped: no desktop TypeScript, graph registry or manifest change');
+  } else {
+    const suite = desktopSuitePreflight(root);
+    if (!suite.ok) {
+      console.log(`SKIP desktop vitest suite: ${suite.reason}`);
+    } else if (!runDesktopSuite(root)) {
+      process.exitCode = 1;
+    }
+  }
+  if (projects.backend || projects.web || projects.desktop) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
@@ -1767,6 +1834,11 @@ function main() {
         if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
       } else {
         console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
+      }
+      if (projects.desktop) {
+        if (!runDesktopTypecheck(root, timeout, run)) process.exitCode = 1;
+      } else {
+        console.log('PASS desktop typecheck skipped: desktop project inputs unchanged');
       }
     });
     if (!held.acquired) {
