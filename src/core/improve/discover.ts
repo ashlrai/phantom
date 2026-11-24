@@ -416,6 +416,20 @@
  *     intake hook that kept throwing or silently stopped being
  *     recorded, and an empty producer family that kept re-earning its
  *     12-hour auto-stop each expiry never became work;
+ *   - the autonomous-action audit journal's recurring adverse outcomes:
+ *     the per-action {ts, action, repo, sandboxId, summary, result}
+ *     rows audit() in src/core/sandbox/audit.ts appends to
+ *     ~/.ashlr/audit/<UTC-date>.jsonl on every audited action across
+ *     the daemon loop, the inbox apply and merge path, plugins,
+ *     sandbox lifecycle, verify commands and verse surfaces —
+ *     recurring 'refused' and 'error' results folded per
+ *     (action, result) cell across distinct UTC days inside the
+ *     7-day window (auditBacklogItems below). Until now the journal's
+ *     only readers were `ashlr audit`'s human tail, the verse
+ *     control-api's bounded recent window and `phm fleet` status's
+ *     newest-eight list — point-in-time surfaces someone had to run —
+ *     so an action a gate kept refusing or machinery kept failing
+ *     never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -487,6 +501,7 @@ import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
 import { selfTickBacklogItems } from './self-tick-backlog.js';
+import { auditBacklogItems } from './audit-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1136,6 +1151,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's machinery and carries no repository column.
   items.push(...await selfTickBacklogItems({ repo }));
+
+  // Autonomous-action audit journal recurring adverse outcomes — the
+  // {ts, action, repo, sandboxId, summary, result} rows audit() appends
+  // to ~/.ashlr/audit/<UTC-date>.jsonl on every audited action. Until
+  // now the journal's only readers were `ashlr audit`'s human tail,
+  // the verse control-api's bounded recent window and `phm fleet`
+  // status's newest-eight list — point-in-time surfaces, so an action
+  // that kept being refused or kept erroring never became work. Each
+  // in-window date partition is read once through readLedgerTail's
+  // bounded no-follow tail; a cell emits only at the recurring bars of
+  // refused/error records across distinct UTC days inside the window,
+  // 'ok' rows — the writer's deliberate-off vocabulary included — never
+  // emit, an unreadable read yields nothing while a truncated tail
+  // folds lower-bound flagged, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // machinery and carries no repository column.
+  items.push(...await auditBacklogItems({ repo }));
   return { items, errors };
 }
 

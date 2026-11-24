@@ -914,7 +914,28 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   than folded, a truncated tail is stated as a lower bound, and rows
   emit only for the fleet's own repository since the journal
   describes this install's machinery and carries no repository
-  column.
+  column,
+  and the autonomous-action audit journal's recurring adverse
+  outcomes, the per-action {ts, action, repo, sandboxId, summary,
+  result} rows audit() in `src/core/sandbox/audit.ts` appends to
+  `~/.ashlr/audit/<UTC-date>.jsonl` — one append-only partition per
+  UTC day under the account home, never rotated or deleted — on
+  every audited action across the daemon loop, the inbox apply and
+  merge path, plugins, sandbox lifecycle, verify commands and verse
+  surfaces (otherwise only visible through `ashlr audit`'s human
+  tail, the verse control-api's bounded recent window and `phm
+  fleet` status's newest-eight list, so an action a gate kept
+  refusing or machinery kept failing never became work). A cell —
+  an action's 'refused' or 'error' result — becomes an item only
+  while its in-window records reach the recurring bars of three
+  across two distinct UTC days inside the 7-day window; 'ok' rows,
+  including the deliberate-off vocabulary several call sites record
+  as ok with explanatory summaries, never emit, malformed lines and
+  off-contract rows drop like the writer's contract, partitions
+  outside the window and non-partition names are never read, a
+  truncated partition tail is stated as a lower bound, and rows emit
+  only for the fleet's own repository since the journal describes
+  this install's machinery and carries no repository column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -922,8 +943,8 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   work-market, dupcheck, improve-outcome, typed-route, branch-gardener,
   reward, job-control, usage-gap, runtime-journal, generator-yield,
   incident-gate, jev-decisions, worktree-reap, gap-proposal,
-  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load
-  and fleet-self-tick items carry priority 3;
+  recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
+  audit-trail and fleet-self-tick items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
@@ -1121,7 +1142,15 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   apps and pinned ops machinery — with the same owner-side no-change
   escape for a rolled-forward window or pinned caps, and emit only
   for the fleet's own repository since the journal records this
-  install's host and carries no repository column. They
+  install's host and carries no repository column. Audit-trail items
+  name the audit journal, `ashlr audit`, `src/core/sandbox/audit.ts`
+  and the action's call sites under src/, keep the
+  deliberate-hold-versus-misfire framing for refusals and the
+  find-which-call-path-is-failing framing for errors, with the same
+  owner-side no-change escape for a correctly configured hold, a
+  rolled-forward window or pinned ops machinery, and emit only for
+  the fleet's own repository since the journal records this
+  install's actions and carries no repository column. They
   launch only for the repository self-improvement is pointed at.
 - **Claims.** An item is claimed by its newest task. It becomes available
   again 3 days after that task ends `closed`, `failed` or `expired`, and never
