@@ -19,8 +19,17 @@ const MAX_STATUS_BYTES = 1024 * 1024;
 const MAX_LANES = 16;
 
 export interface LeaderStatusLane { lane: string; merged: number; medianTtmS: number | null }
+export interface LeaderStatusCollectionError {
+  source: 'queue' | 'guardian' | 'journal';
+  code: 'missing' | 'unavailable' | 'empty' | 'invalid' | 'stale' | 'failed';
+}
 export interface LeaderStatusSnapshot {
   schema: typeof LEADER_STATUS_SNAPSHOT_SCHEMA;
+  collectedAt: string;
+  /** Source tick, retained even when stale; null without a parseable timestamp. */
+  queueObservedAt: string | null;
+  /** Fixed codes only: paths and raw collector exceptions never leave the reader. */
+  collectionErrors: LeaderStatusCollectionError[];
   /** Null when the queue rollup is missing or its dispatcher tick is not fresh. */
   merged24h: number | null;
   medianTtmS: number | null;
@@ -96,22 +105,25 @@ export function summarizeQueueRollup(status: unknown): Pick<LeaderStatusSnapshot
 export async function readLeaderStatusSnapshot(opts: { runsDir?: string; now?: () => number } = {}): Promise<LeaderStatusSnapshot> {
   const runsDir = opts.runsDir ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
   const now = (opts.now ?? Date.now)();
-  const unknownQueue = { ...summarizeQueueRollup(null), ...summarizeQueueActivity(null), queueState: 'unavailable' as const };
+  const unknownQueue = { ...summarizeQueueRollup(null), ...summarizeQueueActivity(null), queueState: 'unavailable' as const,
+    queueObservedAt: null as string | null, queueError: 'unavailable' as LeaderStatusCollectionError['code'] | null };
   const [queue, mains, journal] = await Promise.all([
     readSource(join(runsDir, 'queue', 'status.json'), MAX_STATUS_BYTES, false).then(source => {
-      if (source.state !== 'healthy') return unknownQueue;
-      if (!source.text.trim()) return { ...unknownQueue, queueState: 'empty' as const };
+      if (source.state !== 'healthy') return { ...unknownQueue, queueError: source.state === 'missing' ? 'missing' as const : 'unavailable' as const };
+      if (!source.text.trim()) return { ...unknownQueue, queueState: 'empty' as const, queueError: 'empty' as const };
       try {
         const status: unknown = JSON.parse(source.text);
-        if (!status || typeof status !== 'object' || Array.isArray(status)) return unknownQueue;
-        if (!Object.keys(status).length) return { ...unknownQueue, queueState: 'empty' as const };
+        if (!status || typeof status !== 'object' || Array.isArray(status)) return { ...unknownQueue, queueError: 'invalid' as const };
+        if (!Object.keys(status).length) return { ...unknownQueue, queueState: 'empty' as const, queueError: 'empty' as const };
         const tick = object(status).last_tick;
-        const age = now - (typeof tick === 'string' ? Date.parse(tick) : NaN);
+        const tickMs = typeof tick === 'string' ? Date.parse(tick) : NaN;
+        const queueObservedAt = Number.isFinite(tickMs) ? new Date(tickMs).toISOString() : null;
+        const age = now - tickMs;
         return Number.isFinite(age) && age >= 0 && age <= MAX_QUEUE_AGE_MS
-          ? { ...summarizeQueueRollup(status), ...summarizeQueueActivity(status), queueState: 'fresh' as const }
-          : { ...unknownQueue, queueState: 'stale' as const };
-      } catch { return unknownQueue; }
-    }).catch(() => unknownQueue),
+          ? { ...summarizeQueueRollup(status), ...summarizeQueueActivity(status), queueState: 'fresh' as const, queueObservedAt, queueError: null }
+          : { ...unknownQueue, queueState: 'stale' as const, queueObservedAt, queueError: queueObservedAt === null ? 'invalid' as const : 'stale' as const };
+      } catch { return { ...unknownQueue, queueError: 'invalid' as const }; }
+    }).catch(() => ({ ...unknownQueue, queueError: 'failed' as const })),
     readFleetMainHealth({ runsDir, now: () => now }).catch(() => null),
     readLeaderJournal({ runsDir, now: () => now }).catch(() => null),
   ]);
@@ -122,8 +134,16 @@ export async function readLeaderStatusSnapshot(opts: { runsDir?: string; now?: (
   const known = mains?.source === 'ok' && !stale && mains.repos.length > 0;
   const repos = known ? mains.repos : [];
   const ceo = (journal?.passes[0]?.sections ?? []).filter(section => /\bCEO\b/i.test(section.title)).flatMap(section => section.bullets).slice(0, 6);
+  const { queueError, ...queueEvidence } = queue;
+  const collectionErrors: LeaderStatusCollectionError[] = queueError === null ? [] : [{ source: 'queue', code: queueError }];
+  if (mains === null) collectionErrors.push({ source: 'guardian', code: 'failed' });
+  else if (mains.source !== 'ok') collectionErrors.push({ source: 'guardian', code: 'unavailable' });
+  else if (guardianState === 'stale' || guardianState === 'empty') collectionErrors.push({ source: 'guardian', code: guardianState });
+  if (journal === null) collectionErrors.push({ source: 'journal', code: 'failed' });
+  else if (journal.sources.planLog !== 'healthy') collectionErrors.push({ source: 'journal', code: journal.sources.planLog === 'missing' ? 'missing' : 'unavailable' });
+  else if (!journal.passes.length) collectionErrors.push({ source: 'journal', code: 'empty' });
   return {
-    schema: LEADER_STATUS_SNAPSHOT_SCHEMA, ...queue,
+    schema: LEADER_STATUS_SNAPSHOT_SCHEMA, collectedAt: new Date(now).toISOString(), ...queueEvidence, collectionErrors,
     mains: {
       guardianState, known, total: known ? repos.length : null, stale, observedAt,
       green: known ? repos.filter(repo => repo.state === 'green').length : null,
@@ -142,6 +162,7 @@ function duration(seconds: number): string {
 /** Short plain-words status, built only from the snapshot. Also the fallback when no model answers. */
 export function renderLeaderStatus(snapshot: LeaderStatusSnapshot): string {
   const lines: string[] = [];
+  lines.push(`Status collected: ${snapshot.collectedAt}. Queue checked: ${snapshot.queueObservedAt ?? 'unknown'}.`);
   if (snapshot.merged24h === null) lines.push(`Merged PRs in the last 24h: unknown (queue ${snapshot.queueState}; no fresh complete rollup).`);
   else {
     const median = snapshot.medianTtmS === null ? '' : `, median time to merge ${duration(snapshot.medianTtmS)}`;
@@ -162,5 +183,6 @@ export function renderLeaderStatus(snapshot: LeaderStatusSnapshot): string {
     lines.push(`Mains green: ${mains.green} of ${mains.total}.${red}${mains.unknown ? ` Unknown: ${mains.unknown}.` : ''} Guardian checked: ${mains.observedAt}.`);
   }
   if (snapshot.ceo.length) lines.push(`CEO summary: ${snapshot.ceo.slice(0, 3).join(' ')}`);
+  if (snapshot.collectionErrors.length) lines.push(`Collection gaps: ${snapshot.collectionErrors.map(error => `${error.source} ${error.code}`).join('; ')}.`);
   return lines.join('\n');
 }

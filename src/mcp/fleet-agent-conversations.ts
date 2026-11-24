@@ -25,7 +25,9 @@
  * contradictory pair is an honest empty list — `since` the shared
  * 15m/2h/1d/epoch-ms/ISO grammar resolved to a safe non-negative
  * epoch-ms integer (threads whose last activity reaches the cutoff, whole
- * threads never partial message lists), `contains` the bounded needle
+ * threads never partial message lists), `before` the same grammar as the
+ * exclusive upper bound composing with `since` into one `[since, before)`
+ * window on last activity, `contains` the bounded needle
  * `busReadContains` normalizes over each member message's scrubbed
  * one-line subject — never the raw body — and `limit` an integer in
  * 1–1024. Unknown keys, wrong types, caller roots and malformed values
@@ -45,19 +47,22 @@
  * acks, replies or writes.
  */
 import { busReadContains } from '../core/agents/bus-unified.js';
+import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import {
   CONVERSATION_STATES, readAgentConversations,
   type AgentConversations, type ConversationQuery, type ConversationState,
 } from '../core/fleet/agent-conversations.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job` and `waitingOn` share. */
+/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `from` and `excludeFrom` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
-  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'contains', 'limit',
+  'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
+  'inReplyTo', 'channel', 'priority', 'from', 'excludeFrom', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'from', 'excludeFrom'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -76,8 +81,20 @@ export interface FleetAgentConversationsArgs {
   waitingOn?: string;
   /** Keep only threads whose last activity is at or after this epoch-ms cutoff — the shared `since` grammar resolved once. */
   since?: number;
+  /** Keep only threads whose last activity is strictly before this epoch-ms cutoff — the exclusive upper bound composing with `since` into one `[since, before)` window. */
+  before?: number;
   /** Keep only threads where at least one member message's scrubbed one-line subject carries this needle — the shared `--contains` rule. */
   contains?: string;
+  /** Keep only threads where at least one member message's body cites this envelope id through its own `inReplyTo` field — the shared `--in-reply-to` rule. */
+  inReplyTo?: string;
+  /** Keep only threads where at least one member message is addressed to `group:<channel>:*` — the shared `--channel` rule. */
+  channel?: string;
+  /** Keep only threads where at least one member message carries this exact P0..P3 band — the shared `--priority` rule. */
+  priority?: BusPriority;
+  /** Keep only threads where at least one member message was sent under this agent's labels — the shared `--from` rule. */
+  from?: string;
+  /** Drop threads where any member message was sent under this agent's labels — the shared `--exclude-from` rule. */
+  excludeFrom?: string;
   /** Cap the returned threads, longest-waiting order kept; `matched` still reports the full filtered count. */
   limit?: number;
 }
@@ -89,9 +106,11 @@ export interface FleetAgentConversationsArgs {
  * the same value rules `phm agents conversations` flags and the API
  * params share: the label keys printable routing labels, `waiting`/
  * `blocked` JSON booleans (`false` is the same as absent), `state` one
- * exact CONVERSATION_STATES member, `since` the shared
+ * exact CONVERSATION_STATES member, `since`/`before` the shared
  * `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved to a safe non-negative
- * epoch-ms integer, `contains` the bounded free-text needle
+ * epoch-ms integer — `before` the exclusive upper bound composing with
+ * `since` into one `[since, before)` window on last activity —
+ * `contains` the bounded free-text needle
  * `busReadContains` normalizes and `limit` an integer in 1–1024.
  * Unknown keys, wrong types, caller roots and malformed values are all
  * refused before the store is touched.
@@ -119,12 +138,29 @@ export function parseFleetAgentConversationsArgs(args: Record<string, unknown>):
   const contains = busReadContains(args.contains);
   if (contains === null) return null;
   if (contains !== undefined) parsed.contains = contains;
+  const channel = args.channel;
+  if (channel !== undefined) {
+    if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
+    parsed.channel = channel;
+  }
+  const priority = args.priority;
+  if (priority !== undefined) {
+    if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
+    parsed.priority = priority as BusPriority;
+  }
   const since = args.since;
   if (since !== undefined) {
     if (typeof since !== 'string') return null;
     const resolved = parseSince(since);
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     parsed.since = resolved;
+  }
+  const before = args.before;
+  if (before !== undefined) {
+    if (typeof before !== 'string') return null;
+    const resolved = parseSince(before);
+    if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
+    parsed.before = resolved;
   }
   const limit = args.limit;
   if (limit !== undefined) {
@@ -170,7 +206,13 @@ export async function readFleetAgentConversations(
     ...(args.job === undefined ? {} : { job: args.job }),
     ...(args.waitingOn === undefined ? {} : { waitingOn: args.waitingOn }),
     ...(args.since === undefined ? {} : { since: args.since }),
+    ...(args.before === undefined ? {} : { before: args.before }),
     ...(args.contains === undefined ? {} : { contains: args.contains }),
+    ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.channel === undefined ? {} : { channel: args.channel }),
+    ...(args.priority === undefined ? {} : { priority: args.priority }),
+    ...(args.from === undefined ? {} : { from: args.from }),
+    ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.limit === undefined ? {} : { limit: args.limit }),
   };
   const result: AgentConversations = read(query);

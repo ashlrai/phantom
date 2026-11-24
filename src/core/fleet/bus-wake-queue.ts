@@ -121,11 +121,13 @@ function compactWakeTail(fd: number, file: string, pinned: Pin, retainBytes: num
     return kept.length;
   } finally { closeSync(other); }
 }
-export function readBusWakes(opts: { root?: string; sinceAt?: number; limit?: number;
+export function readBusWakes(opts: { root?: string; sinceAt?: number;
+  /** Keep only rows recorded strictly before this epoch-ms cutoff — the exclusive upper bound `sinceAt` lacks, so the pair reads one `(sinceAt, beforeAt)` window on the hint's queue time. */
+  beforeAt?: number; limit?: number;
   /** Keep only rows the predicate accepts; `matched` still counts every accepted row. */
   match?: (row: BusWakeRow) => boolean } = {}): {
   state: 'missing' | 'unreadable' | 'ok'; wakes: BusWakeRow[];
-  /** Rows passing `sinceAt`/`match` observed in the bounded tail, before `limit`; null unless the queue was read ('ok' or verified-'missing'). */
+  /** Rows passing `sinceAt`/`beforeAt`/`match` observed in the bounded tail, before `limit`; null unless the queue was read ('ok' or verified-'missing'). */
   matched: number | null;
   /** Older bytes or matched rows sit beyond what `wakes` returned; null when the queue state is unknown. */
   truncated: boolean | null;
@@ -139,6 +141,7 @@ export function readBusWakes(opts: { root?: string; sinceAt?: number; limit?: nu
     checkFile(fd, file, pinned); // Recheck after reading; later renames remain possible before return.
     const limit = Number.isSafeInteger(opts.limit) && opts.limit! > 0 ? Math.min(opts.limit!, 500) : 500;
     const matched = rows.filter(row => (opts.sinceAt === undefined || row.at > opts.sinceAt) &&
+      (opts.beforeAt === undefined || row.at < opts.beforeAt) &&
       (opts.match === undefined || opts.match(row)));
     const kept = matched.slice(-limit);
     return { state: 'ok', wakes: kept, matched: matched.length, truncated: cut || kept.length < matched.length };
