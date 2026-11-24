@@ -141,7 +141,11 @@ export async function runContextReply(opts: ContextReplyOptions, io: ContextRepl
   // Only a gate that ran after a zero exit and passed is verification evidence
   // under the reporting contract (work-item-bus-evidence reads `verified`).
   const evidence = opts.check !== undefined && exitCode === 0 && verification === 'pass'
-    ? { verified: { tests: 'local-gate pass' } } : {};
+    ? { verified: { tests: 'local-gate pass' } }
+    : exitCode === 0 && verification === 'fail'
+      ? { blocked: { dependency: 'Fix the failed local gate and rerun verification.' } }
+      : exitCode === 0 && verification === 'error'
+        ? { blocked: { dependency: 'Restore the local gate and rerun verification.' } } : {};
   const resultCode = exitCode || (verification === undefined || verification === 'pass' ? 0 : 1);
   const ttl = request.ttl - Math.ceil(performance.now() - started);
   if (ttl <= 0) return { workerExit, ...checkedFields, replyReceipt: { status: 'expired' }, exitCode: resultCode || 1, reply: null };
