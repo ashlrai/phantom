@@ -128,8 +128,10 @@ export interface BusWorkMineOptions {
   /** Keep only pending items whose recorded appearance or last-activity
    * time is strictly before this epoch-ms cutoff — the exclusive upper
    * bound every bus read's `--before` applies, composing with `since`
-   * into one `[since, before)` window so "what was pending before time T"
-   * is one filtered digest instead of a full re-read paged down to T. Each
+   * into one `[since, before)` window — the wakes section's inherited
+   * `since` keeps its strictly-after boundary, so its own window is
+   * `(since, before)` — so "what was pending before time T" is one
+   * filtered digest instead of a full re-read paged down to T. Each
    * section keys on the same timestamp its `since` rule uses: claims on
    * the lease's `started`, feed jobs on `updatedAt`, pending work and
    * mail on the envelope receipt, mailbox rows on acceptance, the three
@@ -1578,8 +1580,11 @@ function claimContainsMatch(claim: BusWorkMineClaim, needle: string): boolean {
  * unfiltered under every filter as before. `since`/`before`
  * compose into one `[since, before)` window — the lower bound inclusive,
  * the upper exclusive, an item stamped exactly at either bound excluded
- * from the excluded side — so "what was pending before time T" and "what
- * changed in the window" are one filtered digest. Every count stays the
+ * from the excluded side — except the wakes section, whose inherited
+ * `since` keeps the strictly-after boundary and so reads its own
+ * `(since, before)` window — so "what was pending before time T" and
+ * "what changed in the window" are one filtered digest. Every count
+ * stays the
  * filtered total; a section that cannot prove the relation reports its
  * own read state, never a padded match.
  * `options.priority` applies the band rule every bus
