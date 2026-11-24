@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { RESOLVER, updateGraph } from '../scripts/ci-dep-graph.mjs';
 import {
   classifyPaths, plan, changedPaths, selectRelated, selectFallback, selectSmoke, loadSmokeSet,
   TIER1_TESTS, MAX_RELATED_TESTS, FALLBACK_SHARDS, SMOKE_SCHEMA,
 } from '../scripts/ci-fast-select.mjs';
-import { commandsFor, failedTestFiles, shardWorkers } from '../scripts/ci-fast-run.mjs';
+import { commandsFor, failedTestFiles, settleJobs, shardWorkers } from '../scripts/ci-fast-run.mjs';
 import { prNumber, related, attribute } from '../scripts/ci-fast-attribute.mjs';
 
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -268,6 +269,28 @@ test('changedPaths uses the merge-base diff and rejects a mismatched checkout', 
   assert.throws(() => changedPaths({ base: 'main', head, cwd: dir }), /exact commit SHAs/);
 });
 
+test('the first failing shard aborts the ones still running', async () => {
+  const aborted = [];
+  const runJob = (_command, args, signal) => new Promise((done) => {
+    if (args[0] === 'fail') {
+      setTimeout(() => done({ code: 1, log: 'fail' }), 15);
+      return;
+    }
+    const timer = setTimeout(() => done({ code: 0, log: 'done' }), 500);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      aborted.push(args[0]);
+      done({ code: 1, log: 'cancelled' });
+    });
+  });
+  const results = await settleJobs([
+    { command: 'node', args: ['fail'] },
+    { command: 'node', args: ['slow'] },
+  ], runJob);
+  assert.equal(results[0].code, 1);
+  assert.deepEqual(aborted, ['slow']);
+});
+
 test('fallback shards share the runner instead of each taking every CPU', () => {
   assert.equal(shardWorkers(4, 3), 1);
   assert.equal(shardWorkers(16, 3), 5);
@@ -521,12 +544,12 @@ test('web failures are named and web tests run under the web vitest config', () 
     shards: [],
   });
   assert.deepEqual(jobs.map((job) => job.args), [
-    ['scripts/test-ci.mjs', 'test/a.test.ts'],
-    ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx'],
+    ['scripts/test-ci.mjs', '--bail=1', 'test/a.test.ts'],
+    ['scripts/test-ci.mjs', '--bail=1', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx'],
     ['--test', '.github/tests/a.test.mjs'],
   ]);
   const smoke = commandsFor({ mode: 'smoke', tests: [...TIER1_TESTS], web: [], node: [], shards: [] });
-  assert.deepEqual(smoke.map((job) => job.args), [['scripts/test-ci.mjs', ...TIER1_TESTS]]);
+  assert.deepEqual(smoke.map((job) => job.args), [['scripts/test-ci.mjs', '--bail=1', ...TIER1_TESTS]]);
   const fallback = commandsFor({
     mode: 'fallback',
     tests: ['test/a.test.ts', 'test/b.test.ts'],
@@ -536,5 +559,6 @@ test('web failures are named and web tests run under the web vitest config', () 
   }, 4);
   assert.equal(fallback.length, 3);
   assert.ok(fallback[0].args.includes('--maxWorkers=2'));
-  assert.deepEqual(fallback[2].args, ['scripts/test-ci.mjs', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx']);
+  assert.ok(fallback[0].args.includes('--bail=1'));
+  assert.deepEqual(fallback[2].args, ['scripts/test-ci.mjs', '--bail=1', '--config', 'vitest.config.web.ts', 'src/web-ui/Widget.test.tsx']);
 });
