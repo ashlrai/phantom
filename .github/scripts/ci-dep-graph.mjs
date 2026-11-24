@@ -44,6 +44,8 @@ function emptyGraph() {
   return { schema: SCHEMA, files: {} };
 }
 
+const COMMIT = /^[0-9a-f]{40}$/;
+
 export function normalizeGraph(value) {
   if (!value || value.schema !== SCHEMA || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) return emptyGraph();
   const files = {};
@@ -56,7 +58,14 @@ export function normalizeGraph(value) {
       ...(unresolved.length ? { unresolved } : {}),
     };
   }
-  return { schema: SCHEMA, files, ...(Object.values(files).some((node) => node.unresolved?.length) ? { unknown: true } : {}) };
+  const commit = typeof value.commit === 'string' && COMMIT.test(value.commit) ? value.commit : '';
+  const unknown = Object.values(files).some((node) => node.unresolved?.length);
+  return { schema: SCHEMA, files, ...(unknown ? { unknown: true } : {}), ...(commit ? { commit } : {}) };
+}
+
+/** Exact HEAD pin with a non-empty file map. A partial or foreign graph is rebuilt. */
+export function graphCoversCommit(graph, head) {
+  return graph?.commit === head && COMMIT.test(head) && graph.files && Object.keys(graph.files).length > 0;
 }
 
 const ASSET = /\.(?:css|scss|sass|less|svg|png|gif|webp|jpe?g|woff2?|mp3|mp4)$/i;
@@ -236,6 +245,11 @@ function blobTexts(cwd, hashes) {
 function updateFromGit(cwd, outPath) {
   let previous = emptyGraph();
   try { previous = normalizeGraph(JSON.parse(readFileSync(outPath, 'utf8'))); } catch { /* first build */ }
+  const head = git(cwd, ['rev-parse', 'HEAD']).trim();
+  if (graphCoversCommit(previous, head)) {
+    console.log(`dependency graph: reused ${Object.keys(previous.files).length} files at ${head}`);
+    return previous;
+  }
   const entries = listing(cwd);
   const prior = previous.files;
   const missing = entries.filter((entry) => prior[entry.path]?.hash !== entry.hash);
@@ -243,6 +257,7 @@ function updateFromGit(cwd, outPath) {
   const texts = blobTexts(cwd, missing.map((entry) => entry.hash));
   for (const entry of missing) entry.text = texts.get(entry.hash) ?? '';
   const { graph, reparsed } = updateGraph(previous, entries);
+  graph.commit = head;
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(graph));
   console.log(`dependency graph: ${Object.keys(graph.files).length} files, ${reparsed} reparsed`);
