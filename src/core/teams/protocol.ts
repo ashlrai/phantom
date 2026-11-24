@@ -26,6 +26,11 @@ export interface TeamActor {
   provider?: string;
   /** For agents: the human accountable for them. */
   onBehalfOf?: string;
+  /**
+   * Authenticated principal label. For a web token this is
+   * `web-token.<fingerprint>`, never the token. Absent on older log lines.
+   */
+  principal?: string;
 }
 
 export const TEAM_EVENT_TYPES = [

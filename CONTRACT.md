@@ -4036,3 +4036,21 @@ into one `[since, before)` window. The existing
 are deduplicated by id before the since filter. The desktop's existing 2D/3D
 map overlays these messages for 10 seconds; clicking opens the text in place.
 `fleet.live-map.v1` also draws standing planners as `kind: "planner"` nodes.
+
+## Approval actor (RQ-APPROVAL-ACTOR-1)
+
+`src/core/approvals/actor.ts` exports `principalFromWebToken(token)`,
+`agentActorForToken(token)`, `humanActorForPresence(token)`,
+`approvalPresenceBytes(approvalId, decision)`, `invitePresenceBytes(team, op)`,
+`verifyPresenceSignature(message, signature)` and `HumanPresenceRequired`.
+A web token's principal id is `web-token.` plus 32 hex characters of SHA-256.
+The raw token is never an actor id. `verifyPresenceSignature` checks a P-256
+signature against the custody public key and does not sign.
+`decideApproval(team, actor, approvalId, decision, options?)` records an agent
+principal only when the pending approval is not human-required; otherwise it
+throws `HumanPresenceRequired`. `options.presenceProven` accepts the enrolled
+device human after that signature check and does not read agent env markers.
+`decideTeamApproval` takes the resolved actor and does not call `localHumanActor`.
+`POST /api/approvals/team/:id/decision` accepts `decision`, optional `team` and
+optional `assertion`. An `actor` field is refused. A bare token on a
+human-required decision is HTTP 403 `human-presence-required`.
