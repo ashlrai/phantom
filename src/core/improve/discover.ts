@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Forty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. Forty-three sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -402,6 +402,20 @@
  *     write-only audit, so a PR the autopilot kept handing to a
  *     person, a verify loop that never converged, or tick machinery
  *     that kept failing never became work;
+ *   - the fleet self-tick run-record journal's recurring adverse
+ *     evidence: the per-run `fleet.self-tick-record.v1` lines
+ *     appendSelfTickLine appends to queue/self-tick.jsonl under the
+ *     fleet runs directory on every `ashlr fleet self-tick` pass —
+ *     ran or bounced off the single-runner lock — carrying the run's
+ *     mode, state, failedSteps, the planner-tick intake hooks'
+ *     outcomes and any empty-family auto-stop proposals
+ *     (selfTickBacklogItems below). Until now the history file had no
+ *     reader at all — `phm fleet self-tick --last`/`--status` read
+ *     only queue/self-tick-last.json, the LAST run — so a step that
+ *     failed every tick, a pass that kept bouncing off its lock, an
+ *     intake hook that kept throwing or silently stopped being
+ *     recorded, and an empty producer family that kept re-earning its
+ *     12-hour auto-stop each expiry never became work;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -472,6 +486,7 @@ import { judgeBacklogItems } from './judge-backlog.js';
 import { autolandBacklogItems } from './autoland-backlog.js';
 import { loadBacklogItems } from './load-backlog.js';
 import { autopilotBacklogItems } from './autopilot-backlog.js';
+import { selfTickBacklogItems } from './self-tick-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1104,6 +1119,23 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // recorded owner/name, truncated tails are stated as lower bounds,
   // and every journal string is scrubbed before it reaches a prompt.
   items.push(...await autopilotBacklogItems({ repo }));
+
+  // Self-tick run-record journal: the fleet.self-tick-record.v1 lines
+  // appendSelfTickLine writes to queue/self-tick.jsonl on every
+  // `ashlr fleet self-tick` pass — the scheduled maintenance cadence
+  // itself — carrying failedSteps, the planner-tick intake hooks'
+  // outcomes, busy bounces and empty-family auto-stop proposals.
+  // Until now the history file had no reader: --last/--status show
+  // only the newest run, so recurring step failures, a wedged lock,
+  // blind intake hooks and re-firing family stops never became work.
+  // Same bounded tail read and the writer's own record contract; a
+  // cell emits only at the recurring bars of records across distinct
+  // UTC days inside the window, skipped/ran states and clean runs
+  // never emit, an unreadable read yields nothing while a truncated
+  // tail folds lower-bound flagged, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's machinery and carries no repository column.
+  items.push(...await selfTickBacklogItems({ repo }));
   return { items, errors };
 }
 
