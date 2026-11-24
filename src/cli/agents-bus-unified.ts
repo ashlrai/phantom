@@ -11,7 +11,7 @@ import {
 } from '../core/agents/bus-unified.js';
 import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
-import { attachBusCliSession, busAgentView, detectBusCli, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
+import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
   type BusClaimResult, type BusClaimJobRef, type BusWorkJobClaimResult, type BusWorkJobClaimScope } from '../core/agents/bus-claims.js';
 import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/claim-store.js';
@@ -36,7 +36,7 @@ ashlr agents bus channel create <name> [--from <agent>] [--member <agent>]...
 ashlr agents bus channel join|leave <name> [--agent <agent>]
 ashlr agents bus channel post <name> --text <text> [--kind note|context] [--from <agent>] [--topic <t>] [--thread <t>] [--ref <ref>]... [--reply-to <id>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus channel list [--agent <agent>]
-ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--after <cursor>] [--limit <1..100>]
+ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-from <agent>] [--thread <t>] [--priority P0..P3] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--after <cursor>] [--limit <1..100>] [--frame <cli>]
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--matched] [--frame <cli>]
@@ -750,6 +750,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         return finish(result, 'id' in result ? `${result.status}: ${result.id} -> ${result.to} (wake ${result.wake})` : '');
       }
       if (sub === 'read') {
+        const frame = one('--frame');
+        if (frame !== undefined && !(BUS_CLIS as readonly string[]).includes(frame)) throw new UsageError(`--frame must be one of ${BUS_CLIS.join(', ')}.`);
         const result = readAgentChannel(arg, { topic: one('--topic'), from: one('--from'), excludeFrom: one('--exclude-from'),
           thread: one('--thread'), priority: priorityArg(), job: one('--job'), since: sinceArg(), before: beforeArg(),
           contains: one('--contains'), inReplyTo: one('--in-reply-to'), id: one('--id'), bodyKind: one('--body-kind'),
@@ -761,6 +763,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         // point is the newest shown row's cursor (the same rule inbox applies).
         const nextCursor = busPageResumeCursor(result);
         const shown = { ...result, nextCursor };
+        if (frame) { out(json ? JSON.stringify({ ...shown, framed: frameBusChannelRead(frame as BusCli, shown.channel, result.messages) }) : frameBusChannelRead(frame as BusCli, shown.channel, result.messages)); return 0; }
         out(json ? JSON.stringify(shown) : [
           ...shown.messages.map(m => `${m.cursor} ${m.priority} #${shown.channel}:${m.topic} ${m.envelope.id} from ${m.fromAgent ?? m.envelope.from}` +
             (m.held === undefined ? '' : ` held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +

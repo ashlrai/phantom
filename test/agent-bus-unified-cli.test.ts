@@ -329,6 +329,22 @@ describe('phm agents bus (unified)', () => {
     expect(await runAgentsBusUnified(['channel', 'read', 'release', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
     expect(text.join('\n')).toContain('#release:deploy rd-2 from nova');
     expect(text.join('\n')).toContain('nextCursor');
+    // --frame prints the same bounded untrusted block inbox --frame does,
+    // each post's #channel:topic as the where marker; --json carries it on
+    // `framed` alongside the page.
+    const framed = await run(['channel', 'read', 'release', '--frame', 'claude']);
+    expect(framed.code).toBe(0);
+    expect(framed.json.framed).toContain('BEGIN UNTRUSTED AGENT BUS MESSAGES');
+    expect(framed.json.framed).toContain('#release:general id=rd-1 from agent:atlas');
+    expect(framed.json.framed).toContain('#release:deploy id=rd-2 from agent:nova');
+    expect(framed.json.framed).toContain('END UNTRUSTED AGENT BUS MESSAGES');
+    // Human (non-json) output is the bare frame, not a JSON envelope.
+    const framedText: string[] = [];
+    expect(await runAgentsBusUnified(['channel', 'read', 'release', '--frame', 'grok', '--root', root],
+      t => framedText.push(t), () => {}, {})).toBe(0);
+    expect(framedText.join('\n')).toContain('#release:deploy id=rd-2 from agent:nova');
+    expect(framedText.join('\n')).not.toContain('"status"');
+    expect(await run(['channel', 'read', 'release', '--frame', 'gemini'])).toMatchObject({ code: 2 });
   });
 
   it('resolves one retained envelope by id without needing an identity', async () => {

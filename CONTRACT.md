@@ -3873,7 +3873,9 @@ falling back to `busBodyFallbackSummary` for unrecognized bodies; items
 carrying `held` show it inside the line's bracket, and items carrying `job`
 show the shared `busInboxJobMarker` (`job=<id>:<state>` plus `result=<outcome>`
 when the feed job cites a `work.result`, and `claimable=`
-when the claims join computed it) the same way. Identities
+when the claims join computed it) the same way. `frameBusChannelRead(cli,
+channel, messages)` renders a channel page through the same markers, scrub
+and bound, each bracket naming `#<channel>:<topic>`. Identities
 are routing names and grant no authority.
 
 `src/core/agents/bus-status.ts`: `readUnifiedBusStatus(options?)` composes one

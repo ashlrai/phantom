@@ -17,7 +17,8 @@ import {
   BUS_CLIS, agentAddress, registerAgentIdentity, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentRegistryOptions, type BusCli, type BusProvider, type RegisterAgentResult,
 } from './bus-identity.js';
-import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker, type InboxMessage } from './bus-unified.js';
+import { busBodyFallbackSummary, busBodySummary, busInboxJobMarker,
+  type BusEnvelopeLookupJob, type ChannelReadMessage, type InboxMessage } from './bus-unified.js';
 
 export interface BusCliAdapter {
   readonly cli: BusCli;
@@ -188,9 +189,19 @@ function clean(value: string): string {
     .replaceAll(BUS_INBOX_FRAME_BEGIN, '[frame marker removed]').replaceAll(BUS_INBOX_FRAME_END, '[frame marker removed]');
 }
 
-function summary(message: InboxMessage): string {
-  const body = message.envelope.body;
+function summary(body: unknown): string {
   return busBodySummary(body) ?? busBodyFallbackSummary(body);
+}
+
+/** The held/holder/job evidence suffix every bus frame line carries — shared
+ * so the inbox and channel frames can never disagree about what pending work
+ * looks like inside the untrusted block. */
+function frameEvidence(message: { held?: boolean | null; holder?: string | null;
+  job?: BusEnvelopeLookupJob }): string {
+  const held = message.held === undefined ? '' :
+    ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
+  const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
+  return `${held}${job}`;
 }
 
 /**
@@ -206,16 +217,41 @@ export function frameBusInbox(cli: BusCli, messages: readonly InboxMessage[]): s
   for (const message of messages) {
     const where = message.kind === 'channel' ? `#${message.channel}` : message.kind;
     const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
-    const held = message.held === undefined ? '' :
-      ` held=${message.held === null ? 'unknown' : message.held ? 'yes' : 'no'}${message.holder ? ` holder=${message.holder}` : ''}`;
-    const job = message.job === undefined ? '' : ` ${busInboxJobMarker(message.job)}`;
-    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${held}${job}] ${summary(message)}`);
+    const line = clean(`[${message.priority} ${where} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
     if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
     lines.push(line);
     used += line.length + 1;
     shown += 1;
   }
   if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the inbox again)`);
+  lines.push(BUS_INBOX_FRAME_END);
+  return lines.join('\n');
+}
+
+/**
+ * The same bounded untrusted-data block `frameBusInbox` produces, rendered
+ * for one channel transcript page: every post already sits inside the named
+ * room, so the bracket's `where` carries `#<channel>:<topic>` — the topic the
+ * `group:<channel>:<topic>` post was addressed to — keeping the per-topic
+ * context the flat `#<channel>` inbox marker drops. Same markers, same scrub
+ * and clip bounds and the same held/holder/job evidence; identical for every
+ * CLI so a channel read fed to a next turn is marked untrusted exactly like
+ * the inbox it complements.
+ */
+export function frameBusChannelRead(cli: BusCli, channel: string, messages: readonly ChannelReadMessage[]): string {
+  if (!getBusCliAdapter(cli)) throw new Error('Unknown CLI.');
+  const lines = [BUS_INBOX_FRAME_BEGIN];
+  let used = BUS_INBOX_FRAME_BEGIN.length + BUS_INBOX_FRAME_END.length + 64;
+  let shown = 0;
+  for (const message of messages) {
+    const from = message.fromAgent ? `agent:${message.fromAgent}` : `label ${message.envelope.from}`;
+    const line = clean(`[${message.priority} #${channel}:${message.topic} id=${message.envelope.id} from ${from}${frameEvidence(message)}] ${summary(message.envelope.body)}`);
+    if (used + line.length + 1 > BUS_INBOX_FRAME_MAX) break;
+    lines.push(line);
+    used += line.length + 1;
+    shown += 1;
+  }
+  if (shown < messages.length) lines.push(`(${messages.length - shown} more messages not shown; read the channel again)`);
   lines.push(BUS_INBOX_FRAME_END);
   return lines.join('\n');
 }
