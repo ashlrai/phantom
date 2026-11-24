@@ -17,6 +17,9 @@
  * running jobs and message lines instead of live state, and "Back to live" returns. Times with no history read unknown.
  */
 import { messageLineWidth, type FleetLiveMap, type LiveMapEdge, type LiveMapEdgeKind, type LiveMapNode, type LiveMapNodeKind } from '../../../../core/fleet/live-map.js';
+import type { MapMessage } from '../../../../core/fleet/map-messages.js';
+import { fleetMapMessagesQuery } from '../../control/fleet/fleet-map-queries.js';
+import { MESSAGE_EDGE_TTL_MS, transientMessageEdges } from './map-model.js';
 import type { MapEdge } from '../../../../core/fleet/map-edges.js';
 import type { AgentsMessagePair } from '../../../../core/fleet/agents-messages.js';
 import { useMemo, useState } from 'react';
@@ -49,9 +52,9 @@ import styles from './fleet-map.module.css';
 
 /** The existing pane that shows each kind's details. */
 export const DETAIL_PANE: Readonly<Record<LiveMapNodeKind, string>> = {
-  leader: 'leader-thread', lane: 'fleet-lanes', job: 'worker-log', computer: 'fleet-computers', resource: 'fleet-usage',
+  leader: 'leader-thread', lane: 'fleet-lanes', job: 'worker-log', computer: 'fleet-computers', resource: 'fleet-usage', planner: 'leader-thread',
 };
-const KIND_WORD: Readonly<Record<LiveMapNodeKind, string>> = { leader: 'leader', lane: 'lane', job: 'job', computer: 'computer', resource: 'pool' };
+const KIND_WORD: Readonly<Record<LiveMapNodeKind, string>> = { leader: 'leader', lane: 'lane', job: 'job', computer: 'computer', resource: 'pool', planner: 'planner' };
 const nameOf = (node: LiveMapNode) => `Open ${KIND_WORD[node.kind]} ${node.label}: ${node.detail}`;
 const VIEW_OPTIONS = [{ value: '2d', label: '2D' }, { value: '3d', label: '3D' }] as const;
 const LAYOUT_OPTIONS = [{ value: 'rows', label: 'By lane' }, { value: 'org', label: 'By org' }] as const;
@@ -63,6 +66,7 @@ interface MapViewProps {
   map: FleetLiveMap; now: number; onOpen: (node: LiveMapNode) => void;
   /** `phm map edges`: the last words on each message line. Null or absent when that read is unknown; the lines still draw. */
   edges?: MapEdge[] | null;
+  liveMessages?: readonly MapMessage[];
   onOpenMessages?: (pair: MessagePair) => void;
   /** `phm agents messages`: count and last 5 summaries per line, keyed `from->to` by node id. Null or absent: the card says unknown. */
   pairs?: Map<string, AgentsMessagePair> | null;
@@ -73,9 +77,16 @@ interface MapViewProps {
   /** Phone layout only: what waits on the owner, pinned on top. */
   asks?: readonly OrgAsk[];
 }
-export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, reducedMotion = false, asks }: MapViewProps) {
+export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => {}, pairs, conversations, liveMessages, reducedMotion = false, asks }: MapViewProps) {
   const [filter, setFilter] = useState<MapFilter>(readMapFilter);
-  const map = useMemo(() => filterLiveMap(full, filter), [full, filter]);
+  const filtered = useMemo(() => filterLiveMap(full, filter), [full, filter]);
+  const live = transientMessageEdges(liveMessages ?? [], now).filter(edge => [edge.from, edge.to].every(id => filtered.nodes.some(node => node.id === id)));
+  const map = { ...filtered, edges: [...filtered.edges, ...live] };
+  const [picked, setPicked] = useState<MapMessage | null>(null);
+  const openEdge = (edge: LiveMapEdge) => {
+    const message = liveMessages?.find(m => edge.id === `live:${m.id}`);
+    if (message) setPicked(message); else onOpenMessages(pairOf(edge));
+  };
   const none = map.filter?.matched === 0;
   const changeFilter = (next: MapFilter) => { setFilter(next); saveMapFilter(next); };
   const filterBar = <MapFilterBar map={full} filter={filter} onChange={changeFilter} />;
@@ -97,8 +108,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
   const orgLayout = arrangement === 'org' ? layoutByOrg(map) : null;
   const layout = orgLayout ?? layoutLiveMap(map);
   const pulse = (edge: LiveMapEdge) => pulsing(edge, map, now, reducedMotion) ? 'true' : undefined;
-  const counts = showMessages ? messagePairs(map) : [];
-  const talk = showMessages ? map.edges.filter(edge => edge.kind === 'messaged-in-last-15-min') : [];
+  const counts = showMessages ? messagePairs(filtered) : [];
+  const talk = showMessages ? filtered.edges.filter(edge => edge.kind === 'messaged-in-last-15-min') : [];
   const hover = (edge: LiveMapEdge) => ({ onMouseEnter: () => setHovered(edge.id), onMouseLeave: () => setHovered(null),
     onFocus: () => setHovered(edge.id), onBlur: () => setHovered(null) });
   const label = (id: string) => layout.at.get(id)?.label ?? 'unknown';
@@ -124,9 +135,12 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
     </div>
     <p className={styles.notice}>Map as of {Number.isFinite(Date.parse(map.generatedAt)) ? <time dateTime={map.generatedAt}>{map.generatedAt}</time> : 'unknown'}.</p>
     {filterBar}
+    {picked && <section aria-label="Message text"><strong>{picked.from} → {picked.to} · {picked.kind}</strong>
+      <pre className={styles.logPreview}>{typeof picked.text === 'string' ? picked.text : picked.summary}</pre><button type="button" onClick={() => setPicked(null)}>Close message</button></section>}
+    {showMessages && live.length > 0 && <p className={styles.notice}>Live messages stay for 10 seconds. {live.map(edge => <button type="button" key={edge.id} onClick={() => openEdge(edge)}>Read {label(edge.from)} → {label(edge.to)}</button>)}</p>}
     {noJobs}
     {emptyMap(map) && map.sources.jobs !== 'available' && !none && <p className={styles.notice} role="status">Nothing to map yet: no lanes, jobs or computers reported.</p>}
-    {none ? noMatch : mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={edge => onOpenMessages(pairOf(edge))} nameOf={nameOf}
+    {none ? noMatch : mode === '3d' ? <MapStage3D map={map} now={now} onOpen={onOpen} onOpenEdge={openEdge} nameOf={nameOf}
       showMessages={showMessages} reducedMotion={reducedMotion} onHover={setHovered} cardEdge={card}
       card={card ? <MessageCard edge={card} pair={pairs?.get(`${card.from}->${card.to}`)} layout={layout} now={now} title={`${label(card.from)} → ${label(card.to)}`} anchored /> : null} />
       : <div className={styles.scroll}>
@@ -144,8 +158,8 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
             const d = message ? messageCurve(a, b).d : `M${a.x},${a.y} L${b.x},${b.y}`;
             if (!message) return <path key={edge.id} d={d} className={styles.edge} data-kind={edge.kind} />;
             return <g key={edge.id}>
-              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: messageLineWidth(edge.messages), opacity: edgeOpacity(edge, map, now) }} />
-              <path d={d} className={styles.hit} data-open-messages={edge.id} onClick={() => onOpenMessages(pairOf(edge))} {...hover(edge)} />
+              <path d={d} className={styles.edge} data-kind={edge.kind} data-pulse={pulse(edge)} style={{ strokeWidth: edge.id.startsWith('live:') ? 5 : messageLineWidth(edge.messages), opacity: edge.id.startsWith('live:') ? 1 - (now - Date.parse(edge.lastMessageAt!)) / MESSAGE_EDGE_TTL_MS : edgeOpacity(edge, map, now) }} />
+              <path d={d} className={styles.hit} data-open-messages={edge.id} onClick={() => openEdge(edge)} {...hover(edge)} />
             </g>;
           })}
         </svg>
@@ -189,7 +203,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
           style={{ left: node.x - NODE_W / 2, top: node.y - NODE_H / 2, width: NODE_W, height: NODE_H }}
           aria-label={nameOf(node)} title={node.detail} onClick={() => onOpen(node)}>
           <span className={styles.name}>
-            {(node.kind === 'lane' || node.kind === 'job') && <ProviderBadge of={node.provider} iconOnly size={node.kind === 'lane' ? 16 : 12} />}
+            {!['computer', 'resource'].includes(node.kind) && <ProviderBadge of={node.provider} iconOnly size={node.kind === 'lane' ? 16 : 12} />}
             {node.live && <span className={styles.live} role="img" aria-label="Active in the last 5 minutes" />}
             <strong>{node.label}</strong>
             {node.kind === 'lane' && <LaneHealthBadge health={node.health} />}
@@ -205,7 +219,7 @@ export function MapView({ map: full, now, onOpen, edges, onOpenMessages = () => 
     {showMessages && !none && <section aria-label="Messages on the map">
       {map.counts.messages === null ? <p className={styles.notice}>Messages unknown.</p>
         : talk.length ? <ul className={styles.talk}>{talk.map(edge => <li key={edge.id}>
-          <button type="button" title="Open the last 20 messages" data-pulse={pulse(edge)} onClick={() => onOpenMessages(pairOf(edge))} {...hover(edge)}>
+          <button type="button" title="Open the last 20 messages" data-pulse={pulse(edge)} onClick={() => openEdge(edge)} {...hover(edge)}>
             {label(edge.from)} → {label(edge.to)}: {edge.messages ?? 'unknown'} in {map.windowMinutes} min{lastOn(edge) ? last(lastOn(edge)!) : ''}</button></li>)}</ul>
           : <p className={styles.notice}>No messages between agents in the last {map.windowMinutes} minutes.</p>}
       {offMap.length > 0 && <ul className={styles.talk} aria-label="Messages not drawn on the map">{offMap.map(edge => <li key={edge.id}>
@@ -234,6 +248,10 @@ function MessageCard({ edge, pair, layout, now, title, anchored = false }: { edg
 
 export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) {
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  const messages = useQuery(fleetMapMessagesQuery, { enabled: visible, freshMs: 2000 });
+  const refetchMessages = useRefetch(fleetMapMessagesQuery);
+  usePollWhileVisible(() => { setNow(Date.now()); refetchMessages(); }, 2000, { enabled: visible });
   const read = useQuery(liveMapQuery, { enabled: visible, freshMs: MAP_POLL_MS });
   const refetch = useRefetch(liveMapQuery);
   const edges = useQuery(mapEdgesQuery, { enabled: visible, freshMs: MAP_POLL_MS });
@@ -266,7 +284,7 @@ export function MapPane({ visible, host }: Pick<PaneProps, 'visible' | 'host'>) 
     {replay && <ReplayBar replay={replay} index={frame ? scrub : null} playing={playing} onIndex={setScrub} onPlaying={setPlaying} />}
     {replay && frame ? <MapView map={replayMap(read.data, frame, replay.stepSeconds)} now={Date.parse(frame.at)} onOpen={open} edges={frame.messages} onOpenMessages={openMessages}
       pairs={null} conversations={null} reducedMotion />
-      : <MapView map={read.data} now={Date.now()} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
+      : <MapView map={read.data} now={now} liveMessages={messages.data?.messages} onOpen={open} edges={edges.data} onOpenMessages={openMessages}
       pairs={pairs.data} conversations={threads.data} reducedMotion={prefersReducedMotion()} />}
   </>;
 }

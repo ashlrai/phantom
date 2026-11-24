@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { runsRoot, readTail } from '../metrics/loop-collect.js';
 import { readSource } from './runs-parked-queue.js';
 import { compactMergeLatency } from './compact-brief-evidence.js';
+import { openPrCount } from './open-prs.js';
 import { mergeLatencyLine } from './git-merge-latency.js';
 
 type BriefLatency = Awaited<ReturnType<typeof compactMergeLatency>>;
@@ -105,7 +106,7 @@ const defaults = (repoRoot: string | undefined, now: number): BriefReaders => ({
     let prs: unknown = null;
     try { prs = JSON.parse(source.text); } catch { /* Preserve the existing snapshot path when invalid. */ }
     const mergeLatency = await compactMergeLatency(root, ledger?.text ?? '', now, prs, source.state === 'missing', repoRoot);
-    return { mergedPrs, mergeLatency, merges24h: mergedPrs.state === 'ok' ? mergedPrs.prs.length : null, openPrs: null };
+    return { mergedPrs, mergeLatency, merges24h: mergedPrs.state === 'ok' ? mergedPrs.prs.length : null, openPrs: source.state === 'healthy' ? openPrCount(prs, now) : null };
   },
   installed: readInstalledBundleVersion,
   latest: async () => (await discoverLatestRelease('ashlrai/phantom', defaultReleasePublicReader())).version,

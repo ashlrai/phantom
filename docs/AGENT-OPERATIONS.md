@@ -42,7 +42,7 @@ The command consumes route evidence because invoking the legacy router can publi
 | Run the CLI from source, no build | `npm run dev -- <command>` or `npx tsx src/cli/index.ts <command>` |
 | Run the built CLI | `node bin/ashlr <command>` (shim that imports `dist/cli/index.js`) |
 | Install the source build on `PATH` | `./install.sh` (builds, symlinks `bin/ashlr` into `~/.local/bin`) |
-| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs); reference in [verify-changed.md](verify-changed.md) |
+| Worker pre-PR static checks | `node scripts/verify-changed.mjs` once in the foreground; replaces worker runs of full typecheck and lint, runs the docs link check when the diff touches markdown or deletes files, the quarantine-ledger check when test files or `queue/quarantine.tsv` change, and a syntax check of each changed file by type (Python, shell, Perl, shebang scripts, JSON, XML, Rust, Swift, YAML, TOML, CSS, Vitest snapshots, patch diffs, embedded payloads in HTML files, and scripts in the independently-owned `src/raycast/` and `examples/universe-site/` trees); reference in [verify-changed.md](verify-changed.md) |
 | Type check (backend + web) | `npm run typecheck` |
 | Fast type check via the native compiler (same projects as `typecheck`) | `npm run typecheck:fast` |
 | Lint (ESLint + real-I/O lane + Phantom console sync-I/O guards) | `npm run lint` |
@@ -399,6 +399,18 @@ TTL; changed contents under the same ID refuse. Inbox returns unacknowledged,
 unexpired envelopes in priority and acceptance order, with remaining TTL and
 `hasMore` for a truncated result. Reading never acknowledges. Ack checks the
 recipient and is idempotent; unknown IDs refuse.
+
+`phm bus inbox` takes the same read filters every other bus read shares, all
+ANDed: `--from`/`--exclude-from` keep or drop mail one sender label wrote
+(each resolved through the agent identity registry, so a registered identity's
+handle, `agent:` address, id and aliases all match, with exact-label matching
+when the ref resolves to nothing or the registry is unreadable), `--priority`
+keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
+`--channel` keeps mail addressed to `group:<name>:*`, `--since`/`--before`
+bound the store acceptance time as one `[since, before)` window, `--contains`
+keeps envelopes whose scrubbed one-line summary carries the needle, and
+`--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
+that conversation label. `hasMore` reports truncation of the filtered set.
 
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,

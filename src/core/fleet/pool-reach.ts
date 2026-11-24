@@ -190,8 +190,8 @@ export function readPoolReach(deps: PoolReachDeps): PoolReach {
   let configError: string | null = null;
   try {
     config = deps.readConfig();
-  } catch (error) {
-    configError = error instanceof Error ? error.message : String(error);
+  } catch {
+    configError = 'pool config unreadable';
   }
   return joinPoolReach(config, configError, peers, home);
 }

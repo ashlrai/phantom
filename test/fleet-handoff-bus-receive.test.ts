@@ -137,6 +137,11 @@ describe('fleet handoff-receive', () => {
     expect(handoffRecipientMatches('worker-9', stableAgentId('worker-9'), options)).toBe(true);
     expect(handoffRecipientMatches('agent:worker-9', 'agent:worker-8', options)).toBe(false);
     expect(handoffRecipientMatches('group:ops:general', 'worker-9', options)).toBe(false);
+    // A case-variant of the handle or alias resolves to no identity: it keeps
+    // exact-label matching, never the identity's other labels.
+    expect(handoffRecipientMatches('agent:worker-9', 'Worker-9', options)).toBe(false);
+    expect(handoffRecipientMatches('agent:worker-9', 'W9-ALIAS', options)).toBe(false);
+    expect(handoffRecipientMatches('Worker-9', 'Worker-9', options)).toBe(true);
     writeFileSync(join(busRoot, 'agent-identities', 'registry.json'), '{invalid', { mode: 0o600 });
     expect(handoffRecipientMatches('agent:worker-9', 'worker-9', options)).toBe(false);
     expect(handoffRecipientMatches('agent:worker-9', 'agent:worker-9', options)).toBe(true);

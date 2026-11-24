@@ -59,6 +59,22 @@ async function seedAllSignals(): Promise<void> {
     { pool: 'claude', pctUsed: 40, resetAt: new Date(NOW + 10 * 3_600_000).toISOString(), observedAt: iso(1), burnRatePctPerHour: 2 },
     { pool: 'codex', pctUsed: 10, resetAt: new Date(NOW + 100 * 3_600_000).toISOString(), observedAt: iso(1) },
   ].map(row => JSON.stringify(row)).join('\n'));
+  // A readable hints report with no actionable content: the signal is ok, no idea.
+  await put('metrics/selection-hints.json', JSON.stringify({
+    schema: 'metrics.selection-hints.v1', at: iso(1), advisory: true,
+    lanes: [], nodes_with_spare: [],
+    top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+    loop_wait: { missing: 'loop stage times not collected' },
+    bets_share: { missing: 'bets share not computed' },
+  }));
+  // Three jobs the gate let through all ended EMPTY already_done: the missed-duplicates idea trips once.
+  const dupcheck = (job: string, action: string, tag?: string) =>
+    JSON.stringify({ schema: 'queue.dupcheck-event.v1', at: iso(30), job, action, ...(tag ? { tag } : {}) });
+  await put('metrics/dupcheck.jsonl', [
+    dupcheck('RQ-DUP-1', 'launch'), dupcheck('RQ-DUP-2', 'launch'), dupcheck('RQ-DUP-3', 'warn'),
+    dupcheck('RQ-DUP-1', 'outcome', 'already_done'), dupcheck('RQ-DUP-2', 'outcome', 'already_done'), dupcheck('RQ-DUP-3', 'outcome', 'already_done'),
+    'not json at all',
+  ].join('\n') + '\n');
 }
 
 const read = () => readIdeaList({ runsDir: root, usageLogPaths: [join(root, 'queue', 'usage-readings.log')], now: NOW });
@@ -73,6 +89,7 @@ describe('ideas list ranking', () => {
       ['disk-trend:runway', 75],
       ['guardian-fixups:phantom:lint', 70],
       ['idle-lanes:claude', 66],
+      ['dupcheck-gate:missed-duplicates', 50],
       ['empty-launches:rq-phx-recut', 34],
       ['unspent-usage:claude', 30],
     ]);
@@ -85,6 +102,10 @@ describe('ideas list ranking', () => {
     expect(byId.get('disk-trend:runway')).toMatchObject({ title: 'Disk will drop below 150 GB free in about 15 hours', evidence: { freeGb: 180, gbPerHour: 2, hoursUntilFloor: 15 } });
     expect(byId.get('idle-lanes:claude')!.title).toBe('claude has 5 jobs waiting but runs 0 of 3');
     expect(byId.get('unspent-usage:claude')).toMatchObject({ evidence: { usedPct: 40, hoursToReset: 10, readingAgeHours: 1, projectedLeftAtResetPct: 38 } });
+    expect(byId.get('dupcheck-gate:missed-duplicates')).toMatchObject({
+      signal: 'dupcheck-gate',
+      evidence: { checked: 3, launches: 2, warns: 1, launchedEndedAlreadyDone: 2, warnedEndedAlreadyDone: 1, missedRate: 1 },
+    });
     for (const idea of report.ideas) {
       expect(idea.title).not.toMatch(/\n/);
       expect(idea.task.length).toBeGreaterThan(20);
@@ -122,10 +143,95 @@ describe('ideas list ranking', () => {
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, idleLanes: { ok: false, reason: 'x' },
       unspentUsage: { ok: true, data: [{ pool: 'claude', usedPct: 30, hoursToReset: 6, readingAgeHours: 0.5, projectedLeftPct: null }] },
+      loopHints: { ok: false, reason: 'x' }, dupcheckGate: { ok: false, reason: 'x' },
     };
     const [idea] = rankBottlenecks(signals, NOW).ideas;
     expect(idea!.evidence.projectedLeftAtResetPct).toBeNull();
     expect(idea!.task).not.toMatch(/will expire at the current pace/);
+  });
+});
+
+describe('loop-hints signal', () => {
+  const hintsDoc = (over: Record<string, unknown> = {}) => JSON.stringify({
+    schema: 'metrics.selection-hints.v1', at: iso(2), advisory: true,
+    lanes: [{ lane: 'claude', merged_per_lane_hour: 1.5, merged_6h: 9, held: false }],
+    nodes_with_spare: [{ node: 'studio', spare: 2 }],
+    top_constraint: { name: 'merge', evidence: '5 PRs opened and 0 merged in 6h' },
+    loop_wait: { headline: 'Biggest wait: PR to merged, p50 95 min', slowest: { stage: 'pr_to_merged', p50_minutes: 95 }, since: iso(24), jobs_truncated: false },
+    bets_share: { reserved: 1, usable: 1 },
+    ...over,
+  });
+
+  it('turns the loop diagnosis into ranked ideas with the report stamp as evidence', async () => {
+    await seedAllSignals();
+    await put('metrics/selection-hints.json', hintsDoc());
+    const report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok', reason: null });
+    const byId = new Map(report.ideas.map(idea => [idea.id, idea]));
+    expect(byId.get('loop-constraint:merge')).toMatchObject({
+      signal: 'loop-hints', payoff: { score: 75 },
+      evidence: { constraint: 'merge', constraintEvidence: '5 PRs opened and 0 merged in 6h', hintsAt: iso(2), hintsAgeHours: 2 },
+    });
+    expect(byId.get('loop-wait:pr-to-merged')).toMatchObject({
+      signal: 'loop-hints', payoff: { score: 48 },
+      evidence: { stage: 'pr_to_merged', p50Minutes: 95, since: iso(24), jobsTruncated: 'false', hintsAgeHours: 2 },
+    });
+    expect(byId.get('loop-wait:pr-to-merged')!.title).toBe("The self-improvement loop's slowest stage is PR to merged (p50 95 min)");
+  });
+
+  it('emits no idea for unnamed or unknown constraints and stages under the wait floor', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+      loop_wait: { headline: 'x', slowest: { stage: 'queued_to_launched', p50_minutes: 30 }, since: iso(24), jobs_truncated: null },
+    }));
+    const report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+  });
+
+  it('turns a measurement constraint into an idea but leaves unknown constraint names alone', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({ top_constraint: { name: 'measurement', evidence: 'jobs.jsonl unreadable: throughput unknown' } }));
+    let report = await read();
+    expect(report.ideas.map(idea => idea.id)).toEqual(['loop-constraint:measurement', 'loop-wait:pr-to-merged']);
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'unknown', evidence: 'loop times missing; see loop report reasons' },
+      loop_wait: { missing: 'loop stage times not collected' },
+    }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'ok' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+  });
+
+  it('reports the signal unknown on missing, malformed, stale or wrong-schema files and invents nothing', async () => {
+    let report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json not found' });
+    await put('metrics/selection-hints.json', '{not json');
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is not valid JSON' });
+    await put('metrics/selection-hints.json', hintsDoc({ schema: 'metrics.other.v1' }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown' });
+    expect(report.ideas.filter(idea => idea.signal === 'loop-hints')).toEqual([]);
+    await put('metrics/selection-hints.json', hintsDoc({ at: iso(100) }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is older than 72 hours' });
+    await put('metrics/selection-hints.json', hintsDoc({ at: iso(-3) }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown', reason: 'metrics/selection-hints.json is stamped in the future' });
+    await put('metrics/selection-hints.json', hintsDoc({ advisory: false }));
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'loop-hints')).toMatchObject({ status: 'unknown' });
+  });
+
+  it('treats a Missing loop_wait and absent constraint fields as unknown detail, not zero', async () => {
+    await put('metrics/selection-hints.json', hintsDoc({
+      top_constraint: { name: 'idea-to-merge' },
+      loop_wait: { missing: 'loop stage times not collected' },
+    }));
+    const report = await read();
+    const idea = report.ideas.find(candidate => candidate.id === 'loop-constraint:idea-to-merge');
+    expect(idea).toMatchObject({ payoff: { score: 50 }, evidence: { constraintEvidence: null } });
+    expect(report.ideas.some(candidate => candidate.id.startsWith('loop-wait:'))).toBe(false);
   });
 });
 
@@ -149,9 +255,59 @@ describe('stable JSON', () => {
     const lane = (name: string) => ({ lane: name, status: 'red' as const, running: 0, target: 1, queued: 1 });
     const signals: BottleneckSignals = {
       emptyLaunches: { ok: false, reason: 'x' }, guardianFixups: { ok: false, reason: 'x' }, disk: { ok: false, reason: 'x' }, unspentUsage: { ok: false, reason: 'x' },
+      loopHints: { ok: false, reason: 'x' }, dupcheckGate: { ok: false, reason: 'x' },
       idleLanes: { ok: true, data: [lane('zeta'), lane('alpha')] },
     };
     expect(rankBottlenecks(signals, NOW).ideas.map(idea => idea.id)).toEqual(['idle-lanes:alpha', 'idle-lanes:zeta']);
+  });
+});
+
+describe('dupcheck-gate signal', () => {
+  const event = (job: string, action: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ schema: 'queue.dupcheck-event.v1', at: iso(1), job, action, ...extra });
+  const ledger = (rows: string[]) => rows.join('\n') + '\n';
+  const dupcheckIdeas = async (text: string) => {
+    await put('metrics/dupcheck.jsonl', text);
+    return (await read()).ideas.filter(idea => idea.signal === 'dupcheck-gate');
+  };
+
+  it('ranks false skips: skipped jobs that launched anyway', async () => {
+    const ideas = await dupcheckIdeas(ledger([
+      event('RQ-SKIP-1', 'skip'), event('RQ-SKIP-1', 'launch'),
+      event('RQ-SKIP-2', 'skip'), event('RQ-SKIP-2', 'warn'),
+      event('RQ-SKIP-3', 'skip'),
+    ]));
+    expect(ideas.map(idea => idea.id)).toEqual(['dupcheck-gate:false-skips']);
+    expect(ideas[0]).toMatchObject({
+      payoff: { score: 50 },
+      evidence: { checked: 3, skips: 3, falseSkips: 2, skipPrecision: 0.33, falseSkipJobs: 'RQ-SKIP-1, RQ-SKIP-2' },
+    });
+  });
+
+  it('keeps missed duplicates below the count or rate threshold out', async () => {
+    // Two ended already_done: under DUPCHECK_MISSED_MIN even at a 100% rate.
+    expect(await dupcheckIdeas(ledger([
+      event('RQ-M-1', 'launch'), event('RQ-M-1', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-2', 'launch'), event('RQ-M-2', 'outcome', { tag: 'already_done' }),
+    ]))).toEqual([]);
+    // Three misses in forty-one let-through launches: under DUPCHECK_MISSED_RATE.
+    const rows = [
+      event('RQ-M-1', 'launch'), event('RQ-M-1', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-2', 'warn'), event('RQ-M-2', 'outcome', { tag: 'already_done' }),
+      event('RQ-M-3', 'launch'), event('RQ-M-3', 'outcome', { tag: 'already_done' }),
+      ...Array.from({ length: 37 }, (_, i) => event(`RQ-OK-${i}`, 'launch')),
+    ];
+    expect(await dupcheckIdeas(ledger(rows))).toEqual([]);
+  });
+
+  it('reports the signal unknown when no dupcheck event is readable, ok when the file is merely empty', async () => {
+    await put('metrics/dupcheck.jsonl', 'garbage\n{"schema":"other.v1"}\n');
+    let report = await read();
+    expect(report.signals.find(signal => signal.name === 'dupcheck-gate')).toMatchObject({ status: 'unknown' });
+    expect(report.ideas.some(idea => idea.signal === 'dupcheck-gate')).toBe(false);
+    await put('metrics/dupcheck.jsonl', '');
+    report = await read();
+    expect(report.signals.find(signal => signal.name === 'dupcheck-gate')).toMatchObject({ status: 'ok' });
   });
 });
 

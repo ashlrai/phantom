@@ -16,6 +16,7 @@ import { runsRoot } from '../metrics/loop-collect.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { readHostLoadJobRoots } from './host-load.js';
 import { queueProducers } from './job-producers.js';
+import { isPrecheckSkipRow } from './jobs-ledger-dialect.js';
 import { readSource } from './runs-parked-queue.js';
 
 export const LEADER_BETS_SCHEMA = 'fleet.leader-bets.v1';
@@ -108,7 +109,7 @@ export function leaderBets(queue: string | null, ledger: string | null, now: num
     if (url && (event === 'publish' || event === 'outcome' || event === 'finish')) cur.url = url;
     if (event === 'outcome' && ['MERGED', 'OPEN', 'CLOSED', 'EMPTY', 'EMPTY_DONE'].includes(state)) cur.state = state;
     if (typeof row.merged_at === 'string') cur.state = 'MERGED';
-    if (event === 'precheck_skip' && row.applied !== false) {
+    if (isPrecheckSkipRow(row)) {
       cur.skip = true;
       cur.reason ??= text(row.reason) ?? (typeof row.code === 'string' || typeof row.code === 'number' ? `precheck ${String(row.code).slice(0, 40)}` : 'precheck skip');
     }

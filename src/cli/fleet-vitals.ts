@@ -6,6 +6,8 @@ import { readSource } from '../core/fleet/runs-parked-queue.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readLaunchCosts } from '../core/fleet/launch-cost.js';
 import { readLocalGateEvidence, type LocalGateEvidence } from '../core/fleet/local-gate.js';
+import { readSwapoutRateEvidence, type SwapoutRateEvidence } from '../core/fleet/swapout-sync.js';
+import { MEMORY_GUARD } from '../core/resources/lane-autopilot.js';
 import { readLaunchVitals, type LaunchVitals } from '../core/fleet/launch-vitals.js';
 import { readEmptyCauses, topEmptyCauses, type EmptyCause } from '../core/fleet/empty-cause.js';
 import { stuckSummaryLine } from '../core/fleet/stuck-jobs.js';
@@ -59,10 +61,10 @@ export async function readHostVitals(root = join(homedir(), '.ashlr-runs'), now 
  * shape (and its exact-key contract test) stays byte-compatible.
  * Unknown is null; a stale planner is evidence only and grants no authority.
  */
-export type FleetVitalsView = HostVitals & { leader_liveness: LeaderLiveness; local_gate: LocalGateEvidence };
+export type FleetVitalsView = HostVitals & { leader_liveness: LeaderLiveness; local_gate: LocalGateEvidence; swapout_rate: SwapoutRateEvidence };
 export async function readFleetVitalsView(root = join(homedir(), '.ashlr-runs'), now = Date.now()): Promise<FleetVitalsView> {
-  const [host, leader_liveness, local_gate] = await Promise.all([readHostVitals(root, now), readLeaderLiveness(root, now), readLocalGateEvidence(root)]);
-  return { ...host, leader_liveness, local_gate };
+  const [host, leader_liveness, local_gate, swapout_rate] = await Promise.all([readHostVitals(root, now), readLeaderLiveness(root, now), readLocalGateEvidence(root), readSwapoutRateEvidence(root, { guard: MEMORY_GUARD })]);
+  return { ...host, leader_liveness, local_gate, swapout_rate };
 }
 
 const USAGE = 'Usage: phm fleet vitals [--runs-dir <directory>] [--json]\nDisk sizes and change since the previous host sample, plus launch queue, first-minute launch cost, the top three causes of empty jobs in 24 hours and how many jobs are stuck. Missing readings are unknown.';
@@ -97,6 +99,16 @@ export async function cmdFleetVitals(args: string[]): Promise<number> {
     console.log(gate.state === 'known'
       ? `Local gate: ${gate.passed}/${gate.reports} reports passed (source ${gate.source})${failingSteps.length ? `; failing ${failingSteps.join(', ')}` : ''}`
       : `Local gate: unknown (source ${gate.source})`);
+    const mem = report.swapout_rate;
+    console.log(mem.state === 'known'
+      ? `Memory samples: ${mem.samples} recorded (${mem.oldestAt?.slice(0, 10) ?? 'unknown'} to ${mem.newestAt?.slice(0, 10) ?? 'unknown'}); swapouts/min mean ${mem.swapoutsMean ?? 'unknown'}, max ${mem.swapoutsMax ?? 'unknown'}, ${mem.swapoutsPositive} above zero`
+      : `Memory samples: unknown (source ${mem.source})`);
+    const guard = mem.memoryGuard;
+    if (mem.state === 'known' && guard !== null) {
+      const c = guard.constants;
+      const pct = (share: number | null) => share === null ? 'unknown' : `${Math.round(share * 100)}%`;
+      console.log(`Memory guard: free<${c.lowFreePct}% ${pct(guard.freeBelowLowShare)}, free>${c.raiseFreePct}% ${pct(guard.freeAboveRaiseShare)}, swapouts≥${c.growingSwapoutsPerMin}/min ${pct(guard.swapoutsGrowingShare)}, swap>${c.swapBackstopGb}GB ${pct(guard.swapAboveBackstopShare)} (share of samples carrying each field)`);
+    }
     const empties = report.emptyCauses;
     console.log(`Empty causes (24h): ${empties.total === null ? 'unknown' : empties.top.length
       ? `${empties.top.map(c => `${c.cause} ${c.count}`).join(', ')} of ${empties.total}` : 'none'}`);

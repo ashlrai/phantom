@@ -22,7 +22,14 @@ sibling outcome readers share — job ids `job|job_id|jobId|id`, lanes
 `lane|pool|arm`, events `event|type|kind` (`published` folds to `publish`),
 terminal phases `phase|state|outcome|status|result|conclusion`, and
 `merged`/`closed`/`revert`/`reverted` event names when no phase field
-resolves. A merged, non-reverted job that needed a retry, a
+resolves. Reverted covers the ledger's own revert spellings plus the
+standing revert set the daemon supplies (`revertedPrKeys` — outcome-ledger,
+cloud-task and `phm fleet reverts --record` detections): a merged job whose
+standing verdict row's pull URL is claimed by exactly that job and whose
+`owner/repo#n` key stands in the set counts as reverted, the same
+unambiguous-claim rule the outcome learners apply, so a merge git history
+proved did not hold never seeds a "recovery" draft. A merged,
+non-reverted job that needed a retry, a
 recut, or recovered a failure class seen on three earlier failed jobs seeds
 one bounded draft card.
 
@@ -106,6 +113,16 @@ counts publish only after at least `MIN_SKILL_OBSERVED_TRAJECTORIES` (3)
 production trajectories carry skill-use coverage, and the whole section is
 withheld when the skill-use ledger is degraded. Below the gate the field is
 absent — unknown stays unknown, never a zero.
+
+Recurring adverse tallies do not stay report-only:
+`phm improve discover` reads the same projection and queues a priority-3
+backlog item for the fleet repository when one live card revision records
+at least three reverted + regressed + followed-up realized outcomes inside
+the 7-day window. Only the corpus's newest revision in a `candidate` or
+`verified` status qualifies — superseded and withdrawn cards were already
+handled — and the items keep the association-not-causation framing since
+shadow selections never steered those runs. Withdrawing or rewriting a card
+itself remains an owner-only act on the host-signed ledger.
 
 ## Exit codes
 

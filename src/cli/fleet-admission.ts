@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readFleetStartStatus } from '../core/fleet/admission-status.js';
 import { fleetAdmissionVerdict } from '../core/fleet/admission-verdict.js';
 import { laneLaunchTarget } from '../core/fleet/lane-launch-target.js';
 import { parseAdmissionCtl, type LoadAdmission } from '../core/fleet/load-owners.js';
@@ -51,13 +52,15 @@ export interface FleetAdmissionReport {
 
 export type FleetAdmissionReader = (path: string) => Promise<string>;
 
-const USAGE = `Usage: ashlr fleet admission [--json]
-Read the global cap and why each lane is waiting. Read-only.
-Shows the launch guard's settle seconds, host load and owned load separately.
+const USAGE = `Usage: ashlr fleet admission [--json] [--details]
+Read why starts are waiting in one line. ASHLR_ADMISSION_CTL_PATH overrides the file.
+--details shows the global cap and why each lane is waiting. Read-only.
+Default exits: 0 open, 1 blocked or settling, 2 unknown. --json includes the pacing cap and countdown.
+Details show the launch guard's settle seconds, host load and owned load separately.
 Load-only settle advice uses the last 24 hours of metrics/fleet-controller.jsonl; incomplete history stays unknown. No limits or settings change.
 A lane is admission closed when it has queued work, is under its launch target (the configured target tightened by the controller's effective_target shed), and the dispatcher is not admitting (load gate or pause).
 A lane is blocked by the global cap when it has queued work, is under its launch target, and global running is at the cap while admission is otherwise open.
-Exits 1 when any such lane has ${FLEET_ADMISSION_RED_QUEUED} or more queued.
+--details exits 1 when any such lane has ${FLEET_ADMISSION_RED_QUEUED} or more queued.
 Other waits: ashlr fleet lane-idle.`;
 
 const UNREADABLE = 'Queue status is unreadable or invalid.';
@@ -187,23 +190,29 @@ function formatFleetAdmission(report: FleetAdmissionReport): string {
 /** Read-only. The injected reader is the only filesystem operation. */
 export async function cmdFleetAdmission(
   args: string[],
-  reader: FleetAdmissionReader = async path => path.endsWith('fleet-controller.jsonl')
-    ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8'),
+  reader?: FleetAdmissionReader,
   now = Date.now(),
 ): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
     console.log(USAGE);
     return 0;
   }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) {
+  if (new Set(args).size !== args.length || args.some(arg => !['--json', '--details'].includes(arg))) {
     console.error(USAGE);
     return 2;
   }
+  if (!args.includes('--details')) {
+    const report = await readFleetStartStatus({ read: reader, now });
+    console.log(args.includes('--json') ? JSON.stringify(report) : report.summary);
+    return report.state === 'unknown' ? 2 : report.state === 'open' ? 0 : 1;
+  }
   try {
-    const root = join(homedir(), '.ashlr-runs');
-    const optional = (path: string) => reader(join(root, path)).catch(() => null);
+    const read = reader ?? (async (path: string) => path.endsWith('fleet-controller.jsonl')
+      ? (await readJobsTail(path)).text ?? '' : readFile(path, 'utf8'));
+    const root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+    const optional = (path: string) => read(join(root, path)).catch(() => null);
     const [status, guard, history] = await Promise.all([
-      reader(join(root, 'queue/status.json')), optional('queue/admission-ctl.json'), optional('metrics/fleet-controller.jsonl'),
+      read(join(root, 'queue/status.json')), optional('queue/admission-ctl.json'), optional('metrics/fleet-controller.jsonl'),
     ]);
     const report = sanitizePublicJson(explainFleetAdmission(JSON.parse(status), guard, history, now)) as FleetAdmissionReport;
     console.log(args.includes('--json') ? JSON.stringify(report) : formatFleetAdmission(report));

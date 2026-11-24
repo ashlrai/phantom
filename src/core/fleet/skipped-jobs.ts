@@ -3,6 +3,7 @@
  * Read-only: it never re-queues a job or edits a queue file. A code it does not know is shown as unknown, never guessed. */
 import { join } from 'node:path';
 import { readText } from './empty-cause.js';
+import { isPrecheckSkipRow } from './jobs-ledger-dialect.js';
 import { defaultRunsDir } from './landed-closes-read.js';
 import { jobFamily } from './slot-yield.js';
 
@@ -42,7 +43,7 @@ export function summarizeSkips(ledger: string | null, now: number, hours = SKIP_
   if (ledger === null) return report;
   const rows: Array<SkippedJobV1 & { ms: number }> = [];
   for (const line of ledger.split(/\r?\n/)) {
-    if (!line.includes('precheck_skip')) continue;
+    if (!line.includes('precheck_skip') && !line.includes('skipped_empty')) continue;
     let row: Record<string, unknown>;
     try {
       const v: unknown = JSON.parse(line);
@@ -50,7 +51,7 @@ export function summarizeSkips(ledger: string | null, now: number, hours = SKIP_
       row = v as Record<string, unknown>;
     } catch { continue; }
     const ms = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-    if (row.event !== 'precheck_skip' || typeof row.job !== 'string' || !row.job || !Number.isFinite(ms) || ms < now - hours * HOUR || ms > now) continue;
+    if (!isPrecheckSkipRow(row) || typeof row.job !== 'string' || !row.job || !Number.isFinite(ms) || ms < now - hours * HOUR || ms > now) continue;
     const code = typeof row.code === 'number' && Number.isInteger(row.code) ? row.code : null;
     const family = jobFamily(row.job);
     rows.push({ job: row.job, family, lane: text(row.lane ?? row.pool), repo: text(row.repo), at: new Date(ms).toISOString(), code,
