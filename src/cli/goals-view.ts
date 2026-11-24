@@ -1,6 +1,6 @@
 /**
  * `phm goals [--json]`: the fleet scorecard. Plain words by default, behind
- * first; `--json` prints the versioned `fleet.goal-scorecard.v2` object for
+ * first; `--json` prints the versioned `fleet.goal-scorecard.v3` object for
  * agents (`--text` is kept as an alias of the default). Thin:
  * core/fleet/goal-scorecard.ts reads and judges. Exit 0 even when signals are
  * unknown; unknown is an answer, not a failure.

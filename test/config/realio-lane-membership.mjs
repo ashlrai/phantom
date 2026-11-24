@@ -43,6 +43,7 @@ export const REAL_IO_LANE_TIMEOUT_MS = 60_000;
  * lane by default instead of silently rejoining the flaky pile.
  */
 export const REAL_IO_TEST_FILES = [
+  'test/update-release-directory.test.ts', // Extracts real archives and smoke-tests a candidate executable.
   'test/channel-health-ingress-failure-322s.test.ts', // Spawns real ingress health probes.
   'test/comms-confirm-http-original-264s.test.ts', // Runs confirmation transport child processes.
   'test/email-outbox-crash-batch-103.test.ts', // Restarts real outbox processes after crashes.
@@ -69,6 +70,7 @@ export const REAL_IO_TEST_FILES = [
   'test/recut-scripts-c497.test.ts', // Runs the desktop performance script in a real Node child.
   'test/release-notes.test.ts', // Creates real Git merge history and invokes the release CLI through tsx.
   'test/release-status.test.ts', // Creates real Git tags and remote refs for release status reads.
+  'test/release-git-backlog.test.ts', // Creates temporary Git tags, remote refs and shallow clones for the leader brief fallback.
   'test/verify-changed-master-overlay.test.ts', // Creates real Git branches and materializes master overlay fixtures.
   'test/acp-seat-client.test.ts', // Real hermetic ACP stdio fixture subprocesses.
   'test/agents-app-adapters.test.ts', // Real fake-CLI shell subprocesses and session-record files.

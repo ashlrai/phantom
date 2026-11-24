@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { apiGet } from '../../../data/client.js';
 import { useQuery, useRefetch } from '../../../data/hooks.js';
 import { usePollWhileVisible } from '../shell/section-visibility.js';
 import { returnsQuery } from './returns-query.js';
-import { returnsHeadline, type ParsedReturns } from './returns-model.js';
+import { returnsHeadline, returnTemporal, type ParsedReturns } from './returns-model.js';
 import { parseVerify, verdictFor, verdictLabel, verifyHeadline, type ParsedVerify, type VerifyChecked } from './returns-verify-model.js';
 import styles from './fleet-board.module.css';
 
@@ -27,7 +27,7 @@ function age(at: string, now: number): string {
 export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify }: {
   parsed: ParsedReturns | null; now: number; verify?: VerifyState; onVerify?: () => void;
 }) {
-  const headline = parsed === null ? null : returnsHeadline(parsed);
+  const headline = parsed === null ? null : returnsHeadline(parsed, now);
   const github = verify.status === 'done' ? verify.parsed : null;
   const githubHeadline = github === null ? null : verifyHeadline(github);
   return (
@@ -41,7 +41,9 @@ export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify
             const checked = github === null ? null : verdictFor(github, row);
             return (
             <li className={styles.orderRow} key={`${row.claimId}|${row.at}|${i}`}>
-              <span className={styles.orderState} data-state={row.result}>{row.result}</span>
+              <span className={styles.orderState} data-state={returnTemporal(row, now) === 'current' ? row.result : 'background'}>
+                {row.result} · {returnTemporal(row, now)}{returnTemporal(row, now) === 'current' ? '' : ' (background)'}
+              </span>
               <span>{row.repo}</span>
               <span className={styles.mono}>{row.evidenceKind === 'pr'
                 ? `PR #${row.pr} · head ${row.head?.slice(0, 7)}` : row.evidenceKind}</span>
@@ -80,6 +82,16 @@ export function ReturnsBody({ parsed, now, verify = { status: 'idle' }, onVerify
 export function ReturnsStrip({ visible = true }: { visible?: boolean }) {
   const read = useQuery(returnsQuery, { enabled: visible, freshMs: 0 });
   const refetch = useRefetch(returnsQuery);
+  const [, tick] = useReducer(value => value + 1, 0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!visible) return;
+    const boundaries = read.data?.rows.flatMap(row => [Date.parse(row.at), Date.parse(row.expiresAt)]) ?? [];
+    const next = Math.min(...boundaries.filter(at => at > now));
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(tick, Math.min(next - now, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [read.data, visible, now]);
   usePollWhileVisible(() => { refetch(); }, 30_000, { enabled: visible });
   const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
   const onVerify = () => {
@@ -92,7 +104,7 @@ export function ReturnsStrip({ visible = true }: { visible?: boolean }) {
   return (
     <section className={styles.orderStrip} aria-label="Results">
       <h3 className={styles.sectionTitle}>Results</h3>
-      {read.data !== undefined ? <ReturnsBody parsed={read.data} now={Date.now()} verify={verify} onVerify={onVerify} />
+      {read.data !== undefined ? <ReturnsBody parsed={read.data} now={now} verify={verify} onVerify={onVerify} />
         : <p className={styles.orderNote}>{read.status === 'error' ? 'Results unknown: request failed' : 'Loading results…'}</p>}
     </section>
   );

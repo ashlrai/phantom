@@ -18,12 +18,14 @@
 .icon { display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; font-size: var(--text-xs-size); color: var(--status-info-fg); background: var(--status-info-bg); }
 .icon[data-kind='merged'] { color: var(--status-success-fg); background: var(--status-success-bg); }
 .icon[data-kind='failed'] { color: var(--status-danger-fg); background: var(--status-danger-bg); }
-.icon[data-kind='incident'] { color: var(--status-warning-fg); background: var(--status-warning-bg); }
+.icon[data-kind='lane'], .icon[data-kind='incident'] { color: var(--status-warning-fg); background: var(--status-warning-bg); }
 .cardBody { display: grid; gap: var(--space-1); min-width: 0; }
 .cardBody a, .cardBody > span:first-child { color: var(--text-primary); text-decoration: none; overflow-wrap: anywhere; }
 .cardBody a:hover { color: var(--accent-500); text-decoration: underline; }
 .cardBody a:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 3px; }
 .meta { color: var(--text-secondary); font-size: var(--text-xs-size); font-variant-numeric: tabular-nums; }
+.group summary { color: var(--accent-500); font-size: var(--text-xs-size); cursor: pointer; }
+.group ul { display: grid; gap: var(--space-1); margin: var(--space-1) 0 0; padding-left: var(--space-4); font-size: var(--text-sm-size); overflow-wrap: anywhere; }
 .more { align-self: center; min-height: 2.75rem; padding: 0 var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); cursor: pointer; }
 .more:focus-visible { outline: 2px solid var(--accent-500); outline-offset: 1px; }
 .kind { border-radius: var(--radius-sm); padding: 0 var(--space-1); font-size: var(--text-xs-size); color: var(--status-info-fg); background: var(--status-info-bg); }
@@ -47,3 +49,8 @@
   .root header > span { max-width: 100%; flex-wrap: wrap; }
   .newBar { flex-wrap: wrap; }
 }
+
+.betsCard { display: grid; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); min-width: 0; overflow-wrap: anywhere; }
+.betsCard h2 { margin: 0; color: var(--text-secondary); font-size: var(--text-sm-size); }
+.betsHead, .betsRate { margin: 0; color: var(--text-primary); }
+.betsRate[data-known='false'] { color: var(--text-secondary); }

@@ -97,10 +97,27 @@ class Unit(unittest.TestCase):
         self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fake()), 0)
         self.assertEqual(self.calls, [])
 
-    def test_child_env_has_no_secrets_passthrough(self):
-        os.environ['GH_TOKEN'] = 'sentinel'
-        try: self.assertNotIn('GH_TOKEN', postrun_pr.child_env(self.home))
-        finally: del os.environ['GH_TOKEN']
+    def test_child_env_forwards_only_publish_policy(self):
+        parent = {
+            'HOME': '/parent/home',
+            'PATH': '/parent/bin',
+            'PUBLISH_FULL_TESTS': '1',
+            'PUBLISH_JUDGE_CMD': 'python3 judge.py --threshold 0.95',
+            'PUBLISH_JUDGE_THRESHOLD': '0.91',
+            'PUBLISH_JUDGE_TIMEOUT': '37',
+            'PUBLISH_UNRELATED': 'not-forwarded',
+            'GH_TOKEN': 'sentinel',
+        }
+        child = postrun_pr.child_env(self.home, parent)
+        self.assertEqual(child['PUBLISH_FULL_TESTS'], '1')
+        self.assertEqual(child['PUBLISH_JUDGE_CMD'], 'python3 judge.py --threshold 0.95')
+        self.assertEqual(child['PUBLISH_JUDGE_THRESHOLD'], '0.91')
+        self.assertEqual(child['PUBLISH_JUDGE_TIMEOUT'], '37')
+        self.assertEqual({name for name in child if name.startswith('PUBLISH_')}, set(postrun_pr.PUBLISH_POLICY_ENV))
+        self.assertNotIn('PUBLISH_UNRELATED', child)
+        self.assertNotIn('GH_TOKEN', child)
+        self.assertEqual(child['HOME'], self.home)
+        self.assertEqual(child['PATH'], '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin')
 
 
 class Tick(unittest.TestCase):

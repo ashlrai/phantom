@@ -35,12 +35,13 @@ describe('resident CI reruns', () => {
   it('enforces a global hourly cap across repos and expires old attempts', async () => {
     const { opts, gh } = setup();
     opts.repos.push('org/other'); opts.maxPerHour = 1;
+    const reruns = () => gh.mock.calls.filter(call => call[0][0] === 'run');
     const status = await runCiRerunMaintenance(opts);
-    expect(gh).toHaveBeenCalledTimes(1);
+    expect(reruns()).toHaveLength(1);
     expect(status.repos['org/other']?.skippedCap).toBe(1);
     opts.now = () => Date.parse('2026-01-01T13:01:00Z');
     await runCiRerunMaintenance(opts);
-    expect(gh).toHaveBeenCalledTimes(2);
+    expect(reruns()).toHaveLength(2);
   });
   it.each(['pr-caused', 'shared-baseline', 'unknown'])('never reruns %s', async kind => {
     const { opts, gh } = setup(kind);
@@ -104,5 +105,128 @@ describe('resident CI reruns', () => {
     opts.analyzer = async () => { throw new Error('analysis unavailable'); };
     expect((await runCiRerunMaintenance(opts)).repos['org/repo']?.errors).toEqual(['analysis unavailable']);
     expect(gh).not.toHaveBeenCalled();
+  });
+  it('stamps the failing test on attempt rows and queues a recurring flake after three heads', async () => {
+    const { opts, report } = setup();
+    const heads = ['a'.repeat(40), 'c'.repeat(40), 'd'.repeat(40)];
+    for (const [i, head] of heads.entries()) {
+      report.groups[0]!.runs[0]!.head = head;
+      report.groups[0]!.runs[0]!.runId = 123 + i;
+      const status = await runCiRerunMaintenance(opts);
+      expect(status.repos['org/repo']?.recurringFlakes).toBe(i === 2 ? 1 : 0);
+      expect(status.repos['org/repo']?.flakeFixesQueued).toBe(i === 2 ? 1 : 0);
+    }
+    const journal = readFileSync(opts.journalPath!, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const attempts = journal.filter((row: { outcome: string }) => row.outcome === 'attempt');
+    expect(attempts).toHaveLength(3);
+    expect(attempts.every((row: { test?: string }) => row.test === 'test/a.test.ts > a')).toBe(true);
+    const queue = readFileSync(opts.queueFile!, 'utf8');
+    expect(queue).toContain('- READY RQ-CIFLAKE-');
+    expect(queue).toContain('test/a.test.ts > a');
+    expect(queue).toContain('3 distinct heads');
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.recurringFlakes).toHaveLength(1);
+    expect(read.recurringFlakes[0]).toMatchObject({ repo: 'org/repo', attempts: 3 });
+    expect(read.recurringFlakes[0]!.heads).toEqual([...heads].sort());
+  });
+  it('reports recurring flakes without queueing them while authority or KILL blocks writes', async () => {
+    const { opts, report } = setup();
+    opts.autonomyEffective = () => false;
+    for (const [i, head] of ['a'.repeat(40), 'c'.repeat(40), 'd'.repeat(40)].entries()) {
+      report.groups[0]!.runs[0]!.head = head;
+      report.groups[0]!.runs[0]!.runId = 200 + i;
+      const status = await runCiRerunMaintenance(opts);
+      expect(status.repos['org/repo']?.recurringFlakes).toBe(i === 2 ? 1 : 0);
+    }
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.queueBlocked).toBe('autonomy-off');
+    expect(status.repos['org/repo']?.flakeFixesQueued).toBe(0);
+    let queue = '';
+    try { queue = readFileSync(opts.queueFile!, 'utf8'); } catch { /* absent */ }
+    expect(queue).not.toContain('RQ-CIFLAKE-');
+  });
+  it('resolves a fired rerun to a pass verdict on a later pass and reports it once', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    gh.mockImplementation(async (args: string[]) => args[0] === 'api'
+      ? { ok: true, stdout: JSON.stringify({ status: 'completed', conclusion: 'success', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' }), stderr: '' }
+      : { ok: true, stdout: '', stderr: '' });
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.verdictsResolved).toBe(1);
+    const verdictRows = readFileSync(opts.journalPath!, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      .filter((row: { outcome?: string }) => row.outcome === 'verdict');
+    expect(verdictRows).toHaveLength(1);
+    expect(verdictRows[0]).toMatchObject({ repo: 'org/repo', head: 'a'.repeat(40), runId: 123, pr: 1, verdict: 'pass', test: 'test/a.test.ts > a' });
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 1, fail: 0, inconclusive: 0, pending: 0 });
+    expect(read.verdicts.resolutionRate).toBe(1);
+    await runCiRerunMaintenance(opts);
+    expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(1);
+  });
+  it('maps run conclusions to fail and inconclusive and skips running or stale reads', async () => {
+    const { opts, gh, report } = setup();
+    report.groups[0]!.runs.push(
+      { pr: 2, head: 'b'.repeat(40), runId: 124 },
+      { pr: 3, head: 'c'.repeat(40), runId: 125 },
+      { pr: 4, head: 'd'.repeat(40), runId: 126 },
+    );
+    await runCiRerunMaintenance(opts);
+    expect(gh.mock.calls.filter(call => call[0][0] === 'run')).toHaveLength(4);
+    opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    const payloads: Record<string, unknown> = {
+      '123': { status: 'completed', conclusion: 'failure', head_sha: 'a'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '124': { status: 'completed', conclusion: 'cancelled', head_sha: 'b'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '125': { status: 'in_progress', conclusion: null, head_sha: 'c'.repeat(40), updated_at: '2026-01-01T12:09:00Z' },
+      '126': { status: 'completed', conclusion: 'success', head_sha: 'd'.repeat(40), updated_at: '2026-01-01T11:00:00Z' },
+    };
+    gh.mockImplementation(async (args: string[]) => args[0] === 'api'
+      ? { ok: true, stdout: JSON.stringify(payloads[args[1]!.split('/').pop()!] ?? {}), stderr: '' }
+      : { ok: true, stdout: '', stderr: '' });
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.verdictsResolved).toBe(2);
+    const read = readCiReruns(opts.journalPath!, opts.now!());
+    expect(read.verdicts).toMatchObject({ pass: 0, fail: 1, inconclusive: 1, pending: 2 });
+    expect(read.verdicts.resolutionRate).toBe(0);
+  });
+  it('does not check reruns inside the settle window and never resolves failed calls', async () => {
+    const { opts, gh } = setup();
+    await runCiRerunMaintenance(opts);
+    opts.now = () => Date.parse('2026-01-01T12:03:00Z');
+    gh.mockClear();
+    const status = await runCiRerunMaintenance(opts);
+    expect(status.repos['org/repo']?.verdictsPending).toBe(1);
+    expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(0);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts.pending).toBe(1);
+    const failing = setup();
+    failing.gh.mockRejectedValue(new Error('unavailable'));
+    await runCiRerunMaintenance(failing.opts);
+    failing.opts.now = () => Date.parse('2026-01-01T12:10:00Z');
+    failing.gh.mockResolvedValue({ ok: true, stdout: '', stderr: '' });
+    const failedStatus = await runCiRerunMaintenance(failing.opts);
+    expect(failedStatus.repos['org/repo']?.verdictsPending).toBe(0);
+    expect(failing.gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(0);
+  });
+  it('bounds verdict checks per pass and drains the backlog over later passes', async () => {
+    const { opts, gh, report } = setup();
+    report.groups = [];
+    const firedAt = '2026-01-01T11:00:00Z';
+    const rows = Array.from({ length: 10 }, (_, i) => [
+      { at: firedAt, repo: 'org/repo', head: String(i).padStart(40, '0'), runId: 100 + i, pr: i + 1, outcome: 'attempt' },
+      { at: firedAt, repo: 'org/repo', head: String(i).padStart(40, '0'), runId: 100 + i, pr: i + 1, outcome: 'ok' },
+    ]).flat();
+    appendFileSync(opts.journalPath!, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    gh.mockImplementation(async (args: string[]) => {
+      if (args[0] !== 'api') return { ok: true, stdout: '', stderr: '' };
+      const head = String(Number(args[1]!.split('/').pop()) - 100).padStart(40, '0');
+      return { ok: true, stdout: JSON.stringify({ status: 'completed', conclusion: 'success', head_sha: head, updated_at: '2026-01-01T11:30:00Z' }), stderr: '' };
+    });
+    const first = await runCiRerunMaintenance(opts);
+    expect(first.repos['org/repo']?.verdictsPending).toBe(10);
+    expect(first.repos['org/repo']?.verdictsResolved).toBe(8);
+    expect(gh.mock.calls.filter(call => call[0][0] === 'api')).toHaveLength(8);
+    const second = await runCiRerunMaintenance(opts);
+    expect(second.repos['org/repo']?.verdictsResolved).toBe(2);
+    expect(readCiReruns(opts.journalPath!, opts.now!()).verdicts).toMatchObject({ pass: 10, pending: 0, resolutionRate: 1 });
   });
 });

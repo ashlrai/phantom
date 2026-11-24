@@ -38,10 +38,10 @@ export async function cmdFleetReturnsCheck(args: string[], deps: { gh?: Gh; now?
   }
   const now = deps.now ?? Date.now;
   const observedAt = now();
-  // Retain history at epoch zero (ledger timestamps are nonnegative), without
-  // reaping. Only the projection qualifies currency at the observation clock.
+  // Read retained return intents at the observation clock without reaping;
+  // expired ordinary messages and ownership are not part of return history.
   let board: FleetBoard | null;
-  try { board = readFleetBoard({ now: 0, reap: false }); } catch { board = null; }
+  try { board = readFleetBoard({ now: observedAt, reap: false, includeExpiredReturns: true }); } catch { board = null; }
   const view = projectCoordinationReturns(board, observedAt);
   const receipts = view.returns.filter(row => row.result === 'VERIFIED' && row.evidenceKind === 'pr');
   const check = await checkReturnPrs(view.returns, { gh: deps.gh, now, limit });

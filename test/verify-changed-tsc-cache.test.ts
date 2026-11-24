@@ -13,6 +13,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'verify-tsc-cache-'));
   fixtures.push(root);
   cpSync(template, root, { recursive: true });
+  writeFileSync(join(root, 'scripts/check-realio-lane-membership.mjs'), '\n');
   return root;
 }
 
@@ -22,17 +23,18 @@ beforeAll(() => {
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, 'node_modules/typescript/bin'), { recursive: true });
   writeFileSync(join(root, 'scripts/verify-changed.mjs'), readFileSync(resolve('scripts/verify-changed.mjs')));
-  for (const name of ['check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
+  for (const name of ['test-ci.mjs', 'check-realio-lane-membership.mjs', 'check-verse-sync-io.mjs']) {
     writeFileSync(join(root, 'scripts', name), '');
   }
-  writeFileSync(join(root, '.gitignore'), 'node_modules/\n');
+  writeFileSync(join(root, '.gitignore'), '.ashlr-gate/\nnode_modules/\nshared/\n');
   writeFileSync(join(root, 'package-lock.json'), '{"lockfileVersion":3}');
-  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: 'node_modules/.cache/backend.tsbuildinfo' } }));
+  writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: '.ashlr-gate/verify/backend.tsbuildinfo' } }));
   writeFileSync(join(root, 'node_modules/typescript/bin/tsc'), `
     const fs = require('node:fs');
     const path = require('node:path');
-    if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['--noEmit', '-p', 'tsconfig.json'])) process.exit(8);
-    const file = 'node_modules/.cache/backend.tsbuildinfo';
+    const project = process.argv[4] === 'tsconfig.json' ? 'backend' : 'web';
+    const file = path.resolve('.ashlr-gate/verify', project + '.tsbuildinfo');
+    if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['--noEmit', '-p', project === 'backend' ? 'tsconfig.json' : 'src/web-ui/tsconfig.json', '--incremental', '--tsBuildInfoFile', file])) process.exit(8);
     if (process.env.FAKE_MODE === 'timeout') setInterval(() => {}, 1000);
     else {
       const previous = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'cold';
@@ -72,7 +74,7 @@ describe('verify-changed TypeScript cache', () => {
     expect(readFileSync(join(root, 'observed.txt'), 'utf8')).toBe('cold');
     const shared = join(root, 'shared', readdirSync(join(root, 'shared'))[0]);
     expect(readFileSync(shared, 'utf8')).toBe('compiled');
-    rmSync(join(root, 'node_modules/.cache/backend.tsbuildinfo'));
+    rmSync(join(root, '.ashlr-gate/verify/backend.tsbuildinfo'));
     expect(run(root, { FAKE_CONTENT: 'updated' }).status).toBe(0);
     expect(readFileSync(join(root, 'observed.txt'), 'utf8')).toBe('compiled');
     expect(readFileSync(shared, 'utf8')).toBe('updated');
@@ -104,7 +106,7 @@ describe('verify-changed TypeScript cache', () => {
     writeFileSync(join(root, 'package-lock.json'), '{"lockfileVersion": 3}');
     expect(run(root, { PHANTOM_TSC_CACHE_DIR: '' }).status).toBe(0);
     expect(readdirSync(shared)).toHaveLength(2);
-    writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: 'node_modules/.cache/backend.tsbuildinfo', strict: true } }));
+    writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { tsBuildInfoFile: '.ashlr-gate/verify/backend.tsbuildinfo', strict: true } }));
     expect(run(root, { PHANTOM_TSC_CACHE_DIR: '' }).status).toBe(0);
     expect(readdirSync(shared)).toHaveLength(3);
   }, 120_000);

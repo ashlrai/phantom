@@ -35,6 +35,7 @@ export interface TeamMember {
   id: string; display_name: string; role: 'owner' | 'member';
   /** Verified sender ids only; pending or unknown ids are left out. */
   channels: Partial<Record<'email' | 'slack' | 'phone', string[]>>;
+  /** Pools (lanes) this teammate brings to the shared pool. */ pools: string[]; seats: string[];
   pool_share_pct: number; allowed_repos: string[]; /** null: unknown (joined before this was recorded). */ created_at: string | null;
 }
 /** An owner is a founder who has joined; a pending founder record is not an owner yet. */
@@ -43,7 +44,7 @@ export function toMember(p: TeamPerson): TeamMember {
   const channels: TeamMember['channels'] = {};
   for (const i of p.identities) if (i.state === 'verified') (channels[i.kind] ??= []).push(i.value);
   return { id: p.id, display_name: p.displayName, role: isOwner(p) ? 'owner' : 'member', channels,
-    pool_share_pct: p.poolSharePct ?? 0, allowed_repos: p.allowedRepos ?? [], created_at: p.createdAt ?? null };
+    pools: p.lanes, seats: p.seats, pool_share_pct: p.poolSharePct ?? 0, allowed_repos: p.allowedRepos ?? [], created_at: p.createdAt ?? null };
 }
 export const shareTotal = (people: readonly TeamPerson[]): number => people.reduce((sum, p) => sum + (p.poolSharePct ?? 0), 0);
 

@@ -8,7 +8,7 @@ import { discoverTools } from './registry.js';
 type Availability = 'available' | 'unavailable' | 'unknown';
 
 /** Checks executable presence only; never starts a connector or resolves credentials. */
-async function executableAvailability(command: string, path: string): Promise<Availability> {
+export async function executableAvailability(command: string, path: string): Promise<Availability> {
   if (!isAbsolute(command) && command.includes('/')) return 'unknown';
   const candidates = isAbsolute(command) ? [command] : path.split(delimiter).filter(Boolean).map(dir => join(dir, command));
   for (const candidate of candidates) {

@@ -138,6 +138,22 @@ describe('owner-live notice planning', () => {
     expect(report.skipped.find(row => row.channel === 'telegram')?.reason).toBe('already-replied');
   });
 
+  it('an outbound filed under a channel without a fanout is not proof the channel carried one', async () => {
+    const { options } = fixture();
+    await inbound(options, 'imessage', 'fake-imsg-inbound1');
+    const thread = messages(options);
+    const phantom: OwnerThreadMessage = {
+      ...thread[0]!, seq: 2, id: 'fake-phantom-0002', idempotencyKey: 'local-notice-0001',
+      channel: 'imessage', senderId: 'leader', direction: 'outbound',
+      at: new Date(NOW).toISOString(), text: 'a local-only notice', fanout: undefined,
+    };
+    expect(planOwnerLiveNotices([...thread, phantom], adapters(options))).toEqual([
+      { channel: 'imessage', replyTo: 'fake-imsg-inbound1', idempotencyKey: 'leader-live-imessage' },
+    ]);
+    const delivered: OwnerThreadMessage = { ...phantom, fanout: ['imessage'] };
+    expect(planOwnerLiveNotices([...thread, delivered], adapters(options))).toEqual([]);
+  });
+
   it('plans nothing on a channel whose adapter is disabled', async () => {
     const { options } = fixture();
     await inbound(options, 'telegram', 'fake-tg-inbound-01');

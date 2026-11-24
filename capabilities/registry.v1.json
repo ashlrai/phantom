@@ -98,6 +98,12 @@
       "launch": { "command": "npx", "args": ["-y", "-p", "@ashlr/stack@0.3.6", "-p", "ashlr-stack-mcp@0.3.6", "-p", "phantom-secrets@0.7.9", "ashlr-stack-mcp"] }
     },
     {
+      "id": "context7", "kind": "mcp", "description": "Context7 companion: current library and framework documentation lookup.",
+      "surfaces": ["claude-code", "claude-desktop", "codex-cli", "codex-desktop", "devin-cli", "devin-desktop", "cursor-desktop"],
+      "effects": ["read"], "sensitivity": { "external_send": false, "spend": false, "delete": false },
+      "launch": { "command": "npx", "args": ["-y", "@upstash/context7-mcp@4.7.1"] }
+    },
+    {
       "id": "ashlr", "kind": "mcp", "description": "ashlr-plugin MCP: token-efficient read, grep and edit tools.",
       "surfaces": ["claude-code", "codex-cli", "devin-cli", "devin-desktop"],
       "effects": ["read", "write-local"], "sensitivity": { "external_send": false, "spend": false, "delete": false },

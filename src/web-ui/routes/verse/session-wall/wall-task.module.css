@@ -1,0 +1,16 @@
+/* What a session's job was asked to do (WallTask.tsx): a small name, then the line quoted from its brief. A title reads as the card's headline and a queue row as plain words; an opening line and an unknown one stay quiet. */
+.task { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.name { flex: none; color: var(--text-secondary); font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; }
+/* Two lines on a card, then cut; the opened conversation shows the brief whole. */
+.words { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
+.task[data-task='title'] > .words { color: var(--text-primary); font-family: var(--font-display); font-weight: 600; }
+.task[data-task='queue'] > .words { color: var(--text-primary); }
+.task[data-task='opening'] > .words { color: var(--text-secondary); }
+.task[data-task='unknown'] { color: var(--text-secondary); font-style: italic; }
+/* A row beside an open conversation has one line for it and no room for the name. */
+.task[data-place='rail'] > .name { display: none; }
+.task[data-place='rail'] > .words { -webkit-line-clamp: 1; font-size: var(--text-2xs-size); line-height: var(--text-2xs-line); }
+/* At the top of a conversation the title is the heading of its Summary, and is never cut. */
+.task[data-place='thread'] { padding-bottom: var(--space-1); }
+.task[data-place='thread'] > .words { display: block; overflow: visible; }
+.task[data-place='thread'][data-task='title'] > .words { font-size: var(--text-md-size); line-height: var(--text-md-line); }

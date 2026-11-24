@@ -92,6 +92,77 @@ describe('GET /api/verse/comms/inbox', () => {
     const r = await call({});
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ schema: 'comms.unified-inbox.v1', total: 0, omitted: 0, items: [] });
-    expect(Object.keys(r.body.sources).sort()).toEqual(['bus', 'drafts', 'gmail', 'imessage', 'linkedin', 'needs-you']);
+    expect(Object.keys(r.body.sources).sort()).toEqual(['board', 'bus', 'conversations', 'drafts', 'email-inbox', 'email-outbox', 'gmail', 'imessage', 'linkedin', 'mailbox', 'needs-you', 'needs-you-delivery', 'owner-delivery', 'owner-thread', 'peer-dispatch', 'proposals', 'requests', 'seats', 'slack', 'team-approvals', 'teammate-tasks', 'wakes']);
+  });
+
+  it('forwards the view filter to the reader and echoes the applied filter', async () => {
+    let seen: { filter?: unknown } | undefined;
+    const r = await call({
+      read: async (options) => {
+        seen = options;
+        // The real readUnifiedInbox echoes the normalized filter on its report.
+        return { ...inbox(2), ...(options.filter === undefined ? {} : { filter: options.filter }) };
+      },
+    }, 'GET', '?source=bus&kind=bus-work&severity=warn&blocking=true&job=RQ-1&since=1h&before=30m&contains=parser');
+    expect(r.status).toBe(200);
+    expect(seen?.filter).toEqual({
+      source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true,
+      job: 'RQ-1', since: NOW - 3_600_000, before: NOW - 1_800_000, contains: 'parser',
+    });
+    expect(r.body.filter).toEqual(seen?.filter);
+  });
+
+  it('blocking=false narrows to non-blocking items', async () => {
+    let seen: { filter?: { blocking?: boolean } } | undefined;
+    const r = await call({
+      read: async (options) => { seen = options; return inbox(1); },
+    }, 'GET', '?blocking=false');
+    expect(r.status).toBe(200);
+    expect(seen?.filter).toEqual({ blocking: false });
+    expect(r.body.filter).toBeUndefined();
+  });
+
+  it('an unfiltered read passes no filter and echoes none', async () => {
+    let seen: { filter?: unknown } | undefined;
+    const r = await call({
+      read: async (options) => { seen = options; return inbox(1); },
+    });
+    expect(r.status).toBe(200);
+    expect(seen?.filter).toBeUndefined();
+    expect(r.body.filter).toBeUndefined();
+  });
+
+  it('since accepts epoch ms and ISO times like every other bus read', async () => {
+    let seen: { filter?: { since?: number } } | undefined;
+    const r = await call({
+      read: async (options) => { seen = options; return inbox(0); },
+    }, 'GET', `?since=${NOW}`);
+    expect(r.status).toBe(200);
+    expect(seen?.filter?.since).toBe(NOW);
+  });
+
+  it('before takes the same epoch ms and ISO grammar as since', async () => {
+    let seen: { filter?: { before?: number } } | undefined;
+    const r = await call({
+      read: async (options) => { seen = options; return inbox(0); },
+    }, 'GET', `?before=${NOW}`);
+    expect(r.status).toBe(200);
+    expect(seen?.filter?.before).toBe(NOW);
+    const iso = await call({
+      read: async (options) => { seen = options; return inbox(0); },
+    }, 'GET', '?before=2026-11-07T11:30:00Z');
+    expect(iso.status).toBe(200);
+    expect(seen?.filter?.before).toBe(Date.parse('2026-11-07T11:30:00Z'));
+  });
+
+  it.each([
+    '?source=bogus', '?kind=bogus', '?severity=critical', '?blocking=yes', '?blocking=',
+    '?job=a%20b', '?since=not-a-time', '?before=not-a-time', '?before=',
+    '?contains=', '?contains=%20%20',
+    `?contains=${'x'.repeat(513)}`, '?unknown=1', '?source=bus&source=imessage',
+    '?limit=0', '?limit=201', '?limit=1.5',
+  ])('%s is a 400', async (query) => {
+    const r = await call({ read: async () => inbox(1) }, 'GET', query);
+    expect(r.status).toBe(400);
   });
 });

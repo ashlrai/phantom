@@ -6,7 +6,7 @@ Run `phm worktrees` to list every job worktree with its job, repo, state (live
 job, merged PR, empty result, open PR, kept on purpose or unknown), age, size
 and whether it is safe to remove, followed by counts by state and the total
 size that can be reclaimed. A worktree is safe to remove only when its PR
-merged or the job ended empty, it is at least six hours old, `git status`
+merged or the job ended empty, it is at least two hours old, `git status`
 shows no modified or untracked files, no job is running in it and it is not on
 `queue/keep.txt`, in `status.json` kept worktrees or pinned in
 `~/.ashlr/kept-worktrees.json`. If any safety record cannot be read, nothing is
@@ -16,7 +16,10 @@ Run `phm worktrees --reap` to preview the removal (a dry run), then
 `phm worktrees --reap --apply` to remove the safe worktrees with
 `git worktree remove`, never `--force`. Each removal is checked for changes
 again just before Git runs, printed and appended to
-`~/.ashlr-runs/queue/worktree-reap.jsonl`. Add `--json` for the
+`~/.ashlr-runs/queue/worktree-reap.jsonl`. Run
+`phm worktrees --reap --plan` to print only the `git -C <path> worktree remove <path>`
+lines (never `--force`), one per line, for a script or agent to run; with
+`--json` they come as `worktrees.plan.v1` `{commands}`. Add `--json` for the
 `worktrees.v1` report. The Home view's Disk card shows the same counts.
 
 ## `phm worktrees prune`

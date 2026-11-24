@@ -1,7 +1,7 @@
 /**
  * routes/verse/shell/CompactNavStrip.tsx — the narrow-window top strip: Home, Leader,
  * Feed, Needs you (with its count) and Fleet, one tap each; Leader and Feed
- * carry a "N new" chip while not showing. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
+ * carry unread chips: Feed derives its badge from shared queries. Plain buttons, so Tab reaches them and Enter/Space activate; the current one carries
  * aria-current.
  */
 import type { HomeChoice } from './home-view.js';
@@ -26,7 +26,7 @@ export interface CompactNavStripProps {
   /** The item whose view is showing; null when none of the views is. */
   active: CompactNavId | null;
   needsYouCount: number | null;
-  /** New Leader lines and Feed items since each was last seen; the active item shows no chip. */
+  /** Leader lines since last seen; Feed owns its shared-query unread count. */
   unread?: UnreadCounts;
   onSelect: (id: CompactNavId) => void;
 }

@@ -1,5 +1,6 @@
 import type { JobClaim, LeaderLease, NodeSession, QueueV1 } from './queue-v1.js';
-import { nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
+import { validNodeTask, type EmbeddedNodeTask } from './task.js';
+import { actionableClaim, jobBlockers, nodeCapacityView, nodeCanAcceptWork, planRoutes, routable, type RouteAssignment } from './router.js';
 import { validCap, validId, validSecretName, type NodeAuth, type NodesState, type NodesStore } from './state.js';
 import { isLocalModelCap } from '../../local-runtime/omlx/models.js';
 import { isNodeCapacity, isHostStats, type NodeCapacitySample, type HostStats } from './state.js';
@@ -35,14 +36,17 @@ export interface NodeReport {
 }
 
 export interface JobSpec {
+  task?: EmbeddedNodeTask;
   owner: string;
   requires?: string[];
   pack?: string;
   secrets?: string[];
 }
 
-/** What a node may see of a job it is entitled to: references only, never values. */
+/** What a node may see of a job it is entitled to: references only, never values.
+ * Embedded task text is included only in the successful pull response. */
 export interface JobView {
+  task?: EmbeddedNodeTask;
   id: string;
   owner: string;
   state: 'pending' | 'running' | 'completed';
@@ -52,8 +56,7 @@ export interface JobView {
   producerWithdrawn?: true;
   /** Accepted completion's executor identity; no result body or fencing token. */
   completedBy?: string;
-  /** Current holder of a running job's claim (lapsed or live); no fencing token. */
-  /** Status views only: the node holding a running claim. Never sent to a runner. */
+  /** Status views only: the node whose live session can still act on a running claim. Never sent to a runner. */
   claimedBy?: string;
 }
 
@@ -128,6 +131,19 @@ export class DriveNodes implements QueueV1 {
         throw new Error('Invalid or regressed drive authority clock');
       }
       state.observedAt = now;
+      // Legacy producer fences predate producerWithdrawn. Result text alone is
+      // also a valid worker result, so require the complete withdrawal signature.
+      for (const job of state.jobs) {
+        const claim = job.claim;
+        if (job.producerWithdrawn === undefined && job.state === 'completed' && job.result === WITHDRAWN_RESULT &&
+            claim?.nodeId === WITHDRAWN_RESULT && claim.jobId === job.id &&
+            Number.isSafeInteger(claim.token) && claim.token > 0 && claim.token <= state.sequence &&
+            claim.session === claim.token && claim.leaderToken === claim.token &&
+            job.completedAt !== undefined && Number.isSafeInteger(job.completedAt) && job.completedAt >= 0 &&
+            claim.expiresAt === job.completedAt && job.completedAt <= now) {
+          job.producerWithdrawn = true;
+        }
+      }
       return structuredClone(fn(state, now));
     });
   }
@@ -204,6 +220,7 @@ export class DriveNodes implements QueueV1 {
   }
 
   enqueue(jobId: string, spec?: JobSpec): boolean {
+    if (spec?.task !== undefined && (spec.pack !== 'codex-file' || !validNodeTask(spec.task))) throw new Error('Invalid embedded node task');
     if (!validId(jobId)) throw new Error('Invalid drive job ID');
     if (spec && !validId(spec.owner)) throw new Error('Invalid drive owner scope');
     if (spec?.pack !== undefined && !validId(spec.pack)) throw new Error('Invalid drive pack reference');
@@ -211,6 +228,7 @@ export class DriveNodes implements QueueV1 {
       owner: spec.owner, requires: names(spec.requires, validCap, 'capability'),
       ...(spec.pack === undefined ? {} : { pack: spec.pack }),
       secrets: names(spec.secrets, validSecretName, 'secret name (use the NAME, never the value)'),
+      ...(spec.task === undefined ? {} : { task: structuredClone(spec.task) }),
     };
     return this.transaction(state => {
       if (state.jobs.some(j => j.id === jobId)) return false;
@@ -246,7 +264,7 @@ export class DriveNodes implements QueueV1 {
       job.startedAt = now; delete job.completedAt;
       job.state = 'running';
       job.claim = claim;
-      return { claim, job: this.jobView(job) };
+      return { claim, job: { ...this.jobView(job), ...(job.task === undefined ? {} : { task: job.task }) } };
     });
   }
 
@@ -273,7 +291,7 @@ export class DriveNodes implements QueueV1 {
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),
       jobs: state.jobs.filter(j => j.owner && scope.has(j.owner)).map(j => ({ ...this.jobView(j),
-        ...(j.state === 'running' && j.claim ? { claimedBy: j.claim.nodeId } : {}) })),
+        ...(actionableClaim(state, j, now) ? { claimedBy: j.claim!.nodeId } : {}) })),
       routes: planRoutes(state, now).filter(a => scope.has(a.owner)),
     }));
   }
@@ -286,6 +304,10 @@ export class DriveNodes implements QueueV1 {
       stored.expiresAt > now && this.liveNode(state, stored, now);
   }
 
+  /** Leader-side assignment under the live lease. Applies the same execution
+   * fences as `pull` — a declined session, missing caps or absent `gh` auth is
+   * refused — so a claim can never hand a job to a node routing would reject.
+   * Owner scope stays the leader's deliberate choice. */
   claim(leader: LeaderLease, worker: NodeSession, jobId: string): JobClaim | null {
     return this.transaction((state, now) => {
       const current = this.liveLeader(state, now);
@@ -294,11 +316,12 @@ export class DriveNodes implements QueueV1 {
       const node = state.nodes.find(n => sameSession(n, worker))!;
       if (!nodeCanAcceptWork(node, now)) return null;
       const active = state.jobs.filter(j => j.state === 'running' && j.claim &&
-        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId).length;
+        j.claim.expiresAt > now && j.claim.nodeId === worker.nodeId && j.claim.session === worker.session).length;
       if (node.slots !== undefined && active >= node.slots) return null;
       if (state.pool && !nodeCapacityView(state, now).some(h => h.eligibleNodeIds.includes(node.nodeId) && (h.freeSlots ?? 0) > 0)) return null;
       const job = state.jobs.find(j => j.id === jobId);
       if (!job || job.state === 'completed' || (job.claim && this.currentClaim(state, job.claim, now))) return null;
+      if (jobBlockers(node, job).length > 0) return null;
       const claim = { ...worker, jobId, token: nextToken(state), leaderToken: current.token,
         expiresAt: now + this.claimTtl };
       job.executionHostId = node.capacity?.hostId;

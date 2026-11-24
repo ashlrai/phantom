@@ -7,7 +7,7 @@
  * world-model, intents and desktop integration remain out of scope (see
  * BRIDGE_NOTES.md).
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -104,7 +104,30 @@ describe('readJobsTail', () => {
     writeFileSync(small, ledgerText);
     const whole = await readJobsTail(small);
     expect(whole.truncated).toBe(false);
+    expect(whole.missing).toBe(false);
     expect(whole.text).toBe(ledgerText);
+  });
+
+  it('flags a missing ledger separately from an unreadable one and honors a custom byte bound', async () => {
+    const root = runsRoot();
+    expect(await readJobsTail(join(root, 'metrics', 'jobs.jsonl'))).toEqual({ text: null, truncated: false, missing: true });
+    const dir = join(root, 'adir');
+    mkdirSync(dir, { recursive: true });
+    expect(await readJobsTail(dir)).toEqual({ text: null, truncated: false, missing: false });
+    const tail = 'row-old\nrow-new\n';
+    const path = join(root, 'bounded.jsonl');
+    writeFileSync(path, `${'x'.repeat(5000)}\n${tail}`);
+    const read = await readJobsTail(path, Buffer.byteLength(tail) + 10);
+    expect(read).toEqual({ text: tail, truncated: true, missing: false });
+  });
+
+  it('refuses symlinked ledgers without classifying them as missing', async () => {
+    const root = runsRoot();
+    const target = join(root, 'target.jsonl');
+    const link = join(root, 'linked.jsonl');
+    writeFileSync(target, ledgerText);
+    symlinkSync(target, link);
+    expect(await readJobsTail(link, 1024)).toEqual({ text: null, truncated: false, missing: false });
   });
 });
 

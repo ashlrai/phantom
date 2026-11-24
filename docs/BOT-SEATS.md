@@ -86,16 +86,52 @@ lifecycle transition. Missing node storage is never initialized by observation.
 
 ```sh
 phm bots seats --json
+phm bots handoffs --json
+phm bots handoffs --apply --json
 phm bots handoff --seat devin-review --json
 phm bots handoff --seat devin-review --apply --json
 ```
 
+`phm bots handoffs` is the fleet-wide dry-run: one read reports every roster
+seat's projected state, whether `planSeatHandoff`/`applySeatHandoff` would
+accept it (`eligible`), and the pending handoff records it would journal —
+the same deterministic ids a later per-seat apply dedupes on. Ineligible seats
+(active seats, and idle seats with no open work or handoff history) report
+`eligible: false` with no records instead of erroring, so the whole roster's
+handoff posture reads in one call. It writes nothing: no state transitions,
+releases, journals or notices. `phm comms inbox` lists each eligible seat
+with pending handoff records as a `seat-handoff` item — the same plan read —
+so pending seat work surfaces in the unified pending view without a second
+lookup. `phm agents bus work mine`'s `seats` section reads the same plan
+narrowed to the seats the queried agent denotes, so an agent sees its own
+pending seat handoffs inside the one per-agent digest. `phm bots handoffs
+--apply` is the fleet-wide apply: it runs the same per-seat
+`applySeatHandoff` for every eligible seat in roster order —
+journal-before-release, idempotent notices and stale-safe claim fencing
+unchanged — and reports each seat's outcome (`applied`, `skipped`,
+`contended` or `failed` with a fixed reason) instead of stopping at the
+first failure, so one command drains the whole roster and a re-run resumes
+where a partial apply stopped. The isolated fleet
+MCP server serves the same whole-roster plan as `fleet_seat_handoffs` —
+no arguments, server-owned roots, `apply` always false — so MCP-connected
+agents read the same handoff posture the CLI prints. The roster itself —
+per-seat quota evidence, projected lifecycle state, `acceptsNewWork` and
+open claims/jobs — reads as `fleet_bot_seats`, the same seat views
+`phm bots seats --json` computes minus the persist-on-read lifecycle
+write (`persisted: false`), with secret-handle names and adapter
+internals kept out of the result.
+
 Handoff defaults to a dry-run plan. It refuses active seats; only draining seats
 or idle seats with work may hand off (completed handoffs allow harmless replay).
-Open work consists of live coordination claims owned by `participantId` and
-running node-router jobs held by `nodeId`. The claim guard `seatMayClaim` admits
-only active seats with measured evidence; this module never acquires claims.
-Existing executors must call the guard to enforce seat admission.
+Open work consists of live coordination claims owned by `participantId` — or by
+any other routing label of the same registered bus identity (handle, `agent:`
+address, stable id or alias), the same owner matching `claim list --owner`
+applies — and running node-router jobs held by `nodeId`. An unresolvable
+`participantId` or an unreadable identity registry keeps exact-label matching:
+unknown identity state never widens what a handoff drains. The claim guard
+`seatMayClaim` admits only active seats with measured evidence; this module
+never acquires claims. Existing executors must call the guard to enforce seat
+admission.
 
 Apply uses a **write-ahead, exactly-once handoff record**: the SHA-256 id includes
 the seat, work reference and fencing/lease identity. The private append-only
@@ -113,8 +149,18 @@ that another agent has started the work, and it does not stop a remote bot.
 
 Each record has a bus note and owner-thread notice with stable deduplication
 keys. Private `handoff-notices.json` receipts suppress repeated attempts; a crash
-between sending and saving a receipt retries with the same key. Notification
-failures do not undo release or expose exception text: apply reports per-record
+between sending and saving a receipt retries with the same key. The bus note
+is one `note` envelope appended to the shared bus store addressed to `leaders`
+— a system post from the seat's participant id with `origin_bridge`
+`bot-seats`, not a channel message, so no bus identity registration or channel
+membership is required. A `node-job` record's note also carries
+`thread: job:<ref>` — the same job citation `work mine --job` and the unified
+inbox seats source already apply to a node-job ref — so every `--job` bus read
+and the job's conversation thread find the handoff; a `bus-claim` ref is a
+coordination claim key, never a job citation, and a ref that cannot form a
+valid bus label cites nothing. KILL and the comms pause refuse it like every other
+local bus write; an unavailable store reports `unavailable`, never a claimed
+post. Notification failures do not undo release or expose exception text: apply reports per-record
 `notifications.bus` and `notifications.owner` statuses. A failed/halted attempt
 is recorded, not automatically retried. Owner notices use the configured owner
 thread, honor KILL and comms pause, and are local desktop notices, not proof of
@@ -132,9 +178,17 @@ poll wake targets. Neither projection grants membership or authentication.
 Direct messaging still requires the existing bus identities/aliases and channel
 membership; the seat projection does not silently register them.
 
-`sendSeatMessage` sends to another configured participant through the unified
-bus, or to the owner through an injected/configured owner thread. Unknown seats
-and secret-shaped text are refused. Provider adapter messaging is separate.
+`phm bots message --from <seat> --to <seat|owner> --text <text>` reaches
+`sendSeatMessage`: both ends accept a seat id or participantId, and `owner`
+posts an owner-thread notice. `sendSeatMessage` sends to another configured
+participant through the unified bus, or to the owner through the configured
+owner thread (injected options win in tests). A seat-to-seat message resolves
+the bus identity registry and appends under the same fleet root
+(`<home>/.ashlr/fleet`) and clock the seat's claims and handoff notices use;
+`runsRoot` places only the wake hint queue. Owner notices use the same
+settings/runs construction as handoff notices and mirror onto that fleet root.
+Unknown seats and secret-shaped text are refused. Provider adapter messaging
+is separate.
 
 The console's `/bots` Seats section reads `GET /api/bots/seats`: display name,
 kind/provider, state, admission, quota evidence, current claims/jobs and recent

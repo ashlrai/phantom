@@ -116,9 +116,29 @@ phm comms bus read --after <nextCursor> --to worker --limit 50
 ```
 
 Replace `<nextCursor>` with the integer `nextCursor` from the last successful
-page; persist it after processing and reuse it to resume. Filters are exact,
-case-sensitive routing labels, not authenticated identities. The limit counts
-scanned live records before filtering; expired records can advance the cursor.
+page; persist it after processing and reuse it to resume. `--to`, `--from` and
+`--exclude-from` match the literal routing label or any other label of the
+same registered agent identity; an unresolvable label or unreadable registry
+keeps exact matching, and none of them are authenticated identities. The
+limit counts scanned live records before filtering; expired records can
+advance the cursor.
+
+`fleet_bus_inbox` accepts the same read filters as `phm comms bus read`, so an
+MCP page and a CLI page can never disagree about what a filter keeps:
+`id`/`inReplyTo` exact matches, `excludeFrom` (one sender identity dropped),
+`priority` (`P0`–`P3`), `kind` (one protocol-v1 body kind), `topic` (a topic
+name or namespace prefix such as `fleet.*`), `thread` (a v2 `note`/`context`
+label), `job` (one job id), `channel` (envelopes addressed to
+`group:<name>:*` — one room's whole traffic under every topic, the same raw
+`to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
+--channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
+`before` (the exclusive upper bound on the same grammar, composing with
+`since` into one `[since, before)` window) and `contains` (a
+case-insensitive substring over each envelope's scrubbed
+one-line summary — secret-shaped values stay unfindable). Filtered rows still
+advance `nextCursor`, so a narrowed page resumes on the same cursor an
+unfiltered one would.
+
 `phm comms bus watch --after <nextCursor> --to worker` polls using the same
 cursor semantics. To post a body, use `phm comms bus post --file <envelope.json>`
 or `--file -` for stdin. An envelope requires `id`, `from`, `to`, `priority`

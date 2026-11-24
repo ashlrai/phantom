@@ -21,5 +21,26 @@
 .facts > span[data-quiet='true'] { color: var(--status-warning-fg); font-weight: 600; }
 .facts > span[data-elsewhere='true'] { font-style: italic; }
 .why { color: var(--text-tertiary, var(--text-secondary)); overflow-wrap: anywhere; }
+.thread { flex: none; align-self: center; margin-right: var(--space-1); padding: var(--space-1) var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; cursor: pointer; }
+.thread:hover, .thread:focus-visible { background: var(--bg-hover); }
 .pr { flex: none; align-self: center; padding: var(--space-1) var(--space-2); color: var(--accent-500); }
 .gaps { color: var(--text-secondary); }
+/* Scope and filter share one line and wrap at phone width. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.search { flex: 1 1 12rem; min-width: 0; }
+.count { color: var(--text-tertiary, var(--text-secondary)); font-variant-numeric: tabular-nums; }
+.clear { padding: 0; border: 0; background: none; color: var(--accent-500); font: inherit; text-decoration: underline; cursor: pointer; }
+/* The dot repeats the state word beside it in colour; the word stays the source of truth. */
+.dot { flex: none; width: var(--space-2); height: var(--space-2); border-radius: 50%; background: var(--status-unknown-solid); }
+.dot[data-dot='running'] { background: var(--status-running-solid); }
+.dot[data-dot='quiet'] { background: var(--status-warning-solid); }
+.dot[data-dot='failed'] { background: var(--status-danger-solid); }
+.dot[data-dot='done'] { background: var(--status-success-solid); }
+.dot[data-dot='idle'] { background: var(--status-neutral-solid); }
+/* A parent kept only to place a match under it reads quieter than the match. */
+.row[data-context='true'] { border-style: dashed; }
+.row[data-context='true'] .job, .row[data-context='true'] .message { color: var(--text-secondary); font-weight: 400; }
+.open:focus-visible { outline: 2px solid var(--accent-500); outline-offset: -2px; }
+.keys { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin: 0; color: var(--text-tertiary, var(--text-secondary)); }
+.keys kbd { margin-left: var(--space-2); }
+.keys kbd:first-child { margin-left: 0; }

@@ -85,6 +85,10 @@ export function teammateNeedsReply(text: string): boolean {
   // artifacts to retain, never conversation requests to answer once per chunk.
   // PATCH-BEGIN/PART/END frames are transfer protocol, never conversation.
   if (isProtocolText(text)) return false;
+  // Task protocol belongs to the fleet task ledger. Malformed, unmatched or quoted
+  // TASK/RESULT frames must never become model replies or jobs; the check is
+  // case-sensitive so lowercase prose such as "task list?" stays conversation.
+  if (/^[\s>]*(?:RESULT|TASK)(?:\s|:|$)/m.test(text)) return false;
   return !/^\s*(ack(?:nowledged)?|thanks|thank you|received|noted|got it|ok(?:ay)?|👍)[.!\s]*$/i.test(text)
     && (/\?|\b(?:please|can you|could you|request(?:ing)?|need you|probe)\b/i.test(text) || isActionableRequest(text));
 }

@@ -8,7 +8,7 @@ import { isRemoteMobileMode } from '../../../data/remote-mode.js';
 import { CardNote } from '../command/Surface.js';
 import { useViewport } from '../shell/viewport.js';
 import styles from './library.module.css';
-const kinds = [['', 'All'], ['file', 'Files & media'], ['memory', 'Memory'], ['message', 'Messages'], ['context', 'Context']] as const;
+const kinds = [['', 'All'], ['file', 'Files'], ['media', 'Media'], ['memory', 'Memory'], ['message', 'Messages'], ['context', 'Context']] as const;
 const query: QueryDef<LibrarySnapshot> = {
   key: 'verse-library-overview',
   fetch: async signal => {
@@ -92,6 +92,6 @@ export function LibraryOverview({ visible, search, onSearch }: { visible: boolea
         {selected ? <Detail item={selected} onClose={() => setSelectedId(null)} closeLabel={compact ? 'Back to list' : 'Close'} />
           : compact ? null : <p className={styles.meta}>Choose an item to see its details.</p>}
       </div> : !result.error && !result.data.unavailable.length ?
-        <CardNote>{search || kind ? 'No Library items match.' : 'Your Library is empty. Files, memories and agent messages will appear here.'}</CardNote> : null}
+        <CardNote>{search || kind ? 'No Library items match.' : 'Your Library is empty. Files, media, memory, messages and shared context will appear here.'}</CardNote> : null}
   </section>;
 }

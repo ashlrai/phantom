@@ -27,6 +27,7 @@ import { readLedgerLines } from './ledger-lines.js';
 import { readFleetMainHealth, type FleetMainHealthRepo } from './main-health.js';
 import { readFleetRunsDirState, type FleetRunsLane } from './runs-dir-state.js';
 import { jobFamily, yieldTally, YIELD_MIN_LAUNCHES, type YieldReport } from './slot-yield.js';
+import { laneLaunchTarget } from './lane-launch-target.js';
 
 export const NEXT_BETS_SCHEMA = 'fleet.next-bets.v1';
 export const NEXT_BETS_UI_LIMIT = 5;
@@ -34,7 +35,7 @@ export const NEXT_BETS_UI_LIMIT = 5;
 export const BET_WEIGHTS = {
   redMain: { weight: 1000, cap: 1 }, // a red main outranks everything: no other sum of terms reaches 1000
   fixAttempt: { weight: 10, cap: 10 }, // guardian fix attempts that did not clear the failure
-  idleSlot: { weight: 40, cap: 5 }, // free slots (target minus running) on a lane with nothing queued and no hold
+  idleSlot: { weight: 40, cap: 5 }, // free slots (launch target minus running) on a lane with nothing queued and no hold
   poolWastePct: { weight: 2, cap: 100 }, // percent of a pool's usage projected to expire unused, from POOL_WASTE_MIN_PCT up
   releaseAgeDay: { weight: 4, cap: 30 }, // days since the last tag in a repo with commits after it
   unreleasedCommit: { weight: 1, cap: 40 }, // commits since the last tag
@@ -76,7 +77,8 @@ const term = (input: BetTerm['input'], value: number): BetTerm => {
   const { weight, cap } = BET_WEIGHTS[input];
   return { input, value: round(value), weight, points: Math.round(Math.min(value, cap) * weight) };
 };
-const freeSlots = (lane: FleetRunsLane): number => lane.held || lane.healthy === false ? 0 : Math.max(0, lane.target - lane.running);
+const freeSlots = (lane: FleetRunsLane): number => lane.held || lane.healthy === false ? 0
+  : Math.max(0, laneLaunchTarget(lane.target, lane.effectiveTarget) - lane.running);
 
 /** Pure: rank suggestions from whatever inputs are known. */
 export function suggestBets(inputs: BetInputs, now: number, limit = Number.MAX_SAFE_INTEGER): NextBetsReport {
@@ -107,13 +109,14 @@ export function suggestBets(inputs: BetInputs, now: number, limit = Number.MAX_S
   for (const name of [...new Set([...byLane.keys(), ...waste.keys()])].sort()) {
     const lane = byLane.get(name), pool = waste.get(name);
     const free = lane && lane.queued === 0 ? freeSlots(lane) : 0;
+    const launch = lane ? laneLaunchTarget(lane.target, lane.effectiveTarget) : null;
     // A held or unhealthy lane is a deliberate pause, not unused room.
     if (free === 0 && (!pool || lane?.held || lane?.healthy === false)) continue;
     const expiring = pool ? `about ${pool.unusedPercent}% of its usage expires unused${pool.hoursLeft === null ? '' : ` in ${plural(Math.round(pool.hoursLeft), 'hour')}`}` : '';
     drafts.push({
       id: `${free ? 'idle-lane' : 'pool-waste'}:${slug(name)}`, signal: free ? 'idle-lane' : 'pool-waste', lane: plain(name), tier: bestTier, repo: null,
-      goal: free ? `Give ${plain(name)} work: ${free} of ${plural(lane!.target, 'slot')} free and nothing queued${expiring ? `; ${expiring}` : ''}` : `Route more work to ${plain(name)}: ${expiring}`,
-      numbers: { running: lane?.running ?? null, target: lane?.target ?? null, queued: lane?.queued ?? null, freeSlots: lane ? free : null,
+      goal: free ? `Give ${plain(name)} work: ${free} of ${plural(launch!, 'slot')} free and nothing queued${expiring ? `; ${expiring}` : ''}` : `Route more work to ${plain(name)}: ${expiring}`,
+      numbers: { running: lane?.running ?? null, target: lane?.target ?? null, effectiveTarget: lane?.effectiveTarget ?? null, queued: lane?.queued ?? null, freeSlots: lane ? free : null,
         unusedPercent: pool?.unusedPercent ?? null, hoursToReset: pool?.hoursLeft == null ? null : round(pool.hoursLeft, 1) },
       family: LEADER_FAMILY,
       terms: [...(free ? [term('idleSlot', free)] : []), ...(pool ? [term('poolWastePct', pool.unusedPercent!)] : [])],

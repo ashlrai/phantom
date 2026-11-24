@@ -64,6 +64,34 @@ describe('throughput report', () => {
     expect(build(LEDGER.join('\n'), { by: 'tier' }).groups.map(g => g.name)).toEqual(['fast', 'frontier', 'unknown']);
   });
 
+  it('groups by the model each launch row names, and files the rest under unknown', () => {
+    const models = build([
+      row('launch', 55, { job: 'RQ-M1', lane: 'claude', repo: 'phantom', tier: 'frontier', model: 'fake-large-1' }),
+      row('launch', 50, { job: 'RQ-M2', lane: 'codex', repo: 'phantom', tier: 'work', model: 'fake-large-1' }),
+      row('launch', 45, { job: 'RQ-M3', lane: 'local', repo: 'phantom', tier: 'fast', model: 'fake:30b' }),
+      // No model on the launch row; a later row may fill the gap but never replaces what a launch said.
+      row('launch', 40, { job: 'RQ-M4', lane: 'grok', repo: 'phantom', tier: 'fast' }),
+      row('launch', 40, { job: 'RQ-M5', lane: 'grok', repo: 'phantom', tier: 'fast', model: 'not a model id' }),
+      row('publish', 30, { job: 'RQ-M1', url: pr(31), model: 'fake:30b' }), row('outcome', 20, { job: 'RQ-M1', url: pr(31), state: 'MERGED' }),
+      row('finish', 28, { job: 'RQ-M1', empty: false }), row('finish', 25, { job: 'RQ-M3', empty: true }),
+      row('finish', 24, { job: 'RQ-M4', empty: true, model: 'fake-small-2' }),
+    ].join('\n'), { by: 'model' });
+    expect(models.by).toBe('model');
+    expect(models.groups.map(g => [g.name, g.totals.launched, g.totals.merged, g.totals.finished, g.totals.empty]))
+      .toEqual([['fake-large-1', 2, 1, 1, 0], ['fake-small-2', 1, 0, 1, 1], ['fake:30b', 1, 0, 1, 1], ['unknown', 1, 0, 0, 0]]);
+    expect(models.groups[0]!.buckets[23]).toMatchObject({ launched: 2, published: 1, merged: 1 });
+    // The fixture fleet's launch rows name no model, so all of its work is under unknown and nothing is guessed from the lane.
+    expect(build(LEDGER.join('\n'), { by: 'model' }).groups.map(g => [g.name, g.totals.launched, g.totals.merged])).toEqual([['unknown', 6, 4]]);
+  });
+
+  it('reads jobs-ledger dialect spellings for events, phases and PR links', () => {
+    const d = build([
+      JSON.stringify({ type: 'launch', job_id: 'RQ-D', pool: 'claude', repo: 'phantom', tier: 'work', time: at(50) }),
+      JSON.stringify({ kind: 'publish', id: 'RQ-D', html_url: pr(21), timestamp: at(45) }),
+      JSON.stringify({ type: 'outcome', job: 'RQ-D', result: 'MERGED', updatedAt: at(40), url: pr(21) }),
+    ].join('\n'));
+    expect(d.totals).toMatchObject({ launched: 1, published: 1, merged: 1 });
+  });
   it('skips and counts malformed lines', () => {
     expect(report.malformed_lines).toBe(2);
     expect(throughputText(report)).toContain('Metrics lines that could not be read and were skipped: 2.');
@@ -107,7 +135,8 @@ describe('throughput report', () => {
   it('validates the window and grouping', () => {
     expect(throughputOptions()).toEqual({ hours: 24, by: 'lane' });
     expect(throughputOptions('6', 'tier')).toEqual({ hours: 6, by: 'tier' });
-    for (const [hours, by] of [['0', null], ['169', null], ['6h', null], ['1.5', null], [null, 'model']] as const) expect(throughputOptions(hours, by)).toBeNull();
+    for (const [hours, by] of [['0', null], ['169', null], ['6h', null], ['1.5', null], [null, 'seat']] as const) expect(throughputOptions(hours, by)).toBeNull();
+    expect(throughputOptions(null, 'model')).toEqual({ hours: 24, by: 'model' });
   });
 });
 
@@ -160,7 +189,7 @@ describe('phm throughput', () => {
     const missing = await run('--runs-dir', runs, '--metrics', join(runs, 'none.jsonl'));
     expect(missing.code).toBe(1);
     expect(JSON.parse(missing.out)).toMatchObject({ metrics: 'unreadable', totals: { merged: null, launched: null } });
-    for (const args of [['--hours', '0'], ['--by', 'model'], ['--since', '24h'], ['--hours']]) {
+    for (const args of [['--hours', '0'], ['--by', 'seat'], ['--since', '24h'], ['--hours']]) {
       const bad = await run(...args);
       expect([bad.code, bad.out]).toEqual([2, '']);
       expect(bad.err).toContain('Usage: phm throughput');

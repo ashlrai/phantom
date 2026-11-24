@@ -243,6 +243,8 @@ export function loadOwnerThreadSettings(configDir: string): OwnerThreadSettings 
     if (identity.channel === 'bus') owners.desktop = identity.id;
     else if (isOwnerChannel(identity.channel)) owners[identity.channel] = identity.id;
   }
+  // Pairing must resolve to one owner handle; never choose the last of several.
+  if (new Set(parseMasonIdentities(network).filter(i => i.channel === 'imessage').map(i => i.id)).size !== 1) delete owners.imessage;
   let secretHandles: OwnerThreadSettings['secretHandles'] = {};
   let imessageBridge: OwnerThreadSettings['imessageBridge'] = 'off';
   try {

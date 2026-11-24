@@ -268,6 +268,12 @@ export async function cmdEval(args: string[]): Promise<number> {
     return cmdEvalRouter(args.slice(1));
   }
 
+  // Fold the live fleet ledgers into a router-eval.v1 dataset for replay.
+  if (args[0] === 'dataset') {
+    const { cmdEvalDataset } = await import('./eval-dataset.js');
+    return cmdEvalDataset(args.slice(1));
+  }
+
   // RQ-SELFOPT-PROMPT-OPT: prompt-variant A/B eval + promotion dashboard.
   if (args[0] === 'prompts') {
     const { cmdEvalPrompts } = await import('./eval-prompts.js');
@@ -384,6 +390,7 @@ function printEvalHelp(): void {
   console.log(`    ashlr eval attention [--window 1d|7d|30d] [--limit N] [--json] [--save]`);
   console.log(`    ashlr eval swe-bench [--fixtures] [--dataset <path>] [--engine <id>]`);
   console.log(`    ashlr eval router --dataset <jobs.jsonl> [--policy <name>] [--check <baseline.json>] [--json]`);
+  console.log(`    ashlr eval dataset [--runs-dir <dir>] [--out <jobs.jsonl>] [--json]`);
   console.log(`    ashlr eval prompts --dataset <jobs.jsonl> [--spec <experiment.json>] [--promote] [--json]`);
   console.log(`    ashlr eval passk [--dataset <golden.jsonl>] [--lane <lane:engine>]... [--trials N] [--k K] [--json]`);
   console.log(`    PHANTOM_CHECKPOINTS=1 ashlr eval checkpoints --file <fixture.json> [--json]`);

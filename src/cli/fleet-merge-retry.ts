@@ -69,6 +69,21 @@ export interface MergeRetryRow {
   retries_left?: number;
   requests_failed?: number;
   head_sha?: string | null;
+  /** Plain-words diagnosis and next step for this row. */
+  note?: string;
+}
+
+/** Queue wait for the PRs this run looked at; merged and closed PRs no longer wait. */
+export interface MergeRetryWait {
+  /** Rows still waiting on the queue: re-armed, armed, conflicting or stalled. */
+  waiting: number;
+  /** Longest wait among those rows, from the dropped auto-merge to now; null when none. */
+  oldest_s: number | null;
+  total_s: number;
+  /** Rows whose PR had already merged or closed by the time this ran. */
+  finished: number;
+  /** Rows that need a recut before any retry can help. */
+  conflicts: number;
 }
 
 export interface MergeRetryReport {
@@ -77,8 +92,35 @@ export interface MergeRetryReport {
   ok: boolean;
   known: boolean;
   max_retries_per_pr: number;
+  queue_wait: MergeRetryWait;
   rows: MergeRetryRow[];
 }
+
+const NOTES: Record<string, string> = {
+  'request-auto-merge': 'Dropped from the merge queue; --apply re-arms auto-merge.',
+  'auto-merge-requested': 'Re-armed auto-merge; it merges when required checks pass.',
+  'already-armed': 'Auto-merge is already on again; nothing to do.',
+  conflict: 'Merge conflict: retrying cannot help. It needs a recut.',
+  'predicted-conflict': 'Shares files with an armed PR that lands first; try again after it merges.',
+  draft: 'Draft PR; mark it ready first.',
+  merged: 'Already merged; nothing to retry.',
+  closed: 'Closed without merging; nothing to retry.',
+  'not-ready': 'GitHub is still computing mergeability; the next run retries.',
+  held: 'Held PR; never retried automatically.',
+  capped: `Over the ${MAX_REQUESTS_PER_RUN} requests per run; the next run retries.`,
+  failed: 'GitHub refused or did not answer; the next run retries.',
+  'needs-person': 'Automatic retries are used up or the cause is unknown; a person decides.',
+};
+
+export function summarizeQueueWait(rows: MergeRetryRow[]): MergeRetryWait {
+  const finished = rows.filter(r => r.action === 'merged' || r.action === 'closed').length;
+  const open = rows.filter(r => r.waiting_s !== undefined && r.action !== 'merged' && r.action !== 'closed');
+  const waits = open.map(r => r.waiting_s!);
+  return { waiting: open.length, oldest_s: waits.length ? Math.max(...waits) : null,
+    total_s: waits.reduce((a, b) => a + b, 0), finished, conflicts: rows.filter(r => r.action === 'conflict').length };
+}
+
+const span = (s: number) => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
 
 type RetryRecorder = (event: { repo: string; pr: number; type: 'retry_requested' | 'retry_failed'; at: string; head_sha?: string }) => Promise<void>;
 
@@ -101,6 +143,7 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       `Bounds: ${MAX_QUEUE_RETRIES} retries and ${MAX_QUEUE_RETRIES} distinct failed submissions per PR total, ${MAX_REQUESTS_PER_RUN} requests per run. Held PRs are never retried.`,
       'Actions: request-auto-merge (dry run), auto-merge-requested, already-armed, already-requested, conflict, predicted-conflict, draft, merged, closed, not-ready, held, capped, failed, needs-person.',
       'Needs-person reasons: unattributed, already-requested, too-many-retries, request-failed.',
+      'Every row carries a plain-words note; queue_wait reports how many PRs still wait, the oldest wait, conflicts, and PRs already merged or closed.',
       'Exit: 0 ok, 1 unreadable ledger or a failed request, 2 bad arguments.',
     ].join('\n'));
     return 0;
@@ -142,24 +185,28 @@ export async function cmdFleetMergeRetry(args: string[], deps: MergeRetryDeps = 
       const base = { repo: candidate.repo, pr: candidate.pr, disabled_at: candidate.disabled_at,
         waiting_s: candidate.waiting_s, retries_left: candidate.retries_left,
         requests_failed: candidate.requests_failed, head_sha: candidate.head_sha };
-      if (!apply) { rows.push({ ...base, action: 'request-auto-merge' }); continue; }
+      if (!apply) { rows.push({ ...base, action: 'request-auto-merge', note: NOTES['request-auto-merge'] }); continue; }
       const action = attempted >= MAX_REQUESTS_PER_RUN
         ? 'capped'
         : await retryOne(candidate, gh, record, now, snapshotFor);
       if (action === 'auto-merge-requested' || action === 'failed') attempted += 1;
       if (action === 'failed') failed = true;
-      rows.push({ ...base, action });
+      rows.push({ ...base, action, note: NOTES[action] });
     }
     for (const person of retries.needs_person) {
-      rows.push({ repo: person.repo, pr: person.pr, action: 'needs-person', reason: person.reason, requests_failed: person.requests_failed });
+      rows.push({ repo: person.repo, pr: person.pr, action: 'needs-person', reason: person.reason, requests_failed: person.requests_failed, note: NOTES['needs-person'] });
     }
   }
   const report: MergeRetryReport = { schema: SCHEMA, dryRun: !apply, ok: latency.known && !failed,
-    known: latency.known, max_retries_per_pr: MAX_QUEUE_RETRIES, rows };
+    known: latency.known, max_retries_per_pr: MAX_QUEUE_RETRIES, queue_wait: summarizeQueueWait(rows), rows };
+  const wait = report.queue_wait;
+  const waitLine = wait.waiting || wait.finished
+    ? `Queue wait: ${wait.waiting} waiting${wait.oldest_s === null ? '' : `, oldest ${span(wait.oldest_s)}`}, ${wait.conflicts} conflicting, ${wait.finished} already finished.`
+    : '';
   output(json ? JSON.stringify(report)
     : !latency.known ? 'Merge retry: unknown (events unreadable)'
     : rows.length
-      ? rows.map(row => `${row.repo}#${row.pr}: ${row.action}${row.reason ? ` (${row.reason})` : ''}`).join('\n')
+      ? [...rows.map(row => `${row.repo}#${row.pr}: ${row.action}${row.reason ? ` (${row.reason})` : ''}${row.note ? ` - ${row.note}` : ''}`), waitLine].filter(Boolean).join('\n')
       : 'No dropped auto-merges to retry.');
   return !latency.known || failed ? 1 : 0;
 }

@@ -4,6 +4,18 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { ledgerPhase, ledgerPrUrl } from '../core/fleet/empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../core/fleet/jobs-ledger-dialect.js';
+
+/** dispatchd's id pick: publish claims name jobId first, lifecycle rows job first. */
+const firstString = (row: Record<string, unknown>, keys: readonly string[]): string | null => {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+const PUBLISHED_JOB_KEYS = ['jobId', 'job', 'job_id', 'id'] as const;
 
 const execFileAsync = promisify(execFile);
 
@@ -73,7 +85,10 @@ function defaultReadJobs(): () => Promise<string> {
   };
 }
 
-/** Index current attempts and match reconciled outcomes by PR, as dispatchd does. */
+/** Index current attempts and match reconciled outcomes by PR, as dispatchd does.
+ * Reads the jobs-ledger dialect: job|job_id|jobId|id, event|type|kind, phase and
+ * timestamp aliases, PR links across url|pr_url|prUrl|pr and eventless
+ * reconciler rows (`jobId`/`prUrl`/`outcome`/`mergedAt` + source). */
 function indexJobs(text: string): Map<string, { last: number; merged: boolean }> {
   const jobs = new Map<string, { last: number; merged: boolean; urls: Set<string> }>();
   const mergedUrls = new Set<string>();
@@ -81,19 +96,22 @@ function indexJobs(text: string): Map<string, { last: number; merged: boolean }>
     let row: Record<string, unknown>;
     try { row = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    const merged = row.event === 'outcome' && String(row.state ?? row.outcome ?? '').toUpperCase() === 'MERGED';
-    const outcomeUrl = typeof row.url === 'string' ? row.url.replace(/\/+$/, '') : '';
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    const merged = ledgerOutcomeState(row, event, phase) === 'MERGED';
+    const rawUrl = ledgerPrUrl(row);
+    const outcomeUrl = rawUrl?.replace(/\/+$/, '') ?? '';
     if (merged && outcomeUrl) mergedUrls.add(outcomeUrl);
-    const published = (row.outcome ?? row.status) === 'PUBLISHED';
-    const id = published ? (row.jobId ?? row.job ?? row.id) : (row.job ?? row.job_id ?? row.id);
-    if (typeof id !== 'string') continue;
+    const published = phase === 'PUBLISHED';
+    const id = published ? firstString(row, PUBLISHED_JOB_KEYS) : ledgerJobId(row);
+    if (id === null) continue;
     let entry = jobs.get(id) ?? { last: 0, merged: false, urls: new Set<string>() };
-    if (row.event === 'launch') entry = { last: 0, merged: false, urls: new Set<string>() };
-    const at = typeof row.ts === 'string' ? Date.parse(row.ts) : NaN;
-    if (Number.isFinite(at)) entry.last = Math.max(entry.last, at);
-    const url = published ? (row.prUrl ?? row.pr) : row.event === 'publish' ? row.url : null;
-    if (typeof url === 'string' && url) entry.urls.add(url.replace(/\/+$/, ''));
-    if (merged && !outcomeUrl) entry.merged = true;
+    if (event === 'launch') entry = { last: 0, merged: false, urls: new Set<string>() };
+    const at = ledgerEventTs(row, phase);
+    if (at !== null) entry.last = Math.max(entry.last, at);
+    const url = published || event === 'publish' ? rawUrl : null;
+    if (url !== null && url !== '') entry.urls.add(url.replace(/\/+$/, ''));
+    if (merged && outcomeUrl === '') entry.merged = true;
     jobs.set(id, entry);
   }
   for (const entry of jobs.values()) {

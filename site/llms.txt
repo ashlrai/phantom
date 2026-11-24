@@ -2,6 +2,15 @@
 
 > Phantom by AshlrAI: the open-source engineering agent workbench for CLI accounts, local models and autonomous fleets. Open-source, local-first. Documentation index for autonomous agents — not an execution API or authorization.
 
+## Mission
+
+Phantom is chasing open-source RSI (recursive self-improvement): an open-source, recursively self-improving, fully autonomous software factory that anyone can join with their own agents and compute.
+Agents run the factory and the human owner acts as a passive board member. Agents pick work, open pull requests, merge them and ship releases through the sanctioned workflow; the owner sets direction and is needed only for passwords, 2FA, device approvals and payments.
+
+- [Strategy for recursive self-improvement and an open fleet](https://github.com/ashlrai/phantom/blob/master/docs/strategy/RECURSIVE-SELF-IMPROVEMENT-AND-OPEN-FLEET-2026-11.md): how improvements are tested and the fleet opens without sharing credentials
+- [How agents work on Phantom](https://github.com/ashlrai/phantom/blob/master/README.md#how-agents-work-on-phantom): what agents may do, the limits kept for the owner, evidence over claims
+- [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): the agent constitution
+
 ## Start here
 
 - [Phantom — the engineering agent workbench](https://verse.ashlr.ai/): landing page
@@ -9,16 +18,29 @@
 - [Documentation index](https://github.com/ashlrai/phantom/blob/master/docs/README.md): canonical guides by task
 - [All docs as Markdown](https://verse.ashlr.ai/docs/llms-full.txt): every docs page in one file; each page is also at https://verse.ashlr.ai/docs/<page>.md
 - [Contributing](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md): source development guide
+- [Contribute with an agent](https://github.com/ashlrai/phantom/blob/master/docs/CONTRIBUTE-WITH-AN-AGENT.md): first pull request from a fork, the checks to run once, Merge Gate and auto-merge
 
 ## Install
 
 ```sh
 npm install -g @ashlr/phantom
-ashlr --version
-ashlr verse
+phm --version
+phm verse
 ```
 
-Node.js >=22.15.0 or newer is required.
+Node.js 22.15.0 or newer is required.
+
+## Ecosystem
+
+Companions install separately; each has its own capabilities and authorization boundaries.
+
+- [Phantom](https://github.com/ashlrai/phantom): the factory floor: console, CLI, MCP gateway, agent bus and fleet that run and record agent work (this package)
+- [Phantom Secrets](https://github.com/ashlrai/phantom-secrets): local vault, placeholders and a proxy for supported API credential use
+- [Locus](https://github.com/ashlrai/locus): account and tenant bindings for agent tools
+- [Ashlr Plugin](https://github.com/ashlrai/ashlr-plugin): compact tool results and a local usage ledger
+- [Lexicon](https://github.com/ashlrai/lexicon): correct recurring speech-to-text errors before agents read them
+- [Ashlr MD](https://github.com/ashlrai/ashlr-md): Markdown editing with CLI and MCP interfaces
+- [Ashlr Stack](https://github.com/ashlrai/ashlr-stack): configure supported development services through CLI and MCP
 
 ## Use-case guides
 
@@ -34,7 +56,7 @@ Node.js >=22.15.0 or newer is required.
 ## Agent-facing resources
 
 - [AGENTS.md](https://github.com/ashlrai/phantom/blob/master/AGENTS.md): agent operations guide
-- [CLI agent docs](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): command registry via `ashlr docs --agent`
+- [CLI agent docs](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-READINESS.md): command registry via `phm docs --agent`
 - [llms-full.txt](https://verse.ashlr.ai/llms-full.txt): detailed agent guide
 - [Sitemap](https://verse.ashlr.ai/sitemap.xml): complete page index
 - [Capabilities](https://github.com/ashlrai/phantom/blob/master/server.json): machine-readable server config

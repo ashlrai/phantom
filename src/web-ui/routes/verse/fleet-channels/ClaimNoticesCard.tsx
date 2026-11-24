@@ -21,13 +21,16 @@ export function ClaimNoticesCard({ visible, nowMs }: { visible: boolean; nowMs: 
 }
 
 export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowMs: number }) {
+  const obs = view.pendingObservation;
   return <section className={styles.root} aria-label="Slack thread notices" data-testid="claim-notices">
     <strong>Slack thread notices</strong>
     <SlackItemLadder nowMs={nowMs} />
+    <p className={styles.header}>{view.asOf === null ? 'as of unknown'
+      : <>as of <time dateTime={view.asOf}>{formatRelative(view.asOf, nowMs)}</time></>}</p>
     {view.source === 'missing' && <p className={styles.notice} role="status">No claim-notice state found yet; nothing has been posted.</p>}
     {view.source === 'unreadable' && <p className={styles.notice} role="status">Claim-notice state is unreadable; counts are unknown.</p>}
     {view.source === 'ok' && <>
-      <p className={styles.header}>{view.bindings} bound threads · {view.sentTotal} posted · {view.pending.length} waiting</p>
+      <p className={styles.header}>{view.bindings} bound threads · {view.sentTotal} posted · {obs.state === 'known' ? `${view.pending.length} waiting` : `pending unknown (${obs.reason})`}</p>
       <p className={styles.header}>{view.delivery.slackSent} slack-sent · {view.delivery.noReceipt} no-slack-receipt · {view.delivery.unknown} unknown</p>
       {view.slackConfigured === false && <p className={styles.notice} role="status">Slack is not configured; notices stay pending.</p>}
       <ul className={styles.list} aria-label="Slack thread notice rows">
@@ -36,7 +39,7 @@ export function ClaimNoticesBody({ view, nowMs }: { view: ClaimNoticesView; nowM
             <span>{row.delivery}</span>
             <time dateTime={new Date(row.at).toISOString()}>{formatRelative(new Date(row.at).toISOString(), nowMs)}</time></div>
         </li>)}
-        {view.pending.map((row, i) => <li className={styles.row} key={`pending-${i}`}>
+        {obs.state === 'known' && view.pending.map((row, i) => <li className={styles.row} key={`pending-${i}`}>
           <div className={styles.meta}><span className={styles.healthBadge}>{row.state}</span><span>would post</span></div>
           <p className={styles.preview}>{row.text}</p>
         </li>)}

@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { ledgerPhase } from '../core/fleet/empty-cause.js';
+import { ledgerEventTs, ledgerJobId, ledgerLifecycleEvent, ledgerOutcomeState } from '../core/fleet/jobs-ledger-dialect.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
 type State = 'merged' | 'empty' | 'open' | 'none';
@@ -45,17 +47,28 @@ export async function readFleetWtReap(deps: WtReapDeps = {}): Promise<WtReapRepo
   const [dirs, jobs] = await Promise.allSettled([
     readers.listDirs(join(root, 'wt')), readers.readJobs(join(root, 'metrics', 'jobs.jsonl')),
   ]);
-  const latest = new Map<string, { outcome?: Record<string, unknown>; finish?: Record<string, unknown> }>();
+  // jobs.jsonl in its ledger dialect: job|job_id|jobId|id, event|type|kind,
+  // phase and timestamp aliases, and eventless reconciler outcome rows. The
+  // last resolved outcome wins; a phase-less outcome row records nothing
+  // rather than overwriting a merge. Publish claims are not lifecycle rows.
+  const latest = new Map<string, { outcome?: string; finishMs: number | null; finishEmpty: boolean }>();
   for (const line of (jobs.status === 'fulfilled' ? jobs.value : '').split(/\r?\n/)) {
     try {
       const r = JSON.parse(line) as Record<string, unknown> | null;
       if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
-      const id = r.job ?? r.job_id ?? r.id;
-      if (typeof id !== 'string') continue;
-      if (r.event === 'launch') { latest.delete(id); continue; }
-      if (r.event !== 'outcome' && r.event !== 'finish') continue;
-      const entry = latest.get(id) ?? {};
-      entry[r.event] = r;
+      const id = ledgerJobId(r);
+      if (id === null) continue;
+      const phase = ledgerPhase(r);
+      const event = ledgerLifecycleEvent(r, phase);
+      if (event === 'launch') { latest.delete(id); continue; }
+      const state = ledgerOutcomeState(r, event, phase);
+      if (event !== 'finish' && state === null) continue;
+      const entry = latest.get(id) ?? { finishMs: null, finishEmpty: false };
+      if (event === 'finish') {
+        entry.finishMs = ledgerEventTs(r, phase);
+        entry.finishEmpty = r['empty'] === true;
+      }
+      if (state !== null) entry.outcome = state.toLowerCase();
       latest.set(id, entry);
     } catch { /* Ignore damaged rows; never echo their contents. */ }
   }
@@ -64,12 +77,12 @@ export async function readFleetWtReap(deps: WtReapDeps = {}): Promise<WtReapRepo
     totals: { worktrees: 0, merged: 0, empty: 0, open: 0, none: 0, reapable: 0 } };
   for (const id of (dirs.status === 'fulfilled' ? dirs.value : []).sort()) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) { report.sources.worktrees = false; continue; }
-    const { outcome, finish } = latest.get(id) ?? {};
-    const recorded = String(outcome?.state ?? outcome?.outcome ?? '').toLowerCase();
+    const entry = latest.get(id);
+    const recorded = entry?.outcome;
     const state: State = recorded === 'merged' ? 'merged' : recorded === 'open' ? 'open'
-      : !outcome && finish?.empty === true ? 'empty' : 'none';
-    const at = typeof finish?.ts === 'string' ? Date.parse(finish.ts) : NaN;
-    const ageHours = Number.isFinite(at) ? Math.max(0, ((deps.now ?? Date.now()) - at) / 3_600_000) : null;
+      : entry !== undefined && entry.outcome === undefined && entry.finishEmpty ? 'empty' : 'none';
+    const at = entry?.finishMs ?? null;
+    const ageHours = at === null ? null : Math.max(0, ((deps.now ?? Date.now()) - at) / 3_600_000);
     const reapable = (state === 'merged' || state === 'empty') && ageHours !== null && ageHours > 1;
     report.worktrees.push({ id, ageHours, state, reapable });
     report.totals.worktrees++;

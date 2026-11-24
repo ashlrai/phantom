@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runSelfTick, SELF_TICK_STEP_ORDER, type SelfTickStep, type SelfTickSteps } from '../src/core/fleet/self-tick.js';
-import { readSelfTickLast } from '../src/core/fleet/self-tick-last.js';
+import { readSelfTickLast, SELF_TICK_LAST } from '../src/core/fleet/self-tick-last.js';
+import { cmdFleetSelfTick } from '../src/cli/fleet-self-tick.js';
+import { cmdFleetLandedSweep } from '../src/cli/fleet-landed-sweep.js';
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -34,6 +36,49 @@ function steps(calls: string[], over: Partial<SelfTickSteps> = {}): SelfTickStep
 }
 
 describe('self-tick landed-sweep step', () => {
+  it.each([false, true])('preserves an unavailable sweep as skipped through CLI and storage (json=%s)', async (json) => {
+    const runsDir = tmp();
+    const out: string[] = [];
+    const calls: string[] = [];
+    const code = await cmdFleetSelfTick(['--runs-dir', runsDir, ...(json ? ['--json'] : [])], {
+      now: () => 1_000, output: text => out.push(text),
+      steps: steps(calls, {
+        'landed-sweep': async argv => {
+          let output = '';
+          const exitCode = await cmdFleetLandedSweep(argv, {
+            gh: async () => ({ ok: false, stdout: '', stderr: 'offline' }),
+            landedFromGit: () => ({ schema: 'fleet.landed.v1', source: 'git', ok: false, repo: 'phantom', sinceHours: 24, jobs: [], repos: [], reason: 'offline' }),
+            output: text => { output = text; },
+          });
+          return { exitCode, output };
+        },
+      }),
+    });
+    expect(code).toBe(0);
+    expect(calls.at(-1)).toBe('cos-work');
+    const stored = JSON.parse(readFileSync(join(runsDir, SELF_TICK_LAST), 'utf8'));
+    const sweep = stored.steps.find((step: { step: string }) => step.step === 'landed-sweep');
+    expect(sweep).toMatchObject({ state: 'skipped', exitCode: 0, report: { skippedReason: expect.stringContaining('no landed report yet') } });
+    expect(readSelfTickLast(runsDir, 61_000)).toMatchObject({ state: 'ok', failedSteps: [] });
+    if (json) expect(JSON.parse(out[0]!).steps).toContainEqual(sweep);
+    else expect(out[0]).toContain('landed-sweep  skipped  exit=0  "skipped: no landed report yet');
+  });
+
+  it.each([
+    [0, { skipped: 1 }, 'ok'],
+    [0, { skippedReason: '' }, 'ok'],
+    [0, { skippedReason: '   ' }, 'ok'],
+    [0, { skippedReason: 1 }, 'ok'],
+    [1, { skippedReason: 'offline' }, 'failed'],
+  ])('classifies exit=%s with report %j as %s', async (code, sweep, state) => {
+    const { report, exitCode } = await runSelfTick({
+      runsDir: tmp(), now: () => 0,
+      steps: steps([], { 'landed-sweep': async () => ({ exitCode: code, output: JSON.stringify(sweep) }) }),
+    });
+    expect(report.steps.find(step => step.step === 'landed-sweep')?.state).toBe(state);
+    expect(exitCode).toBe(code);
+  });
+
   it('runs every step in order with landed-sweep immediately before cos-work', async () => {
     const calls: string[] = [];
     const { report, exitCode } = await runSelfTick({ runsDir: tmp(), steps: steps(calls), now: () => 0 });

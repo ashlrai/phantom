@@ -42,6 +42,11 @@ export interface InstalledPanelOptions {
   learnedSkills?: () => SkillListReport;
 }
 
+/** What `agents` says for a Phantom plugin whose manifest does not parse. */
+export const INVALID_MANIFEST_AGENTS = 'None (invalid manifest)';
+/** The `source` of Phantom's learned skill cards. */
+export const LEARNED_SKILLS_SOURCE = 'Learned from merged PRs';
+
 type Read<T> = { state: 'read'; value: T } | { state: 'none' | 'unknown' };
 
 const missing = (err: unknown) => (err as NodeJS.ErrnoException)?.code === 'ENOENT';
@@ -79,7 +84,7 @@ function phantomPlugins(home: string, enabledPlugins: () => string[]): Read<Inst
   try { enabled = new Set(enabledPlugins()); } catch { enabled = null; }
   return { state: 'read', value: dirs.value.map(dir => {
     const manifest = readManifest(join(root, dir));
-    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: 'None (invalid manifest)', enabled: false, lastUsed: 'unknown' };
+    if (!manifest.ok) return { name: dir, source: 'Phantom', agents: INVALID_MANIFEST_AGENTS, enabled: false, lastUsed: 'unknown' };
     const name = manifest.manifest.name;
     return { name, source: 'Phantom', agents: 'Any agent that runs phm on this machine', enabled: enabled ? enabled.has(name) : 'unknown', lastUsed: 'unknown' };
   }) };
@@ -128,7 +133,7 @@ function learned(read: () => SkillListReport): Read<InstalledItem[]> {
   if (report.corpus === 'missing') return { state: 'none' };
   if (report.corpus === 'degraded' && report.skills.length === 0) return { state: 'unknown' };
   // Skill retrieval is observe-only today: no lane is handed these cards.
-  return { state: 'read', value: report.skills.map(skill => ({ name: skill.name, source: 'Learned from merged PRs', agents: 'No lane yet (observe-only)', enabled: skill.status === 'verified', lastUsed: 'unknown' })) };
+  return { state: 'read', value: report.skills.map(skill => ({ name: skill.name, source: LEARNED_SKILLS_SOURCE, agents: 'No lane yet (observe-only)', enabled: skill.status === 'verified', lastUsed: 'unknown' })) };
 }
 
 /** Skills: Claude Code and Codex user skills, and Phantom's learned skill cards. */
@@ -137,7 +142,7 @@ export function readSkillsPanel(opts: InstalledPanelOptions = {}): InstalledPane
   return collect('fleet.skills-panel.v1', opts.now?.() ?? new Date(), [
     { source: 'Claude Code', read: skillDirs(join(home, '.claude', 'skills'), 'Claude Code', 'Claude lanes') },
     { source: 'Codex', read: skillDirs(join(home, '.codex', 'skills'), 'Codex', 'Codex lanes') },
-    { source: 'Learned from merged PRs', read: learned(opts.learnedSkills ?? (() => listSkills({ limit: SKILL_LIST_MAX_LIMIT }))) },
+    { source: LEARNED_SKILLS_SOURCE, read: learned(opts.learnedSkills ?? (() => listSkills({ limit: SKILL_LIST_MAX_LIMIT }))) },
   ]);
 }
 
