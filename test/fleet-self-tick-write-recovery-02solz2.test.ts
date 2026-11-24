@@ -67,7 +67,19 @@ describe('self-tick survives a failed last-report write', () => {
       step: missing, state: 'failed', exitCode: 1, report: { reason: 'step-not-configured' },
     });
     expect(order).toEqual(SELF_TICK_STEP_ORDER.filter((step) => step !== missing));
-    expect(JSON.parse(readFileSync(join(runsDir, 'queue', 'self-tick-last.json'), 'utf8'))).toEqual({ ...first.report, schema: 'fleet.self-tick-record.v1', startedAt: first.report.at, failedSteps: [{ step: missing, error: null }], hooks: ['autofill', 'gaps', 'reap'].map(hook => ({ hook, state: 'not-recorded', items: null, count: null, note: null })) });
+    // The last-record writer persists a summary, not the in-memory report
+    // (no leaderBrief/liveJobs). Hooks now include stranded-requeue, and
+    // familyStops is recorded as null when the planner did not emit stops.
+    expect(JSON.parse(readFileSync(join(runsDir, 'queue', 'self-tick-last.json'), 'utf8'))).toMatchObject({
+      v: 1,
+      schema: 'fleet.self-tick-record.v1',
+      startedAt: first.report.at,
+      failedSteps: [{ step: missing, error: null }],
+      familyStops: null,
+      hooks: ['autofill', 'gaps', 'reap', 'stranded-requeue'].map(hook => ({
+        hook, state: 'not-recorded', items: null, count: null, note: null,
+      })),
+    });
     expect(existsSync(LOCK())).toBe(false);
     const next = await runSelfTick({ runsDir, steps: recordingSteps([]), now: () => NOW_MS });
     expect(next.lock).toBe('acquired');
