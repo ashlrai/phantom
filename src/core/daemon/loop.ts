@@ -4852,12 +4852,12 @@ export async function tick(
         const { syncEmptyTagsFromJobsLedger } = await import('../fleet/empty-tag-sync.js');
         await syncEmptyTagsFromJobsLedger({ signal });
       }, { deadlineMs: TICK_PHASE_EMPTY_TAG_SYNC_MS, parentSignal: opts.signal, log: phaseLog });
-      // Queue station visits: fold the same jobs-ledger tail plus live READY
-      // rows into visits.jsonl, the journal `phm queue stats` and
-      // /api/queue/stats read. Best-effort and idempotent — planVisitSync
-      // refuses regressions and dedups against the journal; an unreadable
-      // journal skips the append rather than risking duplicates.
-      // launchOffTickJob keeps it single-flight.
+      // Queue station visits: fold the same jobs-ledger tail plus the
+      // merge-events check observations and live READY rows into visits.jsonl,
+      // the journal `phm queue stats` and /api/queue/stats read. Best-effort
+      // and idempotent — planVisitSync refuses regressions and dedups against
+      // the journal; an unreadable journal skips the append rather than
+      // risking duplicates. launchOffTickJob keeps it single-flight.
       launchOffTickJob('visit-sync', async signal => {
         const { syncQueueVisits } = await import('../queue/visit-sync.js');
         await syncQueueVisits({ signal });

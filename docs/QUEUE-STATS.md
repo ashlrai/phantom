@@ -29,15 +29,18 @@ tail or live queue. Completed visits older than that whose jobs have left
 every evidence window are dropped; stats windows never reach them, and a visit
 id is never reused so nothing can append against a dropped key.
 
-`phm queue visits-sync` is the fleet producer: it folds `metrics/jobs.jsonl`
-and the live `- READY` rows of `queue/router-queue.md` into visits and appends
+`phm queue visits-sync` is the fleet producer: it folds `metrics/jobs.jsonl`,
+the sampled check observations of `metrics/merge-events.jsonl` and the live
+`- READY` rows of `queue/router-queue.md` into visits and appends
 new or progressed snapshots to the journal. Dry run by default; `--apply`
 writes, `--json` prints a `queue.visits-sync.v1` report, and `--jobs`,
-`--queue`, `--journal` override the default paths. The resident daemon runs
+`--merge-events`, `--queue`, `--journal` override the default paths. The
+resident daemon runs
 the same fold (`syncQueueVisits` in `src/core/queue/visit-sync.ts`) as a
 `visit-sync` off-tick job on the self-improvement cadence, so the journal
 stays fed without a manual pass; it reads the newest bounded tail of the jobs
-ledger like the sibling evidence syncs and reports its health in the tick's
+and merge-events ledgers like the sibling evidence syncs and reports their
+health in the tick's
 off-tick job list. Re-running is idempotent:
 a visit appends again only when it gains a transition, and a candidate less
 complete than the journal's latest snapshot is refused.
@@ -60,9 +63,19 @@ Station mapping (visit id `<job>:a<attempt>`, pool = the launch lane):
   finish without publish stays open as publisher-slot WIP.
 - **pr-ci** — `publish` to `ci_complete`, a matched `MERGED`/`CLOSED` outcome,
   or stays open; `ci_start` is the service start when the ledger carries it,
-  otherwise the whole dwell reports as wait.
+  otherwise the whole dwell reports as wait. No producer writes `ci_start`/
+  `ci_complete` rows, so when the ledger lacks them the fold derives both
+  boundaries from the PR's timed `check_observed`/`checks_passed` rows in
+  merge-events.jsonl (joined by the publish URL): the last recorded green
+  observation inside the attempt's terminal bound is the CI-complete
+  boundary, and the first `pending` observation of that final green run is
+  the service start. A run whose pending phase sampling never saw reports
+  as wait, never guessed; a PR with no green observation keeps the
+  terminal-or-open exit exactly like a ledger without ci rows.
 - **merge-queue** — `ci_complete` to `MERGED`/`CLOSED`; needs the CI boundary,
-  otherwise absent.
+  otherwise absent. The boundary is the ledger `ci_complete` row when one
+  exists, else the same merge-events-derived green observation, so the
+  station resolves for every PR the merge-queue loop has sampled green.
 - **merged** — zero-dwell marker at the merge stamp for throughput.
 
 Known gaps stay unknown: `planned`, `released`, `fix-main`, review and release
