@@ -286,7 +286,12 @@ learned in the last 7 days.
 rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
-never launches work. Providers passed with `--exhausted` are never routed.
+never launches work. Providers passed with `--exhausted` are never routed. An
+unplaced job's `rejected` counts name why: `provider-not-in-job` and
+`model-not-in-job` count cost rows the job's own provider/model lists excluded,
+`no-costs`/`no-nodes` mean the inputs held no usable cost rows or node
+documents, and the remaining keys (`node-stale`, `node-pressure`, `memory`,
+`cpu`, `provider-not-on-node`, ...) count per-node or per-candidate failures.
 
 The outcomes file is optional to maintain by hand: `--outcomes-ledger` derives
 the same `{provider: {attempts, merged}}` tallies from
