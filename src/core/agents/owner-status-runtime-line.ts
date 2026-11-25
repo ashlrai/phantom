@@ -42,9 +42,12 @@ function ageText(seconds: number): string {
  * reader's own ageSeconds is the fallback when its mtime is not parseable. */
 function fleetAgeSeconds(state: RuntimeIdentity['fleetState'] | undefined, now: Date): number | null {
   if (!state) return null;
+  const nowMs = now.getTime();
+  if (!Number.isFinite(nowMs)) return null;
   const mtime = Date.parse(state.mtime);
-  if (Number.isFinite(mtime)) return Math.max(0, Math.floor((now.getTime() - mtime) / 1000));
-  return typeof state.ageSeconds === 'number' ? Math.max(0, state.ageSeconds) : null;
+  if (Number.isFinite(mtime)) return mtime > nowMs ? null : Math.floor((nowMs - mtime) / 1000);
+  return typeof state.ageSeconds === 'number' && Number.isFinite(state.ageSeconds) && state.ageSeconds >= 0
+    ? state.ageSeconds : null;
 }
 
 /** "bridge process" for "imessage bridge process not running": the channel is
