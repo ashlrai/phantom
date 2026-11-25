@@ -935,6 +935,33 @@
  *     and only the fleet's own repository inherits the items since the
  *     journal describes this install's machinery and carries no repo
  *     column;
+ *   - the Devin landings ledger's recurring publish and auto-merge
+ *     outcomes: the {v:1, kind:'devin-land', at, sessionId, repo,
+ *     job, branch, base, mergeBase, tip, commits, bundleSha256,
+ *     result, pr, autoMerge, taskId} rows landDevinSession appends
+ *     to devin/landings.jsonl under the Ashlr home for every
+ *     mechanically completed land — each `phm devin autoland` apply
+ *     pass that reaches publish and every manual `phm devin land
+ *     --apply` (landingsBacklogItems below). Until now the file's
+ *     only read was the autoland pass's already-landed idempotency
+ *     check, and autoland.jsonl's 'landed' decision rows carry the
+ *     autoMerge outcome only as a field on a success the backlog
+ *     never counts as adverse — so PRs that opened but could not
+ *     arm auto-merge (arm-refused on a missing head SHA, a failed
+ *     `gh pr merge --auto` call, or an unrecognized hold detail),
+ *     and publish.sh runs that completed with RESULT EMPTY, an
+ *     ABORT/DENIED refusal or no usable RESULT line — invisible to
+ *     autoland.jsonl entirely for manual lands — looked like ordinary
+ *     rows in a file someone had to open, never work. A cell emits
+ *     only at three distinct sessions across two UTC days inside
+ *     the 7-day window; designed holds (the sensitive-paths Security
+ *     hold, withheld NOTE AUTO_MERGE decisions) and armed merges are
+ *     context, throws before the publish step leave no row (those
+ *     are autoland.jsonl's land-failed evidence), truncated tails
+ *     fold lower-bound flagged, and only the fleet's own repository
+ *     inherits the items since the journal describes this install's
+ *     land path — the row's repo names the publish target, quoted
+ *     inside the cells;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1037,6 +1064,7 @@ import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
+import { landingsBacklogItems } from './landings-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2280,6 +2308,25 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the journal describes this
   // install's machinery and carries no repository column.
   items.push(...await efficiencyBacklogItems({ repo }));
+
+  // Devin landings ledger publish and auto-merge outcomes: the
+  // {v:1, kind:'devin-land', …, result, pr, autoMerge} rows
+  // landDevinSession appends to devin/landings.jsonl for every
+  // mechanically completed land — each `phm devin autoland` apply
+  // pass that reaches publish and every manual `phm devin land
+  // --apply`. Until now the file's only read was the autoland
+  // pass's already-landed idempotency check, and autoland.jsonl's
+  // decision rows never count a 'landed' row's autoMerge outcome as
+  // adverse — so PRs that opened but could not arm auto-merge, and
+  // every manual land's publish outcome, produced no work. A cell
+  // emits only at three distinct sessions across two UTC days
+  // inside the window; designed holds (sensitive-paths, withheld
+  // NOTE AUTO_MERGE) and armed merges are context, truncated tails
+  // fold lower-bound flagged, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // land path — the row's repo names the publish target, quoted
+  // inside the cells.
+  items.push(...await landingsBacklogItems({ repo }));
   return { items, errors };
 }
 
