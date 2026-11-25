@@ -76,7 +76,7 @@ describe('repeatable Mac enrollment', () => {
     expect(deps.configure).not.toHaveBeenCalled();
   });
   it('rejects attempts to silently switch pool identity', async () => {
-    expect(await cmdNodePool('join', ['--owner', 'other', '--json'])).toBe(1);
+    expect(await cmdNodePool('join', ['--owner', 'other', '--json'])).toBe(2);
     expect(deps.call).not.toHaveBeenCalled();
   });
   it('derives node identity on first enrollment after proving the route', async () => {
@@ -86,8 +86,8 @@ describe('repeatable Mac enrollment', () => {
   });
   it('rejects incomplete identity and ignored role flags before contacting SSH', async () => {
     deps.read.mockReturnValue(null);
-    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--json'])).toBe(1);
-    expect(await cmdNodePool('join', ['--role', 'primary', '--json'])).toBe(1);
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--json'])).toBe(2);
+    expect(await cmdNodePool('join', ['--role', 'primary', '--json'])).toBe(2);
     expect(deps.call).not.toHaveBeenCalled();
   });
   it('never configures a failed registration', async () => {

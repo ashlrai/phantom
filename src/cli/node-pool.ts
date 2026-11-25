@@ -10,14 +10,17 @@ import { probeNodeLanes, runNodeWorker } from '../core/drive/nodes/worker.js';
 
 export function hasNodePool(): boolean { return existsSync(join(ashlrHome(), 'node-pool', 'config.json')); }
 
+/** Local argument and identity refusals: fixed operator-facing strings, safe to show verbatim. */
+class PoolUsageError extends Error {}
+
 function flags(args: string[], values: string[], booleans: string[] = []): Map<string, string> {
   const out = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
     const key = args[i]!;
-    if (out.has(key)) throw new Error('Duplicate node pool flag');
+    if (out.has(key)) throw new PoolUsageError('Duplicate node pool flag');
     if (key === '--json' || booleans.includes(key)) out.set(key, '');
     else if (values.includes(key) && args[i + 1] && !args[i + 1]!.startsWith('--')) out.set(key, args[++i]!);
-    else throw new Error('Invalid node pool flags; run phm node --help');
+    else throw new PoolUsageError('Invalid node pool flags; run phm node --help');
   }
   return out;
 }
@@ -45,9 +48,10 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       const existing = verb === 'join' ? readPoolConfig() : null;
       const config = existing ?? configFrom(f, role);
       if (!existing && verb === 'join' && !f.has('--node')) config.node = hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
-      if (existing && ['--role', '--node', '--owner', '--primary', '--backup'].some(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig])) throw new Error('Join cannot change pool identity');
-      if (!validSshHost(config.primary) || !validSshHost(config.backup)) throw new Error('Use explicit team SSH config aliases for --primary and --backup');
-      if (config.primary === config.backup || !validId(config.owner) || !validId(config.node)) throw new Error('Invalid node pool identity');
+      if (existing && ['--role', '--node', '--owner', '--primary', '--backup'].some(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig])) throw new PoolUsageError('Join cannot change pool identity');
+      if (!validSshHost(config.primary) || !validSshHost(config.backup)) throw new PoolUsageError('Use explicit team SSH config aliases for --primary and --backup');
+      if (config.primary === config.backup || !validId(config.owner) || !validId(config.node)) throw new PoolUsageError('Invalid node pool identity');
+      if (verb === 'pool' && config.role !== 'primary' && config.role !== 'backup') throw new PoolUsageError('phm node pool --role must be primary or backup');
       if (verb === 'join') {
         const capacity = readNodeCapacity();
         const lanes = probeNodeLanes();
@@ -78,7 +82,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
     }
     if (verb === 'watch') {
       const f = flags(args, [], ['--once']);
-      if (config.role === 'worker') throw new Error('Only primary and backup watch the runner heartbeat');
+      if (config.role === 'worker') throw new PoolUsageError('Only primary and backup watch the runner heartbeat');
       do {
         const envelope: NodeRpcRequest = { kind: config.role === 'primary' ? 'witness' : 'client',
           request: { origin: config.role, action: 'heartbeat' } };
@@ -94,7 +98,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
     if (verb === 'worker') {
       const f = flags(args, ['--runner'], ['--light']);
       const runner = f.get('--runner');
-      if (!runner) throw new Error('Worker requires --runner /absolute/host-owned-runner');
+      if (!runner) throw new PoolUsageError('Worker requires --runner /absolute/host-owned-runner');
       emit({ schemaVersion: 1, ...await runNodeWorker(config, runner, f.has('--light')) });
       return 0;
     }
@@ -102,8 +106,16 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
     emit({ schemaVersion: 1, command: verb, active: result.active, epoch: result.epoch, demoted: result.demoted, ...result.result,
       ...(verb === 'status' ? { capacity: readNodeCapacity() } : {}) });
     return result.demoted ? 1 : 0;
-  } catch {
-    emit({ schemaVersion: 1, error: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.' });
+  } catch (error) {
+    // Usage refusals name the actual problem; anything else (SSH, witness,
+    // store, runner) stays masked behind the fixed pool message.
+    if (error instanceof PoolUsageError) {
+      emit({ schemaVersion: 1, command: verb, error: { code: 'usage', message: error.message, fix: 'Run: phm node --help' } });
+      return 2;
+    }
+    emit({ schemaVersion: 1, command: verb, error: { code: 'error',
+      message: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.',
+      fix: 'Run: phm node --help' } });
     return 1;
   }
 }

@@ -67,7 +67,15 @@ phm node status --owner acme
 
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
-`{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}`.
+`{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}` on failure.
+Every `phm node` verb keeps that envelope — the fleet verbs, `pool`, `watch`,
+`worker`, `self-update`, `capacity`, `route`, `lanes`, `bridge`, and unknown
+verbs or bad arguments at the dispatcher. `error.code` names the refusal
+(`usage` or a verb-specific code such as `missing-flag`, `session-expired` or
+`lease-lost`); exit 2 is bad usage, exit 1 a lost session/lease or operational
+failure, and pool or store failures never echo remote or secret detail.
+The stdin/stdout protocols keep their own shapes: `run-once` replies and
+`rpc` requests, and `light`'s `muse.light.v1` report.
 Exit codes: 0 ok, 1 lease or session lost or store unavailable, 2 bad usage.
 
 ## When something is refused
