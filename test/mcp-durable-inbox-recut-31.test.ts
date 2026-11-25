@@ -96,6 +96,7 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ kind: 'bogus' }], [{ kind: 'TASK' }], [{ kind: 5 }],
     [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
     [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
+    [{ bodyKind: 'has space' }], [{ bodyKind: 'x'.repeat(129) }], [{ bodyKind: '' }], [{ bodyKind: 5 }], [{ bodyKind: null }],
     [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
     [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
@@ -135,6 +136,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { channel: 'eng' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
       filters: { channel: 'eng' } });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { bodyKind: 'work.post' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { bodyKind: 'work.post' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -273,6 +277,40 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the bodyKind discriminator filter exactly and case-sensitively', async () => {
+    expect(post('bk-note', { body: { kind: 'note', text: 'hi' } }).status).toBe('posted');
+    expect(post('bk-context', { body: { kind: 'context', text: 'ctx' } }).status).toBe('posted');
+    expect(post('bk-work', { body: { kind: 'work.post', jobId: 'RQ-9', title: 'x' } }).status).toBe('posted');
+    expect(post('bk-handoff', { body: { kind: 'worker-handoff', taskId: 'RQ-9', prompt: 'p' } }).status).toBe('posted');
+    expect(post('bk-proto', { to: 'fleet.deploy', body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' }, ref: 'r1' } }).status).toBe('posted');
+    expect(post('bk-notice', { body: { type: 'planner-cycle-result.v1', cycle: 1 } }).status).toBe('posted');
+    expect(post('bk-plain', { body: { fake: 'nothing here' } }).status).toBe('posted');
+    expect(post('bk-string', { body: 'just text' }).status).toBe('posted');
+    const client = await connect();
+    const notes = await callInbox(client, { bodyKind: 'note' });
+    expect(notes.parsed).toMatchObject({ sourceState: 'ok', filters: { bodyKind: 'note' } });
+    expect(rows(notes.parsed).map(row => row.envelope.id)).toEqual(['bk-note']);
+    const work = await callInbox(client, { bodyKind: 'work.post' });
+    expect(rows(work.parsed).map(row => row.envelope.id)).toEqual(['bk-work']);
+    const handoff = await callInbox(client, { bodyKind: 'worker-handoff' });
+    expect(rows(handoff.parsed).map(row => row.envelope.id)).toEqual(['bk-handoff']);
+    const proto = await callInbox(client, { bodyKind: 'task' });
+    expect(rows(proto.parsed).map(row => row.envelope.id)).toEqual(['bk-proto']);
+    const notice = await callInbox(client, { bodyKind: 'planner-cycle-result.v1' });
+    expect(rows(notice.parsed).map(row => row.envelope.id)).toEqual(['bk-notice']);
+    // Case variants and unseen kinds are honest empty pages; filtered rows
+    // still advance nextCursor exactly like every other filter.
+    const wrongCase = await callInbox(client, { bodyKind: 'Note' });
+    expect(wrongCase.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 8 });
+    const unseen = await callInbox(client, { bodyKind: 'never-seen' });
+    expect(unseen.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 8 });
+    // The discriminator composes conjunctively with the other filters.
+    const combined = await callInbox(client, { bodyKind: 'note', contains: 'hi' });
+    expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['bk-note']);
+    const none = await callInbox(client, { bodyKind: 'context', contains: 'deploy' });
+    expect(none.parsed).toMatchObject({ returnedMessages: 0, nextCursor: 8 });
   });
 
   it('applies the before upper bound exclusive of its edge and composes with since', async () => {
