@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 class MemoryStore implements NodesStore {
   state = emptyState();
@@ -432,5 +433,47 @@ describe('live-session recovery hints', () => {
   it('leave of an unknown node stays a bare false', () => {
     const f = fixture();
     expect(executeNodeFleet('leave', args('ghost', 1), f.a)).toEqual({ nodeId: 'ghost', left: false });
+  });
+});
+
+describe('beat --capacity sample honesty', () => {
+  const beatArgs = (session: number, capacity?: string) =>
+    ['--node', 'laptop', '--session', String(session), ...(capacity === undefined ? [] : ['--capacity', capacity])];
+  const sample = { hostId: 'laptop.local', ramBytes: 17_179_869_184, slots: 4, held: null, sampledAtMs: 1_000 };
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string; exit?: number } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
+    throw new Error('expected the verb to refuse');
+  }
+  it('refuses a malformed or wrong-shaped --capacity as usage, never a store failure', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    for (const bad of ['not json', '', 'null', '[]', '{"hostId":"x"}', JSON.stringify({ ...sample, extra: 1 })]) {
+      const err = failure(() => executeNodeFleet('beat', beatArgs(worker.session, bad), f.a));
+      expect(err).toMatchObject({ code: 'bad-capacity', exit: 2 });
+      expect(err.fix).toContain('phm node measure');
+    }
+  });
+  it('the --json envelope names --capacity instead of the store', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const joined = executeNodeFleet('join', ['--node', 'laptop', '--owner', 'acme'], nodes);
+      const code = await cmdNodeFleet('beat', beatArgs(joined['session'] as number, 'not json').concat('--json'),
+        { store, probeAuth: () => 'unknown' });
+      expect(code).toBe(2);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'beat',
+        error: { code: 'bad-capacity', fix: expect.stringContaining('phm node measure') } });
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('records a measured sample so the node reports its slots', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    expect(executeNodeFleet('beat', beatArgs(worker.session, JSON.stringify(sample)), f.a))
+      .toMatchObject({ nodeId: 'laptop', leader: true });
+    const node = f.a.snapshot().nodes.find(n => n.nodeId === 'laptop')!;
+    expect(node.capacity).toEqual(sample);
+    expect(node.slots).toBe(4);
   });
 });

@@ -68,7 +68,10 @@ grey and joined ones in color from the same JSON.
 It is read only: it reads `tailscale status` and the node list already on
 this computer, and changes nothing. A fact it cannot confirm (Tailscale missing,
 the node list on another computer) is `unknown` with the reason. The desktop
-Computers pane shows the same rows as cards.
+Computers pane shows the same rows as cards. Every `phm nodes` verb keeps the
+`phm node` error discipline under `--json`: a failure prints
+`{"schemaVersion":1,"command","error":{"code","message","fix"}}` on stdout,
+naming the refused argument, while text mode keeps the usage block on stderr.
 
 Then run one bounded worker batch:
 

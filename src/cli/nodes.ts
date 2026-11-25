@@ -63,36 +63,80 @@ function planText(plan: NodesPlan): string {
   return [...rows, '', ...jobs, ...plan.reasons.map(reason => `note: ${reason}`)].join('\n');
 }
 
+/** Argument-shape failures: exit 2. Under --json the caller gets the same error
+ * envelope `phm node` emits — {"schemaVersion":1,"command","error":{"code",
+ * "message","fix"}} on stdout — so an agent scripting the computers view never
+ * parses prose on stderr. Text mode keeps the full usage block on stderr. argv
+ * alone proves --json intent: a standalone --json token can never be a flag
+ * value, because valued flags refuse '-' led tokens. */
+function nodesUsage(json: boolean, command: string, message: string): number {
+  if (json) console.log(JSON.stringify({ schemaVersion: 1, command,
+    error: { code: 'usage', message, fix: 'Run: phm nodes --help' } }));
+  else console.error(USAGE);
+  return 2;
+}
+
+/** Strict argv parse for the read subcommands. spec.flag names boolean flags
+ * (besides --json, which is always allowed); spec.value names flags that take
+ * the next token. The first refusal names the argument that broke the shape. */
+function parseNodesArgs(args: string[], display: string, spec: { flag?: string[]; value?: string[] }):
+    { json: boolean; flags: Map<string, string>; error: string | null } {
+  const json = args.includes('--json');
+  const switches = new Set(spec.flag ?? []);
+  const valued = new Set(spec.value ?? []);
+  const flags = new Map<string, string>();
+  const refuse = (error: string) => ({ json, flags, error });
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--json' || switches.has(arg)) {
+      if (flags.has(arg)) return refuse(`${arg} was given twice.`);
+      flags.set(arg, ''); continue;
+    }
+    if (valued.has(arg)) {
+      if (flags.has(arg)) return refuse(`${arg} was given twice.`);
+      const value = args[i + 1];
+      if (!value || value.startsWith('-')) return refuse(`${arg} needs a value.`);
+      flags.set(arg, value); i++; continue;
+    }
+    return refuse(arg.startsWith('-')
+      ? `Unknown argument '${arg}' for '${display}'.`
+      : `Unexpected argument '${arg}'.`);
+  }
+  return { json, flags, error: null };
+}
+
 /** `phm nodes plan [--json]`: read only; plans and never launches, moves or stops anything. */
 async function cmdNodesPlan(args: string[], deps: NodesViewDeps, readQueue: typeof readQueueOrder): Promise<number> {
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(USAGE); return 2; }
+  const parsed = parseNodesArgs(args, 'phm nodes plan', {});
+  if (parsed.error) return nodesUsage(parsed.json, 'plan', parsed.error);
   const plan = await readNodesPlan({ view: deps, readQueue: () => readQueue() });
-  console.log(args.length ? JSON.stringify(plan, null, 2) : planText(plan));
+  console.log(parsed.json ? JSON.stringify(plan, null, 2) : planText(plan));
   return 0;
 }
 
 /** `phm nodes doctor [--node <name>] [--json]`: read only readiness check per joined computer. */
 async function cmdNodesDoctor(args: string[], deps: NodesViewDeps, probe: NodeProbe): Promise<number> {
-  let json = false, node: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === '--help' || arg === '-h') { console.log(USAGE); return 0; }
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--node' && node === undefined && args[i + 1] && !args[i + 1]!.startsWith('-')) node = args[++i]!;
-    else { console.error(USAGE); return 2; }
-  }
+  const parsed = parseNodesArgs(args, 'phm nodes doctor', { value: ['--node'] });
+  if (parsed.error) return nodesUsage(parsed.json, 'doctor', parsed.error);
+  const node = parsed.flags.get('--node');
   const report = await readNodesDoctor({ view: deps, probe }, node);
-  if (node !== undefined && !report.nodes.length) { console.error(`No computer named ${node}. Run \`phm nodes\` to list them.`); return 1; }
-  console.log(json ? JSON.stringify(report, null, 2) : doctorText(report));
+  if (node !== undefined && !report.nodes.length) {
+    const message = `No computer named ${node}.`;
+    if (parsed.json) console.log(JSON.stringify({ schemaVersion: 1, command: 'doctor',
+      error: { code: 'not-found', message, fix: 'Run: phm nodes to list them.' } }));
+    else console.error(`${message} Run \`phm nodes\` to list them.`);
+    return 1;
+  }
+  console.log(parsed.json ? JSON.stringify(report, null, 2) : doctorText(report));
   return 0;
 }
 
 /** `phm nodes pool [--json]`: read only; the joined Macs as one pool. */
 function cmdNodesPool(args: string[], deps: NodesViewDeps): number {
-  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) { console.error(USAGE); return 2; }
+  const parsed = parseNodesArgs(args, 'phm nodes pool', {});
+  if (parsed.error) return nodesUsage(parsed.json, 'pool', parsed.error);
   const pool = readNodesPool({ view: deps });
-  console.log(args.length ? JSON.stringify(pool, null, 2) : poolText(pool));
+  console.log(parsed.json ? JSON.stringify(pool, null, 2) : poolText(pool));
   return 0;
 }
 
@@ -105,38 +149,35 @@ function defaultReadHost(): ReturnType<NodesOffloadDeps['readHost']> {
 
 /** `phm nodes offload [--dry-run] [--json]` and `phm nodes offload on|off`. */
 async function cmdNodesOffload(args: string[], deps: NodesViewDeps, readQueue: typeof readQueueOrder, probe: NodeProbe, offload: Partial<NodesOffloadDeps>): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
-  if (args.length === 1 && (args[0] === 'on' || args[0] === 'off')) {
-    writeOffloadEnabled(args[0] === 'on');
+  const json = args.includes('--json');
+  if (args[0] === 'on' || args[0] === 'off') {
+    if (args.length !== 1) return nodesUsage(json, 'offload', `Unexpected argument '${args[1]}'.`);
+    try { writeOffloadEnabled(args[0] === 'on'); }
+    catch { console.error('Could not save the offload setting; check that the Phantom state directory is writable.'); return 1; }
     console.log(args[0] === 'on' ? 'Offload is on. Run `phm nodes offload --dry-run` to see what would move.' : 'Offload is off.');
     return 0;
   }
-  let json = false, dryRun = false;
-  for (const arg of args) {
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--dry-run' && !dryRun) dryRun = true;
-    else { console.error(USAGE); return 2; }
-  }
-  const report = await readNodesOffload({ view: deps, probe, readQueue: () => readQueue(), readHost: defaultReadHost, readEnabled: readOffloadEnabled, ...offload }, { dryRun });
-  console.log(json ? JSON.stringify(report, null, 2) : offloadText(report));
+  if (args[0] !== undefined && !args[0].startsWith('-')) return nodesUsage(json, 'offload', `Unknown offload command '${args[0]}'.`);
+  const parsed = parseNodesArgs(args, 'phm nodes offload', { flag: ['--dry-run'] });
+  if (parsed.error) return nodesUsage(parsed.json, 'offload', parsed.error);
+  const report = await readNodesOffload({ view: deps, probe, readQueue: () => readQueue(), readHost: defaultReadHost, readEnabled: readOffloadEnabled, ...offload }, { dryRun: parsed.flags.has('--dry-run') });
+  console.log(parsed.json ? JSON.stringify(report, null, 2) : offloadText(report));
   return 0;
 }
 
-export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder, probe: NodeProbe = defaultNodeProbe, offload: Partial<NodesOffloadDeps> = {}): Promise<number> {
-  if (args[0] === 'offload') return cmdNodesOffload(args.slice(1), deps, readQueue, probe, offload);
-  if (args[0] === 'pool') return cmdNodesPool(args.slice(1), deps);
-  if (args[0] === 'doctor') return cmdNodesDoctor(args.slice(1), deps, probe);
-  if (args[0] === 'plan') return args.slice(1).includes('--help') ? (console.log(USAGE), 0) : cmdNodesPlan(args.slice(1), deps, readQueue);
-  let json = false, discover = false;
+/** `phm nodes [--json] [--discover] [--can-take <lane>]`: the computers view itself. */
+function cmdNodesView(args: string[], deps: NodesViewDeps): number {
+  const parsed = parseNodesArgs(args, 'phm nodes', { flag: ['--discover'], value: ['--can-take'] });
+  if (parsed.error) return nodesUsage(parsed.json, 'nodes', parsed.error);
+  const { json, flags } = parsed;
+  const laneArg = flags.get('--can-take');
   let lane: string | null = null;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === '--help' || arg === '-h') { console.log(USAGE); return 0; }
-    if (arg === '--json' && !json) json = true;
-    else if (arg === '--discover' && !discover) discover = true;
-    else if (arg === '--can-take' && lane === null && validCap(args[i + 1])) lane = args[++i]!;
-    else { console.error(USAGE); return 2; }
+  if (laneArg !== undefined) {
+    if (!validCap(laneArg)) return nodesUsage(json, 'nodes',
+      `--can-take takes one lane capability name (lowercase, like claude or codex).`);
+    lane = laneArg;
   }
+  const discover = flags.has('--discover');
   const view = readNodesView(deps);
   const nodes = lane === null ? view.nodes : nodesThatCanTake(view, lane);
   const placement = lane === null ? null : chooseNodeForLane(view, lane);
@@ -152,4 +193,15 @@ export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNode
     ...discovered.map(node => `${node.name} (${node.reachable === true ? 'online' : node.reachable === false ? 'offline' : 'unknown'}): ${node.joinCommand === null ? 'not joined; this computer has no node pool to join it' : `not joined. On ${node.name}, run: ${node.joinCommand}`}`)] : [];
   console.log([...choice, ...(nodes.length ? nodes.map(line) : [empty]), ...found, ...only, ...view.reasons.map(reason => `note: ${reason}`)].join('\n'));
   return 0;
+}
+
+export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNodesViewDeps(), readQueue: typeof readQueueOrder = readQueueOrder, probe: NodeProbe = defaultNodeProbe, offload: Partial<NodesOffloadDeps> = {}): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); return 0; }
+  const json = args.includes('--json');
+  if (args[0] === 'offload') return cmdNodesOffload(args.slice(1), deps, readQueue, probe, offload);
+  if (args[0] === 'pool') return cmdNodesPool(args.slice(1), deps);
+  if (args[0] === 'doctor') return cmdNodesDoctor(args.slice(1), deps, probe);
+  if (args[0] === 'plan') return cmdNodesPlan(args.slice(1), deps, readQueue);
+  if (args[0] !== undefined && !args[0].startsWith('-')) return nodesUsage(json, 'nodes', `Unknown nodes command '${args[0]}'.`);
+  return cmdNodesView(args, deps);
 }

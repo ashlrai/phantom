@@ -190,22 +190,30 @@ export interface NodesOffloadDeps extends NodesDoctorDeps {
 /** Never throws. `dryRun` or an off setting records nothing. */
 export async function readNodesOffload(deps: NodesOffloadDeps, opts: { dryRun: boolean }): Promise<NodesOffload> {
   const now = (deps.now ?? (() => new Date()))();
-  const enabled = (deps.readEnabled ?? readOffloadEnabled)();
+  let enabled = false;
+  try { enabled = (deps.readEnabled ?? readOffloadEnabled)(); } catch { /* an unreadable setting is off */ }
   let host: HostGuard;
   try { host = assessHostGuard(deps.readHost()); } catch { host = { state: 'unknown', reasons: [], why: 'This computer\'s guard could not be read; nothing is moved.' }; }
   const view = readNodesView(deps.view);
   const doctor = await readNodesDoctor(deps);
   const queue = await deps.readQueue().catch(() => null);
-  const recorded = (deps.readRecorded ?? readRecordedOffloads)();
+  let recorded = new Set<string>();
+  try { recorded = (deps.readRecorded ?? readRecordedOffloads)(); } catch { /* unreadable history: nothing counts as already chosen */ }
   const plan = planOffload({ host, view, doctor, queue, recorded });
   const live = enabled && !opts.dryRun;
-  const written = live ? (deps.record ?? recordOffloadMoves)(plan.moves, view.self, now) : 0;
+  let written = 0, recordFailed = false;
+  if (live) {
+    try { written = (deps.record ?? recordOffloadMoves)(plan.moves, view.self, now); }
+    catch { recordFailed = true; }
+  }
   const n = plan.moves.length;
   const summary = host.state !== 'busy' ? `${host.why} No job moves.`
     : n === 0 ? `${host.why} No computer is ready, so ${plan.stays.length ? 'jobs keep waiting here' : 'nothing is queued'}.`
       : !enabled ? `Offload is off. ${count(n, 'job would', 'jobs would')} move if you run \`phm nodes offload on\`.`
-        : live ? `${count(written, 'job', 'jobs')} chosen for another computer.` : `${count(n, 'job would', 'jobs would')} move (dry run, nothing recorded).`;
-  return { schema: NODES_OFFLOAD_SCHEMA, schemaVersion: 1, asOf: view.asOf, enabled, mode: live ? 'live' : 'dry-run', host, moves: plan.moves, stays: plan.stays, recorded: written, summary, reasons: [...view.reasons, ...plan.reasons] };
+        : recordFailed ? 'This computer is busy and another computer is ready, but the offload record could not be written; nothing was marked as moved.'
+          : live ? `${count(written, 'job', 'jobs')} chosen for another computer.` : `${count(n, 'job would', 'jobs would')} move (dry run, nothing recorded).`;
+  return { schema: NODES_OFFLOAD_SCHEMA, schemaVersion: 1, asOf: view.asOf, enabled, mode: live ? 'live' : 'dry-run', host, moves: plan.moves, stays: plan.stays, recorded: written,
+    summary, reasons: [...view.reasons, ...plan.reasons, ...(recordFailed ? ['the offload record could not be written; the chosen jobs were not marked as moved'] : [])] };
 }
 
 export function offloadText(report: NodesOffload): string {

@@ -109,6 +109,14 @@ describe('nodes offload', () => {
     expect(assessHostGuard(silent)).toMatchObject({ state: 'busy', reasons: ['load'] });
     expect(assessHostGuard({ ...busy, admission: { ...busy.admission, state: 'open' } }).state).toBe('fine');
   });
+
+  it('a record that throws is reported honestly, never crashes the read', async () => {
+    const report = await readNodesOffload({ ...deps(busy), record: () => { throw new Error('disk full'); } }, { dryRun: false });
+    expect(report).toMatchObject({ mode: 'live', recorded: 0 });
+    expect(report.moves).toHaveLength(2);
+    expect(report.summary).toMatch(/could not be written/);
+    expect(report.reasons.some(r => r.includes('could not be written'))).toBe(true);
+  });
 });
 
 describe('setting and CLI', () => {

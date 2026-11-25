@@ -305,10 +305,14 @@ describe('phm nodes', () => {
       'node-b: ready for work | memory free unknown | CPU free unknown | lanes codex | jobs 0',
     ].join('\n'));
     vi.restoreAllMocks();
-    for (const bad of [['--nope'], ['--can-take'], ['--can-take', 'Bad Lane'], ['--json', '--json']]) {
+    for (const bad of [['--nope'], ['--can-take'], ['--can-take', 'Bad Lane']]) {
       expect(await run(bad)).toMatchObject({ code: 2, err: 1 });
       vi.restoreAllMocks();
     }
+    // A refused flag under --json answers with the parseable envelope on stdout.
+    const refused = await run(['--json', '--json']);
+    expect(refused).toMatchObject({ code: 2, err: 0 });
+    expect(JSON.parse(refused.out)).toMatchObject({ schemaVersion: 1, command: 'nodes', error: { code: 'usage' } });
     expect(await run(['--help'])).toMatchObject({ code: 0, err: 0 });
   });
 });
