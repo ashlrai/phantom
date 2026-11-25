@@ -282,13 +282,16 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   }
   if (base.processAlive === true) base.runtimeHost = host;
   let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
+  let invalidInbound = false;
   try {
     if (src.inboundEvidence) {
       evidence = await src.inboundEvidence();
-      inbound = evidence.rows.map((r) => ms(r.at)).filter(Number.isFinite).sort((a, b) => a - b);
+      inbound = evidence.rows.map((r) => ms(r.at));
     } else {
-      inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+      inbound = (await src.inbound()).map(ms);
     }
+    invalidInbound = inbound.some((t) => !Number.isFinite(t));
+    inbound = inbound.filter(Number.isFinite).sort((a, b) => a - b);
     replies = (await src.replies()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
@@ -323,7 +326,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
   const proof: ChannelProof = {
-    requestCoverage: pending.length ? 'unproven'
+    requestCoverage: invalidInbound || pending.length ? 'unproven'
       : binding && answeredCount > 0 ? 'verified'
         : windowInbound.length ? 'unproven' : 'idle',
     futureDatedCount: futureDated,
@@ -353,13 +356,16 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
     return {
       ...base,
       state: 'UNKNOWN',
-      missing: [evidence.store === 'missing' ? `${channel} inbound journal missing` : `${channel} receipt source unreadable`],
+      missing: [evidence.store === 'missing' ? `${channel} inbound journal missing` : `${channel} receipt source unreadable`,
+        ...(invalidInbound ? [`${channel} invalid inbound timestamp evidence`] : [])],
     };
   }
   if (base.processAlive === 'unknown') {
-    return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`] };
+    return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`,
+      ...(invalidInbound ? [`${channel} invalid inbound timestamp evidence`] : [])] };
   }
   const reasons: string[] = [];
+  if (invalidInbound) reasons.push(`${channel} invalid inbound timestamp evidence`);
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
   if (durableFailed) reasons.push(`${channel} durable ingress failed`);
