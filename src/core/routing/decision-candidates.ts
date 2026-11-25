@@ -9,6 +9,7 @@ import { MODE_RANK } from '../run/model-mode-data.js';
 import { compareSpendPriority, validResetCalendarPool, type ResetCalendarPool } from './reset-pressure.js';
 import { runway, runwayAdmits, type RunwayState } from '../usage/runway.js';
 import { JOB_KEEP_RATE, jobKind } from '../fleet/slot-yield.js';
+import { parseDeclaredSeats, seatLabel } from './subscription-capacity.js';
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const baseSlotSchema = z.object({
@@ -20,6 +21,8 @@ const slotSchema = baseSlotSchema.extend({
 });
 export interface RouteSources {
   models: unknown; slots: unknown; admission: unknown; capacity?: unknown; request?: unknown;
+  /** Operator-declared seat sign-ins by lane (`queue/subscription-seats.json`, routing/subscription-capacity.ts). */
+  seats?: unknown;
   /**
    * Measured merged PRs per launch by job kind (fleet/slot-yield.ts `jobKind`, the
    * rows of `phm jobs yield`). queue/route-yield.ts fills it only when a pool starves.
@@ -43,12 +46,14 @@ export async function loadRouteSources(root: string): Promise<RouteSources> {
       } finally { await fd.close(); }
     } catch { return null; }
   };
-  const [models, slots, admission, capacity, request] = await Promise.all([
+  const [models, slots, admission, capacity, request, seats] = await Promise.all([
     read(join(root, 'models.json')), read(join(root, 'queue/slots.json')), read(join(root, 'queue/admission.json')),
     read(join(root, 'queue/route-capacity.json')),
     read(join(root, 'queue/route-request.json')),
+    read(join(root, 'queue/subscription-seats.json')),
   ]);
-  return { models, slots, admission, ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }) };
+  return { models, slots, admission, ...(capacity === null ? {} : { capacity }), ...(request === null ? {} : { request }),
+    ...(seats === null ? {} : { seats }) };
 }
 
 /**
@@ -90,6 +95,7 @@ export function modelPrior(model: string, tier: RouteRequest['tier_hint']): Pick
 export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSources, refused: MemoryFit[] = []): RouteCandidate[] {
   if (!request.machine_state.admit || object(sources.admission)['admit'] !== true) return [];
   const models = object(sources.models), slots = object(sources.slots);
+  const seats = parseDeclaredSeats(sources.seats);
   const result: RouteCandidate[] = [];
   for (const lane of [...new Set(request.lane_candidates)].sort()) {
     if (request.quota_state[lane] !== 'available') continue;
@@ -114,8 +120,9 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
     const rawCapacity = object(sources.capacity)[lane];
     const capacity = rawCapacity === undefined ? undefined : { ...object(rawCapacity), pool: lane };
     if (capacity && !validResetCalendarPool(capacity)) continue;
+    const label = seatLabel(lane, seats[lane]);
     result.push({ lane, model: model.data, effort: effort.data, mode_tier: mode.success ? mode.data : null,
-      ...(capacity ? { capacity } : {}), ...modelPrior(model.data, tier) });
+      ...(capacity ? { capacity } : {}), ...(label ? { seat_label: label } : {}), ...modelPrior(model.data, tier) });
   }
   return result;
 }
@@ -123,12 +130,14 @@ export function enumerateRouteCandidates(request: RouteRequest, sources: RouteSo
 /**
  * Adequate candidates, best first. Runway policy (usage/runway.ts): a pool that
  * runs dry before its reset takes only frontier work or a high-yield job kind,
- * and other work prefers pools that will reset with usage left.
+ * and other work prefers pools that will reset with usage left. A starter-quota
+ * seat (Antigravity on a Workspace account) ranks after every other seat.
  */
 export function rankRouteCandidates(request: RouteRequest, candidates: readonly RouteCandidate[], nowMs = Date.now(),
   familyYield?: RouteSources['familyYield']): RouteCandidate[] {
   const highYield = highYieldJob(request, familyYield);
   const states = new Map(candidates.map(c => [c, capacityRunwayState(c.capacity, nowMs)]));
+  const starter = (c: RouteCandidate): number => c.seat_label === 'starter-quota' ? 1 : 0;
   const spendFirst = (c: RouteCandidate): number => request.tier_hint !== 'frontier' && states.get(c) === 'spend' ? 0 : 1;
   const desired = request.tier_hint === 'frontier' ? 'premium' : request.tier_hint === 'work' ? 'workhorse' : 'everyday';
   const ranks = { everyday: 0, workhorse: 1, premium: 2 };
@@ -139,7 +148,7 @@ export function rankRouteCandidates(request: RouteRequest, candidates: readonly 
     if (runwayBars(request, pool, nowMs, highYield)) return false;
     return request.mode ? c.mode_tier !== null && (request.mode === 'fusion' || MODE_RANK[c.mode_tier] >= MODE_RANK[request.mode])
       : ranks[c.speed_tier] >= minimum;
-  }).sort((a, b) => spendFirst(a) - spendFirst(b) || compareSpendPriority(a.capacity, b.capacity, nowMs) ||
+  }).sort((a, b) => starter(a) - starter(b) || spendFirst(a) - spendFirst(b) || compareSpendPriority(a.capacity, b.capacity, nowMs) ||
     a.cost_rank - b.cost_rank || a.latency_rank - b.latency_rank || a.lane.localeCompare(b.lane));
 }
 

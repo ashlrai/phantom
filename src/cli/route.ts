@@ -91,13 +91,36 @@ async function routeFit(args: string[]): Promise<number> {
   }
 }
 
+const SEATS_USAGE = 'Usage: phm route seats [--root <directory>] --json';
+
+/** Which Google seat the router uses and whether it reaches Gemini 4 Neon on included capacity. */
+export async function routeSeats(args: string[], out: (text: string) => void = console.log): Promise<number> {
+  let root = process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs');
+  const seen = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg) || !['--root', '--json'].includes(arg)) { console.error(JSON.stringify({ error: SEATS_USAGE })); return 2; }
+    seen.add(arg);
+    if (arg === '--json') continue;
+    const value = args[++i];
+    if (!value || value.startsWith('--')) { console.error(JSON.stringify({ error: SEATS_USAGE })); return 2; }
+    root = value;
+  }
+  if (!seen.has('--json')) { console.error(JSON.stringify({ error: SEATS_USAGE })); return 2; }
+  const { loadRouteSources } = await import('../core/routing/decision-candidates.js');
+  const { googleSeatReadout } = await import('../core/routing/subscription-capacity.js');
+  out(JSON.stringify(googleSeatReadout((await loadRouteSources(root)).seats)));
+  return 0;
+}
+
 export async function cmdRoute(args: string[]): Promise<number> {
+  if (args[0] === 'seats') return routeSeats(args.slice(1));
   if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
   if (args[0] === 'shadow') return routeShadow(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json | phm route shadow eval --input <file|-> [--policy <name>] [--root <directory>] [--record] --json | phm route shadow report [--policy <name>] [--root <directory>] --json');
+    console.error('Usage: phm route explain [--json] | phm route seats [--root <directory>] --json | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json | phm route shadow eval --input <file|-> [--policy <name>] [--root <directory>] [--record] --json | phm route shadow report [--policy <name>] [--root <directory>] --json');
     return 2;
   }
   const report = await explainRoutes();

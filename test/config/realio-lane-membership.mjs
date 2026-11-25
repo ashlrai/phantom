@@ -65,6 +65,7 @@ export const REAL_IO_TEST_FILES = [
   'test/auto-tag-gate-split.test.ts', // Executes the auto-tag workflow step in real Bash children.
   'test/channel-health-slack-binding-338.test.ts', // Spawns real Slack process fixtures and reads private durable stores.
   'test/lane-placement-recut509.test.ts', // Runs Python lane-placement and process-snapshot regression suites.
+  'test/fleet-profile.test.ts', // Runs Python against fake package and login binaries.
   'test/m30.ci.test.ts', // Runs real Bash workflow checks and native tsgo compiler children.
   'test/mcp/fleet-job-current-snapshot-04-sqc1.test.ts', // Creates real Git history for MCP snapshot replay reads.
   'test/no-stray-source-artifacts-373.test.ts', // Runs git ls-files to inspect tracked source artifacts.

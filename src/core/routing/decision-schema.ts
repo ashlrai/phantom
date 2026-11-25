@@ -62,6 +62,8 @@ export type RouteReason = z.infer<typeof routeReasonSchema>;
 export interface RouteCandidate {
   mode_tier: z.infer<typeof modelModeTierSchema> | null;
   capacity?: ResetCalendarPool;
+  /** `starter-quota`: a limited seat the router uses only after every other seat. */
+  seat_label?: import('./subscription-capacity.js').SeatLabel;
   lane: string;
   model: string;
   effort: z.infer<typeof effortSchema>;
@@ -74,6 +76,8 @@ export interface RouteReport extends RouteDecision {
   local_models_refused: import('../resources/local-memory-fit.js').MemoryFit[];
   requested_mode: ModeTier | null;
   capacity: ResetCalendarPool | null;
+  /** Present only when the chosen seat carries a label. */
+  seat_label?: import('./subscription-capacity.js').SeatLabel;
   schema: 'route.decision.v1';
   advisory: true;
   path: 'local-fast' | 'jev' | 'local-strong' | 'fallback';

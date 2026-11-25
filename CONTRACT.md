@@ -1264,6 +1264,14 @@ subscription sticker price. Reset-calendar lanes now sort by reset before pace.
 drops `starve` lanes for non-frontier work unless the job kind's merged-per-launch
 in `RouteSources.familyYield` is at least `JOB_KEEP_RATE`. It ranks `spend` lanes
 first for non-frontier work. `routeCandidateRejections` adds `runway_starve`.
+`src/core/routing/subscription-capacity.ts` (pure) exports `SUBSCRIPTION_CAPACITY`
+(`SubscriptionSeatCapacity` rows: provider, lane, product, account_kind, plan,
+cost_class, opt_in, models, refresh, daily_requests, weekly_cap, neon, label,
+source; unknown caps null), `parseDeclaredSeats`, `seatCapacity`, `seatLabel`
+and `googleSeatReadout` (`route.subscription-capacity.v1`, `phm route seats --json`).
+`RouteSources.seats?` holds `queue/subscription-seats.json`; a Workspace `agy`
+seat sets `RouteCandidate.seat_label` and `RouteReport.seat_label` to
+`starter-quota`, and `rankRouteCandidates` ranks it after every other seat.
 `readPoolRunway()` (`runway-read.ts`) returns `pool.runway.v1` for
 `phm pool runway --json` and `GET /api/usage/runway`.
 `planPoolShares(inputs)` (same file, pure) maps each pool's used percent, burn

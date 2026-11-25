@@ -8,6 +8,9 @@ for team devices. No DNS registration, paid service, discovery broadcast, provid
 auth transfer or agent forwarding is added. See [Agent network](AGENT-NETWORK.md)
 for complete setup and the runner contract.
 
+Use the [fleet profile](FLEET-PROFILE.md) to compare and provision the Macs'
+software and agent settings before enrollment. The profile does not enroll nodes.
+
 The primary keeps queue input and publication custody. The backup durably records
 every node-router transition as its replica and fencing witness. It accepts no
 backup-origin admissions while the primary is live. Every primary admission must

@@ -57,13 +57,21 @@ function text(verb: string, out: Record<string, unknown>): string {
       slots?: number; capacity?: { held?: string | null } }[];
     const jobs = out['jobs'] as { id: string; state: string; claimedBy?: string; completedBy?: string; producerWithdrawn?: true }[];
     const scope = (out['owners'] as string[]).join(',');
+    // A job still waiting on a taker carries the same fix `phm node plan`
+    // prints, so status answers "why is this pending" without a second
+    // command. view() already returns the routes; --json consumers had them,
+    // text mode simply never rendered them. Only unrouted jobs are annotated:
+    // a routed pending job keeps its bare state — its node will pull it.
+    const fixes = new Map((out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[] | undefined ?? [])
+      .filter(r => r.nodeId === null && typeof r.fix === 'string')
+      .map(r => [r.jobId, r.fix!]));
     // slots is the advertised admission bound: a reported number (0 holds
     // admission), or 'unbounded' when none was reported — an absent bound is
     // legacy unbounded routing, not a measured zero. held is the last measured
     // capacity hold, shown only while one is reported.
     const lines = [`Owner scope: ${scope}`,
       ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}`),
-      ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}`)];
+      ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}${fixes.has(j.id) ? ` — ${fixes.get(j.id)}` : ''}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
     if (!nodes.length) lines.push('No nodes joined in this scope.');
