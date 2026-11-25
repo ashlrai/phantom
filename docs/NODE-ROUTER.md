@@ -106,6 +106,10 @@ exists;
 live session and its command, and `release` says the job is pending again —
 with `--decline`, that this session is barred from being offered it.
 
+A `beat` answers `Beat <node>; leader` or `Beat <node>; follower`, appending
+`; gh auth <ok|missing|unknown>` when auth was reported — the same line
+`beat --watch` repeats on every pass.
+
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
 `{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}` on failure.

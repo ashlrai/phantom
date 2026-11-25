@@ -733,6 +733,23 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe('Node box left the registry.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('beat names the node, leader lease and reported gh auth in plain words', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      const box = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      // The first live heartbeat takes the leader lease; --auth self-reports it.
+      expect(await cmdNodeFleet('beat', ['--node', 'box', '--session', box, '--auth', 'ok'], deps)).toBe(0);
+      expect(last(lines)).toBe('Beat box; leader; gh auth ok.');
+      // A second node beats as follower; --probe-auth reads this machine's own gh login.
+      const laptop = String(executeNodeFleet('join', ['--node', 'laptop', '--owner', 'acme'], nodes())['session']);
+      expect(await cmdNodeFleet('beat', ['--node', 'laptop', '--session', laptop, '--probe-auth'],
+        { ...deps, probeAuth: () => 'missing' })).toBe(0);
+      expect(last(lines)).toBe('Beat laptop; follower; gh auth missing.');
+      // No auth report: the clause stays absent rather than invented.
+      expect(await cmdNodeFleet('beat', ['--node', 'box', '--session', box], deps)).toBe(0);
+      expect(last(lines)).toBe('Beat box; leader.');
+    } finally { vi.restoreAllMocks(); }
+  });
   it('status names each node\'s advertised slots and last measured hold', async () => {
     const { deps, nodes, lines } = harness();
     try {

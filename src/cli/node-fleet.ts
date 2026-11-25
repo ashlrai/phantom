@@ -48,6 +48,15 @@ function text(verb: string, out: Record<string, unknown>): string {
       `  ${String(out['next'])}`,
     ].join('\n');
   }
+  if (verb === 'beat') {
+    // beat is the keep-alive every joined node runs — `beat --watch` repeats
+    // it each pass — so its text answer is a sentence naming the node, whether
+    // it holds the leader lease, and the gh-auth status when one was reported:
+    // the same facts the --json envelope carries.
+    const parts = [`Beat ${String(out['nodeId'])}`, out['leader'] === true ? 'leader' : 'follower'];
+    if (typeof out['auth'] === 'string') parts.push(`gh auth ${out['auth']}`);
+    return `${parts.join('; ')}.`;
+  }
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
     return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
