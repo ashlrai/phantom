@@ -15,6 +15,8 @@ import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
 import { listCoordination } from '../agents/claim-store.js';
 import { RUNNING_FRESH_MS, type WorkItemEvidence } from './work-item-state.js';
+import { parseSlackThreadRef } from '../agents/slack-network.js';
+import { slackTraceRowsToWorkItems } from './slack-trace-work-items.js';
 
 export interface BusWorkItemSources {
   /** 'found' when the message id was read; 'missing' when a settled scan did
@@ -34,7 +36,25 @@ export interface BusWorkItemEvidenceResult {
 
 const nonempty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
-/** Both aliases, when present, must name the same exact request. */
+/** Explicit references must agree; absent metadata is the legacy reply path. */
+function sameThread(request: BusInboxReceipt, reply: BusInboxReceipt): boolean {
+  const a = request.envelope.channel_ref, b = reply.envelope.channel_ref;
+  if (a === undefined || b === undefined || a === b) return true;
+  if (request.envelope.channel !== 'slack' || reply.envelope.channel !== 'slack') return false;
+  // Slack accepts both its colon and slash forms. Reuse the trace join's
+  // decimal timestamp identity, while checking the workspace explicitly.
+  const parse = (ref: string) => parseSlackThreadRef(ref) ??
+    parseSlackThreadRef(`slack:${ref.replaceAll('/', ':')}`);
+  const left = parse(a), right = parse(b);
+  if (!left || !right || left.teamId !== right.teamId || left.channelId !== right.channelId) return false;
+  const [joined] = slackTraceRowsToWorkItems(
+    [{ at: '', channelId: left.channelId, threadTs: left.rootTs, messageTs: left.rootTs, ingress: 'unknown', outcome: 'unanswered' }],
+    [{ threadKey: b, claimId: 'thread', repo: 'thread', agent: 'thread' }],
+  );
+  return joined?.claimReceipt === 'thread#thread';
+}
+
+
 function replyTargets(body: Record<string, unknown>, id: string): boolean {
   const camel = Object.hasOwn(body, 'inReplyTo');
   const snake = Object.hasOwn(body, 'in_reply_to');
@@ -186,7 +206,7 @@ export function deriveBusWorkItemEvidence(
   const request = receipts.find(row => row.envelope.id === id);
   let verifiedCursor = -Infinity, blockerCursor = -Infinity;
   for (const row of receipts) {
-    if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt) continue;
+    if (!request || row.cursor <= request.cursor || row.receivedAt < request.receivedAt || !sameThread(request, row)) continue;
     // Match the classifier's private five-minute future-skew boundary; it has
     // no historical TTL. Check Date validity before reply conversion to ISO.
     if (!Number.isFinite(new Date(row.receivedAt).getTime()) ||
