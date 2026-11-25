@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-two sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-three sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -896,6 +896,26 @@
  *     stated as recorded floors, and items emit only for the fleet's
  *     own repository since the journal describes this install's bridge
  *     config and carries no repo column;
+ *   - the selector picks journal's recurring adverse outcome classes:
+ *     the {at, rank, id, repo, jobType, score, predictedValue,
+ *     mergeRate, minutes, usage, basis, frictionId?} rows `phm select`
+ *     appends to <runs>/selector/picks.jsonl for every funded pick,
+ *     joined by pick id — the READY-line id that becomes the
+ *     metrics/jobs.jsonl job id — to that job's recorded launches,
+ *     finishes, publishes, aborts, precheck declines and resolved
+ *     outcomes (selectorPicksBacklogItems below). CONTRACT-SELECTOR
+ *     records predictedValue and mergeRate "so a later run can compare
+ *     it with the real outcome" and until now no run did — fundedIds
+ *     was the journal's only reader — so a selector whose picks keep
+ *     finishing empty, getting declined, aborting, closing unmerged or
+ *     never launching looked identical to a healthy one. A class emits
+ *     only at three distinct picks across two UTC days inside the
+ *     7-day window; 'never-launched' additionally requires the pick to
+ *     be past the launch grace, the retained jobs tail to reach back
+ *     to the funding time and the fleet to have launched other work,
+ *     so absence is proven rather than guessed; the jobs ledger is
+ *     required evidence, not enrichment — withheld, every pick is
+ *     'unknown' and nothing emits;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -996,6 +1016,7 @@ import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
+import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2211,6 +2232,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's bridge config and carries no repo
   // column.
   items.push(...await slackBridgeBacklogItems({ repo }));
+
+  // Selector pick outcomes: the funded picks `phm select` journals to
+  // selector/picks.jsonl — each carrying the predictedValue and
+  // mergeRate CONTRACT-SELECTOR says exist "so a later run can compare
+  // it with the real outcome" — joined by pick id to the jobs-ledger
+  // outcome the READY line became. Until now fundedIds was the
+  // journal's only reader, so picks that kept finishing empty, getting
+  // precheck-declined, aborting, closing unmerged or never launching
+  // produced no work. An adverse class emits only at three distinct
+  // picks across two UTC days inside the window; 'never-launched' is
+  // the only absence claim and requires the launch grace, ledger
+  // coverage back to the funding time and other in-window launches —
+  // anything less folds to 'unknown'. The jobs ledger is required
+  // evidence here, not enrichment: withheld, the source stays quiet.
+  items.push(...await selectorPicksBacklogItems({ repo }));
   return { items, errors };
 }
 
