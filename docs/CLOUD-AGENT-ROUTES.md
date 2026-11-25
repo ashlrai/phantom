@@ -73,7 +73,7 @@ On the host, these CLI reads are also supported (use `--json`):
 | `ashlr fleet peer-ledger` | Peer bus rate-limit, capacity and hop budget (`--json`, or `--from-agent` with `--target` for one exact pair). |
 | `ashlr fleet tailnet-peers` | Sanitized tailnet peer evidence. |
 | `ashlr fleet pool-reach` | Primary/backup alias-to-peer reachability evidence. |
-| `ashlr fleet coordination board` | The separate local advisory coordination ledger: claims, messages, proposals and expired-claim count. |
+| `ashlr fleet coordination board` | The separate local advisory coordination ledger: claims, messages, proposals and expired-claim count; `--from`/`--repo`/`--since`/`--before`/`--contains` narrow the fleet-wide read under the same grammar `inbox` and `returns` share. |
 
 ## Record a result
 

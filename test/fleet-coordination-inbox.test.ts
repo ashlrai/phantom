@@ -152,7 +152,8 @@ describe('fleet coordination inbox read filters', () => {
       const { code } = await inbox('bob', args);
       expect(code).toBe(2);
     }
-    const { code: boardCode } = await cli(['board', '--from', 'alice', '--json']);
+    // board shares the from/since/before/contains grammar but not --agent.
+    const { code: boardCode } = await cli(['board', '--agent', 'alice', '--json']);
     expect(boardCode).toBe(2);
   });
 
