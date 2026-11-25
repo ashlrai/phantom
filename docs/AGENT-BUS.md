@@ -64,7 +64,8 @@ substring or a body citation, so "where did envelope X go" is one filtered
 read — `--body-kind <kind>` for only the bodies carrying that exact kind
 discriminator — the same `busBodyKind` own-field exact match `agents bus
 inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
-wakes --body-kind` and `agents conversations --body-kind` apply, decided
+wakes --body-kind`, `comms bus read|watch --body-kind` and `agents
+conversations --body-kind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
 page — `--limit <n>`)
