@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import { postMergeBacklogItems } from '../src/core/improve/postmerge-backlog.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -264,38 +264,44 @@ describe('postMergeBacklogItems', () => {
   });
 
   it('appends post-merge items through discovery and dedupes on refresh', async () => {
-    const { jobs } = fixture();
-    const runsDir = path.join(home, 'runs');
-    fs.mkdirSync(path.join(runsDir, 'metrics'), { recursive: true });
-    fs.writeFileSync(path.join(runsDir, 'metrics', 'jobs.jsonl'), jobs);
-    process.env.ASHLR_RUNS_DIR = runsDir;
-    process.env.ASHLR_HOME = path.join(home, '.ashlr-e2e');
-    // Signed rows for the fixture's first three devin merges (sha(1..3)).
-    for (const [i, outcome] of (['reverted', 'regressed', 'followed-up'] as const).entries()) {
-      const recorded = recordPostMergeObservation({
-        observedAt: daysAgo(2),
-        outcome,
-        basis: 'bisect-first-bad',
-        confidence: 'deterministic',
-        repo: path.join(home, 'phantom'),
-        proposalId: `proposal-e-${i}`,
-        mergeCommit: sha(i + 1),
-        observedHead: sha(960 + i),
-      });
-      expect(recorded.recorded).toBe(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      const { jobs } = fixture();
+      const runsDir = path.join(home, 'runs');
+      fs.mkdirSync(path.join(runsDir, 'metrics'), { recursive: true });
+      fs.writeFileSync(path.join(runsDir, 'metrics', 'jobs.jsonl'), jobs);
+      process.env.ASHLR_RUNS_DIR = runsDir;
+      process.env.ASHLR_HOME = path.join(home, '.ashlr-e2e');
+      // Signed rows for the fixture's first three devin merges (sha(1..3)).
+      for (const [i, outcome] of (['reverted', 'regressed', 'followed-up'] as const).entries()) {
+        const recorded = recordPostMergeObservation({
+          observedAt: daysAgo(2),
+          outcome,
+          basis: 'bisect-first-bad',
+          confidence: 'deterministic',
+          repo: path.join(home, 'phantom'),
+          proposalId: `proposal-e-${i}`,
+          mergeCommit: sha(i + 1),
+          observedHead: sha(960 + i),
+        });
+        expect(recorded.recorded).toBe(1);
+      }
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const post = first.items.filter((i) => i.id.startsWith('postmerge-'));
+      expect(post.length).toBeGreaterThan(0);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(post)).toBe(post.length);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('postmerge-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('postmerge-'))).toHaveLength(post.length);
+    } finally {
+      vi.useRealTimers();
     }
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const post = first.items.filter((i) => i.id.startsWith('postmerge-'));
-    expect(post.length).toBeGreaterThan(0);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(post)).toBe(post.length);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('postmerge-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('postmerge-'))).toHaveLength(post.length);
   });
 });

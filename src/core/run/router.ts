@@ -42,6 +42,7 @@ import {
   pickModel,
   claude5ExcludeIds,
   CLAUDE5_CATALOG_IDS,
+  GEMINI_API_DEFAULT_MODEL,
   resolveSelectedEngineModel,
   type ModelEntry,
   type ModelCapability,
@@ -191,13 +192,13 @@ function pickCloudProvider(chain: string[]): string | null {
 
 /**
  * Derive a cloud model label from a provider id.
- * Used only in the reason string — never affects routing logic.
+ * Used for the selected escalation model and its reason string.
  */
 function defaultCloudModel(provider: string): string {
   const models: Record<string, string> = {
     anthropic: 'claude-haiku-4-5',
     openai: 'gpt-4o-mini',
-    gemini: 'gemini-1.5-flash',
+    gemini: GEMINI_API_DEFAULT_MODEL,
     cohere: 'command-r',
     groq: 'llama3-8b-8192',
     mistral: 'mistral-small',

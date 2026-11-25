@@ -12,6 +12,7 @@ import {
   type LeaderSeatDeps,
 } from '../src/core/vision/leader-seat.js';
 import { routeSeat } from '../src/core/routing/router.js';
+import { clampBudgetPolicy } from '../src/core/authority/effective-config.js';
 import { capacityFromSeat, type SeatCapacity } from '../src/core/routing/headroom.js';
 import { defaultBudgetPolicy } from '../src/core/routing/policy.js';
 import type { BudgetPolicy } from '../src/core/routing/types.js';
@@ -68,9 +69,9 @@ function deps(opts: {
     capacitySnapshot: () => (opts.snapshot === null ? null : { publishedAt: OBSERVED, seats: opts.snapshot ?? [] }),
     budgetPolicy: (): BudgetPolicy => defaultBudgetPolicy(),
     standingPolicy: () => (opts.standing === undefined ? makePolicy() : opts.standing),
-    clampBudget: (policy) => {
+    clampBudget: (policy, standing) => {
       if (opts.clampThrows) throw new Error('not implemented');
-      return policy;
+      return clampBudgetPolicy(policy, standing);
     },
     route: (req, capacity, policy, nowMs) => routeSeat(req, capacity, policy, { nowMs }),
     capacityFromSeat: (s) => capacityFromSeat(s),

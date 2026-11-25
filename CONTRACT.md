@@ -184,6 +184,17 @@ with only a Codex default retain that default for every tier. The issue router
 keeps its separate Luna cheap slot. These defaults grant no provider access,
 subscription allowance or spending authority.
 
+# Gemini model catalog and provider
+
+`ModelEntry` may carry `costPerMTokCachedIn` and `apiMaxOutputTokens`.
+The `gemini:gemini-4-*` entries describe the metered Gemini API, not a
+Foundry engine or subscription seat; they are excluded from implicit
+`pickModel` selection. `chooseRoute` defaults an opted-in Gemini
+escalation to `gemini-4-neon`. `getActiveClient` accepts the same explicit
+cloud permission and owner key required for other metered providers;
+it does not promote Gemini into the default chain. Catalog discovery for the
+separate `agy` seat uses only IDs returned by `agy models`.
+
 # Managed desktop CLI upgrade
 
 `src/core/desktop/consumer-upgrade.ts` exports `ConsumerUpgradeDependencies`

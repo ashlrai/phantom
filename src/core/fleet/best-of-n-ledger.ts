@@ -865,3 +865,71 @@ export function readBestOfNRecords(opts: ReadBestOfNRecordsOptions = {}): BestOf
   });
   return records;
 }
+
+export interface VerifiedFailureSuccessPair {
+  workItemId: string;
+  failureClass: string;
+  failureSummary: string;
+  failedEngine: string;
+  failedModel: string | null;
+  failedRunId?: string;
+  failedCostUsd?: number;
+  verifiedEngine: string;
+  verifiedModel: string | null;
+  verifiedRunId?: string;
+  verifiedProposalId: string;
+  verifiedCostUsd?: number;
+}
+
+export interface RepeatedFailureClass { failureClass: string; pairs: VerifiedFailureSuccessPair[] }
+
+function classifyFailure(c: BestOfNCandidateRecord): { failureClass: string; summary: string } | undefined {
+  if (c.shadow === true || c.won || c.fullProposalWon === true) return undefined;
+  const raw = c.error ?? c.proposalOutcomeReason ??
+    (c.testsPassed === false ? 'tests-failed' : c.producerStatus === 'aborted' ? 'producer-aborted' : c.producerStatus === 'failed' ? 'producer-failed' : undefined);
+  if (!raw) return undefined;
+  const summary = scrubSecrets(raw).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const failureClass = summary.toLowerCase().replace(/\b[0-9a-f]{7,}\b/g, '<hex>').replace(/\b\d+\b/g, '<n>').slice(0, 64).trim();
+  return failureClass ? { failureClass, summary } : undefined;
+}
+
+function isVerifiedSuccess(c: BestOfNCandidateRecord): c is BestOfNCandidateRecord & { proposalId: string } {
+  return c.shadow !== true && c.testsPassed === true && c.won === true && c.fullProposalWon !== false &&
+    c.isPartial !== true && c.producerStatus !== 'failed' && c.producerStatus !== 'aborted' &&
+    typeof c.proposalId === 'string' && c.proposalId.trim() !== '';
+}
+
+/** Pair scrubbed failing attempts with independently verified successes on the same task (`workItemId`). */
+export function pairRepeatedVerifiedFailures(records: readonly BestOfNRecord[], minOccurrences = 2): RepeatedFailureClass[] {
+  const byTask = new Map<string, BestOfNCandidateRecord[]>();
+  for (const r of records) {
+    const id = r.workItemId?.trim();
+    if (!id) continue;
+    const list = byTask.get(id) ?? [];
+    list.push(...r.candidates);
+    byTask.set(id, list);
+  }
+  const byClass = new Map<string, VerifiedFailureSuccessPair[]>();
+  for (const [workItemId, candidates] of byTask) {
+    const verified = candidates.find(isVerifiedSuccess);
+    if (!verified) continue;
+    const failed = candidates.map((c) => { const f = classifyFailure(c); return f ? { c, ...f } : undefined; }).find(Boolean);
+    if (!failed) continue;
+    const list = byClass.get(failed.failureClass) ?? [];
+    list.push({
+      workItemId, failureClass: failed.failureClass, failureSummary: failed.summary,
+      failedEngine: failed.c.engine, failedModel: failed.c.model,
+      ...(failed.c.runId ? { failedRunId: failed.c.runId } : {}),
+      ...(failed.c.costUsd !== undefined ? { failedCostUsd: failed.c.costUsd } : {}),
+      verifiedEngine: verified.engine, verifiedModel: verified.model,
+      ...(verified.runId ? { verifiedRunId: verified.runId } : {}),
+      verifiedProposalId: verified.proposalId,
+      ...(verified.costUsd !== undefined ? { verifiedCostUsd: verified.costUsd } : {}),
+    });
+    byClass.set(failed.failureClass, list);
+  }
+  const min = Math.max(1, Math.floor(minOccurrences));
+  return [...byClass.entries()].filter(([, pairs]) => pairs.length >= min)
+    .map(([failureClass, pairs]) => ({ failureClass, pairs }))
+    .sort((a, b) => b.pairs.length - a.pairs.length || a.failureClass.localeCompare(b.failureClass));
+}
