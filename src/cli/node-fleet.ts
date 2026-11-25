@@ -10,6 +10,18 @@ export interface NodeFleetDeps {
 }
 
 
+/** Plain-words job state for the status list. `claimedBy` is present only while
+ * a live session can still act on the claim, so a running job without it has a
+ * lapsed or fenced claim and is routable again once the claim expires. */
+function jobStateWords(job: { state: string; claimedBy?: string; completedBy?: string; producerWithdrawn?: true }): string {
+  if (job.state === 'running') return job.claimedBy ? `running (claimed by ${job.claimedBy})` : 'running (no live claim)';
+  if (job.state === 'completed') {
+    if (job.producerWithdrawn) return 'completed (withdrawn by the producer)';
+    return job.completedBy ? `completed by ${job.completedBy}` : 'completed';
+  }
+  return job.state;
+}
+
 function text(verb: string, out: Record<string, unknown>): string {
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
@@ -17,10 +29,44 @@ function text(verb: string, out: Record<string, unknown>): string {
   }
   if (verb === 'status' || verb === 'list') {
     const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[] }[];
-    const jobs = out['jobs'] as { id: string; state: string }[];
-    return [`Owner scope: ${(out['owners'] as string[]).join(',')}`,
+    const jobs = out['jobs'] as { id: string; state: string; claimedBy?: string; completedBy?: string; producerWithdrawn?: true }[];
+    const scope = (out['owners'] as string[]).join(',');
+    const lines = [`Owner scope: ${scope}`,
       ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
-      ...jobs.map(j => `job ${j.id} ${j.state}`)].join('\n');
+      ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}`)];
+    // An empty scope is the first-run case: say so and print the join command,
+    // the same next step `phm node plan` prints for a job with no live node.
+    if (!nodes.length) lines.push('No nodes joined in this scope.');
+    if (!jobs.length) lines.push('No jobs queued in this scope.');
+    if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --node <id> --owner ${scope}`);
+    return lines.join('\n');
+  }
+  if (verb === 'enqueue') {
+    // enqueued:false means the job id is already taken — enqueue is idempotent
+    // on the id, so this is a fact, not a failure.
+    const jobId = String(out['jobId']);
+    return out['enqueued'] === true ? `Enqueued ${jobId}.` : `Job ${jobId} already exists; nothing changed.`;
+  }
+  if (verb === 'withdraw') {
+    const jobId = String(out['jobId']);
+    switch (out['state']) {
+      case 'withdrawn': return `Job ${jobId} withdrawn: it is terminal and can never run again.`;
+      case 'held': return `Job ${jobId} is held by a live claim; withdraw again once the claim lapses or completes.`;
+      case 'completed': return `Job ${jobId} already completed.`;
+      default: return `Job ${jobId} is absent in this owner scope (unknown id or another owner's job).`;
+    }
+  }
+  if (verb === 'renew') {
+    const expires = typeof out['expiresAt'] === 'number' ? new Date(out['expiresAt']).toISOString() : 'unknown';
+    return `Renewed ${String(out['jobId'])}; the lease expires ${expires}.`;
+  }
+  if (verb === 'complete') return `Completed ${String(out['jobId'])}.`;
+  if (verb === 'leave') {
+    const nodeId = String(out['nodeId']);
+    if (out['left'] === true) return `Node ${nodeId} left the registry.`;
+    return typeof out['liveSession'] === 'number'
+      ? `Node ${nodeId} was not left; it is live as session ${out['liveSession']}. Run: ${String(out['next'])}`
+      : `Node ${nodeId} was not left; no live session matches that node and session.`;
   }
   if (verb === 'pull') {
     if (!out['pulled']) return 'No job for this node. Run: phm node plan';

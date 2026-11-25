@@ -81,6 +81,15 @@ owner, requirements, pack and secret names, the embedded task text when the
 job carries one, the lease token pair and expiry, and paste-ready `renew` and
 `complete` commands.
 
+The other verbs print plain-words outcomes too: `status`/`list` name the node
+holding each running claim (`claimed by`, or `no live claim` once the claim
+lapsed or was fenced), mark producer withdrawals, and an empty scope says so
+with the join command; `enqueue` says when the job id already exists;
+`withdraw` names `held` (a live claim still owns it — retry after it lapses),
+`completed` and `absent`; `renew` prints the lease expiry as a time;
+`complete` and `leave` name what happened, and a refused `leave` names the
+live session and its command.
+
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
 `{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}` on failure.
@@ -149,7 +158,10 @@ session the same way. `leave` under a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
-and pull again.
+and pull again. A flag value outside its documented range — `--usage` above
+1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage
+(exit 2, `bad-usage` or `bad-slots`) naming the flag and its range, before the
+beat or join is recorded.
 
 ## Version drift
 
