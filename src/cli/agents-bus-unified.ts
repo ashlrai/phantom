@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -190,20 +190,27 @@ filtered read each; on wakes the matched id is the hint's own id — the
 triggering envelope's wire id on a bus.send hint, the wh-… claim-holder
 id on those — decided on the queue row alone, so it needs no referent
 resolution and counts in matched like the other queue-tail filters.
---body-kind on inbox, channel read and wakes keeps only rows whose body
-carries that exact kind discriminator — the v2 kind field (note,
-context, work.post, work.claim, work.status, work.result, work.release,
-wake), a worker-handoff assignment or a notice kind, a bus-transport v1
-protocol.kind, or a type/schema notice discriminator, the same
-discriminator the row summary switches on — matched exactly and
+--body-kind on inbox, channel read, wakes and work mine keeps only rows
+whose body carries that exact kind discriminator — the v2 kind field
+(note, context, work.post, work.claim, work.status, work.result,
+work.release, wake), a worker-handoff assignment or a notice kind, a
+bus-transport v1 protocol.kind, or a type/schema notice discriminator,
+the same discriminator the row summary switches on — matched exactly and
 case-sensitively, so "which of my pending mail are work results" or
 "which room posts are wake requests" is one filtered read; on wakes the
 verdict is the resolved referent's own body kind — a claim-holder
 wh-… hint's citing work.status receipt provably carries work.status,
-so those hints match only that kind — a body carrying no discriminator
-never matches, and an unrecognized but printable value is an honest
-empty match, never an error. It composes with every other filter and
-counts in matched like the rest.
+so those hints match only that kind — and on work mine the filter
+reaches every section whose items carry a retained body: next, handoffs
+and mailbox keep envelopes of that kind, claims keep only message
+claims whose resolved leased envelope reports it, inbox, wakes and the
+three thread sections pass it to their own reads, jobs and announced
+keep the feed jobs citing a receipt of that kind (every job cites its
+work.post announcement, so work.post keeps them all), while board,
+channels and seats carry no per-item body and stay whole — a body
+carrying no discriminator never matches, and an unrecognized but
+printable value is an honest empty match, never an error. It composes
+with every other filter and counts in matched like the rest.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -419,7 +426,23 @@ naming no resolved message or no citation never lists), and inbox, wakes
 and the thread sections pass the value to their own reads' in-reply-to
 filters; feed jobs, announced jobs, board rows, channels and seats carry
 no retained body citation in their projections and stay unfiltered, and
-every count stays the filtered total. work next claims the next claimable
+every count stays the filtered total. --body-kind on work mine keeps only
+pending items whose body carries that exact kind discriminator — the same
+busBodyKind match every bus read's --body-kind applies, so "which pending
+items for me are work results" or "which are handoffs" is one filtered
+digest: next, handoffs and mailbox keep envelopes whose body reports that
+kind (claimable work under work or task, worker-handoff assignments under
+worker-handoff, kindless legacy mail never), claims keep only message
+claims whose resolved leased envelope reports it (a claim naming no
+resolved message never lists), inbox, wakes and the thread sections pass
+the value to their own reads' body-kind filters, jobs and announced keep
+the feed jobs citing a retained receipt of that kind — every job cites
+its work.post announcement so work.post keeps them all, work.status keeps
+jobs a status receipt has moved, work.result keeps jobs a result receipt
+cites, and any other kind is an honest empty match — while board,
+channels and seats carry no per-item retained body and stay whole; a kind
+nothing on the bus carries is an honest empty match and every count stays
+the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -1022,6 +1045,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const excludeFrom = senderArg('--exclude-from');
       const id = one('--id');
       const inReplyTo = one('--in-reply-to');
+      const bodyKind = one('--body-kind');
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1032,7 +1056,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(from === undefined ? {} : { from }),
           ...(excludeFrom === undefined ? {} : { excludeFrom }),
           ...(id === undefined ? {} : { id }),
-          ...(inReplyTo === undefined ? {} : { inReplyTo }) });
+          ...(inReplyTo === undefined ? {} : { inReplyTo }),
+          ...(bodyKind === undefined ? {} : { bodyKind }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

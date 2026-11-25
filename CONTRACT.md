@@ -2901,10 +2901,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -2915,9 +2915,9 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 grammar every bus `--channel` read validates (`invalid-channel`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
 sender filter shares (`invalid-from`/`invalid-exclude-from`), or an
-`id`/`inReplyTo` outside the same printable-label bound every bus
-`--id`/`--in-reply-to` read validates (`invalid-id`/`invalid-in-reply-to`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id` and `inReplyTo` echo the applied
+`id`/`inReplyTo`/`bodyKind` outside the same printable-label bound every bus
+`--id`/`--in-reply-to`/`--body-kind` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`).
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo` and `bodyKind` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -2932,8 +2932,9 @@ claims (`queue:<envelope-id>` keys) it also carries `message`, a
 resolved across all message claims in one bounded inbox walk plus one
 `inspectBusWorkClaims` journal read, never one scan per claim. `resolved`
 carries `id`, `cursor`, ISO `ts`/`expiresAt`, `priority`, raw `to`/`from`
-labels, resolved `fromAgent` (null unregistered), `bodyKind` (top-level
-`kind`, else `protocol.kind`), the body's own `inReplyTo` citation verbatim
+labels, resolved `fromAgent` (null unregistered), `bodyKind` (the
+`busBodyKind` discriminator — the body's own `kind`, else
+`protocol.kind`, `type` or `schema`), the body's own `inReplyTo` citation verbatim
 (absent when the body cites nothing through that field — never the
 `replyTo` alias), a scrubbed clipped `summary`, optional live
 `job` feed citation on `jobId` bodies and `pinned` — `true` when a journal
@@ -3473,6 +3474,38 @@ the excluded sender. The two compose in the same include-then-exclude
 order every bus read applies — a sender both included and excluded
 matches nothing; every count stays the filtered total, and the result
 echoes `excludeFrom`.
+
+`options.bodyKind` narrows the whole digest to pending items whose body
+carries that exact kind discriminator — the same `busBodyKind` match
+every bus read's `--body-kind` applies (the body's own `kind`, else
+`protocol.kind`, `type` or `schema`; exact and case-sensitive, a body
+carrying none never matching), validated by the same printable-label
+bound: `next`/`handoffs`/`mailbox` keep envelopes whose body reports
+that kind inside the shared pending-work walk and `BusMailbox.pendingFor`'s
+`match` predicate — claimable `work`/`task` receipts answer under
+`work`/`task`, `worker-handoff` assignments under `worker-handoff`, and
+kindless legacy mail never matches — `claims` keep only message claims
+whose resolved leased envelope reports that kind (the resolved message's
+own `bodyKind`, the same `busBodyKind` evidence its display field
+carries; a claim with no resolved message, a scope-key claim or an
+unresolvable/unreadable lease names no provable kind and never lists,
+the same "unknown stays out" rule `priority` applies) — `inbox` passes
+it to `readAgentInbox`'s `bodyKind`, `wakes` to `readAgentWakes`'
+`filter.bodyKind` (the resolved referent's kind), and
+`threads`/`awaiting`/`blocked` pass it into the one shared
+`readAgentConversations` query's `bodyKind` (a thread survives on any
+member message whose body carries it). `jobs`/`announced` keep the feed
+jobs citing at least one retained receipt of that kind — the feed fixes
+each citation slot's kind, so `work.post` keeps every job (each cites
+its announcement), `work.status` keeps jobs a status receipt has moved
+(`statusId` non-null), `work.result` keeps jobs a result receipt cites,
+and any other kind is an honest empty match. `board`, `channels` and
+`seats` carry no per-item retained body in their projections — board
+post bodies are `{threadId, text}` records and seat handoff records keep
+no per-record body — and stay unfiltered, like they do under `priority`.
+Every count stays the filtered total, the result echoes `bodyKind`, and
+a kind nothing on the bus carries is an honest empty match, never an
+error and never a widened one.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
 

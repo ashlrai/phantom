@@ -3403,6 +3403,260 @@ describe('readBusWorkMine', () => {
     expect(none.board).toEqual(all.board);
     expect(none.channels).toEqual(all.channels);
   });
+
+  it('filters the digest to pending items whose body carries one kind discriminator', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    // atlas also answers the fleet.deploy topic label — a protocol task's
+    // `to` must equal its namespaced topic, so the alias is what makes the
+    // task envelope atlas's pending work.
+    registerAgentIdentity({ handle: 'atlas', aliases: ['fleet.deploy'],
+      runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>,
+      priority: 'P0' | 'P2' = 'P2'): void => {
+      const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+
+    // Pending items of every body kind the discriminator can name:
+    // claimable work (kind:'work'), a protocol task (protocol.kind), a
+    // worker-handoff assignment, a note and a kindless legacy body.
+    postClaimable(options, 'w-work');
+    post('w-task', 'agent:nova', 'fleet.deploy',
+      { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'deploy-ref-1' },
+        correlation_id: 'c-bk', payload: {} });
+    post('ho-handoff', 'agent:nova', 'agent:atlas',
+      { kind: 'worker-handoff', taskId: 'RQ-BK-H', prompt: 'kinded handoff' }, 'P2');
+    post('note-mail', 'agent:nova', 'agent:atlas', { kind: 'note', text: 'just a note' });
+    post('kindless-mail', 'agent:nova', 'agent:atlas', { text: 'no discriminator' });
+    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
+    };
+    mailboxSend('mb-work', { kind: 'work', text: 'legacy work' });
+    mailboxSend('mb-note', { kind: 'note', text: 'legacy note' });
+    mailboxSend('mb-kindless', { text: 'legacy kindless' });
+
+    // Feed jobs whose citation slots carry different receipt kinds: one
+    // ghost job atlas can claim that a status receipt has moved
+    // (work.status citation), one atlas announced to nova that a result
+    // receipt cites (work.result citation) — and every job cites its
+    // work.post announcement.
+    await announce(options, 'ghost', 'RQ-J-OPEN', ['queue:RQ-J-OPEN'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-J-ANN', ['queue:RQ-J-ANN'], 'agent:nova');
+    // rescheduled keeps the job in the open set while its work.status
+    // receipt still lands on the feed line's statusId citation.
+    expect(await updateWorkStatus({ from: 'ghost', jobId: 'RQ-J-OPEN', status: 'rescheduled', id: 'ws-open' },
+      options)).toMatchObject({ status: 'posted' });
+    const postResult = (id: string, jobId: string, outcome: string): void => {
+      const envelope: BusEnvelope = { id, from: 'agent:nova', to: 'leaders', priority: 'P2', ttl: 120_000,
+        body: { kind: 'work.result', jobId, claimKey: `queue:${jobId}`,
+          queueId: 'peer-work-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          receiptId: 'pw-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', outcome } };
+      expect(appendBusInbox(envelope, { root: options.root, now: options.now }).status).toBe('posted');
+    };
+    postResult('res-ann', 'RQ-J-ANN', 'complete');
+
+    // Message claims on both claimable envelopes plus a scope claim —
+    // each claim's resolved message carries its own body kind.
+    takeWork(options, 'w-work', 'atlas');
+    takeWork(options, 'w-task', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:bk-scope', options.clock.now);
+
+    // Wake hints whose bus.send ids are the envelopes they refer to.
+    const wake = (id: string): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to: 'agent:atlas' },
+        { root: options.runsRoot, now: options.now })).toBe('queued');
+    };
+    wake('w-work');
+    wake('w-task');
+    wake('ho-handoff');
+    wake('note-mail');
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    if (all.next.status !== 'ok' || all.handoffs.status !== 'ok' || all.wakes.status !== 'ok' ||
+        all.claims.status !== 'ok' || all.jobs.status !== 'ok' || all.announced.status !== 'ok' ||
+        all.inbox.status !== 'ok' || all.mailbox.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(all.next.matched).toBe(2);
+    expect(all.handoffs.matched).toBe(1);
+    expect(all.jobs.open).toBe(2);
+    expect(all.announced.matched).toBe(1);
+    expect(all.wakes.matched).toBe(4);
+    expect(all.inbox.matched).toBe(6);
+    expect(all.mailbox.matched).toBe(3);
+
+    // bodyKind=work keeps only pending items whose body reports the work
+    // discriminator — the same busBodyKind match every bus --body-kind
+    // read applies, exact and case-sensitive.
+    const result = readBusWorkMine('atlas', { ...options, bodyKind: 'work' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.bodyKind).toBe('work');
+    expect(result.inReplyTo).toBeUndefined();
+    expect(formatBusWorkMine(result)[0]).toContain('body-kind=work');
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-work']);
+    // The protocol task reports 'task', the handoff 'worker-handoff' —
+    // neither answers under 'work'.
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    // claims keep only the message claim whose leased envelope reports
+    // work; the task claim and the scope claim name no provable kind and
+    // never list.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:w-work']);
+    const leased = result.claims.claims[0]!.message;
+    expect(leased?.status === 'resolved' ? leased.bodyKind : null).toBe('work');
+    // The feed fixes each citation slot's kind, so bare 'work' cites no
+    // receipt a job line carries — both feed sections are an honest
+    // empty match.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 0 });
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 0 });
+    // wakes keep only the hint whose resolved referent reports work.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(row => row.id)).toEqual(['w-work']);
+    // inbox and mailbox keep only mail whose body reports work — the
+    // work.post announcement, the task, the handoff, the note and the
+    // kindless body all stay out.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(1);
+    expect(result.inbox.messages.map(message => message.id)).toEqual(['w-work']);
+    expect(result.mailbox).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-work']);
+    // The thread sections pass the filter to the shared conversations
+    // read — no member message reports work, so every thread drops.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    // Board, channels and seats carry no per-item retained body and
+    // stay whole.
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+
+    // bodyKind=task keeps the protocol task — its protocol.kind
+    // discriminator — and drops the kind:'work' receipt under the same
+    // exact match.
+    const tasked = readBusWorkMine('atlas', { ...options, bodyKind: 'task' });
+    expect(tasked.status).toBe('ok');
+    if (tasked.status !== 'ok') throw new Error('unreachable');
+    expect(tasked.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (tasked.next.status !== 'ok') throw new Error('unreachable');
+    expect(tasked.next.items.map(item => item.id)).toEqual(['w-task']);
+    expect(tasked.next.items[0]).toMatchObject({ kind: 'task' });
+    expect(tasked.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    expect(tasked.claims.status).toBe('ok');
+    if (tasked.claims.status !== 'ok') throw new Error('unreachable');
+    expect(tasked.claims.claims.map(row =>
+      row.message?.status === 'resolved' ? row.message.id : row.key)).toEqual(['w-task']);
+    expect(tasked.jobs).toMatchObject({ status: 'ok', open: 0 });
+    expect(tasked.announced).toMatchObject({ status: 'ok', matched: 0 });
+    expect(tasked.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (tasked.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(tasked.wakes.wakes.map(row => row.id)).toEqual(['w-task']);
+    expect(tasked.inbox.status).toBe('ok');
+    if (tasked.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(tasked.inbox.matched).toBe(1);
+    expect(tasked.inbox.messages.map(message => message.id)).toEqual(['w-task']);
+    expect(tasked.mailbox).toMatchObject({ status: 'ok', matched: 0 });
+    expect(tasked.board).toEqual(all.board);
+    expect(tasked.channels).toEqual(all.channels);
+
+    // bodyKind=worker-handoff keeps the handoff assignment everywhere
+    // its kind reaches and empties the rest honestly.
+    const handoff = readBusWorkMine('atlas', { ...options, bodyKind: 'worker-handoff' });
+    expect(handoff.status).toBe('ok');
+    if (handoff.status !== 'ok') throw new Error('unreachable');
+    expect(handoff.handoffs).toMatchObject({ status: 'ok', matched: 1 });
+    if (handoff.handoffs.status !== 'ok') throw new Error('unreachable');
+    expect(handoff.handoffs.items.map(item => item.id)).toEqual(['ho-handoff']);
+    expect(handoff.next).toMatchObject({ status: 'ok', matched: 0 });
+    expect(handoff.claims.status).toBe('ok');
+    if (handoff.claims.status !== 'ok') throw new Error('unreachable');
+    expect(handoff.claims.claims).toEqual([]);
+    expect(handoff.jobs).toMatchObject({ status: 'ok', open: 0 });
+    expect(handoff.announced).toMatchObject({ status: 'ok', matched: 0 });
+    expect(handoff.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (handoff.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(handoff.wakes.wakes.map(row => row.id)).toEqual(['ho-handoff']);
+    expect(handoff.inbox.status).toBe('ok');
+    if (handoff.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(handoff.inbox.matched).toBe(1);
+    expect(handoff.inbox.messages.map(message => message.id)).toEqual(['ho-handoff']);
+    expect(handoff.mailbox).toMatchObject({ status: 'ok', matched: 0 });
+    expect(handoff.board).toEqual(all.board);
+    expect(handoff.channels).toEqual(all.channels);
+
+    // The feed citation kinds: work.post keeps every job (each cites
+    // its announcement), work.status keeps the job a status receipt
+    // moved, work.result keeps the job a result receipt cites — and the
+    // work.post announcement envelope itself is atlas's inbox mail.
+    const posted = readBusWorkMine('atlas', { ...options, bodyKind: 'work.post' });
+    expect(posted.status).toBe('ok');
+    if (posted.status !== 'ok') throw new Error('unreachable');
+    expect(posted.jobs).toMatchObject({ status: 'ok', open: 2 });
+    expect(posted.announced).toMatchObject({ status: 'ok', matched: 1 });
+    expect(posted.next).toMatchObject({ status: 'ok', matched: 0 });
+    expect(posted.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    expect(posted.claims.status).toBe('ok');
+    if (posted.claims.status !== 'ok') throw new Error('unreachable');
+    expect(posted.claims.claims).toEqual([]);
+    expect(posted.mailbox).toMatchObject({ status: 'ok', matched: 0 });
+    expect(posted.wakes).toMatchObject({ status: 'ok', matched: 0 });
+    expect(posted.inbox.status).toBe('ok');
+    if (posted.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(posted.inbox.matched).toBe(1);
+    expect(posted.inbox.messages.map(message => message.id)).toEqual(['post-RQ-J-OPEN']);
+    const statused = readBusWorkMine('atlas', { ...options, bodyKind: 'work.status' });
+    expect(statused.status).toBe('ok');
+    if (statused.status !== 'ok' || statused.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(statused.jobs.open).toBe(1);
+    expect(statused.jobs.jobs.map(entry => entry.id)).toEqual(['RQ-J-OPEN']);
+    expect(statused.announced).toMatchObject({ status: 'ok', matched: 0 });
+    const resulted = readBusWorkMine('atlas', { ...options, bodyKind: 'work.result' });
+    expect(resulted.status).toBe('ok');
+    if (resulted.status !== 'ok' || resulted.jobs.status !== 'ok') throw new Error('unreachable');
+    expect(resulted.jobs.open).toBe(1);
+    expect(resulted.jobs.jobs.map(entry => entry.id)).toEqual(['RQ-J-ANN']);
+    expect(resulted.announced).toMatchObject({ status: 'ok', matched: 1 });
+
+    // A kind nothing on the bus carries is an honest empty match on
+    // every filtered section — never an error and never a widened one.
+    const none = readBusWorkMine('atlas', { ...options, bodyKind: 'no-such-kind' });
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('unreachable');
+    if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
+        none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
+        none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
+        none.claims.status !== 'ok') throw new Error('unreachable');
+    expect(none.next.matched).toBe(0);
+    expect(none.handoffs.matched).toBe(0);
+    expect(none.jobs.open).toBe(0);
+    expect(none.announced.matched).toBe(0);
+    expect(none.threads.matched).toBe(0);
+    expect(none.awaiting.matched).toBe(0);
+    expect(none.blocked.matched).toBe(0);
+    expect(none.wakes.matched).toBe(0);
+    expect(none.inbox.matched).toBe(0);
+    expect(none.mailbox.matched).toBe(0);
+    expect(none.claims.claims).toEqual([]);
+    expect(none.board).toEqual(all.board);
+    expect(none.channels).toEqual(all.channels);
+
+    // A value outside the printable-label bound is invalid, never a read.
+    expect(readBusWorkMine('atlas', { ...options, bodyKind: 'bad id' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-body-kind' });
+  });
 });
 
 describe('mailbox section', () => {
@@ -4088,6 +4342,19 @@ describe('phm agents bus work mine', () => {
     const badReply = await run(['work', 'mine', '--in-reply-to', 'bad id'], env);
     expect(badReply.code).toBe(2);
     expect(badReply.json).toMatchObject({ status: 'invalid', reason: 'invalid-in-reply-to' });
+  });
+
+  it('accepts --body-kind, echoes the applied discriminator and rejects a bad value', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--body-kind', 'work.result'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', bodyKind: 'work.result',
+      next: { status: 'ok', matched: 0 },
+      jobs: { status: 'ok', open: 0 } });
+    const bad = await run(['work', 'mine', '--body-kind', 'bad id'], env);
+    expect(bad.code).toBe(2);
+    expect(bad.json).toMatchObject({ status: 'invalid', reason: 'invalid-body-kind' });
   });
 });
 
