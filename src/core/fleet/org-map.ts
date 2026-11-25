@@ -40,9 +40,17 @@ function oneLine(title: string | null | undefined, jobId: string): string | null
   return !line || line === jobId ? null : line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 export function mapWindowMinutes(value: string | undefined): number {
+  const minutes = mapWindowMinutesOrNull(value);
+  if (minutes === null) throw new Error('Minutes must be 1..1440');
+  return minutes;
+}
+
+/** The same window rule without the throw: null where the value is not a whole number of minutes in range. */
+export function mapWindowMinutesOrNull(value: string | undefined): number | null {
   if (value === undefined) return 60;
-  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 1440) throw new Error('Minutes must be 1..1440');
-  return Number(value);
+  if (!/^\d+$/.test(value)) return null;
+  const minutes = Number(value);
+  return minutes >= 1 && minutes <= 1440 ? minutes : null;
 }
 
 /** Pure graph shared by CLI and both views. Reporting edges are structure, never health evidence. */

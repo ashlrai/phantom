@@ -138,7 +138,17 @@ describe('phm org', () => {
       expect(mocks.read).toHaveBeenLastCalledWith(15);
       mocks.read.mockClear();
       for (const args of [['--apply'], ['--minutes'], ['--file', 'org.toml']]) expect(await cmdOrg(args)).toBe(2);
-      expect(await cmdOrg(['--minutes', '0'])).toBe(1);
+      // A window outside 1..1440 or not a whole number is usage (exit 2) with
+      // the org.error.v1 envelope — the same refusal --window and --minutes
+      // give on the fleet verbs — never the operational 'error' exit 1.
+      for (const bad of ['0', '1441', 'abc', '-5', '1.5', '999999999999999999999']) {
+        expect(await cmdOrg(['--minutes', bad, '--json'])).toBe(2);
+        expect(JSON.parse(out.at(-1)!)).toMatchObject({ schema: 'org.error.v1', command: 'org',
+          error: { code: 'usage', message: expect.stringContaining('--minutes must be a whole number from 1 to 1440') } });
+      }
+      // A flag where the value belongs is a missing value, also usage.
+      expect(await cmdOrg(['--minutes', '--json'])).toBe(2);
+      expect(JSON.parse(out.at(-1)!)).toMatchObject({ schema: 'org.error.v1', command: 'org', error: { code: 'usage' } });
       expect(mocks.read).not.toHaveBeenCalled();
       mocks.read.mockRejectedValueOnce(new Error('fixture failure'));
       expect(await cmdOrg([])).toBe(1);
