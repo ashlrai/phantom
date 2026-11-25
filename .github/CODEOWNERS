@@ -1331,6 +1331,7 @@
 /test/router-queue-recut.test.ts @masonwyatt23
 /test/router-queue-utf8-input-31k7.test.ts @masonwyatt23
 /test/router-queue.test.ts @masonwyatt23
+/test/router-shadow-policy.test.ts @masonwyatt23
 /test/router-task-arms.test.ts @masonwyatt23
 /test/router-typed-decisions.test.ts @masonwyatt23
 /test/router-typing.test.ts @masonwyatt23

@@ -1189,3 +1189,23 @@ reverted clears the key; a non-intact ledger contributes nothing rather
 than marking merges reverted or withholding on corrupt evidence, and
 `RouterOutcomeRead.revert_ledger_state` / the weight report's
 `revert_ledger_state` report its health.
+
+## Shadow policy comparison
+
+`phm route shadow eval --input <file|-> [--policy class-failure-avoidance] [--root <directory>] [--record] --json`
+evaluates a candidate adaptation policy next to the live `decideRoute` decision
+on the same request and eligible candidates. The live decision is unchanged;
+`--record` appends an advisory `route.shadow.v1` record (`dispatched: false`)
+to `metrics/route.shadow.jsonl` without dispatching or altering routing. The
+default policy (`class-failure-avoidance`) groups prior resolved outcomes
+strictly by `(repo, task_class, lane)` without crossing repo boundaries or
+escalating cost/speed tier, and marks sparse cells `insufficient_support`.
+
+`phm route shadow report [--policy <name>] [--root <directory>] --json` returns
+a `route.shadow-report.v1` comparison joining recorded shadow decisions with
+`metrics/jobs.jsonl` outcomes by job within the same repo. Unknown outcomes
+stay `null`. Disagreements, insufficient support, per-`(repo, task_class)`
+summaries and off-policy IPS/SNIPS/ESS estimates (with unsupported rows counted
+separately) are reported alongside a `promotion_gate` requiring prospective
+matched evidence before any live routing change. When `metrics/route.shadow.jsonl`
+exists, `phm route explain --json` exposes the same report as `shadow_comparison`.
