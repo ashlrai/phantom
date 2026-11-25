@@ -27,10 +27,12 @@ function text(verb: string, out: Record<string, unknown>): string {
 }
 
 export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleetDeps = {}): Promise<number> {
-  let json = false;
+  // `--json` is a boolean flag and a standalone `--json` token can never be a
+  // flag value (values starting with `--` are refused), so argv alone proves
+  // the caller asked for JSON even when flag parsing fails first.
+  const json = args.includes('--json');
   try {
     const flags = parseNodeFleetFlags(verb, args);
-    json = flags.has('--json');
     if (!deps.store) {
       const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
       if (hasNodePool()) return cmdNodePool(verb, args);
