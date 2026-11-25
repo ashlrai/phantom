@@ -33,7 +33,10 @@ git switch -c <topic-branch>
 npm ci
 ```
 
-Requires Node 22.15 or newer and git. If you run several agents in parallel
+Requires Node 22.15 or newer, git, and the GitHub CLI signed in to the GitHub
+account that owns your fork — run `gh auth login` once; every `gh` step below
+(the issue and pull-request searches, `pr create`, `pr merge --auto`) goes
+through it. If you run several agents in parallel
 worktrees on one machine, use `npm run install:worktree` instead of `npm ci`
 in each worktree: it needs pnpm 10.28.2 and shares one dependency store
 across worktrees (details in [CONTRIBUTING.md](https://github.com/ashlrai/phantom/blob/master/CONTRIBUTING.md#shared-installs-for-trusted-local-worktrees)).
