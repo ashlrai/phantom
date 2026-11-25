@@ -962,6 +962,25 @@
  *     inherits the items since the journal describes this install's
  *     land path — the row's repo names the publish target, quoted
  *     inside the cells;
+ *   - the needs-you auto-resolve audit journal's recurring failure
+ *     classes: the {item:{id,title}, action, at, reason, result?,
+ *     error?} records resolveAutoNeedsYou appends to
+ *     needs-you-auto.jsonl under the fleet runs directory for every
+ *     auto-classified NEEDS-MASON item it attempts — result:'failed'
+ *     with a bounded scrubbed error when resolveNeedsMason does not
+ *     resolve, 'already-resolved' journaling as an ordinary record so
+ *     every failed row is a genuine non-resolution
+ *     (needsYouAutoBacklogItems below). Until now the journal's only
+ *     readers were readNeedsYouAudit — the `phm needs-you` audit log
+ *     and the console panel, point-in-time reports — so an auto-resolve
+ *     path that kept failing on the same error never became work. An
+ *     error-class cell emits only at three failed rows across two
+ *     distinct UTC days inside the 7-day window, resolved rows count
+ *     as coverage context proving the path still works for other
+ *     items, truncated tails fold lower-bound flagged, journal strings
+ *     are scrubbed before they reach a prompt, and only the fleet's
+ *     own repository inherits the items since the journal describes
+ *     this install's resolve path and carries no repository column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1065,6 +1084,7 @@ import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
+import { needsYouAutoBacklogItems } from './needs-you-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2327,6 +2347,21 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // land path — the row's repo names the publish target, quoted
   // inside the cells.
   items.push(...await landingsBacklogItems({ repo }));
+
+  // Needs-you auto-resolve audit journal (needs-you-auto.jsonl under
+  // the fleet runs directory): every auto-classified NEEDS-MASON item
+  // resolveAutoNeedsYou attempts lands one audit record, 'failed'
+  // marking a genuine non-resolution. Until now the journal's only
+  // readers were readNeedsYouAudit — the `phm needs-you` audit log and
+  // the console panel — point-in-time reports, so a resolve path that
+  // kept failing on the same error never became work. Cells key on the
+  // normalized error class and emit only at three failed rows across
+  // two distinct UTC days inside the 7-day window; resolved rows are
+  // coverage context, truncated tails fold lower-bound flagged, and
+  // only the fleet's own repository inherits the items since the
+  // journal describes this install's resolve path and carries no
+  // repository column.
+  items.push(...await needsYouAutoBacklogItems({ repo }));
   return { items, errors };
 }
 
