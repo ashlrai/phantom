@@ -27,6 +27,14 @@ function jobStateWords(job: { state: string; claimedBy?: string; completedBy?: s
   return job.state;
 }
 
+/** Plain words for the capacity holds a beat --capacity sample can report (isNodeCapacity). */
+const PULL_HELD_WORDS: Record<string, string> = {
+  'memory-unmeasured': 'memory not measured',
+  'memory-pressure': 'memory pressure',
+  'disk-unmeasured': 'disk not measured',
+  'disk-pressure': 'disk pressure',
+};
+
 function text(verb: string, out: Record<string, unknown>): string {
   if (verb === 'join') {
     // Join is the first command every new node runs; its text answer is a
@@ -99,7 +107,17 @@ function text(verb: string, out: Record<string, unknown>): string {
       : `Node ${nodeId} was not left; no live session matches that node and session.`;
   }
   if (verb === 'pull') {
-    if (!out['pulled']) return 'No job for this node. Run: phm node plan';
+    if (!out['pulled']) {
+      // An empty pull can still say why this node takes nothing: a measured
+      // capacity hold or an advertised zero-slot bound, in the same words
+      // `phm node status` uses. No hold means the queue simply had nothing.
+      const held = typeof out['held'] === 'string' ? out['held'] : null;
+      const slots = typeof out['slots'] === 'number' ? out['slots'] : null;
+      const why = held !== null ? `this node is held (${PULL_HELD_WORDS[held] ?? held})`
+        : slots === 0 ? 'this node advertises zero job slots' : null;
+      return why === null ? 'No job for this node. Run: phm node plan'
+        : `No job for this node; ${why}. Run: phm node plan`;
+    }
     // Text mode must carry everything a manual runner needs to work the lease:
     // the claim's fencing tokens (renew/complete refuse without them), the job's
     // requirements and secret NAMES, the embedded task text, and paste-ready
