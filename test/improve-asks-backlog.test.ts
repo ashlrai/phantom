@@ -287,11 +287,11 @@ describe('asksLedgerBacklogItems', () => {
   });
 
   it('appends ask items through discovery and dedupes on refresh', async () => {
-    writeJournal([
-      row('usage', 'claude', 'usage-reading', 1),
-      row('usage', 'claude', 'usage-reading', 3),
-      row('usage', 'claude', 'usage-reading', 5),
-    ]);
+    const now = Date.now();
+    writeJournal([1, 3, 5].map((days) => ({
+      ...row('usage', 'claude', 'usage-reading', days),
+      at: new Date(now - days * 86400_000).toISOString(),
+    })));
     const greenGh = async (args: string[]) => {
       const p = args[4] ?? '';
       if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
