@@ -970,7 +970,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1387,7 +1387,29 @@ handoff records keep no per-record body — so those sections stay
 unfiltered, like they do under `--priority`; a citation nothing on
 the bus carries is an honest empty match, every count stays the
 filtered total, the result echoes `inReplyTo` in JSON and the
-human header prints it. The agent defaults to
+human header prints it. `--body-kind <kind>` narrows
+the whole digest the same way — "which pending items for me are
+work results" or "which are handoffs" — under the same `busBodyKind`
+match every bus `--body-kind` read applies, exact and
+case-sensitive, a body carrying no discriminator never matching:
+`next`/`handoffs`/`mailbox` keep envelopes whose body reports that
+kind — claimable `work`/`task` receipts under `work`/`task`,
+`worker-handoff` assignments under `worker-handoff`, kindless
+legacy mail never — claims keep only message claims whose resolved
+leased envelope reports it (a claim naming no resolved message
+never lists), `inbox`, `wakes` and the three thread sections pass
+the value to their own reads' body-kind filters (the inbox read the
+envelope body, the wakes read the resolved referent's, the
+conversations read any member message's), `jobs` and `announced`
+keep the feed jobs citing a retained receipt of that kind — every
+job cites its `work.post` announcement so `work.post` keeps them
+all, `work.status` keeps jobs a status receipt has moved,
+`work.result` keeps jobs a result receipt cites, and any other
+kind is an honest empty match — while `board`, `channels` and
+`seats` carry no per-item retained body and stay whole; a kind
+nothing on the bus carries is an honest empty match, every count
+stays the filtered total, the result echoes `bodyKind` in JSON and
+the human header prints it. The agent defaults to
 `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`
 for inbox rather than an empty list, and reads wakes under `scope: 'label'`
@@ -1400,7 +1422,7 @@ own read state — `missing`/`available`/`unavailable` for claims,
 unreadable dependency degrades only its own section. Exit 0 on a completed
 read, 2 on an invalid agent ref. `fleet_agent_work` (the isolated fleet
 MCP tool) serves the same `readBusWorkMineWithSeats` projection — `agent`
-required, `job`/`since`/`before`/`contains`/`priority`/`channel`/`from`/`excludeFrom` the same
+required, `job`/`since`/`before`/`contains`/`priority`/`channel`/`from`/`excludeFrom`/`id`/`inReplyTo`/`bodyKind` the same
 filters — under the same
 validation, so an MCP-connected agent reads its whole pending digest
 without shelling out to `phm`; it accepts no caller root or path and

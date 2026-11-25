@@ -21,8 +21,8 @@
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
- * `priority`, `channel`, `from`, `excludeFrom`, `id` and `inReplyTo`
- * apply the same rules the
+ * `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo` and
+ * `bodyKind` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
  * root, path or cwd is
@@ -42,7 +42,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -67,6 +67,8 @@ export interface FleetAgentWorkArgs {
   id?: string;
   /** Keep only pending items whose body cites this envelope id through its own `inReplyTo` field — the same `--in-reply-to` rule every bus read shares. */
   inReplyTo?: string;
+  /** Keep only pending items whose body carries this exact kind discriminator — the same `--body-kind` rule every bus read shares. */
+  bodyKind?: string;
 }
 
 /**
@@ -78,10 +80,10 @@ export interface FleetAgentWorkArgs {
  * needle `busReadContains` normalizes, `since` the shared `15m`/`2h`/`1d`/
  * epoch-ms/ISO grammar resolved to a safe non-negative epoch-ms integer,
  * `priority` one exact P0..P3 band, `channel` the strict channel-name
- * grammar every bus `--channel` read validates, `from`/`excludeFrom` the
- * same printable-label bound every bus sender filter shares, and `id`/
- * `inReplyTo` the same printable-label bound every bus `--id`/
- * `--in-reply-to` read validates. Unknown
+ * grammar every bus `--channel` read validates, `from`/`excludeFrom`/`id`/
+ * `inReplyTo`/`bodyKind` the same printable-label bound every bus
+ * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind` read
+ * validates. Unknown
  * keys, wrong
  * types, caller roots and malformed values are all refused before the
  * store is touched.
@@ -124,7 +126,7 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
     if (typeof channel !== 'string' || !agentChannelNameSchema.safeParse(channel).success) return null;
     parsed.channel = channel;
   }
-  for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo'] as const) {
+  for (const key of ['from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind'] as const) {
     const value = args[key];
     if (value !== undefined) {
       if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
@@ -164,5 +166,6 @@ export async function readFleetAgentWork(
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
     ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
+    ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
   });
 }

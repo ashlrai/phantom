@@ -30,7 +30,7 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { busClaimJobRef, listBusClaims, type BusClaimsListClaim, type BusClaimsOwnerMatch } from './bus-claims.js';
 import { agentChannelNameSchema, agentLabels, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity, type AgentRegistry } from './bus-identity.js';
-import { parseClaimKey } from './bus-v2-schema.js';
+import { busBodyKind, parseClaimKey } from './bus-v2-schema.js';
 import type { AgentMessageKind } from '../fleet/agent-messages.js';
 import { conversationScope, readAgentConversations, type AgentConversations, type Conversation, type ConversationScope } from '../fleet/agent-conversations.js';
 import { plainAge } from '../fleet/agent-conversation-model.js';
@@ -290,6 +290,39 @@ export interface BusWorkMineOptions {
    * an error and never a widened one. Every section's count stays the
    * filtered total, never the unfiltered one. */
   inReplyTo?: string;
+  /** Keep only pending items whose body carries this exact kind
+   * discriminator — the same `busBodyKind` match every bus read's
+   * `--body-kind` applies (the body's own `kind`, else `protocol.kind`,
+   * `type` or `schema`; exact and case-sensitive, and a body carrying
+   * none of those fields never matches), decided on each section's own
+   * body evidence: `next`/`handoffs`/`mailbox` keep envelopes whose body
+   * the `busBodyKind` rule accepts — claimable `work`/`task` receipts
+   * under `work`/`task`, `worker-handoff` assignments under
+   * `worker-handoff`, kindless legacy mail never — `claims` keep only
+   * message claims whose resolved leased envelope reports that kind — a
+   * claim naming no resolved message (a scope-key claim, an unresolvable
+   * or unreadable lease) names no provable kind and never lists, the
+   * same "unknown stays out" rule `priority`/`channel`/`from`/`id`
+   * apply — `inbox`, `wakes` and the three thread sections pass the
+   * value to their own reads' body-kind filters (the inbox and
+   * conversations reads keep items whose body — or, for conversations,
+   * any member message's body — carries it, the wakes read the resolved
+   * referent's), while `jobs` and `announced` keep the feed jobs citing
+   * at least one retained receipt of that kind — every job cites its
+   * `work.post` announcement so `work.post` keeps them all,
+   * `work.status` keeps jobs a status receipt has moved, `work.result`
+   * keeps jobs a result receipt cites, and any other kind is an honest
+   * empty match — and `board`, `channels` and `seats` carry no per-item
+   * retained body in their projections — board post bodies are
+   * `{threadId, text}` records and seat handoff records keep no
+   * per-record body — so those sections stay unfiltered, the same rule
+   * `priority`/`channel` apply to sections with no per-item band or
+   * room. The value takes the same printable-label bound every bus
+   * `--body-kind` read validates; a kind nothing on the bus carries is
+   * an honest empty match, never an error and never a widened one.
+   * Every section's count stays the filtered total, never the
+   * unfiltered one. */
+  bodyKind?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -781,6 +814,8 @@ export type BusWorkMineResult =
       id?: string;
       /** The reply-citation filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       inReplyTo?: string;
+      /** The body-kind filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      bodyKind?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -897,9 +932,23 @@ function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): boolean {
   return job.postId === id || job.statusId === id || job.result?.id === id;
 }
 
+/** True when the feed job cites at least one retained receipt of this body
+ * kind — the citation-slot twin of `busWorkFeedJobCitesEnvelope`. The feed
+ * fixes each slot's kind: `postId` is always the `work.post` announcement
+ * (so `work.post` keeps every job), `statusId` the newest `work.status`
+ * receipt (null until one moves the job), `result` the newest `work.result`
+ * receipt. Any other kind cites nothing a job line carries and is an
+ * honest empty match. */
+function busWorkFeedJobCitesBodyKind(job: BusWorkFeedJob, bodyKind: string): boolean {
+  if (bodyKind === 'work.post') return true;
+  if (bodyKind === 'work.status') return job.statusId !== null;
+  if (bodyKind === 'work.result') return job.result !== undefined;
+  return false;
+}
+
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
-  from?: string, excludeFrom?: string, envelopeId?: string): BusWorkMineJobs {
+  from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -920,7 +969,8 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
-      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)))
+      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
+      (bodyKind === undefined || busWorkFeedJobCitesBodyKind(job, bodyKind)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   // `addressed` is the pending-work rule the feed `--to` filter and the
   // next/handoffs sections share: identity labels plus member `group:`
@@ -961,7 +1011,7 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
-  from?: string, excludeFrom?: string, envelopeId?: string): BusWorkMineAnnounced {
+  from?: string, excludeFrom?: string, envelopeId?: string, bodyKind?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -982,7 +1032,8 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
       (excludeOwner === undefined || !excludeOwner(job.owner)) &&
-      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)))
+      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)) &&
+      (bodyKind === undefined || busWorkFeedJobCitesBodyKind(job, bodyKind)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
     items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
@@ -1015,6 +1066,7 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
     ...(options.id === undefined ? {} : { id: options.id }),
     ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
+    ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     ...(contains === undefined ? {} : { contains }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
@@ -1073,7 +1125,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
   const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
       priority === undefined && channelPrefix === undefined && fromMatch === undefined && excludeFromMatch === undefined &&
-      options.id === undefined && options.inReplyTo === undefined ? undefined
+      options.id === undefined && options.inReplyTo === undefined && options.bodyKind === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
       (job === undefined || busBodyJobMatch(message.envelope.body, job)) &&
       (since === undefined || message.acceptedAt >= since) &&
@@ -1084,6 +1136,7 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       (excludeFromMatch === undefined || !excludeFromMatch(message.envelope.from)) &&
       (options.id === undefined || message.envelope.id === options.id) &&
       (options.inReplyTo === undefined || busBodyInReplyToMatch(message.envelope.body, options.inReplyTo)) &&
+      (options.bodyKind === undefined || busBodyKind(message.envelope.body) === options.bodyKind) &&
       (contains === undefined || busReadContainsMatch(message.envelope.body, contains));
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
@@ -1321,9 +1374,14 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       // applies — and an in-reply-to filter keeps only envelopes whose
       // body cites that id through its own `inReplyTo` field, the same
       // own-property exact match `busBodyInReplyToMatch` gives every bus
-      // read, for both kinds alike.
+      // read, for both kinds alike. A body-kind filter keeps only
+      // envelopes whose body carries that discriminator — the same
+      // `busBodyKind` match `agents bus inbox --body-kind` applies — so
+      // claimable `work`/`task` receipts and `worker-handoff` bodies
+      // answer under their own kinds and a kindless body never matches.
       if (options.id !== undefined && envelope.id !== options.id) continue;
       if (options.inReplyTo !== undefined && !busBodyInReplyToMatch(envelope.body, options.inReplyTo)) continue;
+      if (options.bodyKind !== undefined && busBodyKind(envelope.body) !== options.bodyKind) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -1454,19 +1512,6 @@ function claimMessageReceipts(options: BusWorkMineOptions, nowMs: number):
   return { status: 'ok', byId };
 }
 
-/** The protocol body kind a claim-message resolution reports: top-level `kind`, else `protocol.kind` on bus-transport v1 bodies; null when neither is a string. */
-function claimMessageBodyKind(body: unknown): string | null {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
-  const record = body as Record<string, unknown>;
-  if (typeof record['kind'] === 'string') return record['kind'];
-  const proto = record['protocol'];
-  if (proto !== null && typeof proto === 'object' && !Array.isArray(proto)) {
-    const kind = (proto as Record<string, unknown>)['kind'];
-    if (typeof kind === 'string') return kind;
-  }
-  return null;
-}
-
 /**
  * Resolve one message claim to the live envelope its journal row pinned — or,
  * when the journal cannot vouch for a triple, to the live receipt now
@@ -1533,7 +1578,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
     expiresAt: new Date(receipt.receivedAt + ttl).toISOString(),
     priority: receipt.envelope.priority, to: receipt.envelope.to, from: receipt.envelope.from,
     fromAgent: registry === undefined ? null : resolveAgent(registry, receipt.envelope.from)?.handle ?? null,
-    bodyKind: claimMessageBodyKind(body),
+    bodyKind: busBodyKind(body),
     ...(inReplyTo === undefined ? {} : { inReplyTo }),
     summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
     ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
@@ -1853,6 +1898,13 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   if (options.inReplyTo !== undefined && (typeof options.inReplyTo !== 'string' || !AGENT_REF.test(options.inReplyTo))) {
     return { status: 'invalid', reason: 'invalid-in-reply-to' };
   }
+  // The same printable-label bound every bus `--body-kind` read
+  // validates: the discriminator is 1-128 visible ASCII characters —
+  // an unrecognized but printable value is an honest empty match,
+  // never an error and never a widened one.
+  if (options.bodyKind !== undefined && (typeof options.bodyKind !== 'string' || !AGENT_REF.test(options.bodyKind))) {
+    return { status: 'invalid', reason: 'invalid-body-kind' };
+  }
   const sinceMs = options.since;
   const beforeMs = options.before;
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
@@ -1872,9 +1924,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id);
+    options.from, options.excludeFrom, options.id, options.bodyKind);
   const announced = announcedSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom, options.id);
+    options.from, options.excludeFrom, options.id, options.bodyKind);
   const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry, contains);
   // One conversations read backs all three thread views: waits the agent
   // owes, its own unanswered asks and blocked threads it is a party to.
@@ -1894,7 +1946,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.from === undefined ? {} : { from: options.from }),
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
       ...(options.id === undefined ? {} : { id: options.id }),
-      ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }) },
+      ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
+      ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope, channelPrefix);
@@ -2011,6 +2064,18 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       claims.claims = claims.claims.filter(claim =>
         claim.message?.status === 'resolved' && claim.message.inReplyTo === options.inReplyTo);
     }
+    if (options.bodyKind !== undefined) {
+      // A claim lists under a body-kind filter only when its leased
+      // envelope's body carries that discriminator — the resolved
+      // message's own `bodyKind`, the same `busBodyKind` evidence the
+      // claim's display field and every other section's `--body-kind`
+      // match report. A claim naming no resolved message — a scope-key
+      // claim, an unresolvable or unreadable lease — names no provable
+      // kind and never lists, the same "unknown stays out" rule the band
+      // and room filters apply.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.bodyKind === options.bodyKind);
+    }
   }
 
   const page = readAgentWakes(agent, sinceMs,
@@ -2023,6 +2088,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
       ...(options.id === undefined ? {} : { id: options.id }),
       ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
+      ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
@@ -2056,6 +2122,7 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
     ...(options.id === undefined ? {} : { id: options.id }),
     ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
+    ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
     claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     channels };
 }
@@ -2103,7 +2170,8 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     (result.from === undefined ? '' : ` from=${result.from}`) +
     (result.excludeFrom === undefined ? '' : ` exclude-from=${result.excludeFrom}`) +
     (result.id === undefined ? '' : ` id=${result.id}`) +
-    (result.inReplyTo === undefined ? '' : ` in-reply-to=${result.inReplyTo}`));
+    (result.inReplyTo === undefined ? '' : ` in-reply-to=${result.inReplyTo}`) +
+    (result.bodyKind === undefined ? '' : ` body-kind=${result.bodyKind}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {
