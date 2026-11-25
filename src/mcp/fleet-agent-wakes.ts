@@ -12,12 +12,17 @@
  * `work.status` receipt that woke the holder. A hint is a routing hint to
  * read the inbox — never a body, never authority.
  *
- * `agent` is required and resolves through the server-owned identity
- * registry with the same handle/`agent:`/stable-id/alias refs
+ * `agent` is optional. Supplied, it resolves through the server-owned
+ * identity registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; a ref that resolves to no identity but matches
  * the printable-label rule keeps literal-`to` matching under `scope:
  * 'label'` — the same fallback the CLI read reports — so hints queued
- * under a bare coordination label stay readable by their addressee.
+ * under a bare coordination label stay readable by their addressee, and a
+ * resolved ref reads that identity's queue under `scope: 'identity'`.
+ * Omitted, the read is fleet-wide — every hint in the bounded queue tail
+ * across all addressees under `scope: 'fleet'`, the same
+ * `phm agents bus wakes --all` read — so a leader or comms pass sees who
+ * has pending hints in one call instead of one per identity.
  * `since`, `job`, `from`, `excludeFrom`, `channel`, `priority`,
  * `contains`, `thread`, `inReplyTo`, `bodyKind` and `id` apply
  * the same rules the `phm agents bus wakes` flags share and are validated
@@ -79,7 +84,8 @@ export interface FleetAgentWakesArgs {
 /**
  * Runtime argument validation: low-level SDK servers never check the
  * tools/list schema, so the server re-validates on every call. `agent`
- * is required — the addressed read has no meaningful default — and every
+ * is optional — supplied it selects the addressed read, omitted it selects
+ * the fleet-wide read — and every
  * other key takes the same value rules `phm agents bus wakes` flags and
  * the other bus reads share: `job`/`from`/`excludeFrom`/`id`/`thread`/
  * `inReplyTo`/`bodyKind` printable
@@ -152,9 +158,10 @@ export type FleetAgentWakesResult = (WakePage | AllWakesPage) extends infer Memb
   : never;
 
 /**
- * One wake-hint page through the shared `readAgentWakes` projection —
- * the identical read `phm agents bus wakes` runs, so identity/label
- * scope, queue-tail `matched`/`truncated` honesty, claim-holder citation
+ * One wake-hint page through the shared `readAgentWakes`/`readAllWakes`
+ * projections — the identical reads `phm agents bus wakes` and
+ * `phm agents bus wakes --all` run, so identity/label scope, fleet scope,
+ * queue-tail `matched`/`truncated` honesty, claim-holder citation
  * re-derivation and per-hint message resolution can never diverge
  * between the CLI and this tool. Every page status passes through
  * untouched: `ok` keeps `agent`, `scope`, `wakes`, `matched` and
