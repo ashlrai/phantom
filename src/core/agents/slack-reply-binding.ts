@@ -128,15 +128,16 @@ export function bindSlackReplies(input: {
       result.rejected++;
     } else if (cutoffMs < 0 || compareTs(row.ts, cutoff) > 0) {
       result.futureDated++;
-    } else if (typeof row.key === 'string') {
+    } else {
       const id = `${row.channel}:${canonicalTs(row.ts)}`;
       const kept = physical.get(id);
       if (kept) {
         if (kept.thread !== row.thread) kept.conflicted = true;
         if (compareText(row.ts, kept.ts) < 0) kept.ts = row.ts;
-        kept.keys.add(row.key);
+        if (typeof row.key === 'string') kept.keys.add(row.key);
       } else {
-        physical.set(id, { channel: row.channel, thread: row.thread, ts: row.ts, conflicted: false, keys: new Set([row.key]) });
+        physical.set(id, { channel: row.channel, thread: row.thread, ts: row.ts, conflicted: false,
+          keys: new Set(typeof row.key === 'string' ? [row.key] : []) });
       }
     }
   }
