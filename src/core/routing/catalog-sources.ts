@@ -4,12 +4,17 @@ import { parseDevinModelsList } from '../devin/models.js';
 
 export interface CatalogSource { id: string; status: 'ok' | 'unknown'; models: string[]; reason?: string }
 const scan = (text: string): string[] => [...new Set(text.match(/\b(?:(?:claude|gpt|grok)-(?=[a-z0-9.-]*\d)[a-z0-9.-]+|meta\/(?=[a-z0-9./_-]*\d)[a-z0-9./_-]+)/gi) ?? [])];
+const scanAntigravity = (text: string): string[] => [...new Set([
+  ...scan(text),
+  ...(text.match(/\b(?:gemini-[0-9]+(?:\.[0-9]+)?(?:-[a-z0-9]+)+|gpt-oss-[0-9]+b-[a-z]+)\b/g) ?? []),
+])];
 export const CATALOG_SOURCE_SPECS = [
   { id: 'claude', bin: 'claude', args: ['--help'], extract: scan },
   { id: 'codex', bin: 'codex', args: ['--help'], extract: scan },
   { id: 'devin', bin: 'devin', args: ['models', 'list'], extract: (s: string) => parseDevinModelsList(s).families.flatMap(f => f.models.map(m => m.id)) },
   { id: 'cursor', bin: 'cursor-agent', args: ['models'], extract: scan },
   { id: 'grok', bin: 'grok', args: ['models'], extract: scan },
+  { id: 'agy', bin: 'agy', args: ['models'], extract: scanAntigravity },
 ];
 
 export interface CatalogSourceDeps {
@@ -19,8 +24,9 @@ export interface CatalogSourceDeps {
   seats: () => Promise<string[]>;
 }
 const MAX_BYTES = 1024 * 1024;
-const defaultRun: CatalogSourceDeps['run'] = (bin, args) => new Promise((resolve, reject) => {
-  execFile(bin, args, { timeout: 10_000, maxBuffer: MAX_BYTES, encoding: 'utf8' }, (error, stdout) => error ? reject(error) : resolve(stdout));
+const defaultRun = (bin: string, args: string[], subscriptionOnly: boolean): Promise<string> => new Promise((resolve, reject) => {
+  const env = subscriptionOnly ? { HOME: process.env['HOME'], PATH: process.env['PATH'] } : undefined;
+  execFile(bin, args, { timeout: 10_000, maxBuffer: MAX_BYTES, encoding: 'utf8', env }, (error, stdout) => error ? reject(error) : resolve(stdout));
 });
 async function defaultSeats(): Promise<string[]> {
   const [{ loadConfigReadOnly }, { loadRouterGatewayConfig }, { loadRouterGatewayDeps }] = await Promise.all([
@@ -32,7 +38,7 @@ async function defaultSeats(): Promise<string[]> {
 }
 
 export async function collectCatalogSources(includeSeats = false, overrides: Partial<CatalogSourceDeps> = {}, base = 'http://127.0.0.1:11434'): Promise<CatalogSource[]> {
-  const deps: CatalogSourceDeps = { resolve: bin => resolveExecutable(bin)?.path ?? null, run: defaultRun, fetch: globalThis.fetch, seats: defaultSeats, ...overrides };
+  const deps = { resolve: (bin: string) => resolveExecutable(bin)?.path ?? null, fetch: globalThis.fetch, seats: defaultSeats, ...overrides };
   const probe = async (id: string, action: () => Promise<string[]>): Promise<CatalogSource> => {
     try {
       const models = [...new Set(await action())].sort();
@@ -44,7 +50,7 @@ export async function collectCatalogSources(includeSeats = false, overrides: Par
     ...CATALOG_SOURCE_SPECS.map(spec => probe(spec.id, async () => {
       const bin = deps.resolve(spec.bin);
       if (!bin) throw new Error();
-      const text = await deps.run(bin, spec.args);
+      const text = await (deps.run ? deps.run(bin, spec.args) : defaultRun(bin, spec.args, spec.id === 'agy'));
       if (Buffer.byteLength(text) > MAX_BYTES) throw new Error();
       return spec.extract(text);
     })),

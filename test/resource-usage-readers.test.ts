@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { anthropicCostSource } from '../src/core/fabric/readers/anthropic-cost.js';
 import { ANTHROPIC_COST_WORKER } from '../src/core/fabric/readers/anthropic-cost-worker.js';
 import { loadConfigAt } from '../src/core/config.js';
+import { anthropicVersionHeaders } from '../src/core/run/model-catalog.js';
 import { capacitySource } from '../src/core/usage/resource-live/capacity-source.js';
 import { liveSourceOptions } from '../src/core/usage/resource-live/config.js';
 import { defaultResourceLiveSources } from '../src/core/usage/resource-live/sources.js';
@@ -81,6 +82,7 @@ describe('custodied Anthropic cost reader', () => {
     expect(url).toContain('/v1/organizations/cost_report?starting_at=');
     expect(url).toContain('bucket_width=1d');
     expect(new URL(url).searchParams.get('ending_at')).toBe('2026-11-17T00:00:00.000Z');
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ headers: anthropicVersionHeaders('anthropic') });
     const run = vi.fn(async () => output);
     expect(await anthropicCostSource(credit, run).read(NOW)).toEqual({ used: 1.2378912, limit: 50, unit: 'usd',
       reset_at: null, source: 'anthropic-admin-cost', observed_at: new Date(NOW).toISOString() });
