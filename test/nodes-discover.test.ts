@@ -8,18 +8,19 @@ import { narrowComputers } from '../src/web-ui/routes/verse/fleet-host/computers
 const NOW = Date.parse('2026-11-17T12:00:00Z');
 const stats: HostStats = { sampledAtMs: NOW, uptimeSeconds: 60, load: [1, 1, 1], ramTotal: 32 * 1024 ** 3, ramUsed: 8 * 1024 ** 3, diskFree: null, cores: [{ total: 100, idle: 50 }] };
 const joinedNode: NodeRecord = { nodeId: 'laptop-two', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['claude'], slots: 1 };
-const registry: NodesRegistry = { source: 'pool-witness', selfNode: 'desk-mac', state: { version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000, nodes: [joinedNode], leader: null, jobs: [] } };
+const JOIN = 'phm node join --owner acme --primary primary-mac --backup backup-mac';
+const registry: NodesRegistry = { source: 'pool-witness', selfNode: 'desk-mac', pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: { version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000, nodes: [joinedNode], leader: null, jobs: [] } };
 const peer = (HostName: string, Online: boolean) => ({ HostName, OS: 'macOS', Online, LastSeen: '2026-11-17T10:42:00Z' });
 const status = (peers: unknown[]) => JSON.stringify({ BackendState: 'Running', Self: { HostName: 'desk-mac' }, Peer: Object.fromEntries(peers.map((p, i) => [`p${i}`, p])) });
-const deps = (raw: string | null): NodesViewDeps => ({
+const deps = (raw: string | null, reg: NodesRegistry = registry): NodesViewDeps => ({
   peers: { now: () => new Date(NOW), homeDir: () => '/fake-home', exec: () => { if (raw === null) throw new Error('missing'); return raw; } },
-  readRegistry: () => registry, localStats: () => stats, hostName: () => 'desk-mac', timeZone: 'UTC',
+  readRegistry: () => reg, localStats: () => stats, hostName: () => 'desk-mac', timeZone: 'UTC',
 });
 const TWO_ONLINE_ONE_OFF = status([peer('laptop-two', true), peer('studio-mac', true), peer('old-mini', false)]);
 
-async function run(args: string[], raw: string | null): Promise<{ code: number; out: string }> {
+async function run(args: string[], raw: string | null, reg?: NodesRegistry): Promise<{ code: number; out: string }> {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  const code = await cmdNodes(args, deps(raw));
+  const code = await cmdNodes(args, deps(raw, reg));
   const out = log.mock.calls.map(c => String(c[0])).join('\n');
   return { code, out };
 }
@@ -31,16 +32,16 @@ describe('phm nodes --discover', () => {
     const by = Object.fromEntries(rows.map(r => [r.name, r]));
     expect(by['desk-mac']).toMatchObject({ joined: true, joinCommand: null });
     expect(by['laptop-two']).toMatchObject({ joined: true, joinCommand: null });
-    expect(by['studio-mac']).toMatchObject({ joined: false, joinCommand: 'phm node join', reachable: true });
-    expect(by['old-mini']).toMatchObject({ joined: false, joinCommand: 'phm node join', reachable: false });
+    expect(by['studio-mac']).toMatchObject({ joined: false, joinCommand: JOIN, reachable: true });
+    expect(by['old-mini']).toMatchObject({ joined: false, joinCommand: JOIN, reachable: false });
   });
 
   it('text lists the two online peers and the offline one under Not joined', async () => {
     const { code, out } = await run(['--discover'], TWO_ONLINE_ONE_OFF);
     expect(code).toBe(0);
     expect(out).toContain('Not joined (on your Tailscale network):');
-    expect(out).toContain('studio-mac (online): not joined. On studio-mac, run: phm node join');
-    expect(out).toContain('old-mini (offline): not joined. On old-mini, run: phm node join');
+    expect(out).toContain(`studio-mac (online): not joined. On studio-mac, run: ${JOIN}`);
+    expect(out).toContain(`old-mini (offline): not joined. On old-mini, run: ${JOIN}`);
     expect(out).not.toContain('laptop-two (online): not joined');
   });
 
@@ -55,6 +56,18 @@ describe('phm nodes --discover', () => {
   it('without --discover the output has no discovered section', async () => {
     const { out } = await run(['--json'], TWO_ONLINE_ONE_OFF);
     expect(JSON.parse(out)).not.toHaveProperty('discovered');
+  });
+
+  it('no node pool: discovered computers get no join command and the note says why', async () => {
+    const noPool: NodesRegistry = { source: 'local', selfNode: null, pool: null, state: {
+      version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000, nodes: [], leader: null, jobs: [] } };
+    const rows = readNodesView(deps(TWO_ONLINE_ONE_OFF, noPool)).nodes;
+    expect(rows.find(r => r.name === 'studio-mac')).toMatchObject({ joined: false, joinCommand: null, state: 'reachable but Phantom not running' });
+    const { code, out } = await run(['--discover'], TWO_ONLINE_ONE_OFF, noPool);
+    expect(code).toBe(0);
+    expect(out).toContain('studio-mac (online): not joined; this computer has no node pool to join it');
+    expect(out).toContain('note: no node pool on this computer: other computers cannot join its list (docs/NODES.md)');
+    expect(out).not.toContain('run: phm node join');
   });
 
   it('tailscale missing: says so and finds nothing', async () => {
@@ -74,7 +87,7 @@ describe('phm nodes --discover', () => {
   it('the desktop model keeps the flag so not joined computers render grey', async () => {
     const { out } = await run(['--discover', '--json'], TWO_ONLINE_ONE_OFF);
     const cards = narrowComputers(JSON.parse(out))!.computers;
-    expect(cards.find(c => c.name === 'studio-mac')).toMatchObject({ joined: false, joinCommand: 'phm node join' });
+    expect(cards.find(c => c.name === 'studio-mac')).toMatchObject({ joined: false, joinCommand: JOIN });
     expect(cards.find(c => c.name === 'laptop-two')).toMatchObject({ joined: true, joinCommand: null });
   });
 });

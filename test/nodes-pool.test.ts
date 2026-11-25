@@ -19,11 +19,11 @@ const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord => ({
   nodeId, session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['claude'], slots: 2, ...extra,
 });
 const registry = (nodes: NodeRecord[]): NodesRegistry => ({
-  source: 'pool-witness', selfNode: 'node-a',
+  source: 'pool-witness', selfNode: 'node-a', pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' },
   state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } satisfies NodesState,
 });
 const localRegistry = (nodes: NodeRecord[]): NodesRegistry => ({
-  source: 'local', selfNode: null,
+  source: 'local', selfNode: null, pool: null,
   state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } satisfies NodesState,
 });
 const peer = (name: string, online: boolean, lastSeen = '2026-11-17T11:00:00Z') => ({ HostName: name, OS: 'macOS', Online: online, LastSeen: lastSeen });

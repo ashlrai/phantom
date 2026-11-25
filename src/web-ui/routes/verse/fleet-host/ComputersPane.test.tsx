@@ -46,7 +46,7 @@ it('single computer: one card, how to add another, and the reason', () => {
   expect(screen.getAllByRole('listitem')).toHaveLength(1);
   expect(screen.getByText('0 of 1 ready for work')).toBeTruthy();
   expect(screen.getByText(/This is your only computer so far/)).toBeTruthy();
-  expect(screen.getByText('phm node join')).toBeTruthy();
+  expect(screen.getByText('phm nodes --discover')).toBeTruthy();
   expect(screen.getByText('tailscale unavailable or status unreadable')).toBeTruthy();
 });
 
@@ -74,9 +74,15 @@ it('says so plainly when the list cannot be read', async () => {
 });
 
 it('shows a not joined computer grey with the one command to join it', () => {
-  const view = narrowComputers(payload([row('node-a', { isSelf: true }), row('studio-mac', { joined: false, joinCommand: 'phm node join', stateCode: 'not-running', state: 'x' })]));
+  const view = narrowComputers(payload([row('node-a', { isSelf: true }), row('studio-mac', { joined: false, joinCommand: 'phm node join --owner acme --primary primary-mac --backup backup-mac', stateCode: 'not-running', state: 'x' })]));
   const { container } = render(<ComputersBody view={view} />);
   expect(container.querySelector('li[aria-label="studio-mac"]')?.getAttribute('data-state')).toBe('not-joined');
   expect(screen.getByText(/Not joined\. On studio-mac, run/)).toBeTruthy();
   expect(screen.getByText('1 of 2 ready for work')).toBeTruthy();
+});
+
+it('a not joined computer with no join command says this computer has no node pool', () => {
+  const view = narrowComputers(payload([row('node-a', { isSelf: true }), row('studio-mac', { joined: false, joinCommand: null, stateCode: 'not-running', state: 'x' })]));
+  render(<ComputersBody view={view} />);
+  expect(screen.getByText(/This computer has no node pool, so it cannot join this list\./)).toBeTruthy();
 });

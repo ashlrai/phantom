@@ -23,8 +23,9 @@ const USAGE = `Usage: phm nodes [--json] [--discover] [--can-take <lane>]
 One row per known computer: reachable or not, whether Phantom is running there,
 free memory, CPU headroom, lanes, running jobs and a plain-words state.
 --can-take <lane> lists only the computers that can take a job for that lane now.
---discover also lists Tailscale computers that have not joined, each with the one command to join it
-(run "phm node join" on that computer). JSON adds "discovered" with the same rows.
+--discover also lists Tailscale computers that have not joined, each with the command that joins it to this
+computer's node pool (run it on that computer; no command when this computer has no node pool). JSON adds
+"discovered" with the same rows.
 It recommends a ready remote computer, then this computer if no remote is ready.
 pool: your Macs as one pool (this Mac first): online, offline or unknown, free slots,
 running jobs, load, free memory and disk, whether offload is on, when it was last seen,
@@ -148,7 +149,7 @@ export async function cmdNodes(args: string[], deps: NodesViewDeps = defaultNode
   const choice = placement?.node ? [`Suggested computer: ${placement.node}. ${placement.explanation}`] : [];
   const only = lane === null && nodes.length === 1 && nodes[0]!.isSelf ? ['Only this Mac.'] : [];
   const found = discover ? ['', discovered.length ? 'Not joined (on your Tailscale network):' : 'No computers waiting to join.',
-    ...discovered.map(node => `${node.name} (${node.reachable === true ? 'online' : node.reachable === false ? 'offline' : 'unknown'}): not joined. On ${node.name}, run: ${node.joinCommand}`)] : [];
+    ...discovered.map(node => `${node.name} (${node.reachable === true ? 'online' : node.reachable === false ? 'offline' : 'unknown'}): ${node.joinCommand === null ? 'not joined; this computer has no node pool to join it' : `not joined. On ${node.name}, run: ${node.joinCommand}`}`)] : [];
   console.log([...choice, ...(nodes.length ? nodes.map(line) : [empty]), ...found, ...only, ...view.reasons.map(reason => `note: ${reason}`)].join('\n'));
   return 0;
 }

@@ -18,6 +18,7 @@ const stats = (load: number): HostStats => ({ sampledAtMs: NOW, uptimeSeconds: 6
 const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord =>
   ({ nodeId, session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['claude', 'codex'], slots: 2, hostStats: stats(1), ...extra });
 const registry = (nodes: NodeRecord[], jobs: NodesState['jobs'] = []): NodesRegistry => ({ source: 'pool-witness', selfNode: 'node-a',
+  pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' },
   state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs } satisfies NodesState });
 const tailnet = JSON.stringify({ BackendState: 'Running', Self: { HostName: 'node-a' },
   Peer: { p0: { HostName: 'node-b', OS: 'macOS', Online: true, LastSeen: '2026-11-17T10:42:00Z' } } });
