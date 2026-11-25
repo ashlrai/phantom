@@ -716,6 +716,28 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toBe('Node box left the registry.');
     } finally { vi.restoreAllMocks(); }
   });
+  it('status names each node\'s advertised slots and last measured hold', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      // No slot report yet: unbounded, never a fabricated number.
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('node box live usage=unknown auth=unknown slots=unbounded');
+      // A measured capacity beat reports its slot bound; a ready sample shows no hold.
+      const ready = { hostId: 'box.local', ramBytes: 17_179_869_184, slots: 4, held: null, sampledAtMs: 1_000 };
+      executeNodeFleet('beat', ['--node', 'box', '--session', session, '--capacity', JSON.stringify(ready)], nodes());
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('slots=4');
+      expect(last(lines)).not.toContain('held=');
+      // A held sample reads slots=0 with the measured reason, and list agrees.
+      const held = { ...ready, slots: 0, held: 'memory-pressure' };
+      executeNodeFleet('beat', ['--node', 'box', '--session', session, '--capacity', JSON.stringify(held)], nodes());
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('slots=0 held=memory-pressure');
+      expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('slots=0 held=memory-pressure');
+    } finally { vi.restoreAllMocks(); }
+  });
 });
 
 describe('beat --capacity sample honesty', () => {
