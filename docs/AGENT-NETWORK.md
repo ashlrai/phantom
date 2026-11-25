@@ -351,6 +351,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   named stays at zero, and a share can be lowered but never raised above the declared
   value. If the machine declares a `host`, join refuses to run anywhere else. The
   record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
+  Re-running join replaces the machine's whole record, so a lane you stop naming drops
+  to zero — the output lists each dropped lane (`droppedLanes` under `--json`) and how
+  to restore it, so a share tweak never silently starves a lane.
 - `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
   (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
   maximize merged output per unit of pooled usage. Jobs are ordered by priority per
