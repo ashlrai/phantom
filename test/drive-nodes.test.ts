@@ -545,6 +545,79 @@ describe('result: read-only owner-scoped outcome', () => {
   });
 });
 
+describe('text output names outcomes in plain words', () => {
+  function harness() {
+    const store = new MemoryStore();
+    let now = 1_000_000;
+    const deps = { store, now: () => now };
+    const nodes = () => new DriveNodes(store, { now: () => now });
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    return { deps, nodes, lines, advance: (ms: number) => { now += ms; } };
+  }
+  const last = (lines: string[]) => lines.at(-1)!;
+  it('status, enqueue, withdraw, renew, complete and leave say what happened', async () => {
+    const { deps, nodes, lines, advance } = harness();
+    try {
+      // An empty scope says so and prints the join command — the first-run case.
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe([
+        'Owner scope: acme',
+        'No nodes joined in this scope.',
+        'No jobs queued in this scope.',
+        'Join this computer: phm node join --node <id> --owner acme',
+      ].join('\n'));
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      // enqueue names the id; a duplicate id is a fact, not a failure.
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Enqueued j1.');
+      expect(await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already exists; nothing changed.');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j1 pending');
+      // Once pulled, status names the node holding the claim.
+      const claim = (executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+        { jobId: string; token: number; leaderToken: number });
+      const lease = ['--job', 'j1', '--node', 'box', '--session', session,
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j1 running (claimed by box)');
+      // withdraw on a live claim says to retry after it lapses.
+      expect(await cmdNodeFleet('withdraw', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 is held by a live claim; withdraw again once the claim lapses or completes.');
+      // renew prints the expiry as a time; complete a sentence.
+      expect(await cmdNodeFleet('renew', lease, deps)).toBe(0);
+      expect(last(lines)).toMatch(/^Renewed j1; the lease expires \d{4}-\d{2}-\d{2}T/);
+      expect(await cmdNodeFleet('complete', [...lease, '--result', 'done'], deps)).toBe(0);
+      expect(last(lines)).toBe('Completed j1.');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j1 completed by box');
+      expect(await cmdNodeFleet('withdraw', ['--job', 'j1', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j1 already completed.');
+      expect(await cmdNodeFleet('withdraw', ['--job', 'j2', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe("Job j2 is absent in this owner scope (unknown id or another owner's job).");
+      // A producer withdrawal reads back marked, never as node work.
+      executeNodeFleet('enqueue', ['--job', 'j3', '--owner', 'acme'], nodes());
+      expect(await cmdNodeFleet('withdraw', ['--job', 'j3', '--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toBe('Job j3 withdrawn: it is terminal and can never run again.');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j3 completed (withdrawn by the producer)');
+      // A lapsed claim drops the claimant from the status line.
+      executeNodeFleet('enqueue', ['--job', 'j4', '--owner', 'acme'], nodes());
+      executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes());
+      advance(31_000);
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j4 running (no live claim)');
+      // leave names the live session on a refusal, then succeeds.
+      const live = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      expect(await cmdNodeFleet('leave', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe(`Node box was not left; it is live as session ${live}. Run: phm node leave --node box --session ${live}`);
+      expect(await cmdNodeFleet('leave', ['--node', 'box', '--session', live], deps)).toBe(0);
+      expect(last(lines)).toBe('Node box left the registry.');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('beat --capacity sample honesty', () => {
   const beatArgs = (session: number, capacity?: string) =>
     ['--node', 'laptop', '--session', String(session), ...(capacity === undefined ? [] : ['--capacity', capacity])];
