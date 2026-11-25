@@ -1766,6 +1766,25 @@ merged PRs over finished PRs that carried a change: a PR closed after the
 session reported no change was needed is a correct verdict, so it is counted
 under closed but left out of the rate.
 
+### Lesson trial evidence by task family
+
+`phm improve lessons` reports a family gate in addition to the existing
+overall and per-note effects. The JSON report includes it as `byFamily`:
+the candidate is the served arm and the incumbent is the holdout. Each
+family shows both arm counts and landing rates, the rate difference when
+measured, and its verdict. A reverted merge does not count as landed.
+
+Repair, test-writing, refactor and any other observed family must each
+have at least three finished runs per arm. A missing or undersampled
+family has a null difference and an `unknown` verdict. It blocks promotion
+just like a family with a lower candidate landing rate; an aggregate gain
+cannot compensate. The report retains the incumbent on a refusal.
+
+Tasks without a recorded family appear as `unclassified`; they do not fill
+the named cohorts. The live report does not classify launches or change the
+active prompt or harness. Use fixed, matched cohorts under the same model and
+execution envelope when comparing a specific variant against its incumbent.
+
 ### Triage in Needs you
 
 Every few minutes Phantom reads each open cloud PR from GitHub and checks the

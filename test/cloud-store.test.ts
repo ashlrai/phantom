@@ -67,6 +67,17 @@ describe('paths', () => {
 });
 
 describe('tasks', () => {
+  it('round-trips a classified lessons arm and rejects a non-string family', () => {
+    const t = task('ct_20260924T2331_k3f9q2', '2026-09-24T23:31:00.000Z', {
+      lessons: { arm: 'served', noteIds: ['n1'], family: 'test-writing' },
+    });
+    writeCloudTask(t);
+    expect(readCloudTask(t.id)?.lessons).toEqual(t.lessons);
+    const file = path.join(cloudTasksDir(), `${t.id}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...t, lessons: { ...t.lessons, family: 3 } }));
+    expect(readCloudTask(t.id)).toBeNull();
+  });
+
   it('writes atomically with 0600 files in 0700 dirs and reads back', () => {
     const t = task('ct_20260924T2331_k3f9q2', '2026-09-24T23:31:00.000Z');
     writeCloudTask(t);
