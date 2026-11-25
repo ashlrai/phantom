@@ -18,8 +18,10 @@ export function ChannelHealthStrip({ health, nowMs }: { health: ChannelHealthVie
     {health.channels.map(ch => { const coverage = channelCoverageLine(ch); return <li key={ch.channel} className={styles.healthRow}>
       <span className={`${styles.healthBadge} ${BADGE[ch.state]}`}>{ch.state}</span>
       <span>{channelHealthLine(ch, nowMs)}</span>
-      {ch.unansweredCount > 0 && <span className={styles.waitingChip}>{ch.unansweredCount} unanswered</span>}
+      {ch.unansweredCount === null && <span className={styles.message}>request count unknown</span>}
+      {ch.unansweredCount !== null && ch.unansweredCount > 0 && <span className={styles.waitingChip}>{ch.unansweredCount} unanswered</span>}
       {coverage !== null && <span className={styles.message} style={{ flexBasis: '100%' }} data-testid={`channel-coverage-${ch.channel}`}>{coverage}</span>}
+      {coverage === null && <span className={styles.message}>request coverage unknown</span>}
     </li>; })}
     {clock !== null && <li className={styles.message}>as of {clock}</li>}
   </ul>;
