@@ -1,7 +1,7 @@
 /** Kept import-free so `phm node --help` and `bootstrap` never load the node store. */
 export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'withdraw', 'result', 'status', 'list', 'leave'] as const;
 
-export const NODE_FLEET_USAGE = `Usage: phm node join --node <id> --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
+export const NODE_FLEET_USAGE = `Usage: phm node join [--node <id>] --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--watch [--every <seconds>]] [--json]
        phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]
        phm node plan [--owner <scope>] [--json]
@@ -13,7 +13,8 @@ export const NODE_FLEET_USAGE = `Usage: phm node join --node <id> --owner <scope
        phm node list|status --owner <scope[,scope]> [--json]
        phm node leave --node <id> --session <n> [--json]
 
-Computers join Phantom as nodes. A job carries an owner scope and only nodes in that scope
+Computers join Phantom as nodes; a \`join\` that omits \`--node\` takes this machine's
+hostname (reduced to the id alphabet) as the node id. A job carries an owner scope and only nodes in that scope
 see or pull it. The router picks the least-loaded live node that advertises the job's caps
 (\`gh\` also needs a local gh-auth heartbeat). A per-job lease with a fencing token means no
 job runs twice: renew before it expires and pass the token to every effect. \`result\`

@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
+import { defaultNodeId } from '../src/core/drive/nodes/node-id.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
 import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
@@ -485,6 +489,105 @@ describe('standalone join version reporting', () => {
     const f = fixture();
     const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'build'], f.a);
     expect(joined['caps']).toEqual(['build']);
+  });
+});
+
+describe('join --node hostname default', () => {
+  function capture() {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    return { lines, last: () => JSON.parse(lines.at(-1)!) as Record<string, unknown> };
+  }
+  it('derives the node id from the hostname when --node is omitted', async () => {
+    const { last } = capture();
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--caps', 'build', '--json'],
+        { store, hostname: () => 'Studio Mac!.local', phmVersion: () => null });
+      expect(code).toBe(0);
+      const out = last();
+      expect(out).toMatchObject({ command: 'join', nodeId: 'Studio-Mac-.local', owners: ['acme'], caps: ['build'] });
+      expect(store.state.nodes.map(n => n.nodeId)).toEqual(['Studio-Mac-.local']);
+      // The keep-alive hint names the derived id, so beat works without re-typing it.
+      expect(out['next']).toBe(`phm node beat --node Studio-Mac-.local --session ${out['session']} --watch`);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('keeps an explicit --node over the hostname default', async () => {
+    const { last } = capture();
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, hostname: () => 'ignored-name', phmVersion: () => null });
+      expect(code).toBe(0);
+      expect(last()['nodeId']).toBe('laptop');
+      expect(store.state.nodes.map(n => n.nodeId)).toEqual(['laptop']);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('keeps --node required when the hostname yields no valid id', async () => {
+    const { last } = capture();
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--json'],
+        { store, hostname: () => '---', phmVersion: () => null });
+      expect(code).toBe(2);
+      expect(last()).toMatchObject({ command: 'join', error: { code: 'missing-flag' } });
+      expect(store.state.nodes).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('treats --node= as a supplied (invalid) value, never as omitted', async () => {
+    const { last } = capture();
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node=', '--owner', 'acme', '--json'],
+        { store, hostname: () => 'real-name', phmVersion: () => null });
+      expect(code).toBe(2);
+      expect(last()).toMatchObject({ command: 'join', error: { code: 'bad-node' } });
+      expect(store.state.nodes).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('joins a fresh ASHLR_HOME with only --owner, the documented first-run form', async () => {
+    const { last } = capture();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'node-join-home-')));
+    vi.stubEnv('ASHLR_HOME', home);
+    try {
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--json'], { hostname: () => 'fresh-node' });
+      expect(code).toBe(0);
+      const out = last();
+      expect(out['nodeId']).toBe('fresh-node');
+      expect(String(out['next'])).toContain('phm node beat --node fresh-node');
+      const state = JSON.parse(readFileSync(join(home, 'nodes', 'nodes.json'), 'utf8')) as { nodes: { nodeId: string; owners?: string[] }[] };
+      expect(state.nodes.map(n => n.nodeId)).toEqual(['fresh-node']);
+      expect(state.nodes[0]!.owners).toEqual(['acme']);
+    } finally { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); }
+  });
+  it('prints the derived id in the text join sentence', async () => {
+    const { lines } = capture();
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--owner', 'acme'],
+        { store, hostname: () => 'text-node', phmVersion: () => null });
+      expect(code).toBe(0);
+      expect(lines.at(-1)).toContain('Joined text-node as session');
+      expect(lines.at(-1)).toContain('phm node beat --node text-node');
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
+describe('defaultNodeId', () => {
+  it('reduces a hostname to the id alphabet', () => {
+    expect(defaultNodeId(() => 'Build Server 01')).toBe('Build-Server-01');
+    expect(defaultNodeId(() => 'münchen')).toBe('m-nchen');
+    expect(defaultNodeId(() => 'a'.repeat(150))).toBe('a'.repeat(100));
+  });
+  it('drops a leading run that would violate the id start rule', () => {
+    expect(defaultNodeId(() => '.hidden')).toBe('hidden');
+    expect(defaultNodeId(() => '--edge')).toBe('edge');
+    expect(defaultNodeId(() => '_under')).toBe('under');
+  });
+  it('answers null rather than inventing an id', () => {
+    expect(defaultNodeId(() => '')).toBeNull();
+    expect(defaultNodeId(() => '---')).toBeNull();
+    expect(defaultNodeId(() => '!!!')).toBeNull();
   });
 });
 

@@ -6,15 +6,18 @@ On the computer to add, install Node.js 22.15.0 or newer, then install Phantom:
 npm install -g @ashlr/phantom
 ```
 
-Join with a unique node ID and the owner scope used by the jobs you want to
-run. Choose capabilities for this computer's role (see below):
+Join with the owner scope used by the jobs you want to run; `--node` names this
+computer in the registry and defaults to its hostname, so it can be omitted.
+Choose capabilities for this computer's role (see below):
 
 ```sh
-phm node join --node laptop --owner acme --caps build,gh --json
+phm node join --owner acme --caps build,gh --json
 ```
 
-Replace `laptop` and `acme` with your own node ID and owner scope. Save the
-`session` number from the output; use that number in the commands below. The
+Replace `acme` with your owner scope. The output's `nodeId` is this computer's
+registry name — replace `laptop` with it in the commands below — and its
+`session` number is needed by `beat`, `pull` and `leave`; save both. Pass
+`--node <name>` on the join to pick a different name than the hostname. The
 output's `next` field prints the keep-alive `beat --watch` command — the only
 beat form that keeps this session live — and adds `--probe-auth` when `gh` was
 advertised, so GitHub jobs can actually route to this node once `gh auth login`

@@ -69,6 +69,10 @@ phm node result --job fix-123 --owner acme
 phm node status --owner acme
 ```
 
+On the standalone registry `join` may omit `--node`: the node id then defaults
+to this machine's hostname, reduced to the id alphabet — the same default pool
+enrollment applies. A configured pool keeps its own saved identity instead.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act),
 `completed` with the accepted `--result` text, executor and completion time, or

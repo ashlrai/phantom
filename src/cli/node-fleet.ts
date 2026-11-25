@@ -9,6 +9,8 @@ export interface NodeFleetDeps {
   probeAuth?: () => NodeAuth;
   /** This build's version for the join `phm-<version>` cap; defaults to localPhmVersion. */
   phmVersion?: () => string | null;
+  /** Hostname source for the join `--node` default; defaults to os.hostname. */
+  hostname?: () => string;
 }
 
 
@@ -126,9 +128,20 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
   const json = args.includes('--json');
   try {
     const flags = parseNodeFleetFlags(verb, args);
-    if (!deps.store) {
-      const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
-      if (hasNodePool()) return cmdNodePool(verb, args);
+    if (deps.store === undefined) {
+      const pool = await import('./node-pool.js');
+      if (pool.hasNodePool()) return pool.cmdNodePool(verb, args);
+    }
+    // A standalone `join` without --node derives the id from this machine's
+    // hostname — the same default pool enrollment applies — so the documented
+    // first-run command needs no invented id. A configured pool owns node
+    // identity itself (a repeat join must not see a foreign --node) and took
+    // the delegation above; the SSH endpoint never passes through here, so
+    // runNodeFleet stays pure.
+    if (verb === 'join' && !flags.has('--node')) {
+      const { defaultNodeId } = await import('../core/drive/nodes/node-id.js');
+      const id = defaultNodeId(deps.hostname);
+      if (id !== null) flags.set('--node', id);
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
     const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }, { localPhmVersion, versionCap, versionFromCaps }] = await Promise.all([
