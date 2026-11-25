@@ -78,13 +78,27 @@ The stdin/stdout protocols keep their own shapes: `run-once` replies and
 `rpc` requests, and `light`'s `muse.light.v1` report.
 Exit codes: 0 ok, 1 lease or session lost or store unavailable, 2 bad usage.
 
+`phm node beat --capacity '<json>'` carries one self-measured host sample —
+`{"hostId","ramBytes","slots","held","sampledAtMs"}` — which the router uses for
+slot-aware admission and host grouping. Do not hand-write it: `phm node measure`
+prints the exact object to paste (`--capacity "$(phm node measure)"`), measured
+on this machine under the same rules the pool worker applies, so manual and
+worker samples cannot drift apart. `held` is `null` or `memory-unmeasured`,
+`memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
+`"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
+`host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
+worker does, so the node reads unknown rather than wrongly ready.
+
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `lease-lost` error means stop work on
-that job and pull again.
+then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
+`pull` — means the node's heartbeat lapsed: rejoin and use the new session.
+`pull` answers `{"pulled":false}` only while the session is live, so "no job"
+never masks a dead session. A `lease-lost` error means stop work on that job
+and pull again.
 
 ## Version drift
 

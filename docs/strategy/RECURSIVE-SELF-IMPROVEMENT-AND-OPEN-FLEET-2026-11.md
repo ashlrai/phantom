@@ -285,9 +285,10 @@ reporting describe the boundary without publishing private operational data.
 
 **Available now, local only:** with Node 22.15+ installed, use
 [Add a computer in 60 seconds](../add-a-computer.md) to install Phantom and
-join/heartbeat/leave a temporary local scope. Use build-only caps, no GitHub
-login, a harmless public fixture and a scratch Phantom home. This verifies
-local registration; it doesn't join a community network or start a worker.
+join/heartbeat/enqueue/pull/complete/leave a temporary local scope. Use
+build-only caps, no GitHub login, a harmless public fixture and a scratch
+Phantom home. This verifies local registration and one fenced lease
+end to end; it doesn't join a community network or start a worker.
 
 **Pilot path after the broker ships:** from the published, version-pinned
 install guide, verify the package and coordinator, enroll a node key into a

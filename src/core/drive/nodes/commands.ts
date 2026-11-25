@@ -112,8 +112,14 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     }
     case 'plan': return { routes: nodes.plan(flags.get('--owner')) };
     case 'pull': {
-      const pulled = nodes.pull(session());
-      if (!pulled) return { pulled: false };
+      const s = session();
+      const pulled = nodes.pull(s);
+      if (!pulled) {
+        // A dead session and an empty route both answer null; only a live
+        // session may hear "no job" — a stale one must rejoin first.
+        if (!nodes.sessionLive(s)) throw stale;
+        return { pulled: false };
+      }
       const { claim, job } = pulled;
       return { pulled: true, job, claim: { jobId: claim.jobId, nodeId: claim.nodeId, session: claim.session,
         token: claim.token, leaderToken: claim.leaderToken, expiresAt: claim.expiresAt } };

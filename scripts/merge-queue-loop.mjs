@@ -13,6 +13,15 @@
 //     merge-latency` and the router's merge_queue outcome join read);
 //     --events picks another path, --no-events disables recording, and a
 //     dry run never writes.
+//     A cycle with event recording also runs the bounded merge-retry sweep
+//     (mergeRetrySweep below): the same `phm fleet merge-retry` pass, so a
+//     transient queue-attributed auto-merge drop is re-armed on the
+//     pipeline's own cadence instead of waiting for an operator. The
+//     command's own bounds apply (<=3 requests per run, <=3 retries per PR
+//     ever, live head/hold/conflict re-checks); a dry run previews without
+//     --apply, --no-events skips the sweep because the ledger dedupe is
+//     what makes the retry bound honest, and a sweep failure reports
+//     mergeRetry.ok=false without failing the cycle.
 //
 //   node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE_DIR ...
 //        [--ref REF] [--day YYYY-MM-DD] [--out PATH]
@@ -144,6 +153,87 @@ function makeGh(viaLocus) {
   };
 }
 
+/**
+ * CloudGh-shaped adapter for the merge-retry sweep's REST calls (`gh pr
+ * list|view|merge`): same binary, timeout and prompt-free env as makeGh, but
+ * resolves {ok, stdout, stderr} instead of a parsed graphql payload, and a
+ * failed call resolves ok:false rather than throwing — merge-retry records
+ * its own retry_failed event for a refused submission. --via-locus wraps it
+ * identically. Provider stderr is never surfaced.
+ */
+function makeGhRest(viaLocus) {
+  return async (args) => {
+    const [cmd, argv] = viaLocus ? ['locus', ['exec', '--', 'gh', ...args]] : ['gh', args];
+    try {
+      const stdout = execFileSync(cmd, argv, {
+        encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat', NO_COLOR: '1' },
+      });
+      return { ok: true, stdout, stderr: '' };
+    } catch (error) {
+      return { ok: false, stdout: typeof error?.stdout === 'string' ? error.stdout : '', stderr: '' };
+    }
+  };
+}
+
+/**
+ * One bounded merge-retry sweep over the merge-events ledger: invokes the
+ * same `phm fleet merge-retry` command the CLI exposes, so dropped
+ * auto-merges attributed to a transient queue failure are re-armed through
+ * ordinary head-pinned auto-merge on the pipeline's cadence — the merge
+ * queue's own enqueue path only re-arms PRs it classifies 'enqueue', while
+ * a queue-dropped PR can sit 'blocked' until a person runs the command.
+ * The command keeps every bound: at most MAX_REQUESTS_PER_RUN merge
+ * requests per sweep, MAX_QUEUE_RETRIES distinct retries per PR ever,
+ * live re-reads of state/holds/mergeability and the predicted-conflict
+ * skip; required checks, reviews and the merge queue stay enforced.
+ *
+ * `apply` false previews the plan without --apply (the command then makes
+ * no gh calls and records nothing). The sweep always targets `eventsPath`
+ * — the same ledger the cycle records to — because retry_requested /
+ * retry_failed rows are the dedupe that makes the per-PR bound honest; a
+ * cycle run with --no-events must not sweep at all (the caller skips it).
+ * Never throws: an unreadable ledger, a missing dist build or a failed
+ * invocation reports {ok:false, known:false} and the cycle continues.
+ * `run` is injectable for tests: (args, deps) => exit code, with the JSON
+ * report delivered through deps.output.
+ */
+export async function mergeRetrySweep({ gh, eventsPath, apply = true, now, run } = {}) {
+  const failed = { ok: false, known: false, dryRun: apply !== true, queue_wait: null, actions: {} };
+  if (typeof eventsPath !== 'string' || eventsPath === '') return failed;
+  const invoke = run ?? (async (args, deps) => {
+    const { cmdFleetMergeRetry } = await import('../dist/cli/fleet-merge-retry.js');
+    return cmdFleetMergeRetry(args, deps);
+  });
+  const args = ['--events', eventsPath, '--json', ...(apply === true ? ['--apply'] : [])];
+  let text = '';
+  try {
+    const code = await invoke(args, {
+      ...(gh === undefined ? {} : { gh }),
+      ...(now === undefined ? {} : { now }),
+      output: (chunk) => { text += chunk; },
+    });
+    const report = JSON.parse(text);
+    if (!report || typeof report !== 'object' || Array.isArray(report)) return failed;
+    const actions = {};
+    for (const row of Array.isArray(report.rows) ? report.rows : []) {
+      const action = typeof row?.action === 'string' && row.action ? row.action : 'unknown';
+      actions[action] = (actions[action] ?? 0) + 1;
+    }
+    return {
+      ok: code === 0 && report.ok === true,
+      known: report.known === true,
+      dryRun: report.dryRun === true,
+      queue_wait: report.queue_wait && typeof report.queue_wait === 'object' && !Array.isArray(report.queue_wait)
+        ? report.queue_wait : null,
+      actions,
+    };
+  } catch {
+    return failed;
+  }
+}
+
 const CHECKS = new Set(['SUCCESS', 'PENDING', 'EXPECTED', 'FAILURE', 'ERROR']);
 const MERGEABLE = new Set(['MERGEABLE', 'CONFLICTING']);
 
@@ -238,6 +328,18 @@ async function cycle(args) {
     log: (line) => console.error(line),
     now: () => Date.now(),
   }, { dryRun: flags['--dry-run'] === true });
+  // The cycle flushed this pass's sampled transitions before returning, so
+  // the sweep reads a ledger that already knows them. --no-events skips the
+  // sweep: without the ledger the retry bound cannot dedupe honestly.
+  if (eventsPath !== null) {
+    const retry = await mergeRetrySweep({
+      gh: makeGhRest(flags['--via-locus'] === true),
+      eventsPath,
+      apply: flags['--dry-run'] !== true,
+    });
+    summary.mergeRetry = retry;
+    console.error(`MERGEQ_RETRY ok=${retry.ok ? 1 : 0} known=${retry.known ? 1 : 0} dryRun=${retry.dryRun ? 1 : 0}`);
+  }
   console.log(JSON.stringify(summary));
   return summary.repoErrors > 0 || summary.failed > 0 ? 1 : 0;
 }

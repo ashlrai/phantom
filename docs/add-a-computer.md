@@ -38,11 +38,46 @@ phm node beat --node laptop --session 1 --probe-auth --json
 phm node status --owner acme --json
 ```
 
+To report measured capacity, generate the sample on this computer and pass it to
+each beat: `--capacity "$(phm node measure)"`. When `phm node measure` exits 1
+the node is held; omit `--capacity` on that beat. See the
+[node router guide](NODE-ROUTER.md).
+
 Check that `laptop` appears live with the intended caps and, for GitHub jobs,
 that its auth is `ok`. A join does not start a worker or recurring heartbeat.
 Repeat the heartbeat comfortably within 30 seconds to keep the session live;
-if it expires, join again and use the new session number. Omit `--probe-auth`
-if this node does not need GitHub authentication.
+if it expires, join again and use the new session number — `beat` and `pull`
+both answer `session-expired` once it lapses. Omit `--probe-auth` if this node
+does not need GitHub authentication.
+
+## Run one job
+
+Registration only proves the node exists. To watch the router hand work to
+it, enqueue a harmless job and pull it. Jobs and nodes live in this
+computer's private router state, so the smoke job is visible only to nodes
+joined here:
+
+```sh
+phm node enqueue --job smoke-1 --owner acme --json
+phm node plan --owner acme
+phm node pull --node laptop --session 1 --json
+```
+
+`plan` prints `smoke-1 -> laptop` while the node is live and eligible. `pull`
+returns the job and a `claim` carrying `token` and `leaderToken`; copy both
+into `complete` (and `renew`, for real work — the lease lives 30 seconds, so
+renew before it lapses or the job can be pulled again):
+
+```sh
+phm node complete --job smoke-1 --node laptop --session 1 --token <token> --leader-token <leader-token> --result done --json
+phm node status --owner acme --json
+```
+
+`status` then reports `smoke-1` as `completed`. A job can require
+capabilities (`--requires gh` also needs a `--probe-auth` heartbeat reporting
+`ok`) and carries secret names, never values; a job no live node can take
+stays pending and `plan` prints the fix. See the
+[node router guide](NODE-ROUTER.md) for routing, leases and fencing.
 
 ## Leave
 
