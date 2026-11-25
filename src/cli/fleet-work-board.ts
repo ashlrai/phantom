@@ -5,18 +5,31 @@
  * no writes, no network; labels and tokens grant no authority. */
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
-import { listWorkBoard } from '../core/comms/work-board.js';
+import { listWorkBoard, type WorkBoardItem } from '../core/comms/work-board.js';
+import { scrubSecrets } from '../core/util/scrub.js';
 import { WORK_ITEM_STATES, type WorkItemState } from '../core/comms/work-item-state.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
 const usage = 'Usage: ashlr fleet work-board [--root <absolute>] [--thread <channel_ref>] [--state <RECEIVED|ASSIGNED|RUNNING|BLOCKED|VERIFIED>] [--since <15m|2h|1d|epoch-ms|ISO>] [--before <15m|2h|1d|epoch-ms|ISO>] [--limit <1..100>] [--json]\n'
   + 'Prints one line per request: ID STATE as-of=... source=... owner-missing=... owner=... claim=... channel=... ref=...,\n'
+  + 'BLOCKED and VERIFIED rows append their available dependency or proof fields.\n'
   + 'then a footer: items=N truncated=yes|no inbox=ok|unavailable as-of=<now>, plus claims=missing|unavailable\n'
   + 'when the claims table is absent or unreadable (a validated table, even an empty one, prints no claims token).\n'
   + '--state keeps only items the shared classifier placed in that state; --since/--before keep only requests whose\n'
   + 'recorded receivedAt falls inside the [since, before) window — since inclusive, before exclusive, the same bound\n'
   + 'every bus read applies. The footer then also prints state=<S> and matched=<n>, the true filtered total across\n'
   + 'the whole settled scan, so items may be a newest-first slice of it. Read-only.';
+
+function resultText(item: WorkBoardItem): string {
+  const result = item.result;
+  if (!result) return '';
+  // eslint-disable-next-line no-control-regex
+  const clean = (value: string) => scrubSecrets(value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
+  if (item.state === 'BLOCKED' && result.kind === 'blocked') return ` dependency=${clean(result.dependency)}`;
+  if (item.state !== 'VERIFIED' || result.kind !== 'verified') return '';
+  return [result.pr === null ? '' : ` pr=${result.pr}`,
+    ...(['head', 'tests', 'artifact'] as const).map(key => result[key] === null ? '' : ` ${key}=${clean(result[key])}`)].join('');
+}
 
 /** The shared `15m|2h|1d|epoch-ms|ISO` grammar every bus read's time flag
  * takes, resolved to a non-negative safe epoch-ms bound or null. */
@@ -63,7 +76,7 @@ export async function cmdFleetWorkBoard(args: string[]): Promise<number> {
     console.log(`${item.id} ${item.state} as-of=${item.asOf} source=${item.source} `
       + `owner-missing=${item.missing.includes('named owner') ? 'yes' : 'no'} `
       + `owner=${item.owner ?? 'unknown'} claim=${item.claimReceipt ?? 'unknown'} `
-      + `channel=${item.channel} ref=${item.channelRef ?? 'none'}`);
+      + `channel=${item.channel} ref=${item.channelRef ?? 'none'}` + resultText(item));
   }
   // The claims table state rides the footer only when it is not the nominal
   // readable state, so a missing or unreadable table can never pass as
