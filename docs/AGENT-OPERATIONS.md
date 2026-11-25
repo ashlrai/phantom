@@ -410,7 +410,10 @@ keeps one P0..P3 band, `--job` keeps envelopes whose body cites that job,
 bound the store acceptance time as one `[since, before)` window, `--contains`
 keeps envelopes whose scrubbed one-line summary carries the needle, and
 `--in-reply-to`/`--thread` keep bodies citing that envelope id or carrying
-that conversation label. `hasMore` reports truncation of the filtered set.
+that conversation label. `--result` keeps only `work.result` bodies
+reporting that outcome — the same `WORK_RESULT_OUTCOMES` vocabulary the
+work feed's `--result` filter validates. `hasMore` reports truncation of
+the filtered set.
 
 State lives under `$ASHLR_HOME/bus-mailbox`, default `~/.ashlr/bus-mailbox`,
 separate from the task board's `$ASHLR_HOME/bus`. Reads create nothing; corrupt,
