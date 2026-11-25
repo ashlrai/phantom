@@ -115,6 +115,7 @@ export function bindSlackReplies(input: {
   // top-level) or multiple send keys proves no answer. Attempts never establish or override sent evidence.
   const physical = new Map<string, { channel: string; thread?: string; ts: string; conflicted: boolean; keys: Set<string> }>();
   const attemptedKeys = new Set<string>();
+  const malformedKeys = new Set<string>();
   for (const row of receipts) {
     // Attempted receipts legitimately have no ts, but malformed evidence is still rejected.
     if (!record(row) || (row.state !== 'attempted' && row.state !== 'sent') || !isSlackChannelId(row.channel) ||
@@ -122,10 +123,12 @@ export function bindSlackReplies(input: {
         (row.thread !== undefined && !isSlackTs(row.thread)) ||
         (row.key !== undefined && !isSlackSendStoreKey(row.key))) {
       result.rejected++;
+      if (record(row) && isSlackSendStoreKey(row.key)) malformedKeys.add(row.key);
     } else if (row.state === 'attempted') {
       if (typeof row.key === 'string') attemptedKeys.add(row.key);
     } else if (!isSlackTs(row.ts)) {
       result.rejected++;
+      if (typeof row.key === 'string') malformedKeys.add(row.key);
     } else if (cutoffMs < 0 || compareTs(row.ts, cutoff) > 0) {
       result.futureDated++;
     } else if (typeof row.key === 'string') {
@@ -175,7 +178,9 @@ export function bindSlackReplies(input: {
     const sent = sentByKey.get(key);
     let verdict: Exclude<SlackReplyVerdict, 'unverified'> = 'unanswered';
     let replyTs: string | undefined;
-    if (sent !== undefined) {
+    if (malformedKeys.has(key)) {
+      verdict = 'uncertain';
+    } else if (sent !== undefined) {
       // Exactly one consistent physical message in this request's own thread,
       // after the request message on the same Slack clock.
       const ok = sent.length === 1 && !sent[0]!.conflicted && sent[0]!.keys.size === 1 && sent[0]!.channel === request.channelId &&
