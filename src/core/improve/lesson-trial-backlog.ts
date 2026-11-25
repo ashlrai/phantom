@@ -71,7 +71,8 @@ import { CLOUD_REPO_PATTERN, listCloudTasks } from '../cloud/store.js';
 import type { CloudBacklogItem } from '../cloud/types.js';
 import { readKnowledge } from '../learn/retro/store.js';
 import type { KnowledgeNoteV1 } from '../learn/retro/types.js';
-import { lessonTrial, type LessonEffect, type LessonTrialReport } from './lesson-trial.js';
+import { pairRepeatedVerifiedFailures, readBestOfNRecordsDetailed, type BestOfNRecord, type RepeatedFailureClass } from '../fleet/best-of-n-ledger.js';
+import { lessonHoldoutFraction, lessonTrial, type LessonEffect, type LessonTrialReport } from './lesson-trial.js';
 import { revertedPrKeys } from './reverted.js';
 import { scrubSecrets } from '../util/scrub.js';
 
@@ -103,6 +104,16 @@ export interface LessonTrialItemsOptions {
    * when set. Used only to gate per-note rows to still-approved notes.
    */
   notes?: readonly KnowledgeNoteV1[];
+  /** Injected best-of-N records (tests) for proposal-only repeated-failure lessons. */
+  bestOfNRecords?: readonly BestOfNRecord[];
+}
+
+export interface FailureLessonItemsOptions {
+  repo: string;
+  records?: readonly BestOfNRecord[];
+  minOccurrences?: number;
+  limit?: number;
+  holdout?: number;
 }
 
 /** The repository name both vocabularies record: the last path segment, lowercased. */
@@ -254,8 +265,45 @@ export async function lessonTrialBacklogItems(opts: LessonTrialItemsOptions): Pr
         || a.effect.scope.localeCompare(b.effect.scope);
     });
     const limit = Math.max(1, Math.min(opts.limit ?? LESSON_TRIAL_MAX_ITEMS, LESSON_TRIAL_ITEM_HARD_MAX));
-    return candidates.slice(0, limit).map((c) =>
+    const trialItems = candidates.slice(0, limit).map((c) =>
       c.note !== undefined ? noteItem(c.effect, c.note, repo) : overallItem(c.effect, trial.excluded, repo));
+    const remaining = limit - trialItems.length;
+    return remaining <= 0 ? trialItems : [
+      ...trialItems,
+      ...failureLessonBacklogItems({ repo, records: opts.bestOfNRecords, limit: Math.min(1, remaining), holdout: trial.holdout }),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function failureLessonItem(group: RepeatedFailureClass, repo: string, holdout: number): CloudBacklogItem {
+  const cls = fieldText(group.failureClass, 80);
+  const examples = group.pairs.slice(0, 3).map((p) =>
+    `${fieldText(p.workItemId, 48)}: failed(${fieldText(p.failedEngine, 24)}/${fieldText(p.failedModel ?? 'unknown', 32)}, "${fieldText(p.failureSummary, 64)}") -> verified(${fieldText(p.verifiedEngine, 24)}/${fieldText(p.verifiedModel ?? 'unknown', 32)}, proposal ${fieldText(p.verifiedProposalId, 48)})`).join('; ');
+  return {
+    id: `lesson-failure-${createHash('sha256').update(`lesson-failure:${group.failureClass}`).digest('hex').slice(0, 16)}`,
+    title: `Propose lesson for repeated failure '${cls}' (${group.pairs.length} verified pairs)`.slice(0, MAX_TITLE_CHARS),
+    prompt: `Proposal-only lesson candidate (unserved until owner review) from ${group.pairs.length} paired best-of-N tasks sharing repeated failure class '${cls}'.\n\nPaired scrubbed evidence (metadata only, no raw traces): ${examples}.\n\nDraft one bounded, reviewable lesson note for owner approval; leave it unserved until approved, then measure under the current ${Math.round(holdout * 100)}% randomized holdout (src/core/improve/lesson-trial.ts) on fresh tasks. Track human rescue/retry touches per 100 tasks of this class alongside served vs holdout accepted outcomes and cost. ${NO_CHANGE}`,
+    area: 'lesson-trial',
+    priority: 3,
+    ...(CLOUD_REPO_PATTERN.test(repo) ? { repo } : {}),
+  };
+}
+
+/** Proposal-only backlog items from repeated verified failure->success pairs; quiet if either artifact is missing or ledger degraded. */
+export function failureLessonBacklogItems(opts: FailureLessonItemsOptions): CloudBacklogItem[] {
+  try {
+    const repo = opts.repo.trim();
+    if (repo === '' || fleetRepoName(repo) !== FLEET_REPO_NAME) return [];
+    const records = opts.records ?? (() => {
+      const read = readBestOfNRecordsDetailed({ inspectionOnly: true });
+      return read.complete ? read.records : [];
+    })();
+    const groups = pairRepeatedVerifiedFailures(records, opts.minOccurrences ?? 2);
+    if (groups.length === 0) return [];
+    const limit = Math.max(1, Math.min(opts.limit ?? 1, LESSON_TRIAL_MAX_ITEMS));
+    return groups.slice(0, limit).map((g) => failureLessonItem(g, repo, opts.holdout ?? lessonHoldoutFraction()));
   } catch {
     return [];
   }

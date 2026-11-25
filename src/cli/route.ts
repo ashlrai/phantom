@@ -1,6 +1,6 @@
 import { explainRoutes } from '../core/queue/route-explain.js';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { open, constants } from 'node:fs/promises';
 
 async function routeInput(file: string, limit = 32 * 1024): Promise<unknown> {
@@ -95,13 +95,68 @@ export async function cmdRoute(args: string[]): Promise<number> {
   if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
+  if (args[0] === 'shadow') return routeShadow(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json | phm route shadow eval --input <file|-> [--policy <name>] [--root <directory>] [--record] --json | phm route shadow report [--policy <name>] [--root <directory>] --json');
     return 2;
   }
   const report = await explainRoutes();
   console.log(args.includes('--json') ? JSON.stringify(report) : JSON.stringify(report, null, 2));
   return 0;
+}
+
+const SHADOW_USAGE = 'Usage: phm route shadow eval --input <file|-> [--policy <name>] [--root <directory>] [--record] --json | phm route shadow report [--policy <name>] [--root <directory>] --json';
+
+async function routeShadow(args: string[]): Promise<number> {
+  const mode = args[0];
+  if (mode !== 'eval' && mode !== 'report') { console.error(JSON.stringify({ error: SHADOW_USAGE })); return 2; }
+  const allowed = mode === 'eval' ? ['--input', '--policy', '--root', '--record', '--json'] : ['--policy', '--root', '--json'];
+  const values = new Map<string, string>();
+  const seen = new Set<string>();
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (seen.has(arg) || !allowed.includes(arg)) { console.error(JSON.stringify({ error: SHADOW_USAGE })); return 2; }
+    seen.add(arg);
+    if (arg === '--record' || arg === '--json') continue;
+    const value = args[++i];
+    if (!value || value.startsWith('--')) { console.error(JSON.stringify({ error: 'Missing route shadow argument' })); return 2; }
+    values.set(arg, value);
+  }
+  if (!seen.has('--json') || (mode === 'eval' && !values.has('--input'))) { console.error(JSON.stringify({ error: SHADOW_USAGE })); return 2; }
+  const root = resolve(values.get('--root') ?? process.env.ASHLR_RUNS_DIR ?? join(homedir(), '.ashlr-runs'));
+  try {
+    const { buildShadowPolicyReport, evaluateShadowPolicy, isShadowPolicyName, recordShadowPolicyDecision } = await import('../core/router/shadow-policy.js');
+    const rawPolicy = values.get('--policy');
+    if (rawPolicy !== undefined && !isShadowPolicyName(rawPolicy)) { console.error(JSON.stringify({ error: 'Unknown shadow policy' })); return 2; }
+    const policy = rawPolicy && isShadowPolicyName(rawPolicy) ? rawPolicy : undefined;
+    if (mode === 'report') {
+      console.log(JSON.stringify(await buildShadowPolicyReport({ runsDir: root, ...(policy ? { policy } : {}) })));
+      return 0;
+    }
+    const { routeRequestSchema } = await import('../core/routing/decision-schema.js');
+    const request = routeRequestSchema.safeParse(await routeInput(values.get('--input')!));
+    if (!request.success) { console.error(JSON.stringify({ error: 'Invalid route request' })); return 2; }
+    const [{ loadRouteSources }, { decideRoute }, { withRunwayYield }, { readRouterOutcomes }, { readControllerQuality }] = await Promise.all([
+      import('../core/routing/decision-candidates.js'),
+      import('../core/routing/decision.js'),
+      import('../core/queue/route-yield.js'),
+      import('../core/router/outcomes.js'),
+      import('../core/router/controller-quality.js'),
+    ]);
+    const sources = await withRunwayYield(root, await loadRouteSources(root));
+    const live = await decideRoute(request.data, sources);
+    if (!('lane' in live)) {
+      console.log(JSON.stringify({ schema: 'route.shadow-eval.v1', advisory: true, dispatched: false, recorded: false, live, shadow: null }));
+      return 0;
+    }
+    const [outcomesRead, qualityRead] = await Promise.all([readRouterOutcomes({ runsDir: root }), readControllerQuality({ runsDir: root })]);
+    const shadow = evaluateShadowPolicy(request.data, sources, live, outcomesRead.outcomes, { ...(policy ? { policy } : {}), qualityReceipts: qualityRead.receipts });
+    if (seen.has('--record')) await recordShadowPolicyDecision(root, shadow);
+    console.log(JSON.stringify({ schema: 'route.shadow-eval.v1', advisory: true, dispatched: false, recorded: seen.has('--record'), live, shadow }));
+    return 0;
+  } catch {
+    console.error(JSON.stringify({ error: 'Route shadow input or ledger unavailable' })); return 1;
+  }
 }
 
 async function routeFailover(args: string[]): Promise<number> {
