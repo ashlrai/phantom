@@ -25,6 +25,18 @@ function jobStateWords(job: { state: string; claimedBy?: string; completedBy?: s
 }
 
 function text(verb: string, out: Record<string, unknown>): string {
+  if (verb === 'join') {
+    // Join is the first command every new node runs; its text answer is a
+    // sentence, not the key:value dump, and it states the 30-second session
+    // expiry the keep-alive exists to beat (docs/add-a-computer.md).
+    const owners = out['owners'] as string[];
+    const caps = out['caps'] as string[];
+    return [
+      `Joined ${String(out['nodeId'])} as session ${String(out['session'])} for ${owners.length === 1 ? 'owner' : 'owners'} ${owners.join(', ')} (caps: ${caps.join(', ') || 'none'}).`,
+      'The session expires 30 seconds after the last beat. Keep it live:',
+      `  ${String(out['next'])}`,
+    ].join('\n');
+  }
   if (verb === 'plan') {
     const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
     return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
