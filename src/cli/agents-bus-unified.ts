@@ -18,6 +18,8 @@ import { COORDINATION_ORIGINS, type CoordinationOrigin } from '../core/agents/cl
 import { formatBusWorkMine } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
 import { readUnifiedBusStatus } from '../core/agents/bus-status.js';
+import { readAgentBusThread } from '../core/agents/bus-thread.js';
+import type { BusThreadResult } from '../core/fleet/bus-thread-context.js';
 import { claimNextBusWork, type BusNextResult } from '../core/fleet/bus-next-claim.js';
 import { mutateBusWorkClaim, type BusClaimRequest, type BusClaimResult as BusMessageClaimResult } from '../core/fleet/bus-work-claims.js';
 import { scrubSecrets } from '../core/util/scrub.js';
@@ -25,7 +27,7 @@ import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js'
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { seatParticipants } from '../core/bots/seats.js';
 
-export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'adapters', 'claim', 'work', 'status']);
+export const AGENTS_BUS_UNIFIED_VERBS = new Set(['id', 'dm', 'post', 'channel', 'handoff', 'wake', 'inbox', 'wakes', 'show', 'thread', 'adapters', 'claim', 'work', 'status']);
 
 export const AGENTS_BUS_UNIFIED_HELP = `ashlr agents bus id register [<handle>] [--cli <cli>] [--provider <p>] [--model <m>] [--alias <label>]... [--display <name>]
 ashlr agents bus id list
@@ -42,6 +44,7 @@ ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
 ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus show <id>
+ashlr agents bus thread <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
 ashlr agents bus claim renew --key <claimKey> --token <64hex> --lease-ms <1..3600000>
@@ -251,6 +254,19 @@ read. A claim-holder wh-… hint id resolves through the wake
 queue to the live terminal work.status receipt that cites it, returned
 with its wakeHint citation; a hint no live receipt reproduces reports
 not-found.
+thread
+reads the reply chain rooted at one retained envelope id — the same
+readBusThread projection fleet bus-thread and fleet_bus_thread serve,
+always with the live evidence show, inbox and channel read annotate —
+so the exchange around an id, kindless {inReplyTo, text} replies
+included, is one read on this surface instead of a drop to the fleet
+command family. It is a chain read, not the --thread conversation
+label the sends stamp and the inbox filters match. The result lists
+the root receipt plus every live envelope whose own inReplyTo field
+transitively cites it, in cursor order, with rootFound/complete/
+sourceFailure keeping a proven miss distinct from an unreadable walk;
+a wh-… claim-holder hint id is not an envelope id and reports
+not-found rather than resolving through show's wake-hint path.
 A terminal work status also queues a routing-only wake hint for each live claim
 holder on the job's keys; --no-wake opts out. Holder labels need not be
 registered identities, so wakes (and the work mine wakes section) keep
@@ -639,6 +655,27 @@ function showJobLine(job: BusEnvelopeLookupJob): string {
   return `  job ${job.jobId} feed=${job.feed}`;
 }
 
+/**
+ * `thread` human lines: one verdict header — the message count, `not-found`
+ * or `incomplete` with the walk's own failure — then each retained receipt
+ * in cursor order under the same per-envelope block `show` prints, so the
+ * chain reads exactly like the single-envelope lookup repeated.
+ */
+function threadHuman(thread: BusThreadResult, id: string): string[] {
+  const verdict = !thread.complete ? 'incomplete' : thread.rootFound ? `${thread.messages.length} message(s)` : 'not-found';
+  const lines = [`thread ${id}: ${verdict}; scanned through ${thread.scannedThrough}` +
+    (thread.sourceFailure === null ? '' : ` sourceFailure=${thread.sourceFailure}`)];
+  for (const m of thread.messages) {
+    const envelope = m.envelope;
+    lines.push(`${m.cursor} ${envelope.priority} ${envelope.id} from ${m.fromAgent ?? envelope.from} -> ${envelope.to}`,
+      `  ${busBodyFallbackSummary(envelope.body)}`,
+      ...(m.held === undefined ? [] : [`  held=${m.held === null ? 'unknown' : m.held ? 'yes' : 'no'}` +
+        (m.holder ? ` holder=${m.holder}` : '')]),
+      ...(m.job === undefined ? [] : [showJobLine(m.job)]));
+  }
+  return lines;
+}
+
 export async function runAgentsBusUnified(argv: string[], out: (text: string) => void, err: (text: string) => void,
   env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const json = argv.includes('--json');
@@ -964,6 +1001,15 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         ...(result.job === undefined ? [] : [showJobLine(result.job)]),
       ].join('\n'));
       return 0;
+    }
+    if (verb === 'thread') {
+      noExtra(2);
+      if (sub === undefined) throw new UsageError('A message id is required.');
+      const result = readAgentBusThread(sub, options);
+      if (result.status !== 'ok') return finish(result, '');
+      const thread = result.thread;
+      out(json ? JSON.stringify(thread) : threadHuman(thread, sub).join('\n'));
+      return thread.complete && thread.rootFound ? 0 : 1;
     }
     if (verb === 'wakes') {
       noExtra(2);

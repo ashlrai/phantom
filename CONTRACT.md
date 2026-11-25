@@ -4126,6 +4126,18 @@ reports its own real state, a failed probe degrades only its own section, and
 the read never throws, writes or takes a lock; unknown stays null, never zero.
 See [Unified bus](docs/AGENT-BUS.md#unified-bus-identities-dms-channels-handoffs-and-wake).
 
+`src/core/agents/bus-thread.ts`: `readAgentBusThread(id, options?)` returns
+`{ status: 'invalid'; reason }` for a non-printable id before any store read,
+or `{ status: 'ok'; thread }` carrying the `fleet.bus-thread.v1` result
+`readBusThread` produces with `liveEvidence` always on — the root receipt plus
+every live envelope whose own `inReplyTo` field transitively cites it, in
+cursor order, each row annotated with the same `held`/`holder`/`job`/
+`fromAgent` evidence `readAgentInbox`, `readAgentChannel` and
+`readBusEnvelopeById` report, and `rootFound`/`complete`/`sourceFailure`
+keeping a proven miss distinct from an unreadable walk. It backs
+`phm agents bus thread <id>`; a `wh-…` claim-holder hint id is not an envelope
+id and reports `rootFound: false`, never `show`'s wake-hint resolution.
+
 `fleet.specialist-identity.v1` adds a read-only identity/outcome projection over
 specialist roster metadata, orchestration assignments and real jobs.jsonl rows.
 Optional role, capabilities, machine/lane affinity and peer mappings persist in

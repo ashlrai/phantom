@@ -396,6 +396,57 @@ describe('phm agents bus (unified)', () => {
     expect(text.join('\n')).toContain('find me');
   });
 
+  it('reads the reply chain rooted at one envelope id', async () => {
+    expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'root question', '--id', 'th-1'])).json)
+      .toMatchObject({ status: 'posted' });
+    // A classified reply and a kindless {inReplyTo, text} reply both join the chain.
+    expect((await run(['dm', '--from', 'nova', '--to', 'atlas', '--text', 'classified answer',
+      '--reply-to', 'th-1', '--id', 'th-2'])).json).toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'th-3', from: 'agent:atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'th-2', text: 'kindless follow-up' } }, { root }).status).toBe('posted');
+    // A sibling chain and an unrelated row stay out of th-1's descendants.
+    expect((await run(['dm', '--from', 'atlas', '--to', 'nova', '--text', 'other', '--id', 'th-x'])).json)
+      .toMatchObject({ status: 'posted' });
+    expect(appendBusInbox({ id: 'th-y', from: 'agent:nova', to: 'agent:atlas', priority: 'P3', ttl: 60_000,
+      body: { inReplyTo: 'th-x', text: 'other reply' } }, { root }).status).toBe('posted');
+
+    const thread = await run(['thread', 'th-1']);
+    expect(thread.code).toBe(0);
+    expect(thread.json).toMatchObject({ schema: 'fleet.bus-thread.v1', requestedId: 'th-1',
+      rootFound: true, complete: true, sourceFailure: null });
+    expect(thread.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['th-1', 'th-2', 'th-3']);
+    // Live evidence decorates every row: resolved senders; note and kindless
+    // bodies carry no hold or job citation, so those fields stay absent.
+    expect(thread.json.messages.map((m: { fromAgent: string | null }) => m.fromAgent)).toEqual(['atlas', 'nova', 'atlas']);
+    for (const m of thread.json.messages) {
+      expect(m).not.toHaveProperty('held');
+      expect(m).not.toHaveProperty('job');
+    }
+    // Reading th-2 roots the sub-chain — th-1 is its parent, never a member.
+    const sub = await run(['thread', 'th-2']);
+    expect(sub.json.messages.map((m: { envelope: { id: string } }) => m.envelope.id)).toEqual(['th-2', 'th-3']);
+
+    // Honest misses: a never-posted id, a wh-… hint id (not an envelope id —
+    // hint resolution stays show's alone) and a malformed id.
+    const missing = await run(['thread', 'th-404']);
+    expect(missing.code).toBe(1);
+    expect(missing.json).toMatchObject({ rootFound: false, complete: true, messages: [] });
+    expect(await run(['thread', `wh-${'0'.repeat(32)}`])).toMatchObject({ code: 1, json: { rootFound: false } });
+    expect(await run(['thread', 'bad id'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+    expect(await run(['thread'])).toMatchObject({ code: 2 });
+    expect(await run(['thread', 'th-1', 'extra'])).toMatchObject({ code: 2 });
+
+    // Human output prints the verdict header then each receipt like show.
+    const text: string[] = [];
+    expect(await runAgentsBusUnified(['thread', 'th-1', '--root', root], t => text.push(t), () => {}, {})).toBe(0);
+    const human = text.join('\n');
+    expect(human).toContain('thread th-1: 3 message(s)');
+    expect(human).toContain('th-3');
+    expect(human).toContain('kindless follow-up');
+  });
+
   it('annotates work envelope lookups with the live feed job', async () => {
     expect((await run(['id', 'register', 'atlas', '--cli', 'claude'])).json).toMatchObject({ status: 'created' });
     expect((await run(['work', 'post', '--job', 'RQ-CLI-SHOW', '--title', 'CLI job', '--repo', 'ashlrai/phantom',
