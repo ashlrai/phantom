@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import {
   foldLiveConfigAuditRows,
@@ -285,21 +285,27 @@ describe('liveConfigBacklogItems', () => {
   });
 
   it('appends live-config items through discovery and dedupes on refresh', async () => {
-    process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
-    writeJournal(churnRows());
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const live = first.items.filter((i) => i.id.startsWith('live-config-'));
-    expect(live).toHaveLength(1);
-    expect(live[0]!.id).toMatch(/^live-config-churn-/);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(live)).toBe(live.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('live-config-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('live-config-'))).toHaveLength(live.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
+      writeJournal(churnRows());
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const live = first.items.filter((i) => i.id.startsWith('live-config-'));
+      expect(live).toHaveLength(1);
+      expect(live[0]!.id).toMatch(/^live-config-churn-/);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(live)).toBe(live.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('live-config-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('live-config-'))).toHaveLength(live.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

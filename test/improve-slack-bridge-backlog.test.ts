@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SLACK_BRIDGE_MIN_DAYS,
   SLACK_BRIDGE_MIN_EVENTS,
@@ -403,24 +403,30 @@ describe('slackBridgeBacklogItems', () => {
 
 describe('discoverBacklog integration', () => {
   it('surfaces journal cells through discovery and dedupes on refresh', async () => {
-    // discoverBacklog calls the feed with no path overrides, so the feed
-    // resolves <home>/.ashlr-runs — HOME is this test's temp dir.
-    writeJournal(recurring('bus'));
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') {
-        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      }
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const landed = first.items.filter((i) => i.id.startsWith('slack-bridge-'));
-    expect(landed).toHaveLength(1);
-    expect(landed[0]!.area).toBe('slack-bridge-bus-failed');
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(landed)).toBe(landed.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('slack-bridge-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('slack-bridge-'))).toHaveLength(landed.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      // discoverBacklog calls the feed with no path overrides, so the feed
+      // resolves <home>/.ashlr-runs — HOME is this test's temp dir.
+      writeJournal(recurring('bus'));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') {
+          return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        }
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const landed = first.items.filter((i) => i.id.startsWith('slack-bridge-'));
+      expect(landed).toHaveLength(1);
+      expect(landed[0]!.area).toBe('slack-bridge-bus-failed');
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(landed)).toBe(landed.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('slack-bridge-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('slack-bridge-'))).toHaveLength(landed.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import { ciRerunBacklogItems } from '../src/core/improve/ci-rerun-backlog.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -279,24 +279,30 @@ describe('ciRerunBacklogItems', () => {
   });
 
   it('appends ci-rerun items through discovery and dedupes on refresh', async () => {
-    process.env.ASHLR_HOME = path.join(home, '.ashlr-e2e');
-    process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
-    const dir = path.join(home, '.ashlr-e2e', 'ci-reruns');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'journal.jsonl'), journal(failingVerdicts()));
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const rerun = first.items.filter((i) => i.id.startsWith('ci-rerun-'));
-    expect(rerun).toHaveLength(1);
-    expect(rerun[0]!.id).toMatch(/^ci-rerun-verdict-/);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(rerun)).toBe(rerun.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('ci-rerun-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('ci-rerun-'))).toHaveLength(rerun.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      process.env.ASHLR_HOME = path.join(home, '.ashlr-e2e');
+      process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
+      const dir = path.join(home, '.ashlr-e2e', 'ci-reruns');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'journal.jsonl'), journal(failingVerdicts()));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const rerun = first.items.filter((i) => i.id.startsWith('ci-rerun-'));
+      expect(rerun).toHaveLength(1);
+      expect(rerun[0]!.id).toMatch(/^ci-rerun-verdict-/);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(rerun)).toBe(rerun.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('ci-rerun-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('ci-rerun-'))).toHaveLength(rerun.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

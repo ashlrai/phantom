@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import { branchGardenerBacklogItems } from '../src/core/improve/branch-gardener-backlog.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -294,23 +294,29 @@ describe('branchGardenerBacklogItems', () => {
   });
 
   it('appends branch-gardener items through discovery and dedupes on refresh', async () => {
-    process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
-    const dir = path.join(home, 'runs', 'metrics');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'branch-gardener.jsonl'), journal(strandedRows()));
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const gardener = first.items.filter((i) => i.id.startsWith('branch-gardener-'));
-    expect(gardener).toHaveLength(1);
-    expect(gardener[0]!.id).toMatch(/^branch-gardener-stranded-/);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(gardener)).toBe(gardener.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('branch-gardener-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('branch-gardener-'))).toHaveLength(gardener.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      process.env.ASHLR_RUNS_DIR = path.join(home, 'runs');
+      const dir = path.join(home, 'runs', 'metrics');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'branch-gardener.jsonl'), journal(strandedRows()));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const gardener = first.items.filter((i) => i.id.startsWith('branch-gardener-'));
+      expect(gardener).toHaveLength(1);
+      expect(gardener[0]!.id).toMatch(/^branch-gardener-stranded-/);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(gardener)).toBe(gardener.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('branch-gardener-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('branch-gardener-'))).toHaveLength(gardener.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

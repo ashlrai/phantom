@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   EFFICIENCY_MIN_ROWS,
   EFFICIENCY_WINDOW_HOURS,
@@ -250,21 +250,27 @@ describe('efficiencyBacklogItems', () => {
   });
 
   it('appends efficiency items through discovery and dedupes on refresh', async () => {
-    const runs = join(home, '.ashlr-runs');
-    await mkdir(join(runs, 'ledger'), { recursive: true });
-    await writeFile(join(runs, JOURNAL), jsonl(recurringRows([TEST_FULL])).join('\n') + '\n');
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const effItems = first.items.filter((i) => i.id.startsWith('efficiency-'));
-    expect(effItems.map((i) => i.id)).toEqual(['efficiency-test-full']);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(effItems)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('efficiency-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('efficiency-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW_MS);
+    try {
+      const runs = join(home, '.ashlr-runs');
+      await mkdir(join(runs, 'ledger'), { recursive: true });
+      await writeFile(join(runs, JOURNAL), jsonl(recurringRows([TEST_FULL])).join('\n') + '\n');
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const effItems = first.items.filter((i) => i.id.startsWith('efficiency-'));
+      expect(effItems.map((i) => i.id)).toEqual(['efficiency-test-full']);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(effItems)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('efficiency-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('efficiency-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
