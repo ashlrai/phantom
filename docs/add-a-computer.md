@@ -72,6 +72,44 @@ the node already rejoined under a newer session, the fix names that session and
 the exact `leave` command instead, so you can resume without hunting for the
 number. Omit `--probe-auth` if this node does not need GitHub authentication.
 
+## Run a job on it
+
+A live node takes jobs enqueued in its owner scope. This computer's standalone
+registry is local, so `enqueue`, `plan`, `pull`, `renew` and `complete` all run
+on this machine against the same state — a pool member's jobs instead arrive
+from the pool primary (see [NODES.md](NODES.md)). Keep the `beat --watch`
+above running in another terminal: `pull` and `renew` need the live session,
+which expires 30 seconds after the last beat.
+
+Queue one job and see where it routes:
+
+```sh
+phm node enqueue --job hello-1 --owner acme --json
+phm node plan --owner acme
+```
+
+`plan` names the node each pending job routes to, or prints the fix when no
+live node can take it. Then claim the job on this node — run `pull` without
+`--json` to see the claim, the lease tokens and expiry, and the exact
+`renew`/`complete` commands carrying this job's real numbers:
+
+```sh
+phm node pull --node <nodeId> --session 1
+phm node renew --job hello-1 --node <nodeId> --session 1 --token <token> --leader-token <leaderToken> --watch
+phm node complete --job hello-1 --node <nodeId> --session 1 --token <token> --leader-token <leaderToken> --result "done"
+phm node result --job hello-1 --owner acme
+```
+
+Use the current session number (it changes on rejoin) and the token numbers
+`pull` printed. A claim lapses 30 seconds after the last renew, so
+`renew --watch` repeats it every 10 seconds (or `--every <seconds>`, at most
+25) while the job runs; Ctrl-C stops the watch and the claim then expires on
+its own, after which the job can be pulled again. `--result` is the text
+`phm node result` reads back. A job's `--requires` caps must be ones the node
+advertised at join — enqueue without it and any live node in the scope can
+take the job. Jobs carry secret names only; each node resolves them from its
+own custody, so no credential ever travels with the work.
+
 ## Leave
 
 ```sh

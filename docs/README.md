@@ -133,7 +133,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Review EOS partner-credit inventory, costs and proposed fleet wiring | [StackSync EOS capacity plan](https://github.com/ashlrai/phantom/blob/master/docs/strategy/STACKSYNC.md) |
 | Sample local machine resources | [Machine telemetry](MACHINE-TELEMETRY.md) |
 | Review a pool's PR with another model on another pool, and decide auto-merge at the exact head SHA | [Cross-model review](https://github.com/ashlrai/phantom/blob/master/docs/CROSS-REVIEW.md) |
-| Install, join, verify, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
+| Install, join, verify, run a job, and leave a node | [Add a computer in 60 seconds](https://github.com/ashlrai/phantom/blob/master/docs/add-a-computer.md) |
 | Join computers as nodes with caps, owner-scoped jobs and fenced leases | [Node router](https://github.com/ashlrai/phantom/blob/master/docs/NODE-ROUTER.md) |
 | Give any agent one routed model call through the loopback endpoint or `phm run --model auto` | [Router gateway](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-GATEWAY.md) |
 | Route a bounded read-only slice to the 8 GB muse node | [Muse light routing](https://github.com/ashlrai/phantom/blob/master/docs/nodes/MUSE.md) |
