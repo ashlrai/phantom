@@ -46,6 +46,30 @@ names `friction_id=<id>` in its attr group and the picks log records
 churn from `<runs-dir>/queue/noop-streak.json`. A closed item is reopened
 by nothing automatic; only the pick grader's 7d grade closes it.
 
+## Grading
+
+Every non-dry `phm select` pass ends by grading funded picks against
+`<runs-dir>/metrics/jobs.jsonl` (`src/core/fleet/pick-grade-sync.ts` calling
+`src/core/fleet/pick-grader.ts`). Each pick is graded 24h and 7d after its
+`at`: `merged` is a held MERGED verdict — a MERGED-resolved row whose
+mergedAt-preferring stamp lands inside `[at, at + window]` with no newer
+positive revert evidence — and `used` is in-window publish/PR-url evidence;
+a held merge implies used. `stars`/`installs` have no per-pick channel in
+the jobs ledger, so they stay unmeasured and the realized blend
+renormalizes over merged+used. The grader's only feature is `mergeRate`,
+the recorded smoothed merge prior — the sole calibrated [0,1] probability
+the picks log stores; `score`/`predictedValue` are unbounded value-scale
+products and `minutes`/`usage` unsigned estimates, so they stay out of the
+weight model. Grades append to `~/.ashlr/picks/grades.jsonl`, the SGD weight
+step to `~/.ashlr/picks/weights.json` (advisory; nothing routes on it yet),
+and a 7d grade with realized >= 0.5 closes the pick's `friction_id` ledger
+item with reason `grader-7d` — the only automatic close. A pick whose
+window starts before the retained jobs tail's first dated row defers rather
+than scoring a partial window as a miss, so picks older than the tail's
+coverage stay ungraded. `--json` reports `grading` (`state`, `picks`,
+`newGrades`, `frictionClosed`, `line`); text mode prints the accuracy line
+on stderr. `--dry-run` grades nothing.
+
 ## Funding
 
 `phm select` takes the top `--top` (default 5) candidates that are not already

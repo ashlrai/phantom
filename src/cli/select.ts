@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { appendBusInbox, type BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { collectFrictionTop, frictionLedgerPath, type FrictionItem } from '../core/fleet/friction-ledger.js';
+import { syncPickGrades } from '../core/fleet/pick-grade-sync.js';
 import { censorFromConfig, learnFleetOutcomes } from '../core/routing/outcome-learning.js';
 import { readStandingRevertKeys } from '../core/improve/revert-ledger.js';
 import { readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE } from '../core/router/outcomes.js';
@@ -147,10 +148,19 @@ export async function cmdSelect(args: string[], deps: SelectDeps = {}): Promise<
     }, deps.bus);
     bus = post.status;
   }
-  if (parsed.json) io.out(JSON.stringify({ ...result, dryRun: parsed.dryRun, bus, picks: result.picks.map((p) => ({ ...p, ready: readyLine(p) })) }));
+  // Grade due picks against the jobs ledger on every real pass — the
+  // prediction→outcome loop the pick grader was built for, including the
+  // 7d friction close the selector contract promises. Dry runs write nothing.
+  const grading = parsed.dryRun ? null : await syncPickGrades({
+    runsDir: root,
+    frictionPath: parsed.friction ?? frictionLedgerPath(homedir()),
+    now: () => now,
+  });
+  if (parsed.json) io.out(JSON.stringify({ ...result, dryRun: parsed.dryRun, bus, grading, picks: result.picks.map((p) => ({ ...p, ready: readyLine(p) })) }));
   else {
     io.out(result.picks.length === 0 ? 'no candidates to fund' : result.picks.map(readyLine).join('\n'));
     io.err(`${result.picks.length} funded of ${result.considered} (${result.skipped} already funded, ${result.rejected} rejected)${parsed.dryRun ? ' [dry run]' : ''}`);
+    if (grading !== null) io.err(grading.line);
   }
   return 0;
 }

@@ -34,8 +34,14 @@ export interface PickRecord {
 export interface PickSignals {
   merged: boolean;
   used: boolean;
-  stars: number;
-  installs: number;
+  /**
+   * Realized star count; null when the pick stream has no star channel at
+   * all (a queue-job pick never accrues GitHub stars). Null is unmeasured,
+   * never zero: realizedScore drops the component and renormalizes the rest.
+   */
+  stars: number | null;
+  /** Realized install count; null stays unmeasured the same way. */
+  installs: number | null;
 }
 export interface PickGrade {
   pickId: string;
@@ -57,11 +63,24 @@ export function predict(weights: Weights, features: Record<string, number>): num
   return clamp01(sum);
 }
 
-/** Blend merged/used/stars/installs into [0, 1]; stars and installs saturate. */
+/**
+ * Blend merged/used/stars/installs into [0, 1]; stars and installs saturate.
+ * A null stars/installs is unmeasured rather than zero: its weight leaves
+ * the blend and the measured components renormalize, so a pick stream with
+ * no adoption channel is scored on what it actually recorded.
+ */
 export function realizedScore(s: PickSignals): number {
-  const stars = Math.log1p(finite(s.stars)) / Math.log1p(100);
-  const installs = Math.log1p(finite(s.installs)) / Math.log1p(100);
-  return clamp01(0.4 * Number(s.merged) + 0.3 * Number(s.used) + 0.15 * clamp01(stars) + 0.15 * clamp01(installs));
+  let weighted = 0.4 * Number(s.merged) + 0.3 * Number(s.used);
+  let mass = 0.7;
+  if (s.stars !== null) {
+    weighted += 0.15 * clamp01(Math.log1p(finite(s.stars)) / Math.log1p(100));
+    mass += 0.15;
+  }
+  if (s.installs !== null) {
+    weighted += 0.15 * clamp01(Math.log1p(finite(s.installs)) / Math.log1p(100));
+    mass += 0.15;
+  }
+  return clamp01(weighted / mass);
 }
 
 /**
