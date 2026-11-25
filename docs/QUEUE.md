@@ -610,6 +610,24 @@ The typed `MergeQueueOptions.stalledMs` controls the timeout; required checks
 and reviews remain enforced by GitHub. Dequeueing loses the entry's position
 and restarts its merge-group checks, so the timeout is deliberately long.
 
+Each real cycle also feeds the merge-events ledger
+(`~/.ashlr-runs/metrics/merge-events.jsonl`, the file `phm fleet
+merge-latency`, `phm queue wait` and the router's `merge_queue` outcome join
+read) with the transitions it sampled: `eligible`, `queued` and
+`checks_passed` at most once per PR, `conflict` once per observed head,
+`blocked` when the dominant blocker reason changes (`conflict` > `review` >
+`required_checks`; a stale-branch-only wait records nothing), `check_observed`
+on each head-rollup change (`required` is never claimed — the rollup does not
+identify required checks), and `auto_merge_enabled`/`auto_merge_disabled` on
+observed auto-merge toggles tracked across heads — including drops caused by
+a pushed head. The toggles feed `phm fleet merge-latency`'s
+`pending_auto_merge` and `queue_retries` verdicts; drops the loop can fix are
+re-armed by the normal gated enqueue path, and `phm fleet merge-retry` still
+owns bounded retries of queue-attributed failures. Every row's `at`
+is the sample instant, never an exact GitHub transition time; dry runs and
+`--no-events` record nothing, and `--events PATH` retargets the sink. A sink
+failure logs `MERGEQ_EVENTS_ERROR` and never fails the cycle.
+
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs
 keep auto-merge armed unless eligible for timed recovery. The offline scheduling

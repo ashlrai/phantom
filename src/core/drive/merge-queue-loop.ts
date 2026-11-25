@@ -27,6 +27,11 @@
  * Queued entries observed for an hour are refreshed, then safely dequeued and
  * re-enrolled if all head gates still pass. Recovery shares enqueue budgets.
  *
+ * Every real cycle also records the merge-queue transitions it sampled as
+ * merge-events.jsonl rows (planMergeQueueEvents) through the optional
+ * `recordEvents` sink, so merge-latency, queue-wait and router merge_queue
+ * outcomes see fleet evidence instead of "unknown".
+ *
  * Failure policy: a failed repo read is logged and that repo is skipped (the
  * other repos still drain); a failed mutation consumes its retry budget and
  * the cycle continues. Budgets are written ahead of each call: one attempt per
@@ -51,6 +56,40 @@ export const MERGEQ_REPOS = REFIX_REPOS;
 
 /** statusCheckRollup.state; NONE when the head reports no checks at all. */
 export type MergeQueueChecks = 'SUCCESS' | 'PENDING' | 'EXPECTED' | 'FAILURE' | 'ERROR' | 'NONE';
+
+/**
+ * Merge-events.jsonl observation vocabulary this cycle can record. The ledger
+ * (`phm fleet merge-latency`, mergeQueueStatus, router-outcome merge_queue
+ * joins) was previously populated only by hand and by merge-retry; these rows
+ * are sampled observations at cycle time, never claims of exact GitHub
+ * transition instants.
+ */
+export type MergeQueueEventType =
+  | 'eligible' | 'queued' | 'checks_passed' | 'conflict' | 'blocked'
+  | 'check_observed' | 'auto_merge_enabled' | 'auto_merge_disabled';
+/** Blocker reasons the merge-events ledger understands (its 'queue' reason is never emitted here). */
+export type MergeQueueEventReason = 'required_checks' | 'review' | 'conflict' | 'other';
+export type MergeQueueCheckConclusion = 'success' | 'failure' | 'pending';
+/** Once-per-PR event types: consumers require a unique boundary per PR. */
+export type MergeQueueOnceEvent = 'eligible' | 'queued' | 'checks_passed';
+
+export interface MergeQueueEvent {
+  repo: string;
+  pr: number;
+  type: MergeQueueEventType;
+  /** ISO observation time (the cycle's sample clock, not a GitHub transition stamp). */
+  at: string;
+  head_sha?: string;
+  reason?: MergeQueueEventReason;
+  conclusion?: MergeQueueCheckConclusion;
+}
+
+export interface MergeQueuePrSignals {
+  /** Last observed autoMergeRequest presence across head epochs. */
+  autoMerge?: boolean;
+  /** Once-per-PR merge-event types already emitted. */
+  once?: MergeQueueOnceEvent[];
+}
 
 export interface MergeQueuePr {
   /** GraphQL node id; the mutations address the PR by it. */
@@ -96,6 +135,12 @@ export interface MergeQueueLatency {
   blockers?: MergeQueueBlocker[];
   /** Sampled, overlapping durations; do not sum them as total queue time. */
   blockerMs?: Partial<Record<MergeQueueBlocker, number>>;
+  /** Last check rollup recorded on this head epoch (merge-event producer). */
+  checks?: MergeQueueChecks;
+  /** Dominant merge-events blocker reason emitted this epoch; null when clear. */
+  blockedReason?: MergeQueueEventReason | null;
+  /** The conflict merge-event was already emitted this head epoch. */
+  conflictRecorded?: boolean;
 }
 
 export interface MergeQueueState {
@@ -105,6 +150,8 @@ export interface MergeQueueState {
   /** Drain ids this loop appended (refix shares the id space via the queue). */
   drained: Record<string, number>;
   latency?: Record<string, MergeQueueLatency>;
+  /** Per-PR merge-event producer memory keyed like latency, kept across heads. */
+  signals?: Record<string, MergeQueuePrSignals>;
 }
 
 export interface MergeQueueIo {
@@ -129,6 +176,12 @@ export interface MergeQueueIo {
   readHoldList(): Set<string>;
   loadState(): unknown;
   saveState(state: MergeQueueState): void;
+  /**
+   * Optional merge-events.jsonl sink: receives the cycle's sampled transition
+   * rows once per non-dry-run cycle. A throw is logged as a constant line and
+   * never fails the cycle.
+   */
+  recordEvents?(events: readonly MergeQueueEvent[]): void;
   log(line: string): void;
   now(): number;
 }
@@ -220,6 +273,109 @@ export function classifyMergeQueuePr(
   return 'wait';
 }
 
+const CHECKS_CONCLUSION: Record<MergeQueueChecks, MergeQueueCheckConclusion | null> = {
+  SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure',
+  PENDING: 'pending', EXPECTED: 'pending', NONE: null,
+};
+const EVENT_REASONS = new Set<MergeQueueEventReason>(['required_checks', 'review', 'conflict', 'other']);
+const CHECKS_SEEN = new Set<MergeQueueChecks>(['SUCCESS', 'PENDING', 'EXPECTED', 'FAILURE', 'ERROR', 'NONE']);
+const ONCE_EVENTS = new Set<MergeQueueOnceEvent>(['eligible', 'queued', 'checks_passed']);
+
+export interface MergeQueueEventPlanInput {
+  repo: string;
+  number: number;
+  headSha: string;
+  /** Classified action this observation (pre-recovery). */
+  action: MergeQueueAction;
+  /** Freshly computed blockers for this observation. */
+  blockers: readonly MergeQueueBlocker[];
+  checks: MergeQueueChecks;
+  autoMerge: boolean;
+  /** Cycle sample clock (epoch ms). */
+  observedAt: number;
+  /** Tracking values carried on the head-epoch latency record; undefined on first sight. */
+  priorChecks?: MergeQueueChecks;
+  priorBlockedReason?: MergeQueueEventReason | null;
+  conflictRecorded?: boolean;
+  /** Per-PR signals kept across head epochs; undefined until first read. */
+  signalAutoMerge?: boolean;
+  once?: readonly MergeQueueOnceEvent[];
+}
+
+export interface MergeQueueEventPlan {
+  events: MergeQueueEvent[];
+  /** Tracking values the caller stores back on the latency record and signals. */
+  checks: MergeQueueChecks;
+  blockedReason: MergeQueueEventReason | null;
+  conflictRecorded: boolean;
+  autoMerge: boolean;
+  once: MergeQueueOnceEvent[];
+}
+
+/**
+ * Map one sampled PR observation to merge-events.jsonl rows. Pure: the caller
+ * owns persistence. Emission rules:
+ *
+ *  - eligible / queued / checks_passed fire at most once per PR ever
+ *    (`once` survives head changes): consumers require a unique boundary.
+ *  - conflict fires at most once per head epoch (mergeable can flap).
+ *  - blocked fires whenever the dominant reason changes inside the epoch;
+ *    conflict > review > required_checks, and 'stale'-only waits record
+ *    nothing (BEHIND in a queue repo is normal, not a merge blocker).
+ *  - check_observed fires on every rollup change with a real conclusion;
+ *    NONE reports no checks and carries none.
+ *  - auto_merge_enabled/disabled fire on observed autoMergeRequest toggles,
+ *    tracked per PR across heads so a push that drops auto-merge is caught.
+ *    First sight of an armed PR records enabled; an unarmed first sight
+ *    records nothing (a disable needs a prior enable to mean anything).
+ *
+ * First sight of a head epoch or PR emits its current state: every row's `at`
+ * is the observation instant, which the ledger documents as a sample, never
+ * an exact GitHub transition time.
+ */
+export function planMergeQueueEvents(input: MergeQueueEventPlanInput): MergeQueueEventPlan {
+  const plan: MergeQueueEventPlan = {
+    events: [], checks: input.checks, blockedReason: input.priorBlockedReason ?? null,
+    conflictRecorded: input.conflictRecorded === true, autoMerge: input.autoMerge,
+    once: [...(input.once ?? [])],
+  };
+  // 'skip' covers every out-of-scope gate; the ledger is fleet evidence only.
+  if (!Number.isFinite(input.observedAt) || input.action === 'skip') return plan;
+  const at = new Date(input.observedAt).toISOString();
+  const base = { repo: input.repo, pr: input.number, at, head_sha: input.headSha };
+  const emitOnce = (type: MergeQueueOnceEvent): void => {
+    if (plan.once.includes(type)) return;
+    plan.once.push(type);
+    plan.events.push({ ...base, type });
+  };
+  if (input.action === 'enqueue') emitOnce('eligible');
+  if (input.action === 'queued') emitOnce('queued');
+  if (input.action === 'conflict' && !plan.conflictRecorded) {
+    plan.conflictRecorded = true;
+    plan.events.push({ ...base, type: 'conflict' });
+  }
+  let blockedReason: MergeQueueEventReason | null = null;
+  if (input.blockers.includes('conflict')) blockedReason = 'conflict';
+  else if (input.blockers.includes('review')) blockedReason = 'review';
+  else if (input.blockers.includes('checks') && input.checks !== 'NONE') blockedReason = 'required_checks';
+  else if (input.action === 'blocked') blockedReason = 'other';
+  if (blockedReason !== null && blockedReason !== input.priorBlockedReason) {
+    plan.events.push({ ...base, type: 'blocked', reason: blockedReason });
+  }
+  plan.blockedReason = blockedReason;
+  if (input.priorChecks !== input.checks) {
+    const conclusion = CHECKS_CONCLUSION[input.checks];
+    if (conclusion !== null) plan.events.push({ ...base, type: 'check_observed', conclusion });
+    if (input.checks === 'SUCCESS') emitOnce('checks_passed');
+  }
+  if (input.signalAutoMerge === undefined) {
+    if (input.autoMerge) plan.events.push({ ...base, type: 'auto_merge_enabled' });
+  } else if (input.autoMerge !== input.signalAutoMerge) {
+    plan.events.push({ ...base, type: input.autoMerge ? 'auto_merge_enabled' : 'auto_merge_disabled' });
+  }
+  return plan;
+}
+
 export function normalizeMergeQueueState(value: unknown): MergeQueueState {
   const state: MergeQueueState = { v: 1, attempts: {}, drained: {} };
   const row = (value ?? {}) as Record<string, unknown>;
@@ -242,11 +398,30 @@ export function normalizeMergeQueueState(value: unknown): MergeQueueState {
       && (raw.blockers === undefined || (Array.isArray(raw.blockers)
         && new Set(raw.blockers).size === raw.blockers.length && raw.blockers.every(b => BLOCKERS.includes(b))))
       && (raw.blockerMs === undefined || (raw.blockerMs && typeof raw.blockerMs === 'object' && !Array.isArray(raw.blockerMs)
-        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))) {
+        && Object.entries(raw.blockerMs).every(([b, ms]) => BLOCKERS.includes(b as MergeQueueBlocker) && Number.isSafeInteger(ms) && ms >= 0)))
+      && (raw.checks === undefined || CHECKS_SEEN.has(raw.checks))
+      && (raw.blockedReason === undefined || raw.blockedReason === null || EVENT_REASONS.has(raw.blockedReason))
+      && (raw.conflictRecorded === undefined || typeof raw.conflictRecorded === 'boolean')) {
       (state.latency ??= {})[key] = { headSha: raw.headSha, state: raw.state,
         since: raw.since, observedAt: raw.observedAt, stateMs: { ...raw.stateMs },
-        blockers: [...(raw.blockers ?? [])], blockerMs: { ...raw.blockerMs } };
+        blockers: [...(raw.blockers ?? [])], blockerMs: { ...raw.blockerMs },
+        ...(raw.checks !== undefined ? { checks: raw.checks } : {}),
+        ...(raw.blockedReason !== undefined ? { blockedReason: raw.blockedReason } : {}),
+        ...(raw.conflictRecorded !== undefined ? { conflictRecorded: raw.conflictRecorded } : {}) };
     }
+  }
+  for (const [key, raw] of Object.entries((row['signals'] ?? {}) as Record<string, MergeQueuePrSignals>)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    // Sanitize rather than reject: dropping the row would lose the dedupe
+    // memory that keeps once-per-PR events unique for the ledger consumers.
+    const autoMerge = typeof raw.autoMerge === 'boolean' ? raw.autoMerge : undefined;
+    const once = Array.isArray(raw.once)
+      ? [...new Set(raw.once.filter((t) => ONCE_EVENTS.has(t)))] : [];
+    if (autoMerge === undefined && once.length === 0) continue;
+    (state.signals ??= {})[key] = {
+      ...(autoMerge !== undefined ? { autoMerge } : {}),
+      ...(once.length > 0 ? { once } : {}),
+    };
   }
   return state;
 }
@@ -292,6 +467,7 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
     const prior = Object.values(state.attempts).filter((e) => e.pr === tag && e.action === action);
     return prior.length < prWindowCap && !prior.some((e) => now - e.at < retryMs);
   };
+  const pendingEvents: MergeQueueEvent[] = [];
 
   try {
     for (const repo of repos) {
@@ -313,6 +489,9 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
       const observedAt = io.now();
       for (const key of Object.keys(state.latency ?? {})) {
         if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.latency![key];
+      }
+      for (const key of Object.keys(state.signals ?? {})) {
+        if (key.startsWith(`${repo}#`) && !snapshot.prs.some(pr => key === `${repo}#${pr.number}`)) delete state.signals![key];
       }
       const seen = new Set<number>();
       const planned = snapshot.prs.slice().sort((a, b) => a.number - b.number)
@@ -349,6 +528,29 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         latency.state = action;
         latency.observedAt = observedAt;
         (state.latency ??= {})[key] = latency;
+        // Sampled merge-events observation for in-scope PRs; 'skip' already
+        // covers every out-of-scope gate (non-fleet, held, draft, off-base,
+        // malformed). Tracking fields update in memory either way; only a
+        // real cycle flushes rows.
+        if (action !== 'skip') {
+          const signals = (state.signals ??= {})[key] ??= {};
+          const plan = planMergeQueueEvents({
+            repo, number: pr.number, headSha: pr.headSha, action,
+            blockers: latency.blockers ?? [], checks: pr.checks, autoMerge: pr.autoMerge,
+            observedAt,
+            priorChecks: latency.checks,
+            priorBlockedReason: latency.blockedReason,
+            conflictRecorded: latency.conflictRecorded,
+            signalAutoMerge: signals.autoMerge,
+            once: signals.once,
+          });
+          if (!dryRun) pendingEvents.push(...plan.events);
+          latency.checks = plan.checks;
+          latency.blockedReason = plan.blockedReason;
+          latency.conflictRecorded = plan.conflictRecorded;
+          signals.autoMerge = plan.autoMerge;
+          signals.once = plan.once;
+        }
         result.latency.push({ number: pr.number, ...latency });
         result.totals[action] = (result.totals[action] ?? 0) + 1;
         const stalled = action === 'queued' && observedAt - latency.since >= stalledMs;
@@ -451,6 +653,13 @@ export function runMergeQueueCycle(io: MergeQueueIo, options: MergeQueueOptions 
         if (action === 'enqueue') { result.enqueued.push(pr.number); summary.enqueued++; }
         else { result.rebased.push(pr.number); summary.rebased++; }
         io.log(`MERGEQ_${action.toUpperCase()} ${repo}#${pr.number} head=${pr.headSha.slice(0, 7)}`);
+      }
+    }
+    if (!dryRun && pendingEvents.length > 0) {
+      try {
+        io.recordEvents?.(pendingEvents);
+      } catch {
+        io.log('MERGEQ_EVENTS_ERROR');
       }
     }
     io.log(`MERGEQ_CYCLE enqueued=${summary.enqueued} rebased=${summary.rebased} resolved=${summary.resolved} drained=${summary.drained} ` +

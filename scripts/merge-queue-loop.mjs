@@ -3,9 +3,16 @@
 //
 //   node scripts/merge-queue-loop.mjs cycle [--dry-run] [--queue PATH]
 //        [--hold-file PATH] [--state-file PATH] [--via-locus]
+//        [--events PATH] [--no-events]
 //     One enqueue/rebase/conflict pass over the seven approved repos
 //     (src/core/drive/merge-queue-loop.ts). `gh` must already be authorized;
 //     --via-locus runs it as `locus exec -- gh`. Prints the JSON summary.
+//     Each real cycle also appends the merge-queue state transitions it
+//     sampled to the merge-events ledger (default
+//     ~/.ashlr-runs/metrics/merge-events.jsonl, the file `phm fleet
+//     merge-latency` and the router's merge_queue outcome join read);
+//     --events picks another path, --no-events disables recording, and a
+//     dry run never writes.
 //
 //   node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE_DIR ...
 //        [--ref REF] [--day YYYY-MM-DD] [--out PATH]
@@ -25,7 +32,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const USAGE = [
-  'node scripts/merge-queue-loop.mjs cycle [--dry-run] [--queue PATH] [--hold-file PATH] [--state-file PATH] [--via-locus]',
+  'node scripts/merge-queue-loop.mjs cycle [--dry-run] [--queue PATH] [--hold-file PATH] [--state-file PATH] [--via-locus] [--events PATH] [--no-events]',
   'node scripts/merge-queue-loop.mjs metrics --repo OWNER/NAME=CLONE_DIR ... [--ref REF] [--day YYYY-MM-DD] [--out PATH]',
 ].join('\n');
 const RUNS = join(homedir(), '.ashlr-runs');
@@ -190,11 +197,14 @@ export function readSnapshot(gh, repo, claims = []) {
 
 async function cycle(args) {
   const flags = parseFlags(args, {
-    '--dry-run': 'bool', '--via-locus': 'bool', '--queue': 'value', '--hold-file': 'value', '--state-file': 'value',
+    '--dry-run': 'bool', '--via-locus': 'bool', '--no-events': 'bool',
+    '--queue': 'value', '--hold-file': 'value', '--state-file': 'value', '--events': 'value',
   });
   const queue = resolve(flags['--queue'] ?? join(RUNS, 'queue', 'router-queue.md'));
   const holdFile = resolve(flags['--hold-file'] ?? join(RUNS, 'queue', 'hold-list.txt'));
   const stateFile = resolve(flags['--state-file'] ?? `${queue}.mergeq-state.json`);
+  const eventsPath = flags['--no-events'] === true ? null
+    : resolve(flags['--events'] ?? join(RUNS, 'metrics', 'merge-events.jsonl'));
   const { runMergeQueueCycle, normalizeMergeQueueState } = await import('../dist/core/drive/merge-queue-loop.js');
   const { claimBoard } = await import('../dist/core/agents/claim-store.js');
   const gh = makeGh(flags['--via-locus'] === true);
@@ -219,6 +229,12 @@ async function cycle(args) {
     loadState: () => (existsSync(stateFile)
       ? normalizeMergeQueueState(JSON.parse(readFileSync(stateFile, 'utf8'))) : undefined),
     saveState: (state) => atomicWrite(stateFile, `${JSON.stringify(state)}\n`),
+    ...(eventsPath === null ? {} : {
+      recordEvents: (events) => {
+        mkdirSync(dirname(eventsPath), { recursive: true, mode: 0o700 });
+        appendFileSync(eventsPath, events.map((event) => `${JSON.stringify(event)}\n`).join(''), { mode: 0o600 });
+      },
+    }),
     log: (line) => console.error(line),
     now: () => Date.now(),
   }, { dryRun: flags['--dry-run'] === true });
