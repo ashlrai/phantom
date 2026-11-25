@@ -23,6 +23,17 @@ function text(verb: string, out: Record<string, unknown>): string {
       ...jobs.map(j => `job ${j.id} ${j.state}`)].join('\n');
   }
   if (verb === 'pull') return out['pulled'] ? `Claimed ${(out['claim'] as { jobId: string }).jobId}. Renew before expiry; pass the token to every effect.` : 'No job for this node. Run: phm node plan';
+  if (verb === 'result') {
+    const jobId = String(out['jobId']), state = out['state'];
+    if (state === 'absent') return `job ${jobId}: absent (no such job in this owner scope)`;
+    if (state === 'pending') return `job ${jobId}: pending`;
+    if (state === 'running') return `job ${jobId}: running${out['claimedBy'] ? ` (claimed by ${out['claimedBy']})` : ''}`;
+    const head = out['producerWithdrawn'] === true ? 'withdrawn by the producer'
+      : `completed by ${String(out['completedBy'] ?? 'unknown')}`;
+    const when = typeof out['completedAt'] === 'number' ? ` at ${new Date(out['completedAt']).toISOString()}` : '';
+    const body = typeof out['result'] === 'string' && out['result'].length ? `\n${out['result']}` : '';
+    return `job ${jobId}: ${head}${when}${body}`;
+  }
   return Object.entries(out).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(',') : String(v)}`).join('\n');
 }
 

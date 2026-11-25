@@ -436,6 +436,85 @@ describe('live-session recovery hints', () => {
   });
 });
 
+describe('result: read-only owner-scoped outcome', () => {
+  const resultArgs = (jobId: string, owner: string) => ['--job', jobId, '--owner', owner];
+  const leaseArgs = (claim: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }, result?: string) =>
+    ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+      '--token', String(claim.token), '--leader-token', String(claim.leaderToken),
+      ...(result === undefined ? [] : ['--result', result])];
+  function fixtureWithJob() {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('job', { owner: 'o' });
+    return { f, worker, claim: f.a.pull(worker)!.claim };
+  }
+  it('returns a completed job\'s result, executor and completion time without mutating', () => {
+    const { f, claim } = fixtureWithJob();
+    expect(executeNodeFleet('complete', leaseArgs(claim, 'the answer'), f.a)).toMatchObject({ completed: true });
+    const before = f.a.snapshot();
+    const out = executeNodeFleet('result', resultArgs('job', 'o'), f.a);
+    expect(out).toMatchObject({ jobId: 'job', state: 'completed', result: 'the answer', completedBy: 'worker' });
+    expect(out['completedAt']).toBe(before.jobs[0]!.completedAt);
+    expect(f.a.snapshot()).toEqual(before);
+  });
+  it('reports pending and running states, claimedBy for a live claim, and absent honestly', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    f.a.heartbeat(worker);
+    f.a.enqueue('waiting', { owner: 'o' });
+    f.a.enqueue('foreign', { owner: 'other' });
+    expect(executeNodeFleet('result', resultArgs('waiting', 'o'), f.a)).toEqual({ jobId: 'waiting', state: 'pending' });
+    expect(executeNodeFleet('result', resultArgs('ghost', 'o'), f.a)).toEqual({ jobId: 'ghost', state: 'absent' });
+    // Another owner's job is absent inside this scope and pending inside its own.
+    expect(executeNodeFleet('result', resultArgs('foreign', 'o'), f.a)).toEqual({ jobId: 'foreign', state: 'absent' });
+    expect(executeNodeFleet('result', resultArgs('foreign', 'other'), f.a)).toEqual({ jobId: 'foreign', state: 'pending' });
+    // Pull the one routable job: running names the node whose live claim can act.
+    const claim = f.a.pull(worker)!.claim;
+    expect(claim.jobId).toBe('waiting');
+    expect(executeNodeFleet('result', resultArgs('waiting', 'o'), f.a))
+      .toEqual({ jobId: 'waiting', state: 'running', claimedBy: 'worker' });
+    // A lapsed claim is fenced: still running, but no live claimant is named.
+    f.advance(100);
+    expect(executeNodeFleet('result', resultArgs('waiting', 'o'), f.a))
+      .toEqual({ jobId: 'waiting', state: 'running' });
+  });
+  it('marks a producer withdrawal instead of passing it off as node work', () => {
+    const f = fixture();
+    f.a.enqueue('doomed', { owner: 'o' });
+    expect(f.a.withdraw('doomed', 'o')).toEqual({ state: 'withdrawn' });
+    expect(executeNodeFleet('result', resultArgs('doomed', 'o'), f.a))
+      .toMatchObject({ jobId: 'doomed', state: 'completed', result: 'withdrawn', producerWithdrawn: true });
+  });
+  it('requires both --job and --owner and refuses nothing else', () => {
+    const f = fixture();
+    expect(() => executeNodeFleet('result', ['--job', 'j'], f.a)).toThrowError(
+      expect.objectContaining({ code: 'missing-flag' }));
+    expect(() => executeNodeFleet('result', ['--owner', 'o'], f.a)).toThrowError(
+      expect.objectContaining({ code: 'missing-flag' }));
+    expect(() => executeNodeFleet('result', ['--job', 'j', '--owner', 'o', '--node', 'x'], f.a)).toThrowError(
+      expect.objectContaining({ code: 'unknown-flag' }));
+  });
+  it('keeps the --json envelope through cmdNodeFleet', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o'], nodes);
+      executeNodeFleet('enqueue', ['--job', 'job', '--owner', 'o'], nodes);
+      const pulled = executeNodeFleet('pull', ['--node', 'worker', '--session', String(joined['session'])], nodes);
+      const claim = pulled['claim'] as { jobId: string; nodeId: string; session: number; token: number; leaderToken: number };
+      executeNodeFleet('complete', ['--job', claim.jobId, '--node', claim.nodeId, '--session', String(claim.session),
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--result', 'done'], nodes);
+      const code = await cmdNodeFleet('result', ['--job', 'job', '--owner', 'o', '--json'], { store });
+      expect(code).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'result',
+        jobId: 'job', state: 'completed', result: 'done', completedBy: 'worker' });
+    } finally { vi.restoreAllMocks(); }
+  });
+});
+
 describe('beat --capacity sample honesty', () => {
   const beatArgs = (session: number, capacity?: string) =>
     ['--node', 'laptop', '--session', String(session), ...(capacity === undefined ? [] : ['--capacity', capacity])];
