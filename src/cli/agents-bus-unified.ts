@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -393,7 +393,33 @@ every count stays the filtered total. --exclude-from inverts the same
 match — a section keeps an item unless its sender evidence resolves to
 the excluded ref, so a sender that cannot be proven excluded is never
 dropped while board tasks stay listed under it; the two compose so a
-sender both included and excluded matches nothing. work next claims the next claimable
+sender both included and excluded matches nothing. --id on work mine keeps
+only pending items that ARE the retained envelope the value names — the
+same exact-envelope match every bus read's --id applies, so "is envelope X
+still pending for me, and where" is one filtered digest: feed jobs and
+announced jobs keep the jobs whose cited wire ids the value equals (the
+work.post announcement, newest work.status receipt or newest work.result
+receipt the job line prints as post=/status=/result=), next, handoffs and
+mailbox keep envelopes whose own id equals it, claims keep only message
+claims whose resolved leased envelope's id equals it (a claim naming no
+resolved message never lists), inbox, wakes and the thread sections pass
+the value to their own reads' id filters (inbox and wakes the item
+envelope, conversations the thread envelope a member message belongs to),
+and board, channels and seats carry no per-item envelope citation the
+digest can prove and stay unfiltered; an id nothing on the bus carries is
+an honest empty match and every count stays the filtered total.
+--in-reply-to on work mine keeps only pending items whose body cites the
+retained envelope the value names through its own inReplyTo field — the
+same own-property exact match every bus read's --in-reply-to applies,
+never the replyTo alias or a substring, so "what is pending that answers
+envelope X" is one filtered digest: next, handoffs and mailbox keep
+envelopes whose body the citation rule accepts, claims keep only message
+claims whose resolved leased envelope's own inReplyTo equals it (a claim
+naming no resolved message or no citation never lists), and inbox, wakes
+and the thread sections pass the value to their own reads' in-reply-to
+filters; feed jobs, announced jobs, board rows, channels and seats carry
+no retained body citation in their projections and stay unfiltered, and
+every count stays the filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -994,6 +1020,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       };
       const from = senderArg('--from');
       const excludeFrom = senderArg('--exclude-from');
+      const id = one('--id');
+      const inReplyTo = one('--in-reply-to');
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1002,7 +1030,9 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(priority === undefined ? {} : { priority }),
           ...(channel === undefined ? {} : { channel }),
           ...(from === undefined ? {} : { from }),
-          ...(excludeFrom === undefined ? {} : { excludeFrom }) });
+          ...(excludeFrom === undefined ? {} : { excludeFrom }),
+          ...(id === undefined ? {} : { id }),
+          ...(inReplyTo === undefined ? {} : { inReplyTo }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;

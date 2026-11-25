@@ -969,7 +969,7 @@ free set. Exit 0 acquired,
 2 invalid, 1 otherwise. Claims still coordinate scope only — holding one
 never permits a merge, a push, or spending.
 
-**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]` is the read-only
+**Per-agent work view.** `phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]` is the read-only
 digest that answers "what is pending for this agent" in one call: the live
 coordination claims it holds under any of its labels (with the
 announced jobs each claim's keys block — the reverse of `work feed --claims`,
@@ -1342,6 +1342,50 @@ unfiltered like they do under `--from`. The two compose in the same
 include-then-exclude order every bus read applies — a sender both
 included and excluded matches nothing; every count stays the
 filtered total, the result echoes `excludeFrom` in JSON and the
+human header prints it. `--id <id>` narrows the whole digest the
+same way — "is envelope X still pending for me, and where" — under
+the same exact-envelope match every bus `--id` read applies,
+validated by the printable-label bound: feed jobs and announced
+jobs keep the jobs whose cited wire ids the value equals — the
+`work.post` announcement, newest `work.status` receipt or newest
+`work.result` receipt the job line prints as `post=`/`status=`/
+`result=` — `next`/`handoffs`/`mailbox` keep envelopes whose own
+id equals it, claims keep only message claims whose resolved
+leased envelope's id equals it — a claim naming no resolved
+message, a scope-key claim or an unresolvable/unreadable lease
+names no provable envelope and never lists, the same "unknown
+stays out" rule `--priority` applies — and `inbox`, `wakes` and
+the three thread sections pass the value to their own reads' id
+filters (the inbox and conversations reads keep the item envelope
+`id` belongs to, the wakes read the hint id — the triggering
+envelope's wire id on a `bus.send` hint). `board` reports the
+shared `phm bus board pending` digest whole — that projection's
+own filter grammar takes no envelope citation — and `channels`/
+`seats` carry no per-item envelope, so all three stay unfiltered,
+like they do under `--priority`; an id nothing on the bus carries
+is an honest empty match, never an error and never a widened one,
+every count stays the filtered total, the result echoes `id` in
+JSON and the human header prints it. `--in-reply-to <id>` narrows
+the whole digest the same way — "what is pending that answers
+envelope X" — under the same own-property `inReplyTo` exact match
+every bus `--in-reply-to` read applies, never the `replyTo` alias
+or a substring: `next`/`handoffs`/`mailbox` keep envelopes whose
+body the `busBodyInReplyToMatch` rule accepts, claims keep only
+message claims whose resolved leased envelope's own `inReplyTo`
+equals the value — a claim naming no resolved message or no
+citation never lists — and `inbox`, `wakes` and the three thread
+sections pass the value to their own reads' in-reply-to filters
+(the inbox read matches the envelope body, the wakes read the
+resolved referent body, the conversations read any member
+message's citation). Feed jobs, announced jobs, `board` rows,
+`channels` and `seats` carry no retained body citation in their
+projections — feed jobs project `work.post`/`work.status`/
+`work.result` receipts whose strict v2 bodies keep no `inReplyTo`
+field, board post bodies are `{threadId, text}` records, and seat
+handoff records keep no per-record body — so those sections stay
+unfiltered, like they do under `--priority`; a citation nothing on
+the bus carries is an honest empty match, every count stays the
+filtered total, the result echoes `inReplyTo` in JSON and the
 human header prints it. The agent defaults to
 `PHM_AGENT_ID`; an unresolvable ref keeps
 exact-label claim matching, reports `identity: null`, answers `unknown-agent`

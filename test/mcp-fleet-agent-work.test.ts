@@ -123,6 +123,18 @@ describe('fleet_agent_work argument parsing', () => {
     }
   });
 
+  it('maps the shared envelope-citation filters onto the read options', () => {
+    for (const id of ['env-1', 'msg_42', 'x'.repeat(128)]) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', id })).toEqual({ agent: 'a', id });
+      expect(parseFleetAgentWorkArgs({ agent: 'a', inReplyTo: id }))
+        .toEqual({ agent: 'a', inReplyTo: id });
+    }
+    for (const id of ['has space', 'café', 'x'.repeat(129), '', 5, null, true]) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', id })).toBeNull();
+      expect(parseFleetAgentWorkArgs({ agent: 'a', inReplyTo: id })).toBeNull();
+    }
+  });
+
   it('accepts the shared since and before grammar and rejects the rest', () => {
     for (const bound of ['15m', '2h', '1d', '1800000000000', '2026-01-01T00:00:00.000Z']) {
       const parsedSince = parseFleetAgentWorkArgs({ agent: 'a', since: bound });
@@ -155,6 +167,8 @@ describe('fleet_agent_work argument parsing', () => {
       { agent: 'a', channel: 'a'.repeat(33) }, { agent: 'a', channel: '' }, { agent: 'a', channel: 5 },
       { agent: 'a', from: 'has space' }, { agent: 'a', from: '' }, { agent: 'a', from: 5 },
       { agent: 'a', excludeFrom: 'has space' }, { agent: 'a', excludeFrom: '' }, { agent: 'a', excludeFrom: 5 },
+      { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 },
+      { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', limit: 10 }, { agent: 'a', after: 0 }, { agent: 'a', matched: true },
     ]) expect(parseFleetAgentWorkArgs(bad)).toBeNull();
   });
@@ -239,6 +253,10 @@ describe('fleet_agent_work MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['excludeFrom'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['id'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['inReplyTo'])
+      .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
   });
 
   it.each([
@@ -266,10 +284,10 @@ describe('fleet_agent_work MCP tool', () => {
     const payload = digest({ job: 'RQ-9', contains: 'parser fix' });
     const agentWork = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWork });
-    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots' });
+    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0' });
     expect(agentWork).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, before: 1900000000000,
-      priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots',
+      priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0',
     }));
     expect(parsed).toEqual(payload);
   });

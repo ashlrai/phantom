@@ -3089,6 +3089,320 @@ describe('readBusWorkMine', () => {
     if (result.wakes.status !== 'ok') throw new Error('unreachable');
     expect(result.wakes.wakes.map(row => row.id)).toEqual(['wk-new']);
   });
+
+  it('filters the digest to one retained envelope id across the envelope-bearing sections', async () => {
+    // Real wall time: mutateBusWorkClaim checks the leased envelope's TTL
+    // against Date.now(), not the injected read clock.
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>,
+      priority: 'P0' | 'P2' = 'P2'): void => {
+      const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+
+    // Two claimable work envelopes and a worker-handoff addressed to atlas.
+    postClaimable(options, 'w-one', { priority: 'P1' });
+    postClaimable(options, 'w-two', { priority: 'P0' });
+    post('ho-one', 'agent:nova', 'agent:atlas',
+      { kind: 'worker-handoff', taskId: 'RQ-ID-H', prompt: 'one handoff' }, 'P1');
+
+    // atlas announces a feed job to nova — its work.post wire id is
+    // post-RQ-J-1, the citation the jobs/announced sections match on.
+    await announce(options, 'atlas', 'RQ-J-1', ['queue:RQ-J-1'], 'agent:nova');
+
+    // Message claims on both work envelopes plus a scope claim with no
+    // message at all.
+    takeWork(options, 'w-one', 'atlas');
+    takeWork(options, 'w-two', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:id-scope', options.clock.now);
+
+    // Wake hints whose bus.send ids are the envelopes they refer to.
+    const wake = (id: string): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to: 'agent:atlas' },
+        { root: options.runsRoot, now: options.now })).toBe('queued');
+    };
+    wake('w-one');
+    wake('w-two');
+
+    // Legacy mailbox mail.
+    const mailboxSend = (id: string): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority: 'P2', ttl: 120_000, body: { text: `legacy ${id}` } }).replayed).toBe(false);
+    };
+    mailboxSend('mb-one');
+    mailboxSend('mb-two');
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    if (all.next.status !== 'ok' || all.handoffs.status !== 'ok' || all.wakes.status !== 'ok' ||
+        all.claims.status !== 'ok' || all.jobs.status !== 'ok' || all.announced.status !== 'ok' ||
+        all.inbox.status !== 'ok' || all.mailbox.status !== 'ok' || all.awaiting.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(all.next.matched).toBe(2);
+    expect(all.handoffs.matched).toBe(1);
+    expect(all.jobs.open).toBe(1);
+    expect(all.announced.matched).toBe(1);
+    expect(all.claims.claims.map(row => row.key).sort())
+      .toEqual(['queue:w-one', 'queue:w-two', 'repo:a/b']);
+    expect(all.wakes.matched).toBe(2);
+    expect(all.inbox.matched).toBe(3);
+    expect(all.mailbox.matched).toBe(2);
+    expect(all.awaiting.matched).toBe(1);
+
+    // id=w-one keeps only the pending items that ARE envelope w-one:
+    // the claimable work row, its message claim, its wake hint and its
+    // inbox mail — every other section's count is the filtered total.
+    const result = readBusWorkMine('atlas', { ...options, id: 'w-one' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.id).toBe('w-one');
+    expect(result.inReplyTo).toBeUndefined();
+    expect(formatBusWorkMine(result)[0]).toContain('id=w-one');
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['w-one']);
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    // claims keep only the message claim whose leased envelope IS w-one;
+    // the w-two lease names another envelope and the scope claim no
+    // resolved message at all — both stay out under "unknown stays out".
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:w-one']);
+    // No feed job cites w-one as its post/status/result receipt.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 0 });
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(row => row.id)).toEqual(['w-one']);
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(1);
+    expect(result.inbox.messages.map(message => message.id)).toEqual(['w-one']);
+    expect(result.mailbox).toMatchObject({ status: 'ok', matched: 0, messages: [] });
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    // Board and channels carry no per-item envelope citation the digest
+    // can prove and stay whole.
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+
+    // id=post-RQ-J-1 exercises the feed citation join: the job's work.post
+    // receipt is the wire id the announcement, announced and awaiting
+    // sections match — next/handoffs/mailbox/claims name no such envelope.
+    const posted = readBusWorkMine('atlas', { ...options, id: 'post-RQ-J-1' });
+    expect(posted.status).toBe('ok');
+    if (posted.status !== 'ok') throw new Error('unreachable');
+    expect(posted.id).toBe('post-RQ-J-1');
+    if (posted.jobs.status !== 'ok' || posted.announced.status !== 'ok' ||
+        posted.next.status !== 'ok' || posted.handoffs.status !== 'ok' ||
+        posted.claims.status !== 'ok' || posted.inbox.status !== 'ok' ||
+        posted.mailbox.status !== 'ok' || posted.wakes.status !== 'ok' ||
+        posted.awaiting.status !== 'ok') throw new Error('unreachable');
+    expect(posted.jobs.jobs.map(entry => entry.id)).toEqual(['RQ-J-1']);
+    expect(posted.announced.items.map(entry => entry.id)).toEqual(['RQ-J-1']);
+    expect(posted.next.matched).toBe(0);
+    expect(posted.handoffs.matched).toBe(0);
+    expect(posted.claims.claims).toEqual([]);
+    expect(posted.inbox.matched).toBe(0);
+    expect(posted.mailbox.matched).toBe(0);
+    expect(posted.wakes.matched).toBe(0);
+    // The announcement thread survives the conversations id filter: its
+    // member message IS post-RQ-J-1, atlas's own unanswered ask.
+    expect(posted.awaiting.items.map(item => item.messageId)).toEqual(['post-RQ-J-1']);
+
+    // An id nothing on the bus carries is an honest empty match — never
+    // an error and never a widened one.
+    const none = readBusWorkMine('atlas', { ...options, id: 'no-such-envelope' });
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('unreachable');
+    expect(none.id).toBe('no-such-envelope');
+    if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
+        none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
+        none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
+        none.claims.status !== 'ok') throw new Error('unreachable');
+    expect(none.next.matched).toBe(0);
+    expect(none.handoffs.matched).toBe(0);
+    expect(none.jobs.open).toBe(0);
+    expect(none.announced.matched).toBe(0);
+    expect(none.threads.matched).toBe(0);
+    expect(none.awaiting.matched).toBe(0);
+    expect(none.blocked.matched).toBe(0);
+    expect(none.wakes.matched).toBe(0);
+    expect(none.inbox.matched).toBe(0);
+    expect(none.mailbox.matched).toBe(0);
+    expect(none.claims.claims).toEqual([]);
+    expect(none.board).toEqual(all.board);
+    expect(none.channels).toEqual(all.channels);
+
+    // A value outside the printable-label bound is invalid, never a read.
+    expect(readBusWorkMine('atlas', { ...options, id: 'bad id' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-id' });
+    expect(readBusWorkMine('atlas', { ...options, inReplyTo: 'bad id' }))
+      .toEqual({ status: 'invalid', reason: 'invalid-in-reply-to' });
+  });
+
+  it('filters the digest to items citing one retained envelope through inReplyTo', async () => {
+    const options = setup(Date.now());
+    register(options, 'atlas', 'nova', 'ghost');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    registerAgentIdentity({ handle: 'ghost', runtime: { cli: 'codex', provider: 'codex-personal', model: null } }, options);
+
+    const post = (id: string, from: string, to: string, body: Record<string, unknown>,
+      priority: 'P0' | 'P2' = 'P2'): void => {
+      const posted = appendBusInbox({ id, from, to, priority, ttl: 120_000, body },
+        { root: options.root, now: options.now });
+      expect(posted.status).toBe('posted');
+    };
+
+    // The envelope being answered — claimable work so it joins no
+    // conversation thread of its own.
+    postClaimable(options, 'orig-1');
+    // Pending items citing orig-1 through their own inReplyTo field: a
+    // claimable work receipt (kind:'work' tolerates extra fields), a
+    // note thread reply, and legacy mailbox mail.
+    postClaimable(options, 'reply-w',
+      { body: { kind: 'work', text: 'work answering orig', inReplyTo: 'orig-1' }, priority: 'P1' });
+    // One thread carrying the citation on a member message while its
+    // latest message is still an unanswered ask to atlas: th-1-cite
+    // classifies reply (every bus read maps inReplyTo to reply, never
+    // ask), th-2-ask is the waiting tail — ids order the sort so th-2-ask
+    // stays last at the shared timestamp.
+    post('th-1-cite', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'the citation', thread: 't-reply', inReplyTo: 'orig-1' });
+    post('th-2-ask', 'agent:nova', 'agent:atlas',
+      { kind: 'note', text: 'still there?', thread: 't-reply' });
+    post('ho-plain', 'agent:nova', 'agent:atlas',
+      { kind: 'worker-handoff', taskId: 'RQ-IRT-H', prompt: 'plain handoff' }, 'P2');
+    const mailboxSend = (id: string, body: Record<string, unknown>): void => {
+      expect(createBusMailbox(dirname(options.root), options.now).send({ id, from: 'agent:nova',
+        to: 'atlas', priority: 'P2', ttl: 120_000, body }).replayed).toBe(false);
+    };
+    mailboxSend('mb-reply', { text: 'legacy reply', inReplyTo: 'orig-1' });
+    mailboxSend('mb-plain', { text: 'legacy plain' });
+
+    // Feed announcements that carry no inReplyTo citation: one ghost job
+    // atlas can claim, one atlas announced to nova — both must stay
+    // listed unfiltered, proving the feed sections never evaluate the
+    // citation they cannot see.
+    await announce(options, 'ghost', 'RQ-J-R', ['queue:RQ-J-R'], 'agent:atlas');
+    await announce(options, 'atlas', 'RQ-J-MINE', ['queue:RQ-J-MINE'], 'agent:nova');
+
+    // Message claims on both work envelopes plus a scope claim.
+    takeWork(options, 'orig-1', 'atlas');
+    takeWork(options, 'reply-w', 'atlas');
+    claim(options, 'repo:a/b', 'atlas', 'test:irt-scope', options.clock.now);
+
+    // Wake hints whose bus.send ids are the envelopes they refer to:
+    // reply-w's body cites orig-1, orig-1's cites nothing.
+    const wake = (id: string): void => {
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:nova', to: 'agent:atlas' },
+        { root: options.runsRoot, now: options.now })).toBe('queued');
+    };
+    wake('reply-w');
+    wake('orig-1');
+
+    const all = readBusWorkMine('atlas', options);
+    expect(all.status).toBe('ok');
+    if (all.status !== 'ok') throw new Error('unreachable');
+    if (all.next.status !== 'ok' || all.handoffs.status !== 'ok' || all.wakes.status !== 'ok' ||
+        all.claims.status !== 'ok' || all.jobs.status !== 'ok' || all.announced.status !== 'ok' ||
+        all.inbox.status !== 'ok' || all.mailbox.status !== 'ok' || all.threads.status !== 'ok') {
+      throw new Error('unreachable');
+    }
+    expect(all.next.matched).toBe(2);
+    expect(all.handoffs.matched).toBe(1);
+    expect(all.jobs.open).toBe(2);
+    expect(all.announced.matched).toBe(1);
+    expect(all.wakes.matched).toBe(2);
+    expect(all.inbox.matched).toBe(6);
+    expect(all.mailbox.matched).toBe(2);
+    expect(all.threads.matched).toBe(3);
+
+    // inReplyTo=orig-1 keeps only pending items whose body cites orig-1
+    // through its own inReplyTo field — the same own-property exact match
+    // every bus --in-reply-to read applies, never the replyTo alias.
+    const result = readBusWorkMine('atlas', { ...options, inReplyTo: 'orig-1' });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') throw new Error('unreachable');
+    expect(result.inReplyTo).toBe('orig-1');
+    expect(result.id).toBeUndefined();
+    expect(formatBusWorkMine(result)[0]).toContain('in-reply-to=orig-1');
+    expect(result.next).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.next.status !== 'ok') throw new Error('unreachable');
+    expect(result.next.items.map(item => item.id)).toEqual(['reply-w']);
+    // Worker-handoff bodies are a strict {kind, taskId, prompt} record —
+    // they can never carry an inReplyTo citation, so the section is
+    // provably empty under the filter.
+    expect(result.handoffs).toMatchObject({ status: 'ok', matched: 0 });
+    // claims keep only the message claim whose leased envelope cites
+    // orig-1; the resolved message now carries the citation verbatim.
+    expect(result.claims.status).toBe('ok');
+    if (result.claims.status !== 'ok') throw new Error('unreachable');
+    expect(result.claims.claims.map(row => row.key)).toEqual(['queue:reply-w']);
+    const leased = result.claims.claims[0]!.message;
+    expect(leased?.status === 'resolved' ? leased.inReplyTo : null).toBe('orig-1');
+    // Feed jobs and announced jobs carry no retained body citation in
+    // their projections, so both stay whole under the filter.
+    expect(result.jobs).toMatchObject({ status: 'ok', open: 2 });
+    expect(result.announced).toMatchObject({ status: 'ok', matched: 1 });
+    // The conversations read keeps only threads with a member message
+    // citing orig-1: t-reply survives on th-1-cite while its unanswered
+    // th-2-ask tail still waits on atlas; the announcements' and
+    // orig-1-free threads drop.
+    expect(result.threads).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.threads.status !== 'ok') throw new Error('unreachable');
+    expect(result.threads.items.map(item => item.messageId)).toEqual(['th-2-ask']);
+    expect(result.awaiting).toMatchObject({ status: 'ok', matched: 0 });
+    expect(result.blocked).toMatchObject({ status: 'ok', matched: 0 });
+    // wakes keep only the hint whose resolved referent cites orig-1.
+    expect(result.wakes).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.wakes.status !== 'ok') throw new Error('unreachable');
+    expect(result.wakes.wakes.map(row => row.id)).toEqual(['reply-w']);
+    // inbox and mailbox keep only mail whose body cites orig-1.
+    expect(result.inbox.status).toBe('ok');
+    if (result.inbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.inbox.matched).toBe(2);
+    expect(result.inbox.messages.map(message => message.id).sort())
+      .toEqual(['reply-w', 'th-1-cite']);
+    expect(result.mailbox).toMatchObject({ status: 'ok', matched: 1 });
+    if (result.mailbox.status !== 'ok') throw new Error('unreachable');
+    expect(result.mailbox.messages.map(message => message.id)).toEqual(['mb-reply']);
+    // Board, channels and seats carry no retained body citation and stay
+    // whole.
+    expect(result.board).toEqual(all.board);
+    expect(result.channels).toEqual(all.channels);
+
+    // A citation nothing on the bus carries is an honest empty match on
+    // the citation-bearing sections while the unfiltered feed sections
+    // still report their own totals.
+    const none = readBusWorkMine('atlas', { ...options, inReplyTo: 'no-such-cite' });
+    expect(none.status).toBe('ok');
+    if (none.status !== 'ok') throw new Error('unreachable');
+    if (none.next.status !== 'ok' || none.jobs.status !== 'ok' || none.announced.status !== 'ok' ||
+        none.threads.status !== 'ok' || none.awaiting.status !== 'ok' || none.blocked.status !== 'ok' ||
+        none.wakes.status !== 'ok' || none.inbox.status !== 'ok' || none.mailbox.status !== 'ok' ||
+        none.claims.status !== 'ok') throw new Error('unreachable');
+    expect(none.next.matched).toBe(0);
+    expect(none.handoffs.matched).toBe(0);
+    expect(none.threads.matched).toBe(0);
+    expect(none.awaiting.matched).toBe(0);
+    expect(none.blocked.matched).toBe(0);
+    expect(none.wakes.matched).toBe(0);
+    expect(none.inbox.matched).toBe(0);
+    expect(none.mailbox.matched).toBe(0);
+    expect(none.claims.claims).toEqual([]);
+    expect(none.jobs.open).toBe(2);
+    expect(none.announced.matched).toBe(1);
+    expect(none.board).toEqual(all.board);
+    expect(none.channels).toEqual(all.channels);
+  });
 });
 
 describe('mailbox section', () => {
@@ -3761,6 +4075,20 @@ describe('phm agents bus work mine', () => {
     expect(badExclude.code).toBe(2);
     expect(badExclude.json).toMatchObject({ error: 'invalid-argument' });
   });
+
+  it('accepts --id and --in-reply-to, echoes the applied citations and rejects bad values', async () => {
+    const env = { PHM_AGENT_ID: 'atlas' };
+    await run(['id', 'register', 'atlas', '--cli', 'claude'], env);
+    const result = await run(['work', 'mine', '--id', 'env-1', '--in-reply-to', 'env-0'], env);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ status: 'ok', id: 'env-1', inReplyTo: 'env-0' });
+    const badId = await run(['work', 'mine', '--id', 'bad id'], env);
+    expect(badId.code).toBe(2);
+    expect(badId.json).toMatchObject({ status: 'invalid', reason: 'invalid-id' });
+    const badReply = await run(['work', 'mine', '--in-reply-to', 'bad id'], env);
+    expect(badReply.code).toBe(2);
+    expect(badReply.json).toMatchObject({ status: 'invalid', reason: 'invalid-in-reply-to' });
+  });
 });
 
 describe('seats section', () => {
@@ -3903,6 +4231,22 @@ describe('seats section', () => {
     expect(from).toMatchObject({ status: 'ok', matched: 1 });
     const exclude = await readBusWorkMineSeats('atlas', { ...withSeats(options, home), excludeFrom: 'ghost' });
     expect(exclude).toMatchObject({ status: 'ok', matched: 1 });
+  });
+
+  it('stays unfiltered under id and in-reply-to — seat work names no retained envelope', async () => {
+    const options = setup();
+    const home = seatHome();
+    register(options, 'atlas');
+    writeSeatStore(home, [seatRecord('helper', 'atlas')], { helper: draining(options.clock.now) });
+    claim(options, 'repo:a/b', 'atlas', 'test:atlas-1', options.clock.now);
+
+    // Envelope-citation filters narrow the bus-envelope sections but seat
+    // handoff records hold no envelope id or body citation, so the section
+    // stays whole like it does under channel.
+    const byId = await readBusWorkMineSeats('atlas', { ...withSeats(options, home), id: 'env-1' });
+    expect(byId).toMatchObject({ status: 'ok', matched: 1 });
+    const byReply = await readBusWorkMineSeats('atlas', { ...withSeats(options, home), inReplyTo: 'env-0' });
+    expect(byReply).toMatchObject({ status: 'ok', matched: 1 });
   });
 
   it('matches a seat by literal seat id when the ref resolves to no identity', async () => {

@@ -46,12 +46,13 @@ function seatHandoffContainsMatch(handoff: SeatHandoff, needle: string): boolean
  * unified inbox's job-citation rule — and under a `contains` filter only
  * records whose held-work text carries the needle survive. Seats left with
  * no records drop out and `matched` recounts, so every count stays the
- * filtered total. The section takes no `since`, `priority` or `channel`:
- * a pending handoff record's `createdAt` stamps the plan read instant, not
- * the held work's age, so no per-record recency exists to filter on, the
- * record carries no wire band, and seat work has no per-record room —
- * every listed record is current evidence and the section stays whole
- * like `channels`.
+ * filtered total. The section takes no `since`, `priority`, `channel`,
+ * `id` or `inReplyTo`: a pending handoff record's `createdAt` stamps the
+ * plan read instant, not the held work's age, so no per-record recency
+ * exists to filter on, the record carries no wire band, seat work has no
+ * per-record room, and a handoff record names no retained envelope id or
+ * body citation — every listed record is current evidence and the section
+ * stays whole like `channels`.
  */
 export function busWorkMineSeatsFromPlan(
   plan: SeatHandoffsPlan,
