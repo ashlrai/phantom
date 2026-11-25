@@ -125,6 +125,8 @@ export interface ChannelSource {
   inboundEvidence?(): Promise<InboundEvidence> | InboundEvidence;
   /** Reply receipt times (ISO), any order. Activity observations only; binding comes from replyBinding(). */
   replies(): Promise<string[]> | string[];
+  /** Latest failed outbound attempt, without error payloads; null means no failure observed. */
+  outboundFailure?(): Promise<{ at: string } | null> | { at: string } | null;
   /**
    * Optional per-request reply binding at `now`. When present and readable it
    * replaces timestamp-only pending logic: an answered request no longer
@@ -218,6 +220,12 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
     journal: readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 }),
     sends: readSlackSendReceipts(),
   };
+  let sendCaptured = false;
+  let lastSend: ReturnType<typeof readLastSend>;
+  const sendSnapshot = () => {
+    if (!sendCaptured) { lastSend = readLastSend(runsDir); sendCaptured = true; }
+    return lastSend;
+  };
   return {
     slack: {
       configMissing: () => {
@@ -258,8 +266,12 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
         };
       },
       replies: () => {
-        const last = readLastSend(runsDir);
+        const last = sendSnapshot();
         return last?.ok && last.at ? [last.at] : [];
+      },
+      outboundFailure: () => {
+        const last = sendSnapshot();
+        return last && !last.ok ? { at: last.at ?? '' } : null;
       },
     },
   };
@@ -289,6 +301,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   }
   if (base.processAlive === true) base.runtimeHost = host;
   let inbound: number[], replies: number[], evidence: InboundEvidence | null = null;
+  let outboundFailure: { at: string } | null = null;
   try {
     if (src.inboundEvidence) {
       evidence = await src.inboundEvidence();
@@ -297,6 +310,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
       inbound = (await src.inbound()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
     }
     replies = (await src.replies()).map(ms).filter(Number.isFinite).sort((a, b) => a - b);
+    outboundFailure = await src.outboundFailure?.() ?? null;
   } catch {
     return { ...base, state: 'UNKNOWN', missing: [`${channel} receipt source unreadable`] };
   }
@@ -369,11 +383,16 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const reasons: string[] = [];
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
+  const failureTime = outboundFailure ? ms(outboundFailure.at) : null;
+  const invalidFailureTime = failureTime !== null && (!Number.isFinite(failureTime) || failureTime > nowMs);
+  const recentFailure = failureTime !== null && inWindow(failureTime);
+  if (invalidFailureTime) reasons.push(`${channel} outbound failure evidence time invalid`);
+  if (recentFailure) reasons.push(`${channel} outbound send failed`);
   if (durableFailed) reasons.push(`${channel} durable ingress failed`);
   // The binding-unreadable reason is reported but never changes the state the
   // timestamp fallback would have produced on its own.
   const reported = bindingUnreadable ? [...reasons, `${channel} reply binding unreadable`] : reasons;
-  if (pending.some((t) => nowMs - t > REPLY_GRACE_MS) || durableFailed) {
+  if (pending.some((t) => nowMs - t > REPLY_GRACE_MS) || durableFailed || recentFailure) {
     return { ...base, state: 'DEGRADED', missing: reported };
   }
   if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reported };
