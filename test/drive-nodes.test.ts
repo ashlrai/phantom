@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
@@ -511,6 +512,35 @@ describe('result: read-only owner-scoped outcome', () => {
       expect(code).toBe(0);
       expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'result',
         jobId: 'job', state: 'completed', result: 'done', completedBy: 'worker' });
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('prints the lease, task and ready commands on a text pull', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'build'], nodes);
+      const session = String(joined['session']);
+      const taskText = 'Summarize the README in one line.';
+      const digest = createHash('sha256').update(taskText).digest('hex');
+      executeNodeFleet('enqueue', ['--job', 'task-job', '--owner', 'o', '--pack', 'codex-file',
+        '--requires', 'build', '--secrets', 'DEPLOY_KEY',
+        '--task-part', taskText, '--task-sha256', `sha256:${digest}`], nodes);
+      expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session], { store })).toBe(0);
+      const out = lines.at(-1)!;
+      const claim = store.state.jobs[0]!.claim!;
+      expect(out).toContain('Claimed task-job (owner o; requires build; pack codex-file; secrets DEPLOY_KEY).');
+      expect(out).toContain(`Lease token ${claim.token}, leader-token ${claim.leaderToken};`);
+      expect(out).toContain('Task:');
+      expect(out).toContain(taskText);
+      const lease = `--job task-job --node worker --session ${session} --token ${claim.token} --leader-token ${claim.leaderToken}`;
+      expect(out).toContain(`Run: phm node renew ${lease}`);
+      expect(out).toContain(`Done? Run: phm node complete ${lease} --result <text>`);
+      // A second pull finds the job already running and keeps the short no-job text.
+      lines.length = 0;
+      expect(await cmdNodeFleet('pull', ['--node', 'worker', '--session', session], { store })).toBe(0);
+      expect(lines.at(-1)).toBe('No job for this node. Run: phm node plan');
     } finally { vi.restoreAllMocks(); }
   });
 });
