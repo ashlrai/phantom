@@ -17,6 +17,8 @@ export interface Source {
   /** Untrusted, explicitly supplied license evidence. */
   license?: string;
   licenseUrls?: string[];
+  /** Untrusted single-line claim copied from an explicit Claim field; requires external verification. */
+  claim?: string;
   /** Untrusted text copied from explicit Takeaway fields. */
   takeaways?: string[];
   takeawaysTruncated?: { count: boolean; bytes: boolean };
@@ -139,6 +141,8 @@ export function parseHarnessDigest(markdown: string, now: Date, staleDays = 7): 
       if (note) takeaway = [note[1]!.trim()];
       const license = /^- License:[ \t]*(.*)$/.exec(line)?.[1]?.trim();
       if (license && Array.from(license).length <= 120 && !source.license) source.license = license;
+      const claim = /^- Claim:[ \t]*(.*)$/.exec(line)?.[1]?.trim();
+      if (claim && Array.from(claim).length <= 400 && !source.claim) source.claim = claim;
       const licenseSource = /^- License source:[ \t]*(.*)$/.exec(line)?.[1];
       if (licenseSource !== undefined) {
         const links = [...licenseSource.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/g)].map((match) => match[1]!);

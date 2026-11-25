@@ -146,4 +146,39 @@ describe('planResearchDigest', () => {
     expect(planResearchDigest(digest, { ...options, minScore: 4 }).proposals).toHaveLength(0);
     expect(planResearchDigest(digest, { ...options, limit: 0 }).proposals).toHaveLength(0);
   });
+
+  it('attaches auditable source attribution, baseline owner, and signal on a scan-to-proposal fixture', () => {
+    const scanFixture = `# November 2026 frontier scan handoff fixture
+
+## S1 — Dream-RSI
+- Checked: 2026-11-06.
+- Source: [Dream-RSI](https://arxiv.org/abs/2609.14858)
+- Claim: Historical replay prioritizes exploration policies without proving live wins.
+
+## S2 — Review evidence boundary
+- Checked: 2026-11-07.
+- Source: [Anthropic engineering](https://www.anthropic.com/research/redesigning-source-control)
+- Takeaway: Cheap source-control queries enable auditable review handoffs.
+
+## Proposals
+- RQ-SCAN-ATTR-1 | S1,S2 | impact=4 effort=s confidence=high repo=phantom pool=codex-personal tier=work | Extend src/core/research/proposals.ts with review-only attribution fields. | Acceptance: npx vitest run test/research-proposals.test.ts passes. | Baseline-owner: fleet-research | Signal: Human provenance corrections per 100 nominations.
+- RQ-SCAN-UNSAFE | S1 | impact=4 effort=s confidence=high | Edit src/core/research/proposals.ts. | Acceptance: npm test. | Owner: bad\u2014owner | Signal: ok
+`;
+    const plan = planResearchDigest(scanFixture, {
+      ...options,
+      queue: '- READY RQ-EXISTING (P2, pool=codex-personal, tier=work, repo=phantom): unrelated src/cli/queue.ts work.',
+    });
+    expect(plan.proposals).toHaveLength(1);
+    const [proposal] = plan.proposals;
+    expect(proposal!.id).toBe('RQ-SCAN-ATTR-1');
+    expect(proposal!.attribution).toEqual({
+      sources: [
+        { id: 'S1', checkedAt: '2026-11-06', claim: 'Historical replay prioritizes exploration policies without proving live wins.', claimVerified: false },
+        { id: 'S2', checkedAt: '2026-11-07', claim: 'Cheap source-control queries enable auditable review handoffs.', claimVerified: false },
+      ],
+      baselineOwner: 'fleet-research',
+      signal: 'Human provenance corrections per 100 nominations.',
+    });
+    expect(plan.drops).toContainEqual(expect.objectContaining({ id: 'RQ-SCAN-UNSAFE', stage: 'parse', reasons: ['unsafe-baseline-owner'] }));
+  });
 });
