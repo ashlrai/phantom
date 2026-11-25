@@ -5,7 +5,7 @@ const usage = 'Usage: ashlr fleet channel-health [--json]';
 /** Exit 0 only when every channel is LIVE; read-only, sends nothing. */
 export async function cmdFleetChannelHealth(args: string[], deps: ChannelHealthDeps = {}): Promise<number> {
   if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-    console.log(`${usage}\nOne read of Slack and iMessage bridge health from receipts and process checks.`);
+    console.log(`${usage}\nOne read of Slack and iMessage bridge health from receipts and process checks.\nExit 0 means channel health is LIVE; it does not itself prove task assignment, execution, or a request round trip.`);
     return 0;
   }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--json')) {
@@ -21,7 +21,9 @@ export async function cmdFleetChannelHealth(args: string[], deps: ChannelHealthD
       console.log(`${c.channel}: ${c.state} configured=${c.configured} process=${c.processAlive} host=${c.runtimeHost ?? '-'} ` +
         `lastInbound=${c.lastInboundAt ?? '-'} lastReply=${c.lastReplyAt ?? '-'} unanswered=${c.unansweredCount}` +
         ` coverage=${c.proof.requestCoverage}` +
-        (ingress ? ` ingress=posted:${ingress.posted},dup:${ingress.duplicate},failed:${ingress.failed},unverified:${ingress.unverified}` : ''));
+        (ingress ? ` ingress=posted:${ingress.posted},dup:${ingress.duplicate},failed:${ingress.failed},unverified:${ingress.unverified}` : '') +
+        ` answered=${c.proof.answeredCount ?? 'unknown'} futureDatedExcluded=${c.proof.futureDatedCount}`);
+      if (c.proof.requestCoverage === 'idle') console.log('  No request round trip was verified by this health result.');
       for (const m of c.missing) console.log(`  missing: ${m}`);
     }
   }
