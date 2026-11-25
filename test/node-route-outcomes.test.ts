@@ -175,10 +175,10 @@ describe('phm node route --outcomes-ledger', () => {
     const bad = await capture(() => cmdNodeRoute(
       ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--outcomes-ledger', '--runs-dir', runsDir, '--json']));
     expect(bad.code).toBe(2);
-    expect(JSON.parse(bad.lines[0]!).error).toMatch(/state=not-file/);
+    expect(JSON.parse(bad.lines[0]!).error).toMatchObject({ code: 'invalid-input', message: expect.stringMatching(/state=not-file/), fix: expect.any(String) });
     const orphan = await capture(() => cmdNodeRoute(
       ['--capacity', cap, '--costs', costs, '--jobs', jobs, '--runs-dir', runsDir, '--json']));
     expect(orphan.code).toBe(2);
-    expect(JSON.parse(orphan.lines[0]!).error).toMatch(/--outcomes-ledger/);
+    expect(JSON.parse(orphan.lines[0]!).error).toMatchObject({ code: 'usage', message: expect.stringMatching(/--outcomes-ledger/), fix: expect.any(String) });
   });
 });

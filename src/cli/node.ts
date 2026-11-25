@@ -1,4 +1,4 @@
-import { NODE_FLEET_USAGE, NODE_FLEET_VERBS } from './node-fleet-usage.js';
+import { NODE_FLEET_USAGE, NODE_FLEET_VERBS, nodeErrorEnvelope } from './node-fleet-usage.js';
 
 /** `bootstrap` is planning only: no provisioning, host inspection, credentials, or registry I/O.
  * The other verbs (see node-fleet.ts) are the local node registry, router and job leases.
@@ -52,7 +52,10 @@ export async function cmdNode(args: string[]): Promise<number> {
   if (args[0] === 'lanes' && !args.includes('--help') && !args.includes('-h')) {
     const extra = args.slice(1).filter(a => a !== '--json');
     if (extra.length || args.slice(1).filter(a => a === '--json').length > 1) {
-      console.error('Usage: phm node lanes [--json]');
+      const message = 'Usage: phm node lanes [--json]';
+      if (args.includes('--json')) console.log(JSON.stringify(nodeErrorEnvelope('lanes',
+        { code: 'usage', message, fix: 'Run: phm node lanes --json, or phm node --help for the command list.' })));
+      else console.error(message);
       return 2;
     }
     const { localLanePlan, localLaneConfigPath } = await import('../core/drive/nodes/local-model-caps.js');
@@ -112,7 +115,13 @@ phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would 
   const error = bootstrap ? `Node bootstrap is dry-run only. ${USAGE}`
     : args.length === 0 || args[0]!.startsWith('-') ? 'Usage: phm node <command> [arguments] [--json]. Run: phm node --help for the command list.'
     : `Unknown node command '${args[0]}'. Run: phm node --help`;
-  if (json) console.log(JSON.stringify(bootstrap ? { error, executable: false } : { error }));
-  else console.error(error);
+  if (json) {
+    // `command` names what the caller invoked: the stray verb, 'bootstrap' for a
+    // refused bootstrap call, or the group itself when no verb was given.
+    const command = bootstrap ? 'bootstrap' : args.length === 0 || args[0]!.startsWith('-') ? 'node' : args[0]!;
+    console.log(JSON.stringify({ ...nodeErrorEnvelope(command,
+      { code: 'usage', message: error, fix: 'Run: phm node --help for the command list.' }),
+      ...(bootstrap ? { executable: false } : {}) }));
+  } else console.error(error);
   return 2;
 }

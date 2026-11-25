@@ -1,5 +1,6 @@
 /** `phm node bridge [--owner <scope>] [--apply] [--json]`: thin handler over the ready.tsv -> node bridge. */
 import type { NodeBridgeReport } from '../core/drive/nodes/ready-bridge.js';
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 
 const USAGE = 'Usage: phm node bridge [--owner <scope>] [--apply] [--json]';
 
@@ -18,7 +19,7 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
   const owner = ownerAt >= 0 ? args[ownerAt + 1] : undefined;
   const known = args.every((a, i) => ['--json', '--apply', '--owner'].includes(a) || (i === ownerAt + 1 && ownerAt >= 0));
   if (!known || (ownerAt >= 0 && (!owner || owner.startsWith('--')))) {
-    if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'bridge', error: { code: 'usage', message: USAGE, fix: 'Run: phm node bridge --help' } }));
+    if (json) console.log(JSON.stringify(nodeErrorEnvelope('bridge', { code: 'usage', message: USAGE, fix: 'Run: phm node bridge --help' })));
     else console.error(USAGE);
     return 2;
   }

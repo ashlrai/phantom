@@ -1,4 +1,5 @@
 /** `phm node capacity` and `phm node route` (RQ-NODE-AUTOSCALE-1). Thin: parse argv, delegate to core. */
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 import { constants } from 'node:fs';
 import { lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -58,8 +59,8 @@ export async function writeCapacityDoc(path: string, doc: NodeCapacityDoc): Prom
   } catch (error) { await unlink(temp).catch(() => {}); throw error; }
 }
 
-function fail(json: boolean, message: string, code = 2): number {
-  if (json) console.log(JSON.stringify({ error: message }));
+function fail(command: string, json: boolean, message: string, code = 2, kind: { code: string; fix: string } = { code: 'usage', fix: 'Run: phm node --help for the command list.' }): number {
+  if (json) console.log(JSON.stringify(nodeErrorEnvelope(command, { code: kind.code, message, fix: kind.fix })));
   else console.error(message);
   return code;
 }
@@ -67,9 +68,9 @@ function fail(json: boolean, message: string, code = 2): number {
 export async function cmdNodeCapacity(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const problem = validate(args, ['--node', '--out', '--previous'], ['--json']);
-  if (problem) return fail(json, `${problem}\n${NODE_CAPACITY_USAGE}`);
+  if (problem) return fail('capacity', json, `${problem}\n${NODE_CAPACITY_USAGE}`);
   const node = flagValues(args, '--node')[0];
-  if (node !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/.test(node)) return fail(json, 'invalid --node id');
+  if (node !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/.test(node)) return fail('capacity', json, 'invalid --node id');
   const out = flagValues(args, '--out')[0];
   const previousPath = flagValues(args, '--previous')[0] ?? out;
   let previous: NodeCapacityDoc | null = null;
@@ -77,7 +78,7 @@ export async function cmdNodeCapacity(args: string[]): Promise<number> {
   const snapshot = await measureNode(node ? { node } : {});
   const doc = computeNodeCapacity(snapshot, previous);
   if (out) {
-    try { await writeCapacityDoc(out, doc); } catch { return fail(json, `could not write ${out}; check the directory exists and is writable`, 1); }
+    try { await writeCapacityDoc(out, doc); } catch { return fail('capacity', json, `could not write ${out}; check the directory exists and is writable`, 1, { code: 'unavailable', fix: 'Check the --out directory exists, is writable and is not a symlink.' }); }
   }
   if (json) { console.log(JSON.stringify(doc)); return 0; }
   const gib = (n: number | null) => n === null ? 'unknown' : `${(n / 1024 ** 3).toFixed(1)} GiB`;
@@ -99,13 +100,13 @@ const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => 
 export async function cmdNodeRoute(args: string[]): Promise<number> {
   const json = args.includes('--json');
   const problem = validate(args, ['--capacity', '--costs', '--jobs', '--outcomes', '--runs-dir', '--nodes', '--exhausted'], ['--json', '--outcomes-ledger']);
-  if (problem) return fail(json, `${problem}\n${NODE_CAPACITY_USAGE}`);
+  if (problem) return fail('route', json, `${problem}\n${NODE_CAPACITY_USAGE}`);
   const runsDir = flagValues(args, '--runs-dir')[0];
   if (runsDir !== undefined && !args.includes('--outcomes-ledger')) {
-    return fail(json, '--runs-dir only applies with --outcomes-ledger\n' + NODE_CAPACITY_USAGE);
+    return fail('route', json, '--runs-dir only applies with --outcomes-ledger\n' + NODE_CAPACITY_USAGE);
   }
   const capacity = flagValues(args, '--capacity'), costsPath = flagValues(args, '--costs')[0], jobsPath = flagValues(args, '--jobs')[0];
-  if (!capacity.length || !costsPath || !jobsPath) return fail(json, `--capacity, --costs and --jobs are required\n${NODE_CAPACITY_USAGE}`);
+  if (!capacity.length || !costsPath || !jobsPath) return fail('route', json, `--capacity, --costs and --jobs are required\n${NODE_CAPACITY_USAGE}`);
   try {
     const docs = await Promise.all(capacity.map(async p => {
       const doc = parseNodeCapacityDoc(await readJsonFile(p));
@@ -127,7 +128,8 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     if (args.includes('--outcomes-ledger')) {
       ledger = await readRouteLaneOutcomes(runsDir === undefined ? {} : { runsDir });
       if (ledger.state === 'unreadable' || ledger.state === 'not-file') {
-        return fail(json, `jobs ledger ${ledger.path} state=${ledger.state}; --outcomes-ledger needs a readable metrics/jobs.jsonl`, 2);
+        return fail('route', json, `jobs ledger ${ledger.path} state=${ledger.state}; --outcomes-ledger needs a readable metrics/jobs.jsonl`, 2,
+          { code: 'invalid-input', fix: 'Point --runs-dir at the directory holding metrics/jobs.jsonl, or drop --outcomes-ledger.' });
       }
     }
     // Ledger tallies are the base; explicit --outcomes entries win per provider.
@@ -155,6 +157,7 @@ export async function cmdNodeRoute(args: string[]): Promise<number> {
     }
     return 0;
   } catch (error) {
-    return fail(json, error instanceof Error ? error.message : 'route failed');
+    return fail('route', json, error instanceof Error ? error.message : 'route failed', 2,
+      { code: 'invalid-input', fix: 'Check each input file is the JSON shape phm node --help documents for --capacity, --costs, --jobs, --outcomes and --nodes.' });
   }
 }

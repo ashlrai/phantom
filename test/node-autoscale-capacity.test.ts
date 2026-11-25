@@ -252,6 +252,6 @@ describe('phm node capacity / route CLI', () => {
       expect(await cmdNodeRoute(['--bogus', '--json'])).toBe(2);
     } finally { console.log = log; }
     expect(JSON.parse(lines[0]!)).toMatchObject({ schema: 'phantom.node-route.v1', plan: [{ jobId: 'j1', nodeId: 'mbp', provider: 'grok' }] });
-    expect(JSON.parse(lines[1]!).error).toMatch(/node-capacity\.v1/);
+    expect(JSON.parse(lines[1]!).error).toMatchObject({ code: 'invalid-input', message: expect.stringMatching(/node-capacity\.v1/), fix: expect.any(String) });
   });
 });

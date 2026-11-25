@@ -96,4 +96,17 @@ describe('repeatable Mac enrollment', () => {
     expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
     expect(deps.configure).not.toHaveBeenCalled();
   });
+  it('answers a refused pool operation with the shared node error envelope', async () => {
+    deps.call.mockImplementation(() => { throw new Error('ssh secret detail'); });
+    expect(await cmdNodePool('status', ['--json'])).toBe(1);
+    const out = JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0]);
+    expect(out).toMatchObject({ schemaVersion: 1, command: 'status',
+      error: { code: 'unavailable', message: expect.any(String), fix: expect.any(String) } });
+    expect(JSON.stringify(out)).not.toContain('secret detail');
+    // A failed first enrollment reports registered:false under the join command.
+    deps.read.mockReturnValue(null);
+    deps.call.mockImplementation((_c, verb) => { if (verb === 'join') throw new Error('offline'); return { demoted: false, result: {} }; });
+    expect(await cmdNodePool('join', ['--primary', 'primary-mac', '--backup', 'backup-mac', '--owner', 'mason', '--json'])).toBe(1);
+    expect(JSON.parse(vi.mocked(console.log).mock.calls.at(-1)![0])).toMatchObject({ schemaVersion: 1, command: 'join', registered: false });
+  });
 });

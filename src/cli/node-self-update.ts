@@ -1,4 +1,5 @@
 /** `phm node self-update [--owner <scope>] [--target <x.y.z>] [--json]`: per-node phm version drift. Plan only. */
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 import type { NodeView } from '../core/drive/nodes/index.js';
 import { localPhmVersion, planNodeSelfUpdate } from '../core/drive/nodes/phm-version.js';
 import { validId } from '../core/drive/nodes/state.js';
@@ -26,7 +27,8 @@ async function defaultNodes(owner: string | null): Promise<NodeView[]> {
 export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {}): Promise<number> {
   const json = args.includes('--json');
   const fail = (message: string): number => {
-    if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'self-update', error: { message } }));
+    if (json) console.log(JSON.stringify(nodeErrorEnvelope('self-update',
+      { code: 'usage', message, fix: 'Run: phm node --help for the flags self-update takes.' })));
     else console.error(`${message}\n${SELF_UPDATE_USAGE}`);
     return 2;
   };
@@ -54,8 +56,11 @@ export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {
     }
     return 0;
   } catch (error) {
-    const message = error instanceof Error && error.message.startsWith('--owner') ? error.message : 'Node registry unavailable. Check the pool config and SSH approvals.';
-    if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'self-update', error: { message } }));
+    const needsOwner = error instanceof Error && error.message.startsWith('--owner');
+    const message = needsOwner ? (error as Error).message : 'Node registry unavailable. Check the pool config and SSH approvals.';
+    if (json) console.log(JSON.stringify(nodeErrorEnvelope('self-update', needsOwner
+      ? { code: 'usage', message, fix: 'Add --owner <scope>, or configure this Mac as a node pool member first.' }
+      : { code: 'unavailable', message, fix: 'Check the pool config and SSH approvals; see docs/NODES.md.' })));
     else console.error(message);
     return 1;
   }

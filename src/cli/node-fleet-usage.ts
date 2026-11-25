@@ -1,6 +1,14 @@
 /** Kept import-free so `phm node --help` and `bootstrap` never load the node store. */
 export const NODE_FLEET_VERBS = ['join', 'beat', 'enqueue', 'plan', 'pull', 'renew', 'complete', 'withdraw', 'status', 'list', 'leave'] as const;
 
+/** The one `--json` error envelope every `phm node` verb shares (docs/NODE-ROUTER.md):
+ * `{"schemaVersion":1,"command":<verb>,"error":{"code","message","fix"}}`. Agents parse this
+ * shape, so `code` stays a stable slug and `fix` names a runnable next step; argument values
+ * are never echoed into `message`. */
+export function nodeErrorEnvelope(command: string, error: { code: string; message: string; fix: string }) {
+  return { schemaVersion: 1 as const, command, error };
+}
+
 export const NODE_FLEET_USAGE = `Usage: phm node join --node <id> --owner <scope[,scope]> [--caps <cap[,cap]>] [--slots 0-64] [--json]
        phm node beat --node <id> --session <n> [--usage 0-1000] [--slots 0-64] [--capacity <sample-json>] [--auth ok|missing|unknown | --probe-auth] [--json]
        phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]

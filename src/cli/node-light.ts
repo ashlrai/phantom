@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 import { restockLight, runLightJob } from '../core/drive/nodes/light.js';
 import { callPool, readPoolConfig } from '../core/drive/nodes/pool-host.js';
 import { privateDirectory } from '../core/universe/artifacts.js';
@@ -28,8 +29,13 @@ export async function cmdNodeLight(args: string[]): Promise<number> {
       console.log(JSON.stringify(report));
     }
     return 0;
-  } catch {
-    console.log(JSON.stringify({ schema: 'muse.light.v1', error: 'Light operation refused or unavailable; check pool, lease and fixed recipe runner.' }));
+  } catch (error) {
+    const usage = error instanceof Error && error.message === 'usage';
+    console.log(JSON.stringify(nodeErrorEnvelope('light', usage
+      ? { code: 'usage', message: 'Usage: phm node light restock|status|run [--apply on restock] [--json]. run reads one light job on stdin.',
+          fix: 'Run: phm node light restock --json, or phm node --help for the command list.' }
+      : { code: 'unavailable', message: 'Light operation refused or unavailable; check pool, lease and fixed recipe runner.',
+          fix: 'Join the ashlr pool first (phm node join --json), then retry; see docs/nodes/MUSE.md.' })));
     return 1;
   }
 }

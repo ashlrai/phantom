@@ -212,4 +212,17 @@ describe('reference node runner', () => {
     expect(await cmdNode(['run-once'])).toBe(1);
     expect(log).not.toHaveBeenCalled();
   });
+  it('answers --json usage and runner failures with the shared node error envelope', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await cmdNode(['run-once', '--bogus', '--json'])).toBe(2);
+    expect(JSON.parse(log.mock.calls.at(-1)![0])).toMatchObject({ schemaVersion: 1, command: 'run-once',
+      error: { code: 'usage', message: expect.any(String), fix: expect.any(String) } });
+    log.mockClear();
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(Readable.from(['{}']) as NodeJS.ReadStream);
+    expect(await cmdNode(['run-once', '--json'])).toBe(1);
+    const body = JSON.parse(log.mock.calls.at(-1)![0]);
+    expect(body).toMatchObject({ schemaVersion: 1, command: 'run-once', error: { code: 'unavailable' } });
+    expect(error).not.toHaveBeenCalled();
+  });
 });

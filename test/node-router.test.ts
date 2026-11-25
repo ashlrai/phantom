@@ -277,6 +277,72 @@ describe('phm node CLI', () => {
     expect(JSON.parse(stale.out).error.fix).toContain('phm node join');
   });
 
+  it('reports flag parse errors through the documented JSON error envelope with --json', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const cases: [string[], string][] = [
+      [['join', '--node', 'x', '--owner', 'o', '--bogus', '--json'], 'unknown-flag'],
+      [['join', '--node', 'x', '--owner', 'o', '--caps', '--json'], 'missing-value'],
+      [['join', '--node', 'a', '--node', 'b', '--owner', 'o', '--json'], 'duplicate-flag'],
+      [['plan', '--owner', '--json'], 'missing-value'],
+    ];
+    for (const [args, code] of cases) {
+      const res = await cli(...args);
+      expect(res.code).toBe(2);
+      expect(res.err).toBe('');
+      expect(JSON.parse(res.out)).toMatchObject({ schemaVersion: 1, command: args[0],
+        error: { code, message: expect.any(String), fix: expect.any(String) } });
+    }
+    // Without --json the same failures stay human text on stderr.
+    const text = await cli('join', '--node', 'x', '--owner', 'o', '--bogus');
+    expect(text.code).toBe(2);
+    expect(text.out).toBe('');
+    expect(text.err).toContain('That flag is not supported');
+    // A rejected flag's value is never echoed into the JSON error either.
+    const secret = await cli('join', '--node', 'x', '--owner', 'o', '--token=supersecret', '--json');
+    expect(secret.code).toBe(2);
+    expect(secret.out).not.toContain('supersecret');
+    expect(JSON.parse(secret.out).error.code).toBe('unknown-flag');
+  });
+
+  it('emits the documented error envelope from every phm node verb, not just fleet verbs', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // [args, expected command, expected exit]
+    const cases: [string[], string, number][] = [
+      [['frobnicate', '--json'], 'frobnicate', 2],
+      [['--json'], 'node', 2],
+      [['bootstrap', '--json'], 'bootstrap', 2],
+      [['lanes', 'bogus', '--json'], 'lanes', 2],
+      [['capacity', '--bogus', '--json'], 'capacity', 2],
+      [['route', '--json'], 'route', 2],
+      [['self-update', '--apply', '--json'], 'self-update', 2],
+      [['bridge', '--bogus', '--json'], 'bridge', 2],
+      [['run-once', '--bogus', '--json'], 'run-once', 2],
+      [['light', 'bogus', '--json'], 'light', 1],
+    ];
+    for (const [args, command, code] of cases) {
+      const res = await cli(...args);
+      expect(res.code, args.join(' ')).toBe(code);
+      expect(res.err, args.join(' ')).toBe('');
+      const body = JSON.parse(res.out);
+      expect(body, args.join(' ')).toMatchObject({ schemaVersion: 1, command,
+        error: { code: expect.any(String), message: expect.any(String), fix: expect.any(String) } });
+      expect(typeof body.error.code).toBe('string');
+      expect(body.error.fix.length).toBeGreaterThan(0);
+    }
+    // The refused bootstrap plan keeps its executable:false marker inside the envelope.
+    const boot = JSON.parse((await cli('bootstrap', '--json')).out);
+    expect(boot).toMatchObject({ command: 'bootstrap', executable: false, error: { code: 'usage' } });
+    // Without --json the same verbs keep human text on stderr.
+    const text = await cli('lanes', 'bogus');
+    expect(text.code).toBe(2);
+    expect(text.out).toBe('');
+    expect(text.err).toContain('Usage: phm node lanes');
+    const bogus = JSON.parse((await cli('frobnicate', '--json')).out);
+    expect(bogus.error.message).toContain("Unknown node command 'frobnicate'");
+  });
+
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);

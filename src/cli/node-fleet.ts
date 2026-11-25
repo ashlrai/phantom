@@ -2,6 +2,7 @@
 import type { NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
 import type { NodeAuth } from '../core/drive/nodes/state.js';
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
@@ -27,10 +28,12 @@ function text(verb: string, out: Record<string, unknown>): string {
 }
 
 export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleetDeps = {}): Promise<number> {
-  let json = false;
+  // `--json` is a boolean flag and a standalone `--json` token can never be a
+  // flag value (values starting with `--` are refused), so argv alone proves
+  // the caller asked for JSON even when flag parsing fails first.
+  const json = args.includes('--json');
   try {
     const flags = parseNodeFleetFlags(verb, args);
-    json = flags.has('--json');
     if (!deps.store) {
       const { cmdNodePool, hasNodePool } = await import('./node-pool.js');
       if (hasNodePool()) return cmdNodePool(verb, args);
@@ -52,7 +55,7 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
       : 'Check that ~/.ashlr/nodes is a private (0700) directory you own, and that no other process holds its lock.';
     const code = known ? error.code : 'rejected';
-    if (json) console.log(JSON.stringify({ schemaVersion: 1, command: verb, error: { code, message, fix } }));
+    if (json) console.log(JSON.stringify(nodeErrorEnvelope(verb, { code, message, fix })));
     else console.error(`${message} Fix: ${fix}`);
     return known ? error.exit : 1;
   }

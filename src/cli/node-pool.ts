@@ -5,6 +5,7 @@ import { validId } from '../core/drive/nodes/state.js';
 import { readNodeCapacity } from '../core/drive/nodes/capacity.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
+import { nodeErrorEnvelope } from './node-fleet-usage.js';
 import { callNodeSsh, sshApprovalStep, validSshHost } from '../core/drive/nodes/ssh.js';
 import { probeNodeLanes, runNodeWorker } from '../core/drive/nodes/worker.js';
 
@@ -57,16 +58,16 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
           // Registration proves the route, then release it so worker can establish its own session.
           callPool(config, 'leave', ['--node', config.node, '--session', String(result.result['session'])]);
           if (!existing) configurePool(config);
-          emit({ schemaVersion: 1, registered: true, role: config.role, lanes, capacity, ready: !capacity.held && lanes.length > 0,
+          emit({ schemaVersion: 1, command: 'join', registered: true, role: config.role, lanes, capacity, ready: !capacity.held && lanes.length > 0,
             next: 'phm node worker --runner /absolute/host-owned-runner --json', ...result.result });
           return 0;
         } catch {
-          emit({ schemaVersion: 1, registered: false, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
+          emit({ schemaVersion: 1, command: 'join', registered: false, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
           return 1;
         }
       }
       configurePool(config);
-      emit({ schemaVersion: 1, configured: true, role, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
+      emit({ schemaVersion: 1, command: 'pool', configured: true, role, approvalSteps: [sshApprovalStep(config.primary), sshApprovalStep(config.backup)] });
       return 0;
     }
     const config = readPoolConfig();
@@ -103,7 +104,9 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       ...(verb === 'status' ? { capacity: readNodeCapacity() } : {}) });
     return result.demoted ? 1 : 0;
   } catch {
-    emit({ schemaVersion: 1, error: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.' });
+    emit(nodeErrorEnvelope(verb, { code: 'unavailable',
+      message: 'Node pool operation refused or unavailable.',
+      fix: 'First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.' }));
     return 1;
   }
 }
