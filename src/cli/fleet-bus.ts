@@ -2,7 +2,7 @@ import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { ashlrHome } from '../core/cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../core/config.js';
-import { BusBoard, type BusBoardDeliveryFilter, type BusBoardReceiptFilter } from '../core/fleet/bus-board.js';
+import { BusBoard, busBoardPendingSender, type BusBoardDeliveryFilter, type BusBoardReceiptFilter } from '../core/fleet/bus-board.js';
 import { SharedStore } from '../core/fleet/shared-store.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 import type { AshlrConfig } from '../core/types.js';
@@ -14,7 +14,7 @@ export const usage = `Usage: phm bus thread create <title> [--peer <id>] [--json
        phm bus thread ack <thread-id> <delivery-id> [--peer <id>] [--json]
        phm bus thread post <thread-id> <body> [--peer <id>] [--json]
        phm bus thread list [--peer <id>] [--contains <text>] [--json]
-       phm bus board pending [--peer <id>] [--all] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--json]
+       phm bus board pending [--peer <id>] [--all] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO|ms>] [--before <15m|2h|1d|ISO|ms>] [--from <agent>] [--exclude-from <agent>] [--json]
        phm bus task create <thread-id> <fleet-item-id> <title> [--peer <id>] [--json]
        phm bus task list <thread-id> [--peer <id>] [--contains <text>] [--json]
        phm bus task claim|renew|release <task-id> [--peer <id>] [--json]
@@ -33,7 +33,12 @@ state; --all instead returns the fleet-wide digest every thread member shares
 under peers rather than peer). --job keeps only threads carrying a task whose
 fleet item id cites it. Thread delivery reads support --from and --exclude-from
 on the stored sender label; including and excluding the same label matches
-nothing. --contains, --since and --before are the same rules
+nothing. board pending takes the same two flags as agent refs resolved through
+the identity registry — the rule every other bus read's sender filter applies,
+with exact-label matching kept on an unresolvable ref or unreadable registry —
+so deliveries keep only posts the named identity sent while tasks, which
+record no author, never match under --from and stay listed under
+--exclude-from. --contains, --since and --before are the same rules
 every other bus read applies — the normalized needle over scrubbed display
 text, and the [since, before) window on each row's recorded timestamp —
 scoped to the fields each read carries: thread read, pending and hops take
@@ -148,13 +153,14 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
   // Each board read takes only the filters its stored rows carry: deliveries
   // and receipts keep a recorded-time window, deliveries and titles keep the
   // --contains text rule, the delivery reads keep the --from/--exclude-from
-  // sender rule on the stored sender label, and --job/--all stay board
-  // pending's own flags.
+  // sender rule on the stored sender label, board pending keeps the same two
+  // flags resolved through the agent identity registry, and --job/--all stay
+  // board pending's own flags.
   // Anywhere else a flag is refused rather than silently dropped, and --all
   // leaves no single peer view for --peer to select.
   const TIME_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops', 'thread:receipts']);
   const TEXT_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops', 'thread:list', 'task:list']);
-  const SENDER_FILTERED = new Set(['thread:read', 'thread:pending', 'thread:hops']);
+  const SENDER_FILTERED = new Set(['board:pending', 'thread:read', 'thread:pending', 'thread:hops']);
   if ((parsed.all === true && parsed.command !== 'board:pending') ||
     (parsed.job !== undefined && parsed.command !== 'board:pending') ||
     ((parsed.since !== undefined || parsed.before !== undefined) && !TIME_FILTERED.has(parsed.command)) ||
@@ -193,6 +199,13 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
     ...(boardSinceMs === undefined ? {} : { sinceMs: boardSinceMs }),
     ...(boardBeforeMs === undefined ? {} : { beforeMs: boardBeforeMs }),
   };
+  // board pending's sender flags take agent refs resolved through the
+  // identity registry — the rule every other bus read's sender filter
+  // applies — while the thread delivery reads above keep exact peer labels,
+  // so the registry read runs only for the command that consumes it.
+  const pendingSender = parsed.command === 'board:pending'
+    ? busBoardPendingSender({ from: parsed.from, excludeFrom: parsed.excludeFrom })
+    : undefined;
   try {
     const cfg = (deps.loadConfig ?? loadConfigReadOnlyStrict)();
     const shared = cfg.fleet?.sharedQueue;
@@ -223,8 +236,8 @@ export async function cmdFleetBus(args: string[], deps: FleetBusDeps = {}): Prom
       case 'thread:hops': result = board.hops(actor, first!, deliveryFilter); break;
       case 'board:pending':
         result = parsed.all === true
-          ? board.pendingAll(Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs)
-          : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs);
+          ? board.pendingAll(Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs, pendingSender)
+          : board.pending(actor, Date.now(), parsed.job, parsed.contains, boardSinceMs, boardBeforeMs, pendingSender);
         break;
       case 'task:create': result = board.createTask(actor, first!, second!, third!); break;
       case 'task:list': result = board.listTasks(actor, first!, parsed.contains); break;
