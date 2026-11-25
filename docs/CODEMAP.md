@@ -128,6 +128,7 @@ imports, individual files, semantics or contract coverage.
 - `src/core/improve/`
 - `src/core/inbox/`
 - `src/core/incident/`
+- `src/core/install/`
 - `src/core/integrations/`
 - `src/core/intent/`
 - `src/core/knowledge/`
