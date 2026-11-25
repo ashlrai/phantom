@@ -608,6 +608,13 @@ export function createFleetRunsApi(deps: FleetRunsApiDeps = {}): ApiModule {
       sendJson(res, 200, JSON.parse(body));
       return true;
     }
+    if (path === '/api/verse/fleet/runs/leader-brief') {
+      if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }
+      const { readStoredCompactBrief } = await import('../fleet/leader-compact-brief.js');
+      const brief = await readStoredCompactBrief(deps.runsDir ?? defaultRunsDir());
+      sendJson(res, 200, sanitizePublicJson(brief ?? { schema: 'leader.compact-brief.v1', state: 'no data' }));
+      return true;
+    }
     // The phone's four tiles read the same fleet.brief.v1 as `phm status --brief --json`.
     if (path === '/api/verse/fleet/runs/brief') {
       if (method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return true; }

@@ -1,4 +1,5 @@
 import { OperationsDeck } from '../../control/fleet/OperationsDeck.js';
+import { FleetNowCard } from '../fleet/FleetNowCard.js';
 /**
  * routes/verse/sections/FleetSection.tsx — ⌘2 Fleet (SPEC-310B §6,
  * SPEC-310C §5; unit C7). THE place to operate the fleet (3.15): what it is
@@ -131,6 +132,7 @@ export function FleetSection() {
       actions={fleet.status === 'refreshing' ? <RefreshIndicator /> : null}
       lead={
         <>
+          <FleetNowCard />
           <div id={anchorId('fleet-map')}>
             <Suspense fallback={<p className={styles.muted} aria-busy="true">Loading the fleet map…</p>}>
               <FleetWorld initialLens="compute" agentWorkspace={new URLSearchParams(window.location.search).get('agentWorkspace') === '1'} read={fleet.data} refreshing={fleet.status === 'refreshing'} readFailed={fleet.status === 'error'} />

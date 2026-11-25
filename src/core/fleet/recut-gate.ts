@@ -14,6 +14,7 @@
  * `shouldEmitRecut` is pure. `readRecutGateFacts` does the reading, reusing the
  * job-yield tally (`slot-yield.ts`) so the stop list is the one `phm jobs yield` prints.
  */
+import { familyKey, readFamilyStops } from './empty-family-stops.js';
 import { execFile } from 'node:child_process';
 import { readLedgerLines, type YieldLineReader } from './ledger-lines.js';
 import { ledgerAtMs, ledgerEventName, ledgerJobId } from './empty-cause.js';
@@ -152,7 +153,9 @@ export async function readRecutGateFacts(target: string, opts: RecutGateReadOpti
   const ref = opts.ref ?? null;
   const diffContained = ref ? await refContained(opts.git, base, ref) : null;
   const stops = await readLiveStops(opts.stopFile === undefined ? stopFilePath() : opts.stopFile, now);
-  const hit = stops && stoppedBy(stops, [target.toUpperCase(), t.family]);
+  const recent = await readFamilyStops(opts.metrics, now);
+  const familyStop = recent.stops.find(s => s.key === familyKey(target));
+  const hit = (stops && stoppedBy(stops, [target.toUpperCase(), t.family])) ?? (familyStop && !stopList?.includes(t.family) ? { until: familyStop.until / 1000, reason: familyStop.reason } : null);
   const report = await readFamilyYield(opts.metrics, 24, now, opts.read);
   return { family: t.family, area: t.area, paths: t.paths, stopList, lastJobs, masterTouched, diffContained, ref, since, streak: n,
     yieldStats: report.launch_families.find(row => row.family === launchFamily(target.toUpperCase()) || row.family === `${t.family}C`),

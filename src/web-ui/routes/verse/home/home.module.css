@@ -2,6 +2,7 @@
    sets the groups side by side (the container rule at the end). The pane measures itself, so the window's width is never asked. */
 .root { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 88rem; margin: 0 auto; padding: var(--space-3); min-width: 0; overflow-y: auto; overflow-wrap: anywhere; container-type: inline-size; }
 .root > * { align-self: center; width: 100%; max-width: 44rem; }
+.root > article { max-width: 88rem; }
 .headline { margin: 0; color: var(--text-primary); font-size: var(--text-lg-size); font-weight: var(--font-weight-semibold); }
 .headline[data-health='red'] { color: var(--status-danger-fg); }
 .headline[data-health='stalled'] { color: var(--status-warning-fg); }
