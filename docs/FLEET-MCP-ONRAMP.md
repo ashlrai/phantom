@@ -24,11 +24,13 @@ surrounding configuration format and reload procedure depend on the client:
 }
 ```
 
-`phm mcp fleet` accepts no server arguments. `--help` prints help and exits;
-other extra arguments are rejected. Start it through an MCP client, not as an
+`phm mcp fleet` accepts no server arguments. `--help` prints the server's live
+tool-name inventory — the same names `tools/list` advertises — and exits; other
+extra arguments are rejected. Start it through an MCP client, not as an
 interactive shell command. Reserve its stdout for MCP protocol traffic; send
 client or wrapper diagnostics to stderr. Startup failure is reported on stderr.
-Use `tools/list` for the full current inventory; CLI help is only an overview.
+`tools/list` remains the authoritative per-tool contract: descriptions and
+input schemas live there, not in CLI help.
 
 ## First client session
 

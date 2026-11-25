@@ -5,6 +5,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { listWorkBoard, WORK_BOARD_DEFAULT_LIMIT, WORK_BOARD_MAX_LIMIT } from '../core/comms/work-board.js';
@@ -1859,4 +1861,24 @@ export function createFleetServer(readers: FleetReaders = { status: readFleetSta
 
 export async function startFleetServer(): Promise<void> {
   await createFleetServer().connect(new StdioServerTransport());
+}
+
+/**
+ * The tools/list inventory without stdio, so `phm mcp fleet --help` prints the
+ * same names the server advertises instead of a hand-maintained subset that
+ * drifts every time a tool lands. Constructing the server and listing tools
+ * touches no store, reader or external transport.
+ */
+export async function listFleetToolNames(): Promise<string[]> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createFleetServer();
+  const client = new Client({ name: 'phantom-fleet-help', version: '0.0.0' });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    return tools.map(tool => tool.name);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
 }

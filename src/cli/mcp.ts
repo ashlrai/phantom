@@ -959,7 +959,7 @@ function printHelp(): void {
   const cmds: [string, string][] = [
     ['(default)',                       'Run the aggregation gateway on stdio. Point any agent here.'],
     ['run --lazy',                      'Defer downstream startup, including cold discovery, until a tool call.'],
-    ['fleet',                           'Read-only fleet MCP on stdio (fleet_status, fleet_loop, fleet_bus_hops, fleet_host_runs, fleet_bus_inbox; no companion probes).'],
+    ['fleet',                           'Read-only fleet MCP on stdio — the phantom-fleet catalog (agent bus/comms, seats, fleet health); `phm mcp fleet --help` prints every advertised tool; no companion probes.'],
     ['context',                         'Read-only context-pack MCP on stdio (node_context_pack; caller supplies records; unread P0/P1 bus notices for the node join best-effort).'],
     ['docs',                            'Read-only docs MCP on stdio (search, list_pages, get_page over the shipped Markdown docs; no network).'],
     ['list [--json]',                   'Print discovered servers + ecosystem tools summary.'],
@@ -1037,7 +1037,13 @@ export async function cmdMcp(args: string[]): Promise<number> {
 
   if (sub === 'fleet') {
     if (args.length === 2 && (args[1] === '--help' || args[1] === '-h')) {
-      console.log('Usage: phm mcp fleet\nRead-only stdio MCP: fleet_status {}, fleet_loop {limit?: 1..50}, fleet_bus_hops {limit?: 1..50, from?: <label>, to?: <label>, excludeFrom?: <label>, id?: <id>}, fleet_host_runs {}, fleet_bus_inbox {after?: >=0, limit?: 1..100, to?: <label>, from?: <label>}.');
+      try {
+        const { listFleetToolNames } = await import('../mcp/fleet-server.js');
+        const names = await listFleetToolNames();
+        console.log(`Usage: phm mcp fleet\nRead-only stdio MCP (phantom-fleet): ${names.length} tools, all read-only — no companion probes, no caller paths, no writes. tools/list is the authoritative per-tool contract (descriptions and input schemas).\n\nTools: ${names.join(', ')}`);
+      } catch {
+        console.log('Usage: phm mcp fleet\nRead-only stdio MCP serving the phantom-fleet tool catalog; tools/list over the MCP handshake is the authoritative inventory.');
+      }
       return 0;
     }
     if (args.length !== 1) {
