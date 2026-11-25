@@ -150,11 +150,19 @@ export async function readOrderTrace(opts: { runsDir?: string; now?: () => numbe
           const emptyTs = Date.parse(tsText.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
           if (Number.isFinite(emptyTs) && emptyTs >= (empties.get(id) ?? -Infinity)) empties.set(id, emptyTs);
         }
+        if (normalized !== 'publish') {
+          const lifecycle = ['enqueue', 'enqueued', 'queued', 'launch', 'checkout_complete', 'finish', 'ci_start', 'ci_complete', 'outcome'];
+          const invalidEmpty = normalized === 'outcome' && row.empty === true &&
+            (id === null || !id.startsWith('RQ-') || tsText === null ||
+             !Number.isFinite(Date.parse(tsText.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))));
+          if ((!lifecycle.includes(normalized ?? '') || invalidEmpty) && !merged) result.sources.publishes = 'degraded';
+          continue;
+        }
         const job = pickStr(row, JOB_LEDGER_KEYS);
         const url = pickStr(row, URL_LEDGER_KEYS);
-        if (normalized !== 'publish' || job === null || url === null || tsText === null ||
+        if (job === null || url === null || tsText === null ||
             !Number.isFinite(Date.parse(tsText))) {
-          if (!merged) result.sources.publishes = 'degraded';
+          result.sources.publishes = 'degraded';
           continue;
         }
         const ts = Date.parse(tsText);
