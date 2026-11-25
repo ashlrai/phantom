@@ -1,7 +1,7 @@
 /** Board → source-thread notifier for Mason/Dot's Nov12 22:29 + 22:30 ET
  * orders: only meaningful work-state changes go back to the thread the
  * request came from — ASSIGNED (named owner + durable claim receipt),
- * BLOCKED (named dependency) and VERIFIED (every supplied PR, head,
+ * BLOCKED (named dependency and optional receipted owner) and VERIFIED (every supplied PR, head,
  * tests or artifact field).
  * RUNNING and RECEIVED stay silent; conversational acknowledgments are
  * never posted.
@@ -195,7 +195,7 @@ export interface BoardNotifyDeltaFields {
 
 /** Canonical meaningful-delta material for a postable state: the
  * normalized evidence the thread needs (ASSIGNED owner+claim, BLOCKED
- * dependency, VERIFIED pr/head/tests/artifact) bound to the channel and
+ * dependency plus optional owner+claim, VERIFIED pr/head/tests/artifact) bound to the channel and
  * thread it routes to, so a reroute is a new identity. `asOf` and the
  * source label are excluded — they move every pass and would defeat
  * dedupe. Returns null for silent states or missing evidence; the
@@ -209,7 +209,8 @@ export function boardNotifyDeltaMaterial(f: BoardNotifyDeltaFields): string | nu
   } else if (f.state === 'BLOCKED') {
     const dependency = normDeltaField(f.dependency);
     if (dependency === '') return null;
-    core = { dependency };
+    const owner = normDeltaField(f.owner), claim = normDeltaField(f.claimReceipt);
+    core = owner !== '' && claim !== '' ? { dependency, owner, claim } : { dependency };
   } else if (f.state === 'VERIFIED') {
     const head = normDeltaField(f.head), tests = normDeltaField(f.tests), artifact = normDeltaField(f.artifact);
     if (f.pr === undefined && head === '' && tests === '' && artifact === '') return null;
@@ -251,7 +252,7 @@ export function boardNoticeText(state: BoardNotifyState, itemId: string, asOf: s
 
 /** The bounded evidence a postable state cites: ASSIGNED names the owner
  * with its durable claim receipt labeled alongside, BLOCKED names the
- * dependency, and VERIFIED joins every supplied field with its label so
+ * dependency and optional receipted owner, and VERIFIED joins every supplied field with its label so
  * combined evidence stays parseable. A lone artifact already cites
  * itself, so it keeps the unlabeled single-field form. Every untrusted
  * value goes through `field`, keeping the line single and bounded. */
@@ -261,7 +262,12 @@ function detail(t: BoardTransition, state: BoardNotifyState): string | null {
     if (!e.owner || !e.claimReceipt) return null;
     return `${field(e.owner, 120)} (claim ${field(e.claimReceipt, 160)})`;
   }
-  if (state === 'BLOCKED') return e.dependency ? field(e.dependency, 160) : null;
+  if (state === 'BLOCKED') {
+    if (!e.dependency) return null;
+    const dependency = field(e.dependency, 160);
+    if (!normDeltaField(e.owner) || !normDeltaField(e.claimReceipt)) return dependency;
+    return `${dependency} — owner ${field(e.owner!, 120)} (claim ${field(e.claimReceipt!, 160)})`;
+  }
   const parts: string[] = [];
   if (e.pr !== undefined) parts.push(`PR #${e.pr}`);
   if (e.head) parts.push(`head ${field(e.head, 40)}`);
