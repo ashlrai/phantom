@@ -14,6 +14,7 @@ import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspecti
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
+import { indexWorkBoardEvidence } from './work-board-evidence-index.js';
 
 export const WORK_BOARD_DEFAULT_LIMIT = 20;
 export const WORK_BOARD_MAX_LIMIT = 100;
@@ -155,9 +156,10 @@ export function listWorkBoard(opts: {
       requests.push(row);
     }
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
+    const index = indexWorkBoardEvidence(read.receipts, claims);
     const asOf = new Date(now).toISOString();
     const toItem = (row: BusInboxReceipt): WorkBoardItem => {
-      const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now);
+      const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, index.receiptsFor(row.envelope.id), index.claimsFor(row.envelope.id), now);
       const classified = classifyWorkItem(evidence, asOf);
       const result = resultFor(classified.state, evidence);
       return {
