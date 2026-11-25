@@ -12,6 +12,24 @@ with master reason codes and posture evidence; no model calls, dispatch or write
 `cli/bots.ts::runBotsCli(argv, out?, home?)` returns 0 on success, 1 on error/refusal.
 Creation requires `--dry-run` and never calls the writer.
 
+## Harness experiment adoption
+
+`ExperimentResultV1` (`src/core/learn/harness-types.ts`) records the base and
+candidate version IDs, the held-out task set, and the result of paired runs.
+Its optional `families` field records candidate and incumbent pass counts,
+rates, the rate difference, and a verdict per task expectation (`edit` or
+`refuse`). Below three complete pairs in a family, its difference is null and
+its verdict is `unknown`. A missing, null, or empty field means no family
+evidence was recorded; legacy records remain readable but cannot authorize a
+new adoption.
+
+`evaluateAdoptionGate` rechecks the finished result before adoption. Every
+family must improve or hold; a family regression rejects even if aggregate
+lift is positive. The aggregate rules still apply: at least eight complete
+pairs, a positive 95% lift interval lower bound, no individual refuse-task
+regression, no increase in claimed changes without edits, and no cost
+increase above 20%. Refusal leaves the active harness unchanged.
+
 ## External bot seats
 
 `src/core/bots/seats.ts` exports `BotSeat`, `QuotaEvidence`, `SeatAdapter`,

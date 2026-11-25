@@ -1782,8 +1782,10 @@ cannot compensate. The report retains the incumbent on a refusal.
 
 Tasks without a recorded family appear as `unclassified`; they do not fill
 the named cohorts. The live report does not classify launches or change the
-active prompt or harness. Use fixed, matched cohorts under the same model and
-execution envelope when comparing a specific variant against its incumbent.
+active prompt or harness. The separate harness adoption gate checks verified
+pairs from its fixed held-out edit and refuse cohorts under the same
+evaluation envelope. It refuses adoption if any cohort regressed or if its
+evidence is missing or undersampled, even if the aggregate improved.
 
 ### Triage in Needs you
 

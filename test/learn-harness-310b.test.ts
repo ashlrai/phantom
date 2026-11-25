@@ -36,11 +36,13 @@ import {
   applyHarnessPatch,
   buildLearningState,
   checkHarnessCanary,
+  evaluateAdoptionGate,
   findHypothesis,
   harnessConfigDigest,
   harnessDir,
   harnessStatePath,
   loadHarnessState,
+  mutateHarnessState,
   passRateStandardError,
   recordHarnessOutcome,
   recordHypotheses,
@@ -199,6 +201,20 @@ describe('adoptHarness', () => {
     expect(!r.ok && r.reason).toMatch(/not adopted: ledger append refused/);
     expect(activeHarness()).toBeNull();
     expect(loadHarnessState().versions.find((v) => v.id === versionId)!.status).toBe('candidate');
+  });
+
+  it('refuses a finished adopt verdict from a legacy experiment without family evidence', async () => {
+    const ids = await passingExperiment();
+    expect(mutateHarnessState((state) => { delete state.experiments[0]!.families; }).ok).toBe(true);
+    const legacy = loadHarnessState().experiments[0]!;
+    expect(legacy).toMatchObject({ status: 'done', verdict: 'adopt' });
+    expect(evaluateAdoptionGate(legacy)).toEqual({ pass: false, reasons: ['per-family evidence was not recorded'] });
+    ledger.rows.length = 0;
+    expect(adoptHarness({ ...ids, actor: 'leader' })).toEqual({
+      ok: false, reason: 'the adoption gate does not hold: per-family evidence was not recorded',
+    });
+    expect(activeHarness()).toBeNull();
+    expect(ledger.rows).toEqual([]);
   });
 
   it('refuses the daemon, unknown ids, a mismatched experiment, and a second adoption while a canary runs', async () => {

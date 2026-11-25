@@ -52,6 +52,7 @@ import {
   mutateHarnessState,
 } from '../src/core/learn/harness-registry.js';
 import { HARNESS_ADOPTION_GATE, type HarnessHypothesis } from '../src/core/learn/harness-types.js';
+import type { FamilyEvidence } from '../src/core/improve/lesson-trial.js';
 import { HELD_OUT_TASKS } from '../src/core/local-eval/tasks-heldout.js';
 import { buildAgentArgs } from '../src/core/local-eval/runner.js';
 import { renderExperimentResult } from '../src/core/local-eval/report.js';
@@ -188,10 +189,64 @@ describe('paired 95% CI (Newcombe hybrid score) at n = 8', () => {
 // ---------------------------------------------------------------------------
 
 describe('decideExperimentVerdict', () => {
-  const good = { pairs: 8, lift: { mean: 62.5, ciLow: 16.98, ciHigh: 86.32, level: 0.95 as const }, refuseRegression: false, claimedChangeNoneMadeDelta: 0, costDeltaPct: 5 };
+  const good = {
+    pairs: 8, lift: { mean: 62.5, ciLow: 16.98, ciHigh: 86.32, level: 0.95 as const },
+    refuseRegression: false, claimedChangeNoneMadeDelta: 0, costDeltaPct: 5,
+    families: [
+      {
+        family: 'edit', verdict: 'improves', delta: 1,
+        candidate: { tasks: 5, landed: 5, rate: 1 }, incumbent: { tasks: 5, landed: 0, rate: 0 },
+      },
+      {
+        family: 'refuse', verdict: 'holds', delta: 0,
+        candidate: { tasks: 3, landed: 3, rate: 1 }, incumbent: { tasks: 3, landed: 3, rate: 1 },
+      },
+    ] satisfies FamilyEvidence[],
+  };
 
   it('adopts when every rule holds', () => {
     expect(decideExperimentVerdict(good).verdict).toBe('adopt');
+    expect(decideExperimentVerdict(good).reasons).toContain('every task family improved or held its pass rate');
+  });
+
+  it('rejects a task-family regression despite aggregate lift', () => {
+    const d = decideExperimentVerdict({
+      ...good,
+      families: [
+        ...good.families,
+        {
+          family: 'repair', verdict: 'regresses', delta: -0.25,
+          candidate: { tasks: 4, landed: 3, rate: 0.75 }, incumbent: { tasks: 4, landed: 4, rate: 1 },
+        },
+      ],
+    });
+    expect(d.verdict).toBe('reject');
+    expect(d.reasons).toContain('task family repair regressed: candidate passed 3/4, incumbent passed 4/4');
+  });
+
+  it('withholds adoption when a task family has too few pairs', () => {
+    const d = decideExperimentVerdict({
+      ...good,
+      families: [
+        good.families[0]!,
+        {
+          family: 'refuse', verdict: 'unknown', delta: null,
+          candidate: { tasks: 2, landed: 2, rate: 1 }, incumbent: { tasks: 2, landed: 2, rate: 1 },
+        },
+      ],
+    });
+    expect(d).toEqual({
+      verdict: 'inconclusive', reasons: ['task family refuse is unknown; it needs 3+ complete pairs'],
+    });
+  });
+
+  it('withholds adoption when family evidence is not recorded', () => {
+    const { families: _families, ...legacy } = good;
+    for (const metrics of [legacy, { ...legacy, families: null }, { ...legacy, families: [] }]) {
+      expect(decideExperimentVerdict(metrics)).toEqual({
+        verdict: 'inconclusive', reasons: ['per-family evidence was not recorded'],
+      });
+    }
   });
 
   it('is inconclusive below the minimum pairs', () => {
@@ -246,6 +301,16 @@ describe('runExperiment', () => {
     expect(out.costDeltaPct).toBe(0);
     expect(out.verdict).toBe('adopt');
     expect(out.armPasses).toEqual({ base: 9, candidate: 14 });
+    expect(out.families).toEqual([
+      {
+        family: 'edit', verdict: 'improves', delta: 0.5,
+        candidate: { tasks: 10, landed: 10, rate: 1 }, incumbent: { tasks: 10, landed: 5, rate: 0.5 },
+      },
+      {
+        family: 'refuse', verdict: 'holds', delta: 0,
+        candidate: { tasks: 4, landed: 4, rate: 1 }, incumbent: { tasks: 4, landed: 4, rate: 1 },
+      },
+    ]);
     // Each arm of each pair ran with ITS harness.
     for (const call of exec.calls) {
       expect(call.config.prompts.producer ?? null).toBe(call.arm === 'candidate' ? 'Re-run the checks before claiming success.' : null);
@@ -296,6 +361,7 @@ describe('runExperiment', () => {
     const out = await runExperiment(base, candOf(), HELD_OUT_TASKS, { executor: broken });
     expect(out.status).toBe('failed');
     expect(out.verdict).toBe('inconclusive');
+    expect(out.families).toBeNull();
     expect(out.reasons[0]).toMatch(/harness-error twice/);
   });
 
@@ -362,10 +428,13 @@ describe('startExperiment / runNextExperiment / cancelExperiment', () => {
     const ran = await runNextExperiment({ executor: fakeExecutor(WINNING) });
     expect(ran.ran).toMatchObject({ id: 'x-0001', status: 'done', verdict: 'adopt', pairs: HELD_OUT_TASKS.length });
     state = loadHarnessState();
+    expect(state.experiments[0]?.families).toHaveLength(2);
+    expect(ran.ran?.families).toEqual(state.experiments[0]?.families);
     expect(state.experimentMeta['x-0001']!.armPasses).toEqual({ base: 9, candidate: 14 });
     expect(state.experimentMeta['x-0001']!.runner).toBeNull();
     expect(ledger.rows.map((r) => r.kind)).toEqual(['harness:experiment']);
     expect(ledger.rows[0]!.actor).toBe('leader');
+    expect(ledger.rows[0]!.data).toMatchObject({ families: state.experiments[0]?.families });
     // The wire shape carries no internals.
     expect(Object.keys(ledger.rows[0]!.data as object)).not.toContain('armPasses');
 

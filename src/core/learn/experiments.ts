@@ -44,6 +44,7 @@ import {
   type ExternalSkillTrialOutcomeReceipt,
   type ExternalSkillTrialPlan,
 } from '../fleet/external-skill-shadow-eval.js';
+import { familyPromotionGate, type FamilyEvidence } from '../improve/lesson-trial.js';
 import { HELD_OUT_TASKS, HELD_OUT_TASK_SET_ID, taskSetDigest } from '../local-eval/tasks-heldout.js';
 import type { FailureMode, TaskSpec } from '../local-eval/types.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -263,6 +264,7 @@ export interface ExperimentOutcome {
   refuseRegression: boolean | null;
   claimedChangeNoneMadeDelta: number | null;
   costDeltaPct: number | null;
+  families: FamilyEvidence[] | null;
   verdict: ExperimentVerdict | null;
   reasons: string[];
   armPasses: { base: number; candidate: number } | null;
@@ -292,6 +294,7 @@ function emptyOutcome(status: ExperimentOutcome['status'], reasons: string[], ru
     refuseRegression: null,
     claimedChangeNoneMadeDelta: null,
     costDeltaPct: null,
+    families: null,
     verdict: status === 'cancelled' ? null : 'inconclusive',
     reasons,
     armPasses: null,
@@ -448,10 +451,15 @@ export async function runExperiment(
   let refuseRegression = false;
   let candClaimed = 0; let baseClaimed = 0;
   let candWall = 0; let baseWall = 0;
+  const familyRuns: Parameters<typeof familyPromotionGate>[0][number][] = [];
   for (const pair of plan.assignments) {
     const task = byCase.get(pair.caseDigest)!;
     const b = results.get(`${pair.pairId}:base`)!;
     const c = results.get(`${pair.pairId}:candidate`)!;
+    familyRuns.push(
+      { family: task.expectation, arm: 'candidate', passed: c.passed },
+      { family: task.expectation, arm: 'incumbent', passed: b.passed },
+    );
     if (b.passed && c.passed) bothPass += 1;
     else if (c.passed) candOnly += 1;
     else if (b.passed) baseOnly += 1;
@@ -478,6 +486,7 @@ export async function runExperiment(
     refuseRegression,
     claimedChangeNoneMadeDelta: candClaimed - baseClaimed,
     costDeltaPct: baseWall > 0 ? round2(((candWall - baseWall) / baseWall) * 100) : null,
+    families: familyPromotionGate(familyRuns, { families: [...new Set(tasks.map((task) => task.expectation))] }).families,
   };
   const decided = decideExperimentVerdict(metrics);
   return {
@@ -524,6 +533,7 @@ function queuedResult(id: string, hypothesisId: string, base: HarnessVersion, ca
     refuseRegression: null,
     claimedChangeNoneMadeDelta: null,
     costDeltaPct: null,
+    families: null,
     verdict: null,
     reasons: [],
     startedAt: null,
@@ -744,6 +754,7 @@ export async function runNextExperiment(opts: RunNextExperimentOptions = {}): Pr
     e.refuseRegression = outcome.refuseRegression;
     e.claimedChangeNoneMadeDelta = outcome.claimedChangeNoneMadeDelta;
     e.costDeltaPct = outcome.costDeltaPct;
+    e.families = outcome.families;
     e.verdict = outcome.verdict;
     e.reasons = outcome.reasons.map((r) => scrubSecrets(r).slice(0, MAX_REASON_CHARS));
     e.finishedAt = nowIso(clock());

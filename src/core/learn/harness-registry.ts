@@ -49,6 +49,7 @@ import { appendLedger } from '../authority/ledger.js';
 import { currentStandingPolicy } from '../authority/effective-config.js';
 import type { LedgerEventKind, LedgerPayloads } from '../authority/types.js';
 import type { FleetEngine } from '../fleet/fleet-types.js';
+import { MIN_FAMILY_PAIRED } from '../improve/lesson-trial.js';
 import type { RoutingDifficulty } from '../routing/types.js';
 import {
   HARNESS_ADOPTION_GATE,
@@ -468,24 +469,27 @@ export interface ExperimentMetrics {
   refuseRegression: boolean | null;
   claimedChangeNoneMadeDelta: number | null;
   costDeltaPct: number | null;
+  families?: ExperimentResultV1['families'];
 }
 
 const pp = (n: number): string => `${n >= 0 ? '+' : ''}${n.toFixed(1)} pp`;
 
 /**
  * The verdict the adoption gate reaches on an experiment's numbers, with the
- * sentences behind it. Order matters: a hard rule (refuse regression, a rise
- * in claimed-change-none-made, cost) REJECTS regardless of lift, because a
- * pass-rate gain bought with any of those is not a gain the fleet wants.
+ * sentences behind it. Order matters: a hard rule (task-family or refuse
+ * regression, a rise in claimed-change-none-made, cost) REJECTS regardless
+ * of lift, because a pass-rate gain bought that way is not worth adopting.
  * Unmeasured metrics can never adopt (null = unknown, not zero).
  */
 export function decideExperimentVerdict(m: ExperimentMetrics): { verdict: ExperimentVerdict; reasons: string[] } {
   const gate = HARNESS_ADOPTION_GATE;
   const reasons: string[] = [];
+  const rejects = (m.families ?? []).filter((row) => row.verdict === 'regresses').map(({ family, candidate, incumbent }) =>
+    `task family ${family} regressed: candidate passed ${candidate.landed}/${candidate.tasks}, incumbent passed ${incumbent.landed}/${incumbent.tasks}`);
   if (!Number.isInteger(m.pairs) || m.pairs < gate.minPairs) {
+    if (rejects.length > 0) return { verdict: 'reject', reasons: rejects };
     return { verdict: 'inconclusive', reasons: [`only ${m.pairs} complete pairs; the gate needs at least ${gate.minPairs}`] };
   }
-  const rejects: string[] = [];
   if (m.refuseRegression === true) rejects.push('a refuse task regressed: the candidate did something the base harness correctly declined');
   if (m.claimedChangeNoneMadeDelta !== null && m.claimedChangeNoneMadeDelta > 0) {
     rejects.push(`claimed-change-none-made rose by ${m.claimedChangeNoneMadeDelta}`);
@@ -502,11 +506,18 @@ export function decideExperimentVerdict(m: ExperimentMetrics): { verdict: Experi
   if (m.refuseRegression === null) unknown.push('refuse regressions were not measured');
   if (m.claimedChangeNoneMadeDelta === null) unknown.push('claimed-change-none-made was not measured');
   if (m.costDeltaPct === null) unknown.push('cost was not measured');
+  if (!m.families?.length) unknown.push('per-family evidence was not recorded');
+  for (const row of m.families ?? []) {
+    if (row.verdict !== 'improves' && row.verdict !== 'holds') {
+      unknown.push(`task family ${row.family} is unknown; it needs ${MIN_FAMILY_PAIRED}+ complete pairs`);
+    }
+  }
   if (unknown.length > 0) return { verdict: 'inconclusive', reasons: unknown };
   const lift = m.lift!;
   if (lift.ciLow > gate.minLiftCiLow) {
     reasons.push(`lift ${pp(lift.mean)} over ${m.pairs} pairs, 95% CI [${pp(lift.ciLow)}, ${pp(lift.ciHigh)}] excludes 0`);
     reasons.push('no refuse regression');
+    reasons.push('every task family improved or held its pass rate');
     reasons.push(`claimed-change-none-made ${m.claimedChangeNoneMadeDelta! > 0 ? 'rose' : 'did not rise'} (Δ ${m.claimedChangeNoneMadeDelta})`);
     reasons.push(`cost ${m.costDeltaPct! >= 0 ? '+' : ''}${m.costDeltaPct!.toFixed(1)}% (limit +${gate.maxCostIncreasePct}%)`);
     return { verdict: 'adopt', reasons };
@@ -1381,6 +1392,9 @@ export function stripExperimentInternals(exp: ExperimentResultV1): ExperimentRes
     refuseRegression: exp.refuseRegression,
     claimedChangeNoneMadeDelta: exp.claimedChangeNoneMadeDelta,
     costDeltaPct: exp.costDeltaPct,
+    ...(exp.families !== undefined ? {
+      families: exp.families?.map((row) => ({ ...row, candidate: { ...row.candidate }, incumbent: { ...row.incumbent } })) ?? null,
+    } : {}),
     verdict: exp.verdict,
     reasons: [...exp.reasons],
     startedAt: exp.startedAt,
