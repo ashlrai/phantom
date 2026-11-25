@@ -60,6 +60,16 @@ const num = (flags: Map<string, string>, name: string): number => {
   if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, `Pass the number printed by phm node join or pull.`);
   return Number(raw);
 };
+/** Integer flag under the store's documented ceiling (slots 0-64, usage permille
+ * 0-1000). Out-of-range is bad usage — exit 2 naming the flag — never the masked
+ * store failure the DriveNodes bound check would surface as. */
+const boundedNum = (flags: Map<string, string>, name: string, max: number, fix: string): number => {
+  const value = num(flags, name);
+  if (value > max) throw new UsageError(`bad-${name.slice(2)}`, `${name} must be an integer from 0 to ${max}.`, fix);
+  return value;
+};
+const SLOTS_FIX = 'Pass only the concurrent job slots this machine can run at once; 0 holds admission. Run: phm node --help';
+const USAGE_FIX = '--usage is self-reported load in permille: 0 idle, 1000 saturated. Run: phm node --help';
 
 function claimOf(flags: Map<string, string>): JobClaim {
   return { nodeId: need(flags, '--node'), session: num(flags, '--session'), jobId: need(flags, '--job'),
@@ -110,7 +120,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const caps = csv(flags.get('--caps'));
       const nodeId = need(flags, '--node');
       const joined = nodes.join(nodeId, { owners, caps,
-        ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}) });
+        ...(flags.has('--slots') ? { slots: boundedNum(flags, '--slots', 64, SLOTS_FIX) } : {}) });
       if (!joined) {
         const live = liveSession(nodes, nodeId);
         throw new UsageError('node-live', 'A live node already uses that ID.',
@@ -146,9 +156,9 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       if (auth !== undefined && !['ok', 'missing', 'unknown'].includes(auth)) {
         throw new UsageError('bad-auth', '--auth must be ok, missing or unknown.', 'Use --probe-auth to check this machine\'s own gh login.');
       }
-      const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
+      const usage = flags.has('--usage') ? boundedNum(flags, '--usage', 1000, USAGE_FIX) : undefined;
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(capacity === undefined ? {} : { capacity }), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(capacity === undefined ? {} : { capacity }), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: boundedNum(flags, '--slots', 64, SLOTS_FIX) } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale(s.nodeId, s.session);
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }

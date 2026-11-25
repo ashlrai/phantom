@@ -131,7 +131,10 @@ session the same way. `leave` under a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
-and pull again.
+and pull again. A flag value outside its documented range — `--usage` above
+1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage
+(exit 2, `bad-usage` or `bad-slots`) naming the flag and its range, before the
+beat or join is recorded.
 
 ## Version drift
 

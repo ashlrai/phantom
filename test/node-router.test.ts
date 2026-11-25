@@ -340,6 +340,36 @@ describe('phm node CLI', () => {
     expect(JSON.parse(secret.out).error.code).toBe('unknown-flag');
   });
 
+  it('reports out-of-range measured flags as usage errors, not store failures', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    // The store bounds --usage at 0-1000 permille and --slots at 0-64; a value
+    // past them is bad usage (exit 2, code naming the flag), never the masked
+    // "Invalid drive ..." store error with the ids/caps fix.
+    const cases: [string[], string, string][] = [
+      [['beat', '--node', 'laptop', '--session', s, '--usage', '1001', '--json'], 'bad-usage', '--usage must be an integer from 0 to 1000.'],
+      [['beat', '--node', 'laptop', '--session', s, '--slots', '65', '--json'], 'bad-slots', '--slots must be an integer from 0 to 64.'],
+      [['join', '--node', 'other', '--owner', 'acme', '--slots', '65', '--json'], 'bad-slots', '--slots must be an integer from 0 to 64.'],
+    ];
+    for (const [args, code, message] of cases) {
+      const res = await cli(...args);
+      expect(res.code).toBe(2);
+      expect(res.err).toBe('');
+      expect(JSON.parse(res.out)).toMatchObject({ schemaVersion: 1, command: args[0],
+        error: { code, message, fix: expect.stringContaining('phm node --help') } });
+    }
+    // The documented ceilings themselves still pass, and text mode keeps the
+    // same usage classification on stderr.
+    expect((await cli('beat', '--node', 'laptop', '--session', s, '--usage', '1000', '--slots', '64', '--json')).code).toBe(0);
+    expect((await cli('join', '--node', 'edge', '--owner', 'acme', '--slots', '0', '--json')).code).toBe(0);
+    const text = await cli('beat', '--node', 'laptop', '--session', s, '--usage', '1001');
+    expect(text.code).toBe(2);
+    expect(text.out).toBe('');
+    expect(text.err).toContain('--usage must be an integer from 0 to 1000.');
+  });
+
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
