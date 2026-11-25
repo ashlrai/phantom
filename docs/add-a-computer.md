@@ -14,7 +14,9 @@ phm node join --node laptop --owner acme --caps build,gh --json
 ```
 
 Replace `laptop` and `acme` with your own node ID and owner scope. Save the
-`session` number from the output; use that number in the commands below.
+`session` number from the output; use that number in the commands below. The
+output's `next` field prints the exact `beat` command that keeps this session
+live.
 
 To keep the exercise fully separate from real Phantom state, point
 `ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);
@@ -48,8 +50,10 @@ that its auth is `ok`. A join does not start a worker or recurring heartbeat.
 Repeat the heartbeat comfortably within 30 seconds to keep the session live;
 if it expires, join again and use the new session number — `beat` and `pull`
 both answer `session-expired` once it lapses, and the error's `fix` prints the
-rejoin command with this node's last advertised owner and caps. Omit
-`--probe-auth` if this node does not need GitHub authentication.
+rejoin command with this node's last advertised owner and caps. If the node
+already rejoined under a newer session, the fix names that session and the
+exact `leave` command instead, so you can resume without hunting for the
+number. Omit `--probe-auth` if this node does not need GitHub authentication.
 
 ## Leave
 
@@ -58,7 +62,9 @@ phm node leave --node laptop --session 1 --json
 ```
 
 Use the current session number and check for `"left":true`. An expired or
-replaced session cannot leave a newer one.
+replaced session cannot leave a newer one; a refused leave answers
+`"left":false` with `liveSession` naming the session that is live and a `next`
+command that leaves it.
 
 The current router uses a private local state directory shared by processes on
 one host; joining does not connect separate computers over a network. See the

@@ -79,19 +79,43 @@ function joinHint(nodes: DriveNodes, nodeId: string): string {
     ...(profile.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
 }
 
+/** The session a node id is live under right now, or null. Read-only, and used
+ * only to point a refusal at the real recovery command. join and pull already
+ * print session numbers on this host, the state directory is private, and the
+ * pool rpc masks refusal text before it crosses SSH, so naming the live session
+ * here exposes nothing a local caller could not already read. A failed read
+ * degrades to the rejoin hint rather than replacing the refusal. */
+function liveSession(nodes: DriveNodes, nodeId: string): number | null {
+  try {
+    const state = nodes.snapshot();
+    const node = state.nodes.find(n => n.nodeId === nodeId);
+    return node !== undefined && node.expiresAt > state.observedAt ? node.session : null;
+  } catch { return null; }
+}
+
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: need(flags, '--node'), session: num(flags, '--session') });
-  const stale = (nodeId: string) => new UsageError('session-expired',
-    `Node '${nodeId}' has no live session (it expired, left, or was replaced).`,
-    `Rejoin with: ${joinHint(nodes, nodeId)}; then use the new session.`, 1);
+  const stale = (nodeId: string, attempted?: number) => {
+    const live = liveSession(nodes, nodeId);
+    return new UsageError('session-expired',
+      `Node '${nodeId}' has no live session (it expired, left, or was replaced).`,
+      live !== null && live !== attempted
+        ? `Node '${nodeId}' is live as session ${live}: retry with --session ${live}, or run phm node leave --node ${nodeId} --session ${live} and rejoin.`
+        : `Rejoin with: ${joinHint(nodes, nodeId)}; then use the new session.`, 1);
+  };
   switch (verb) {
     case 'join': {
       const owners = csv(need(flags, '--owner'));
       const caps = csv(flags.get('--caps'));
-      const joined = nodes.join(need(flags, '--node'), { owners, caps,
+      const nodeId = need(flags, '--node');
+      const joined = nodes.join(nodeId, { owners, caps,
         ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}) });
-      if (!joined) throw new UsageError('node-live', 'A live node already uses that ID.',
-        'Pick another --node, wait for its lease to expire, or run phm node leave from that node.', 1);
+      if (!joined) {
+        const live = liveSession(nodes, nodeId);
+        throw new UsageError('node-live', 'A live node already uses that ID.',
+          live === null ? 'Pick another --node, wait for its lease to expire, or run phm node leave from that node.'
+            : `It is live as session ${live}: keep it with --session ${live} on beat, pull and leave, or run phm node leave --node ${nodeId} --session ${live} to replace it.`, 1);
+      }
       return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort() };
     }
     case 'beat': {
@@ -109,7 +133,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
       const s = session();
       const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
-      if (!beat) throw stale(s.nodeId);
+      if (!beat) throw stale(s.nodeId, s.session);
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
     case 'enqueue': {
@@ -133,7 +157,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       if (!pulled) {
         // A dead session and an empty route both answer null; only a live
         // session may hear "no job" — a stale one must rejoin first.
-        if (!nodes.sessionLive(s)) throw stale(s.nodeId);
+        if (!nodes.sessionLive(s)) throw stale(s.nodeId, s.session);
         return { pulled: false };
       }
       const { claim, job } = pulled;
@@ -161,8 +185,15 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
     case 'list':
     case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };
     default: {
-      const left = nodes.leave(session());
-      return { nodeId: need(flags, '--node'), left };
+      const s = session();
+      const left = nodes.leave(s);
+      if (left) return { nodeId: s.nodeId, left };
+      // A refused leave is silent today: name the live session so the operator
+      // can retry with it or replace the node, instead of a bare `left:false`.
+      const live = liveSession(nodes, s.nodeId);
+      return { nodeId: s.nodeId, left,
+        ...(live === null || live === s.session ? {} : { liveSession: live,
+          next: `phm node leave --node ${s.nodeId} --session ${live}` }) };
     }
   }
 }
