@@ -158,6 +158,21 @@ describe('agent chat', () => {
     const none = readAgentChat({ channel: 'engineering', thread: 'run:one', inReplyTo: 'zzz' }, options);
     expect(none.status === 'ok' && none.messages).toEqual([]);
   });
+  it('filters messages and the thread index by the shared P0..P3 priority band', () => {
+    const options = setup();
+    add(options, envelope('a', { priority: 'P3' }));
+    add(options, envelope('b', { priority: 'P0', body: { kind: 'note', thread: 'run:two', text: 'urgent' } }));
+    add(options, envelope('c', { priority: 'P1' }));
+    const urgent = readAgentChat({ channel: 'engineering', thread: 'run:one', priority: 'P0' }, options);
+    expect(urgent.status === 'ok' && urgent.messages).toEqual([]);
+    const p3 = readAgentChat({ channel: 'engineering', thread: 'run:one', priority: 'P3' }, options);
+    expect(p3.status === 'ok' && p3.messages.map(m => m.id)).toEqual(['a']);
+    const list = readAgentChat({ channel: 'engineering', priority: 'P0' }, options);
+    expect(list.status === 'ok'); if (list.status !== 'ok') return;
+    expect(list.threads.map(t => t.id)).toEqual(['run:two']);
+    expect(list.threads[0]).toMatchObject({ messageCount: 1 });
+    expect(readAgentChat({ channel: 'engineering', thread: 'run:one', priority: 'P9' as never }, options).status).toBe('invalid');
+  });
   it.each([
     { from: '' }, { from: 'x'.repeat(129) }, { excludeFrom: '' }, { excludeFrom: 'x'.repeat(129) },
     { contains: '   ' }, { contains: 'x'.repeat(513) },
@@ -172,13 +187,15 @@ describe('agent chat', () => {
     const output: string[] = [];
     expect(runAgentsChat(['read', 'run:one', '--channel', 'engineering', '--from', 'bob',
       '--exclude-from', 'carol', '--contains', 'deploy', '--since', '15m', '--before', '2026-01-01T00:00:00Z',
-      '--id', 'env-1', '--in-reply-to', 'env-0', '--json'], s => output.push(s), () => {}, read)).toBe(0);
-    expect(seen).toMatchObject({ from: 'bob', excludeFrom: 'carol', contains: 'deploy', id: 'env-1', inReplyTo: 'env-0' });
+      '--id', 'env-1', '--in-reply-to', 'env-0', '--priority', 'P0', '--json'], s => output.push(s), () => {}, read)).toBe(0);
+    expect(seen).toMatchObject({ from: 'bob', excludeFrom: 'carol', contains: 'deploy', id: 'env-1', inReplyTo: 'env-0', priority: 'P0' });
     expect(typeof seen!.since).toBe('number'); expect(typeof seen!.before).toBe('number');
     expect(runAgentsChat(['list', '--channel', 'engineering', '--since', 'bogus', '--json'], () => {}, () => {}, read)).toBe(2);
-    expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&thread=run:one&from=bob&contains=hi&since=1000&before=2000&id=x&inReplyTo=y&excludeFrom=z', read).code).toBe(200);
-    expect(seen).toMatchObject({ from: 'bob', excludeFrom: 'z', contains: 'hi', id: 'x', inReplyTo: 'y', since: 1000, before: 2000 });
+    expect(runAgentsChat(['list', '--channel', 'engineering', '--priority', 'P9', '--json'], () => {}, () => {}, read)).toBe(2);
+    expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&thread=run:one&from=bob&contains=hi&since=1000&before=2000&id=x&inReplyTo=y&excludeFrom=z&priority=P1', read).code).toBe(200);
+    expect(seen).toMatchObject({ from: 'bob', excludeFrom: 'z', contains: 'hi', id: 'x', inReplyTo: 'y', since: 1000, before: 2000, priority: 'P1' });
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&since=bogus', read).code).toBe(400);
+    expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&priority=P9', read).code).toBe(400);
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&from=a&from=b', read).code).toBe(400);
     expect(agentChatResponse('GET', '/api/agents/chat?channel=engineering&root=/tmp', read).code).toBe(400);
   });

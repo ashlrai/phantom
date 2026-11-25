@@ -1,4 +1,5 @@
 import { readAgentChat, type ChatQuery, type ChatResult } from '../agents/chat.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
 import { parseSince } from '../fleet/agent-messages.js';
 /** Called only behind server.ts local owner read authentication. No remote allowlist expansion. */
 export function agentChatResponse(method: string, url: string,
@@ -6,7 +7,7 @@ export function agentChatResponse(method: string, url: string,
   if (method !== 'GET') return { code: 405, body: { status: 'method-not-allowed' } };
   const params = new URL(url, 'http://localhost').searchParams;
   const allowed = new Set(['channel', 'thread', 'after', 'limit',
-    'from', 'excludeFrom', 'contains', 'since', 'before', 'id', 'inReplyTo']);
+    'from', 'excludeFrom', 'contains', 'since', 'before', 'id', 'inReplyTo', 'priority']);
   if ([...params.keys()].some(key => !allowed.has(key) || params.getAll(key).length !== 1)) {
     return { code: 400, body: { status: 'invalid' } };
   }
@@ -20,6 +21,11 @@ export function agentChatResponse(method: string, url: string,
   }
   for (const key of ['from', 'excludeFrom', 'contains', 'id', 'inReplyTo'] as const) {
     if (params.has(key)) query[key] = params.get(key)!;
+  }
+  if (params.has('priority')) {
+    const priority = params.get('priority')!;
+    if (!(BUS_PRIORITIES as readonly string[]).includes(priority)) return { code: 400, body: { status: 'invalid' } };
+    query.priority = priority as BusPriority;
   }
   for (const key of ['since', 'before'] as const) {
     if (!params.has(key)) continue;

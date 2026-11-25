@@ -1,7 +1,8 @@
 import { sanitizePublicJson } from '../core/util/public-json.js';
 import { readAgentChat, type ChatQuery, type ChatResult } from '../core/agents/chat.js';
+import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
-const HELP = 'phm agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] --json';
+const HELP = 'phm agents chat list|read <outcome:id|run:id> --channel <channel> [--after <cursor>] [--limit <1-100>] [--from <agent>] [--exclude-from <agent>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--id <id>] [--in-reply-to <id>] [--priority <P0|P1|P2|P3>] --json';
 export function runAgentsChat(args: string[], out = console.log, err = console.error,
   read: (query: ChatQuery) => ChatResult = readAgentChat): number {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { out(HELP); return 0; }
@@ -23,6 +24,10 @@ export function runAgentsChat(args: string[], out = console.log, err = console.e
     else if (arg === '--contains') query.contains = value;
     else if (arg === '--id') query.id = value;
     else if (arg === '--in-reply-to') query.inReplyTo = value;
+    else if (arg === '--priority') {
+      if (!(BUS_PRIORITIES as readonly string[]).includes(value)) { invalid = true; break; }
+      query.priority = value as BusPriority;
+    }
     else if (arg === '--since' || arg === '--before') {
       const ms = parseSince(value);
       if (ms === null) { invalid = true; break; }

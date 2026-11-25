@@ -26,8 +26,11 @@ summary the row renders — for the note/context bodies chat admits that is the
 projected text — as a case-insensitive substring with whitespace collapsed,
 `--since`/`--before` bound the `[since, before)` window on `receivedAt` (15m,
 2h, 1d, epoch ms or an ISO time), `--id` keeps only the row whose envelope id
-is strictly equal, and `--in-reply-to` keeps only bodies whose own `inReplyTo`
-citation strictly equals the cited envelope id.
+is strictly equal, `--in-reply-to` keeps only bodies whose own `inReplyTo`
+citation strictly equals the cited envelope id, and `--priority` keeps only
+envelopes stamped with that exact P0, P1, P2 or P3 band — the same match every
+other bus read's `--priority` applies, so urgent room traffic is one filtered
+read (`GET /api/agents/chat` takes the same `priority=` parameter).
 
 Producers use the existing channel post API, with a v2 note/context `thread`
 explicitly set to `run:<id>` or `outcome:<id>`. No inference from prose or job titles.
