@@ -46,6 +46,9 @@ export async function cmdNode(args: string[]): Promise<number> {
     const m = await import('./node-capacity.js');
     return args[0] === 'capacity' ? m.cmdNodeCapacity(args.slice(1)) : m.cmdNodeRoute(args.slice(1));
   }
+  if (args[0] === 'measure' && !args.includes('--help') && !args.includes('-h')) {
+    return (await import('./node-measure.js')).cmdNodeMeasure(args.slice(1));
+  }
   if (args[0] === 'self-update' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-self-update.js')).cmdNodeSelfUpdate(args.slice(1));
   }
@@ -87,6 +90,7 @@ phm node light run (fixed recipe runner stdin protocol)
 phm node rpc --json (SSH stdin endpoint)
 phm node lanes [--json] (local oMLX lane plan: model pick, caps, backoff)
 phm node capacity [--node <id>] [--out <file>] [--previous <file>] [--json] (measured agents runnable now per harness)
+phm node measure [--json] (print the measured --capacity sample for phm node beat)
 phm node route --capacity <file>... --costs <file> --jobs <file> [--outcomes <file>] [--outcomes-ledger] [--runs-dir <dir>] [--nodes <file>] [--exhausted <p,p>] [--json] (node, provider, model scoring; --outcomes-ledger derives lane merge tallies from metrics/jobs.jsonl)
 phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: per-node phm version drift)
 phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`);

@@ -38,6 +38,11 @@ phm node beat --node laptop --session 1 --probe-auth --json
 phm node status --owner acme --json
 ```
 
+To report measured capacity, generate the sample on this computer and pass it to
+each beat: `--capacity "$(phm node measure)"`. When `phm node measure` exits 1
+the node is held; omit `--capacity` on that beat. See the
+[node router guide](NODE-ROUTER.md).
+
 Check that `laptop` appears live with the intended caps and, for GitHub jobs,
 that its auth is `ok`. A join does not start a worker or recurring heartbeat.
 Repeat the heartbeat comfortably within 30 seconds to keep the session live;
