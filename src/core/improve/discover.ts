@@ -1065,6 +1065,7 @@ import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
+import { jobReissueBacklogItems } from './job-reissue-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2327,6 +2328,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // land path — the row's repo names the publish target, quoted
   // inside the cells.
   items.push(...await landingsBacklogItems({ repo }));
+
+  // Job-reissue audit journal: the resurrection path's own record — every
+  // row is a dead or stalled job manually re-queued under a fresh
+  // RQ-PHX-<stem>R<n> id through the verse outcomes fleet-reissue
+  // endpoint — becomes backlog items too. Until now the journal's only
+  // reader was the audit itself: nothing folded it, so work that keeps
+  // dying and needing manual recovery never became work. A family cell
+  // emits only at three recorded reissues inside the window (from→to
+  // edges unioned into exact families, never stem-guessed); a lane cell
+  // only at three distinct families on one recorded lane. The rows carry
+  // no repository — the journal describes this install's reissue
+  // machinery — so only the fleet's own repository inherits the items.
+  items.push(...await jobReissueBacklogItems({ repo }));
   return { items, errors };
 }
 
