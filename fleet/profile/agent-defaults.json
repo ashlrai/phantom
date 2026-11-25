@@ -1,9 +1,0 @@
-{
-  "devin": { "local_tools_approval_mode": "bypass" },
-  "claude": {
-    "permissions.defaultMode": "bypassPermissions",
-    "skipDangerousModePermissionPrompt": true
-  },
-  "codex": { "approval_policy": "never", "sandbox_mode": "danger-full-access" },
-  "logins": ["devin", "gh", "claude", "codex", "agy"]
-}

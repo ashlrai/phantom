@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Report or apply the declared Mac fleet profile (Python 3.11+)."""
+"""Report or apply the declared fleet profile (Python 3.11+)."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import selectors
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -18,25 +21,24 @@ import tomllib
 
 
 ROOT = Path(__file__).parent
-FILES = ("Brewfile", "npm-globals.txt", "agent-defaults.json")
+SCHEMA = "fleet.profile.v1"
 CONFIGS = {
     "devin": (".config/devin/config.json", {"local_tools_approval_mode": str}),
     "claude": (".claude/settings.json", {"permissions.defaultMode": str, "skipDangerousModePermissionPrompt": bool}),
     "codex": (".codex/config.toml", {"approval_policy": str, "sandbox_mode": str}),
 }
-LOGINS = {
-    "devin": (["auth", "status"], "devin auth login"),
-    "gh": (["auth", "status", "--hostname", "github.com"], "gh auth login"),
-    "claude": (["auth", "status"], "claude auth login"),
-    "codex": (["login", "status"], "codex login"),
-    "agy": (["models"], "agy"),
-}
 GH_VERIFY = "https://github.com/login/device"
-BREW_ITEM = re.compile(r'(brew|cask) "([a-z0-9][a-z0-9._+-]*)"')
-NPM_ITEM = re.compile(r'(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*')
+OS_INSTALLERS = {"macos": ("brew", "brewCask", "npm"), "windows": ("winget",),
+                 "linux": ("apt", "npm", "pipx")}
+PACKAGE = re.compile(r"(?:@[a-zA-Z0-9][a-zA-Z0-9._-]*/)?[a-zA-Z0-9][a-zA-Z0-9._+-]*")
+HOST = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._-]*")
+APP = re.compile(r"/Applications/[a-zA-Z0-9][a-zA-Z0-9 ._-]*\.app")
+SSH = ["ssh", "-a", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+       "-o", "UpdateHostKeys=no", "-o", "ConnectTimeout=10"]
 CREDENTIAL_KEY = re.compile(r'(?:^|[_-])(?:api[_-]?key|token|password|secret|authorization|credentials?)$', re.I)
 REMOTE = (
-    "import json,sys; "
+    "import json,os,sys; "
+    "sys.platform == 'darwin' and os.environ.update(PATH='/opt/homebrew/bin:/usr/local/bin:'+os.environ['PATH']); "
     "source,profile,args=json.load(sys.stdin); "
     "scope={'__file__':'apply.py','__name__':'fleet_profile'}; "
     "exec(compile(source,'apply.py','exec'),scope); "
@@ -44,32 +46,57 @@ REMOTE = (
 )
 
 
-def entries(raw):
-    return [line.strip() for line in raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+def argv_list(value):
+    return isinstance(value, list) and bool(value) and all(isinstance(arg, str) and arg for arg in value)
 
 
 def parse_profile(profile):
-    brew = [BREW_ITEM.fullmatch(line) for line in entries(profile["Brewfile"])]
-    npm = entries(profile["npm-globals.txt"])
-    defaults = json.loads(profile["agent-defaults.json"])
-    if not all(brew) or not all(NPM_ITEM.fullmatch(name) for name in npm) or not isinstance(defaults, dict):
+    entries, defaults = profile["entries"], profile.get("agentDefaults", {})
+    if profile["schema"] != SCHEMA or not isinstance(entries, list) or not isinstance(defaults, dict):
         raise ValueError
-    logins = defaults.pop("logins", [])
-    if not isinstance(logins, list) or any(type(tool) is not str or tool not in LOGINS for tool in logins):
-        raise ValueError
+    ids = set()
+    for entry in entries:
+        name, kind, install, detect = (entry[key] for key in ("id", "kind", "install", "detect"))
+        if not HOST.fullmatch(name) or name in ids or kind not in ("cli", "desktop-app", "mcp", "sdk", "api", "local-model"):
+            raise ValueError
+        ids.add(name)
+        if not isinstance(install, dict) or not isinstance(detect, dict) or set(detect) not in ({"path"}, {"command"}):
+            raise ValueError
+        for installer, value in install.items():
+            if installer == "script":
+                if not isinstance(value, dict) or not all(map(argv_list, value.values())):
+                    raise ValueError
+            elif installer == "manual":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError
+            elif installer not in {"brew", "brewCask", "winget", "apt", "npm", "pipx"} or not PACKAGE.fullmatch(value):
+                raise ValueError
+        for value in detect.values():
+            if not (isinstance(value, str) and value or argv_list(value)):
+                raise ValueError
+        if "login" in entry and not all(argv_list(entry["login"][key]) for key in ("status", "start")):
+            raise ValueError
+        if "models" in entry and (kind != "local-model" or not argv_list(entry["models"])):
+            raise ValueError
+        if "copyFromHost" in entry:
+            peer = entry["copyFromHost"]
+            if kind != "desktop-app" or set(install) != {"manual"} or not (
+                HOST.fullmatch(peer["host"]) and APP.fullmatch(peer["path"])
+            ):
+                raise ValueError
     for agent, values in defaults.items():
         if agent not in CONFIGS or not isinstance(values, dict) or any(
             type(value) is not CONFIGS[agent][1].get(key) for key, value in values.items()
         ):
             raise ValueError
-    return [match.groups() for match in brew], npm, defaults, list(dict.fromkeys(logins))
+    return entries, defaults
 
 
 def run(args, data=None, timeout=60, env=None, stderr=subprocess.DEVNULL):
     return subprocess.run(
         args, input=data, stdin=subprocess.DEVNULL if data is None else None,
         stdout=subprocess.PIPE, stderr=stderr, text=True, encoding="utf-8",
-        cwd="/" if args[0] != "ssh" else None, timeout=timeout,
+        cwd=Path.home().anchor if args[0] != "ssh" else None, timeout=timeout,
         env={**(os.environ if env is None else env), "HOMEBREW_NO_ANALYTICS": "1", "HOMEBREW_NO_AUTO_UPDATE": "1"},
     )
 
@@ -181,8 +208,114 @@ def write_config(path, source, updated):
         Path(tmp).unlink(missing_ok=True)
 
 
+def host_os():
+    return {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}.get(platform.system(), sys.platform)
+
+
+def installer_for(entry, os_name):
+    available = entry["install"]
+    for key in OS_INSTALLERS.get(os_name, ()):
+        if key in available:
+            return key, available[key]
+    scripts = available.get("script", {})
+    for target in (f"{os_name}-{platform.machine().lower()}", os_name):
+        if target in scripts:
+            return "script", scripts[target]
+    if os_name == "macos" and "copyFromHost" in entry:
+        return "copy", entry["copyFromHost"]
+    return ("manual", available["manual"]) if "manual" in available else (None, None)
+
+
+def detected(entry):
+    key, values = next(iter(entry["detect"].items()))
+    for value in [values] if isinstance(values, str) else values:
+        if key == "command":
+            if shutil.which(value, path=os.environ.get("PATH", os.defpath)):
+                return True
+        else:
+            path = Path(os.path.expandvars(value)).expanduser()
+            if path.is_absolute() and path.exists():
+                return True
+    return False
+
+
+def package_state(entry, installer, value, inventories, os_name):
+    if installer is None:
+        return f"unsupported-on-{os_name}"
+    if installer in inventories:
+        packages = inventories[installer]
+        if packages is not None and value in packages:
+            return "in-sync"
+        if installer == "npm":
+            return "unknown" if packages is None else "missing"
+    if detected(entry) or installer == "copy" and Path(value["path"]).exists():
+        return "in-sync"
+    if installer == "manual":
+        return "manual"
+    return "unknown" if installer in inventories and inventories[installer] is None else "missing"
+
+
+def copy_app(peer):
+    host, source = peer["host"], peer["path"]
+    destination = Path(source)
+    if destination.exists() or destination.is_symlink() or destination.parent.is_symlink():
+        return False
+    verify = ["codesign", "--verify", "--deep", "--strict", "-R", "anchor apple generic"]
+    quoted = shlex.quote(source)
+    check = f"test ! -L /Applications && test -d {quoted} && test ! -L {quoted} && {shlex.join([*verify, source])}"
+    if run([*SSH, host, check]).returncode:
+        return False
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".fleet-app-") as stage:
+        if run(["rsync", "-a", "--safe-links", "--protect-args", "-e", shlex.join(SSH),
+                f"{host}:{source}", stage], timeout=3600).returncode:
+            return False
+        bundle = Path(stage) / destination.name
+        if bundle.is_symlink() or not bundle.is_dir() or run([*verify, str(bundle)]).returncode:
+            return False
+        if destination.exists() or destination.is_symlink():
+            return False
+        bundle.rename(destination)
+    return True
+
+
+def package_inventories(selections):
+    commands = {"brew": "--formula", "brewCask": "--cask"}
+    inventories = {kind: inventory(["brew", "list", flag], str.split)
+                   for kind, flag in commands.items() if kind in selections}
+    if "npm" in selections:
+        inventories["npm"] = npm_inventory()
+    return inventories
+
+
+def install_packages(selections):
+    brewfile = "".join(f'{label} "{name}"\n' for key, label in (("brew", "brew"), ("brewCask", "cask"))
+                       for name in selections.get(key, []))
+    apt, npm = selections.get("apt", []), selections.get("npm", [])
+    commands = []
+    if brewfile:
+        commands.append((["brew", "bundle", "--no-upgrade", "--file=-"], brewfile))
+    if apt:
+        commands.append((["apt-get", "install", "-y", *apt], None))
+    if npm:
+        commands.append(([*NPM, "i", "-g", *npm], None))
+    commands.extend((["pipx", "install", name], None) for name in selections.get("pipx", []))
+    commands.extend((["winget", "install", "--exact", "--id", name, "--source", "winget",
+                      "--disable-interactivity"], None) for name in selections.get("winget", []))
+    commands.extend((argv, None) for argv in selections.get("script", []))
+    try:
+        for argv, data in commands:
+            if run(argv, data, timeout=3600).returncode:
+                return False
+        return all(map(copy_app, selections.get("copy", [])))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
 def local_report(profile, apply):
-    brew, npm, defaults, logins = parse_profile(profile)
+    entries, defaults = parse_profile(profile)
+    os_name = host_os()
+    choices = {entry["id"]: installer_for(entry, os_name) for entry in entries}
+    inventories = package_inventories({installer for installer, _ in choices.values()})
     items, errors, updates = {}, [], []
     for agent, wanted in defaults.items():
         if not wanted:
@@ -197,19 +330,16 @@ def local_report(profile, apply):
             items.update({f"config:{agent}.{key}": "unknown" for key in wanted})
             errors.append(f"cannot safely merge {agent} config")
     if apply and not errors:
-        installs = [
-            ("brew bundle", lambda: not brew or run(
-                ["brew", "bundle", "--no-upgrade", "--file=-"], profile["Brewfile"], timeout=3600).returncode == 0),
-            ("npm install", lambda: install_npm(npm)),
-        ]
-        for name, install in installs:
-            try:
-                if install():
-                    continue
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                pass
-            errors.append(f"{name} failed")
-            break
+        pending = {}
+        for entry in entries:
+            installer, value = choices[entry["id"]]
+            if package_state(entry, installer, value, inventories, os_name) in ("missing", "unknown"):
+                group = pending.setdefault(installer, [])
+                if value not in group:
+                    group.append(value)
+        if not install_packages(pending):
+            errors.append("package or app installation failed")
+        inventories = package_inventories(inventories)
         if not errors:
             for agent, path, source, updated in updates:
                 try:
@@ -219,31 +349,14 @@ def local_report(profile, apply):
                     items.update({f"config:{agent}.{key}": "in-sync" for key in defaults[agent]})
                 except (OSError, ValueError):
                     errors.append(f"cannot update {agent} config")
-    for kind, flag in (("brew", "--formula"), ("cask", "--cask")):
-        names = [name for item_kind, name in brew if item_kind == kind]
-        if names:
-            package_rows(items, errors, "formula" if kind == "brew" else kind, names,
-                         inventory(["brew", "list", flag], str.split))
-    if npm:
-        package_rows(items, errors, "npm", npm, npm_inventory())
-    for tool in logins:
-        items[f"login:{tool}"] = login_status(tool)
-    return {"schema": "fleet.profile.v1", "dry_run": not apply, "items": items, "errors": errors}
-
-
-def install_npm(names):
-    if not names:
-        return True
-    installed = npm_inventory()
-    missing = [name for name in names if installed is None or name not in installed]
-    return not missing or run([*NPM, "i", "-g", *missing], timeout=3600).returncode == 0
-
-
-def package_rows(items, errors, kind, names, installed):
-    if installed is None:
-        errors.append(f"{kind} inventory unavailable")
-    for name in names:
-        items[f"{kind}:{name}"] = "unknown" if installed is None else "in-sync" if name in installed else "missing"
+    for entry in entries:
+        name = entry["id"]
+        items[f"entry:{name}"] = package_state(entry, *choices[name], inventories, os_name)
+        for model in entry.get("models", []):
+            items[f"model:{name}:{model}"] = "report-only"
+        if "login" in entry:
+            items[f"login:{name}"] = login_status(name, entry["login"]["status"])
+    return {"schema": SCHEMA, "dry_run": not apply, "items": items, "errors": errors}
 
 
 def login_env():
@@ -251,9 +364,9 @@ def login_env():
             "NO_COLOR": "1", "GH_PROMPT_DISABLED": "1"}
 
 
-def login_status(tool):
+def login_status(tool, command):
     try:
-        proc = run([tool, *LOGINS[tool][0]], timeout=8, env=login_env(), stderr=subprocess.PIPE)
+        proc = run(command, timeout=8, env=login_env(), stderr=subprocess.PIPE)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return "unknown"
     answer = proc.stdout + "\n" + proc.stderr
@@ -291,41 +404,50 @@ def github_approval():
 
 def login_plan(profile, host):
     plan = []
-    for tool in parse_profile(profile)[3]:
-        status = login_status(tool)
+    for tool, login in profile_logins(profile).items():
+        status = login_status(tool, login["status"])
         if status == "logged-in":
             continue
         row = {"tool": tool, "host": host}
-        code = github_approval() if tool == "gh" and status == "login-needed" else None
+        code = github_approval() if tool == "gh" and login["start"] == ["gh", "auth", "login"] and (
+            login["status"] == ["gh", "auth", "status", "--hostname", "github.com"]
+            and status == "login-needed" and os.name == "posix") else None
         plan.append({**row, "action": "approve", "url": GH_VERIFY, "code": code} if code else
-                    {**row, "action": "manual", "command": LOGINS[tool][1]})
+                    {**row, "action": "manual", "command": shlex.join(login["start"])})
     return plan
 
 
+def profile_logins(profile):
+    return {entry["id"]: entry["login"] for entry in parse_profile(profile)[0] if "login" in entry}
+
+
 def remote_report(host, source, profile, args):
-    command = 'PATH=/opt/homebrew/bin:/usr/local/bin:"$PATH" python3 -I -c ' + shlex.quote(REMOTE)
+    encoded = base64.b64encode(REMOTE.encode()).decode()
+    command = f"python3 -I -c \"exec(__import__('base64').b64decode('{encoded}'))\""
     try:
-        proc = run(["ssh", "-a", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-                    "-o", "UpdateHostKeys=no", "-o", "ConnectTimeout=10", host, command],
-                   json.dumps([source, profile, args]), timeout=7500 if "--apply" in args else 210)
+        data, timeout = json.dumps([source, profile, args]), 7500 if "--apply" in args else 210
+        proc = run([*SSH, host, command], data, timeout=timeout)
+        if proc.returncode in (127, 49, 9009):
+            proc = run([*SSH, host, command.replace("python3 ", "python ", 1)], data, timeout=timeout)
         if proc.returncode in (0, 1):
             report = json.loads(proc.stdout)
             if "--login" in args and proc.returncode == 0 and isinstance(report, list):
-                return [login_row(row, host) for row in report], []
-            if report.get("schema") == "fleet.profile.v1":
+                logins = profile_logins(profile)
+                return [login_row(row, host, logins) for row in report], []
+            if report.get("schema") == SCHEMA:
                 return report["items"], report["errors"]
     except (OSError, ValueError, TypeError, AttributeError, KeyError, subprocess.TimeoutExpired):
         pass
     return {}, ["SSH/profile check failed"]
 
 
-def login_row(row, host):
+def login_row(row, host, logins):
     tool, action = row["tool"], row["action"]
     if tool == "gh" and action == "approve" and re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", row["code"]):
         return {"tool": tool, "host": host, "action": action, "url": GH_VERIFY, "code": row["code"]}
-    if tool not in LOGINS or action != "manual":
+    if tool not in logins or action != "manual":
         raise ValueError
-    return {"tool": tool, "host": host, "action": action, "command": LOGINS[tool][1]}
+    return {"tool": tool, "host": host, "action": action, "command": shlex.join(logins[tool]["start"])}
 
 
 def main(argv=None, profile=None):
@@ -336,11 +458,11 @@ def main(argv=None, profile=None):
     parser.add_argument("--json", action="store_true", help="emit JSON (the default)")
     parser.add_argument("--host", action="append", default=[], help="explicit SSH config alias; repeat for a matrix")
     args = parser.parse_args(argv)
-    if any(not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", host) for host in args.host):
+    if any(not HOST.fullmatch(host) for host in args.host):
         parser.error("--host requires an SSH config alias")
     try:
         if profile is None:
-            profile = {name: (ROOT / name).read_text(encoding="utf-8") for name in FILES}
+            profile = json.loads((ROOT / "profile.json").read_text(encoding="utf-8"))
         if args.host:
             parse_profile(profile)
             source = Path(__file__).read_text(encoding="utf-8")
@@ -362,7 +484,7 @@ def main(argv=None, profile=None):
             return 0
         else:
             report = local_report(profile, args.apply)
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         parser.exit(2, "fleet profile: cannot read or validate profile declarations\n")
     print(json.dumps(report, indent=2))
     return int(bool(report["errors"]))

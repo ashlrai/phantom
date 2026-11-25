@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const usage = 'Usage: phm fleet profile [--json] [--host <alias>]\nReport Mac setup drift from a Phantom checkout. Repeat --host for a matrix.';
+const usage = 'Usage: phm fleet profile [--json] [--host <alias>]\nReport fleet setup drift from a Phantom checkout. Repeat --host for a matrix.';
 const script = fileURLToPath(new URL('../../fleet/profile/apply.py', import.meta.url));
 
 export async function cmdFleetProfile(args: string[]): Promise<number> {
@@ -18,8 +18,9 @@ export async function cmdFleetProfile(args: string[]): Promise<number> {
     return 1;
   }
   return new Promise(resolve => {
-    const child = spawn('python3', ['-I', script, ...args], { stdio: 'inherit' });
-    child.once('error', () => { console.error('fleet profile: could not start python3'); resolve(1); });
+    const python = process.platform === 'win32' ? 'python' : 'python3';
+    const child = spawn(python, ['-I', script, ...args], { stdio: 'inherit' });
+    child.once('error', () => { console.error(`fleet profile: could not start ${python}`); resolve(1); });
     child.once('close', code => resolve(code ?? 1));
   });
 }
