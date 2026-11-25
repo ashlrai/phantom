@@ -361,7 +361,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   router's usage and reset data for the contribution's `pool`. A lane's budget is its
   headroom times the contributed share; a red pool gets none, and a lane with no
   telemetry is planned with a conservative 25 points of headroom. Leftover work is
-  returned in `unassigned` with a reason.
+  returned in `unassigned` with a reason. Text output also lists each held lane
+  (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
+  in on that member's machine, so a member can see why a contribution is unused.
 
 With `--json`, a failed `phm org` call prints
 `{"schema":"org.error.v1","command","error":{"code","message"}}` on stdout —

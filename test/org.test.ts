@@ -331,4 +331,31 @@ describe('cmdOrg', () => {
     expect(logs).toEqual([]);
     vi.unstubAllEnvs();
   });
+
+  it('plan text names each held lane and the join that opts it in', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // mason-wyatt opts claude in at zero share and codex-personal at 50; scofield
+    // opts codex-personal in. evan-deloria never joins: both held reasons show.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac',
+      '--lane', 'claude=0', '--lane', 'codex-personal=50', '--json'])).toBe(0);
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-scofield', '--machine', 'sco-mac',
+      '--lane', 'codex-personal', '--json'])).toBe(0);
+    logs.length = 0;
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('2 lanes held');
+    expect(text).toContain('held mason-wyatt/claude: zero share');
+    expect(text).toContain('phm org join --member mason-wyatt --machine mason-mac --lane claude');
+    expect(text).toContain('held evan-deloria/claude: not opted in');
+    expect(text).toContain('phm org join --member evan-deloria --machine evan-mac --lane claude');
+    expect(text).not.toContain('held mason-scofield/');
+    // --json output is unchanged: the same held rows were already in the plan.
+    expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
+    const plan = JSON.parse(logs.pop()!);
+    expect(plan.held.map((h: any) => `${h.member}/${h.lane}`)).toEqual(['mason-wyatt/claude', 'evan-deloria/claude']);
+    vi.unstubAllEnvs();
+  });
 });

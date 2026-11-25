@@ -204,9 +204,19 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     let view = null;
     try { view = await (await import('../core/fabric/resource-view-store.js')).readResourceView(); } catch { /* unknown usage is planned conservatively */ }
     const plan = planOrg(org, readJoins(), view, queue);
+    // Text mode names each held lane and the join that opts it in; the JSON plan
+    // already carries the same held rows, so --json consumers lose nothing.
+    const heldLines = plan.held.map((h) => {
+      const machines = org.members.find((m) => m.id === h.member)?.machines.map((x) => x.id) ?? [];
+      const machineArg = machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null;
+      const fix = machineArg === null ? 'add a machine for this member in org.toml before join'
+        : `on that member's machine run: phm org join --member ${h.member} --machine ${machineArg} --lane ${h.lane}`;
+      return `  held ${h.member}/${h.lane}: ${h.reason} — ${fix}`;
+    });
     return print(plan, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
-      ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`)].join('\n'));
+      ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`),
+      ...heldLines].join('\n'));
   } catch (err) {
     return orgFailure(json, command, err);
   }
