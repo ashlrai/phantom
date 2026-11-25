@@ -1,6 +1,6 @@
 import type { DriveNodes, JobClaim } from './index.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
-import { isNodeCapacity, isHostStats, validId } from './state.js';
+import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -60,8 +60,61 @@ const num = (flags: Map<string, string>, name: string): number => {
   return Number(raw);
 };
 
+/** Flag values are checked against the store's grammar before the store sees
+ * them: a malformed value is bad usage (exit 2) naming the rule, never a store
+ * 'rejected' — and the value itself is never echoed (secret NAMES included).
+ * The store re-checks every rule for direct API and rpc callers. */
+const ID_RULE = 'letters, digits and . _ : / - (up to 200 characters, starting with a letter or digit)';
+const HELP = 'Run: phm node --help';
+const checkId = (value: string, name: string, code: string, noun: string): string => {
+  if (!validId(value)) throw new UsageError(code, `${name} is not a valid ${noun}.`, `Use ${ID_RULE}. ${HELP}`);
+  return value;
+};
+const needId = (flags: Map<string, string>, name: string): string => checkId(need(flags, name), name, 'bad-id', 'id');
+const optId = (flags: Map<string, string>, name: string): string | undefined => {
+  const value = flags.get(name);
+  return value === undefined ? undefined : checkId(value, name, 'bad-id', 'id');
+};
+const needOwner = (flags: Map<string, string>): string => checkId(need(flags, '--owner'), '--owner', 'bad-owner', 'owner scope');
+const optOwner = (flags: Map<string, string>): string | undefined => {
+  const value = flags.get('--owner');
+  return value === undefined ? undefined : checkId(value, '--owner', 'bad-owner', 'owner scope');
+};
+/** --owner is a comma list on join/status/list and a single scope elsewhere; an
+ * empty, over-long or malformed list is bad usage, not an empty view. The store's
+ * names() dedupes before its 64-entry bound, so the same happens here. */
+const ownerScopes = (flags: Map<string, string>): string[] => {
+  const scopes = [...new Set(csv(need(flags, '--owner')))];
+  if (!scopes.length || scopes.length > 64 || scopes.some(scope => !validId(scope))) {
+    throw new UsageError('bad-owner', '--owner needs 1-64 valid owner scopes.', `Use ${ID_RULE}; separate several scopes with commas. ${HELP}`);
+  }
+  return scopes;
+};
+const CAP_RULE = 'lowercase letters, digits and . _ : - (up to 64 characters), like build or pack:codex-file';
+const capsArg = (flag: string, value: string | undefined): string[] => {
+  const caps = [...new Set(csv(value))];
+  if (caps.length > 64 || caps.some(cap => !validCap(cap))) {
+    throw new UsageError('bad-cap', `${flag} takes up to 64 lowercase capability names.`, `Use ${CAP_RULE}. ${HELP}`);
+  }
+  return caps;
+};
+const secretsArg = (value: string | undefined): string[] => {
+  const secrets = [...new Set(csv(value))];
+  if (secrets.length > 64 || secrets.some(secret => !validSecretName(secret))) {
+    throw new UsageError('bad-secret', '--secrets takes up to 64 secret NAMES, never values.', `Use SCREAMING_SNAKE names like DEPLOY_KEY; secret values are never accepted. ${HELP}`);
+  }
+  return secrets;
+};
+/** num() proves digits; the verb's own bound is still a usage error. */
+const ranged = (flags: Map<string, string>, name: string, max: number, code: string, rule: string): number | undefined => {
+  if (!flags.has(name)) return undefined;
+  const value = num(flags, name);
+  if (value > max) throw new UsageError(code, `${name} must be a whole number from 0 to ${max}.`, `Use ${rule}. ${HELP}`);
+  return value;
+};
+
 function claimOf(flags: Map<string, string>): JobClaim {
-  return { nodeId: need(flags, '--node'), session: num(flags, '--session'), jobId: need(flags, '--job'),
+  return { nodeId: needId(flags, '--node'), session: num(flags, '--session'), jobId: needId(flags, '--job'),
     token: num(flags, '--token'), leaderToken: num(flags, '--leader-token'), expiresAt: 0 };
 }
 
@@ -94,7 +147,7 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
 }
 
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
-  const session = (): { nodeId: string; session: number } => ({ nodeId: need(flags, '--node'), session: num(flags, '--session') });
+  const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
     return new UsageError('session-expired',
@@ -105,11 +158,11 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
   };
   switch (verb) {
     case 'join': {
-      const owners = csv(need(flags, '--owner'));
-      const caps = csv(flags.get('--caps'));
-      const nodeId = need(flags, '--node');
-      const joined = nodes.join(nodeId, { owners, caps,
-        ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}) });
+      const owners = ownerScopes(flags);
+      const caps = capsArg('--caps', flags.get('--caps'));
+      const nodeId = needId(flags, '--node');
+      const slots = ranged(flags, '--slots', 64, 'bad-slots', 'a whole number from 0 to 64');
+      const joined = nodes.join(nodeId, { owners, caps, ...(slots === undefined ? {} : { slots }) });
       if (!joined) {
         const live = liveSession(nodes, nodeId);
         throw new UsageError('node-live', 'A live node already uses that ID.',
@@ -145,14 +198,15 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       if (auth !== undefined && !['ok', 'missing', 'unknown'].includes(auth)) {
         throw new UsageError('bad-auth', '--auth must be ok, missing or unknown.', 'Use --probe-auth to check this machine\'s own gh login.');
       }
-      const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
+      const usage = ranged(flags, '--usage', 1000, 'bad-usage', 'a load permille from 0 (idle) to 1000 (saturated)');
+      const slots = ranged(flags, '--slots', 64, 'bad-slots', 'a whole number from 0 to 64');
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(capacity === undefined ? {} : { capacity }), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(capacity === undefined ? {} : { capacity }), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(slots === undefined ? {} : { slots }), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale(s.nodeId, s.session);
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
     case 'enqueue': {
-      const jobId = need(flags, '--job');
+      const jobId = needId(flags, '--job');
       let task;
       if (flags.has('--task-part') || flags.has('--task-sha256')) {
         const text = need(flags, '--task-part');
@@ -161,11 +215,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         task = { text, sha256: digest.slice(7) };
         if (!validNodeTask(task)) throw new Error('Invalid embedded node task');
       }
-      const added = nodes.enqueue(jobId, { owner: need(flags, '--owner'), requires: csv(flags.get('--requires')),
-        ...(flags.has('--pack') ? { pack: flags.get('--pack')! } : {}), secrets: csv(flags.get('--secrets')), ...(task ? { task } : {}) });
+      const pack = optId(flags, '--pack');
+      const added = nodes.enqueue(jobId, { owner: needOwner(flags), requires: capsArg('--requires', flags.get('--requires')),
+        ...(pack === undefined ? {} : { pack }), secrets: secretsArg(flags.get('--secrets')), ...(task ? { task } : {}) });
       return { jobId, enqueued: added };
     }
-    case 'plan': return { routes: nodes.plan(flags.get('--owner')) };
+    case 'plan': return { routes: nodes.plan(optOwner(flags)) };
     case 'pull': {
       const s = session();
       const pulled = nodes.pull(s);
@@ -186,19 +241,27 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       return { jobId: claim.jobId, expiresAt: claim.expiresAt };
     }
     case 'complete': {
-      const done = nodes.complete(claimOf(flags), flags.get('--result') ?? '');
+      const claim = claimOf(flags);
+      const result = flags.get('--result') ?? '';
+      if (Buffer.byteLength(result) > 64 * 1024) {
+        throw new UsageError('bad-result', '--result must be at most 64 KiB.', 'Pass a short result reference; keep details in the job artifacts. Run: phm node --help');
+      }
+      const done = nodes.complete(claim, result);
       if (!done) throw new UsageError('lease-lost', 'Completion refused: the lease is gone or the job is already complete.',
         'Discard this run\'s result. Another node holds a newer token or the job finished.', 1);
-      return { jobId: need(flags, '--job'), completed: true };
+      return { jobId: claim.jobId, completed: true };
     }
     case 'release': {
       if (!nodes.release(claimOf(flags), flags.has('--decline'))) throw new UsageError('lease-lost', 'Release refused: the lease is gone or the job is already complete.',
         'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
-    case 'withdraw': return { jobId: need(flags, '--job'), ...nodes.withdraw(need(flags, '--job'), need(flags, '--owner')) };
+    case 'withdraw': {
+      const jobId = needId(flags, '--job');
+      return { jobId, ...nodes.withdraw(jobId, needOwner(flags)) };
+    }
     case 'list':
-    case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };
+    case 'status': return { ...nodes.view(ownerScopes(flags)) };
     default: {
       const s = session();
       const left = nodes.leave(s);

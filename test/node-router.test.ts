@@ -288,7 +288,7 @@ describe('phm node CLI', () => {
     expect(missing.err).toContain('--owner is required');
     expect(missing.err).toContain('Fix:');
     const secret = await cli('enqueue', '--job', 'j', '--owner', 'o', '--secrets', 'sk-live-supersecret');
-    expect(secret.code).toBe(1);
+    expect(secret.code).toBe(2);
     expect(secret.err).not.toContain('supersecret');
     expect(secret.err).toContain('NAME');
     const bad = await cli('join', '--node', 'x', '--owner', 'o', '--token=supersecret');

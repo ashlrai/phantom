@@ -71,9 +71,10 @@ Add `--json` to any verb for deterministic output:
 Every `phm node` verb keeps that envelope — the fleet verbs, `pool`, `watch`,
 `worker`, `self-update`, `capacity`, `route`, `lanes`, `bridge`, and unknown
 verbs or bad arguments at the dispatcher. `error.code` names the refusal
-(`usage` or a verb-specific code such as `missing-flag`, `session-expired` or
-`lease-lost`); exit 2 is bad usage, exit 1 a lost session/lease or operational
-failure, and pool or store failures never echo remote or secret detail. A Mac
+(`usage` or a verb-specific code such as `missing-flag`, `bad-id`, `bad-cap`,
+`session-expired` or `lease-lost`); exit 2 is bad usage, exit 1 a lost
+session/lease or operational failure, and pool or store failures never echo
+remote or secret detail. A Mac
 with no `node-pool/config.json` gets `code:"error"` naming the missing
 configuration — and whether a standalone registry is present — with the
 configure-a-pool-or-use-standalone-verbs fix.
@@ -121,7 +122,12 @@ session the same way. `leave` under a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
-and pull again.
+and pull again. Flag values are checked against the registry grammar before
+the store sees them: a malformed `--node`, `--job`, `--owner`, `--caps`,
+`--requires`, `--pack` or `--secrets` value, an out-of-range `--slots` or
+`--usage`, or an oversized `--result` is refused as a `bad-*` usage error
+(exit 2) naming the rule — never a store `rejected` — and the value itself is
+never echoed.
 
 ## Version drift
 

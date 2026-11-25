@@ -363,10 +363,11 @@ describe('session-expired rejoin hint', () => {
     const err = failure(() => executeNodeFleet('pull', args('laptop', worker.session), f.a));
     expect(err.fix).toBe('Rejoin with: phm node join --node laptop --owner <scope>; then use the new session.');
   });
-  it('never inlines an id-invalid node id into the suggested command', () => {
+  it('refuses an id-invalid node id as usage without echoing it', () => {
     const f = fixture();
     const err = failure(() => executeNodeFleet('pull', args('bad;id', 1), f.a));
-    expect(err.fix).toBe('Rejoin with: phm node join --node <id> --owner <scope>; then use the new session.');
+    expect(err).toMatchObject({ code: 'bad-id', exit: 2 });
+    expect(err.message).not.toContain('bad;id');
     expect(err.fix).not.toContain('bad;id');
   });
   it('beat reports the same rejoin hint', () => {
@@ -475,5 +476,84 @@ describe('beat --capacity sample honesty', () => {
     const node = f.a.snapshot().nodes.find(n => n.nodeId === 'laptop')!;
     expect(node.capacity).toEqual(sample);
     expect(node.slots).toBe(4);
+  });
+});
+
+describe('flag value refusals are usage errors', () => {
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string; exit?: number } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
+    throw new Error('expected the verb to refuse');
+  }
+  const run = (verb: string, args: string[]) => {
+    const f = fixture();
+    return failure(() => executeNodeFleet(verb, args, f.a));
+  };
+  it('join refuses malformed ids, owners, caps and slot counts before the store', () => {
+    for (const [args, code] of [
+      [['--node', 'bad id', '--owner', 'acme'], 'bad-id'],
+      [['--node', 'laptop', '--owner', 'bad owner'], 'bad-owner'],
+      [['--node', 'laptop', '--owner', 'acme', '--caps', 'Build'], 'bad-cap'],
+      [['--node', 'laptop', '--owner', 'acme', '--caps', 'build,Bad_Cap'], 'bad-cap'],
+      [['--node', 'laptop', '--owner', 'acme', '--slots', '65'], 'bad-slots'],
+      [['--node', 'laptop', '--owner', ',', ], 'bad-owner'],
+    ] as const) {
+      const err = run('join', [...args]);
+      expect(err, args.join(' ')).toMatchObject({ code, exit: 2 });
+      expect(err.fix).toContain('phm node --help');
+    }
+  });
+  it('beat refuses out-of-range usage and slots as usage, not store failures', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    for (const [flag, value, code] of [
+      ['--usage', '1001', 'bad-usage'], ['--usage', '5000', 'bad-usage'],
+      ['--slots', '65', 'bad-slots'],
+    ] as const) {
+      const err = failure(() => executeNodeFleet('beat', ['--node', 'laptop', '--session', String(worker.session), flag, value], f.a));
+      expect(err).toMatchObject({ code, exit: 2 });
+    }
+    // Boundary values still pass through to the store.
+    expect(executeNodeFleet('beat', ['--node', 'laptop', '--session', String(worker.session), '--usage', '1000', '--slots', '64'], f.a))
+      .toMatchObject({ nodeId: 'laptop' });
+  });
+  it('enqueue refuses malformed job, owner, requires, pack and secret names', () => {
+    for (const [args, code] of [
+      [['--job', 'bad job', '--owner', 'acme'], 'bad-id'],
+      [['--job', 'j', '--owner', 'bad owner'], 'bad-owner'],
+      [['--job', 'j', '--owner', 'acme', '--requires', 'Codex'], 'bad-cap'],
+      [['--job', 'j', '--owner', 'acme', '--pack', 'bad pack'], 'bad-id'],
+      [['--job', 'j', '--owner', 'acme', '--secrets', 'deploy_key'], 'bad-secret'],
+      [['--job', 'j', '--owner', 'acme', '--secrets', 'sk-live-supersecret'], 'bad-secret'],
+    ] as const) {
+      const err = run('enqueue', [...args]);
+      expect(err, args.join(' ')).toMatchObject({ code, exit: 2 });
+    }
+    const secret = run('enqueue', ['--job', 'j', '--owner', 'acme', '--secrets', 'sk-live-supersecret']);
+    expect(secret.message).not.toContain('supersecret');
+    expect(secret.fix).not.toContain('supersecret');
+  });
+  it('read and lease verbs refuse malformed ids and owners the same way', () => {
+    for (const [verb, args, code] of [
+      ['plan', ['--owner', 'bad owner'], 'bad-owner'],
+      ['status', ['--owner', 'bad owner'], 'bad-owner'],
+      ['list', ['--owner', ''], 'bad-owner'],
+      ['pull', ['--node', 'bad;id', '--session', '1'], 'bad-id'],
+      ['leave', ['--node', 'bad id', '--session', '1'], 'bad-id'],
+      ['renew', ['--job', 'bad job', '--node', 'n', '--session', '1', '--token', '1', '--leader-token', '1'], 'bad-id'],
+      ['withdraw', ['--job', 'j', '--owner', 'bad owner'], 'bad-owner'],
+    ] as const) {
+      const err = run(verb, [...args]);
+      expect(err, `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+    }
+  });
+  it('complete refuses an oversized --result as usage before touching the lease', () => {
+    const err = run('complete', ['--job', 'j', '--node', 'n', '--session', '1', '--token', '1', '--leader-token', '1',
+      '--result', 'x'.repeat(64 * 1024 + 1)]);
+    expect(err).toMatchObject({ code: 'bad-result', exit: 2 });
+    // Exactly at the bound is not a usage error; it fails later as a lost lease.
+    const f = fixture();
+    const atBound = failure(() => executeNodeFleet('complete', ['--job', 'j', '--node', 'n', '--session', '1', '--token', '1',
+      '--leader-token', '1', '--result', 'x'.repeat(64 * 1024)], f.a));
+    expect(atBound).toMatchObject({ code: 'lease-lost', exit: 1 });
   });
 });
