@@ -97,6 +97,15 @@ describe('readNodesDoctor', () => {
     expect(peer.unknowns.some(u => u.includes('free disk unknown'))).toBe(true);
   });
 
+  it('a reachable computer with no live Phantom session is a gap, never ready', async () => {
+    // NO_POOL leaves this computer's standalone registry empty, so the view
+    // proves Phantom is not running here even though every lane checks out.
+    const report = await readNodesDoctor({ view: deps([]), probe: fake({ 'home-mac': healthy() }) });
+    const self = report.nodes.find(n => n.name === 'home-mac')!;
+    expect(self.gaps).toEqual(['home-mac: reachable but Phantom not running: run `phm node join --node <id> --owner <scope>` here']);
+    expect(self.ready).toBe(false);
+  });
+
   it('a throwing adapter is unknown, not a crash', async () => {
     const report = await readNodesDoctor({ view: deps([]), probe: async () => { throw new Error('boom'); } });
     expect(report.nodes[0]!.repos).toBe('unknown');
