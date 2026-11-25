@@ -723,7 +723,8 @@ export function validateCoverage({ root, bundle, source, producer, lanes }) {
   assert.deepEqual([...generalFiles].sort(), expectedGeneral, 'Mac full module inventory incomplete');
   const webConfig = boundedBytes(join(root, 'vitest.config.web.ts'), 1024 * 1024).toString();
   assert.ok(webConfig.includes("include: ['src/web-ui/**/*.test.{ts,tsx}']"), 'web collection contract changed');
-  const expectedWeb = source.tracked.map((entry) => entry.path).filter((path) => /^src\/web-ui\/.*\.test\.(?:ts|tsx)$/.test(path) &&
+  assert.ok(webConfig.includes("include: ['desktop/**/*.test.{ts,tsx}']"), 'desktop collection contract changed');
+  const expectedWeb = source.tracked.map((entry) => entry.path).filter((path) => /^(?:src\/web-ui|desktop)\/.*\.test\.(?:ts|tsx)$/.test(path) &&
     !/(?:^|\/)(?:node_modules|dist)\//.test(path)).sort();
   assert.deepEqual([...webFiles].sort(), expectedWeb, 'web full module inventory incomplete');
   assert.deepEqual(markerReports[0].cases.map(({ id, name }) => ({ id, name })), markerReports[1].cases.map(({ id, name }) => ({ id, name })), 'marker case inventory differs');

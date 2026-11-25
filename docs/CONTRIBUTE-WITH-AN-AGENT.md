@@ -74,7 +74,7 @@ Run these in the foreground and wait for each to finish:
 ```sh
 node scripts/verify-changed.mjs           # lint of changed files, one type check, docs check when docs/deletions changed, quarantine check when tests/ledger changed, syntax check of changed files by type (table below)
 npm run test:ci -- test/<file>.test.ts    # affected backend suites, isolated HOME
-npm run test:web                          # only if src/web-ui/ changed
+npm run test:web                          # only if src/web-ui/ or desktop/ changed
 npm run check:docs                        # if docs changed (verify-changed already ran it when the diff touched markdown or deleted files)
 npx vitest run test/doc-facts.test.ts     # if a documented command, flag or npm script changed
 npm run build                             # before suites that run dist/ (below), or if build, packaging or CLI wiring changed
@@ -238,7 +238,9 @@ and the fast gate never skips tests silently:
   `.github/fast-gate-budget.json` (25 in the measured file). Name-matched
   `test/**/<stem>.test.ts` files fill in after that closure. A web test that
   reaches a changed file, and the colocated `src/web-ui/**/*.test.ts` or
-  `*.test.tsx` for a changed web file, run under `vitest.config.web.ts`
+  `*.test.tsx` for a changed web file (the same pairing covers `desktop/**`,
+  whose component tests run in the same web lane), run under
+  `vitest.config.web.ts`
   (`npm run test:web -- <files>`). Changed test files always run. Named tests:
   - `.github/CODEOWNERS`, `src/core/authority/`, a `test/authority-*310b*`
     suite or `.github/tests/secret-shape/` adds the two
@@ -289,7 +291,7 @@ RUNNER_TEMP="$(mktemp -d)" CI_DEP_GRAPH="$graph" \
 
 It prints the mode and test counts and writes the list to
 `$RUNNER_TEMP/fast-gate-plan.json`. Run the vitest files with
-`npm run test:ci -- <files>` and any `src/web-ui` tests with
+`npm run test:ci -- <files>` and any `src/web-ui` or `desktop` tests with
 `npm run test:web -- <files>` before you push.
 
 ## 7. Auto-merge

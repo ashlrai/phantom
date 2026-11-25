@@ -51,7 +51,7 @@ full walkthrough and recovery steps.
    ```sh
    node scripts/verify-changed.mjs                # changed-file lint, one typecheck, docs links
    npm run test:ci -- test/<affected>.test.ts     # affected backend suites, isolated HOME
-   npm run test:web                               # only when src/web-ui changed
+   npm run test:web                               # when src/web-ui or desktop changed
    npm run check:docs                             # if verify-changed skipped it
    npx vitest run test/doc-facts.test.ts          # when docs name commands, flags or scripts
    ```
@@ -187,7 +187,7 @@ To install the CLI while developing:
 | `npm run test:serial` | Run tests without file parallelism — required for tests that touch the same home dir |
 | `npm run test:ci` | Run backend lanes locally with isolated test homes, inactivity detection and a hard runtime cap |
 | `npm run test:ci:balanced` | Run the complete backend suite as four concurrent shards balanced by measured file durations |
-| `npm run test:web` | Run the separate jsdom/Testing Library console suite |
+| `npm run test:web` | Run the separate jsdom/Testing Library console and desktop-component suite |
 | `npm run test:engineering-responsiveness` | Run the explicit macOS real-CLI two-second control-room latency gate; not implied by default test success |
 | `npm run eval:routing` | Score the offline routing corpus: local share, escalation reasons, accuracy, and a labeled frontier dollar estimate. Not part of CI. |
 | `npm run dev:web` | Run the Vite development server; it does not commission providers or enable dispatch |

@@ -1,11 +1,18 @@
 /**
- * vitest.config.web.ts — DOM test runner for src/web-ui/**.
+ * vitest.config.web.ts — DOM test runner for src/web-ui/** and desktop/**.
  *
  * Deliberately separate from the root vitest.config.ts, which is scoped to
  * `test/**` (the backend's own suite, per-process HOME isolation, forked
  * pool, etc.) and owned by the backend/test-migration work. Mixing a jsdom
  * environment + testing-library setup into that config would change
  * semantics for 650+ existing backend test files. Run with `npm run test:web`.
+ *
+ * The desktop project collects the shipped desktop web components
+ * (desktop/fleet-map's <fleet-node-map> today). desktop/vitest.config.mts
+ * remains the standalone runner documented in desktop/fleet-map/README.md;
+ * this project is what CI's web qualification lane and `npm run test:web`
+ * actually execute, so a desktop suite that only the standalone config knew
+ * about would never run on a pull request.
  */
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
@@ -44,6 +51,17 @@ export default defineConfig({
           exclude: excludes,
           maxWorkers: 1,
           sequence: { groupOrder: 1 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'desktop',
+          include: ['desktop/**/*.test.{ts,tsx}'],
+          exclude: excludes,
+          maxWorkers: 2,
+          sequence: { groupOrder: 2 },
+          server: { deps: { inline: [/@testing-library\/dom/] } },
         },
       },
     ],

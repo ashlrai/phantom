@@ -131,9 +131,11 @@ export function needsDist(cwd, file) {
   return /require-built-dist/.test(text);
 }
 const TEST_FILE = /^test\/(?:[^/]+\/)*[^/]+\.test\.ts$/;
-const SOURCE_FILE = /^(?:src|test)\/.+\.(?:ts|tsx|mjs|js)$/;
-const WEB_TEST = /^src\/web-ui\/(?:[^/]+\/)*[^/]+\.test\.(?:ts|tsx)$/;
-const WEB_IMPL = /^src\/web-ui\/.+\.(?:ts|tsx)$/;
+const SOURCE_FILE = /^(?:src|test|desktop)\/.+\.(?:ts|tsx|mjs|js)$/;
+// Desktop component tests run under vitest.config.web.ts's desktop project,
+// so they select into the same web bucket as src/web-ui suites.
+const WEB_TEST = /^(?:src\/web-ui|desktop)\/(?:[^/]+\/)*[^/]+\.test\.(?:ts|tsx)$/;
+const WEB_IMPL = /^(?:src\/web-ui|desktop)\/.+\.(?:ts|tsx)$/;
 export const SMOKE_SCHEMA = 'phantom-fast-gate-smoke.v1';
 export const SMOKE_SET_PATH = '.github/fast-gate-smoke.json';
 
@@ -261,7 +263,7 @@ export function assessGraph({ cwd, graph, base, sources }) {
 }
 
 function webTests(cwd) {
-  return new Set(git(cwd, ['ls-files', '-z', '--', 'src/web-ui']).split('\0').filter((file) => WEB_TEST.test(file)));
+  return new Set(git(cwd, ['ls-files', '-z', '--', 'src/web-ui', 'desktop']).split('\0').filter((file) => WEB_TEST.test(file)));
 }
 
 function colocatedWeb(path, files) {

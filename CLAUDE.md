@@ -25,7 +25,7 @@ npm run typecheck:fast    # same projects via tsgo (native); what gate phase A r
 npm run lint              # optional full ESLint + lane lints for humans
 npm run check:docs        # documentation link and anchor check
 npx vitest run test/<file>.test.ts   # one backend suite
-npm run test:web          # src/web-ui suites
+npm run test:web          # src/web-ui + desktop suites
 npm run test:ci           # backend lanes with isolated HOME/ASHLR_HOME
 npm run gate              # build, static checks and related tests together
 ```

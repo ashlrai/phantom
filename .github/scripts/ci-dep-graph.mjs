@@ -136,11 +136,14 @@ export function updateGraph(previous, listing) {
     if (typeof entry.text !== 'string') throw new Error(`missing text for changed graph file ${entry.path}`);
     reparsed += 1;
     const edges = importEdges(entry.text, entry.path, available);
+    // src/ and desktop/ feed test selection; an edge they cannot resolve must
+    // mark the graph unknown rather than silently drop a related suite.
+    const selectable = entry.path.startsWith('src/') || entry.path.startsWith('desktop/');
     files[entry.path] = {
       hash: entry.hash,
       imports: edges.imports,
-      ...(entry.path.startsWith('src/') && edges.unresolved.length ? { unresolved: edges.unresolved } : {}),
-      ...(entry.path.startsWith('src/') && edges.dynamic ? { dynamic: true } : {}),
+      ...(selectable && edges.unresolved.length ? { unresolved: edges.unresolved } : {}),
+      ...(selectable && edges.dynamic ? { dynamic: true } : {}),
     };
   }
   const unknown = Object.values(files).some((node) => node.unresolved?.length);
@@ -223,7 +226,7 @@ function git(cwd, args) {
 }
 
 function listing(cwd) {
-  const out = git(cwd, ['ls-tree', '-r', '-z', 'HEAD', '--', 'src', 'test', 'scripts']);
+  const out = git(cwd, ['ls-tree', '-r', '-z', 'HEAD', '--', 'src', 'test', 'scripts', 'desktop']);
   const entries = [];
   for (const record of out.split('\0')) {
     if (!record) continue;
