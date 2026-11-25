@@ -101,11 +101,12 @@ describe('fleet MCP protocol', () => {
 });
 
 describe('fleet MCP CLI routing', () => {
-  it('prints help and rejects arguments without starting a server', async () => {
+  it('prints the live advertised tool catalog and rejects arguments without starting a server', async () => {
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     expect(await cmdMcp(['fleet', '--help'])).toBe(0);
-    expect(stdout).toHaveBeenCalledWith(expect.stringContaining('fleet_loop'));
+    const printed = stdout.mock.calls.map(call => String(call[0])).join('\n');
+    expect(printed.match(/\bfleet_[a-z0-9_]+\b/g)).toEqual([...FLEET_MCP_TOOL_NAMES]);
     expect(await cmdMcp(['fleet', '--start'])).toBe(2);
     expect(stderr).toHaveBeenCalledWith('Usage: phm mcp fleet\n');
   });
