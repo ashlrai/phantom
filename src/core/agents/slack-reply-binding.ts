@@ -112,7 +112,7 @@ export function bindSlackReplies(input: {
   }
   // Sent evidence identifies a physical message by channel + canonical ts (Slack
   // ts is unique per channel). A physical message recorded under conflicting threads (including
-  // top-level) proves no answer. Attempts never establish or override sent evidence.
+  // top-level) or multiple send keys proves no answer. Attempts never establish or override sent evidence.
   const physical = new Map<string, { channel: string; thread?: string; ts: string; conflicted: boolean; keys: Set<string> }>();
   const attemptedKeys = new Set<string>();
   for (const row of receipts) {
@@ -140,7 +140,7 @@ export function bindSlackReplies(input: {
       }
     }
   }
-  const sentByKey = new Map<string, Array<{ channel: string; thread?: string; ts: string; conflicted: boolean }>>();
+  const sentByKey = new Map<string, Array<{ channel: string; thread?: string; ts: string; conflicted: boolean; keys: Set<string> }>>();
   for (const p of physical.values()) {
     for (const key of p.keys) sentByKey.set(key, [...(sentByKey.get(key) ?? []), p]);
   }
@@ -178,7 +178,7 @@ export function bindSlackReplies(input: {
     if (sent !== undefined) {
       // Exactly one consistent physical message in this request's own thread,
       // after the request message on the same Slack clock.
-      const ok = sent.length === 1 && !sent[0]!.conflicted && sent[0]!.channel === request.channelId &&
+      const ok = sent.length === 1 && !sent[0]!.conflicted && sent[0]!.keys.size === 1 && sent[0]!.channel === request.channelId &&
         sent[0]!.thread === request.threadTs && compareTs(sent[0]!.ts, request.messageTs) > 0;
       if (ok) { verdict = 'answered'; replyTs = sent[0]!.ts; } else verdict = 'uncertain';
     } else if (attemptedKeys.has(key)) {
