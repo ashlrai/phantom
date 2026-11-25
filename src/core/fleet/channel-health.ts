@@ -321,10 +321,14 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   // logic (never 'verified') and say so.
   let binding: ReplyBindingEvidence | null = null;
   let bindingUnreadable = false;
+  let invalidBindingTime = false;
   if (src.replyBinding) {
     try {
       const read = await src.replyBinding(now);
-      if (read.store === 'ok') binding = read;
+      if (read.store === 'ok') {
+        invalidBindingTime = [...read.answeredAt, ...read.unansweredAt].some((t) => !Number.isFinite(ms(t)));
+        if (!invalidBindingTime) binding = read;
+      }
       else bindingUnreadable = true;
     } catch { bindingUnreadable = true; }
   }
@@ -387,6 +391,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
   if (invalidReplyTime) reasons.push(`${channel} reply evidence time invalid`);
+  if (invalidBindingTime) reasons.push(`${channel} reply binding time invalid`);
   const failureTime = outboundFailure ? ms(outboundFailure.at) : null;
   const invalidFailureTime = failureTime !== null && (!Number.isFinite(failureTime) || failureTime > nowMs);
   const recentFailure = failureTime !== null && inWindow(failureTime);
