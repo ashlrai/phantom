@@ -51,6 +51,6 @@ One focused change covers reliable agent context and recoverable empty states.
 All work remains uncommitted for the bridge handoff. No PR, merge, publication,
 native build, signing, notarization or live installation was performed.
 Component tests exercise real UI and fetch handling with synthetic responses,
-including delayed reads, StrictMode, retries and agent/chat switches. See
-[bridge notes](BRIDGE_NOTES.md) for exact commands and results. Hosted checks and
-rendered acceptance of a newly packaged desktop build remain downstream gates.
+including delayed reads, StrictMode, retries and agent/chat switches. Exact
+commands and results were recorded in the worker's `BRIDGE_NOTES.md`. Hosted
+checks and rendered acceptance of a newly packaged desktop build remain downstream gates.

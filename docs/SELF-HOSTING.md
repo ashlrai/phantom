@@ -1,10 +1,8 @@
 # Self-hosting Phantom
 
-Phantom (`@ashlr/phantom`) is the open-source engineering agent workbench:
-the `phm` CLI (`ashlr` is a compatible alias), a loopback console, a stdio
-MCP gateway and the Universe experiment kernel — all on your machine against
-your own provider accounts and models; there is no Phantom-hosted backend to
-deploy. All state lives under `~/.ashlr/`.
+Phantom (`@ashlr/phantom`) runs on your machine with your accounts and models.
+It includes the `phm` CLI (`ashlr` is an alias), a loopback console, a stdio MCP gateway,
+and the Universe experiment kernel. There's no hosted backend; state lives under `~/.ashlr/`.
 
 ## What runs locally
 
@@ -33,9 +31,8 @@ npm install -g @ashlr/phantom
 phm --version
 ```
 
-From source, [`install.sh`](https://github.com/ashlrai/phantom/blob/master/install.sh)
-checks Node, installs dependencies, builds `dist/` and symlinks `phm` and
-`ashlr` into `~/.local/bin`:
+From source, [`install.sh`](https://github.com/ashlrai/phantom/blob/master/install.sh) checks Node,
+installs dependencies, builds `dist/`, and symlinks `phm` and `ashlr` into `~/.local/bin`:
 
 ```sh
 git clone https://github.com/ashlrai/phantom.git
@@ -68,10 +65,8 @@ The per-user daemon:
 
 `phm daemon service-status` reads the service. It does not start a SYSTEM service and it does not ask for Administrator.
 
-Or build and run without touching PATH: `npm ci && npm run build`, then
-`node bin/ashlr --version` (or `npm run dev -- --version` straight from
-source via tsx). For a pinned, versioned source install see
-[versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md).
+Without changing PATH: `npm ci && npm run build`, then `node bin/ashlr --version` (or `npm run dev -- --version` via tsx).
+For a pinned source install, see [versioned self-swap](https://github.com/ashlrai/phantom/blob/master/docs/SELF-SWAP.md).
 
 ## First run
 
@@ -81,11 +76,9 @@ phm doctor      # checks Node, git, config, providers and MCP registration; --fi
 phm verse       # opens the workbench — keep the printed tokens private
 ```
 
-`phm init --wire` also registers the MCP gateway in detected agents (below).
-`phm onboard` walks the first safe activation (preflight → enroll one repo →
-dry-run plan → inbox review); `phm preflight` is the read-only readiness
-check. First-chat checklist: [Quickstart](QUICKSTART.md); console tour:
-[first local session](VERSE.md#first-local-session).
+`phm init --wire` also registers the gateway in detected agents. `phm preflight` checks readiness without writing.
+`phm onboard` guides activation: preflight → enroll one repo → dry-run plan → inbox review.
+See [Quickstart](QUICKSTART.md) for first chat and [first local session](VERSE.md#first-local-session) for a console tour.
 
 ## Data locations
 
@@ -102,17 +95,13 @@ check. First-chat checklist: [Quickstart](QUICKSTART.md); console tour:
 | `authority/ledger.jsonl` | hash-chained authority ledger |
 | `daemon.json`, `logs/`, `fleet/mirrors/` | daemon state, runtime output, fleet clones |
 
-`~/.local/bin/phm` and `~/.local/bin/ashlr` are the PATH shims for a source
-install; the full state map is in [RELIABILITY](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md#where-state-lives).
+Source PATH shims: `~/.local/bin/phm` and `~/.local/bin/ashlr`. See the [full state map](https://github.com/ashlrai/phantom/blob/master/docs/RELIABILITY.md#where-state-lives).
 
 ## Connect Claude Code and Codex over MCP
 
-`phm mcp` is one stdio gateway: it serves Phantom's own tools plus every
-server registered in `~/.ashlr/settings.json`, each tool prefixed with its
-server name. Register detected companions and probe them, then register the
-gateway as the `ashlr-hub` server in each agent. `phm wire` backs the target
-config up first and is idempotent; `phm wire status` reports detection and
-registration without writing:
+`phm mcp` serves Phantom's tools and server-prefixed tools from `~/.ashlr/settings.json` over stdio.
+Register and probe companions, then add `ashlr-hub` to each client. `phm wire` backs up config and is idempotent;
+`phm wire status` reports detection and registration without writing:
 
 ```sh
 phm mcp ecosystem --write
@@ -122,52 +111,36 @@ phm wire codex      # runs codex mcp add ashlr-hub -- ashlr mcp
 phm wire all        # every detected client (claude, codex, cursor)
 ```
 
-`phm mcp install claude` performs the same `~/.claude.json` write with an
-absolute path to this install's `bin/ashlr`. By hand, add this entry under
-`mcpServers` in the client's config:
+`phm mcp install claude` writes the same `~/.claude.json` entry using the absolute path to this install's `bin/ashlr`.
+To register manually, add this entry under `mcpServers` in the client's config:
 
 ```json
 "ashlr-hub": { "command": "ashlr", "args": ["mcp"] }
 ```
 
-Restart the agent so it reloads MCP servers. Companion install and the
-combined tool surface: [one connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
+Restart the agent to reload MCP servers. For companion setup, see [one connection for every agent](COMPANIONS.md#one-connection-for-every-agent).
 
 ## Upgrade
 
-- Release directory (`~/.local/share/ashlr/releases/<sha>`): `phm update`
-  verifies the npm tarball's SHA-512 integrity (and GitHub CLI attestation when
-  `gh` is installed), smoke-tests the candidate and swaps `current`, pausing and
-  restarting running launchd services. Failures restore changed links; the
-  previous release stays on disk. `phm update --json` returns `from`, `to`,
-  `verified`, `rolled_back` and `log_line` (appended to
-  `~/.ashlr-runs/installs.log`); `--check` leaves the installation unchanged.
-- Source checkout: `phm update` (alias `phm upgrade`) fast-forwards with
-  `git pull --ff-only`, runs `npm install` and `npm run build`, then checks
-  the `~/.local/bin` symlink and a `help` smoke test. It aborts on a dirty
-  tree; `phm update --check` is read-only. Equivalent by hand:
-  `git pull --ff-only && npm ci && npm run build && ./install.sh`.
-- npm install: `phm update` checks the registry, prints
-  `npm install -g @ashlr/phantom@latest`, and `--yes` runs it.
+- Release directory (`~/.local/share/ashlr/releases/<sha>`): `phm update` verifies SHA-512 and, if `gh` is installed, the npm tarball's attestation.
+  It smoke-tests the candidate, swaps `current`, and pauses and restarts active launchd services. Failure restores links; the prior release stays on disk.
+  `phm update --json` returns `from`, `to`, `verified`, `rolled_back` and `log_line` (appended to `~/.ashlr-runs/installs.log`).
+  `--check` leaves the install unchanged.
+- Source checkout: `phm update` (alias `phm upgrade`) refuses a dirty tree; otherwise it runs `git pull --ff-only`, `npm install` and `npm run build`,
+  then checks the `~/.local/bin` symlink and smoke-tests `help`. `phm update --check` is read-only.
+  Equivalent by hand: `git pull --ff-only && npm ci && npm run build && ./install.sh`.
+- npm install: `phm update` checks the registry and prints `npm install -g @ashlr/phantom@latest`; `--yes` runs it.
 - A running console picks up the new build on next start; re-open `phm verse`.
 
 ## Uninstall
 
-1. Stop what is running: Ctrl-C the `phm verse` console. If an OS service was
-   installed, `phm daemon service-status` shows it and `phm daemon stop` /
-   `phm daemon uninstall` removes it. On macOS under a standing grant, run
-   `phm authority resident stop` first. `phm onboard --rollback <repo>`
-   reverses the guided activation.
-2. Remove agent registrations: `codex mcp remove ashlr-hub`, and delete the
-   `ashlr-hub` key under `mcpServers` in `~/.claude.json` and
-   `~/.cursor/mcp.json`.
-3. Remove the program: `npm uninstall -g @ashlr/phantom`, or for a source
-   install `rm ~/.local/bin/phm ~/.local/bin/ashlr` and delete the checkout.
-4. Remove all local state: `rm -rf ~/.ashlr` — config, enrollments, inbox,
-   sandboxes, audit trail and genome go with it.
+1. Ctrl-C `phm verse`. Inspect any service with `phm daemon service-status`, stop it with `phm daemon stop`, and remove it with `phm daemon uninstall`.
+   On macOS under a standing grant, run `phm authority resident stop` first. `phm onboard --rollback <repo>` reverses guided activation.
+2. Run `codex mcp remove ashlr-hub`; delete the `ashlr-hub` key under `mcpServers` in `~/.claude.json` and `~/.cursor/mcp.json`.
+3. Run `npm uninstall -g @ashlr/phantom` or, for source installs, `rm ~/.local/bin/phm ~/.local/bin/ashlr` and delete the checkout.
+4. Remove all local state (config, enrollments, inbox, sandboxes, audit, and genome): `rm -rf ~/.ashlr`.
 
 ## See also
 
-- [Agent operations guide](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md#where-state-lives)
-  for the cold-start checklist; `phm docs --agent --json` prints the command registry your binary supports.
+- [Agent operations](https://github.com/ashlrai/phantom/blob/master/docs/AGENT-OPERATIONS.md#where-state-lives) for the cold-start checklist; `phm docs --agent --json` prints your binary's command registry.
 - [Autonomy setup](AUTONOMY-SETUP.md) before granting the resident runtime standing authority; [Automatic work](AUTOMATIC-OUTCOMES.md) for readiness.

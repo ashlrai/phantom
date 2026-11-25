@@ -46,6 +46,6 @@ describe('PR #7463 local verification guidance preservation', () => {
     );
     expect(fullChecks.length).toBeGreaterThan(0);
     for (const job of fullChecks) expect(job.if).toContain("github.event_name != 'pull_request'");
-    expect(read('test/cli-tidy-json.test.ts')).toContain("import { requireBuiltDist } from './helpers/require-built-dist.js'");
+    expect(read('test/cli-tidy-json.test.ts')).toMatch(/import \{ requireBuiltDist \} from '\.\/helpers\/require-built-dist\.js'/);
   });
 });

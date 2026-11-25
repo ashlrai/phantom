@@ -44,6 +44,7 @@ A zero exit code is not a merge and not permission to spend. `phm docs --agent -
 | Install, connect MCP, upgrade, and uninstall | [Self-hosting](SELF-HOSTING.md) |
 | Install a tool and its project MCP server with one command | [Tool installer](https://github.com/ashlrai/phantom/blob/master/docs/INSTALL-TOOLS.md) |
 | Use the console | [Phantom user guide](VERSE.md) |
+| Turn a screen-level request into an agent pull request | [Prompt-to-PR](PROMPT-TO-PR.md) |
 | Publish local reports and browse their pages | [Report pages — source guide](https://github.com/ashlrai/phantom/blob/master/docs/PAGES.md) |
 | Work in a floating personal agent window | [Owner Assist](https://github.com/ashlrai/phantom/blob/master/docs/OWNER-ASSIST.md) |
 | See what each fleet lane runs on and is best at | [Fleet lanes](lanes.md) |
@@ -101,6 +102,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 | Separate tested firm machinery from remaining activation and integration work | [Autonomy gap map](AUTONOMY-GAP.md) |
 | Exercise signed graph execution and a deliberately lying candidate | [Firm graph fixture](FIRM-DEMO.md) |
 | Connect autonomy research to engineering acceptance | [Autonomy engineering brief](UNIVERSE-AUTONOMY-RESEARCH.md) |
+| Compare recent factory, merge, and feedback research and pick measurable fleet jobs | [November 2026 frontier scan](https://github.com/ashlrai/phantom/blob/master/docs/research/2026-11-frontier-scan.md) |
 | Configure offline daily research queue restocking | [Research topics and restock contract](https://github.com/ashlrai/phantom/blob/master/docs/research/TOPICS.md) |
 | Generate daily frontier direction and track ideation outcomes | [Standing ideation loop](https://github.com/ashlrai/phantom/blob/master/docs/IDEATION.md) |
 | Turn research digests into scored, gated job proposals | [Research loop](https://github.com/ashlrai/phantom/blob/master/docs/RESEARCH-LOOP.md) |

@@ -149,11 +149,13 @@ function readInputs(request: CrossReviewRequest): Inputs {
 
 /** Read all exact-SHA CI evidence; required checks alone cannot prove the head green. */
 async function observeHeadChecks(repo: string, pr: number, headSha: string): Promise<NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>> {
+  let references: NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>['references'];
   const result = (
     code: NonNullable<Parameters<typeof decideCrossReview>[0]['checks']>['code'],
     status: 'ready' | 'wait' | 'hold' = code === null ? 'ready' : 'hold',
     detail?: string,
-  ) => ({ headSha, code, status, ...(detail ? { detail: scrubSecrets(detail).replace(/[\p{C}\s]+/gu, ' ').slice(0, 400) } : {}) });
+  ) => ({ headSha, code, status, ...(detail ? { detail: scrubSecrets(detail).replace(/[\p{C}\s]+/gu, ' ').slice(0, 400) } : {}),
+    ...(references && code !== 'checks-stale' ? { references } : {}) });
   try {
     const deps = defaultHostMergeDeps();
     const before = await readPr(repo, pr, deps);
@@ -165,6 +167,12 @@ async function observeHeadChecks(repo: string, pr: number, headSha: string): Pro
     const checks = await readHeadChecks(repo, headSha, deps);
     if (typeof checks === 'string') return result('checks-unreadable');
     if (!Array.isArray(checks.runs) || !Array.isArray(checks.statuses)) return result('checks-unreadable');
+    references = {
+      runIds: [...new Set(checks.runs.map((r) => r?.id).filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, 300),
+      statusContexts: [...new Set(checks.statuses.map((s) => s?.context).filter((name) =>
+        typeof name === 'string' && name.length > 0 && name.length <= 160 &&
+        !/[\p{C}]/u.test(name) && scrubSecrets(name) === name))].slice(0, 100),
+    };
     const label = (name: string, appId: string | null) => `${scrubSecrets(name).replace(/[\p{C}\s]+/gu, ' ').slice(0, 160)} (${required.required.some(
       (r) => r.context === name && (r.appId === null || r.appId === appId),
     ) ? 'required' : 'non-required'})`;
