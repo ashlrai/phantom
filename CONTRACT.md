@@ -57,9 +57,15 @@ Exports:
   writes state. `applySeatHandoff(id, opts?)` uses a stale-safe lock, fsyncs one
   `phantom-bot-handoff.v1` record per work/lease identity before releasing work,
   retries held releases on replay, declines node sessions and releases bus
-  claims by source. Source releases require the current owner; seat handoffs also
-  match the captured stored lease generation. Team and board clears use owner-only
-  fencing because acquisition may normalize the requested expiry. It returns
+  claims by source — `origin:'message'` claims first settle through the bus
+  work-claims journal's owner-authorized release
+  (`releaseBusWorkClaimForOwner` in `src/core/fleet/bus-work-claims.ts`), which
+  drops the journal row and its coordination partner under the journal writer
+  lock so the two stores cannot drift; a claim that cannot name a journal row
+  still takes the by-source path alone. Source releases require the current
+  owner; seat handoffs also match the captured stored lease generation. Team
+  and board clears use owner-only fencing because acquisition may normalize
+  the requested expiry. It returns
   `phantom-bot-handoff-plan.v1` with `apply`, state
   and handoffs; apply handoffs include `notifications: {bus, owner}` statuses.
   Durable notice receipts suppress repeated attempts; crashes before receipt

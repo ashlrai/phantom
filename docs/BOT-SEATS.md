@@ -150,8 +150,16 @@ local-store lock serializes apply operations.
 Node jobs return to pending through `DriveNodes.release(claim, true)`; the
 decline excludes the drained node session from receiving that job again, while
 the router can offer it to other eligible nodes. Bus claims use the existing
-claim-store release-by-source path. This is coordination release, not a promise
-that another agent has started the work, and it does not stop a remote bot.
+claim-store release-by-source path — except `origin:'message'` claims, which
+`mutateBusWorkClaim` dual-writes to the bus work-claims journal
+(`bus-work-claims/claims.json`) beside the coordination row. Those settle
+through the journal's owner-authorized release first, which drops both rows
+under the journal writer lock, so a handed-off message is really claimable
+again and the claim-drift read stays VERIFIED instead of reporting an orphaned
+journal lease. A claim that cannot name a journal row — a foreign `queue:`
+key or unparseable lease coordinates — still takes the by-source path alone.
+This is coordination release, not a promise that another agent has started the
+work, and it does not stop a remote bot.
 
 Each record has a bus note and owner-thread notice with stable deduplication
 keys. Private `handoff-notices.json` receipts suppress repeated attempts; a crash

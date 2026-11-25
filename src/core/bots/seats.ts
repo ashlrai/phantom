@@ -18,6 +18,7 @@ import { ashlrHome } from '../cloud/store.js';
 import { canonicalPath, privateDirectory } from '../universe/artifacts.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { appendBusInbox } from '../fleet/bus-inbox.js';
+import { releaseBusWorkClaimForOwner } from '../fleet/bus-work-claims.js';
 import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
 import { acquireLocalStoreLock, releaseLocalStoreLock } from '../fleet/local-store-lock.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -384,6 +385,30 @@ export function inspectSeatStore(home?: string): SeatStoreInspection {
 
   return { source: degraded ? 'unavailable' : 'available', seats, states, handoffs, notices };
 }
+/** The journal's own row-label rule: printable ASCII, at most 128 chars. A
+ * claim whose id or owner cannot name a journal row — a hand-built
+ * `origin:'message'` lease, say — falls back to the coordination release
+ * alone, which is safe because no journal lease can exist for it. */
+const JOURNAL_LABEL = /^[\x21-\x7e]{1,128}$/;
+/** The journal coordinates a message claim's `queue:<id>` key and
+ * `<id>:<cursor>:<receivedAt>` sourceId carry — the same triple the
+ * claim-store drift read joins the two stores on. Undefined when the claim
+ * is not a standard bus-work-claims row (a foreign `queue:` key or an
+ * unparseable sourceId), in which case only the coordination release below
+ * applies. An id may itself contain ':'; the tail is split only after the
+ * known `<id>:` prefix, the same rule the drift read applies. */
+function busWorkClaimTarget(claim: CoordinationView): { id: string; cursor: number; receivedAt: number } | undefined {
+  if (!claim.key.startsWith('queue:')) return undefined;
+  const id = claim.key.slice('queue:'.length);
+  if (!JOURNAL_LABEL.test(id) || !JOURNAL_LABEL.test(claim.owner)) return undefined;
+  const prefix = `${id}:`;
+  if (!claim.sourceId.startsWith(prefix)) return undefined;
+  const tail = claim.sourceId.slice(prefix.length).split(':');
+  if (tail.length !== 2 || !/^\d+$/.test(tail[0]!) || !/^\d+$/.test(tail[1]!)) return undefined;
+  const cursor = Number(tail[0]), receivedAt = Number(tail[1]);
+  if (!Number.isSafeInteger(cursor) || cursor < 1 || !Number.isSafeInteger(receivedAt)) return undefined;
+  return { id, cursor, receivedAt };
+}
 function handoff(seatId: string, kind: SeatHandoff['work']['kind'], ref: string, identity: string, now: string, claim?: CoordinationView): SeatHandoff {
   return { schema: 'phantom-bot-handoff.v1', handoffId: createHash('sha256').update(JSON.stringify([seatId, kind, ref, identity])).digest('hex'), seatId,
     work: { kind, ref }, done: 'unknown', left: 'unknown', branch: claim?.branch ?? null, pr: claim?.key.startsWith('pr:') ? claim.key.slice(3) : null, createdAt: now };
@@ -545,6 +570,25 @@ export async function applySeatHandoff(id: string, o: SeatOptions = {}) {
       } else if (held) {
         const claim = row.work.claims.find(c => c.key === record.work.ref)!;
         if (claim.origin === 'queue') throw new Error('Bus claim release refused.');
+        // An origin 'message' claim is dual-written to the bus work-claims
+        // journal: releasing only the coordination row would leave the
+        // journal lease live — the message stays claimed and the claim-drift
+        // read reports it forever. The journal's owner-authorized release
+        // settles both stores under its writer lock first; the by-source
+        // release below then answers 'lost' for the already-dropped partner
+        // or finishes a claim that never journaled. Journal-side refusals
+        // (unavailable, contended, a disagreeing live partner) fail the
+        // apply honestly so a retry resumes the release.
+        if (claim.origin === 'message') {
+          const target = busWorkClaimTarget(claim);
+          if (target !== undefined) {
+            const journal = releaseBusWorkClaimForOwner({ ...target, owner: claim.owner,
+              root: fleet(o), now: (o.now ?? Date.now)() });
+            if (!['released', 'lost', 'expired', 'completed'].includes(journal.status)) {
+              throw new Error('Bus claim release refused.');
+            }
+          }
+        }
         const result = releaseCoordinationBySource({ root: fleet(o), origin: claim.origin, sourceId: claim.sourceId,
           owner: claim.owner, leaseUntil: claim.leaseUntil, now: (o.now ?? Date.now)() });
         if (!['released', 'lost', 'stale', 'expired'].includes(result.status)) throw new Error('Bus claim release refused.');

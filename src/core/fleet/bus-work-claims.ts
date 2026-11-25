@@ -186,3 +186,71 @@ export function mutateBusWorkClaim(request: BusClaimRequest): BusClaimResult {
     } finally { releaseLocalStoreLock(lock.lock); }
   } catch (error) { return { status: error instanceof BusInboxChurnError ? 'retryable' : 'unavailable' }; }
 }
+
+/**
+ * Owner-authorized release of one journaled claim — the administrative settle
+ * a seat handoff needs when the claim's owner is draining. mutateBusWorkClaim's
+ * release demands the fencing token only the holder kept; a handoff knows the
+ * owner label and the lease coordinates the coordination row's sourceId
+ * `<id>:<cursor>:<receivedAt>` carries, so this variant authorizes on the
+ * stored row's owner under the same writer lock and runs the same
+ * coordination settle + journal splice + dead-row sweep, keeping the two
+ * stores in agreement the way a bare releaseCoordinationBySource cannot —
+ * that path drops only the coordination row and leaves this journal lease
+ * live, which blocks re-acquire and reports claim drift forever. The token
+ * never leaves the module.
+ *
+ * The input names the exact receipt coordinates, never "whatever row is
+ * live": a re-delivered message's newer claim is untouched. 'released'
+ * settled the journal row and its coordination partner — a missing or dead
+ * partner is spliced anyway because that orphan is exactly the drift this
+ * release clears. 'lost' means no journal row for that owner at those
+ * coordinates; 'expired' the lease lapsed; 'completed' was already settled.
+ * 'mismatched-token' means a live coordination row under the same queue key
+ * belongs to a different lease — genuine disagreement, refused rather than
+ * spliced over. 'invalid', 'unavailable', 'retryable' and 'full' are honest
+ * failures the caller must not treat as settled.
+ */
+export function releaseBusWorkClaimForOwner(input: {
+  id: string; cursor: number; receivedAt: number; owner: string; root?: string; now?: number;
+}): BusClaimResult {
+  if (!label(input.id) || !label(input.owner) || !integer(input.cursor) || input.cursor < 1 ||
+    !integer(input.receivedAt) ||
+    (input.root !== undefined && (typeof input.root !== 'string' || !isAbsolute(input.root) || input.root.includes('\0')))) {
+    return { status: 'invalid' };
+  }
+  const now = input.now ?? Date.now();
+  if (!integer(now)) return { status: 'invalid' };
+  try {
+    const root = input.root ?? join(ashlrHome(), 'fleet');
+    const directory = join(root, 'bus-work-claims'), file = join(directory, 'claims.json');
+    privatePath(root, 'directory', root);
+    try { mkdirSync(directory, { mode: 0o700 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    privatePath(directory, 'directory', root);
+    const lock = acquireLocalStoreLockWithOutcome(join(directory, 'writer.lock'), 0, { anchorPath: root, exactPrivateStorage: true });
+    if (lock.state !== 'acquired') return { status: lock.state === 'contended' ? 'retryable' : 'unavailable' };
+    try {
+      const rows = load(file, root);
+      const row = rows.find(r => r.id === input.id && r.cursor === input.cursor &&
+        r.receivedAt === input.receivedAt && r.owner === input.owner);
+      if (!row) return { status: 'lost' };
+      if (row.completedAt !== null) return { status: 'completed' };
+      if (row.leaseUntil <= now) return { status: 'expired' };
+      const gate = settleCoordination({ root, key: `queue:${input.id}`, token: row.token, outcome: 'released', now });
+      if (gate.status !== 'released' && gate.status !== 'lost' && gate.status !== 'expired') {
+        return { status: gate.status === 'mismatched-token' ? gate.status : 'unavailable' };
+      }
+      rows.splice(rows.indexOf(row), 1);
+      const retained = rows.filter(r => now < r.receivedAt || now - r.receivedAt < r.ttl);
+      const json = JSON.stringify(retained);
+      if (retained.length > CLAIM_MAX_ROWS || Buffer.byteLength(json) > CLAIM_MAX_BYTES) return { status: 'full' };
+      const pending = join(directory, '.pending');
+      // With the writer lock held, a leftover stage belongs to a vanished writer.
+      // Canonical state was validated above; an incomplete stage is never promoted.
+      try { privatePath(pending, 'file', root); unlinkSync(pending); }
+      catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      writePrivateFileAtomically(pending, file, json, { anchorPath: root, label: 'Bus claims' });
+      return { status: 'released' };
+    } finally { releaseLocalStoreLock(lock.lock); }
+  } catch (error) { return { status: error instanceof BusInboxChurnError ? 'retryable' : 'unavailable' }; }
+}
