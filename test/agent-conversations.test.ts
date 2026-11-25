@@ -324,6 +324,33 @@ describe('conversations from messages', () => {
     expect(filterConversations(list, { agent: 'agt_lead', with: 'claude' }, same).map(c => c.id)).toEqual(['a']);
   });
 
+  it('to keeps threads a member message was addressed to, through the caller predicate', () => {
+    const list = buildConversations([
+      say('a', 'claude', 'leader', 0, { kind: 'ask' }),
+      say('b', 'leader', 'claude', 1, { kind: 'reply', replyTo: 'a' }),
+      say('c', 'grok', 'zai', 2, { kind: 'status' }),
+      say('d', 'peer-a', 'peer-b', 3, { kind: 'status' }),
+      say('e', 'peer-b', 'group:eng:general', 4, { kind: 'status' }),
+    ], NOW);
+    // 'a'+'b' are one thread (b replies to a); 'c', 'd', 'e' stand alone.
+    const addressed = (wanted: string) => (value: string) => value === wanted;
+    // 'to' decides on each member's to label — thread 'a' carries mail to
+    // 'leader' (a) and 'claude' (b), so both addressed reads keep it while
+    // 'zai', 'peer-b' and the room address each keep only their own thread.
+    expect(filterConversations(list, { to: 'leader' }, undefined, undefined, undefined, addressed('leader')).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { to: 'claude' }, undefined, undefined, undefined, addressed('claude')).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { to: 'zai' }, undefined, undefined, undefined, addressed('zai')).map(c => c.id)).toEqual(['c']);
+    expect(filterConversations(list, { to: 'group:eng:general' }, undefined, undefined, undefined, addressed('group:eng:general')).map(c => c.id)).toEqual(['e']);
+    // An unresolvable ref keeps exact-label matching — 'missing' names no to.
+    expect(filterConversations(list, { to: 'missing' }, undefined, undefined, undefined, addressed('missing'))).toEqual([]);
+    // `to` set with no resolved predicate matches nothing, never widened.
+    expect(filterConversations(list, { to: 'leader' })).toEqual([]);
+    // It composes with the other filters like every flag here.
+    expect(filterConversations(list, { to: 'leader', from: 'claude' }, undefined, undefined, undefined, addressed('leader')).map(c => c.id)).toEqual(['a']);
+    expect(filterConversations(list, { to: 'leader', from: 'grok' }, undefined, undefined, undefined, addressed('leader'))).toEqual([]);
+    expect(filterConversations(list, { to: 'leader', kind: 'reply' }, undefined, undefined, undefined, addressed('leader')).map(c => c.id)).toEqual(['a']);
+  });
+
   it('an identity resolver matches every label of one agent, an unresolvable side stays strict', () => {
     const list = buildConversations([say('a', 'one', 'two', 0, { kind: 'ask' }), say('b', 'three', 'four', 1, { kind: 'status' })], NOW);
     const same = (label: string) => ['one', 'two', 'query-label'].includes(label) ? 'agt_same' : undefined;
@@ -727,6 +754,53 @@ describe('phm agents conversations --json', () => {
     expect(readAgentConversations({ agent: 'DEVIN-CLOUD' }, { root, now: () => NOW }).conversations!.map(c => c.id)).toEqual(['m3']);
   });
 
+  it('matches --to through the identity registry and stays strict without one', () => {
+    const rows: [number, string, string, string, Record<string, unknown>][] = [
+      [T0, 'm1', 'leader', 'agent:atlas', { text: 'can you look?' }],
+      [T0 + MIN, 'm2', 'agent:atlas', 'leader', { text: 'yes', replyTo: 'm1' }],
+      [T0 + 2 * MIN, 'm3', 'devin-cloud', 'grok', { text: 'alias lane note' }],
+      [T0 + 3 * MIN, 'm4', 'zai', 'claude', { text: 'unrelated' }],
+    ];
+    const ids = (root: string, to: string) =>
+      readAgentConversations({ to }, { root, now: () => NOW }).conversations!.map(c => c.id);
+    const bare = bus(rows);
+    // No registry: member `to` is the normalized name — 'atlas' finds the
+    // thread mail addressed to agent:atlas sits in, 'agent:atlas' names no
+    // normalized to and stays an honest empty, the same exact-label
+    // degradation every member-level filter applies without a registry.
+    expect(ids(bare, 'atlas')).toEqual(['m1']);
+    expect(ids(bare, 'agent:atlas')).toEqual([]);
+    const root = bus(rows);
+    expect(registerAgentIdentity({ handle: 'atlas', aliases: ['devin-cloud'] }, { root }).status).toBe('created');
+    // Every label of the atlas identity — handle, agent: address and alias —
+    // keeps the thread carrying mail addressed to any of them; 'grok' and
+    // 'claude' keep only their own threads, 'missing' is an honest empty.
+    for (const to of ['atlas', 'agent:atlas', 'devin-cloud']) expect(ids(root, to)).toEqual(['m1']);
+    expect(ids(root, 'grok')).toEqual(['m3']);
+    expect(ids(root, 'leader')).toEqual(['m1']);
+    expect(ids(root, 'missing')).toEqual([]);
+    // `to` is the addressed-to read, not the participant read: 'devin-cloud'
+    // is atlas's alias, so --to finds only the thread mail was addressed to
+    // atlas in (m1) while --agent also keeps m3, which atlas only sent from.
+    expect(readAgentConversations({ agent: 'devin-cloud' }, { root, now: () => NOW }).conversations!.map(c => c.id).sort())
+      .toEqual(['m1', 'm3']);
+  });
+
+  it('the CLI --to prints that JSON and refuses a missing value', async () => {
+    const root = bus(CHAT), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    // CHAT: m1 leader->claude and m2 claude->leader share thread m1; m3 grok->zai stands alone.
+    expect(await run(['--to', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect(await run(['--to', 'zai', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    expect(await run(['--to', 'nobody', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    expect(await run(['--to'])).toBe(2);
+    expect(await run(['--to', '--json'])).toBe(2);
+    expect(errors.pop()).toContain('Usage: phm agents conversations');
+  });
+
   it('a slack-coordination request waits for a reply; declared types set the state', () => {
     const root = bus([
       [T0, 's1', 'agent:peer-a', 'agent:peer-b', { kind: 'slack-coordination', trust: 'untrusted', messageType: 'request',
@@ -1120,6 +1194,19 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=a&with=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?agent=leader&with=has%20space`)).status).toBe(400);
+    // to keeps the threads a member message was addressed to; bad values are refused.
+    const addressed = await call(`${AGENT_CONVERSATIONS_PATH}?to=claude`);
+    expect(addressed.status).toBe(200);
+    expect(addressed.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    const zai = await call(`${AGENT_CONVERSATIONS_PATH}?to=zai`);
+    expect(zai.status).toBe(200);
+    expect(zai.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m3']);
+    const nowhere = await call(`${AGENT_CONVERSATIONS_PATH}?to=nobody`);
+    expect(nowhere.status).toBe(200);
+    expect(nowhere.body.conversations).toEqual([]);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?to=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?to=a&to=b`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?to=has%20space`)).status).toBe(400);
     // id keeps the thread the named envelope belongs to; bad values are refused.
     const member = await call(`${AGENT_CONVERSATIONS_PATH}?id=m2`);
     expect(member.status).toBe(200);
