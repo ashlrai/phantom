@@ -137,29 +137,39 @@ describe('cmdOrg', () => {
     const joined = readJoins();
     expect(joined).toHaveLength(1);
     expect(JSON.parse(logs.pop()!).recordFile).toBe(join(home, 'org', 'joins', 'evan-deloria.evan-mac.json'));
-    const malformed = [
-      [...base, 'claude', '--json'],                  // stray positional reads as "no lanes" otherwise
-      [...base, '--bogus', '--json'],                 // unknown flag
-      [...base, '--member', 'mason-wyatt', '--json'], // repeated single-value flag
-      [...base, '--lane', '--json'],                  // --lane with no value
-      [...base, '--lane', 'claude=20=30', '--json'],  // second '='
-      [...base, '--lane', 'claude=', '--json'],       // empty share is not share 0
-      [...base, '--lane', '=20', '--json'],           // empty lane name
-      [...base, '--lane', 'claude=abc', '--json'],    // non-numeric share
-      [...base, '--lane', 'claude=10', '--lane', 'claude=20', '--json'], // same lane twice
-      ['join', '--file', file, '--member', '--machine', 'evan-mac', '--json'], // flag as value
-      ['show', '--file', file, '--file', file, '--json'],
-      ['show', '--file', file, 'stray', '--json'],
-      ['plan', '--file', file, 'stray', '--json'],
-      ['plan', '--file', file, '--queue', 'a', '--queue', 'b', '--json'],
+    const malformed: [string[], string][] = [
+      [[...base, 'claude', '--json'], 'Unexpected argument'],                  // stray positional reads as "no lanes" otherwise
+      [[...base, '--bogus', '--json'], 'Unexpected argument'],                 // unknown flag
+      [[...base, '--member', 'mason-wyatt', '--json'], 'more than once'],      // repeated single-value flag
+      [[...base, '--lane', '--json'], '--lane needs a value'],                 // --lane with no value
+      [[...base, '--lane', 'claude=20=30', '--json'], '--lane takes <lane> or <lane>=<share>'], // second '='
+      [[...base, '--lane', 'claude=', '--json'], '--lane share must be a number'], // empty share is not share 0
+      [[...base, '--lane', '=20', '--json'], '--lane needs a lane name'],      // empty lane name
+      [[...base, '--lane', 'claude=abc', '--json'], '--lane share must be a number'], // non-numeric share
+      [[...base, '--lane', 'claude=10', '--lane', 'claude=20', '--json'], 'more than once'], // same lane twice
+      [['join', '--file', file, '--member', '--machine', 'evan-mac', '--json'], '--member needs a value'], // flag as value
+      [['show', '--file', file, '--file', file, '--json'], '--file was given more than once'],
+      [['show', '--file', file, 'stray', '--json'], 'Unexpected argument'],
+      [['plan', '--file', file, 'stray', '--json'], 'Unexpected argument'],
+      [['plan', '--file', file, '--queue', 'a', '--queue', 'b', '--json'], '--queue was given more than once'],
     ];
-    for (const args of malformed) expect(await cmdOrg(args), args.join(' ')).toBe(1);
+    for (const [args, said] of malformed) {
+      expect(await cmdOrg(args), args.join(' ')).toBe(1);
+      // --json callers get the org.error.v1 envelope on stdout, never stderr text.
+      const failure = JSON.parse(logs.pop()!);
+      expect(failure.schema).toBe('org.error.v1');
+      // Failures before the verb is known report command "org"; later ones name it.
+      expect(['org', 'show', 'join', 'plan']).toContain(failure.command);
+      expect(failure.error.code).toBe('rejected');
+      expect(failure.error.message).toContain(said);
+    }
     expect(readJoins()).toEqual(joined);
+    expect(errs).toEqual([]);
+    // The same refusal without --json stays human text on stderr.
+    expect(await cmdOrg([...base, 'claude'])).toBe(1);
     const said = errs.join('\n');
     expect(said).toContain('Unexpected argument');
-    expect(said).toContain('more than once');
-    expect(said).toContain('--lane share must be a number');
-    expect(said).toContain('--lane needs a value');
+    expect(said).toContain('Run: phm org --help');
     // Distinct lanes in one join still work; --lane without '=' keeps the declared share.
     expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac',
       '--lane', 'claude', '--lane', 'codex-personal=50', '--json'])).toBe(0);
@@ -168,6 +178,32 @@ describe('cmdOrg', () => {
     expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac', '--lane', 'claude=10'])).toBe(0);
     const text = logs.pop()!;
     expect(text).toContain(`Record: ${join(home, 'org', 'joins', 'mason-wyatt.mason-mac.json')}`);
+    vi.unstubAllEnvs();
+  });
+
+  it('emits org.error.v1 under --json: usage exits 2, refusals and operational failures exit 1', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [], errs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    vi.spyOn(console, 'error').mockImplementation((s) => { errs.push(String(s)); });
+    const popped = () => JSON.parse(logs.pop()!);
+    // Unknown verb and malformed bare-org arguments are usage errors (exit 2).
+    expect(await cmdOrg(['bogus', '--json'])).toBe(2);
+    expect(popped()).toMatchObject({ schema: 'org.error.v1', command: 'org', error: { code: 'usage' } });
+    expect(await cmdOrg(['--bogus', '--json'])).toBe(2);
+    expect(popped()).toMatchObject({ schema: 'org.error.v1', command: 'org', error: { code: 'usage' } });
+    // A missing org file is the org model refusing the request (exit 1, rejected).
+    const missing = join(home, 'missing.toml');
+    expect(await cmdOrg(['show', '--file', missing, '--json'])).toBe(1);
+    expect(popped()).toMatchObject({ schema: 'org.error.v1', command: 'show',
+      error: { code: 'rejected', message: expect.stringContaining('No org file') } });
+    // An unreadable queue file is operational, not a refusal (exit 1, error).
+    expect(await cmdOrg(['plan', '--file', 'docs/examples/org.toml', '--queue', join(home, 'nope.json'), '--json'])).toBe(1);
+    expect(popped()).toMatchObject({ schema: 'org.error.v1', command: 'plan', error: { code: 'error' } });
+    // Text mode is unchanged: the same failure is stderr text, stdout stays clean.
+    expect(await cmdOrg(['show', '--file', missing])).toBe(1);
+    expect(errs.join('\n')).toContain(`phm org: No org file at ${missing}`);
+    expect(logs).toEqual([]);
     vi.unstubAllEnvs();
   });
 });
