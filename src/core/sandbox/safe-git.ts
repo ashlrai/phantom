@@ -41,6 +41,7 @@ import { constants as fsConstants, accessSync, lstatSync, readFileSync, realpath
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { STANDING_GRANT_PATTERNS } from '../authority/types.js';
+import { observeGit } from '../fleet/git-observations.js';
 import { isGitHubInstallationToken } from '../util/github-installation-token.js';
 
 export interface SafeGitTarget {
@@ -362,6 +363,7 @@ function collect(max: number): { push(chunk: Buffer): boolean; text(): string } 
 /** Run one hardened git call (async). Throws SafeGitError only for refusals before spawning. */
 export function runSafeGit(opts: SafeGitOptions): Promise<SafeGitResult> {
   const { file, args, env } = safeGitCommand(opts);
+  const observe = observeGit('safe-git', opts.args);
   const max = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   return new Promise((resolvePromise) => {
     // Own process group on POSIX, so a kill reaches git's remote helpers and
@@ -404,12 +406,14 @@ export function runSafeGit(opts: SafeGitOptions): Promise<SafeGitResult> {
       clearTimeout(timer);
       if (grace) clearTimeout(grace);
       opts.signal?.removeEventListener('abort', onAbort);
+      const stderr = err.text();
+      observe(code === 0 ? undefined : stderr);
       resolvePromise({
         ok: code === 0 && !timedOut && !overflow,
         code,
         signal,
         stdout: out.text(),
-        stderr: overflow ? `${err.text()}\n[safe-git: output limit exceeded]` : err.text(),
+        stderr: overflow ? `${stderr}\n[safe-git: output limit exceeded]` : stderr,
         timedOut,
       });
     };
@@ -423,6 +427,7 @@ export function runSafeGit(opts: SafeGitOptions): Promise<SafeGitResult> {
 /** Run one hardened git call synchronously (for callers already on a sync path). */
 export function runSafeGitSync(opts: SafeGitOptions): SafeGitResult {
   const { file, args, env } = safeGitCommand(opts);
+  const observe = observeGit('safe-git', opts.args);
   const max = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   const result = spawnSync(file, args, {
     cwd: opts.workTree,
@@ -433,6 +438,7 @@ export function runSafeGitSync(opts: SafeGitOptions): SafeGitResult {
     windowsHide: true,
   });
   const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+  observe(result.status === 0 ? undefined : result.stderr);
   return {
     ok: result.status === 0 && !result.error,
     code: result.status,

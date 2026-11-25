@@ -24,6 +24,7 @@ import { appendFile, lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { observeGitAsync } from './git-observations.js';
 import { measureWorktreeBytes, type WorktreeMeasurement } from '../worktree-retention.js';
 import { readWtAudit, type WtAuditDeps, type WtAuditReport, type WtAuditEntry, type WtAuditState } from './wt-audit.js';
 
@@ -222,7 +223,8 @@ async function defaultRemove(path: string, wtRoot: string): Promise<void> {
   if (!info.isDirectory() || info.isSymbolicLink() || dirname(await realpath(path)) !== await realpath(wtRoot)) {
     throw Object.assign(new Error('unsafe path'), { unsafePath: true });
   }
-  await run('git', ['-C', path, 'worktree', 'remove', '--', path], { timeout: 60_000, maxBuffer: 64 * 1024 });
+  const args = ['-C', path, 'worktree', 'remove', '--', path];
+  await observeGitAsync('worktree-reaper', args, () => run('git', args, { timeout: 60_000, maxBuffer: 64 * 1024 }));
 }
 
 async function defaultReadReapLog(runsRoot: string): ReturnType<NonNullable<WorktreesDeps['readReapLog']>> {
