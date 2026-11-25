@@ -26,7 +26,15 @@ type Unknown = typeof UNKNOWN;
 /** `local`/`pool-witness` are the authority on this disk; `pool-mirror` is the primary's evidence copy;
  * `none` means no pool exists here; `elsewhere` means the list lives on another computer. */
 export type NodesRegistrySource = 'local' | 'pool-witness' | 'pool-mirror' | 'none' | 'elsewhere';
-export interface NodesRegistry { source: NodesRegistrySource; state: NodesState | null; selfNode: string | null }
+/** This computer's node-pool enrollment details: the owner scope and SSH aliases a new computer joins through. */
+export interface NodesPoolJoin { owner: string; primary: string; backup: string }
+export interface NodesRegistry {
+  source: NodesRegistrySource;
+  state: NodesState | null;
+  selfNode: string | null;
+  /** Pool enrollment details when this computer belongs to a node pool; null for the standalone registry. */
+  pool: NodesPoolJoin | null;
+}
 export type NodeStateCode = 'ready' | 'busy' | 'held' | 'offline' | 'not-running' | 'unknown';
 
 export interface NodeRow {
@@ -53,10 +61,14 @@ export interface NodeRow {
   state: string;
   /** True for this computer and any computer registered in the node list. False: seen on Tailscale only ("not joined"). */
   joined: boolean;
-  /** The one command that joins this computer; run it on that computer. Null once joined. */
+  /** The command that joins this computer to this computer's node pool; run it on that computer.
+   * Null once joined, and when this computer has no node pool for it to join. */
   joinCommand: string | null;
 }
-export const JOIN_COMMAND = 'phm node join';
+/** The enrollment command a new computer runs to join this pool; null when no pool is configured here. */
+export function poolJoinCommand(pool: NodesPoolJoin | null): string | null {
+  return pool === null ? null : `phm node join --owner ${pool.owner} --primary ${pool.primary} --backup ${pool.backup}`;
+}
 export const NODES_SCHEMA = 'phantom.nodes-view.v1';
 /** A Phantom heartbeat older than this means the computer is offline. */
 export const HEARTBEAT_OFFLINE_MS = 5 * 60_000;
@@ -115,6 +127,12 @@ function headroom(stats: HostStats | undefined): Pick<NodeRow, 'freeMemoryBytes'
 
 interface Machine { name: string; isSelf: boolean; reachable: boolean | Unknown; lastSeen: string | Unknown; records: NodeRecord[] }
 
+/** The standalone rejoin for this computer's own expired session, from its newest record. */
+function standaloneRejoin(records: NodeRecord[]): string {
+  const rec = [...records].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
+  return rec ? `phm node join --node ${rec.nodeId} --owner ${rec.owners?.length ? rec.owners.join(',') : '<scope>'}` : 'phm node join --node <id> --owner <scope>';
+}
+
 /** Pure join of the tailnet read, the registry snapshot and this computer's sample. */
 export function buildNodesView(
   peers: TailnetPeers, registry: NodesRegistry | null, local: { name: string; stats: HostStats | null },
@@ -124,8 +142,9 @@ export function buildNodesView(
   const safe = (text: string) => sanitizeIdentityText(text, options.home ?? '').slice(0, 120);
   const reasons = [...peers.reasons];
   const state = registry?.state ?? null;
+  const enroll = poolJoinCommand(registry?.pool ?? null);
   if (!registry) reasons.push('node list unreadable; Phantom status unknown');
-  else if (registry.source === 'none') reasons.push('no node pool on this computer: run `phm node join` on each computer to pool them');
+  else if (registry.pool === null) reasons.push('no node pool on this computer: other computers cannot join its list (docs/NODES.md)');
   else if (registry.source === 'elsewhere') reasons.push('the node list lives on the pool primary: run `phm nodes` there');
   const mirrorStale = registry?.source === 'pool-mirror' && state !== null && nowMs - state.observedAt > MIRROR_FRESH_MS;
   if (mirrorStale) reasons.push(`pool mirror last updated ${clock(iso(state.observedAt), now, options.timeZone) ?? UNKNOWN}; newer node state unknown`);
@@ -154,6 +173,18 @@ export function buildNodesView(
     machine.records.push(record);
   }
 
+  /** The command that brings this computer's Phantom back, or nothing when none exists here.
+   * A pool member re-enrolls with bare `phm node join`; a computer new to the pool needs the
+   * full enrollment command. The standalone registry is single-host, so only this computer
+   * can rejoin it — and only with the node id and owner its expired session recorded. */
+  const rejoinWords = (machine: Machine): string => {
+    if (!registry) return '';
+    const cmd = registry.pool !== null
+      ? (machine.records.length ? 'phm node join' : enroll)
+      : machine.isSelf ? standaloneRejoin(machine.records) : null;
+    return cmd ? `: run \`${cmd}\` ${machine.isSelf ? 'here' : 'there'}` : '';
+  };
+
   const nodes = machines.map((machine): NodeRow => {
     const live = machine.records.filter(record => !mirrorStale && record.expiresAt > nowMs);
     // Absence proves "not running" only where the list is authoritative and current.
@@ -171,7 +202,6 @@ export function buildNodesView(
     const held = live.map(record => record.capacity?.held).find(Boolean);
     const newest = [...live].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const joined = machine.isSelf || machine.records.length > 0;
-    const where = machine.isSelf ? 'here' : 'there';
     const newestBeat = machine.records.reduce((max, record) => Math.max(max, record.heartbeatAt), Number.NEGATIVE_INFINITY);
     const heartbeatAgeSeconds = Number.isFinite(newestBeat) && Number.isFinite(nowMs) ? Math.max(0, Math.round((nowMs - newestBeat) / 1000)) : UNKNOWN;
     // A remote computer seen only through the registry, whose last heartbeat is over 5 minutes old, is offline.
@@ -189,7 +219,7 @@ export function buildNodesView(
       } else { stateCode = 'ready'; words = 'ready for work'; }
     } else if (phantom === 'not-running') {
       stateCode = machine.reachable === true ? 'not-running' : UNKNOWN;
-      words = machine.reachable === true ? `reachable but Phantom not running: run \`phm node join\` ${where}` : 'not seen on the network; Phantom not running';
+      words = machine.reachable === true ? `reachable but Phantom not running${rejoinWords(machine)}` : 'not seen on the network; Phantom not running';
     } else {
       stateCode = UNKNOWN;
       words = machine.reachable === true ? 'reachable; Phantom status unknown' : 'unknown';
@@ -199,7 +229,7 @@ export function buildNodesView(
       ...headroom(machine.isSelf ? local.stats ?? undefined : newest?.hostStats),
       lanes: machine.records.length ? [...new Set((live.length ? live : machine.records).flatMap(record => record.caps ?? []))].sort() : UNKNOWN,
       jobsRunning: jobs, freeSlots: slots, stateCode, state: words,
-      joined, joinCommand: joined ? null : JOIN_COMMAND,
+      joined, joinCommand: joined ? null : enroll,
     };
   });
   nodes.sort((a, b) => Number(b.isSelf) - Number(a.isSelf) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -249,16 +279,17 @@ export function readNodesView(deps: NodesViewDeps): NodesView {
 export function readNodesRegistry(): NodesRegistry {
   const config = readPoolConfig();
   const selfNode = config?.node ?? null;
-  if (config?.role === 'worker') return { source: 'elsewhere', state: null, selfNode };
+  const pool = config === null ? null : { owner: config.owner, primary: config.primary, backup: config.backup };
+  if (config?.role === 'worker') return { source: 'elsewhere', state: null, selfNode, pool };
   const [directory, file, source] = !config ? ['nodes', 'nodes.json', 'local'] as const
     : config.role === 'backup' ? ['node-pool', 'nodes.json', 'pool-witness'] as const
       : ['node-pool', 'primary-mirror.json', 'pool-mirror'] as const;
   const root = join(ashlrHome(), directory), path = join(root, file);
-  if (!existsSync(path)) return { source: config ? 'elsewhere' : 'none', state: null, selfNode };
+  if (!existsSync(path)) return { source: config ? 'elsewhere' : 'none', state: null, selfNode, pool };
   const limit = 16 * 1024 * 1024;
   const read = readStableRegularFile(path, { anchorPath: root, maxFileBytes: limit, remainingBytes: limit });
   if (!read.ok) throw new Error('Node list unreadable');
-  return { source, state: parseState(JSON.parse(read.text)), selfNode };
+  return { source, state: parseState(JSON.parse(read.text)), selfNode, pool };
 }
 
 export function defaultNodesViewDeps(): NodesViewDeps {

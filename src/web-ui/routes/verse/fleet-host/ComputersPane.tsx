@@ -15,7 +15,9 @@ function Computer({ computer }: { computer: ComputerCard }) {
     </p>
     {computer.joined
       ? <p className={styles.line}>{computer.state}</p>
-      : <p className={styles.line}>Not joined. On {computer.name}, run <code>{computer.joinCommand ?? 'phm node join'}</code></p>}
+      : <p className={styles.line}>Not joined. {computer.joinCommand
+        ? <>On {computer.name}, run <code>{computer.joinCommand}</code></>
+        : 'This computer has no node pool, so it cannot join this list.'}</p>}
     {computer.joined ? <dl className={styles.identity}>
       <dt>Memory free</dt><dd>{show(computer.freeMemoryBytes, (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`)}</dd>
       <dt>CPU free</dt><dd>{show(computer.cpuHeadroomPercent, (percent) => `${percent}%`)}</dd>
@@ -34,7 +36,7 @@ export function ComputersBody({ view }: { view: ComputersView | null | undefined
     <p className={styles.headline}>{ready} of {view.computers.length} ready for work</p>
     <ul className={styles.computers}>{view.computers.map((c, i) => <Computer computer={c} key={`${i}:${c.name}`} />)}</ul>
     {view.computers.length === 1
-      ? <p className={styles.line}>This is your only computer so far. To add another, connect it to your Tailscale network and run <code>phm node join</code> on it.</p>
+      ? <p className={styles.line}>This is your only computer so far. To add another, connect it to your Tailscale network, then run <code>phm nodes --discover</code> to see the command that joins it.</p>
       : null}
     {view.reasons.map((reason, i) => <p className={styles.muted} key={`${i}:${reason}`}>{reason}</p>)}
   </>;

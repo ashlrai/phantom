@@ -21,8 +21,10 @@ const stats = (usedGib: number, load: number): HostStats => ({
 const node = (nodeId: string, extra: Partial<NodeRecord> = {}): NodeRecord => ({
   nodeId, session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000, caps: ['claude', 'codex'], slots: 2, ...extra,
 });
+const POOL = { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' };
+const JOIN = 'phm node join --owner acme --primary primary-mac --backup backup-mac';
 const registry = (nodes: NodeRecord[], jobs: NodesState['jobs'] = [], extra: Partial<NodesRegistry> = {}): NodesRegistry => ({
-  source: 'pool-witness', selfNode: 'node-a', state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs }, ...extra,
+  source: 'pool-witness', selfNode: 'node-a', pool: POOL, state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs }, ...extra,
 });
 const tailnet = (peers: Record<string, unknown>[], backend = 'Running') => JSON.stringify({
   BackendState: backend, Self: { HostName: 'node-a' }, Peer: Object.fromEntries(peers.map((peer, i) => [`key-${i}`, peer])),
@@ -35,7 +37,7 @@ function deps(status: string | null, read: NodesRegistry | Error): NodesViewDeps
     localStats: () => stats(20, 2), hostName: () => 'node-a.fake.example', timeZone: 'UTC',
   };
 }
-const NO_POOL: NodesRegistry = { source: 'none', state: null, selfNode: null };
+const NO_POOL: NodesRegistry = { source: 'none', state: null, selfNode: null, pool: null };
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -47,10 +49,10 @@ describe('readNodesView', () => {
       nodes: [{
         name: 'node-a', isSelf: true, reachable: true, lastSeen: '2026-11-17T12:00:00.000Z', phantom: 'not-running',
         heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 12 * GIB, freeMemoryPercent: 38, load: 2, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
-        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join` here',
+        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join --node <id> --owner <scope>` here',
         joined: true, joinCommand: null,
       }],
-      reasons: ['no node pool on this computer: run `phm node join` on each computer to pool them'],
+      reasons: ['no node pool on this computer: other computers cannot join its list (docs/NODES.md)'],
     });
   });
 
@@ -102,38 +104,42 @@ describe('readNodesView', () => {
     expect(nodesThatCanTake(view, 'codex').map(row => row.name)).toEqual(['node-a']);
   });
 
-  it('Phantom not running: a reachable computer with no live heartbeat is told to join', () => {
+  it('Phantom not running: a reachable computer is told the command that actually joins it', () => {
     const view = readNodesView(deps(tailnet([peer('node-b', true), peer('node-c', true)]), registry([node('node-a'), node('node-c', { expiresAt: NOW - 1 })])));
-    for (const row of view.nodes.slice(1)) {
-      expect(row).toMatchObject({ reachable: true, phantom: 'not-running', stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join` there' });
-    }
+    // node-b was never enrolled: it needs the full pool command. node-c holds an
+    // expired session: a configured Mac re-enrolls with bare `phm node join`.
+    expect(view.nodes[1]).toMatchObject({ name: 'node-b', reachable: true, phantom: 'not-running', stateCode: 'not-running', joined: false,
+      state: `reachable but Phantom not running: run \`${JOIN}\` there`, joinCommand: JOIN });
+    expect(view.nodes[2]).toMatchObject({ name: 'node-c', reachable: true, phantom: 'not-running', stateCode: 'not-running', joined: true,
+      state: 'reachable but Phantom not running: run `phm node join` there', joinCommand: null });
     expect(nodesThatCanTake(view, 'claude').map(row => row.name)).toEqual(['node-a']);
   });
 
   it('standalone registry: records are this computer whatever id they joined under', () => {
-    const local = (nodes: NodeRecord[]): NodesRegistry => ({ source: 'local', selfNode: null, state: {
+    const local = (nodes: NodeRecord[]): NodesRegistry => ({ source: 'local', selfNode: null, pool: null, state: {
       version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } });
     // The documented join (`phm node join --node laptop --owner acme --caps
     // build,gh`) leaves a record whose id is not this computer's tailnet name.
     // The standalone store is single-host, so the record is this computer:
     // the self row reports Phantom running and the peer named laptop stays
-    // not joined instead of inheriting the local heartbeat.
+    // not joined instead of inheriting the local heartbeat. With no node pool
+    // the peer cannot join this computer's list at all, so no command is shown.
     const view = readNodesView(deps(tailnet([peer('laptop', true)]), local([node('laptop', { caps: ['build', 'gh'], slots: undefined })])));
     expect(view.nodes.map(row => [row.name, row.isSelf, row.phantom, row.state])).toEqual([
       ['node-a', true, 'running', 'Phantom running; free slots unknown'],
-      ['laptop', false, 'not-running', 'reachable but Phantom not running: run `phm node join` there'],
+      ['laptop', false, 'not-running', 'reachable but Phantom not running'],
     ]);
     expect(view.nodes[0]).toMatchObject({ joined: true, joinCommand: null, lanes: ['build', 'gh'], jobsRunning: [], freeSlots: 'unknown' });
-    expect(view.nodes[1]).toMatchObject({ joined: false, joinCommand: 'phm node join', reachable: true, lanes: 'unknown' });
+    expect(view.nodes[1]).toMatchObject({ joined: false, joinCommand: null, reachable: true, lanes: 'unknown' });
   });
 
-  it('standalone registry: an expired local session puts this computer back to not running', () => {
-    const view = readNodesView(deps(tailnet([]), { source: 'local', selfNode: null, state: {
+  it('standalone registry: an expired local session is told the rejoin its record proves', () => {
+    const view = readNodesView(deps(tailnet([]), { source: 'local', selfNode: null, pool: null, state: {
       version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000,
-      nodes: [node('laptop', { expiresAt: NOW - 1 })], leader: null, jobs: [] } }));
+      nodes: [node('laptop', { expiresAt: NOW - 1, owners: ['acme'] })], leader: null, jobs: [] } }));
     expect(view.nodes).toHaveLength(1);
     expect(view.nodes[0]).toMatchObject({ isSelf: true, phantom: 'not-running', stateCode: 'not-running',
-      state: 'reachable but Phantom not running: run `phm node join` here' });
+      state: 'reachable but Phantom not running: run `phm node join --node laptop --owner acme` here' });
   });
 
   it('missing tailscale: reachability is unknown with the reason, registry facts still shown', () => {
@@ -151,7 +157,7 @@ describe('readNodesView', () => {
     expect(stopped.nodes).toMatchObject([{ name: 'node-a', phantom: 'unknown', state: 'reachable; Phantom status unknown' }]);
     expect(JSON.stringify(stopped)).not.toContain('boom');
 
-    const worker = readNodesView(deps(tailnet([peer('node-b', true)]), { source: 'elsewhere', state: null, selfNode: 'node-a' }));
+    const worker = readNodesView(deps(tailnet([peer('node-b', true)]), { source: 'elsewhere', state: null, selfNode: 'node-a', pool: POOL }));
     expect(worker.nodes.map(row => row.phantom)).toEqual(['unknown', 'unknown']);
     expect(worker.reasons).toEqual(['the node list lives on the pool primary: run `phm nodes` there']);
 

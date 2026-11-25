@@ -10,7 +10,7 @@ const tailnet = (peers: Array<[string, boolean]>) => JSON.stringify({
   BackendState: 'Running', Self: { HostName: 'home-mac' },
   Peer: Object.fromEntries(peers.map(([name, online], i) => [`k${i}`, { HostName: name, OS: 'macOS', Online: online, LastSeen: '2026-11-17T10:00:00Z' }])),
 });
-const NO_POOL: NodesRegistry = { source: 'none', state: null, selfNode: null };
+const NO_POOL: NodesRegistry = { source: 'none', state: null, selfNode: null, pool: null };
 const deps = (peers: Array<[string, boolean]>): NodesViewDeps => ({
   peers: { now: () => new Date(NOW), homeDir: () => '/fake-home', exec: () => tailnet(peers) },
   readRegistry: () => NO_POOL, hostName: () => 'home-mac', timeZone: 'UTC',
@@ -84,7 +84,7 @@ describe('readNodesDoctor', () => {
     // The standalone store is single-host, so the laptop record is this
     // computer's session; the tailnet peer named laptop is not probed and
     // must report unknown disk, not this machine's 5 GB host stat.
-    const local: NodesRegistry = { source: 'local', selfNode: null, state: {
+    const local: NodesRegistry = { source: 'local', selfNode: null, pool: null, state: {
       version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
       nodes: [{ nodeId: 'laptop', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000,
         hostStats: { sampledAtMs: NOW, uptimeSeconds: 1, load: [1, 1, 1], ramTotal: 8, ramUsed: 4, diskFree: 5 * GB, cores: [{ total: 1, idle: 1 }] } }],

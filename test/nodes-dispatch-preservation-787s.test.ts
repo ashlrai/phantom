@@ -10,7 +10,7 @@ import type { QueueOrderV1 } from '../src/core/queue/order-types.js';
 const now = Date.parse('2026-11-17T12:00:00Z');
 const view: NodesViewDeps = {
   peers: { now: () => new Date(now), homeDir: () => '/fake', exec: () => JSON.stringify({ BackendState: 'Running', Self: { HostName: 'local-fake' }, Peer: { x: { HostName: 'remote-fake', OS: 'macOS', Online: true } } }) },
-  readRegistry: () => ({ source: 'pool-witness', selfNode: 'local-fake', state: { version: 'drive.nodes.v1', sequence: 1, observedAt: now, leader: null, jobs: [], nodes: [{ nodeId: 'remote-fake', session: 1, heartbeatAt: now, expiresAt: now + 30000, caps: ['codex'], slots: 1 }] } }),
+  readRegistry: () => ({ source: 'pool-witness', selfNode: 'local-fake', pool: { owner: 'acme', primary: 'primary-mac', backup: 'backup-mac' }, state: { version: 'drive.nodes.v1', sequence: 1, observedAt: now, leader: null, jobs: [], nodes: [{ nodeId: 'remote-fake', session: 1, heartbeatAt: now, expiresAt: now + 30000, caps: ['codex'], slots: 1 }] } }),
   localStats: () => { throw new Error('no sample'); }, hostName: () => 'local-fake', timeZone: 'UTC',
 };
 const queue: QueueOrderV1 = { schema: 'queue.order.v1', version: 1, generatedAt: '', count: 1, parked: 0, lanes: ['codex'], jobs: [{ position: 1, id: 'job-one', repo: 'fake', lane: 'codex', tier: 'work', ageSeconds: 1, family: null, supersededBy: null }] };
