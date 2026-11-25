@@ -816,6 +816,28 @@
  *     is never surfaced, and items emit only for the fleet's own
  *     repository since the journal describes this install's usage
  *     subscriptions and carries no repo column;
+ *   - the harness lifecycle ledger's recurring adverse cells: the
+ *     authority ledger's harness:experiment terminal rows (failed,
+ *     cancelled, inconclusive and reject verdicts — the adopt verdict
+ *     and harness:adopted rows are the success path, and
+ *     harness:rejected is a strict subset of the reject verdicts) plus
+ *     harness:rolled-back transitions, keyed per hypothesis target
+ *     (prompt/effort/sampling/routing/skill, resolved through the
+ *     harness state file's experimentMeta and 'unknown' when the meta
+ *     is gone) — become backlog items too. Until now no reader folded
+ *     the harness kinds anywhere: the learning API reads only current
+ *     state, the authority index keeps only merge/revert/gate evidence
+ *     kinds, the autonomy ladder's decision view reads
+ *     grant/rollout/gate/pr/merge kinds and the nightly retro reads
+ *     only gate/pr/merge kinds, so the self-improvement loop's own
+ *     experiment verdicts, candidate rejections and canary rollbacks
+ *     were write-only audit evidence that never became work
+ *     (harnessBacklogItems below). Entries come from readLedger's
+ *     chain-verified read and a broken chain fails closed to nothing;
+ *     a cell emits only at three adverse rows across two distinct UTC
+ *     days inside the 7-day window, actor values are counted never
+ *     emitted, reason text is never folded, and items emit only for
+ *     the fleet's own repository since the rows carry no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -912,6 +934,7 @@ import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
 import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
+import { harnessBacklogItems } from './harness-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2051,6 +2074,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's usage subscriptions and carries
   // no repo column.
   items.push(...await usageLiveAlertsBacklogItems({ repo }));
+
+  // Harness lifecycle ledger: the authority ledger's harness:experiment
+  // terminal rows and harness:rolled-back transitions — the
+  // self-improvement loop's own experiment verdicts (failed, cancelled,
+  // inconclusive, reject) and the adopted versions its canary or a veto
+  // took back out of production — become backlog items too, keyed per
+  // hypothesis target. Until now no reader folded the harness kinds
+  // anywhere: the learning API reads only current state, the authority
+  // index keeps only merge/revert/gate evidence kinds and the nightly
+  // retro reads only gate/pr/merge kinds, so the loop's own
+  // self-modification verdicts were write-only audit evidence that
+  // never became work. Entries come from readLedger's chain-verified
+  // read with a broken chain failing closed; the hypothesis target
+  // resolves through the harness state file's experimentMeta and
+  // degrades to 'unknown' when the meta is gone; a cell emits only at
+  // the recurring bars of three adverse rows across two distinct UTC
+  // days inside the 7-day window, actor values are counted never
+  // emitted, reason text is never folded, and only the fleet's own
+  // repository inherits the items since the rows carry no repo column.
+  items.push(...await harnessBacklogItems({ repo }));
   return { items, errors };
 }
 
