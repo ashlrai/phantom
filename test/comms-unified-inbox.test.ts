@@ -2512,6 +2512,71 @@ describe('readUnifiedInbox view filters', () => {
   });
 });
 
+describe('readUnifiedInbox priority filter', () => {
+  // The needs-you urgency band is the computed heuristic output, not the
+  // stored severity: P0 work bands 'now' on severity=high, P1 'today' on
+  // severity=warn, P2 'this-week' on info, and a hard-limit needs-you line
+  // bands 'now' on blocking — 'whenever' is a valid band no item computes.
+  const seedBands = () => {
+    postWork('pri-now', { priority: 'P0' });
+    postWork('pri-today', { priority: 'P1' });
+    postWork('pri-week');                                   // P2 info
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');  // needs-you: warn, blocking -> now
+  };
+
+  it('keeps only items in the filtered urgency band while source reports stay unfiltered', async () => {
+    seedBands();
+    const all = await read();
+    expect(all.total).toBe(4);
+    expect(all.filter).toBeUndefined();
+
+    const now = await read({ filter: { priority: 'now' } });
+    expect(now.filter).toEqual({ priority: 'now' });
+    expect(now.total).toBe(2);
+    expect(now.items.find(i => i.source === 'bus')!.id).toBe('bus:pri-now');
+    expect(now.items.every(i => i.priority === 'now')).toBe(true);
+    expect(now.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+    // Per-source reports stay the unfiltered store truth.
+    expect(now.sources.bus.pending).toBe(3);
+    expect(now.sources['needs-you'].pending).toBe(1);
+
+    const today = await read({ filter: { priority: 'today' } });
+    expect(today.items.map(i => i.id)).toEqual(['bus:pri-today']);
+    expect(today.items.every(i => i.priority === 'today')).toBe(true);
+
+    const week = await read({ filter: { priority: 'this-week' } });
+    expect(week.items.map(i => i.id)).toEqual(['bus:pri-week']);
+    expect(week.items.every(i => i.priority === 'this-week')).toBe(true);
+
+    // 'whenever' is a real band the heuristic never emits — an honest empty
+    // view, never an error and never the unfiltered list.
+    const whenever = await read({ filter: { priority: 'whenever' } });
+    expect(whenever.total).toBe(0);
+    expect(whenever.items).toEqual([]);
+    expect(whenever.filter).toEqual({ priority: 'whenever' });
+    expect(whenever.sources.bus.pending).toBe(3);
+  });
+
+  it('ANDs priority with the other view dimensions', async () => {
+    seedBands();
+    // priority + agreeing source keeps the rows; disagreeing is an honest empty.
+    const busNow = await read({ filter: { priority: 'now', source: 'bus' } });
+    expect(busNow.items.map(i => i.id)).toEqual(['bus:pri-now']);
+    const none = await read({ filter: { priority: 'now', source: 'needs-you' } });
+    // needs-you's blocking item IS 'now', so this keeps exactly that one row.
+    expect(none.items).toHaveLength(1);
+    expect(none.items[0]!.source).toBe('needs-you');
+    expect(none.items[0]!.priority).toBe('now');
+
+    // priority + severity: the P0 bus item is high AND now; the needs-you
+    // blocking item is warn-severity yet still bands now.
+    const highNow = await read({ filter: { priority: 'now', severity: 'high' } });
+    expect(highNow.items.map(i => i.id)).toEqual(['bus:pri-now']);
+    const warnNow = await read({ filter: { priority: 'now', severity: 'warn' } });
+    expect(warnNow.items.map(i => i.source)).toEqual(['needs-you']);
+  });
+});
+
 describe('readUnifiedInbox kind filter', () => {
   // The same board store the board describe derives: boardRoot = busRoot here.
   const boardStore = () => new BusBoard({
@@ -3012,7 +3077,7 @@ describe('phm comms inbox cli', () => {
   it('keeps read/post and help while refusing malformed unified invocations', async () => {
     const { command, lines } = setupCli();
     expect(await command(['--help'])).toBe(0);
-    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
+    expect(lines().at(-1)).toContain('phm comms inbox [--source <name>] [--kind <name>] [--severity <info|warn|high>] [--priority <now|today|this-week|whenever>] [--blocking] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--json]');
     for (const args of [['--json', '--json'], ['unified'], ['--limit', '5'], ['bogus', '--json']]) {
       expect(await command(args)).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });
@@ -3226,6 +3291,44 @@ describe('phm comms inbox cli', () => {
     expect(report.items.map(i => i.kind)).toEqual(['needs-you']);
   });
 
+  it('filters the unified JSON view by --priority', async () => {
+    const { command, json } = setupCli();
+    postWork('cli-pri-now', { priority: 'P0' });
+    postWork('cli-pri-today', { priority: 'P1' });
+    postWork('cli-pri-week');
+    writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- Rotate the deploy secret for the example app\n');
+
+    expect(await command(['--priority', 'now', '--json'])).toBe(0);
+    let report = json();
+    expect(report.filter).toEqual({ priority: 'now' });
+    expect(report.total).toBe(2);
+    expect(report.items.every(i => i.priority === 'now')).toBe(true);
+    expect(report.items.map(i => i.source).sort()).toEqual(['bus', 'needs-you']);
+    // The per-source counts stay the unfiltered store truth.
+    expect(report.sources.bus.pending).toBe(3);
+    expect(report.sources['needs-you'].pending).toBe(1);
+
+    expect(await command(['--priority', 'today', '--json'])).toBe(0);
+    report = json();
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-pri-today']);
+
+    // 'whenever' is a valid band no item computes — an honest empty view.
+    expect(await command(['--priority', 'whenever', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ priority: 'whenever' });
+    expect(report.total).toBe(0);
+    expect(report.items).toEqual([]);
+
+    // --priority ANDs with the other view filters; the P0..P3 envelope band
+    // `inbox read --priority` takes is not a valid urgency band here.
+    expect(await command(['--priority', 'now', '--source', 'bus', '--json'])).toBe(0);
+    report = json();
+    expect(report.filter).toEqual({ priority: 'now', source: 'bus' });
+    expect(report.items.map(i => i.id)).toEqual(['bus:cli-pri-now']);
+    expect(await command(['--priority', 'P0', '--json'])).toBe(2);
+    expect(await command(['--priority', 'urgent', '--json'])).toBe(2);
+  });
+
   it('labels the human footer with the applied filter and unfiltered counts', async () => {
     const { command, lines } = setupCli();
     writeFileSync(join(runsDir, 'NEEDS-MASON.md'), '- fake needs-you line\n');
@@ -3266,6 +3369,11 @@ describe('phm comms inbox cli', () => {
     expect(await command(['--before', '15m'])).toBe(0);
     expect(lines().at(-1)).toBe('Nothing pending matching before=' +
       `${new Date(now - 15 * 60_000).toISOString()}.`);
+    // --priority labels the band verbatim in the same footer slot.
+    expect(await command(['--priority', 'now'])).toBe(0);
+    expect(lines().join('\n')).toContain('matching priority=now');
+    expect(await command(['--priority', 'whenever'])).toBe(0);
+    expect(lines().at(-1)).toBe('Nothing pending matching priority=whenever.');
   });
 
   it('refuses malformed unified filter invocations', async () => {
@@ -3289,6 +3397,8 @@ describe('phm comms inbox cli', () => {
       ['--contains'], ['--contains', ''], ['--contains', '   '], ['--contains', '--json'],
       ['--contains', 'x'.repeat(513)], ['--contains', 'a', '--contains', 'b'],
       ['--contains', 'deploy', '--job'], ['--json', '--contains'],
+      ['--priority'], ['--priority', '--json'], ['--priority', 'P0'], ['--priority', 'urgent'],
+      ['--priority', 'now', '--priority', 'today'], ['--json', '--priority'], ['--priority', 'read'],
     ]) {
       expect(await command(args), args.join(' ')).toBe(2);
       expect(JSON.parse(lines().at(-1)!)).toEqual({ status: 'invalid' });

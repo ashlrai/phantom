@@ -269,8 +269,8 @@
  * Ordering is the same deterministic contract the Needs-you surfaces use
  * (decide/needs-you.ts): severity band first, then the pure priority
  * heuristic, then expiry, then newest. `options.filter` narrows the returned
- * items by stored source, severity, blocking, job citation or appearance
- * time while every
+ * items by stored source, kind, severity, priority band, blocking, job
+ * citation, appearance time or title/detail text while every
  * per-source report stays unfiltered. Never a model call, never throws, and
  * never mutates: a degraded store reports its source state and the remaining
  * sources still list. Bus work bodies are untrusted data — titles are scrubbed
@@ -290,6 +290,7 @@ import { readPendingProposals, readTeamApprovals, type ProposalApprovalItem, typ
 import { listDrafts, type Draft } from '../cos/drafts.js';
 import { listDrafts as listCommsAgentDrafts, type CommsDraft } from '../comms-agent/store.js';
 import { compareRanked, needsYouPriorityHeuristic, type AttentionItem, type NeedsYouPriority, type RankedAttentionItem } from '../decide/needs-you.js';
+import { NEEDS_YOU_PRIORITIES } from '../decide/registry.js';
 import { BUS_INBOX_MAX_BYTES, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, inspectBusInbox, listBusInboxAfter, type BusInboxInspection, type BusInboxOptions, type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { createBusMailbox, type BusMailboxPendingMessage } from '../fleet/bus-mailbox.js';
 import { readBusBoardPending, type BusBoardPendingRead } from '../fleet/bus-board.js';
@@ -345,6 +346,11 @@ export type UnifiedInboxSeverity = 'info' | 'warn' | 'high';
 const UNIFIED_INBOX_SEVERITIES: readonly UnifiedInboxSeverity[] = ['info', 'warn', 'high'];
 export const isUnifiedInboxSeverity = (value: string): value is UnifiedInboxSeverity =>
   (UNIFIED_INBOX_SEVERITIES as readonly string[]).includes(value);
+/** The needs-you urgency band every item carries — `now`, `today`,
+ * `this-week` or `whenever` — the same vocabulary `needsYouPriorityHeuristic`
+ * assigns and the ranked sort orders by. */
+export const isUnifiedInboxPriority = (value: string): value is NeedsYouPriority =>
+  (NEEDS_YOU_PRIORITIES as readonly string[]).includes(value);
 /** Every pending-item kind the unified view can report. Most kinds are 1:1
  * with their source; the `bus` source splits into `bus-work`/`bus-handoff`
  * and the `board` source into `board-delivery`/`board-task`, so `kind` is
@@ -417,6 +423,17 @@ export interface UnifiedInboxFilter {
   kind?: UnifiedInboxKind;
   /** Keep only items at this severity band. */
   severity?: UnifiedInboxSeverity;
+  /** Keep only items the needs-you priority heuristic banded this urgency —
+   * the same `priority` every item carries, the ranked sort's second key
+   * after severity and the band the human view prints as `[now]`/`[today]`/
+   * `[this-week]`/`[whenever]`. It is the computed urgency, not the stored
+   * severity: an item expiring inside two hours or blocking reads `now`
+   * whatever its severity, so `priority=now` is the "what needs me now"
+   * read `severity=high` cannot express. The value is one of
+   * `NEEDS_YOU_PRIORITIES`, validated by `isUnifiedInboxPriority`; a band no
+   * item computes (the heuristic never emits `whenever`) is an honest empty
+   * view, never an error. */
+  priority?: NeedsYouPriority;
   /** Keep only blocking items when true, only non-blocking when false. */
   blocking?: boolean;
   /** Keep only items that provably name this job id — the same citation
@@ -2235,7 +2252,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
   const requested = options.filter;
   const filter = requested !== undefined &&
     (requested.source !== undefined || requested.kind !== undefined ||
-      requested.severity !== undefined ||
+      requested.severity !== undefined || requested.priority !== undefined ||
       requested.blocking !== undefined || requested.job !== undefined ||
       requested.since !== undefined || requested.before !== undefined ||
       requested.contains !== undefined)
@@ -2252,6 +2269,7 @@ export async function readUnifiedInbox(options: UnifiedInboxOptions = {}): Promi
     (filter.source === undefined || item.source === filter.source) &&
     (filter.kind === undefined || item.kind === filter.kind) &&
     (filter.severity === undefined || item.severity === filter.severity) &&
+    (filter.priority === undefined || item.priority === filter.priority) &&
     (filter.blocking === undefined || item.blocking === filter.blocking) &&
     // A job filter keeps only items whose own citation set names the job —
     // an item with no provable job relation stays out of the match.
