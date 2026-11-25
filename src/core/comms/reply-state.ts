@@ -77,9 +77,10 @@ function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string
   const own = receipts.find(row => row.envelope.id === id);
   const ref = own?.envelope.channel_ref;
   if (!own || ref === undefined || !isRequest(own)) return id;
+  const channel = own.envelope.channel ?? 'bus';
   let first = own;
   for (const row of receipts) {
-    if (row.envelope.channel_ref !== ref || !isRequest(row)) continue;
+    if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref || !isRequest(row)) continue;
     if (row.receivedAt < first.receivedAt || (row.receivedAt === first.receivedAt && row.cursor < first.cursor)) first = row;
   }
   return first.envelope.id;
