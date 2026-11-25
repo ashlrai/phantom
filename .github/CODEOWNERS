@@ -660,6 +660,7 @@
 /test/improve-self-tick-backlog.test.ts @masonwyatt23
 /test/improve-skill-outcome-backlog.test.ts @masonwyatt23
 /test/improve-source-yield-backlog.test.ts @masonwyatt23
+/test/improve-spawn-proposals-backlog.test.ts @masonwyatt23
 /test/improve-stray-stop-backlog.test.ts @masonwyatt23
 /test/improve-stuck-job-backlog.test.ts @masonwyatt23
 /test/improve-tick-health-backlog.test.ts @masonwyatt23
