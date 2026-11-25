@@ -81,7 +81,7 @@ function firstInThread(id: string, receipts: readonly BusInboxReceipt[]): string
   let first = own;
   for (const row of receipts) {
     if ((row.envelope.channel ?? 'bus') !== channel || row.envelope.channel_ref !== ref || !isRequest(row)) continue;
-    if (row.receivedAt < first.receivedAt || (row.receivedAt === first.receivedAt && row.cursor < first.cursor)) first = row;
+    if (row.cursor < first.cursor) first = row;
   }
   return first.envelope.id;
 }
