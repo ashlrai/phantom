@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'smol-toml';
-import { initOrg, joinOrg, loadOrg, parseQueue, planOrg, readJoins, validateOrg, type JoinRecord } from '../src/core/org/org.js';
+import { droppedJoinLanes, initOrg, joinOrg, loadOrg, parseQueue, planOrg, readJoins, validateOrg, type JoinRecord } from '../src/core/org/org.js';
 import { cmdOrg } from '../src/cli/org.js';
 import { buildResourceView } from '../src/core/fabric/resource-view.js';
 
@@ -87,6 +87,20 @@ describe('join', () => {
     expect(() => joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'other' })).toThrow(/not that machine/);
     expect(joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'Evans-MacBook' }).member).toBe('evan-deloria');
   });
+  it('replaces the whole record and names the lanes a re-join dropped', () => {
+    const dir = tmp();
+    const o = org();
+    const first = joinOrg(o, { member: 'mason-wyatt', machine: 'mason-mac', optIn: [{ lane: 'claude' }, { lane: 'codex-personal', share: 40 }] }, { dir });
+    // A first join drops nothing; lowering a share is not a drop.
+    expect(droppedJoinLanes(undefined, first)).toEqual([]);
+    const second = joinOrg(o, { member: 'mason-wyatt', machine: 'mason-mac', optIn: [{ lane: 'claude', share: 50 }] }, { dir });
+    expect(second.lanes).toEqual([{ lane: 'claude', share: 50 }]);
+    expect(droppedJoinLanes(first, second)).toEqual([{ lane: 'codex-personal', share: 40 }]);
+    // Naming the lane again restores it; an identical re-join drops nothing.
+    const third = joinOrg(o, { member: 'mason-wyatt', machine: 'mason-mac', optIn: [{ lane: 'claude' }, { lane: 'codex-personal' }] }, { dir });
+    expect(droppedJoinLanes(second, third)).toEqual([]);
+    expect(droppedJoinLanes(third, third)).toEqual([]);
+  });
 });
 
 describe('plan', () => {
@@ -151,6 +165,32 @@ describe('cmdOrg', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await cmdOrg(['bogus'])).toBe(2);
     expect(await cmdOrg(['--help'])).toBe(0);
+    vi.unstubAllEnvs();
+  });
+
+  it('join reports the lanes a re-join dropped, in JSON and text', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    const base = ['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac'];
+    // First join: nothing to drop.
+    expect(await cmdOrg([...base, '--lane', 'claude', '--lane', 'codex-personal=40', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).droppedLanes).toEqual([]);
+    // Re-join naming only claude replaces the record; codex-personal is reported dropped.
+    expect(await cmdOrg([...base, '--lane', 'claude=50', '--json'])).toBe(0);
+    const second = JSON.parse(logs.pop()!);
+    expect(second.schema).toBe('org.join.v1');
+    expect(second.record.lanes).toEqual([{ lane: 'claude', share: 50 }]);
+    expect(second.droppedLanes).toEqual([{ lane: 'codex-personal', share: 40 }]);
+    // Text mode names the dropped lane and how to restore it.
+    expect(await cmdOrg([...base, '--lane', 'claude=50', '--lane', 'codex-personal=10'])).toBe(0);
+    const restore = logs.pop()!;
+    expect(restore).not.toContain('no longer opts in');
+    expect(await cmdOrg([...base, '--lane', 'claude=50'])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('no longer opts in: codex-personal (was 10%)');
+    expect(text).toContain('Name the lane again with --lane to restore it.');
     vi.unstubAllEnvs();
   });
 
@@ -289,6 +329,33 @@ describe('cmdOrg', () => {
     expect(await cmdOrg(['show', '--file', missing])).toBe(1);
     expect(errs.join('\n')).toContain(`phm org: No org file at ${missing}`);
     expect(logs).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('plan text names each held lane and the join that opts it in', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    // mason-wyatt opts claude in at zero share and codex-personal at 50; scofield
+    // opts codex-personal in. evan-deloria never joins: both held reasons show.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac',
+      '--lane', 'claude=0', '--lane', 'codex-personal=50', '--json'])).toBe(0);
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-scofield', '--machine', 'sco-mac',
+      '--lane', 'codex-personal', '--json'])).toBe(0);
+    logs.length = 0;
+    expect(await cmdOrg(['plan', '--file', file])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain('2 lanes held');
+    expect(text).toContain('held mason-wyatt/claude: zero share');
+    expect(text).toContain('phm org join --member mason-wyatt --machine mason-mac --lane claude');
+    expect(text).toContain('held evan-deloria/claude: not opted in');
+    expect(text).toContain('phm org join --member evan-deloria --machine evan-mac --lane claude');
+    expect(text).not.toContain('held mason-scofield/');
+    // --json output is unchanged: the same held rows were already in the plan.
+    expect(await cmdOrg(['plan', '--file', file, '--json'])).toBe(0);
+    const plan = JSON.parse(logs.pop()!);
+    expect(plan.held.map((h: any) => `${h.member}/${h.lane}`)).toEqual(['mason-wyatt/claude', 'evan-deloria/claude']);
     vi.unstubAllEnvs();
   });
 });

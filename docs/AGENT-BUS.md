@@ -182,7 +182,8 @@ lines and Conversations panel all run the one `readAgentConversations`
 projection, and the tool is that read with the same dimensions as
 arguments: `agent`, `waiting`, `blocked`, `state`, `job`, `waitingOn`,
 `since`, `before`, `contains`, `inReplyTo`, `id`, `channel`, `priority`, `from`,
-`excludeFrom`, `with`, `thread`, `bodyKind` and `limit` all optional — so an MCP-connected agent
+`excludeFrom`, `with`, `thread`, `bodyKind`, `kind` and `limit`
+all optional — so an MCP-connected agent
 answers "which threads wait for a reply, which are blocked, which are
 done" fleet-wide without reconstructing reply chains from the raw
 timeline; `matched`/`waiting`/`skipped`/`source` pass through untouched,

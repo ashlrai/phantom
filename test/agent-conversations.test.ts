@@ -476,6 +476,30 @@ describe('v2 work threads', () => {
     expect(list.map(x => [x.id, x.messageCount]).sort()).toEqual([['job:RQ-X1', 2], ['job:RQ-X2', 1]]);
   });
 
+  it('kind keeps the whole threads holding a member of that classified kind', () => {
+    const root = bus(WORK);
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    // kind reads each member's classified kind: both job threads hold an
+    // ask (their work.post) and a reply (the note's replyTo, the complete
+    // result); only RQ-PEER9's failed result classifies a blocker and only
+    // RQ-PEER10's work.release reads status.
+    expect(read({ kind: 'ask' }).sort()).toEqual(['job:RQ-PEER10', 'job:RQ-PEER9']);
+    expect(read({ kind: 'reply' }).sort()).toEqual(['job:RQ-PEER10', 'job:RQ-PEER9']);
+    expect(read({ kind: 'blocker' })).toEqual(['job:RQ-PEER9']);
+    expect(read({ kind: 'status' })).toEqual(['job:RQ-PEER10']);
+    expect(read({ kind: 'handoff' })).toEqual([]);
+    // It composes like every other member-level filter: each test keeps
+    // whole threads, so a thread passes when any member satisfies each.
+    expect(read({ kind: 'blocker', job: 'RQ-PEER10' })).toEqual([]);
+    expect(read({ kind: 'reply', job: 'RQ-PEER9' })).toEqual(['job:RQ-PEER9']);
+    // The member items carry the classified kind the filter reads.
+    const nine = readAgentConversations({ job: 'RQ-PEER9' }, { root, now: () => NOW }).conversations![0]!;
+    expect(nine.messages.map(m => m.kind)).toEqual(['ask', 'reply', 'blocker']);
+    const ten = readAgentConversations({ job: 'RQ-PEER10' }, { root, now: () => NOW }).conversations![0]!;
+    expect(ten.messages.map(m => m.kind)).toEqual(['ask', 'reply', 'status']);
+  });
+
   it('the CLI --job prints only that job\'s threads and refuses a bad id', async () => {
     const root = bus(WORK), lines: string[] = [], errors: string[] = [];
     const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
@@ -484,6 +508,15 @@ describe('v2 work threads', () => {
     expect(printed.conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
     expect(await run(['--job', 'has space'])).toBe(2);
     expect(errors.pop()).toContain('--job takes a job id');
+  });
+
+  it('the CLI --kind filters threads and refuses a bad value', async () => {
+    const root = bus(WORK), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--kind', 'blocker', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
+    expect(await run(['--kind', 'bogus'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -1069,6 +1102,14 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=2`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?blocked=1&blocked=0`)).status).toBe(400);
+    // kind keeps threads holding a member of that classified kind; bad
+    // values are refused.
+    const replyKind = await call(`${AGENT_CONVERSATIONS_PATH}?kind=reply`);
+    expect(replyKind.status).toBe(200);
+    expect(replyKind.body.conversations.map((c: { id: string }) => c.id)).toEqual(['m1']);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=bogus`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=`)).status).toBe(400);
+    expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=a&kind=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
     // blocked=1 keeps only the blocked threads, same as --blocked.

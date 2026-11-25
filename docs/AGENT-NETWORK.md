@@ -351,6 +351,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   named stays at zero, and a share can be lowered but never raised above the declared
   value. If the machine declares a `host`, join refuses to run anywhere else. The
   record lands in `~/.ashlr/org/joins/`; copy another machine's record there to count it.
+  Re-running join replaces the machine's whole record, so a lane you stop naming drops
+  to zero — the output lists each dropped lane (`droppedLanes` under `--json`) and how
+  to restore it, so a share tweak never silently starves a lane.
 - `phm org plan [--queue jobs.json] --json` proposes assignments of queue work
   (`[{"id": "RQ-1", "priority": 3, "costPct": 2, "lane": "claude"}]`) and agent roles to
   maximize merged output per unit of pooled usage. Jobs are ordered by priority per
@@ -358,7 +361,9 @@ are refused. Spending stays with each member; nothing here changes billing.
   router's usage and reset data for the contribution's `pool`. A lane's budget is its
   headroom times the contributed share; a red pool gets none, and a lane with no
   telemetry is planned with a conservative 25 points of headroom. Leftover work is
-  returned in `unassigned` with a reason.
+  returned in `unassigned` with a reason. Text output also lists each held lane
+  (`held <member>/<lane>: <reason>`) with the `phm org join` command that opts it
+  in on that member's machine, so a member can see why a contribution is unused.
 
 With `--json`, a failed `phm org` call prints
 `{"schema":"org.error.v1","command","error":{"code","message"}}` on stdout —

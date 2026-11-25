@@ -20,7 +20,7 @@
  * GET /api/verse/fleet/control/map-replay[?since=6h&step=5m] is `phm map replay --json`
  * (fleet.map-replay.v1): the fleet one frame per step, for the Map pane's time slider.
  *
- * GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=peer-a&waiting=1&blocked=1&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&thread=label&bodyKind=work.post] is
+ * GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=peer-a&waiting=1&blocked=1&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&thread=label&bodyKind=work.post&kind=blocker] is
  * `phm agents conversations --json` (agents.conversations.v1): threads by reply
  * chain with their state, for the map's thread lines and the Conversations panel.
  */
@@ -29,7 +29,7 @@ import { sendJson } from '../web/api.js';
 import { buildFleetLiveMap, LIVE_MAP_WINDOW_MINUTES, type FleetLiveMap } from '../fleet/live-map.js';
 import { MAP_EDGES_DEFAULT_SINCE, readMapEdges, type MapEdges } from '../fleet/map-edges.js';
 import { readAgentsMessages } from '../fleet/agents-messages.js';
-import { parseSince } from '../fleet/agent-messages.js';
+import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../fleet/agent-messages.js';
 import { readAgentConversations } from '../fleet/agent-conversations.js';
 import { CONVERSATION_STATES, type ConversationState } from '../fleet/agent-conversation-model.js';
 import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
@@ -104,14 +104,16 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
       const inReplyTo = params.get('inReplyTo'), id = params.get('id'), channel = params.get('channel'), priority = params.get('priority');
       const from = params.get('from'), excludeFrom = params.get('excludeFrom'), withPeer = params.get('with');
       const thread = params.get('thread'), bodyKind = params.get('bodyKind');
+      const kind = params.get('kind');
       const sinceMs = since === null ? undefined : parseSince(since);
       const beforeMs = before === null ? undefined : parseSince(before);
       const KEYS = ['agent', 'waiting', 'blocked', 'job', 'waitingOn', 'state', 'limit', 'since', 'before', 'contains',
-        'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind'];
+        'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind', 'kind'];
       if ([...params.keys()].some(key => !KEYS.includes(key))
         || KEYS.some(key => params.getAll(key).length > 1)
         || (waiting !== null && waiting !== '1' && waiting !== '0') || (blocked !== null && blocked !== '1' && blocked !== '0')
         || (state !== null && !(CONVERSATION_STATES as readonly string[]).includes(state))
+        || (kind !== null && !(AGENT_MESSAGE_KINDS as readonly string[]).includes(kind))
         || (limit !== null && (!/^[1-9][0-9]*$/.test(limit) || Number(limit) > 1024))
         || (contains !== null && (contains.trim() === '' || contains.length > 512))
         || (priority !== null && !(BUS_PRIORITIES as readonly string[]).includes(priority))
@@ -119,7 +121,7 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
         || [agent, job, waitingOn, inReplyTo, id, from, excludeFrom, withPeer, thread, bodyKind].some(v => v !== null && !/^[\x21-\x7e]{1,128}$/.test(v))
         || sinceMs === null || beforeMs === null
         || [agent, job, waitingOn, since, before].some(v => v === '')) {
-        sendJson(res, 400, { error: 'Use agent (a name), with (the other agent, needs agent), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), before (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters), inReplyTo (an envelope id), id (an envelope id), channel (a channel name), priority (P0..P3), from (a name), excludeFrom (a name), thread (a conversation bucket) and bodyKind (a body kind) and limit (1-1024) only, once each.' }); return true;
+        sendJson(res, 400, { error: 'Use agent (a name), with (the other agent, needs agent), waiting (1), blocked (1), job (a job id), waitingOn (a name), state (waiting|answered|blocked|done), since (15m, 2h, 1d, epoch ms or an ISO time), before (15m, 2h, 1d, epoch ms or an ISO time), contains (text, at most 512 characters), inReplyTo (an envelope id), id (an envelope id), channel (a channel name), priority (P0..P3), from (a name), excludeFrom (a name), thread (a conversation bucket), bodyKind (a body kind), kind (ask|reply|handoff|status|blocker) and limit (1-1024) only, once each.' }); return true;
       }
       if (withPeer !== null && agent === null) {
         sendJson(res, 400, { error: 'with takes the other agent and needs agent.' }); return true;
@@ -128,7 +130,9 @@ export function createFleetLiveMapApi(read: () => Promise<FleetLiveMap> = thrott
         const result = conversations({ agent: agent ?? undefined, waitingOnly: waiting === '1', blockedOnly: blocked === '1', job: job ?? undefined, waitingOn: waitingOn ?? undefined,
           state: state === null ? undefined : state as ConversationState, since: sinceMs ?? undefined, before: beforeMs ?? undefined, contains: contains ?? undefined,
           inReplyTo: inReplyTo ?? undefined, id: id ?? undefined, channel: channel ?? undefined, priority: priority === null ? undefined : priority as BusPriority,
-          from: from ?? undefined, excludeFrom: excludeFrom ?? undefined, with: withPeer ?? undefined, thread: thread ?? undefined, bodyKind: bodyKind ?? undefined, limit: limit === null ? undefined : Number(limit) });
+          from: from ?? undefined, excludeFrom: excludeFrom ?? undefined, with: withPeer ?? undefined, thread: thread ?? undefined, bodyKind: bodyKind ?? undefined,
+          kind: kind === null ? undefined : kind as AgentMessageKind,
+          limit: limit === null ? undefined : Number(limit) });
         sendJson(res, result.source === 'unavailable' ? 503 : 200, result);
       } catch { sendJson(res, 503, { error: 'Agent conversations unavailable.' }); }
       return true;

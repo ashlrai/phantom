@@ -84,14 +84,16 @@ describe('fleet_agent_conversations argument parsing', () => {
       job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
       before: '1800000001000', contains: '  Build   OK ',
       inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post',
+      kind: 'blocker', limit: 25,
     });
     expect(parsed).toEqual({
       agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
       before: 1800000001000, contains: 'build ok',
       inReplyTo: 'env-7', id: 'env-9', channel: 'dev', priority: 'P0', from: 'agent:bot',
-      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post', limit: 25,
+      excludeFrom: 'agent:spam', with: 'agent:peer', thread: 'release-1', bodyKind: 'work.post',
+      kind: 'blocker', limit: 25,
     });
   });
 
@@ -105,6 +107,15 @@ describe('fleet_agent_conversations argument parsing', () => {
     expect(parseFleetAgentConversationsArgs({ waiting: false, blocked: false })).toEqual({});
     expect(parseFleetAgentConversationsArgs({ waiting: false, state: 'done' }))
       .toEqual({ state: 'done' });
+  });
+
+  it('accepts every classified message kind', () => {
+    for (const kind of ['ask', 'reply', 'handoff', 'status', 'blocker']) {
+      expect(parseFleetAgentConversationsArgs({ kind })).toMatchObject({ kind });
+    }
+    for (const bad of ['ASK', 'BLOCKER', 'open', '', 5, null, true, ['ask']]) {
+      expect(parseFleetAgentConversationsArgs({ kind: bad })).toBeNull();
+    }
   });
 
   it('accepts every conversation state and rejects anything outside the enum', () => {
@@ -157,6 +168,7 @@ describe('fleet_agent_conversations argument parsing', () => {
       { with: 'has space' }, { with: '' }, { with: 5 }, { with: 'x'.repeat(129) },
       { thread: 'has space' }, { thread: '' }, { thread: 5 }, { thread: 'x'.repeat(129) },
       { bodyKind: 'has space' }, { bodyKind: '' }, { bodyKind: 5 }, { bodyKind: 'x'.repeat(129) },
+      { kind: 'bogus' }, { kind: 'ASK' }, { kind: '' }, { kind: 5 }, { kind: null },
       { limit: 0 }, { limit: 1025 }, { limit: 1.5 }, { limit: '50' },
     ]) expect(parseFleetAgentConversationsArgs(bad)).toBeNull();
   });
@@ -174,14 +186,14 @@ describe('fleet_agent_conversations reader', () => {
         agent: 'agent:claude', waiting: true, blocked: true, state: 'waiting',
         job: 'RQ-9', waitingOn: 'agent:leader', since: '1800000000000',
         before: '1800000001000', contains: 'Build OK', id: 'env-9', with: 'agent:peer',
-        thread: 'release-1', bodyKind: 'work.post', limit: 10,
+        thread: 'release-1', bodyKind: 'work.post', kind: 'blocker', limit: 10,
       })!,
       { read });
     expect(seen).toEqual([{
       agent: 'agent:claude', waitingOnly: true, blockedOnly: true, state: 'waiting',
       job: 'RQ-9', waitingOn: 'agent:leader', since: 1800000000000,
       before: 1800000001000, contains: 'build ok', id: 'env-9', with: 'agent:peer',
-      thread: 'release-1', bodyKind: 'work.post', limit: 10,
+      thread: 'release-1', bodyKind: 'work.post', kind: 'blocker', limit: 10,
     }]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
@@ -255,6 +267,8 @@ describe('fleet_agent_conversations MCP tool', () => {
       .toMatchObject({ type: 'string' });
     expect(tool?.inputSchema.properties?.['limit'])
       .toMatchObject({ type: 'integer', minimum: 1, maximum: 1024 });
+    expect(tool?.inputSchema.properties?.['kind'])
+      .toMatchObject({ type: 'string', enum: ['ask', 'reply', 'handoff', 'status', 'blocker'] });
   });
 
   it.each([
@@ -266,6 +280,7 @@ describe('fleet_agent_conversations MCP tool', () => {
     [{ since: 'never' }], [{ since: 5 }], [{ since: '9999999d' }],
     [{ before: 'never' }], [{ before: 5 }], [{ before: '9999999d' }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
+    [{ kind: 'bogus' }], [{ kind: 'ASK' }], [{ kind: 5 }],
     [{ limit: 0 }], [{ limit: 1025 }], [{ limit: 1.5 }], [{ limit: '50' }],
     [{ extra: 1 }], [{ matched: true }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {

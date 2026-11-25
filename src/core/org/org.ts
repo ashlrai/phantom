@@ -165,6 +165,17 @@ export function joinOrg(org: Org, req: { member: string; machine: string; optIn:
   return record;
 }
 
+/**
+ * Lanes a re-join dropped: opted in on the machine's previous record, absent from the new one.
+ * Join replaces the whole record, so a lane not named again stops being contributed; callers
+ * surface these so the opt-out is never silent.
+ */
+export function droppedJoinLanes(previous: JoinRecord | undefined, next: JoinRecord): { lane: string; share: number }[] {
+  if (!previous) return [];
+  const kept = new Set(next.lanes.map((l) => l.lane));
+  return previous.lanes.filter((l) => !kept.has(l.lane));
+}
+
 export interface QueueJob { id: string; title?: string; priority?: number; lane?: string; costPct?: number }
 export function parseQueue(text: string): QueueJob[] {
   assertMetadata(text);

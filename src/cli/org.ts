@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { initOrg, joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { droppedJoinLanes, initOrg, joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
 export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
        phm org <show|join|plan|init> [--file <org.toml>] [--json]
@@ -19,7 +19,8 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
   show                          The org: members, agents, machines, lanes, shares and reporting lines
   join --member <id> --machine <id> [--lane <lane>[=<share>]]...
                                 Run on your own machine. Opts in only the lanes you name (share can only be lowered).
-                                Nothing is sent and no provider auth is read; sign in to your own CLIs here.
+                                A re-join replaces this machine's opt-ins; dropped lanes are listed. Nothing is sent
+                                and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
   init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]...
                                 Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
@@ -186,9 +187,16 @@ export async function cmdOrg(argv: string[]): Promise<number> {
         if (seen.has(o.lane)) throw new OrgError(`--lane ${o.lane} was given more than once.`);
         seen.add(o.lane);
       }
+      // Read the machine's current record before joinOrg replaces it, so a re-join that
+      // stops naming a lane reports the opt-out instead of dropping it silently.
+      const prior = readJoins().find((j) => j.member === member && j.machine === machine);
       const r = joinOrg(org, { member, machine, optIn });
       const recordFile = join(joinsDir(), `${r.member}.${r.machine}.json`);
-      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\nRecord: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
+      const dropped = droppedJoinLanes(prior, r);
+      const droppedNote = dropped.length
+        ? `This machine no longer opts in: ${dropped.map((l) => `${l.lane} (was ${l.share}%)`).join(', ')}. Name the lane again with --lane to restore it.\n`
+        : '';
+      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile, droppedLanes: dropped }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\n${droppedNote}Record: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
     const queueFile = one(rest, '--queue');
     noLeftovers(rest);
@@ -196,9 +204,19 @@ export async function cmdOrg(argv: string[]): Promise<number> {
     let view = null;
     try { view = await (await import('../core/fabric/resource-view-store.js')).readResourceView(); } catch { /* unknown usage is planned conservatively */ }
     const plan = planOrg(org, readJoins(), view, queue);
+    // Text mode names each held lane and the join that opts it in; the JSON plan
+    // already carries the same held rows, so --json consumers lose nothing.
+    const heldLines = plan.held.map((h) => {
+      const machines = org.members.find((m) => m.id === h.member)?.machines.map((x) => x.id) ?? [];
+      const machineArg = machines.length === 1 ? machines[0]! : machines.length ? `<${machines.join('|')}>` : null;
+      const fix = machineArg === null ? 'add a machine for this member in org.toml before join'
+        : `on that member's machine run: phm org join --member ${h.member} --machine ${machineArg} --lane ${h.lane}`;
+      return `  held ${h.member}/${h.lane}: ${h.reason} — ${fix}`;
+    });
     return print(plan, [`Plan for ${plan.leader}: ${plan.assignments.length} assigned, ${plan.unassigned.length} unassigned, ${plan.held.length} lanes held`,
       ...plan.assignments.map((a) => `  ${a.job} -> ${a.agent} (${a.member}/${a.lane}, ~${a.costPct}%)`),
-      ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`)].join('\n'));
+      ...plan.unassigned.map((u) => `  ! ${u.job}: ${u.reason}`),
+      ...heldLines].join('\n'));
   } catch (err) {
     return orgFailure(json, command, err);
   }

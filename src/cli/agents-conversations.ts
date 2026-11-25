@@ -1,11 +1,11 @@
 import type { BusInboxOptions } from '../core/fleet/bus-inbox.js';
 import { CONVERSATION_STATES, type ConversationState } from '../core/fleet/agent-conversation-model.js';
-import { parseSince } from '../core/fleet/agent-messages.js';
+import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../core/fleet/agent-messages.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 
 /** `phm agents conversations`: thin argv adapter for core/fleet/agent-conversations.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--thread <label>] [--body-kind <kind>] [--limit <1..1024>] [--json]
+export const AGENTS_CONVERSATIONS_USAGE = `Usage: phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--thread <label>] [--body-kind <kind>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]
 
 Agent-to-agent messages grouped into threads by reply chain: who is in each
 thread, the latest subject, message count, last activity and one state:
@@ -90,7 +90,11 @@ same busBodyKind own-field exact match agents bus inbox --body-kind,
 channel read --body-kind and agents bus wakes --body-kind apply — so
 "which threads carry work.post traffic" is one filtered read, a member
 message whose body carries no discriminator never matching;
---limit caps the threads shown, longest-waiting order kept, while matched
+--kind keeps only the threads where at least one member message's
+classified kind is the value — ask, reply, handoff, status or blocker,
+the same vocabulary phm messages --kind filters the flat timeline on —
+so "which threads carry a blocker" is one filtered read of whole
+threads; --limit caps the threads shown, longest-waiting order kept, while matched
 still reports the full filtered count.
 --json prints agents.conversations.v1. Read only.`;
 
@@ -106,6 +110,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   let state: ConversationState | undefined, limit: number | undefined, sinceRaw: string | undefined, beforeRaw: string | undefined, contains: string | undefined;
   let inReplyTo: string | undefined, id: string | undefined, channel: string | undefined, priority: BusPriority | undefined, from: string | undefined, excludeFrom: string | undefined;
   let withPeer: string | undefined, thread: string | undefined, bodyKind: string | undefined;
+  let kind: AgentMessageKind | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) json = true;
@@ -128,6 +133,13 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
     else if (arg === '--with' && withPeer === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { withPeer = value; i++; }
     else if (arg === '--thread' && thread === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { thread = value; i++; }
     else if (arg === '--body-kind' && bodyKind === undefined && value !== undefined && JOB_ID.test(value) && !value.startsWith('--')) { bodyKind = value; i++; }
+    else if (arg === '--kind' && kind === undefined && value !== undefined && !value.startsWith('--')) {
+      if (!(AGENT_MESSAGE_KINDS as readonly string[]).includes(value)) {
+        err(`--kind takes one of ${AGENT_MESSAGE_KINDS.join(', ')}.`);
+        return 2;
+      }
+      kind = value as AgentMessageKind; i++;
+    }
     else if (arg === '--state' && state === undefined && value !== undefined && !value.startsWith('--')) {
       if (!(CONVERSATION_STATES as readonly string[]).includes(value)) {
         err(`--state takes one of ${CONVERSATION_STATES.join(', ')}.`);
@@ -147,7 +159,7 @@ export async function runAgentsConversationsCli(args: string[], out: (text: stri
   const before = beforeRaw === undefined ? undefined : parseSince(beforeRaw, options.now?.() ?? Date.now());
   if (beforeRaw !== undefined && before === null) { err('--before takes 15m, 2h, 1d, epoch ms or an ISO time.'); return 2; }
   const { formatAgentConversationsText, readAgentConversations } = await import('../core/fleet/agent-conversations.js');
-  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, id, channel, priority, from, excludeFrom, with: withPeer, thread, bodyKind, limit }, options);
+  const result = readAgentConversations({ agent, waitingOnly, blockedOnly, job, waitingOn, state, since: since ?? undefined, before: before ?? undefined, contains, inReplyTo, id, channel, priority, from, excludeFrom, with: withPeer, thread, bodyKind, kind, limit }, options);
   out(json ? JSON.stringify(result, null, 2) : formatAgentConversationsText(result));
   return result.source === 'unavailable' ? 1 : 0;
 }
