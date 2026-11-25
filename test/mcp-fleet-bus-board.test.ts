@@ -94,6 +94,13 @@ describe('fleet_bus_board argument parsing', () => {
     expect(parseFleetBusBoardArgs({ before: '1767225600000' })).toEqual({ before: 1767225600000 });
   });
 
+  it('maps the sender filters onto the read options under the printable-label rule', () => {
+    expect(parseFleetBusBoardArgs({ from: 'nova', excludeFrom: 'agent:ghost' }))
+      .toEqual({ from: 'nova', excludeFrom: 'agent:ghost' });
+    expect(parseFleetBusBoardArgs({ from: 'agt_0123456789abcdef0123' }))
+      .toEqual({ from: 'agt_0123456789abcdef0123' });
+  });
+
   it('rejects unknown keys, caller roots and malformed values before any read', () => {
     for (const bad of [
       { extra: 1 }, { root: '/tmp/fake' }, { path: '/tmp/x' }, { cwd: '/tmp' },
@@ -103,6 +110,8 @@ describe('fleet_bus_board argument parsing', () => {
       { since: 'bogus' }, { since: '0x10' }, { since: 5 }, { since: null }, { since: true },
       { before: 'bogus' }, { before: '0x10' }, { before: 5 }, { before: null }, { before: true },
       { since: '1d', before: '-5' }, { since: '1d', before: '1969-12-31T23:59:59.000Z' },
+      { from: 'has space' }, { from: '' }, { from: 5 }, { from: null }, { from: true },
+      { excludeFrom: 'has space' }, { excludeFrom: '' }, { excludeFrom: 5 }, { excludeFrom: null },
     ]) expect(parseFleetBusBoardArgs(bad)).toBeNull();
   });
 });
@@ -125,6 +134,20 @@ describe('fleet_bus_board reader', () => {
     if (result.source !== 'available') throw new Error('expected an available board read');
     expect(result.pending).toMatchObject({ claims: 'readable', peers: ['alice', 'bob'] });
     expect(result.pending.tasks.items[0]).toMatchObject({ itemId: 'job-1', hold: 'open' });
+  });
+
+  it('passes the sender refs through to the shared read untouched', async () => {
+    const seen: BusBoardPendingReadOptions[] = [];
+    const read = (options: BusBoardPendingReadOptions): BusBoardPendingRead => {
+      seen.push(options);
+      return okRead();
+    };
+    // The refs stay agent refs — readBusBoardPending resolves them through
+    // the fleet-root identity registry, the same rule every bus read's
+    // sender filter applies.
+    const result = await readFleetBusBoard({ from: 'nova', excludeFrom: 'agent:ghost' }, { read });
+    expect(seen).toEqual([{ from: 'nova', excludeFrom: 'agent:ghost' }]);
+    expect(result.source).toBe('available');
   });
 
   it('passes degraded results through untouched — unknown stays unknown, never an empty digest', async () => {
@@ -160,6 +183,8 @@ describe('fleet_bus_board MCP tool', () => {
         contains: { type: 'string' },
         since: { type: 'string' },
         before: { type: 'string' },
+        from: { type: 'string' },
+        excludeFrom: { type: 'string' },
       },
       additionalProperties: false,
     });
@@ -170,6 +195,7 @@ describe('fleet_bus_board MCP tool', () => {
     [{ busRoot: '/tmp/bus' }], [{ job: 'has space' }], [{ contains: '' }],
     [{ contains: 'x'.repeat(513) }], [{ since: 'bogus' }], [{ since: 5 }], [{ extra: 1 }],
     [{ before: 'bogus' }], [{ before: 5 }], [{ before: '1969-12-31T23:59:59.000Z' }],
+    [{ from: 'has space' }], [{ from: '' }], [{ from: 5 }], [{ excludeFrom: 'has space' }], [{ excludeFrom: 5 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busBoard = vi.fn();
     const client = await connect({ status: async () => ({}), loop: async () => ({}), busBoard });

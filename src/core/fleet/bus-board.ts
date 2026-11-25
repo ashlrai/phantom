@@ -27,6 +27,7 @@ import { validateBusEnvelope } from './bus-envelope.js';
 import { appendBusHop } from './bus-hoplog.js';
 import { emit } from './event-bus.js';
 import { clearBoardLease, upsertBoardLease } from '../agents/claim-store.js';
+import { agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../agents/bus-identity.js';
 
 interface BoardThread { id: string; title: string; members: string[] }
 interface BoardTask { id: string; threadId: string; itemId: string; title: string; claim?: QueueClaimRef }
@@ -590,13 +591,18 @@ export class BusBoard {
    * `pendingDigest` under identical rules, so `phm bus board pending`
    * narrows exactly the way `work mine`'s board section and
    * `fleet_bus_board` do; `now` is the epoch-ms instant task holds
-   * evaluate against (default `Date.now()`).
+   * evaluate against (default `Date.now()`). `sender` is the same
+   * `BusBoardSenderFilter` `pendingFor`/`pendingAll` take — deliveries
+   * keep only posts whose `sender` label the predicates accept while
+   * tasks, which record no author, never match under `from` and stay
+   * listed under `excludeFrom`.
    */
-  pending(actor: string, now = Date.now(), jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number): BusBoardPending {
+  pending(actor: string, now = Date.now(), jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number,
+    sender?: BusBoardSenderFilter): BusBoardPending {
     actor = this.peer(actor);
     return this.transaction(false, (state) => ({
       peer: actor,
-      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs, beforeMs)),
+      ...this.presentDigest(this.pendingDigest(state, new Set([actor]), now, jobId, contains, sinceMs, beforeMs, sender)),
     }));
   }
 
@@ -971,12 +977,42 @@ export type BusBoardPendingRead =
   | { source: 'unavailable' };
 
 /**
+ * The pending digest's sender slice resolved from agent refs — the same
+ * `agentRefAddressMatcher` identity-label rule every bus `--from`/
+ * `--exclude-from` read applies: a handle, `agent:` address, stable id or
+ * alias of one registered identity matches every routing label that
+ * identity answers to, while an unresolvable ref or unreadable registry
+ * keeps exact-label matching — unknown identity state never widens the
+ * filter, and the two refs compose include-then-exclude so a sender both
+ * included and excluded matches nothing. `root` is the fleet root the
+ * identity registry lives under (default `<ashlrHome>/fleet`, the same
+ * root `readBusBoardPending`'s `busRoot` names); `registry` is a pre-read
+ * override for tests. Neither ref given returns undefined without touching
+ * the registry, so an unfiltered digest pays nothing.
+ */
+export function busBoardPendingSender(
+  refs: { from?: string; excludeFrom?: string },
+  options: { root?: string; registry?: AgentRegistry } = {},
+): BusBoardSenderFilter | undefined {
+  if (refs.from === undefined && refs.excludeFrom === undefined) return undefined;
+  let registry = options.registry;
+  if (registry === undefined) {
+    const read = readAgentRegistry({ root: options.root });
+    registry = read.status === 'ok' ? read.registry : undefined;
+  }
+  return {
+    ...(refs.from === undefined ? {} : { from: agentRefAddressMatcher(refs.from, registry) }),
+    ...(refs.excludeFrom === undefined ? {} : { excludeFrom: agentRefAddressMatcher(refs.excludeFrom, registry) }),
+  };
+}
+
+/**
  * Options for `readBusBoardPending`: `busRoot` overrides the fleet root the
  * board paths derive from — the same seam `phm comms inbox`'s board source
  * and tests use, unset resolving `<ashlrHome>/fleet` — `now` the epoch-ms
  * thunk the digest evaluates holds against, and
- * `jobId`/`contains`/`sinceMs`/`beforeMs` the same optional filters
- * `BusBoard.pendingAll` takes.
+ * `jobId`/`contains`/`sinceMs`/`beforeMs`/`from`/`excludeFrom` the same
+ * optional filters `BusBoard.pendingAll` takes.
  */
 export interface BusBoardPendingReadOptions {
   busRoot?: string;
@@ -985,6 +1021,16 @@ export interface BusBoardPendingReadOptions {
   contains?: string;
   sinceMs?: number;
   beforeMs?: number;
+  /** Keep only deliveries whose `sender` label the `from` agent ref
+   * resolves to through the identity registry under `busRoot` — the same
+   * `agentRefAddressMatcher` rule every bus `--from` read applies, with
+   * exact-label fallback on an unresolvable ref or unreadable registry.
+   * Board tasks record no author and never match under it. */
+  from?: string;
+  /** Drop deliveries whose `sender` label the `excludeFrom` agent ref
+   * resolves to under the same identity-label rule; board tasks stay
+   * listed — nothing proves a task came from the excluded sender. */
+  excludeFrom?: string;
 }
 
 /**
@@ -1012,10 +1058,13 @@ export function readBusBoardPending(options: BusBoardPendingReadOptions = {}): B
   try {
     const shared = cfg.fleet?.sharedQueue;
     const fleet = new SharedStore(paths.queueRoot, shared?.leaseMs);
+    const fleetRoot = options.busRoot ?? join(ashlrHome(), 'fleet');
+    const sender = busBoardPendingSender(
+      { from: options.from, excludeFrom: options.excludeFrom }, { root: fleetRoot });
     return {
       source: 'available',
       pending: new BusBoard({ root: paths.boardRoot, fleet, cfg })
-        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs, options.beforeMs),
+        .pendingAll(options.now?.(), options.jobId, options.contains, options.sinceMs, options.beforeMs, sender),
     };
   } catch {
     return { source: 'unavailable' };

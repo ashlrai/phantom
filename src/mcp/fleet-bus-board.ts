@@ -25,8 +25,19 @@
  * `[since, before)` window — board tasks carry no timestamp, so under a
  * time bound the task list is provably empty rather than padded with
  * undated rows, and thread rollups list only while a surviving delivery
- * remains. The result reports `source` missing (verified-empty — no
- * `state.json` was ever written), available or unavailable — an
+ * remains. `from` and `excludeFrom` are the sender filters every bus read
+ * shares, resolved through the server-side identity registry under the
+ * same fleet root the board derives from: a handle, `agent:` address,
+ * stable id or alias of one registered identity keeps or drops every
+ * delivery whose `sender` label belongs to that identity, an
+ * unresolvable ref or unreadable registry keeps exact-label matching —
+ * unknown identity state never widens the read — and the two compose
+ * include-then-exclude so a sender both included and excluded matches
+ * nothing. Board tasks record no author, so under `from` they never
+ * match while under `excludeFrom` they stay listed — nothing proves a
+ * task came from the excluded sender. The result reports `source`
+ * missing (verified-empty — no `state.json` was ever written), available
+ * or unavailable — an
  * unreadable board, malformed config, relative path override or disabled
  * event bus is never an invented empty digest — plus the digest's
  * `peers`, `claims` read state, thread rollups and the deliveries/tasks
@@ -54,7 +65,7 @@ import {
 /** The printable-label rule `job` shares — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const BOARD_KEYS = new Set(['job', 'contains', 'since', 'before']);
+const BOARD_KEYS = new Set(['job', 'contains', 'since', 'before', 'from', 'excludeFrom']);
 
 export interface FleetBusBoardArgs {
   /** Keep only threads carrying a task whose fleet itemId cites this job id — the same citation rule the work-mine board section applies. */
@@ -65,6 +76,10 @@ export interface FleetBusBoardArgs {
   since?: number;
   /** Keep only deliveries recorded strictly before this epoch-ms cutoff — the exclusive `before` bound composing with `since` into one [since, before) window; tasks never match under it. */
   before?: number;
+  /** Keep only deliveries sent under any registered spelling of this agent ref — the same sender-inclusion rule every bus read's `from` applies. */
+  from?: string;
+  /** Drop deliveries sent under any registered spelling of this agent ref — the same sender-exclusion rule every bus read's `excludeFrom` applies. */
+  excludeFrom?: string;
 }
 
 /**
@@ -73,9 +88,10 @@ export interface FleetBusBoardArgs {
  * takes the printable routing-label bound every bus read applies,
  * `contains` the bounded free-text needle `busReadContains` normalizes,
  * `since`/`before` the shared `15m`/`2h`/`1d`/epoch-ms/ISO grammar resolved
- * to a safe non-negative epoch-ms integer. Unknown keys, wrong types,
- * caller roots and malformed values are all refused before the store is
- * touched.
+ * to a safe non-negative epoch-ms integer, and `from`/`excludeFrom` the
+ * same printable-label bound every bus sender filter shares. Unknown keys,
+ * wrong types, caller roots and malformed values are all refused before
+ * the store is touched.
  */
 export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusBoardArgs | null {
   if (Object.keys(args).some(key => !BOARD_KEYS.has(key))) return null;
@@ -96,6 +112,12 @@ export function parseFleetBusBoardArgs(args: Record<string, unknown>): FleetBusB
     if (resolved === null || !Number.isSafeInteger(resolved) || resolved < 0) return null;
     if (key === 'since') parsed.since = resolved;
     else parsed.before = resolved;
+  }
+  for (const key of ['from', 'excludeFrom'] as const) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
+    parsed[key] = value;
   }
   return parsed;
 }
@@ -132,6 +154,8 @@ export async function readFleetBusBoard(
     ...(args.contains === undefined ? {} : { contains: args.contains }),
     ...(args.since === undefined ? {} : { sinceMs: args.since }),
     ...(args.before === undefined ? {} : { beforeMs: args.before }),
+    ...(args.from === undefined ? {} : { from: args.from }),
+    ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
   });
   return {
     schemaVersion: 1 as const, snapshotKind: 'local-persisted' as const,

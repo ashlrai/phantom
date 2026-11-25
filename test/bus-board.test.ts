@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AshlrConfig } from '../src/core/types.js';
 import { clearBoardLease, listCoordination, upsertBoardLease } from '../src/core/agents/claim-store.js';
 import { cmdFleetBus } from '../src/cli/fleet-bus.js';
-import { BusBoard } from '../src/core/fleet/bus-board.js';
+import { registerAgentIdentity } from '../src/core/agents/bus-identity.js';
+import { BusBoard, busBoardPendingSender, readBusBoardPending,
+  type BusBoardSenderFilter } from '../src/core/fleet/bus-board.js';
 import { SharedStore, type QueueClaimRef } from '../src/core/fleet/shared-store.js';
 
 let dir: string;
@@ -828,6 +830,146 @@ describe('bus board pendingAll digest', () => {
     expect(inverted.tasks.matched).toBe(0);
     expect(inverted.threads).toEqual([]);
     expect(store.pendingAll(undefined, undefined, undefined, since, since).deliveries.matched).toBe(0);
+  });
+
+  it('applies the sender slice to pending and pendingAll while tasks stay honest', async () => {
+    const store = board();
+    const threadId = threadWith('alice', 'bob', 'carol');
+    await store.post('alice', threadId, 'alice ping');
+    await store.post('bob', threadId, 'bob ping');
+    store.createTask('alice', threadId, 'item-sender', 'Sender task');
+
+    const slice = (from?: string, excludeFrom?: string): BusBoardSenderFilter => ({
+      ...(from === undefined ? {} : { from: (sender: string) => sender === from }),
+      ...(excludeFrom === undefined ? {} : { excludeFrom: (sender: string) => sender === excludeFrom }),
+    });
+
+    // `from` keeps only deliveries whose sender label the predicate
+    // accepts; tasks record no author and never match under it. Each post
+    // reached all three members, so alice's one post is three deliveries.
+    const fromAlice = store.pendingAll(undefined, undefined, undefined, undefined, undefined, slice('alice'));
+    expect(fromAlice.deliveries.matched).toBe(3);
+    expect(fromAlice.deliveries.items.every((row) => row.sender === 'alice')).toBe(true);
+    expect(fromAlice.tasks.matched).toBe(0);
+    expect(fromAlice.threads).toHaveLength(1);
+    expect(fromAlice.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 3 });
+    expect(fromAlice.threads[0]!.tasks).toEqual({ open: 0, held: 0, ambiguous: 0, unknown: 0 });
+
+    // `excludeFrom` drops the excluded sender's deliveries but the task
+    // stays listed — nothing proves a task came from the excluded sender.
+    const exclAlice = store.pendingAll(undefined, undefined, undefined, undefined, undefined, slice(undefined, 'alice'));
+    expect(exclAlice.deliveries.matched).toBe(3);
+    expect(exclAlice.deliveries.items.every((row) => row.sender === 'bob')).toBe(true);
+    expect(exclAlice.tasks.matched).toBe(1);
+    expect(exclAlice.threads[0]).toMatchObject({ id: threadId, pendingDeliveries: 3 });
+    expect(exclAlice.threads[0]!.tasks).toEqual({ open: 1, held: 0, ambiguous: 0, unknown: 0 });
+
+    // A sender both included and excluded matches nothing; under `from`
+    // the task cannot match either, so the rollup has nothing surviving.
+    const both = store.pendingAll(undefined, undefined, undefined, undefined, undefined, slice('alice', 'alice'));
+    expect(both.deliveries.matched).toBe(0);
+    expect(both.tasks.matched).toBe(0);
+    expect(both.threads).toEqual([]);
+
+    // The single-peer form takes the same trailing slice: bob's pending
+    // deliveries are alice's post and his own (the sender gets a delivery
+    // too), so from=alice keeps one while excludeFrom=alice keeps the
+    // other — and tasks never match under `from`.
+    const peerFrom = store.pending('bob', undefined, undefined, undefined, undefined, undefined, slice('alice'));
+    expect(peerFrom.deliveries.matched).toBe(1);
+    expect(peerFrom.deliveries.items[0]).toMatchObject({ sender: 'alice' });
+    expect(peerFrom.tasks.matched).toBe(0);
+    const peerExcl = store.pending('bob', undefined, undefined, undefined, undefined, undefined, slice(undefined, 'alice'));
+    expect(peerExcl.deliveries.matched).toBe(1);
+    expect(peerExcl.deliveries.items[0]).toMatchObject({ sender: 'bob' });
+    expect(peerExcl.tasks.matched).toBe(1);
+    expect(peerExcl.threads[0]).toMatchObject({ id: threadId });
+    const peerBoth = store.pending('bob', undefined, undefined, undefined, undefined, undefined, slice('alice', 'alice'));
+    expect(peerBoth.deliveries.matched).toBe(0);
+    expect(peerBoth.tasks.matched).toBe(0);
+    expect(peerBoth.threads).toEqual([]);
+    // An absent slice changes nothing — the unfiltered digest still lists all.
+    expect(store.pendingAll().deliveries.matched).toBe(6);
+    expect(store.pendingAll().tasks.matched).toBe(1);
+  });
+});
+
+describe('readBusBoardPending sender refs', () => {
+  it('resolves from/excludeFrom agent refs through the fleet-root registry', async () => {
+    // readBusBoardPending derives <dirname(busRoot)>/bus and
+    // <busRoot>/bus-queue; the identity registry lives under busRoot.
+    const fleetRoot = join(dir, 'fleet-root');
+    const store = new BusBoard({
+      root: join(dir, 'bus'), fleet: new SharedStore(join(fleetRoot, 'bus-queue'), 60_000), cfg,
+    });
+    for (const handle of ['nova', 'ghost']) {
+      expect(registerAgentIdentity({ handle }, { root: fleetRoot }).status).toBe('created');
+    }
+    const threadId = store.createThread('nova', 'Sender board').id;
+    store.joinThread('ghost', threadId);
+    store.joinThread('atlas', threadId);
+    await store.post('nova', threadId, 'nova ping');
+    await store.post('ghost', threadId, 'ghost ping');
+    store.createTask('nova', threadId, 'item-sender', 'Sender task');
+
+    const read = (options: Parameters<typeof readBusBoardPending>[0] = {}) =>
+      readBusBoardPending({ busRoot: fleetRoot, ...options });
+
+    const all = read();
+    expect(all.source).toBe('available');
+    if (all.source !== 'available') throw new Error('unreachable');
+    expect(all.pending.deliveries.matched).toBe(6);
+    expect(all.pending.tasks.matched).toBe(1);
+
+    // `agent:` refs and bare handles resolve to the same identity labels.
+    for (const ref of ['nova', 'agent:nova']) {
+      const filtered = read({ from: ref });
+      expect(filtered.source).toBe('available');
+      if (filtered.source !== 'available') throw new Error('unreachable');
+      expect(filtered.pending.deliveries.matched).toBe(3);
+      expect(filtered.pending.deliveries.items.every((row) => row.sender === 'nova')).toBe(true);
+      expect(filtered.pending.tasks.matched).toBe(0);
+    }
+
+    // excludeFrom drops the excluded identity's deliveries; the task
+    // stays — nothing proves a task came from the excluded sender.
+    const excluded = read({ excludeFrom: 'nova' });
+    expect(excluded.source).toBe('available');
+    if (excluded.source !== 'available') throw new Error('unreachable');
+    expect(excluded.pending.deliveries.matched).toBe(3);
+    expect(excluded.pending.deliveries.items.every((row) => row.sender === 'ghost')).toBe(true);
+    expect(excluded.pending.tasks.matched).toBe(1);
+
+    // An unresolvable ref keeps exact-label matching: no delivery sender
+    // is literally 'unregistered', and tasks still never match under from.
+    const literal = read({ from: 'unregistered' });
+    expect(literal.source).toBe('available');
+    if (literal.source !== 'available') throw new Error('unreachable');
+    expect(literal.pending.deliveries.matched).toBe(0);
+    expect(literal.pending.tasks.matched).toBe(0);
+    expect(literal.pending.threads).toEqual([]);
+    // excludeFrom on the same unresolvable ref excludes nothing.
+    const literalExcl = read({ excludeFrom: 'unregistered' });
+    expect(literalExcl.source).toBe('available');
+    if (literalExcl.source !== 'available') throw new Error('unreachable');
+    expect(literalExcl.pending.deliveries.matched).toBe(6);
+    expect(literalExcl.pending.tasks.matched).toBe(1);
+  });
+
+  it('busBoardPendingSender resolves refs against a supplied registry and stays undefined unfiltered', () => {
+    expect(busBoardPendingSender({})).toBeUndefined();
+    const fleetRoot = join(dir, 'fleet-refs');
+    expect(registerAgentIdentity({ handle: 'nova', aliases: ['nova-alias'] }, { root: fleetRoot }).status).toBe('created');
+    const registry = busBoardPendingSender({ from: 'nova' }, { root: fleetRoot });
+    expect(registry?.from?.('agent:nova')).toBe(true);
+    expect(registry?.from?.('nova-alias')).toBe(true);
+    expect(registry?.from?.('ghost')).toBe(false);
+    const exact = busBoardPendingSender({ from: 'unregistered' }, { root: fleetRoot });
+    expect(exact?.from?.('unregistered')).toBe(true);
+    expect(exact?.from?.('agent:unregistered')).toBe(false);
+    const both = busBoardPendingSender({ from: 'nova', excludeFrom: 'nova-alias' }, { root: fleetRoot });
+    expect(both?.from?.('nova')).toBe(true);
+    expect(both?.excludeFrom?.('nova')).toBe(true);
   });
 });
 

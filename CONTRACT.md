@@ -3152,10 +3152,15 @@ longer needs a separate `--peer` read per label. Its fleet-wide form,
 optional filters over every thread member as the label set — the digest
 `phm comms inbox`'s board source and `fleet_bus_board` project through the
 shared `readBusBoardPending` read, which reports `missing` for a
-verified-empty board and `unavailable` for an unreadable one, and `phm bus
+verified-empty board and `unavailable` for an unreadable one, takes
+`from`/`excludeFrom` agent refs that `busBoardPendingSender` resolves
+through the identity registry under the board's fleet root into the
+`sender` slice — the same `agentRefAddressMatcher` rule every bus
+`--from`/`--exclude-from` read applies, exact-label fallback on an
+unresolvable ref or unreadable registry — and `phm bus
 board pending --all` serves the same `pendingAll` digest directly. The
 single-peer form `phm bus board pending` serves,
-`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?, beforeMs?)`, takes the
+`BusBoard.pending(actor, now?, jobId?, contains?, sinceMs?, beforeMs?, sender?)`, takes the
 same optional filters under the identical `pendingDigest` rules while
 keeping its `peer` display shape. `peers` names the queried
 labels the board actually knows — each a member of at least one thread,
