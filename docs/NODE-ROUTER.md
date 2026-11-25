@@ -75,6 +75,11 @@ job's outcome: `pending`, `running` (naming the node whose live claim can act),
 `withdraw` stays the only fence, and a producer withdrawal reads back as
 `completed` with `producerWithdrawn` set, not as node work.
 
+A text `pull` (no `--json`) prints the same claim for a person: the job's
+owner, requirements, pack and secret names, the embedded task text when the
+job carries one, the lease token pair and expiry, and paste-ready `renew` and
+`complete` commands.
+
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
 `{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}` on failure.
