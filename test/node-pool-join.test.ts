@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const deps = vi.hoisted(() => ({ read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn() }));
@@ -51,10 +51,18 @@ describe('repeatable Mac enrollment', () => {
     expect(deps.call).not.toHaveBeenCalled();
   });
   it('routes zero-argument join through the pool and preserves stored identity', async () => {
-    expect(await cmdNode(['join', '--json'])).toBe(0);
-    expect(deps.configure).not.toHaveBeenCalled();
-    expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--slots', '2']);
-    expect(deps.call).toHaveBeenCalledWith(config, 'leave', ['--node', 'air', '--session', '3']);
+    // cmdNodeFleet delegates to the pool only when a config file exists; the
+    // mocked readPoolConfig supplies its contents, so any valid file marks it configured.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'node-pool-home-')));
+    vi.stubEnv('ASHLR_HOME', home);
+    try {
+      mkdirSync(join(home, 'node-pool'), { recursive: true });
+      writeFileSync(join(home, 'node-pool', 'config.json'), JSON.stringify(config));
+      expect(await cmdNode(['join', '--json'])).toBe(0);
+      expect(deps.configure).not.toHaveBeenCalled();
+      expect(deps.call).toHaveBeenCalledWith(config, 'join', ['--node', 'air', '--caps', 'codex', '--slots', '2']);
+      expect(deps.call).toHaveBeenCalledWith(config, 'leave', ['--node', 'air', '--session', '3']);
+    } finally { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); }
   });
   it('retains explicit live-session join for existing router clients', async () => {
     const args = ['--node', 'air', '--owner', 'mason', '--caps', 'codex', '--slots', '2', '--json'];
