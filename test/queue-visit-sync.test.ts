@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { planVisitSync, queueReadyVisits, queueVisitsFromJobs, syncQueueVisits } from '../src/core/queue/visit-sync.js';
+import {
+  foldMergeEventChecks, planVisitSync, queueReadyVisits, queueVisitsFromJobs, syncQueueVisits,
+} from '../src/core/queue/visit-sync.js';
 import { compactQueueVisits, readQueueVisits, VISIT_JOURNAL_MAX_BYTES } from '../src/core/queue/journal.js';
 import { estimateQueueStats, queueVisitKey, type QueueVisit } from '../src/core/queue/stats.js';
 
@@ -134,6 +136,91 @@ describe('queueVisitsFromJobs', () => {
     expect(at(visits, 'RQ-K', 'claimed')?.completedAt).toBe(ms('14:02:00'));
   });
 
+  it('derives pr-ci service start and merge-queue entry from merge-events check observations', () => {
+    const checks = foldMergeEventChecks(ledger(
+      { repo: 'ashlrai/phantom', pr: 7, type: 'check_observed', conclusion: 'pending', at: T('14:03:30'), head_sha: 'a' },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'check_observed', conclusion: 'pending', at: T('14:04:00'), head_sha: 'a' },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'check_observed', conclusion: 'success', at: T('14:04:30'), head_sha: 'a' },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'checks_passed', at: T('14:04:35'), head_sha: 'a' },
+    ));
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'enqueue', job: 'RQ-M', lane: 'codex', ts: T('14:00:00') },
+      { event: 'launch', job: 'RQ-M', lane: 'codex', ts: T('14:00:30') },
+      { event: 'finish', job: 'RQ-M', lane: 'codex', ts: T('14:02:30') },
+      { event: 'publish', job: 'RQ-M', url: 'https://github.com/AshlrAI/Phantom/pull/7', ts: T('14:03:00') },
+      { event: 'outcome', job: 'RQ-M', state: 'MERGED', url: 'https://github.com/ashlrai/phantom/pull/7', ts: T('14:06:00') },
+    ), NOW, checks);
+    // Last recorded green (checks_passed at 14:04:35) is the CI-complete
+    // boundary; the first pending of the final run (14:03:30) the service start.
+    expect(at(visits, 'RQ-M', 'pr-ci')).toMatchObject({
+      arrivedAt: ms('14:03:00'), startedAt: ms('14:03:30'), completedAt: ms('14:04:35'),
+    });
+    expect(at(visits, 'RQ-M', 'merge-queue')).toMatchObject({
+      arrivedAt: ms('14:04:35'), startedAt: ms('14:06:00'), completedAt: ms('14:06:00'),
+    });
+  });
+
+  it('takes the last green before the terminal, restarting service after a concluded rollup', () => {
+    const checks = foldMergeEventChecks(ledger(
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'success', at: T('14:04:30') },
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'failure', at: T('14:04:45') },
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'pending', at: T('14:05:00') },
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'success', at: T('14:05:30') },
+      // A green stamped after the merge belongs to a later life of the PR.
+      { repo: 'x/y', pr: 2, type: 'check_observed', conclusion: 'success', at: T('14:07:00') },
+    ));
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'launch', job: 'RQ-N', lane: 'codex', ts: T('14:00:30') },
+      { event: 'publish', job: 'RQ-N', url: 'https://github.com/x/y/pull/2', ts: T('14:03:00') },
+      { event: 'outcome', job: 'RQ-N', state: 'MERGED', url: 'https://github.com/x/y/pull/2', ts: T('14:06:00') },
+    ), NOW, checks);
+    expect(at(visits, 'RQ-N', 'pr-ci')).toMatchObject({
+      arrivedAt: ms('14:03:00'), startedAt: ms('14:05:00'), completedAt: ms('14:05:30'),
+    });
+    expect(at(visits, 'RQ-N', 'merge-queue')).toMatchObject({
+      arrivedAt: ms('14:05:30'), completedAt: ms('14:06:00'),
+    });
+  });
+
+  it('lets ledger ci boundaries win over derived ones and ignores greens before publish', () => {
+    const checks = foldMergeEventChecks(ledger(
+      // Green stamped before this attempt's publish belongs to an earlier head.
+      { repo: 'x/y', pr: 3, type: 'check_observed', conclusion: 'success', at: T('14:02:00') },
+      { repo: 'x/y', pr: 3, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+      { repo: 'x/y', pr: 3, type: 'check_observed', conclusion: 'success', at: T('14:04:30') },
+    ));
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'launch', job: 'RQ-O', lane: 'codex', ts: T('14:00:30') },
+      { event: 'publish', job: 'RQ-O', url: 'https://github.com/x/y/pull/3', ts: T('14:03:00') },
+      { event: 'ci_start', job: 'RQ-O', ts: T('14:03:30') },
+      { event: 'ci_complete', job: 'RQ-O', ts: T('14:05:00') },
+      { event: 'outcome', job: 'RQ-O', state: 'MERGED', url: 'https://github.com/x/y/pull/3', ts: T('14:06:00') },
+    ), NOW, checks);
+    expect(at(visits, 'RQ-O', 'pr-ci')).toMatchObject({
+      arrivedAt: ms('14:03:00'), startedAt: ms('14:03:30'), completedAt: ms('14:05:00'),
+    });
+    expect(at(visits, 'RQ-O', 'merge-queue')).toMatchObject({
+      arrivedAt: ms('14:05:00'), completedAt: ms('14:06:00'),
+    });
+  });
+
+  it('keeps merge-queue absent and pr-ci terminal-bound when no green was sampled', () => {
+    const checks = foldMergeEventChecks(ledger(
+      { repo: 'x/y', pr: 4, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+      { repo: 'x/y', pr: 4, type: 'check_observed', conclusion: 'failure', at: T('14:04:30') },
+    ));
+    const { visits } = queueVisitsFromJobs(ledger(
+      { event: 'launch', job: 'RQ-P', lane: 'codex', ts: T('14:00:30') },
+      { event: 'publish', job: 'RQ-P', url: 'https://github.com/x/y/pull/4', ts: T('14:03:00') },
+      { event: 'outcome', job: 'RQ-P', state: 'MERGED', url: 'https://github.com/x/y/pull/4', ts: T('14:06:00') },
+    ), NOW, checks);
+    expect(at(visits, 'RQ-P', 'pr-ci')).toMatchObject({
+      arrivedAt: ms('14:03:00'), startedAt: ms('14:06:00'), completedAt: ms('14:06:00'),
+    });
+    expect(at(visits, 'RQ-P', 'merge-queue')).toBeUndefined();
+  });
+
   it('ignores rows stamped after now and counts invalid ordering', () => {
     const { visits, invalid } = queueVisitsFromJobs(ledger(
       { event: 'enqueue', job: 'RQ-H', lane: 'codex', ts: T('16:00:00') },
@@ -148,6 +235,30 @@ describe('queueVisitsFromJobs', () => {
     // RQ-I's enqueue postdates its launch: the READY visit is invalid and dropped.
     expect(at(visits, 'RQ-I', 'READY')).toBeUndefined();
     expect(invalid).toBe(1);
+  });
+});
+
+describe('foldMergeEventChecks', () => {
+  it('folds timed check observations per PR and skips every other row', () => {
+    const checks = foldMergeEventChecks(ledger(
+      { repo: 'AshlrAI/Phantom', pr: 7, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'check_observed', conclusion: 'success', at: T('14:04:30'), head_sha: 'abc', required: true },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'checks_passed', at: T('14:04:35') },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'merged', at: T('14:06:00') },
+      { repo: 'ashlrai/phantom', pr: 7, type: 'blocked', reason: 'required_checks', at: T('14:04:00') },
+      { repo: 'ashlrai/phantom', pr: 8, type: 'check_observed', conclusion: 'bogus', at: T('14:04:00') },
+      { repo: 'ashlrai/phantom', pr: 8, type: 'check_observed', conclusion: 'success', required: 'yes', at: T('14:04:00') },
+      { repo: 'not a repo', pr: 8, type: 'check_observed', conclusion: 'success', at: T('14:04:00') },
+      { repo: 'ashlrai/phantom', pr: 0, type: 'check_observed', conclusion: 'success', at: T('14:04:00') },
+      { repo: 'ashlrai/phantom', pr: 8, type: 'check_observed', conclusion: 'success', at: 'not-a-date' },
+    ) + 'not json\n');
+    expect(checks.get('ashlrai/phantom#7')).toEqual([
+      { at: ms('14:03:30'), order: 0, conclusion: 'pending' },
+      { at: ms('14:04:30'), order: 1, conclusion: 'success' },
+      { at: ms('14:04:35'), order: 2, conclusion: 'success' },
+    ]);
+    expect(checks.has('ashlrai/phantom#8')).toBe(false);
+    expect(foldMergeEventChecks(null).size).toBe(0);
   });
 });
 
@@ -278,6 +389,48 @@ describe('syncQueueVisits', () => {
     const result = await sync({ signal: AbortSignal.abort() });
     expect(result).toMatchObject({ state: 'read', queueState: 'not-read', journalState: 'not-read', appended: 0 });
     expect(existsSync(journalPath)).toBe(false);
+  });
+
+  it('reads merge-events.jsonl for derived CI boundaries and reports its health', async () => {
+    writeJobs(jobsText);
+    writeQueue(queueText);
+    writeFileSync(join(runsDir, 'metrics', 'merge-events.jsonl'), ledger(
+      { repo: 'x/y', pr: 1, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+      { repo: 'x/y', pr: 1, type: 'check_observed', conclusion: 'success', at: T('14:04:30') },
+    ), { mode: 0o600 });
+
+    const result = await sync();
+    expect(result).toMatchObject({ state: 'read', mergeEventsState: 'read', mergeEventsTruncated: false });
+    const visits = await readQueueVisits(journalPath);
+    expect(visits.find(v => v.id === 'RQ-S:a1' && v.station === 'pr-ci'))
+      .toMatchObject({ arrivedAt: ms('14:03:00'), startedAt: ms('14:03:30'), completedAt: ms('14:04:30') });
+    expect(visits.find(v => v.id === 'RQ-S:a1' && v.station === 'merge-queue'))
+      .toMatchObject({ arrivedAt: ms('14:04:30'), startedAt: ms('14:06:00'), completedAt: ms('14:06:00') });
+  });
+
+  it('reports merge-events missing and keeps ledger-only boundaries', async () => {
+    writeJobs(jobsText);
+    writeQueue(queueText);
+    const result = await sync();
+    expect(result).toMatchObject({ state: 'read', mergeEventsState: 'missing', mergeEventsTruncated: false });
+    const visits = await readQueueVisits(journalPath);
+    expect(visits.some(v => v.id === 'RQ-S:a1' && v.station === 'merge-queue')).toBe(false);
+    expect(visits.find(v => v.id === 'RQ-S:a1' && v.station === 'pr-ci'))
+      .toMatchObject({ arrivedAt: ms('14:03:00'), completedAt: ms('14:06:00') });
+  });
+
+  it('honors injected merge-events text without touching the runs dir', async () => {
+    const result = await sync({
+      runsDir: join(directory, 'absent'), jobsText, queueText,
+      mergeEventsText: ledger(
+        { repo: 'x/y', pr: 1, type: 'check_observed', conclusion: 'pending', at: T('14:03:30') },
+        { repo: 'x/y', pr: 1, type: 'check_observed', conclusion: 'success', at: T('14:04:30') },
+      ),
+    });
+    expect(result).toMatchObject({ state: 'read', mergeEventsState: 'read', mergeEventsTruncated: false });
+    const visits = await readQueueVisits(journalPath);
+    expect(visits.find(v => v.id === 'RQ-S:a1' && v.station === 'merge-queue'))
+      .toMatchObject({ arrivedAt: ms('14:04:30'), completedAt: ms('14:06:00') });
   });
 });
 

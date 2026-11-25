@@ -2,17 +2,28 @@
  * visit-sync.ts — producer for the queue visit journal (journal.ts), which
  * `phm queue stats` and `GET /api/queue/stats` read but fleet events never
  * wrote. Folds `metrics/jobs.jsonl` (per-attempt lifecycle; `launch` rows
- * delimit attempts) and live `- READY` rows of `queue/router-queue.md` into
+ * delimit attempts), the live `- READY` rows of `queue/router-queue.md`, and
+ * the sampled check observations of `metrics/merge-events.jsonl` into
  * `QueueVisit` snapshots. Station mapping and honesty rules:
  * docs/QUEUE-STATS.md. Derived timestamps only — missing boundaries leave a
  * visit open or absent, never zero-filled; rows after `now` are ignored.
+ *
+ * The jobs ledger's `ci_start`/`ci_complete` boundary events have no
+ * producer, so the pr-ci service start and the merge-queue entry boundary
+ * are derived from the merge-queue loop's recorded check observations
+ * instead: a publish row's URL joins its PR's timed `check_observed` /
+ * `checks_passed` rows, the last recorded green inside the attempt's
+ * terminal bound is the CI-complete boundary, and the first pending
+ * observation of that final run is the service start. Ledger ci rows always
+ * win; unsampled phases report as wait, never guessed.
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseLedgerTs } from '../metrics/loop.js';
 import {
-  readLedgerFile, readLedgerTail, ROUTER_OUTCOME_LEDGER_RELATIVE,
+  readLedgerFile, readLedgerTail, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE,
+  ROUTER_OUTCOME_LEDGER_RELATIVE,
   type LedgerReadState, type LedgerTailRead,
 } from '../router/outcomes.js';
 import { appendQueueVisits, compactQueueVisits, queueJournalPath, readQueueVisits } from './journal.js';
@@ -52,6 +63,127 @@ interface LedgerEvent {
 const KNOWN_EVENTS = new Set<string>([
   'enqueue', 'queued', 'launch', 'finish', 'publish', 'launch_failed', 'ci_start', 'ci_complete',
 ]);
+
+/** A github.com pull URL in the canonical shape dispatchd and the fleet writers emit. */
+const GITHUB_PULL_URL = /^https:\/\/github\.com\/([^/?#\s]+)\/([^/?#\s]+)\/pull\/([1-9]\d*)\/?$/i;
+
+/** `owner/repo#n` (lowercase repo) for a pull URL; null when the URL is not that shape. */
+function pullRequestKey(url: string): string | null {
+  const m = GITHUB_PULL_URL.exec(url);
+  return m ? `${m[1]!.toLowerCase()}/${m[2]!.toLowerCase()}#${m[3]}` : null;
+}
+
+export type MergeCheckConclusion = 'pending' | 'failure' | 'success';
+
+/**
+ * One timed check observation from metrics/merge-events.jsonl — the
+ * merge-queue loop's sampled head-rollup verdicts (`check_observed` rows)
+ * plus its once-per-PR `checks_passed` boundary, both normalized onto the
+ * rollup conclusion vocabulary. `at` is the sampler's observation instant
+ * in ms, never an exact GitHub transition time.
+ */
+export interface MergeCheckObservation {
+  at: number;
+  /** File order within the retained merge-events tail; ties break by it. */
+  order: number;
+  conclusion: MergeCheckConclusion;
+}
+
+const MERGE_EVENT_REPO = /^[\w.-]+\/[\w.-]+$/;
+
+/**
+ * Fold merge-events.jsonl text into per-PR timed check observations keyed
+ * `owner/repo#n` (lowercase repo — the same key pullRequestKey produces, so
+ * a publish row's URL joins without a second canonicalization). Only the
+ * two check-bearing row types count: `check_observed` needs its recorded
+ * in-vocabulary conclusion (and a boolean `required` when the row carries
+ * one), `checks_passed` reads as a `success` observation. Every other event
+ * type, unparseable `at`, malformed repo/pr and near-miss rows are skipped,
+ * never guessed — the same validation bar foldMergeEvents applies. Each
+ * PR's rows are sorted by (at, order): the ledger's append order is causal
+ * but sampled stamps can tie or drift, so the sort keeps boundary scans
+ * deterministic.
+ */
+export function foldMergeEventChecks(text: string | null): Map<string, MergeCheckObservation[]> {
+  const prs = new Map<string, MergeCheckObservation[]>();
+  if (text === null) return prs;
+  let order = 0;
+  for (const line of text.split('\n')) {
+    const lineOrder = order++;
+    if (!line.trim()) continue;
+    let value: unknown;
+    try { value = JSON.parse(line); } catch { continue; }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const repo = row['repo'];
+    const pr = row['pr'];
+    const type = row['type'];
+    if (typeof repo !== 'string' || !MERGE_EVENT_REPO.test(repo) ||
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
+        (type !== 'check_observed' && type !== 'checks_passed')) continue;
+    let conclusion: MergeCheckConclusion;
+    if (type === 'check_observed') {
+      const c = row['conclusion'];
+      if (c !== 'success' && c !== 'failure' && c !== 'pending') continue;
+      const req = row['required'];
+      if (req !== undefined && typeof req !== 'boolean') continue;
+      conclusion = c;
+    } else {
+      conclusion = 'success';
+    }
+    const at = parseLedgerTs(row['at']);
+    if (at === null) continue;
+    const key = `${repo.toLowerCase()}#${pr}`;
+    const list = prs.get(key) ?? [];
+    list.push({ at, order: lineOrder, conclusion });
+    prs.set(key, list);
+  }
+  for (const list of prs.values()) list.sort((a, b) => a.at - b.at || a.order - b.order);
+  return prs;
+}
+
+export interface DerivedCiBoundaries {
+  /** First observed pending stamp of the final green run; null when sampling never saw it. */
+  start: number | null;
+  /** Last recorded green observation inside the attempt's evidence window. */
+  complete: number | null;
+}
+
+/**
+ * Derive one attempt's CI service window from its PR's sampled
+ * merge-events check observations. `complete` is the LAST recorded green
+ * observation inside [publishAt, boundAt] — the most recent merge-ready
+ * boundary before the attempt's terminal, so merge-queue dwell measures
+ * from the head that actually entered the queue rather than the first
+ * green of an earlier head. `start` is the first `pending` observation of
+ * the final green run — the pending rows after the last concluded row
+ * (a failure or an earlier green episode) before the trailing all-success
+ * run; consecutive greens collapse into one episode because checks_passed
+ * restates the check_observed success it accompanies. A run whose pending
+ * phase sampling missed leaves start null so the dwell reports as wait,
+ * never guessed. No green observation means no complete boundary: the
+ * stations stay absent exactly like a ledger without ci_complete rows.
+ */
+function deriveCiBoundaries(
+  rows: readonly MergeCheckObservation[] | undefined,
+  publishAt: number,
+  boundAt: number,
+): DerivedCiBoundaries {
+  const window = (rows ?? []).filter(r => r.at >= publishAt && r.at <= boundAt);
+  let greenEnd = -1;
+  for (let i = window.length - 1; i >= 0; i--) {
+    if (window[i]!.conclusion === 'success') { greenEnd = i; break; }
+  }
+  if (greenEnd < 0) return { start: null, complete: null };
+  let greenStart = greenEnd;
+  while (greenStart > 0 && window[greenStart - 1]!.conclusion === 'success') greenStart--;
+  let bound = -1;
+  for (let i = greenStart - 1; i >= 0; i--) {
+    if (window[i]!.conclusion !== 'pending') { bound = i; break; }
+  }
+  const start = bound + 1 < greenStart ? window[bound + 1]!.at : null;
+  return { start, complete: window[greenEnd]!.at };
+}
 
 function str(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -140,8 +272,16 @@ interface AttemptTerminal { merged: LedgerEvent | null; closed: LedgerEvent | nu
 /**
  * Fold one job's ordered events into station visits. `events` must already be
  * filtered to visit-relevant kinds with `at <= now`, in file order.
+ * `ciEvidence` carries the merge-events check observations keyed by canonical
+ * PR (`owner/repo#n`); a ledger `ci_start`/`ci_complete` row always wins over
+ * the derived boundary, which itself only fills what sampling recorded.
  */
-function visitsForJob(job: string, events: LedgerEvent[]): { visits: QueueVisit[]; invalid: number } {
+function visitsForJob(
+  job: string,
+  events: LedgerEvent[],
+  now: number,
+  ciEvidence?: ReadonlyMap<string, readonly MergeCheckObservation[]>,
+): { visits: QueueVisit[]; invalid: number } {
   const visits: QueueVisit[] = [];
   let invalid = 0;
   const push = (v: QueueVisit | null) => { if (v) visits.push(v); else invalid++; };
@@ -225,24 +365,44 @@ function visitsForJob(job: string, events: LedgerEvent[]): { visits: QueueVisit[
         publish && publish.at >= finish.at ? publish.at : undefined, publish?.at));
     }
 
+    // The attempt's CI evidence window ends at its first matched terminal
+    // (or now while unresolved): check observations past that bound belong
+    // to a later life of the PR, never this attempt's CI phase.
+    const ciBoundAt = exits.length > 0 ? exits[0]!.at : now;
+    const prKey = publish !== null && publish.url !== null ? pullRequestKey(publish.url) : null;
+    const derivedCi = prKey !== null
+      ? deriveCiBoundaries(ciEvidence?.get(prKey), publish!.at, ciBoundAt)
+      : { start: null, complete: null };
+
     // pr-ci: entry is the PR opening; ci_start is the service start when the
-    // ledger carries it, otherwise the whole dwell reports as wait.
+    // ledger carries it, the merge-events-derived pending stamp when only
+    // sampling saw the run, otherwise the whole dwell reports as wait. The
+    // derived green boundary stands in for ci_complete only when the ledger
+    // recorded none — a real row always wins, matching merge-queue below.
     if (publish) {
       const after = win.filter(e => e.order > publish.order);
       const ciStart = earliest(after, ['ci_start']);
-      const exit = earliest(
-        [...after.filter(e => e.kind === 'ci_complete'), ...exits.filter(e => e.order > publish.order)],
-        ['ci_complete', 'merged', 'closed']);
-      const started = ciStart && (!exit || ciStart.at <= exit.at) ? ciStart.at : exit?.at;
-      push(makeVisit(job, attempt, STATION_PR_CI, pool, publish.at, started, exit?.at));
+      const ledgerCiAts = after.filter(e => e.kind === 'ci_complete').map(e => e.at);
+      const exitAts = [...ledgerCiAts];
+      for (const e of exits) if (e.order > publish.order) exitAts.push(e.at);
+      if (ledgerCiAts.length === 0 && derivedCi.complete !== null) exitAts.push(derivedCi.complete);
+      const exitAt = exitAts.length > 0 ? Math.min(...exitAts) : undefined;
+      const ciStartAt = ciStart?.at ?? derivedCi.start;
+      const started = ciStartAt !== null && (exitAt === undefined || ciStartAt <= exitAt) ? ciStartAt : exitAt;
+      push(makeVisit(job, attempt, STATION_PR_CI, pool, publish.at, started, exitAt));
     }
 
-    // merge-queue: entry needs a ci_complete boundary; exit is merge or a
-    // matched terminal. Missing ci_complete stays absent rather than guessed.
+    // merge-queue: entry needs a ci_complete boundary — the ledger's own
+    // event, or the last recorded green check observation the merge-events
+    // fold derives; exit is merge or a matched terminal. Missing boundary
+    // stays absent rather than guessed.
     const ciComplete = earliest(win, ['ci_complete']);
-    if (ciComplete) {
-      const exit = exits.find(e => e.order > ciComplete.order) ?? null;
-      push(makeVisit(job, attempt, STATION_MERGE_QUEUE, pool, ciComplete.at, exit?.at, exit?.at));
+    const ciCompleteAt = ciComplete !== null ? ciComplete.at : derivedCi.complete;
+    if (ciCompleteAt !== null) {
+      const exit = ciComplete !== null
+        ? exits.find(e => e.order > ciComplete.order) ?? null
+        : exits.find(e => e.at >= ciCompleteAt) ?? null;
+      push(makeVisit(job, attempt, STATION_MERGE_QUEUE, pool, ciCompleteAt, exit?.at, exit?.at));
     }
 
     // merged: terminal marker carrying merge throughput as a zero-dwell visit.
@@ -272,8 +432,15 @@ export interface JobsVisitFold {
 /**
  * Fold jobs.jsonl text into station visits plus per-job queue evidence.
  * Rows are grouped by job id in file order; attempts split on `launch`.
+ * `ciEvidence` is the optional merge-events check-observation fold
+ * (`foldMergeEventChecks`); without it the pr-ci and merge-queue stations
+ * behave exactly as before — ledger ci boundaries only, derived ones absent.
  */
-export function queueVisitsFromJobs(text: string | null, now = Date.now()): JobsVisitFold {
+export function queueVisitsFromJobs(
+  text: string | null,
+  now = Date.now(),
+  ciEvidence?: ReadonlyMap<string, readonly MergeCheckObservation[]>,
+): JobsVisitFold {
   const byJob = new Map<string, LedgerEvent[]>();
   const jobs = new Map<string, JobQueueEvidence>();
   let rows = 0, ignored = 0, invalid = 0;
@@ -301,7 +468,7 @@ export function queueVisitsFromJobs(text: string | null, now = Date.now()): Jobs
   }
   const visits: QueueVisit[] = [];
   for (const [job, events] of byJob) {
-    const fold = visitsForJob(job, events);
+    const fold = visitsForJob(job, events, now, ciEvidence);
     visits.push(...fold.visits);
     invalid += fold.invalid;
   }
@@ -385,6 +552,13 @@ export interface QueueVisitSyncOptions {
   jobsText?: string;
   /** Injected router-queue.md text; undefined reads the file, null means missing. */
   queueText?: string | null;
+  /**
+   * Injected merge-events.jsonl tail text; undefined reads
+   * <runsDir>/metrics/merge-events.jsonl, null means missing. Its check
+   * observations derive the pr-ci service start and the merge-queue entry
+   * boundary the jobs ledger's ci_start/ci_complete rows never record.
+   */
+  mergeEventsText?: string | null;
   /** Visit journal path; defaults to queueJournalPath() (~/.ashlr/queue/visits.jsonl). */
   journalPath?: string;
   now?: () => number;
@@ -411,6 +585,15 @@ export interface QueueVisitSyncResult {
   rows: number;
   ignored: number;
   invalid: number;
+  /**
+   * Health of the merge-events.jsonl tail behind the derived CI
+   * boundaries; 'not-read' when the pass never reached it. A non-'read'
+   * state leaves every derived boundary absent — the fold still runs on
+   * ledger ci_start/ci_complete rows alone, exactly as before.
+   */
+  mergeEventsState: LedgerReadState | 'not-read';
+  /** True when the merge-events tail dropped older bytes — early check observations may be missing. */
+  mergeEventsTruncated: boolean;
   /** Station visits derived (ledger fold plus live READY rows) before dedup. */
   derived: number;
   /** Snapshots appended to the journal this pass. */
@@ -431,6 +614,7 @@ function visitSyncBase(
     state, jobsPath, queuePath, journalPath, truncated: false,
     queueState: 'not-read', journalState: 'not-read',
     rows: 0, ignored: 0, invalid: 0, derived: 0, appended: 0, unchanged: 0, regression: 0,
+    mergeEventsState: 'not-read', mergeEventsTruncated: false,
     journalCompacted: false, journalDropped: 0,
   };
 }
@@ -477,11 +661,22 @@ export async function syncQueueVisits(opts: QueueVisitSyncOptions = {}): Promise
       ? { state: 'read', text: opts.jobsText, truncated: false }
       : await readLedgerTail(jobsPath);
     if (jobs.state !== 'read') return visitSyncBase(jobs.state, jobsPath, queuePath, journalPath);
+    const mergeEventsPath = join(runsDir, ROUTER_MERGE_EVENTS_LEDGER_RELATIVE);
+    const mergeEvents: LedgerTailRead = opts.mergeEventsText !== undefined
+      ? opts.mergeEventsText === null
+        ? { state: 'missing' }
+        : { state: 'read', text: opts.mergeEventsText, truncated: false }
+      : await readLedgerTail(mergeEventsPath);
     const nowMs = now();
-    const fold = queueVisitsFromJobs(jobs.text, nowMs);
+    const fold = queueVisitsFromJobs(
+      jobs.text, nowMs,
+      mergeEvents.state === 'read' ? foldMergeEventChecks(mergeEvents.text) : undefined,
+    );
     const scanned = {
       rows: fold.rows, ignored: fold.ignored, invalid: fold.invalid,
       truncated: jobs.truncated,
+      mergeEventsState: mergeEvents.state,
+      mergeEventsTruncated: mergeEvents.state === 'read' ? mergeEvents.truncated : false,
     };
     if (opts.signal?.aborted) {
       return { ...visitSyncBase('read', jobsPath, queuePath, journalPath), ...scanned };
