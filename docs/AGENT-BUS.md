@@ -64,7 +64,9 @@ substring or a body citation, so "where did envelope X go" is one filtered
 read — `--body-kind <kind>` for only the bodies carrying that exact kind
 discriminator — the same `busBodyKind` own-field exact match `agents bus
 inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
-wakes --body-kind` and `agents conversations --body-kind` apply, decided
+wakes --body-kind`, `agents conversations --body-kind`, `comms bus
+read|watch --body-kind`, `fleet bus-follow --body-kind` and
+`fleet_bus_inbox`'s `bodyKind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
 page — `--limit <n>`)
@@ -1863,9 +1865,17 @@ into one `[since, before)` window. The stream also narrows on the remaining fiel
 bus page reads share: `--id` keeps only the envelope carrying that exact id,
 `--in-reply-to` keeps only object bodies whose own `inReplyTo` equals it —
 the same application convention `comms bus read|watch` and `fleet_bus_inbox`
-apply — and `--kind`/`--topic` keep only protocol-v1 bodies whose
+apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 `protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
-namespace prefix like `fleet.*`. As with `--to` and `--job`, filtered rows
+namespace prefix like `fleet.*`, and `--body-kind` keeps only envelopes
+whose body carries that exact kind discriminator — the same `busBodyKind`
+own-field exact match `comms bus read|watch --body-kind`,
+`fleet_bus_inbox`'s `bodyKind`, `phm messages --body-kind` and the
+`agents bus` reads' `--body-kind` apply: the v2 `kind` field, a
+`worker-handoff` assignment, a notice kind, a bus-transport v1
+`protocol.kind` or a `type`/`schema` notice discriminator, exact and
+case-sensitive, a body carrying no discriminator never matching. As with
+`--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
 an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same

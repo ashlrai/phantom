@@ -43,6 +43,14 @@ status.
   but not `fleetx.deploy`. Patterns must be a valid name or a namespace
   prefix. Anything else exits 2.
 - `--kind <task|result|review|status|question>` matches `protocol.kind`.
+- `--body-kind <kind>` matches the body's own kind discriminator exactly and
+  case-sensitively — the same `busBodyKind` read every other bus read's
+  body-kind filter applies: the v2 `kind` field, a `worker-handoff`
+  assignment, a notice kind, a bus-transport v1 `protocol.kind` or a
+  `type`/`schema` notice discriminator. The value is printable ASCII, 1 to
+  128 characters; anything else exits 2. A body carrying no discriminator
+  never matches, and an unrecognized but printable value is an honest empty
+  page.
 - `--thread <label>` matches the v2 `thread` field on `note`/`context`
   bodies only; every other body kind never matches. The label is printable
   ASCII, 1 to 128 characters; anything else exits 2.

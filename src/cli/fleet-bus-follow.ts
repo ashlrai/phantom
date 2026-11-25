@@ -3,7 +3,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 import { followBusStream, validBusFollowRequest, type BusFollowRecord, type BusFollowRequest } from '../core/fleet/bus-follow-stream.js';
 import { sanitizePublicJson } from '../core/util/public-json.js';
 
-const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--channel <name>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
+const usage = 'Usage: ashlr fleet bus-follow --after <nonnegative-safe-cursor> --duration-ms <1..3600000> [--id <id>] [--in-reply-to <id>] [--to <agent-or-topic>] [--channel <name>] [--job <id>] [--from <agent-or-label>] [--exclude-from <agent-or-label>] [--priority P0..P3] [--kind <task|result|review|status|question>] [--topic <name|ns.*>] [--body-kind <kind>] [--thread <t>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--interval-ms <100..60000>] [--root <absolute>] --json';
 
 interface Dependencies {
   /** Receives one scrubbed JSON line per record; resolves when the line is accepted. */
@@ -70,6 +70,10 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
       '--id and --in-reply-to keep only the exact envelope id or bodies replying to it, and --kind and ' +
       '--topic narrow on the protocol-v1 body fields — the same filters comms bus read|watch and ' +
       'fleet_bus_inbox apply to this store; ' +
+      '--body-kind keeps only envelopes whose body carries that exact kind discriminator — the v2 kind ' +
+      'field, a worker-handoff assignment, a notice kind, a protocol-v1 protocol.kind or a type/schema ' +
+      'notice discriminator, the same busBodyKind match comms bus read|watch --body-kind, ' +
+      'fleet_bus_inbox\'s bodyKind, phm messages --body-kind and the agents bus reads apply; ' +
       '--contains keeps only envelopes whose scrubbed one-line summary carries the needle — the same ' +
       'case-insensitive text search agents bus inbox --contains and comms bus read --contains apply. ' +
       'Local observation only; routing labels are not authenticated identities and bodies are never executed.');
@@ -79,7 +83,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
   let json = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--json' && !json) { json = true; continue; }
-    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--channel|--job|--from|--exclude-from|--priority|--kind|--topic|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
+    const match = /^(--after|--duration-ms|--id|--in-reply-to|--to|--channel|--job|--from|--exclude-from|--priority|--kind|--topic|--body-kind|--thread|--since|--before|--contains|--interval-ms|--root)(?:=(.*))?$/.exec(args[i]!);
     if (!match || Object.hasOwn(values, match[1]!)) return invalid();
     const value = match[2] ?? args[++i];
     if (value === undefined || value === '' || value.startsWith('--')) return invalid();
@@ -101,6 +105,7 @@ export async function cmdFleetBusFollow(args: string[], deps: Dependencies = {})
     to: values['--to'], channel: values['--channel'], job: values['--job'], from: values['--from'], excludeFrom: values['--exclude-from'],
     priority: values['--priority'] as BusFollowRequest['priority'],
     kind: values['--kind'] as BusFollowRequest['kind'], topic: values['--topic'],
+    bodyKind: values['--body-kind'],
     thread: values['--thread'], since: since ?? undefined, before: before ?? undefined, contains: values['--contains'],
     id: values['--id'], inReplyTo: values['--in-reply-to'], root: values['--root'],
   };

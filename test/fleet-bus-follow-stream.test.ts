@@ -200,6 +200,53 @@ it('applies --job on top of --to matching', async () => {
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
+it('delivers only envelopes whose body carries the exact --body-kind discriminator', async () => {
+  post('bk-note', 'worker-a', { body: { kind: 'note', text: 'hi' } });
+  post('bk-context', 'worker-a', { body: { kind: 'context', text: 'ctx' } });
+  post('bk-work', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-1', title: 'x' } });
+  post('bk-handoff', 'worker-a', { body: { kind: 'worker-handoff', taskId: 'RQ-1', prompt: 'p' } });
+  post('bk-proto', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' }, ref: 'r1' } });
+  post('bk-notice', 'worker-a', { body: { type: 'planner-cycle-result.v1', cycle: 1 } });
+  post('bk-plain', 'worker-a', { body: { text: 'no kind' } });
+  post('bk-string', 'worker-a', { body: 'just text' });
+  // Default post() bodies carry {kind:'note'} — they count as note too.
+  post('bk-default');
+  const { records, pending, expire } = follow({ bodyKind: 'note' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['bk-note', 'bk-default']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 9 });
+
+  for (const [bodyKind, ids] of [
+    ['work.post', ['bk-work']],
+    ['worker-handoff', ['bk-handoff']],
+    ['task', ['bk-proto']],
+    ['planner-cycle-result.v1', ['bk-notice']],
+    // Exact and case-sensitive: variants and unseen kinds are honest empty.
+    ['Note', []],
+    ['never-seen', []],
+  ] as const) {
+    const again = follow({ bodyKind });
+    again.expire();
+    await again.pending;
+    expect(messages(again.records).map(row => row.envelope.id)).toEqual([...ids]);
+    expect(again.records.at(-1)).toEqual({ type: 'checkpoint', cursor: 9 });
+  }
+});
+
+it('applies --body-kind on top of --to matching', async () => {
+  post('mine-note', 'worker-a', { body: { kind: 'note', text: 'n' } });
+  post('mine-work', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-1', title: 'x' } });
+  post('theirs-note', 'worker-b', { body: { kind: 'note', text: 'n' } });
+  const { records, pending, expire } = follow({ to: 'worker-a', bodyKind: 'note' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['mine-note']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
 it('resumes from an emitted checkpoint without redelivering messages', async () => {
   post('first');
   const before = follow();
@@ -319,6 +366,10 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--exclude-from=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--exclude-from', 'worker-a', '--exclude-from', 'worker-b', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--priority', 'P9', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'has space', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'x'.repeat(129), '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'note', '--body-kind', 'context', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
