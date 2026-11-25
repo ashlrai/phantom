@@ -17,7 +17,7 @@ const submit = (description = DESCRIPTION) => submitChangeRequest({ description,
 const exists = async (path: string) => access(path).then(() => true, () => false);
 it('refuses secret-shaped and protected-scope text without writing', async () => {
   const [secret, protectedScope] = await Promise.all([
-    submit('Please add a feature using ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'),
+    submit('Please add a feature using ghp_FAKE00000000000000000000000000000000'),
     submit('Please add a feature by editing .github/workflows/ci.yml'),
   ]);
   expect(secret).toEqual({ status: 'refused', reason: 'secret-shaped' });
