@@ -532,6 +532,76 @@ describe('body-kind-filtered reads', () => {
   });
 });
 
+describe('result-outcome-filtered reads', () => {
+  it('narrows inbox and channel pages to work.result bodies reporting one outcome', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-DVL-BUS-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    // One receipt per WORK_RESULT_OUTCOMES code, plus the shapes that must never match.
+    post('res-complete', 'agent:nova', result('complete'));
+    post('res-failed', 'agent:nova', result('failed'));
+    post('res-reserved', 'agent:nova', result('reserved'));
+    post('res-admitted', 'agent:nova', result('admitted'));
+    // A work.result carrying no outcome and one carrying an outcome outside
+    // the enum both report no provable outcome for the filter.
+    post('res-nooutcome', 'agent:nova', { kind: 'work.result', jobId: 'RQ-DVL-BUS-1', claimKey: 'repo:o/n' });
+    post('res-bogus', 'agent:nova', result('bogus'));
+    // A work.release body's own released/completed outcome is a different
+    // vocabulary — the kind-scoped match keeps it out of every result page.
+    post('rel-released', 'agent:nova', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' });
+    post('res-note', 'agent:nova', { kind: 'note', text: 'plain note' });
+    // Channel posts: two result receipts and one note in the room.
+    post('ch-res-complete', 'group:release:general', result('complete'));
+    post('ch-res-failed', 'group:release:general', result('failed'));
+    post('ch-note', 'group:release:general', { kind: 'note', text: 'room note' });
+
+    const inbox = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') => {
+      const page = readAgentInbox('nova', { result: outcome }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    // The inbox covers the room's posts too: a member channel's result
+    // receipts arrive as 'channel' mail alongside the 'dm' ones.
+    expect(inbox('complete')).toEqual(['ch-res-complete', 'res-complete']);
+    expect(inbox('failed')).toEqual(['ch-res-failed', 'res-failed']);
+    expect(inbox('reserved')).toEqual(['res-reserved']);
+    expect(inbox('admitted')).toEqual(['res-admitted']);
+    // The outcome filter composes with the other envelope filters.
+    expect(readAgentInbox('nova', { result: 'failed', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'res-failed' } }] });
+    expect(readAgentInbox('nova', { result: 'failed', kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-res-failed' } }] });
+    expect(readAgentInbox('nova', { result: 'complete', bodyKind: 'work.result' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'res-complete' } }, { envelope: { id: 'ch-res-complete' } }] });
+    // The matched total counts only rows the outcome filter kept.
+    const counted = readAgentInbox('nova', { result: 'failed', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+
+    // The same outcome narrows a channel transcript to its result receipts.
+    const channel = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') => {
+      const page = readAgentChannel('release', { result: outcome }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    expect(channel('complete')).toEqual(['ch-res-complete']);
+    expect(channel('failed')).toEqual(['ch-res-failed']);
+    expect(channel('reserved')).toEqual([]);
+    expect(channel('admitted')).toEqual([]);
+
+    // The outcome vocabulary is closed: anything outside WORK_RESULT_OUTCOMES
+    // refuses closed like the priority and delivery-kind enums.
+    for (const bad of ['bogus', 'released', 'completed', '', 'FAILED'] as const) {
+      expect(readAgentInbox('nova', { result: bad as never }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { result: bad as never }, options)).toMatchObject({ status: 'invalid' });
+    }
+  });
+});
+
 describe('sender-filtered inbox reads', () => {
   it('narrows an inbox page to one sender under every label of its identity', async () => {
     const options = setup();
