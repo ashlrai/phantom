@@ -58,6 +58,15 @@ const num = (flags: Map<string, string>, name: string): number => {
   if (!/^\d{1,15}$/.test(raw)) throw new UsageError('bad-number', `${name} must be a non-negative integer.`, `Pass the number printed by phm node join or pull.`);
   return Number(raw);
 };
+/** A measured integer bounded to [0, max] (--usage permille, --slots concurrency); the fix names the flag's own contract. */
+const bounded = (flags: Map<string, string>, name: string, max: number, unit: string | null, fix: string): number => {
+  const raw = need(flags, name);
+  const value = /^\d{1,15}$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value > max) {
+    throw new UsageError('bad-number', `${name} must be an integer 0-${max}${unit ? ` (${unit})` : ''}.`, fix);
+  }
+  return value;
+};
 
 function claimOf(flags: Map<string, string>): JobClaim {
   return { nodeId: need(flags, '--node'), session: num(flags, '--session'), jobId: need(flags, '--job'),
@@ -73,7 +82,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const owners = csv(need(flags, '--owner'));
       const caps = csv(flags.get('--caps'));
       const joined = nodes.join(need(flags, '--node'), { owners, caps,
-        ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}) });
+        ...(flags.has('--slots') ? { slots: bounded(flags, '--slots', 64, null, 'Pass how many jobs this node runs at once (0-64). Run: phm node --help') } : {}) });
       if (!joined) throw new UsageError('node-live', 'A live node already uses that ID.',
         'Pick another --node, wait for its lease to expire, or run phm node leave from that node.', 1);
       return { nodeId: joined.nodeId, session: joined.session, owners: [...new Set(owners)].sort(), caps: [...new Set(caps)].sort() };
@@ -84,15 +93,21 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         try { const raw = flags.get('--host-stats')!; hostStats = raw.length <= 128 * 1024 ? JSON.parse(raw) : null; } catch { hostStats = null; }
         if (!isHostStats(hostStats)) throw new UsageError('bad-host-stats', 'Host stats must be a numeric host observation.', 'Use the node worker to collect host stats.');
       }
-      const capacity: unknown = flags.has('--capacity') ? JSON.parse(flags.get('--capacity')!) : undefined;
-      if (capacity !== undefined && !isNodeCapacity(capacity)) throw new Error('Invalid node capacity sample');
+      let capacity: unknown;
+      if (flags.has('--capacity')) {
+        try { capacity = JSON.parse(flags.get('--capacity')!); }
+        catch { throw new UsageError('bad-capacity', '--capacity must be a JSON capacity sample.', 'Run: phm node measure and pass what it prints.'); }
+        if (!isNodeCapacity(capacity)) {
+          throw new UsageError('bad-capacity', '--capacity is not a valid capacity sample.', 'Run: phm node measure without --json and pass exactly what it prints.');
+        }
+      }
       const auth = flags.has('--probe-auth') ? probeAuth() : flags.get('--auth');
       if (auth !== undefined && !['ok', 'missing', 'unknown'].includes(auth)) {
         throw new UsageError('bad-auth', '--auth must be ok, missing or unknown.', 'Use --probe-auth to check this machine\'s own gh login.');
       }
-      const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
+      const usage = flags.has('--usage') ? bounded(flags, '--usage', 1000, 'permille', 'Report load in permille: 0 is idle, 1000 is full. Run: phm node --help') : undefined;
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: bounded(flags, '--slots', 64, null, 'Pass how many jobs this node runs at once (0-64). Run: phm node --help') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale;
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
