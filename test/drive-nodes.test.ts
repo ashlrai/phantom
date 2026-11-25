@@ -318,3 +318,24 @@ describe('release: decline versus retry (CLI + router)', () => {
     expect(() => executeNodeFleet('release', lease(claim), f.a)).toThrow();
   });
 });
+
+describe('pull session honesty', () => {
+  const pullArgs = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
+  it('answers no-job only to a live session; a dead one gets session-expired', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    // Live session, empty route: the honest "nothing for you" answer.
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toEqual({ pulled: false });
+    // Past the node TTL the same pull must not read as "no job": the session
+    // is gone and the node has to rejoin before it can hear about work.
+    f.advance(100);
+    expect(() => executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toThrowError(
+      expect.objectContaining({ code: 'session-expired', exit: 1 }));
+    // A rejoined node gets a new session; the replaced one stays refused.
+    const again = f.a.join('worker', { owners: ['o'], slots: 1 })!;
+    expect(again.session).not.toBe(worker.session);
+    expect(() => executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toThrowError(
+      expect.objectContaining({ code: 'session-expired' }));
+    expect(executeNodeFleet('pull', pullArgs('worker', again.session), f.a)).toEqual({ pulled: false });
+  });
+});
