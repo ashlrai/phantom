@@ -135,7 +135,8 @@ MCP page and a CLI page can never disagree about what a filter keeps:
 `id`/`inReplyTo` exact matches, `excludeFrom` (one sender identity dropped),
 `priority` (`P0`–`P3`), `kind` (one protocol-v1 body kind), `topic` (a topic
 name or namespace prefix such as `fleet.*`), `thread` (a v2 `note`/`context`
-label), `job` (one job id), `channel` (envelopes addressed to
+label), `bodyKind` (one exact kind discriminator — the same `busBodyKind`
+match every other bus read's body-kind filter applies), `job` (one job id), `channel` (envelopes addressed to
 `group:<name>:*` — one room's whole traffic under every topic, the same raw
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
 --channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
