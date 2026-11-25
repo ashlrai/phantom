@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-three sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -916,6 +916,25 @@
  *     so absence is proven rather than guessed; the jobs ledger is
  *     required evidence, not enrichment — withheld, every pick is
  *     'unknown' and nothing emits;
+ *   - the efficiency baseline's recurring ranked bottleneck cells:
+ *     the top-N `ranked` measured-cost items each hourly
+ *     ashlr.efficiency-hourly/v1 row of
+ *     <runs>/ledger/efficiency-hourly.jsonl carries — agent-session
+ *     full-suite test runs, per-session harness size, hosted-runner CI
+ *     wall time, worktree disk footprint and the exec-trace
+ *     build/install/rescan wall-time axes
+ *     (efficiencyBacklogItems below). Until now the ops-side ledger's
+ *     only readers were other ops rollups and its optional --report
+ *     baseline markdown — a report someone had to run and read — so a
+ *     bottleneck that stayed ranked never became work. A cell emits
+ *     only at three ranked sightings across two UTC days inside the
+ *     7-day window, only for the seven keys with a repo-side fix
+ *     surface (host-level cells, dispatch_paused — already owned by
+ *     the swapout fold — and the process-class install variant never
+ *     mint items), degraded writer rows never count toward recurrence,
+ *     and only the fleet's own repository inherits the items since the
+ *     journal describes this install's machinery and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1017,6 +1036,7 @@ import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
+import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2247,6 +2267,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // anything less folds to 'unknown'. The jobs ledger is required
   // evidence here, not enrichment: withheld, the source stays quiet.
   items.push(...await selectorPicksBacklogItems({ repo }));
+
+  // Efficiency baseline ranked bottleneck cells: the top-N `ranked`
+  // measured-cost items each hourly ashlr.efficiency-hourly/v1 row of
+  // ledger/efficiency-hourly.jsonl carries — the ops-side
+  // efficiency_hourly.py launchd job's own measurement ledger, until
+  // now read only by other ops rollups and its optional --report
+  // baseline markdown. A cell emits only at three ranked sightings
+  // across two UTC days inside the window, only for the seven keys
+  // with a repo-side fix surface, degraded writer rows never count,
+  // truncated tails fold lower-bound flagged, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's machinery and carries no repository column.
+  items.push(...await efficiencyBacklogItems({ repo }));
   return { items, errors };
 }
 
