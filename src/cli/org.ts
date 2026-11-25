@@ -2,10 +2,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
-import { joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
+import { initOrg, joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
 export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
-       phm org <show|join|plan> [--file <org.toml>] [--json]
+       phm org <show|join|plan|init> [--file <org.toml>] [--json]
   (no verb)                     The live organization as a fleet.org.v1 JSON tree: the leader, its planners (executor,
                                 Core orchestrator, main guardian, comms), each lane, each job with tier, age and goal.
                                 Every node has a provider, a model, a state (running, idle, held, done, unknown) and what it
@@ -21,7 +21,13 @@ export const ORG_USAGE = `Usage: phm org [--json] [--text] [--minutes N]
                                 Run on your own machine. Opts in only the lanes you name (share can only be lowered).
                                 Nothing is sent and no provider auth is read; sign in to your own CLIs here.
   plan [--queue <jobs.json>]    Propose queue assignments and agent roles within each member's contributed limits
-Default file: ~/.ashlr/org.toml (example: docs/examples/org.toml). Guide: docs/AGENT-NETWORK.md#team-org
+  init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]...
+                                Write a starter org.toml (default ~/.ashlr/org.toml, or --file)
+                                declaring <member> as leader (founder) of a new org on <machine>.
+                                A bare --lane declares share 100; =<share> sets 0-100. Refuses to
+                                overwrite an existing file. Add members, agents and lanes by editing
+                                the file; nothing is sent and no auth is read.
+Default file: ~/.ashlr/org.toml (create one with init, or use a copy of the leader's file). Guide: docs/AGENT-NETWORK.md#team-org
 
   With --json every failure prints {"schema":"org.error.v1","command","error":{"code","message"}}
   on stdout (code: usage | rejected | error) instead of "phm org: ..." on stderr; exit codes are unchanged.`;
@@ -111,10 +117,40 @@ export async function cmdOrg(argv: string[]): Promise<number> {
   try {
     const file = one(args, '--file') ?? orgFile();
     const [sub, ...rest] = args;
-    if (sub !== 'show' && sub !== 'join' && sub !== 'plan') {
+    if (sub !== 'show' && sub !== 'join' && sub !== 'plan' && sub !== 'init') {
       return orgUsage(json, 'org', typeof sub === 'string' && !sub.startsWith('-') ? `Unknown org command '${sub}'` : undefined);
     }
     command = sub;
+    if (sub === 'init') {
+      const member = one(rest, '--member'), machine = one(rest, '--machine'), name = one(rest, '--name');
+      const laneArgs = take(rest, '--lane');
+      noLeftovers(rest);
+      if (!member || !machine) throw new OrgError('init needs --member and --machine.');
+      // Same flag shape as join's --lane, except a bare lane declares the full share (100)
+      // and the share itself is bounded by the schema's 0-100, not a prior declaration.
+      const lanes = laneArgs.map((s) => {
+        const eq = s.indexOf('=');
+        if (eq >= 0 && s.indexOf('=', eq + 1) >= 0) throw new OrgError(`--lane takes <lane> or <lane>=<share>: '${s}'`);
+        const laneName = eq < 0 ? s : s.slice(0, eq);
+        const shareText = eq < 0 ? undefined : s.slice(eq + 1);
+        if (laneName === '') throw new OrgError(`--lane needs a lane name: '${s}'`);
+        const share = shareText === undefined ? 100 : Number(shareText);
+        if (shareText !== undefined && (shareText.trim() === '' || !Number.isFinite(share) || share < 0 || share > 100)) {
+          throw new OrgError(`--lane share must be a number from 0 to 100: '${s}'`);
+        }
+        return { lane: laneName, share };
+      });
+      const seenLanes = new Set<string>();
+      for (const l of lanes) {
+        if (seenLanes.has(l.lane)) throw new OrgError(`--lane ${l.lane} was given more than once.`);
+        seenLanes.add(l.lane);
+      }
+      const r = initOrg({ member, machine, ...(name === undefined ? {} : { name }), lanes }, file);
+      const m = r.org.members[0]!;
+      const laneText = m.contributions.length ? m.contributions.map((c) => `${c.lane} ${c.share}%`).join(', ') : 'none';
+      return print({ schema: 'org.init.v1', file: r.file, leader: r.org.leader, member: m.id, machine: m.machines[0]!.id, lanes: m.contributions },
+        `Wrote ${r.file}: ${r.org.leader} leads ${m.name} on ${m.machines[0]!.id} with lanes ${laneText}.\nEdit the file to add members, agents and lanes. Each machine opts in with:\n  phm org join --member ${m.id} --machine ${m.machines[0]!.id}${m.contributions.length ? ` --lane ${m.contributions.map((c) => c.lane).join(' --lane ')}` : ''} --json\nThe leader plans with: phm org plan --json`);
+    }
     const org = loadOrg(file);
     if (sub === 'show') {
       noLeftovers(rest);

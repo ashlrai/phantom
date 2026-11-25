@@ -89,7 +89,7 @@ describe('fleet_agent_inbox argument parsing', () => {
   it('maps every shared inbox filter onto the page fields', () => {
     const parsed = parseFleetAgentInboxArgs({
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
-      thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
+      thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
       since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
       inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
@@ -97,7 +97,7 @@ describe('fleet_agent_inbox argument parsing', () => {
     expect(parsed).toMatchObject({
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
       filters: {
-        thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot',
+        thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
         since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
         inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
@@ -110,7 +110,9 @@ describe('fleet_agent_inbox argument parsing', () => {
       { agent: 'a', extra: 1 }, { agent: 'a', root: '/tmp/fake' }, { agent: 'a', path: '/tmp/x' },
       { agent: 'a', cwd: '/tmp' }, { agent: 'a', runsDir: '/tmp' }, { agent: 'a', home: '/tmp' },
       { agent: 'a', thread: 'has space' }, { agent: 'a', thread: '' }, { agent: 'a', thread: 5 },
-      { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', job: 'has space' },
+      { agent: 'a', from: 5 }, { agent: 'a', excludeFrom: null }, { agent: 'a', with: 5 },
+      { agent: 'a', with: '' }, { agent: 'a', with: 'has space' }, { agent: 'a', with: 'x'.repeat(129) },
+      { agent: 'a', job: 'has space' },
       { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 }, { agent: 'a', id: 'x'.repeat(129) },
       { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 }, { agent: 'a', bodyKind: 'x'.repeat(129) },
@@ -187,12 +189,12 @@ describe('fleet_agent_inbox reader', () => {
     };
     await readFleetAgentInbox(parseFleetAgentInboxArgs({
       agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops',
-      thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
+      thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
     })!, { read });
     expect(seenPage).toMatchObject({
       since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops',
-      thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
+      thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
     });
   });

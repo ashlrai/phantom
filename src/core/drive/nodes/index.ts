@@ -269,6 +269,13 @@ export class DriveNodes implements QueueV1 {
     });
   }
 
+  /** Whether this exact session can still act right now. `pull` answers null for a
+   * dead session and for an empty route alike; a caller that must tell them apart
+   * asks here. */
+  sessionLive(session: NodeSession): boolean {
+    return this.transaction((state, now) => this.liveNode(state, session, now));
+  }
+
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
       ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],

@@ -612,6 +612,59 @@ describe('sender-filtered inbox reads', () => {
     expect(readAgentInbox('nova', { excludeFrom: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
   });
 
+  it('narrows an inbox page to the two-way exchange with one peer', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'relay', aliases: ['lane-relay'] }, options);
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova', 'relay'] }, options);
+    await sendDirectMessage({ from: 'relay', to: 'nova', text: 'relay dm', id: 'dm-r1' }, options);
+    await sendDirectMessage({ from: 'atlas', to: 'nova', text: 'atlas dm', id: 'dm-a1' }, options);
+    // Legacy traffic addressed to the bare handle is still the peer's direct mail.
+    expect(appendBusInbox({ id: 'leg-r1', from: 'relay', to: 'nova', priority: 'P3', ttl: 60_000,
+      body: { kind: 'note', text: 'legacy' } }, options).status).toBe('posted');
+    // A label-addressed handoff from the peer is direct mail too.
+    expect(appendBusInbox({ id: 'ho-r1', from: 'relay', to: 'agent:nova', priority: 'P1', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-DVL-BUS-9', prompt: 'take it' } }, options).status).toBe('posted');
+    // Room traffic never matches --with: the peer's channel post and a
+    // channel-addressed handoff both carry a group: to, not the peer.
+    await postChannelMessage({ from: 'relay', channel: 'release', text: 'relay post', id: 'ch-r1' }, options);
+    expect(appendBusInbox({ id: 'ho-ch', from: 'relay', to: 'group:release:general', priority: 'P1', ttl: 60_000,
+      body: { kind: 'worker-handoff', taskId: 'RQ-DVL-BUS-10', prompt: 'room handoff' } }, options).status).toBe('posted');
+    await postChannelMessage({ from: 'atlas', channel: 'release', text: 'atlas post', id: 'ch-a1' }, options);
+
+    // Every ref of the peer identity finds its direct mail under any spelling.
+    for (const ref of ['relay', 'lane-relay', 'agent:relay', stableAgentId('relay')]) {
+      const page = readAgentInbox('nova', { with: ref }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      expect(page.messages.map(m => m.envelope.id).sort()).toEqual(['dm-r1', 'ho-r1', 'leg-r1']);
+    }
+    const atlas = readAgentInbox('nova', { with: 'atlas' }, options);
+    expect(atlas.status === 'ok' && atlas.messages.map(m => m.envelope.id).sort()).toEqual(['dm-a1']);
+    // --from keeps the peer's room traffic too; --with keeps only the
+    // private exchange, so the two answer different questions.
+    const fromRelay = readAgentInbox('nova', { from: 'relay' }, options);
+    if (fromRelay.status !== 'ok') throw new Error('unreadable');
+    expect(fromRelay.messages.map(m => m.envelope.id).sort())
+      .toEqual(['ch-r1', 'dm-r1', 'ho-ch', 'ho-r1', 'leg-r1']);
+    // An unresolvable ref keeps exact-label matching and finds nothing.
+    expect(readAgentInbox('nova', { with: 'ghost' }, options)).toMatchObject({ status: 'ok', messages: [] });
+    for (const ref of ['Relay', 'LANE-RELAY', 'agent:Relay']) {
+      expect(readAgentInbox('nova', { with: ref }, options)).toMatchObject({ status: 'ok', messages: [] });
+    }
+    // --with composes with the delivery-kind and matched filters.
+    const handoffs = readAgentInbox('nova', { with: 'relay', kind: 'handoff' }, options);
+    expect(handoffs.status === 'ok' && handoffs.messages.map(m => m.envelope.id)).toEqual(['ho-r1']);
+    const counted = readAgentInbox('nova', { with: 'relay', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(3);
+    // The unfiltered page still sees everything the filter skipped.
+    const all = readAgentInbox('nova', {}, options);
+    expect(all.status === 'ok' && all.messages).toHaveLength(7);
+    // The same validation the sender filters apply.
+    expect(readAgentInbox('nova', { with: '' }, options)).toMatchObject({ status: 'invalid' });
+    expect(readAgentInbox('nova', { with: 'x'.repeat(129) }, options)).toMatchObject({ status: 'invalid' });
+  });
+
   it('validates the sender filter and still scans the whole store for nextCursor', async () => {
     const options = setup();
     register(options, 'atlas', 'nova');
