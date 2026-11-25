@@ -77,7 +77,12 @@ export interface Placement {
   mergesPerMTok: number | null;
   mergesPerHour: number | null;
   footprint: 'node' | 'fleet' | null;
-  /** When unplaced: why each node or candidate was rejected (counts). */
+  /** When unplaced: why each node or candidate was rejected (counts).
+   * `provider-not-in-job`/`model-not-in-job` count cost rows the job's own
+   * provider/model lists excluded before any node was tried (per cost row,
+   * like `provider-exhausted`); `no-costs`/`no-nodes` appear with count 1
+   * when the inputs held no usable cost rows or node documents at all, so an
+   * unplaced job never reports an empty map. */
   rejected?: Record<string, number>;
 }
 
@@ -142,8 +147,8 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
     type Cand = { state: NodeState; cost: HarnessModelCost; fp: HarnessFootprint; fpSource: 'node' | 'fleet'; load: number; p: number; perMTok: number; perHour: number };
     const cands: Cand[] = [];
     for (const cost of costs) {
-      if (job.providers && !job.providers.includes(cost.provider)) continue;
-      if (job.models && !job.models.includes(cost.model)) continue;
+      if (job.providers && !job.providers.includes(cost.provider)) { reject('provider-not-in-job'); continue; }
+      if (job.models && !job.models.includes(cost.model)) { reject('model-not-in-job'); continue; }
       if (exhausted.has(cost.provider)) { reject('provider-exhausted'); continue; }
       for (const state of states) {
         if (state.blocked) { reject(`node-${state.blocked}`); continue; }
@@ -162,6 +167,11 @@ export function planAutoscaleRoutes(input: RouterInput): Placement[] {
       }
     }
     if (!cands.length) {
+      // A job can be unplaceable before any (cost, node) pair is scored: the
+      // inputs may hold no usable cost rows or node documents at all. Name
+      // that rather than reporting an empty rejection map.
+      if (costs.length === 0) reject('no-costs');
+      if (states.length === 0) reject('no-nodes');
       plan.push({ jobId: job.id, nodeId: null, provider: null, model: null, score: null, mergeRate: null,
         mergesPerMTok: null, mergesPerHour: null, footprint: null, rejected });
       continue;
