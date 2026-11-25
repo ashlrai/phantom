@@ -24,6 +24,7 @@ export async function decideRoute(raw: unknown, sources: RouteSources, options: 
   const report = (decision: ReturnType<typeof candidateDecision>, path: RouteReport['path']): RouteReport => ({
     ...routeDecisionSchema.parse(decision), requested_mode: request.mode ?? null, schema: 'route.decision.v1', advisory: true, path,
     capacity: candidates.find(c => c.lane === decision.lane)?.capacity ?? null,
+    ...(() => { const label = candidates.find(c => c.lane === decision.lane)?.seat_label; return label ? { seat_label: label } : {}; })(),
     duration_ms: Math.round(performance.now() - started), attempts, candidate_count: candidates.length, local_models_refused,
   });
   const fallback = (): RouteReport => report(candidates[0] ? {

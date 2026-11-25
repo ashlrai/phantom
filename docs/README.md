@@ -62,6 +62,7 @@ Grok Bot routine integration: [Grok Bot resource lane](https://github.com/ashlra
 |-----------|-----------------|
 | Read provider-neutral bot metadata, dry-run plans and route explanations | [Phantom Bots](https://github.com/ashlrai/phantom/blob/master/docs/BOTS.md) |
 | Manage external bot seats: unified roster, quota-driven draining and write-ahead handoffs | [External bot seats](https://github.com/ashlrai/phantom/blob/master/docs/BOT-SEATS.md) |
+| See which subscriptions give included model capacity and which Google seat reaches Gemini 4 Neon | [Subscription capacity](https://github.com/ashlrai/phantom/blob/master/docs/SUBSCRIPTION-CAPACITY.md) |
 | Refresh the router catalog with discovery, review-only patches and weekly scheduling | [Router catalog refresh](https://github.com/ashlrai/phantom/blob/master/docs/ROUTER-CATALOG.md) |
 | Resolve append-union PR conflicts with dry-run proof, verified merge bundles and sanctioned publish plans | [Append-union PR conflict resolver](https://github.com/ashlrai/phantom/blob/master/docs/PR-CONFLICT-RESOLVER.md) |
 | Group CI failures read-only and plan guarded fixes or updates | [CI baseline analyzer](https://github.com/ashlrai/phantom/blob/master/docs/CI-BASELINE.md) |
