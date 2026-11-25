@@ -8,16 +8,14 @@
  */
 import { execFile } from 'node:child_process';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
-import { buildSlackBridgeStatus, slackInboundRequests } from '../agents/slack-status.js';
+import { slackInboundRequests } from '../agents/slack-status.js';
+import { loadAgentNetworkConfig } from '../agents/slack-network.js';
 import { readSlackJournal } from '../agents/slack-journal.js';
 import { bindSlackReplies } from '../agents/slack-reply-binding.js';
 import { readSlackSendReceipts } from '../agents/slack-send-receipts.js';
-import { ashlrHome } from '../cloud/store.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
 import { commsEnabled, readLastSend } from '../integrations/imessage.js';
-import { readPrivateFileCapped } from '../verse/preferences.js';
 
 export type ChannelName = 'slack' | 'imessage';
 export type ChannelState = 'LIVE' | 'DEGRADED' | 'BLOCKED' | 'UNKNOWN';
@@ -157,23 +155,21 @@ function pgrep(pattern: string): Promise<boolean | 'unknown'> {
 
 const isoOrNull = (ms: number): string | null => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 
-/** Slack sent-receipt `ts` is epoch seconds; the store prunes after expiry, so this is recent evidence only. */
-function slackReplyTimes(): string[] {
-  const read = readPrivateFileCapped(join(ashlrHome(), 'fleet', 'slack-transport', 'messages.json'), 1024 * 1024);
-  if (read === null) return [];
-  if (read.truncated) throw new Error('slack-receipts-unreadable');
-  const data = JSON.parse(read.text) as { messages?: Record<string, { state?: string; ts?: string }> };
-  const out: string[] = [];
-  for (const receipt of Object.values(data.messages ?? {})) {
-    const at = receipt?.state === 'sent' && typeof receipt.ts === 'string' ? isoOrNull(Number(receipt.ts) * 1000) : null;
-    if (at) out.push(at);
-  }
-  return out;
+type SlackSnapshot = {
+  journal: ReturnType<typeof readSlackJournal>;
+  sends: ReturnType<typeof readSlackSendReceipts>;
+};
+
+function slackReplyTimes(sends: SlackSnapshot['sends']): string[] {
+  if (sends.state === 'degraded') throw new Error('slack-receipts-unreadable');
+  return sends.receipts.flatMap((receipt) => {
+    const at = receipt.state === 'sent' && receipt.ts ? isoOrNull(Number(receipt.ts) * 1000) : null;
+    return at ? [at] : [];
+  });
 }
 
 /** Slack journal rows -> inbound evidence. Only ids/outcomes survive; text, authors and error payloads never reach this surface. */
-function slackInboundEvidence(runsDir?: string): InboundEvidence {
-  const journal = readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 });
+function slackInboundEvidence(journal: SlackSnapshot['journal']): InboundEvidence {
   if (journal.state === 'degraded') return { store: 'unreadable', rows: [] };
   if (journal.state === 'missing') return { store: 'missing', rows: [] };
   return {
@@ -191,12 +187,10 @@ function slackInboundEvidence(runsDir?: string): InboundEvidence {
  * id-less legacy) is reported unanswered so nothing is claimed answered
  * without a receipt.
  */
-function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBindingEvidence {
+function slackReplyBinding({ journal, sends }: SlackSnapshot, now: Date): ReplyBindingEvidence {
   const empty = { answeredAt: [], unansweredAt: [], futureDated: 0 };
-  const journal = readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 });
   if (journal.state === 'missing') return { store: 'missing', ...empty };
   if (journal.state === 'degraded') return { store: 'unreadable', ...empty };
-  const sends = readSlackSendReceipts();
   // A missing send store means nothing was sent (every request unanswered);
   // a degraded one could hide receipts, so it never certifies coverage.
   if (sends.state === 'degraded') return { store: 'unreadable', ...empty };
@@ -219,29 +213,34 @@ function slackReplyBinding(runsDir: string | undefined, now: Date): ReplyBinding
 }
 
 export function defaultChannelSources(runsDir?: string): Record<ChannelName, ChannelSource> {
+  let captured: SlackSnapshot | undefined;
+  const snapshot = (): SlackSnapshot => captured ??= {
+    journal: readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 }),
+    sends: readSlackSendReceipts(),
+  };
   return {
     slack: {
       configMissing: () => {
-        const status = buildSlackBridgeStatus(runsDir ? { runsDir } : {});
+        const config = loadAgentNetworkConfig();
         const missing: string[] = [];
-        if (status.config.state !== 'ok') missing.push('slack agent-network config');
-        else if (status.slackSection !== 'ok') missing.push('slack config section');
+        if (config.state !== 'ok') missing.push('slack agent-network config');
+        else if (!config.slack || config.slack === 'invalid') missing.push('slack config section');
         else {
-          if (status.credentials.botTokenRef === null) missing.push('slack bot token reference');
-          if (status.credentials.appTokenRef === null) missing.push('slack app token reference');
-          if (status.mappings.length === 0) missing.push('slack channel mapping');
+          if (config.slack.botTokenRef === undefined) missing.push('slack bot token reference');
+          if (config.slack.appTokenRef === undefined) missing.push('slack app token reference');
+          if (config.slack.map.length === 0) missing.push('slack channel mapping');
         }
         return missing;
       },
       processAlive: () => pgrep('channels slack run'),
       inbound: () => {
-        const evidence = slackInboundEvidence(runsDir);
+        const evidence = slackInboundEvidence(snapshot().journal);
         if (evidence.store !== 'ok') throw new Error('slack-journal-unreadable');
         return evidence.rows.map((r) => r.at);
       },
-      inboundEvidence: () => slackInboundEvidence(runsDir),
-      replies: slackReplyTimes,
-      replyBinding: (now) => slackReplyBinding(runsDir, now),
+      inboundEvidence: () => slackInboundEvidence(snapshot().journal),
+      replies: () => slackReplyTimes(snapshot().sends),
+      replyBinding: (now) => slackReplyBinding(snapshot(), now),
     },
     imessage: {
       configMissing: () => (commsEnabled(loadConfigReadOnlyStrict()) ? [] : ['imessage comms configuration']),
