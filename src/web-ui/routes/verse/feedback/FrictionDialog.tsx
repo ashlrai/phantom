@@ -14,7 +14,7 @@ interface RequestHistoryItem {
   ageSeconds: number;
   status: string;
   fate?: { fate: 'ingested' | 'rejected'; queued: boolean } | null;
-  prUrl?: string | null;
+  pr: { url: string; state: 'open' | 'merged' | 'closed' | null } | null;
 }
 
 type ChangeRequestResponse =
@@ -162,7 +162,7 @@ export default function FrictionDialog({ surface, description, setDescription, o
           : requests === null ? <p>Loading requests…</p>
             : requests.length === 0 ? <p>No requests yet.</p>
               : <ul>{requests.map((request) => {
-                const prUrl = safePrUrl(request.prUrl);
+                const prUrl = safePrUrl(request.pr?.url);
                 const status = request.fate?.queued ? 'queued' : request.fate?.fate ?? request.status;
                 return <li key={request.jobId}>
                   <span>{request.surface}</span>
@@ -172,6 +172,7 @@ export default function FrictionDialog({ surface, description, setDescription, o
                     event.preventDefault();
                     window.open(prUrl, '_blank', 'noopener,noreferrer');
                   }}>Open pull request</a>}
+                  {prUrl && request.pr?.state && <span>{request.pr.state}</span>}
                 </li>;
               })}</ul>}
       </section>

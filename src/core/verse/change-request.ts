@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
+import { lstat, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   countQueuedDropJobPrompts,
@@ -13,11 +13,18 @@ import {
   writeDropJob,
 } from '../fleet/drop-job-writer.js';
 import { readDropJobFates, type DropJobFate } from '../fleet/drop-job-fate.js';
+import { ledgerJobId, ledgerPhase, ledgerPrUrl } from '../fleet/empty-cause.js';
+import { ledgerLifecycleEvent, ledgerOutcomeState } from '../fleet/jobs-ledger-dialect.js';
+import { parsePublishResult } from '../fleet/job-state.js';
+import { readSource } from '../fleet/runs-parked-queue.js';
 import { frictionFeedbackDir, parseFrictionFlag } from './feedback-queue.js';
 import { triageFeedback } from '../fleet/feedback-triage.js';
 
 export interface ChangeRequestStatusRow { v: 1; id: string; jobId: string; surface: string; createdAt: string; status: 'queued'; }
-export interface ChangeRequestListItem extends ChangeRequestStatusRow { ageSeconds: number; fate: DropJobFate | null; }
+type ChangeRequestPr = { url: string; state: 'open' | 'merged' | 'closed' | null };
+export interface ChangeRequestListItem extends ChangeRequestStatusRow {
+  ageSeconds: number; fate: DropJobFate | null; pr: ChangeRequestPr | null;
+}
 export interface ChangeRequestDeps { statusRoot?: string; runsRoot?: string; now?: () => number; }
 
 export type ChangeRequestResult =
@@ -27,6 +34,8 @@ export type ChangeRequestResult =
   | { status: 'refused'; reason: string };
 
 const MAX_STATUS_READ_BYTES = 256 * 1024;
+const JOB_LEDGER_TAIL_BYTES = 2 * 1024 * 1024;
+const PUBLISH_TAIL_BYTES = 64 * 1024;
 const STATUS_ROW_LIMIT = 20;
 const CHANGE_REQUEST_ID = /^UIREQ[A-F0-9]{12}$/;
 const SURFACE = /^[a-z][a-z0-9-]{0,63}$/;
@@ -134,6 +143,48 @@ export async function submitChangeRequest(input: unknown, deps: ChangeRequestDep
   });
   return { status: 'queued', jobId };
 }
+
+function phantomPrUrl(value: string | null): string | null {
+  return /^https:\/\/github\.com\/ashlrai\/phantom\/pull\/\d+\/?$/.exec(value ?? '')?.[0].replace(/\/$/, '') ?? null;
+}
+
+async function readRequestPrs(root: string, jobIds: ReadonlySet<string>): Promise<Map<string, ChangeRequestPr>> {
+  const prs = new Map<string, ChangeRequestPr>();
+  const isDirectory = async (path: string) => (await lstat(path).catch(() => null))?.isDirectory() ?? false;
+  if (!await isDirectory(root)) return prs;
+  const metrics = join(root, 'metrics');
+  const ledger = await isDirectory(metrics) ? (await readSource(join(metrics, 'jobs.jsonl'), JOB_LEDGER_TAIL_BYTES, true)).text : '';
+  const published = new Map<string, string>();
+  const resolved = new Map<string, string>();
+  const states = new Map<string, ChangeRequestPr['state']>();
+  for (const line of ledger.split('\n')) {
+    let value: unknown;
+    try { value = JSON.parse(line); } catch { continue; }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const url = phantomPrUrl(ledgerPrUrl(row));
+    if (!url) continue;
+    const jobId = ledgerJobId(row);
+    const phase = ledgerPhase(row);
+    const event = ledgerLifecycleEvent(row, phase);
+    const outcome = ledgerOutcomeState(row, event, phase);
+    if (outcome === 'OPEN' || outcome === 'MERGED' || outcome === 'CLOSED') {
+      if (states.get(url) !== 'merged') states.set(url, outcome === 'OPEN' ? 'open' : outcome === 'MERGED' ? 'merged' : 'closed');
+      if (jobId && jobIds.has(jobId)) resolved.set(jobId, url);
+    } else if (event === 'publish' && jobId && jobIds.has(jobId)) {
+      published.set(jobId, url);
+    }
+  }
+  await Promise.all([...jobIds].map(async (jobId) => {
+    const receipt = await readSource(join(root, `${jobId}.publish`), PUBLISH_TAIL_BYTES, true);
+    const { result } = parsePublishResult(receipt.text);
+    const receiptUrl = result?.kind === 'pr' ? phantomPrUrl(result.url) : null;
+    const url = receiptUrl ?? published.get(jobId) ?? resolved.get(jobId);
+    if (url) prs.set(jobId, { url, state: states.get(url) ?? null });
+  }));
+  return prs;
+}
+
 export async function listChangeRequests(deps: ChangeRequestDeps = {}): Promise<ChangeRequestListItem[]> {
   const now = deps.now ?? Date.now;
   const nowMs = now();
@@ -144,11 +195,15 @@ export async function listChangeRequests(deps: ChangeRequestDeps = {}): Promise<
     .map(({ row }) => row);
   if (recent.length === 0) return [];
   const root = resolveDropJobRoot(deps.runsRoot);
-  const { fates } = await readDropJobFates({ runsRoot: root, limit: 50, now });
+  const [{ fates }, prs] = await Promise.all([
+    readDropJobFates({ runsRoot: root, limit: 50, now }),
+    readRequestPrs(root, new Set(recent.map((row) => row.jobId))),
+  ]);
   const fatesById = new Map(fates.map((fate) => [fate.id, fate]));
   return recent.map((row) => ({
     ...row,
     ageSeconds: Math.max(0, Math.floor((nowMs - Date.parse(row.createdAt)) / 1000)),
     fate: fatesById.get(row.id) ?? null,
+    pr: prs.get(row.jobId) ?? null,
   }));
 }
