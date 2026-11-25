@@ -1,3 +1,5 @@
+import { anthropicVersionHeaders } from '../../run/model-catalog.js';
+
 // https://platform.claude.com/docs/en/api/beta/organization/cost_report/retrieve
 // Daily buckets; amounts are decimal cents, not dollars. No provider text leaves custody.
 export const ANTHROPIC_COST_WORKER = String.raw`
@@ -19,7 +21,7 @@ export const ANTHROPIC_COST_WORKER = String.raw`
       url.searchParams.set('limit', '31');
       if (page) url.searchParams.set('page', page);
       const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(10000),
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', Accept: 'application/json' } });
+        headers: { 'x-api-key': key, ...${JSON.stringify(anthropicVersionHeaders('anthropic'))}, Accept: 'application/json' } });
       if (!response.ok) return null;
       const text = await response.text();
       if (text.length > 1048576) return null;
