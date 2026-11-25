@@ -4,6 +4,9 @@ import { slackTraceRowsToWorkItems, type SlackTraceClaim } from '../core/comms/s
 import { classifyWorkItem } from '../core/comms/work-item-state.js';
 import { claimNoticeDir, claimNoticePaths, readClaimThreadBindings } from '../core/fleet/claim-notice-send.js';
 import { readFleetBoard } from '../core/fleet/coordination.js';
+import { scrubSecrets } from '../core/util/scrub.js';
+
+const safeDisplay = (value: string): string => scrubSecrets(value).replace(/[\r\n\p{Cc}\p{Zl}\p{Zp}]/gu, ' ');
 
 const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack channel id>] [--message <ts>] [--work-state] [--json]';
 
@@ -119,15 +122,18 @@ export async function cmdFleetSlackTrace(
     else if (row.outcome === 'bus-failed') counts.busFailed++;
     else counts.unanswered++;
   }
-  let outRows: Array<(typeof rows)[number] & { state?: string; stateAsOf?: string; stateMissing?: string[] }> = rows;
+  let outRows: Array<(typeof rows)[number] & { state?: string; stateAsOf?: string; stateMissing?: string[]; stateOwner?: string; stateSource?: string }> = rows;
   if (workState) {
     let claims: readonly SlackTraceClaim[] = [];
     // An unreadable claim store means no claim evidence: rows stay RECEIVED, never ASSIGNED.
     try { claims = readClaims(); } catch { claims = []; }
     const items = slackTraceRowsToWorkItems(rows, claims);
     outRows = rows.map((row, i) => {
-      const c = classifyWorkItem(items[i]!, collected.asOf);
-      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: c.missing };
+      const item = items[i]!;
+      const c = classifyWorkItem(item, collected.asOf);
+      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: c.missing,
+        ...(c.state === 'ASSIGNED' && item.owner ? { stateOwner: safeDisplay(item.owner) } : {}),
+        stateSource: safeDisplay(c.source) };
     });
   }
   const trace = { ...collected, rows: outRows, counts, scope, collectionScope };
@@ -141,7 +147,7 @@ export async function cmdFleetSlackTrace(
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
         `${row.outcome.toUpperCase()}${row.evidence === 'unverified' ? ' (reply identity unverified)' : ''}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}` +
-        `${row.state !== undefined ? ` state=${row.state} missing=${row.stateMissing?.length ? row.stateMissing.join(',') : 'none'}` : ''}`);
+        `${row.state !== undefined ? ` state=${row.state} owner=${row.stateOwner ?? 'unknown'} source=${row.stateSource} missing=${row.stateMissing?.length ? row.stateMissing.join(',') : 'none'}` : ''}`);
     }
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
