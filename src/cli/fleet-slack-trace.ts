@@ -9,7 +9,7 @@ const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack 
 
 /**
  * Read-only per-request trace: ingress receipt to same-thread reply outcome.
- * Exit 0 requires both sources ok, at least one request, and every row both
+ * Exit 0 requires both sources ok, no omitted journal observations, at least one request, and every row both
  * `answered` and carrying durable bus ingress evidence (`ingress !== 'unknown'`,
  * the same join fleet slack-evidence enforces). `answered` is reply transport
  * evidence only; it never proves RUNNING/VERIFIED task execution. Output is
@@ -137,6 +137,10 @@ export async function cmdFleetSlackTrace(
     console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends}) ` +
       `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}` +
       `${message !== undefined ? ` message=${message}` : ''}; ${scope}`);
+    if (trace.projectionOmitted === true) {
+      console.log('Incomplete coverage: journal projection omitted observations; counts cover returned rows only. ' +
+        'Selected filters cannot establish complete coverage; verification unsuccessful.');
+    }
     if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
@@ -146,6 +150,6 @@ export async function cmdFleetSlackTrace(
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
   // An answered row whose ingress is unknown has reply evidence but no bus receipt for the request itself; refuse it.
-  return clean && trace.rows.length > 0 &&
+  return clean && trace.projectionOmitted !== true && trace.rows.length > 0 &&
     trace.rows.every((row) => row.outcome === 'answered' && row.ingress !== 'unknown') ? 0 : 1;
 }
