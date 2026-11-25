@@ -16,8 +16,8 @@ import {
   BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, type BusWorkFeedViewFilters,
 } from './bus-work-feed-read.js';
 import {
-  PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS,
-  type WorkDispatch, type WorkJob,
+  PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS,
+  type WorkDispatch, type WorkJob, type WorkResultOutcome,
 } from './bus-v2-schema.js';
 
 /** Raw query values as `URLSearchParams.get` returns them; absent keys are undefined. */
@@ -34,6 +34,8 @@ export interface BusWorkFeedQueryInput {
   before?: string;
   contains?: string;
   channel?: string;
+  /** Newest `work.result` citation outcome to keep; one of WORK_RESULT_OUTCOMES. */
+  result?: string;
   open?: string;
   claimable?: string;
   /** Newest-first page bound applied after the filters; absent means the whole filtered view. */
@@ -61,7 +63,9 @@ const invalid = (error: string): BusWorkFeedQuery => ({ ok: false, error });
  * window — and `contains` takes a non-empty needle of at most
  * `BUS_WORK_FEED_CONTAINS_MAX` characters, and `channel` takes the strict
  * bus channel-name grammar — a raw `group:<channel>:` prefix match on the
- * announcement address, never a registry-dependent guess. `limit` is the
+ * announcement address, never a registry-dependent guess. `result` keeps
+ * jobs whose newest `work.result` citation carries that outcome — one of the
+ * `WORK_RESULT_OUTCOMES` codes — and `limit` is the
  * page bound `sliceBusWorkFeedView` applies after the filters — an integer
  * in 1..BUS_WORK_FEED_LIMIT_MAX, absent meaning the whole filtered view.
  */
@@ -132,6 +136,14 @@ export function parseBusWorkFeedQuery(
       return invalid('channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
     }
     filters.channel = input.channel;
+  }
+  if (input.result !== undefined) {
+    // The same outcome enum the work.result body schema enforces — a value
+    // outside it is a usage error, never a silent empty view.
+    if (!(WORK_RESULT_OUTCOMES as readonly string[]).includes(input.result)) {
+      return invalid(`result takes one of ${WORK_RESULT_OUTCOMES.join(', ')}.`);
+    }
+    filters.result = input.result as WorkResultOutcome;
   }
   if (open === true) filters.open = true;
   if (claimable === true) filters.claimable = true;

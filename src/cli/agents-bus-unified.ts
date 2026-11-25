@@ -9,7 +9,7 @@ import {
   readAgentChannel, readAgentInbox, readAgentWakes, readAllWakes, readBusEnvelopeById, sendDirectMessage, sendHandoff, sendWakeRequest,
   updateWorkStatus, INBOX_KINDS, type AllWakesPage, type BusEnvelopeLookupJob, type InboxKind, type UnifiedBusOptions, type WakePage, type WorkStatusInput,
 } from '../core/agents/bus-unified.js';
-import { PROVIDERS, providerSchema, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob } from '../core/agents/bus-v2-schema.js';
+import { PROVIDERS, providerSchema, WORK_RESULT_OUTCOMES, WORK_STATUSES, WORK_TIERS, parseClaimKey, type WorkDispatch, type WorkJob, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher, busWorkFeedRepoKey, BUS_WORK_FEED_CONTAINS_MAX, BUS_WORK_FEED_LIMIT_MAX, formatBusWorkFeed, formatBusWorkFeedJob, projectBusWorkFeedView, readBusWorkFeed, sliceBusWorkFeedView } from '../core/agents/bus-work-feed-read.js';
 import { attachBusCliSession, busAgentView, detectBusCli, frameBusChannelRead, frameBusInbox, listBusCliAdapters } from '../core/agents/bus-cli-adapters.js';
 import { busClaimExitCode, claimBusWorkJob, executeBusClaimBody, listBusClaims, newBusClaimOpId,
@@ -54,7 +54,7 @@ ashlr agents bus work post --job <id> --title <text> --repo <owner/name> [--clai
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [--detail <text>] [--to <label>]
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
-ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
+ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
 ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
@@ -253,7 +253,11 @@ filters, and a secret-shaped value stays unfindable. --limit pages the
 filtered view newest-first (1..200) and reports matched as the true
 filtered total before the cap and omitted as the rest, with claims holds
 regrouped under the shown jobs only — the same page fleet_work_feed's
-limit argument and work-feed?limit= serve. A job line
+limit argument and work-feed?limit= serve. --result keeps only jobs whose
+newest retained work.result citation carries that outcome — reported
+evidence that never moved the job's status, so a complete result on a
+still-running job is the divergence it surfaces, and a job with no result
+never matches. A job line
 also cites the newest retained work.result receipt — the outcome a
 worker reported with its receipt id — as evidence only: it never moves
 the job's status, which only the announcer's work.status does. work claim
@@ -421,6 +425,7 @@ const VALUE_FLAGS = new Set(['--from', '--to', '--text', '--priority', '--thread
   '--model', '--alias', '--display', '--member', '--agent', '--topic', '--task', '--prompt', '--after', '--limit',
   '--frame', '--since', '--before', '--root', '--key', '--owner', '--origin', '--lease-ms', '--token', '--outcome', '--reason',
   '--job', '--title', '--repo', '--claim', '--tier', '--scope', '--acceptance', '--status', '--detail', '--ref',
+  '--result',
   '--kind', '--channel', '--contains', '--exclude-from', '--exclude-owner', '--reply-to', '--in-reply-to', '--body-kind']);
 const MULTI = new Set(['--alias', '--member', '--claim', '--ref']);
 const BOOL_FLAGS = new Set(['--json', '--wake', '--no-wake', '--claims', '--open', '--claimable', '--jobs', '--matched', '--all']);
@@ -917,6 +922,12 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       if (contains !== undefined && (contains.trim() === '' || contains.length > BUS_WORK_FEED_CONTAINS_MAX)) {
         throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_WORK_FEED_CONTAINS_MAX} characters.`);
       }
+      const resultRaw = one('--result');
+      const resultOutcome = resultRaw === undefined ? undefined
+        : WORK_RESULT_OUTCOMES.find(item => item === resultRaw) as WorkResultOutcome | undefined;
+      if (resultRaw !== undefined && resultOutcome === undefined) {
+        throw new UsageError(`--result must be one of ${WORK_RESULT_OUTCOMES.join(', ')}.`);
+      }
       const limitRaw = one('--limit');
       const limit = limitRaw === undefined ? undefined : integer(limitRaw, '--limit');
       if (limit !== undefined && (limit < 1 || limit > BUS_WORK_FEED_LIMIT_MAX)) {
@@ -928,7 +939,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
         readBusWorkFeed({ root: options.root, claims: p.bools.has('--claims') || claimable || open }),
         { status: status as WorkJob['status'] | undefined, jobId, repo,
           provider: providerRaw as WorkJob['provider'] | undefined, tier,
-          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), before: beforeArg(), contains, channel,
+          open: open || undefined, claimable: claimable ? true : undefined, since: sinceArg(), before: beforeArg(), contains, channel, result: resultOutcome,
           toMatch: to === undefined ? undefined : busWorkFeedPendingToMatcher(to, { root: options.root }),
           ownerMatch: owner === undefined ? undefined : busWorkFeedOwnerMatcher(owner, { root: options.root }) });
       const paged = limit === undefined ? result : sliceBusWorkFeedView(result, limit);
