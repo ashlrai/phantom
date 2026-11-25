@@ -16,6 +16,20 @@ hub (M1–M20). Entries below detail each milestone; dates are merge dates into 
 
 ---
 
+## [3.30.74](https://github.com/ashlrai/phantom/compare/v3.30.73...v3.30.74) (2026-11-25)
+
+
+### Fixes
+
+* **ci:** clear current-master release blockers ([#8771](https://github.com/ashlrai/phantom/issues/8771)) ([4ec1e0c](https://github.com/ashlrai/phantom/commit/4ec1e0ce36b4a84c950675f902d44c626b4de26b))
+* **release:** dispatch release gate after exact-SHA push CI is green ([#8766](https://github.com/ashlrai/phantom/issues/8766)) ([d0635be](https://github.com/ashlrai/phantom/commit/d0635be6035f8b6e390280857765b548fc151a4c))
+
+
+### Changes
+
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795562135-N17:** ([#8763](https://github.com/ashlrai/phantom/issues/8763)) ([b3ba0b8](https://github.com/ashlrai/phantom/commit/b3ba0b801cb5ccc9e536eb4f4076a31e40122d10))
+* **RQ-DEVINCLOUD-RQ-DVL-BUS-1795565460-N17:** ([#8770](https://github.com/ashlrai/phantom/issues/8770)) ([527c13e](https://github.com/ashlrai/phantom/commit/527c13e9a2725ce22ed34ada5866ab67f4f1ef99))
+
 ## [Unreleased]
 
 ### Since v3.30.40
