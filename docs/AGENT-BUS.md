@@ -2332,7 +2332,10 @@ HTTP with the feed CLIs' filter parameters (read session required;
 The Fleet world shows live local bus messages as directional links. Run
 `phm fleet edges --json` for the same `fleet.edges.v1` projection. Each edge
 contains routing labels, a message count and the latest receipt time; it never
-includes message bodies. Provider labels come from sender metadata observed on
+includes message bodies. `--window-minutes <1..1440>` keeps only edges whose
+receipts fall inside the trailing window — the same bound the org map's
+`minutes` parameter applies — and `--root <absolute>` reads a non-default
+fleet store like the other fleet bus reads. Provider labels come from sender metadata observed on
 live receipts. A missing or conflicting provider is `null` (unknown). Labels
 are not authenticated identities. Broadcasts to `leaders`, human/external
 messages, self-messages, dead-letter notices filed to `bus.dead-letter` and
