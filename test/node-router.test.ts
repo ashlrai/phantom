@@ -258,6 +258,30 @@ describe('phm node CLI', () => {
     expect(JSON.parse(stale.out).error.fix).toContain('phm node join');
   });
 
+  it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // No pool config exists here: argument-free join must reach the standalone
+    // parser's missing-flag error, never the multi-Mac pool's SSH-alias error.
+    const bare = await cli('join');
+    expect(bare.code).toBe(2);
+    expect(bare.err).toContain('--owner is required');
+    expect(bare.err).not.toContain('--primary');
+    const json = await cli('join', '--json');
+    expect(json.code).toBe(2);
+    expect(JSON.parse(json.out).error).toMatchObject({ code: 'missing-flag' });
+  });
+
+  it('reports usage for bare and unknown node verbs instead of the bootstrap error', async () => {
+    const bare = await cli();
+    expect(bare.code).toBe(2);
+    expect(bare.err).toContain('phm node --help');
+    expect(bare.err).not.toContain('bootstrap');
+    const bogus = await cli('frobnicate');
+    expect(bogus.code).toBe(2);
+    expect(bogus.err).toContain("Unknown node command 'frobnicate'");
+  });
+
   it('keeps bootstrap and help working', async () => {
     expect((await cli('--help')).out).toContain('Usage: phm node bootstrap --dry-run');
     expect((await cli('--help')).out).toContain('phm node pull');

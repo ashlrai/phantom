@@ -33,8 +33,13 @@ export async function cmdNode(args: string[]): Promise<number> {
   if (args[0] === 'light' && !args.includes('--help') && !args.includes('-h')) {
     return (await import('./node-light.js')).cmdNodeLight(args.slice(1));
   }
+  // Only first pool enrollment (`--primary`) must bypass the standalone parser:
+  // --primary/--backup are not node-fleet flags. Every other join form — bare,
+  // --json-only or explicit — reaches cmdNodeFleet, which delegates to the pool
+  // only when a pool config exists and otherwise answers with the standalone
+  // registry's own usage error.
   if (!args.includes('--help') && !args.includes('-h') &&
-      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && (args.includes('--primary') || args.slice(1).every(a => a === '--json'))))) {
+      (['pool', 'rpc', 'watch', 'worker'].includes(args[0] ?? '') || (args[0] === 'join' && args.includes('--primary')))) {
     return (await import('./node-pool.js')).cmdNodePool(args[0]!, args.slice(1));
   }
   if ((args[0] === 'capacity' || args[0] === 'route') && !args.includes('--help') && !args.includes('-h')) {
@@ -88,20 +93,26 @@ phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would 
   if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));
   const json = args.includes('--json');
   const flags = args.slice(1);
-  if (args[0] !== 'bootstrap' || !flags.includes('--dry-run') ||
-      flags.some((flag) => flag !== '--dry-run' && flag !== '--json') ||
-      new Set(flags).size !== flags.length) {
-    const error = `Node bootstrap is dry-run only. ${USAGE}`;
-    if (json) console.log(JSON.stringify({ error, executable: false }));
-    else console.error(error);
-    return 2;
+  const bootstrap = args[0] === 'bootstrap';
+  const dryRun = flags.includes('--dry-run') &&
+    flags.every((flag) => flag === '--dry-run' || flag === '--json') &&
+    new Set(flags).size === flags.length;
+  if (bootstrap && dryRun) {
+    const plan = nodeBootstrapPlan();
+    if (json) console.log(JSON.stringify(plan));
+    else {
+      console.log('Node bootstrap plan (dry-run only; registry integration is a stub).');
+      console.log(`Template: ${plan.template}`);
+      plan.steps.forEach((step, index) => console.log(`${index + 1}. ${step}`));
+    }
+    return 0;
   }
-  const plan = nodeBootstrapPlan();
-  if (json) console.log(JSON.stringify(plan));
-  else {
-    console.log('Node bootstrap plan (dry-run only; registry integration is a stub).');
-    console.log(`Template: ${plan.template}`);
-    plan.steps.forEach((step, index) => console.log(`${index + 1}. ${step}`));
-  }
-  return 0;
+  // Only `bootstrap --dry-run` is a valid leftover. Bare `phm node`, stray
+  // flags and unknown verbs get the command list, never bootstrap's contract.
+  const error = bootstrap ? `Node bootstrap is dry-run only. ${USAGE}`
+    : args.length === 0 || args[0]!.startsWith('-') ? 'Usage: phm node <command> [arguments] [--json]. Run: phm node --help for the command list.'
+    : `Unknown node command '${args[0]}'. Run: phm node --help`;
+  if (json) console.log(JSON.stringify(bootstrap ? { error, executable: false } : { error }));
+  else console.error(error);
+  return 2;
 }
