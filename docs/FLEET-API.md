@@ -209,6 +209,26 @@ PR's `updatedAt`. A stale branch is `mergeStateStatus` `BEHIND`; `DIRTY`
 counts as a conflict just like `mergeable: CONFLICTING`. An unparseable or
 future timestamp stays `null` — unknown, never guessed.
 
+For revision-pinned triage, supply optional top-level `preparations` (results
+from [lookahead preparation](FLEET-MERGE-BATCH.md#local-lookahead-preparation))
+and queue rows with `revision: {repo, headSha, baseSha, predecessors?, mergeGroupSha?}`.
+Use full commit SHAs and ordered `predecessors: [{number, headSha}]` (`[]` means
+known empty). Supply `checksRevision` in the same shape for the observed required
+checks. Checks are attributed only to the exact current merge group, never to a
+PR-head success. Missing, ambiguous or mismatched check pins produce unknown
+checks. Snapshots without any revision fields or preparations keep legacy triage.
+
+In a revision-pinned snapshot, `stall` and `stallEvidence` distinguish
+`base_movement` (same head and predecessor pins, changed target SHA),
+`stack_wait` (matching deferred preparation), `content_conflict` (matching
+local rehearsal conflict), `check_failure` (current required check actually
+failed), and `unknown`. A preparation must match the observed ordered predecessor
+list. Prep evidence takes precedence for the stall label but does not hide a
+current check failure. The label contributes to `causes` and `oldestActionable`,
+not to merge authorization. Compare matched cohorts by repo and task class:
+manual recuts per 100 queued PRs and p90 post-CI wait for eligible PRs. Report
+denominators and unknowns separately; never count a stale receipt as green.
+
 A conflicting active entry also lands in `retryable_conflicts` with the
 `recut` request the existing merge-queue recut path enqueues once per head:
 the shared `RQ-RECUT-<repo>-<pr>-<sha7>` idempotency key means a repeat

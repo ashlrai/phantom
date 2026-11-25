@@ -2017,6 +2017,13 @@ No merge, publish, send or scheduler authority is added. The full limits,
 dedupe, protected-scope and failure contract is in the
 [feedback pipeline contract](docs/contracts/CONTRACT-RQ-GROK-FEEDBACKLOOP-1.md).
 
+## Fleet merge queue snapshots
+
+The `mergeQueueAge(input, now?)` snapshot API and optional revision pins are
+specified in [Merge queue age from a snapshot](docs/FLEET-API.md#merge-queue-age-from-a-snapshot).
+The `prepareMergeQueue` result contract is in
+[Local lookahead preparation](docs/FLEET-MERGE-BATCH.md#local-lookahead-preparation).
+
 ## Fleet chief-of-staff v1
 
 `src/core/fleet/chief-of-staff.ts` exports `FleetSnapshot`, `ChiefOfStaffPlan`,

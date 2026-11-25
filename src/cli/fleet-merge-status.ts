@@ -27,7 +27,7 @@ const usage = 'Usage: phm fleet merge-status --input <snapshot.json> [--json]\n'
   'Each blocker carries the earliest evidence time; a stale branch is mergeStateStatus BEHIND. ' +
   'Conflicts may include a recut recommendation; this command does not enqueue it. ' +
   'Merged and closed PRs are excluded; missing evidence stays unknown. ' +
-  'Read-only; required checks stay in place.';
+  'Read-only; required checks stay in place. For revision-pinned triage, see docs/FLEET-API.md.';
 
 export async function cmdFleetMergeStatus(args: string[]): Promise<number> {
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) { 
