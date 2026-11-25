@@ -11,7 +11,8 @@
  * a different channel or a different store). A source that cannot be read is
  * named in `gaps`; a state that cannot be known is UNKNOWN, never guessed. */
 import { readOwnerThread, type OwnerThreadOptions } from './owner-thread.js';
-import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
+import { authoritativeBusClaims, deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence,
+  type BusClaimAuthority } from './work-item-bus-evidence.js';
 import { MASON_THREAD_SCHEMA, type MasonThread, type MasonThreadItem, type MasonThreadState } from './mason-thread-model.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
@@ -117,6 +118,9 @@ export async function readMasonThread(opts: MasonThreadOptions): Promise<MasonTh
   let busOk = false;
   try { const read = readBusInboxEvidence(opts.busRoot); busOk = read.status === 'ok'; receipts = read.receipts; } catch { /* busOk stays false */ }
   try { claims = inspectBusWorkClaims(opts.busRoot).claims; } catch { /* no claims */ }
+  let authority: BusClaimAuthority | undefined;
+  try { authority = readBusClaimAuthority(opts.busRoot, opts.now); } catch { /* journal claims unverified */ }
+  claims = authoritativeBusClaims(claims, authority, opts.now);
   if (!busOk) gaps.push('Reply states are unknown where no job is linked: the bus inbox could not be read.');
 
   drafts.sort((a, b) => a.at - b.at);

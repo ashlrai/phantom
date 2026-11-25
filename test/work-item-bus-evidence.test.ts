@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import { mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
 import { postBusReply } from '../src/core/fleet/bus-reply-post.js';
 import { collectBusWorkItemEvidence } from '../src/core/comms/work-item-bus-evidence.js';
 import { classifyWorkItem, RUNNING_FRESH_MS } from '../src/core/comms/work-item-state.js';
@@ -37,7 +38,7 @@ describe('collectBusWorkItemEvidence on real durable stores', { timeout: 60_000 
   it('RECEIVED from an inbox receipt with no claim', () => {
     post();
     const { evidence, sources } = collect();
-    expect(sources).toEqual({ inbox: 'found', claims: 'missing' });
+    expect(sources).toEqual({ inbox: 'found', claims: 'missing', coordination: 'missing' });
     expect(evidence).toEqual({ id: ID, receivedAt: iso(now) });
     const r = classifyWorkItem(evidence, iso(now));
     expect(r.state).toBe('RECEIVED');
@@ -51,7 +52,7 @@ describe('collectBusWorkItemEvidence on real durable stores', { timeout: 60_000 
     const claim = acquire();
     expect(claim.status).toBe('acquired');
     const { evidence, sources } = collect();
-    expect(sources).toEqual({ inbox: 'found', claims: 'available' });
+    expect(sources).toEqual({ inbox: 'found', claims: 'available', coordination: 'available' });
     expect(evidence.owner).toBe('fake-owner');
     expect(evidence.claimReceipt).toBe(`bus-claim:${ID}:1:${now}`);
     expect(evidence.runningEvidence).toEqual({
@@ -63,6 +64,24 @@ describe('collectBusWorkItemEvidence on real durable stores', { timeout: 60_000 
     expect(serialized).toContain('bus-claim:');
     expect(serialized).not.toContain(claim.token!);
     expect(serialized).not.toMatch(/[a-f0-9]{64}/);
+  });
+
+  it('a claim released through the coordination authority reads RECEIVED, not RUNNING', () => {
+    post();
+    acquire();
+    expect(classify().state).toBe('RUNNING');
+    // Seat handoffs, work-visibility and session-handoff settle the shared
+    // coordination lease without touching the work-claims journal; the
+    // journal row stays live but the authority no longer backs it.
+    const released = releaseCoordinationBySource({
+      root, origin: 'message', sourceId: `${ID}:1:${now}`, owner: 'fake-owner', now,
+    });
+    expect(released.status).toBe('released');
+    const { evidence, sources } = collect();
+    expect(sources).toEqual({ inbox: 'found', claims: 'available', coordination: 'available' });
+    expect(evidence.owner).toBeUndefined();
+    expect(evidence.claimReceipt).toBeUndefined();
+    expect(classifyWorkItem(evidence, iso(now)).state).toBe('RECEIVED');
   });
 
   it('ASSIGNED once the lease has expired, with fresh running evidence missing', () => {
@@ -122,7 +141,7 @@ describe('cmdFleetWorkTrace', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkTrace(['--id', ID, '--root', root])).toBe(0);
     const line = String(log.mock.calls.at(-1)![0]);
     expect(line).toBe(`${ID} RUNNING as-of=${iso(now)} source=bus-work-claims lease-until ${iso(now + 600_000)} `
-      + `missing=none inbox=found claims=available owner=fake-owner claimReceipt=bus-claim:${ID}:1:${now}`);
+      + `missing=none inbox=found claims=available coordination=available owner=fake-owner claimReceipt=bus-claim:${ID}:1:${now}`);
     expect(line).not.toMatch(/[a-f0-9]{64}/);
     expect(await cmdFleetWorkTrace(['--id', ID, '--root', root, '--json'])).toBe(0);
     const parsed = JSON.parse(String(log.mock.calls.at(-1)![0]));
@@ -136,7 +155,7 @@ describe('cmdFleetWorkTrace', { timeout: 60_000 }, () => {
     expect(await cmdFleetWorkTrace(['--id', 'RQ-NOPE', '--root', root, '--json'])).toBe(0);
     expect(JSON.parse(String(log.mock.calls.at(-1)![0]))).toEqual({ id: 'RQ-NOPE', state: 'RECEIVED',
       asOf: 'unknown', source: 'unknown', missing: ['named owner', 'durable claim receipt'],
-      inbox: 'missing', claims: 'missing', owner: null, claimReceipt: null });
+      inbox: 'missing', claims: 'missing', coordination: 'missing', owner: null, claimReceipt: null });
   });
 
   it('exits 2 on bad args and prints nothing', async () => {

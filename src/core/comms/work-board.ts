@@ -12,7 +12,8 @@
 import { isGroupPresenceBody } from '../fleet/bus-group.js';
 import { inspectBusWorkClaims, type BusWorkClaimView, type BusWorkClaimsInspection } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
-import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
+import { deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence,
+  type BusClaimAuthority } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
 
 export const WORK_BOARD_DEFAULT_LIMIT = 20;
@@ -72,6 +73,10 @@ export interface WorkBoardResult {
    * unknown, not absent. Optional so hand-built fixtures still compile;
    * listWorkBoard always sets it. */
   claims?: BusWorkClaimsInspection['source'];
+  /** The coordination lease table's read state behind the claim veto —
+   * 'unavailable' means journal claims could not be verified against the
+   * shared lease authority and stand as the journal reports them. */
+  coordination?: BusClaimAuthority['source'];
   /** Echo of the applied state filter; present only when `state` was given
    * and the inbox scan settled — an unreadable inbox reports neither. */
   state?: WorkItemState;
@@ -133,11 +138,20 @@ export function listWorkBoard(opts: {
     claimsSource = inspection.source;
     claims = inspection.claims;
   } catch { /* stays unavailable: no claim rows */ }
+  // The shared lease authority every claim origin coordinates through:
+  // bypass paths (seat handoffs, work-visibility, session-handoff) settle
+  // coordination rows without touching this journal, so a live journal
+  // claim stands only while a live message-origin twin backs it. An
+  // unreadable table keeps every journal claim — unknown never erases
+  // recorded evidence.
+  let authority: BusClaimAuthority | undefined;
+  try { authority = readBusClaimAuthority(opts.root, now); } catch { /* stays undefined: journal claims unverified */ }
   // The claims source rides every result, including a failed inbox scan:
   // during an inbox outage the board still reports whether the claims table
   // was validated-empty, missing or unreadable instead of dropping the one
   // piece of ownership evidence the inspection already produced.
-  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false, claims: claimsSource };
+  const empty: WorkBoardResult = { items: [], inbox: 'unavailable', truncated: false, claims: claimsSource,
+    ...(authority === undefined ? {} : { coordination: authority.source }) };
   try {
     // One settled bounded inbox read for the whole board; an unsettled or
     // churning scan reports 'unavailable', never a partial listing.
@@ -157,7 +171,7 @@ export function listWorkBoard(opts: {
     requests.sort((a, b) => b.receivedAt - a.receivedAt || b.cursor - a.cursor);
     const asOf = new Date(now).toISOString();
     const toItem = (row: BusInboxReceipt): WorkBoardItem => {
-      const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now);
+      const { evidence } = deriveBusWorkItemEvidence(row.envelope.id, read.receipts, claims, now, authority);
       const classified = classifyWorkItem(evidence, asOf);
       const result = resultFor(classified.state, evidence);
       return {
@@ -181,7 +195,8 @@ export function listWorkBoard(opts: {
     if (opts.state === undefined) {
       const kept = requests.slice(0, limit(opts));
       return { items: kept.map(toItem), inbox: 'ok', truncated: requests.length > kept.length,
-        claims: claimsSource, ...(bounded ? { matched: requests.length } : {}) };
+        claims: claimsSource, ...(authority === undefined ? {} : { coordination: authority.source }),
+        ...(bounded ? { matched: requests.length } : {}) };
     }
     // A state filter must classify every request before the display cap so
     // `matched` is the true filtered total across the settled scan, never a
@@ -191,6 +206,7 @@ export function listWorkBoard(opts: {
     const matching = requests.map(toItem).filter(item => item.state === opts.state);
     const kept = matching.slice(0, limit(opts));
     return { items: kept, inbox: 'ok', truncated: matching.length > kept.length,
-      claims: claimsSource, state: opts.state, matched: matching.length };
+      claims: claimsSource, ...(authority === undefined ? {} : { coordination: authority.source }),
+      state: opts.state, matched: matching.length };
   } catch { return empty; }
 }

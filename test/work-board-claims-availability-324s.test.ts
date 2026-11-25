@@ -126,7 +126,7 @@ describe('listWorkBoard claims availability', { timeout: 60_000 }, () => {
     mkdirSync(join(root, 'bus-inbox'), { mode: 0o700 });
     writeFileSync(join(root, 'bus-inbox', 'messages.json'), 'invalid', { mode: 0o600 });
     const board = listWorkBoard({ root, now });
-    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'available' });
+    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'available', coordination: 'missing' });
   });
 });
 
