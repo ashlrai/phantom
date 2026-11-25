@@ -1904,7 +1904,15 @@ function main() {
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
-  if (projects.backend || projects.web || selection.contribRouterTypecheck) try {
+  // A tree that already failed a cheap check cannot pass this run, so the
+  // typecheck lane — the gate's most expensive step and a machine-wide shared
+  // slot other worktrees queue on — is deferred to the rerun after the fix
+  // instead of compiling a known-failed tree. Every earlier FAIL still
+  // printed; only the compile is skipped, never a check's verdict.
+  const typecheckSelected = projects.backend || projects.web || selection.contribRouterTypecheck;
+  if (process.exitCode && typecheckSelected) {
+    console.log('SKIP typecheck: an earlier check failed; fix it and rerun');
+  } else if (typecheckSelected) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
