@@ -226,6 +226,9 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
     if (!sendCaptured) { lastSend = readLastSend(runsDir); sendCaptured = true; }
     return lastSend;
   };
+  // Share the pending read too, so both inbound projections use one generation.
+  let inboundCaptured: ReturnType<typeof readImessageAckEvidence> | undefined;
+  const inboundSnapshot = () => inboundCaptured ??= readImessageAckEvidence(4096, runsDir);
   return {
     slack: {
       configMissing: () => {
@@ -254,12 +257,12 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
       configMissing: () => (commsEnabled(loadConfigReadOnlyStrict()) ? [] : ['imessage comms configuration']),
       processAlive: () => pgrep('imessage (poll|watch|run)|ashlr-imessage|imsg|textbot'),
       inbound: async () => {
-        const ev = await readImessageAckEvidence(4096, runsDir);
+        const ev = await inboundSnapshot();
         if (ev.sourceState !== 'ok' || ev.malformedRows) throw new Error('imessage-acks-unreadable');
         return ev.rows.filter((r) => r.status === 'accepted').map((r) => r.timestamp);
       },
       inboundEvidence: async () => {
-        const ev = await readImessageAckEvidence(4096, runsDir);
+        const ev = await inboundSnapshot();
         return {
           store: ev.malformedRows ? 'unreadable' : ev.sourceState,
           rows: ev.rows.filter((r) => r.status === 'accepted').map((r) => ({ at: r.timestamp })),
