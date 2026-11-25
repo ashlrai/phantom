@@ -100,8 +100,12 @@ caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
 then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
 `pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
 carrying the node's last advertised owner scopes, caps and slots while the
-registry still holds the record (placeholders when it does not). Rejoin and use
-the new session.
+registry still holds the record (placeholders when it does not). If the node
+already rejoined under a newer session, the fix names that session and the
+exact `leave` command instead, so an operator who lost track of the number can
+resume without re-joining again. A `node-live` error from `join` names the live
+session the same way. `leave` under a stale session answers `"left":false` with
+`liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
 and pull again.

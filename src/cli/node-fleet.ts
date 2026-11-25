@@ -43,6 +43,10 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
+    // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
+    // pool replies already carry their own `next` (the worker command) and a
+    // `next` inside result.result would override it in the spread below.
+    if (verb === 'join') out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}`;
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
   } catch (error) {

@@ -377,3 +377,60 @@ describe('session-expired rejoin hint', () => {
     expect(err.fix).toContain('phm node join --node laptop --owner acme --caps build');
   });
 });
+
+describe('live-session recovery hints', () => {
+  const args = (nodeId: string, session: number) => ['--node', nodeId, '--session', String(session)];
+  const joinArgs = (nodeId: string) => ['--node', nodeId, '--owner', 'acme'];
+  const sessionOf = (out: Record<string, unknown>): number => out['session'] as number;
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string }; }
+    throw new Error('expected the verb to refuse');
+  }
+  it('join refusal names the live session and the exact leave command', () => {
+    const f = fixture();
+    const worker = executeNodeFleet('join', joinArgs('laptop'), f.a);
+    const session = sessionOf(worker);
+    const err = failure(() => executeNodeFleet('join', joinArgs('laptop'), f.a));
+    expect(err.code).toBe('node-live');
+    expect(err.fix).toContain(`session ${session}`);
+    expect(err.fix).toContain(`phm node leave --node laptop --session ${session}`);
+  });
+  it('beat and pull under a replaced session name the live one', () => {
+    const f = fixture();
+    const first = executeNodeFleet('join', joinArgs('laptop'), f.a);
+    f.advance(100);
+    const second = executeNodeFleet('join', joinArgs('laptop'), f.a);
+    const live = sessionOf(second);
+    expect(live).not.toBe(sessionOf(first));
+    for (const verb of ['beat', 'pull']) {
+      const err = failure(() => executeNodeFleet(verb, args('laptop', sessionOf(first)), f.a));
+      expect(err.code).toBe('session-expired');
+      expect(err.fix).toContain(`live as session ${live}`);
+      expect(err.fix).toContain(`phm node leave --node laptop --session ${live}`);
+    }
+  });
+  it('a node with no live record still gets the rejoin hint', () => {
+    const f = fixture();
+    executeNodeFleet('join', joinArgs('laptop'), f.a);
+    f.advance(200);
+    const err = failure(() => executeNodeFleet('beat', args('laptop', 999), f.a));
+    expect(err.code).toBe('session-expired');
+    expect(err.fix).toContain('Rejoin with: phm node join --node laptop --owner acme');
+    expect(err.fix).not.toContain('live as session');
+  });
+  it('leave under a replaced session reports the live session instead of a bare false', () => {
+    const f = fixture();
+    const first = executeNodeFleet('join', joinArgs('laptop'), f.a);
+    f.advance(100);
+    const second = executeNodeFleet('join', joinArgs('laptop'), f.a);
+    const live = sessionOf(second);
+    const out = executeNodeFleet('leave', args('laptop', sessionOf(first)), f.a);
+    expect(out).toMatchObject({ nodeId: 'laptop', left: false, liveSession: live,
+      next: `phm node leave --node laptop --session ${live}` });
+    expect(executeNodeFleet('leave', args('laptop', live), f.a)).toMatchObject({ left: true });
+  });
+  it('leave of an unknown node stays a bare false', () => {
+    const f = fixture();
+    expect(executeNodeFleet('leave', args('ghost', 1), f.a)).toEqual({ nodeId: 'ghost', left: false });
+  });
+});

@@ -209,6 +209,28 @@ describe('phm node CLI', () => {
     expect(status.out).not.toContain('j1');
   });
 
+  it('join prints its keep-alive beat and session refusals name the live session', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    expect(joined.next).toBe(`phm node beat --node laptop --session ${joined.session}`);
+    const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
+    expect(text.out).toContain('next: phm node beat --node desktop --session ');
+    const again = await cli('join', '--node', 'laptop', '--owner', 'acme', '--json');
+    expect(again.code).toBe(1);
+    expect(JSON.parse(again.out).error).toMatchObject({ code: 'node-live',
+      fix: expect.stringContaining(`phm node leave --node laptop --session ${joined.session}`) });
+    const stale = await cli('beat', '--node', 'laptop', '--session', '999', '--json');
+    expect(stale.code).toBe(1);
+    const error = JSON.parse(stale.out).error;
+    expect(error.code).toBe('session-expired');
+    expect(error.fix).toContain(`live as session ${joined.session}`);
+    const left = await cli('leave', '--node', 'laptop', '--session', '999', '--json');
+    expect(left.code).toBe(0);
+    expect(JSON.parse(left.out)).toMatchObject({ left: false, liveSession: joined.session,
+      next: `phm node leave --node laptop --session ${joined.session}` });
+  });
+
   it('reports unmeasured load as unknown, never a fabricated 0', async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
