@@ -622,6 +622,7 @@
 /test/improve-gateway-activity-backlog.test.ts @masonwyatt23
 /test/improve-gateway-shadow-backlog.test.ts @masonwyatt23
 /test/improve-generator-yield-backlog.test.ts @masonwyatt23
+/test/improve-harness-backlog.test.ts @masonwyatt23
 /test/improve-hot-patch.test.ts @masonwyatt23
 /test/improve-incident-gate-backlog.test.ts @masonwyatt23
 /test/improve-jev-backlog.test.ts @masonwyatt23
