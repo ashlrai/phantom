@@ -5,6 +5,12 @@ import { classifyWorkItem } from '../core/comms/work-item-state.js';
 import { claimNoticeDir, claimNoticePaths, readClaimThreadBindings } from '../core/fleet/claim-notice-send.js';
 import { readFleetBoard } from '../core/fleet/coordination.js';
 
+const sameMessageTs = (a: unknown, b: unknown): boolean => {
+  if (!isSlackTs(a) || !isSlackTs(b)) return false;
+  const normalize = (ts: string) => ts.replace(/^0+(?=\d)/, '').replace(/0+$/, '');
+  return normalize(a) === normalize(b);
+};
+
 const usage = 'Usage: ashlr fleet slack-trace [--thread <ts>] [--channel <Slack channel id>] [--message <ts>] [--work-state] [--json]';
 
 /**
@@ -111,7 +117,7 @@ export async function cmdFleetSlackTrace(
     return 1;
   }
   const rows = collected.rows.filter((row) =>
-    (channelId === undefined || row.channelId === channelId) && (message === undefined || row.messageTs === message));
+    (channelId === undefined || row.channelId === channelId) && (message === undefined || sameMessageTs(row.messageTs, message)));
   const counts = { total: rows.length, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
   for (const row of rows) {
     if (row.outcome === 'answered') counts.answered++;
