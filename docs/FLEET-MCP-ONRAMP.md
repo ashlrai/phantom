@@ -134,7 +134,11 @@ advance the cursor.
 MCP page and a CLI page can never disagree about what a filter keeps:
 `id`/`inReplyTo` exact matches, `excludeFrom` (one sender identity dropped),
 `priority` (`P0`–`P3`), `kind` (one protocol-v1 body kind), `topic` (a topic
-name or namespace prefix such as `fleet.*`), `thread` (a v2 `note`/`context`
+name or namespace prefix such as `fleet.*`), `bodyKind` (one exact body kind
+discriminator — the `busBodyKind` own-field match `--body-kind` applies),
+`result` (one `work.result` outcome from `reserved`, `admitted`, `complete`,
+`failed` — the `busBodyResultOutcome` match `--result` applies), `thread`
+(a v2 `note`/`context`
 label), `job` (one job id), `channel` (envelopes addressed to
 `group:<name>:*` — one room's whole traffic under every topic, the same raw
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow

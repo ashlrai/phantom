@@ -97,6 +97,8 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
     [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
     [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
+    [{ bodyKind: 'has space' }], [{ bodyKind: '' }], [{ bodyKind: 'x'.repeat(129) }], [{ bodyKind: 5 }], [{ bodyKind: null }],
+    [{ result: 'bogus' }], [{ result: 'P0' }], [{ result: 'COMPLETE' }], [{ result: 'completed' }], [{ result: 5 }], [{ result: null }],
     [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
     [{ channel: '' }], [{ channel: 5 }], [{ channel: null }],
@@ -273,6 +275,36 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the bodyKind and result read filters', async () => {
+    expect(post('res-ok', { body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'complete' } }).status).toBe('posted');
+    expect(post('res-bad', { body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'failed' } }).status).toBe('posted');
+    expect(post('res-none', { body: { kind: 'work.result', jobId: 'RQ-2' } }).status).toBe('posted');
+    expect(post('rel', { body: { kind: 'work.release', claimKey: 'queue:RQ-1', outcome: 'completed' } }).status).toBe('posted');
+    expect(post('note', { body: { kind: 'note', text: 'done', outcome: 'failed' } }).status).toBe('posted');
+    expect(post('proto', { body: { protocol: { version: 1, kind: 'task' } } }).status).toBe('posted');
+    expect(post('kindless', { body: { outcome: 'failed', text: 'no kind' } }).status).toBe('posted');
+    const client = await connect();
+    const results = await callInbox(client, { bodyKind: 'work.result' });
+    expect(results.parsed).toMatchObject({ sourceState: 'ok', filters: { bodyKind: 'work.result' } });
+    expect(rows(results.parsed).map(row => row.envelope.id)).toEqual(['res-ok', 'res-bad', 'res-none']);
+    const failed = await callInbox(client, { result: 'failed' });
+    expect(rows(failed.parsed).map(row => row.envelope.id)).toEqual(['res-bad']);
+    expect(failed.parsed['filters']).toEqual({ result: 'failed' });
+    // A work.release outcome is a different vocabulary; a note's stray outcome
+    // field, a kindless body's outcome and a result carrying no outcome never match.
+    const complete = await callInbox(client, { result: 'complete' });
+    expect(rows(complete.parsed).map(row => row.envelope.id)).toEqual(['res-ok']);
+    const both = await callInbox(client, { bodyKind: 'work.result', result: 'complete' });
+    expect(rows(both.parsed).map(row => row.envelope.id)).toEqual(['res-ok']);
+    const tasks = await callInbox(client, { bodyKind: 'task' });
+    expect(rows(tasks.parsed).map(row => row.envelope.id)).toEqual(['proto']);
+    // Filters narrow the shown page only; the cursor still covers every scanned row.
+    const narrowed = await callInbox(client, { result: 'failed', limit: 2 });
+    expect(narrowed.parsed).toMatchObject({ returnedMessages: 1, nextCursor: 2 });
+    const rest = await callInbox(client, { after: narrowed.parsed['nextCursor'], result: 'failed' });
+    expect(rest.parsed).toMatchObject({ messages: [], nextCursor: 7 });
   });
 
   it('applies the before upper bound exclusive of its edge and composes with since', async () => {
