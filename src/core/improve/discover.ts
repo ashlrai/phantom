@@ -766,6 +766,32 @@
  *     bounds, and items emit only for the fleet's own repository since
  *     the ledger describes this install's comms and carries no repo
  *     column;
+ *   - the post-run publish journal's recurring adverse cells: the
+ *     `POSTRUN_PR <action> <job>` outcome lines contrib/mac/postrun_pr.py
+ *     appends to <runs>/dispatchd.log per spawned publish — dispatchd's
+ *     reap step spawns it once per finished RESULT EMPTY job whose
+ *     worktree is ahead of origin/master, up to three attempts ever —
+ *     plus dispatchd's own `postrun_pr err` spawn failures. Until now
+ *     the lines had no reader at all: the tick reports that scan
+ *     dispatchd.log never fold POSTRUN_PR outcomes, and the only other
+ *     surfaces (`phm fleet republish`, `phm fleet stranded`) are
+ *     point-in-time reports someone had to run, so jobs whose publish
+ *     attempts kept erroring, kept completing without a PR, whose gh PR
+ *     lookup kept failing, or whose three-attempt budget burned with
+ *     the work still unpublished never became work
+ *     (postrunBacklogItems below). Cells emit on fixed bars — per-job
+ *     'exhausted' (three consumed spawn attempts, every one non-terminal,
+ *     no publish-step outcome) and global 'publish-error'/'no-pr' cells
+ *     keyed by exception type / RESULT-prefix class plus
+ *     'spawn-error'/'lookup-failed'/'record-missing'/'skip-other' at
+ *     three adverse rows across two distinct UTC days inside the
+ *     7-day window — designed outcomes (off-switch, repo-not-
+ *     allowlisted, exists, published, in-flight publish markers) count
+ *     as context only, truncated tails are stated as lower bounds,
+ *     recorded exception/result text is scrubbed and capped, and items
+ *     emit only for the fleet's own repository since the journal
+ *     describes this install's dispatch machinery and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -860,6 +886,7 @@ import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
 import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
 import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
+import { postrunBacklogItems } from './postrun-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1950,6 +1977,35 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // repository inherits the items since the ledger describes this
   // install's comms and carries no repo column.
   items.push(...await deliveryReceiptsBacklogItems({ repo }));
+
+  // Post-run publish journal (dispatchd.log's `POSTRUN_PR <action>
+  // <job>` lines and dispatchd's `postrun_pr err` spawn failures under
+  // the runs dir): contrib/mac/postrun_pr.py appends one outcome line
+  // per spawned publish — dispatchd's reap step spawns it once per
+  // finished RESULT EMPTY job whose worktree is ahead of
+  // origin/master, up to three attempts ever — recording skip
+  // (off-switch, no-job-record, repo-not-allowlisted, pr-lookup-failed),
+  // exists, publish, error, published and no-pr outcomes. Until now the
+  // lines had no reader at all: the tick reports that scan
+  // dispatchd.log never fold them and `phm fleet republish` /
+  // `phm fleet stranded` are point-in-time reports someone had to run,
+  // so a publish path that kept failing, a gh lookup that kept
+  // refusing, or jobs whose retry budget burned unpublished never
+  // became work. The retry contract shapes the cells: the child writes
+  // queue/run/<job>.postrun.json on every outcome past the PR lookup,
+  // so a publish-step result is final per job and publish failures
+  // aggregate globally by exception type / RESULT-prefix class, while
+  // skips and dispatchd spawn failures burn the three-spawn budget
+  // silently — a job with three consumed non-terminal attempts and no
+  // terminal outcome is terminally stranded ('exhausted'). Cells emit
+  // on fixed bars — 'exhausted' on its own terminal bar, the global
+  // cells at three adverse rows across two distinct UTC days inside
+  // the 7-day window; designed outcomes count as context only,
+  // truncated tails are stated as lower bounds, recorded detail text
+  // is scrubbed and capped, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // dispatch machinery and carries no repo column.
+  items.push(...await postrunBacklogItems({ repo }));
   return { items, errors };
 }
 
