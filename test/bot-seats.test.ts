@@ -8,8 +8,10 @@ import { createDevinBotAdapter } from '../src/core/bots/devin-bot-adapter.js';
 import { participantSchema } from '../src/core/agents/bus-v2-schema.js';
 import { registerAgentIdentity, stableAgentId } from '../src/core/agents/bus-identity.js';
 import { acquireCoordination, listCoordination, releaseCoordinationBySource } from '../src/core/agents/claim-store.js';
-import { listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
+import { appendBusInbox, listBusInboxAfter } from '../src/core/fleet/bus-inbox.js';
 import { busBodyJobIds } from '../src/core/agents/bus-unified.js';
+import { inspectBusWorkClaims, mutateBusWorkClaim } from '../src/core/fleet/bus-work-claims.js';
+import { readClaimStoreDrift } from '../src/core/fleet/claim-store-drift.js';
 import { DriveNodes, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { emptyState } from '../src/core/drive/nodes/state.js';
 import { runBotsCli } from '../src/cli/bots.js';
@@ -194,6 +196,30 @@ it('keeps a successor lease when a seat handoff releases its stale snapshot', as
   expect(listCoordination(root, clock).claims).toContainEqual(expect.objectContaining({
     sourceId, owner: 'successor', leaseUntil: now + 20_001, live: true,
   }));
+});
+it('settles a handed-off message claim in the journal and coordination stores alike', async () => {
+  const o = await fixture();
+  const t = Date.now();
+  const fleetRoot = join(o.home, '.ashlr', 'fleet');
+  const opts: SeatOptions = { ...o, now: () => t, readQuota: async () => exhausted,
+    ownerNotice: async () => ({ status: 'accepted' }), busPost: async () => ({ status: 'posted' }) };
+  const id = 'seat-held-message';
+  expect(appendBusInbox({ id, from: 'peer', to: 'helper', priority: 'P1', ttl: 3_600_000, body: 'work' },
+    { root: fleetRoot, now: () => t }).status).toBe('posted');
+  expect(mutateBusWorkClaim({ action: 'acquire', id, owner: 'helper', leaseMs: 3_600_000, root: fleetRoot }).status).toBe('acquired');
+  await writeFile(join(o.root, 'seat-state.json'), JSON.stringify({ helper: { state: 'draining', since: iso(t), exhaustedReset: null } }));
+  const plan = await planSeatHandoff('helper', opts);
+  expect(plan.handoffs.map(h => h.work.ref)).toEqual([`queue:${id}`]);
+  const applied = await applySeatHandoff('helper', opts);
+  expect(applied.handoffs).toHaveLength(1);
+  // The dual-written claim left neither store: a bare coordination release
+  // used to orphan the journal lease — busOnly drift and a message that
+  // stayed claimed forever.
+  expect(inspectBusWorkClaims(fleetRoot).claims).toEqual([]);
+  expect(listCoordination(fleetRoot, t).claims.filter(c => c.live && c.key === `queue:${id}`)).toEqual([]);
+  expect(readClaimStoreDrift({ root: fleetRoot, now: t }).state).toBe('VERIFIED');
+  // The freed message is claimable again — the handoff really released it.
+  expect(mutateBusWorkClaim({ action: 'acquire', id, owner: 'other', leaseMs: 60_000, root: fleetRoot }).status).toBe('acquired');
 });
 it('CLI emits empty roster and dry-run/apply JSON; refuses active or unknown seats', async () => {
   const o = await fixture();
