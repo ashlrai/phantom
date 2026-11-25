@@ -1305,6 +1305,27 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   rows — truncated tails are stated as lower bounds, actor and reason
   text is never emitted, and items emit only for the fleet's own
   repository since the journal describes this install's config and
+  carries no repo column,
+  and the owner-thread delivery ledger's recurring failed deliveries,
+  the {messageId, channel, state, reason?, at} rows recordDelivery
+  (src/core/leader/delivery-receipts.ts) appends per fanout destination
+  on every sendOwnerReply — `phm comms send-owner`, the MCP send tool,
+  the leader-live notices — to <real home>/.ashlr-runs/leader/
+  delivery-receipts.jsonl (deliveryReceiptsBacklogItems). Until now the
+  ledger's only reader was readReceipts' point-in-time
+  latest-receipt-per-channel join behind `phm comms thread`'s marks and
+  the undelivered-replies read, so a channel whose deliveries kept
+  failing never became work. A (channel, signal) cell emits at the
+  recurring bars of three in-window 'failed' rows across two distinct
+  UTC days AND two distinct message ids — a retried reply re-records
+  the same send — where the signal is the fixed reason vocabulary
+  (transport refusal, no transport attached, owner-policy, or
+  unclassified with the recorded reason quoted bounded); the designed
+  holds (KILL, comms pause, unconfigured adapters) never emit, rows
+  written before the `at` stamp existed stay undated context, the read
+  mirrors the writer's own bounded tail and line cap with truncation
+  stated as lower bounds, and items emit only for the fleet's own
+  repository since the ledger describes this install's comms and
   carries no repo column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
@@ -1316,7 +1337,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close and live-config items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config and delivery-receipts items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name

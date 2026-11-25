@@ -3,6 +3,8 @@
  * WENT (desktop, iMessage via Dot, Slack, ...) and whether it failed. Append-only
  * jsonl in the owner runs dir's `leader/` folder, read bounded to the last
  * MAX_READ_LINES lines. A message with no record is "unknown", never "delivered".
+ * Rows carry `at` (ISO-8601) so windowed folds can place them in time; rows
+ * written before the stamp existed have no `at` and stay undated evidence.
  */
 import { appendFileSync, closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +27,7 @@ export function recordDelivery(runsDir: string, messageId: string, channel: stri
   try {
     ensurePrivateDirectory(runsDir);
     ensurePrivateDirectory(dirOf(runsDir));
-    const row = { messageId, channel, state, ...(reason ? { reason: scrubSecrets(reason).slice(0, MAX_REASON) } : {}) };
+    const row = { messageId, channel, state, at: new Date().toISOString(), ...(reason ? { reason: scrubSecrets(reason).slice(0, MAX_REASON) } : {}) };
     appendFileSync(fileOf(runsDir), `${JSON.stringify(row)}\n`, { mode: 0o600 });
   } catch { /* receipts are advisory */ }
 }
