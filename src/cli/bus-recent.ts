@@ -1,5 +1,5 @@
 /** `phm bus recent`: thin argv adapter for core/fleet/bus-recent.ts. Exit 0 read, 1 bus unreadable, 2 bad usage. */
-export const BUS_RECENT_USAGE = `Usage: phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--json]
+export const BUS_RECENT_USAGE = `Usage: phm bus recent [--since 5m] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--json]
 
 Agent-to-agent messages from the last 5 minutes (or --since 10m, 2h, 1d), newest
 first: time, from, to, kind and a plain summary of at most 100 characters.
@@ -16,7 +16,7 @@ export async function cmdBusRecent(args: string[], out: (text: string) => void =
   if (args.some(arg => arg === '--help' || arg === '-h')) { out(BUS_RECENT_USAGE); return 0; }
   let json = false;
   const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string;
-    job?: string; thread?: string; channel?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {};
+    job?: string; thread?: string; channel?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; bodyKind?: string; result?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!, value = args[i + 1];
     if (arg === '--json' && !json) { json = true; continue; }
@@ -24,7 +24,8 @@ export async function cmdBusRecent(args: string[], out: (text: string) => void =
       : arg === '--with' ? 'with' : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority'
       : arg === '--job' ? 'job' : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel'
       : arg === '--contains' ? 'contains' : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom'
-      : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind' : null;
+      : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo' : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind'
+      : arg === '--result' ? 'result' : null;
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { err(BUS_RECENT_USAGE); return 2; }
     values[key] = value; i++;
   }

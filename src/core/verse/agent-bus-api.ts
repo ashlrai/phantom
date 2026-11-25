@@ -31,7 +31,10 @@
  * to the value — the same exact-envelope match those raw reads' `id`
  * filter applies; `bodyKind` keeps only bodies whose own kind
  * discriminator strictly equals the value — the same `busBodyKind`
- * own-field exact match the raw bus reads' body-kind filter applies.
+ * own-field exact match the raw bus reads' body-kind filter applies;
+ * `result` keeps only `work.result` bodies whose own `outcome` strictly
+ * equals one `WORK_RESULT_OUTCOMES` code — the same outcome vocabulary the
+ * work feed's `--result` filter validates.
  * GETs require a current read session. Responses wrap store outcomes with v: 1;
  * missing storage reads as an empty page, while status reports source: missing.
  * Unavailable storage returns 503. Expired rows advance nextCursor but are omitted.
@@ -141,7 +144,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
     try { params = new URL(req.url ?? path, 'http://localhost').searchParams; }
     catch { sendJson(res, 400, { error: 'Invalid query.' }); return true; }
     const allowed = method === 'GET' && path === PATH ? ['after', 'limit']
-      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'limit']
+      : method === 'GET' && path === MESSAGES ? ['since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to', 'result', 'limit']
       : method === 'GET' && path === WORK_FEED ? [...WORK_FEED_PARAMS] : [];
     if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) {
       sendJson(res, 400, { error: 'Invalid query.' }); return true;
@@ -175,6 +178,7 @@ export function createAgentBusApi(deps: AgentBusApiDeps = {}): ApiModule {
           id: params.get('id') ?? undefined,
           bodyKind: params.get('bodyKind') ?? undefined,
           to: params.get('to') ?? undefined,
+          result: params.get('result') ?? undefined,
           limit: params.get('limit') ?? undefined });
         if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return true; }
         const result = (deps.messages ?? readAgentMessages)(parsed.query);

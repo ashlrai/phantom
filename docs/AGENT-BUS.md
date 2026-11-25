@@ -68,10 +68,18 @@ wakes --body-kind`, `agents conversations --body-kind` and `fleet
 bus-follow --body-kind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
-page — `--limit <n>`)
+page — `--result <reserved|admitted|complete|failed>` for only the
+`work.result` receipts reporting that outcome — the same
+`WORK_RESULT_OUTCOMES` vocabulary the work feed's `--result` filter
+validates, read through the kind-scoped `busBodyResultOutcome` own-field
+match so a `work.release` body's own `released`/`completed` outcome, every
+other body kind and a result carrying no outcome never match — the
+envelope-level audit trail the feed's per-job newest-result `--result`
+cannot show, since a job that failed then recovered still lists its
+earlier `failed` receipt here — `--limit <n>`)
 or GET `/api/verse/agent-bus/messages` with the same
 `since`, `before`, `agent`, `with`, `kind`, `priority`, `job`, `thread`, `channel`,
-`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind`, `to` and `limit` params. Both return `agent-messages.v1`: newest
+`contains`, `from`, `excludeFrom`, `inReplyTo`, `id`, `bodyKind`, `to`, `result` and `limit` params. Both return `agent-messages.v1`: newest
 first, each with `id`, `ts`, `priority` (the envelope's P0–P3 band, the
 same band `comms bus read --priority` filters on), `from` and `to` (name and lane, lane `null` when
 unknown), `kind` (ask, reply, handoff, status, blocker), a scrubbed one-line

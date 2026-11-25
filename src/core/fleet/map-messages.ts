@@ -34,6 +34,7 @@ export interface MapMessagesFlags {
   agent?: string; with?: string; kind?: string; priority?: string; job?: string;
   thread?: string; channel?: string; contains?: string;
   from?: string; excludeFrom?: string; inReplyTo?: string; id?: string; bodyKind?: string; to?: string;
+  result?: string;
 }
 
 /** Key order is the JSON contract. `fromNode`/`toNode` are map node ids (`leader`, `lane:<name>`, `job:<id>`), null when the map does not draw that agent. */
@@ -122,7 +123,7 @@ export function parseMapMessagesQuery(input: MapMessagesFlags = {}, now = Date.n
     agent: input.agent, with: input.with, kind: input.kind, priority: input.priority, job: input.job,
     thread: input.thread, channel: input.channel, contains: input.contains,
     from: input.from, excludeFrom: input.excludeFrom, inReplyTo: input.inReplyTo, id: input.id,
-    bodyKind: input.bodyKind, to: input.to,
+    bodyKind: input.bodyKind, to: input.to, result: input.result,
   }, now);
   if (!shared.ok) return shared;
   return { ok: true, query: { ...shared.query, since, before, limit } };
@@ -155,7 +156,8 @@ export function readMapMessages(input: MapMessagesFlags = {}, options: MapMessag
 
 /** The query keys the read accepts — the CLI filter dimensions plus `limit`. */
 const MAP_MESSAGES_QUERY_KEYS = ['since', 'before', 'limit', 'agent', 'with', 'kind', 'priority',
-  'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to'] as const;
+  'job', 'thread', 'channel', 'contains', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to',
+  'result'] as const;
 
 /** GET /api/fleet/map/messages[?since=15m&before=1h&limit=20&…]: 200 the messages, 400 a bad query, 503 the typed "unknown" read. */
 export function mapMessagesResponse(url: string, options: BusInboxOptions = {}): { status: 200 | 400 | 503; body: MapMessages | { error: string } } {

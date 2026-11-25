@@ -354,6 +354,25 @@ export function busBodyKind(body: unknown): string | null {
   return field('type') ?? field('schema');
 }
 
+/**
+ * The outcome a `work.result` body reports — read verbatim and unvalidated
+ * like `busBodyThread`/`busBodyKind`: the body's own `outcome` field when its
+ * own `kind` is `work.result`, null for every other body kind and shape.
+ * Scoping to the v2 `kind` field keeps a `work.release` body's own
+ * `released`/`completed` outcome — a different vocabulary — and every
+ * kindless notice out of a result-outcome match, so "which retained result
+ * receipts report `failed`" is one exact-field read, never a substring or
+ * a cross-kind conflation. A `work.result` body whose `outcome` is absent
+ * or not a string reports null: no provable outcome, never a match.
+ */
+export function busBodyResultOutcome(body: unknown): string | null {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record['kind'] !== 'work.result') return null;
+  const outcome = record['outcome'];
+  return typeof outcome === 'string' && outcome.length > 0 ? outcome : null;
+}
+
 // ─── Work feed ──────────────────────────────────────────────────────
 
 export const workJobSchema = z.object({

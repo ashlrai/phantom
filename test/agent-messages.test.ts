@@ -827,6 +827,58 @@ describe('phm messages projection', () => {
     expect(parseAgentMessagesQuery({ bodyKind: 'x'.repeat(129) }).ok).toBe(false);
   });
 
+  it('filters to the work.result receipts reporting that outcome', () => {
+    const root = store();
+    const result = (id: string, at: number, outcome: string, jobId = 'RQ-RES1') => post(root, at,
+      { id, from: 'agent:worker-1', to: 'agent:leader',
+        body: { kind: 'work.result', jobId, claimKey: `job:${jobId}`, queueId: 'peer-work-0123456789abcdef0123456789abcdef',
+          receiptId: 'pw-0123456789abcdef0123456789abcdef', outcome, reason: 'done' } });
+    result('r1', T0, 'failed');
+    result('r2', T0 + 1_000, 'complete');
+    // A job that failed then recovered keeps both receipts on the timeline:
+    // the feed's --result sees only the newest, this read sees every one.
+    result('r3', T0 + 2_000, 'failed', 'RQ-RES2');
+    result('r4', T0 + 3_000, 'admitted');
+    result('r5', T0 + 4_000, 'reserved');
+    // Every other outcome-shaped body stays out: a work.release reports its
+    // own released/completed vocabulary, a note's outcome field is not a
+    // result receipt, and a work.result with no provable outcome never
+    // matches — the match is the raw body's own kind-scoped field.
+    post(root, T0 + 5_000, { id: 'rel1', from: 'agent:worker-1', to: 'agent:leader',
+      body: { kind: 'work.release', claimKey: 'job:RQ-RES1', token: 'tok-1', outcome: 'released' } });
+    post(root, T0 + 6_000, { id: 'rel2', from: 'agent:worker-1', to: 'agent:leader',
+      body: { kind: 'work.release', claimKey: 'job:RQ-RES2', token: 'tok-2', outcome: 'completed' } });
+    post(root, T0 + 7_000, { id: 'n1', from: 'agent:worker-1', to: 'agent:leader',
+      body: { kind: 'note', text: 'failed again', outcome: 'failed' } });
+    post(root, T0 + 8_000, { id: 'r6', from: 'agent:worker-1', to: 'agent:leader',
+      body: { kind: 'work.result', jobId: 'RQ-RES3', claimKey: 'job:RQ-RES3',
+        queueId: 'peer-work-0123456789abcdef0123456789abcdef', receiptId: 'pw-0123456789abcdef0123456789abcdef' } });
+    post(root, T0 + 9_000, { id: 'r7', from: 'agent:worker-1', to: 'agent:leader',
+      body: { kind: 'work.result', jobId: 'RQ-RES4', claimKey: 'job:RQ-RES4',
+        queueId: 'peer-work-0123456789abcdef0123456789abcdef', receiptId: 'pw-0123456789abcdef0123456789abcdef', outcome: 'Failed' } });
+    const hits = read(root, { result: 'failed' });
+    expect(hits.messages.map(m => m.id)).toEqual(['r3', 'r1']);
+    expect(hits.matched).toBe(2);
+    expect(read(root, { result: 'complete' }).messages.map(m => m.id)).toEqual(['r2']);
+    expect(read(root, { result: 'admitted' }).messages.map(m => m.id)).toEqual(['r4']);
+    expect(read(root, { result: 'reserved' }).messages.map(m => m.id)).toEqual(['r5']);
+    // --result composes with the other filters; matched counts only the rows
+    // every filter accepts and limit caps the page, not the count.
+    expect(read(root, { result: 'failed', job: 'RQ-RES2' }).messages.map(m => m.id)).toEqual(['r3']);
+    expect(read(root, { result: 'failed', bodyKind: 'work.result', limit: 1 }))
+      .toMatchObject({ matched: 2, messages: [{ id: 'r3' }] });
+    expect(read(root, { result: 'failed', contains: 'missing' })).toMatchObject({ matched: 0, messages: [] });
+  });
+
+  it('parses --result against the work-result outcome enum and refuses anything else', () => {
+    expect(parseAgentMessagesQuery({ result: 'failed' })).toEqual({ ok: true, query: { result: 'failed' } });
+    expect(parseAgentMessagesQuery({ result: 'complete', kind: 'reply', limit: '5' }))
+      .toEqual({ ok: true, query: { result: 'complete', kind: 'reply', limit: 5 } });
+    for (const bad of ['released', 'completed', 'Failed', 'has space', '']) {
+      expect(parseAgentMessagesQuery({ result: bad }).ok).toBe(false);
+    }
+  });
+
   it('serves the same read at GET /api/verse/agent-bus/messages', async () => {
     const calls: unknown[] = [];
     const api = createAgentBusApi({ messages: query => { calls.push(query); return { schema: 'agent-messages.v1', source: 'missing', messages: [], matched: 0, skipped: 0 }; } });
@@ -837,11 +889,11 @@ describe('phm messages projection', () => {
       const handled = await api(ctx, { url, headers: {} } as never, res, url.split('?')[0]!, 'GET');
       return { handled, status: status || (res as { statusCode: number }).statusCode, body };
     };
-    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&bodyKind=work.post&limit=5');
+    const ok = await send('/api/verse/agent-bus/messages?since=1704067200000&before=1704153600000&agent=claude&kind=ask&priority=P0&job=RQ-JOB1&thread=t-1&contains=parser%20fix&from=atlas&excludeFrom=grok&inReplyTo=m-1&id=m-2&bodyKind=work.post&result=failed&limit=5');
     expect(ok.handled).toBe(true);
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body)).toMatchObject({ schema: 'agent-messages.v1' });
-    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2', bodyKind: 'work.post' }]);
+    expect(calls).toEqual([{ kind: 'ask', priority: 'P0', job: 'RQ-JOB1', thread: 't-1', contains: 'parser fix', since: 1704067200000, before: 1704153600000, agent: 'claude', limit: 5, from: 'atlas', excludeFrom: 'grok', inReplyTo: 'm-1', id: 'm-2', bodyKind: 'work.post', result: 'failed' }]);
     expect((await send('/api/verse/agent-bus/messages?limit=0')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?kind=chatter')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?before=never')).status).toBe(400);
@@ -855,6 +907,7 @@ describe('phm messages projection', () => {
     expect((await send('/api/verse/agent-bus/messages?inReplyTo=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?id=has%20space')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?bodyKind=has%20space')).status).toBe(400);
+    expect((await send('/api/verse/agent-bus/messages?result=released')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?id=a&id=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?from=a&from=b')).status).toBe(400);
     expect((await send('/api/verse/agent-bus/messages?excludeFrom=a&excludeFrom=b')).status).toBe(400);

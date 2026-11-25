@@ -140,6 +140,26 @@ describe('fleet map messages', () => {
     expect(readMapMessages({ channel: 'BAD CHANNEL!' }, { root, now: () => NOW })!.ok).toBe(false);
     expect(readMapMessages({ id: 'has space' }, { root, now: () => NOW })!.ok).toBe(false);
     expect(readMapMessages({ bodyKind: 'has space' }, { root, now: () => NOW })!.ok).toBe(false);
+    expect(readMapMessages({ result: 'released' }, { root, now: () => NOW })!.ok).toBe(false);
+  });
+
+  it('the --result filter keeps only work.result receipts reporting that outcome', () => {
+    const root = store();
+    const post = (id: string, at: number, body: Record<string, unknown>) =>
+      expect(appendBusInbox({ id, from: 'claude', to: 'leader', priority: 'P2', ttl: 86_400_000, body },
+        { root, now: () => at }).status).toBe('posted');
+    const receipt = (id: string, at: number, outcome: string) => post(id, at,
+      { kind: 'work.result', jobId: 'RQ-RES1', claimKey: 'job:RQ-RES1',
+        queueId: 'peer-work-0123456789abcdef0123456789abcdef',
+        receiptId: 'pw-0123456789abcdef0123456789abcdef', outcome });
+    receipt('w1', T0, 'failed');
+    receipt('w2', T0 + 1_000, 'complete');
+    post('rel1', T0 + 2_000, { kind: 'work.release', claimKey: 'job:RQ-RES1', token: 'tok-1', outcome: 'released' });
+    const summaries = (input: MapMessagesFlags) => read(root, input).messages!.map(m => m.summary);
+    expect(summaries({ result: 'failed' })).toEqual(['failed']);
+    expect(summaries({ result: 'complete' })).toEqual(['complete']);
+    expect(summaries({ result: 'admitted' })).toEqual([]);
+    expect(read(root, { result: 'failed' }).matched).toBe(1);
   });
 
   it('the pure builder shapes matched messages into newest-first map rows', () => {
@@ -190,9 +210,10 @@ describe('fleet map messages', () => {
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?to=claude`, options).body as MapMessages).matched).toBe(1);
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?id=m1`, options).body as MapMessages).messages!.map(m => m.summary)).toEqual(['on it?']);
     expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?bodyKind=note`, options).body as MapMessages).matched).toBe(0);
+    expect((mapMessagesResponse(`${MAP_MESSAGES_PATH}?result=failed`, options).body as MapMessages).matched).toBe(0);
     for (const query of ['since=soon', 'since=1m&since=2m', 'root=/tmp', 'limit=0', 'limit=101', 'limit=x', 'limit=1&limit=2',
       'before=soon', 'before=', 'before=1h&before=2h', 'since=1h&bogus=1', 'kind=bogus', 'channel=BAD!', 'with=codex',
-      'id=has%20space', 'contains=', 'agent=', 'bodyKind=has%20space', 'to=has%20space']) {
+      'id=has%20space', 'contains=', 'agent=', 'bodyKind=has%20space', 'to=has%20space', 'result=released']) {
       expect(mapMessagesResponse(`${MAP_MESSAGES_PATH}?${query}`, options).status).toBe(400);
     }
     const req = Object.assign(Readable.from([]) as IncomingMessage, { url: MAP_MESSAGES_PATH, method: 'GET', headers: {} });
@@ -212,17 +233,17 @@ describe('fleet map messages', () => {
       ['--before'], ['--before', 'soon'], ['--before', '1h', '--before', '2h'], ['--kind'], ['--kind', 'bogus'],
       ['--with', 'codex'], ['--channel', 'BAD CHANNEL!'], ['--id', 'has space'], ['--from', 'a', '--from', 'b'],
       ['--agent', 'claude', '--agent', 'codex'], ['--contains', 'two', '--contains', 'words'], ['--job'],
-      ['--body-kind'], ['--body-kind', 'has space'], ['--to', 'has space']]) {
+      ['--body-kind'], ['--body-kind', 'has space'], ['--to', 'has space'], ['--result'], ['--result', 'bogus']]) {
       expect(cmdFleetMapMessages(args)).toBe(2);
     }
-    expect(err).toHaveBeenCalledTimes(21);
+    expect(err).toHaveBeenCalledTimes(23);
     expect(cmdFleetMapMessages(['--json', '--limit', '5'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1', version: 1 });
     expect(cmdFleetMapMessages(['--json', '--before', '1h'])).toBe(0);
     expect(cmdFleetMapMessages(['--json', '--kind', 'ask', '--from', 'claude', '--contains', 'docs',
       '--channel', 'build', '--in-reply-to', 'm1', '--id', 'm2', '--agent', 'claude', '--with', 'codex',
       '--exclude-from', 'leader', '--priority', 'P2', '--job', 'RQ-ONE-1', '--thread', 'build',
-      '--body-kind', 'note', '--to', 'leader'])).toBe(0);
+      '--body-kind', 'note', '--to', 'leader', '--result', 'failed'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toMatchObject({ schema: 'fleet.map-messages.v1' });
     expect(await cmdFleetMessages(['--json', '--since', '1m', '--before', '2h'])).toBe(0);
     expect(JSON.parse(out.mock.lastCall![0])).toEqual([]);

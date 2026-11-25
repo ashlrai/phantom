@@ -40,6 +40,7 @@ import {
   parseSince, readAgentMessages,
   type AgentMessageKind, type AgentMessages, type AgentMessagesQuery,
 } from '../core/fleet/agent-messages.js';
+import { WORK_RESULT_OUTCOMES } from '../core/agents/bus-v2-schema.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
 import { busReadContains } from '../core/agents/bus-unified.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
@@ -49,7 +50,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const MESSAGE_KEYS = new Set([
   'since', 'before', 'agent', 'with', 'kind', 'priority', 'job', 'thread',
-  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'bodyKind', 'to', 'limit',
+  'contains', 'from', 'excludeFrom', 'inReplyTo', 'channel', 'id', 'bodyKind', 'to', 'result', 'limit',
 ]);
 const LABEL_KEYS = ['job', 'thread', 'from', 'excludeFrom', 'inReplyTo', 'id', 'bodyKind', 'to'] as const;
 
@@ -125,6 +126,11 @@ export function parseFleetAgentMessagesArgs(args: Record<string, unknown>): Flee
   if (withAgent !== undefined) {
     if (query.agent === undefined || typeof withAgent !== 'string' || !BUS_LABEL.test(withAgent)) return null;
     query.with = withAgent;
+  }
+  const result = args.result;
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    query.result = result as AgentMessagesQuery['result'];
   }
   const limit = args.limit;
   if (limit !== undefined) {
