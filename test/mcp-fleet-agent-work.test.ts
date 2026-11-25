@@ -145,6 +145,16 @@ describe('fleet_agent_work argument parsing', () => {
     }
   });
 
+  it('maps the shared result-outcome filter onto the read options', () => {
+    for (const outcome of ['reserved', 'admitted', 'complete', 'failed']) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', result: outcome }))
+        .toEqual({ agent: 'a', result: outcome });
+    }
+    for (const outcome of ['released', 'done', 'FAILED', '', 5, null, true]) {
+      expect(parseFleetAgentWorkArgs({ agent: 'a', result: outcome })).toBeNull();
+    }
+  });
+
   it('accepts the shared since and before grammar and rejects the rest', () => {
     for (const bound of ['15m', '2h', '1d', '1800000000000', '2026-01-01T00:00:00.000Z']) {
       const parsedSince = parseFleetAgentWorkArgs({ agent: 'a', since: bound });
@@ -180,6 +190,8 @@ describe('fleet_agent_work argument parsing', () => {
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 },
       { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 },
+      { agent: 'a', result: 'released' }, { agent: 'a', result: 'FAILED' }, { agent: 'a', result: '' },
+      { agent: 'a', result: 5 }, { agent: 'a', result: null },
       { agent: 'a', limit: 10 }, { agent: 'a', after: 0 }, { agent: 'a', matched: true },
     ]) expect(parseFleetAgentWorkArgs(bad)).toBeNull();
   });
@@ -270,6 +282,8 @@ describe('fleet_agent_work MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['bodyKind'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: ['reserved', 'admitted', 'complete', 'failed'] });
   });
 
   it.each([
@@ -284,6 +298,8 @@ describe('fleet_agent_work MCP tool', () => {
     [{ agent: 'a', from: 'has space' }], [{ agent: 'a', from: '' }], [{ agent: 'a', from: 5 }],
     [{ agent: 'a', excludeFrom: 'has space' }], [{ agent: 'a', excludeFrom: '' }], [{ agent: 'a', excludeFrom: 5 }],
     [{ agent: 'a', bodyKind: 'has space' }], [{ agent: 'a', bodyKind: '' }], [{ agent: 'a', bodyKind: 5 }],
+    [{ agent: 'a', result: 'released' }], [{ agent: 'a', result: 'FAILED' }], [{ agent: 'a', result: '' }],
+    [{ agent: 'a', result: 5 }],
     [{ agent: 'a', limit: 10 }], [{ agent: 'a', after: 0 }], [{ agent: 'a', matched: true }],
     [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
@@ -298,11 +314,11 @@ describe('fleet_agent_work MCP tool', () => {
     const payload = digest({ job: 'RQ-9', contains: 'parser fix' });
     const agentWork = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWork });
-    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0', bodyKind: 'work.result' });
+    const { parsed } = await callWork(client, { agent: 'planner', job: 'RQ-9', contains: 'Parser Fix', since: '1800000000000', before: '1900000000000', priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0', bodyKind: 'work.result', result: 'failed' });
     expect(agentWork).toHaveBeenCalledWith(expect.objectContaining({
       agent: 'planner', job: 'RQ-9', contains: 'parser fix', since: 1800000000000, before: 1900000000000,
       priority: 'P2', channel: 'eng', from: 'ghost', excludeFrom: 'agent:bots', id: 'env-1', inReplyTo: 'env-0',
-      bodyKind: 'work.result',
+      bodyKind: 'work.result', result: 'failed',
     }));
     expect(parsed).toEqual(payload);
   });

@@ -21,8 +21,8 @@
  * `agent` is required and resolves through the server-owned identity
  * registry with the same handle/`agent:`/stable-id/alias refs
  * `resolveAgent` accepts; `job`, `since`, `before`, `contains`,
- * `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo` and
- * `bodyKind` apply the same rules the
+ * `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`,
+ * `bodyKind` and `result` apply the same rules the
  * `phm agents bus work mine` flags share and are validated before any
  * store read. Read-only: no caller
  * root, path or cwd is
@@ -34,6 +34,7 @@
  */
 import { busReadContains } from '../core/agents/bus-unified.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import type { BusWorkMineOptions, BusWorkMineResult } from '../core/agents/bus-work-mine.js';
 import { readBusWorkMineWithSeats } from '../core/agents/bus-work-mine-seats.js';
@@ -42,7 +43,7 @@ import { parseSince } from '../core/fleet/agent-messages.js';
 /** The printable-label rule `agent` and `job` share — the same bound every bus read applies. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
-const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind']);
+const WORK_KEYS = new Set(['agent', 'job', 'contains', 'since', 'before', 'priority', 'channel', 'from', 'excludeFrom', 'id', 'inReplyTo', 'bodyKind', 'result']);
 
 export interface FleetAgentWorkArgs {
   /** Agent ref — handle, `agent:<handle>`, stable `agt_` id or alias — resolved through the server-side registry. */
@@ -69,6 +70,8 @@ export interface FleetAgentWorkArgs {
   inReplyTo?: string;
   /** Keep only pending items whose body carries this exact kind discriminator — the same `--body-kind` rule every bus read shares. */
   bodyKind?: string;
+  /** Keep only pending items tied to a `work.result` receipt reporting this outcome — the same `--result` rule every bus read shares. */
+  result?: WorkResultOutcome;
 }
 
 /**
@@ -83,7 +86,9 @@ export interface FleetAgentWorkArgs {
  * grammar every bus `--channel` read validates, `from`/`excludeFrom`/`id`/
  * `inReplyTo`/`bodyKind` the same printable-label bound every bus
  * `--from`/`--exclude-from`/`--id`/`--in-reply-to`/`--body-kind` read
- * validates. Unknown
+ * validates, and `result` one exact `WORK_RESULT_OUTCOMES` code — the
+ * same vocabulary `phm agents bus work mine --result` and every other
+ * bus read's `--result` flag shares. Unknown
  * keys, wrong
  * types, caller roots and malformed values are all refused before the
  * store is touched.
@@ -120,6 +125,11 @@ export function parseFleetAgentWorkArgs(args: Record<string, unknown>): FleetAge
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
     parsed.priority = priority as BusPriority;
+  }
+  const result = args.result;
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    parsed.result = result as WorkResultOutcome;
   }
   const channel = args.channel;
   if (channel !== undefined) {
@@ -167,5 +177,6 @@ export async function readFleetAgentWork(
     ...(args.id === undefined ? {} : { id: args.id }),
     ...(args.inReplyTo === undefined ? {} : { inReplyTo: args.inReplyTo }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),
+    ...(args.result === undefined ? {} : { result: args.result }),
   });
 }

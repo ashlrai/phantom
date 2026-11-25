@@ -56,7 +56,7 @@ ashlr agents bus work status --job <id> --status <${WORK_STATUSES.join('|')}> [-
     [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus work feed [--status <${WORK_STATUSES.join('|')}>] [--job <id>] [--repo <owner/name>] [--provider <p>] [--tier <${WORK_TIERS.join('|')}>] [--to <label>] [--owner <agent>] [--channel <name>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--claims] [--open] [--claimable] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-${BUS_WORK_FEED_LIMIT_MAX}>]
 ashlr agents bus work claim --job <id> --lease-ms <1..3600000> [--key <claimKey>] [--owner <label>] [--id <opId>]
-ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>]
+ashlr agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus work next [<agent>] --lease-ms <1..3600000> [--owner <label>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]
 ashlr agents bus status
 Common: [--root <abs>] [--json]. <agent> is a handle, agent:<handle>, agt_ id or alias;
@@ -458,7 +458,21 @@ jobs a status receipt has moved, work.result keeps jobs a result receipt
 cites, and any other kind is an honest empty match — while board,
 channels and seats carry no per-item retained body and stay whole; a kind
 nothing on the bus carries is an honest empty match and every count stays
-the filtered total. work next claims the next claimable
+the filtered total. --result on work mine keeps only pending items tied to
+a work.result receipt reporting that one outcome — the same
+WORK_RESULT_OUTCOMES vocabulary and kind-scoped busBodyResultOutcome
+own-field match every bus read's --result applies: jobs and announced keep
+the feed jobs whose newest retained work.result citation carries it (a job
+with no result receipt never matches), next, handoffs and mailbox keep
+envelopes whose body is a work.result reporting it (claimable work, task
+and worker-handoff bodies never match, so those sections are provably
+empty), claims keep only message claims whose resolved leased envelope's
+body reports it (a claim naming no resolved message never lists), inbox
+and wakes pass the value to their own reads' result filters, and the
+thread sections, board, channels and seats carry no per-item result
+evidence the digest can prove and stay unfiltered; an outcome nothing on
+the bus reports is an honest empty match and every count stays the
+filtered total. work next claims the next claimable
 work envelope addressed to the agent — the same kind:'work'/protocol-task
 receipts work mine's next section lists, walked in bus-next order
 (priority band, then cursor) under the same addressed-to rule: any label
@@ -1069,6 +1083,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       const id = one('--id');
       const inReplyTo = one('--in-reply-to');
       const bodyKind = one('--body-kind');
+      const resultOutcome = resultArg();
       const result = await readBusWorkMineWithSeats(agent,
         { ...options, ...(job === undefined ? {} : { job }),
           ...(contains === undefined ? {} : { contains }),
@@ -1080,7 +1095,8 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
           ...(excludeFrom === undefined ? {} : { excludeFrom }),
           ...(id === undefined ? {} : { id }),
           ...(inReplyTo === undefined ? {} : { inReplyTo }),
-          ...(bodyKind === undefined ? {} : { bodyKind }) });
+          ...(bodyKind === undefined ? {} : { bodyKind }),
+          ...(resultOutcome === undefined ? {} : { result: resultOutcome }) });
       if (result.status !== 'ok') {
         out(json ? JSON.stringify(result) : `${result.status}: ${result.reason}`);
         return 2;
