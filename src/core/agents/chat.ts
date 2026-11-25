@@ -2,6 +2,7 @@ import { readOwnerChatReceipts, ownerChatRoot, verifiedOwnerChat, ownerChatRecei
 /** Read-only channel projection. Routing labels and human flags are not authority. */
 import { createHash } from 'node:crypto';
 import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, type BusInboxOptions } from '../fleet/bus-inbox.js';
+import { BUS_PRIORITIES, type BusPriority } from '../fleet/bus-envelope.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { busBodySchema } from './bus-v2-schema.js';
 import { readAgentRegistry, resolveAgent, agentChannelNameSchema, agentRefAddressMatcher } from './bus-identity.js';
@@ -34,9 +35,12 @@ export interface ChatQuery {
    * same scrubbed one-line summary every bus read's `--contains` matches (for
    * the note/context bodies chat admits, that summary is the projected text),
    * `since`/`before` the `[since, before)` window on `receivedAt`, `id` the
-   * exact envelope id and `inReplyTo` the body's own reply citation. */
+   * exact envelope id, `inReplyTo` the body's own reply citation and `priority`
+   * keeps only envelopes stamped with that exact P0..P3 band — the same match
+   * every other bus read's `--priority` applies, so urgent room traffic is one
+   * filtered read. */
   from?: string; excludeFrom?: string; contains?: string;
-  since?: number; before?: number; id?: string; inReplyTo?: string;
+  since?: number; before?: number; id?: string; inReplyTo?: string; priority?: BusPriority;
 }
 
 /** Local owner read boundary only; never combines DMs, inboxes, or external transports.
@@ -56,6 +60,7 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       (query.before !== undefined && (!Number.isSafeInteger(query.before) || query.before < 0)) ||
       (query.id !== undefined && (typeof query.id !== 'string' || !BUS_TOKEN.test(query.id))) ||
       (query.inReplyTo !== undefined && (typeof query.inReplyTo !== 'string' || !BUS_TOKEN.test(query.inReplyTo))) ||
+      (query.priority !== undefined && !BUS_PRIORITIES.includes(query.priority)) ||
       containsNeedle === null) {
     return { status: 'invalid' };
   }
@@ -107,6 +112,7 @@ export function readAgentChat(query: ChatQuery, options: BusInboxOptions = {}): 
       // row the filter rejects.
       if ((fromMatch !== undefined && !fromMatch(e.from)) ||
           (excludeFromMatch !== undefined && excludeFromMatch(e.from)) ||
+          (query.priority !== undefined && e.priority !== query.priority) ||
           (containsNeedle !== undefined && !busReadContainsMatch(e.body, containsNeedle)) ||
           (query.since !== undefined && row.receivedAt < query.since) ||
           (query.before !== undefined && row.receivedAt >= query.before) ||
