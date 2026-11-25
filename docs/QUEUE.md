@@ -23,6 +23,18 @@ Exit codes: 0 complete, 1 unknown evidence, 2 bad usage. Missing push links, unr
 logs, private repositories, API failures and incomplete PR pages stay unknown. Logs are capped at 2 MiB.
 This preview cannot establish cherry-pick compatibility or find recovery PRs under another head.
 
+For the common case — the push landed but `gh pr create` never ran — the fleet finishes it
+directly instead of re-running the job: `phm publish sweep` scans the local `<job>.publish`
+logs for a confirmed push with no `RESULT PR` afterwards and, with `--apply`, opens the PR
+through the same live checks as `phm publish resume` — but never arms auto-merge, because the
+log cannot prove the branch is safe to arm; the merge queue's own gated path decides, exactly
+as it does for every other PR. At most `--limit` (default 3, max 10) per pass, oldest first,
+48-hour window, with `queue/publish-resume.json` remembering terminal and deferred outcomes.
+`default-fetch` aborts stay with the planner-tick recovery-job requeue and
+`integrated-receipt-consume` with the integrated-mode journal; both are reported under
+`skipped`, never resumed. A dry run scans and reports only. The fleet self-tick runs the
+same sweep inside every planner-tick pass (an applied tick resumes; a dry tick only scans).
+
 ## Job requirements
 
 The live producer input is `queue/router-queue.md`. For example:

@@ -1214,6 +1214,7 @@
 /test/proposal-spans.test.ts @masonwyatt23
 /test/protected-paths-310b.test.ts @masonwyatt23
 /test/publish-fetch-retry.test.ts @masonwyatt23
+/test/publish-resume-sweep.test.ts @masonwyatt23
 /test/publish-resume.test.ts @masonwyatt23
 /test/quarantine-ledger.test.ts @masonwyatt23
 /test/queue-dupcheck-gate.test.ts @masonwyatt23
