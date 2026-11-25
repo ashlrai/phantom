@@ -31,7 +31,7 @@ export function restockLight(call: NodeCall, apply: boolean, now = Date.now()) {
   const muse = view.nodes.find(n => n.nodeId === 'muse' && n.owners.includes('ashlr'));
   const ready = !!muse && muse.live && muse.expiresAt > now && muse.heartbeatAt > 0 &&
     muse.heartbeatAt <= now && now - muse.heartbeatAt < NODE_OFFLINE_MS &&
-    muse.slots === 2 && muse.usage < 900 && muse.caps.includes('light');
+    muse.slots === 2 && (muse.usage ?? 0) < 900 && muse.caps.includes('light');
   const candidates = LIGHT_RECIPES.filter(r => r.requires.every(c => muse?.caps.includes(c)))
     .map(r => ({ jobId: `${PREFIX}${r.id}-${Math.floor(now / 3_600_000)}`, recipe: r }))
     .filter(c => !view.jobs.some(j => j.id === c.jobId)).slice(0, ready ? Math.max(0, 2 - outstanding) : 0);

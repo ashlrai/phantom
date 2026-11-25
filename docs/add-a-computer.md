@@ -14,7 +14,9 @@ phm node join --node laptop --owner acme --caps build,gh --json
 ```
 
 Replace `laptop` and `acme` with your own node ID and owner scope. Save the
-`session` number from the output; use that number in the commands below.
+`session` number from the output; use that number in the commands below. The
+output prints `next`, the heartbeat command that keeps the session live; text
+output also notes that this registry is private to this computer.
 
 To keep the exercise fully separate from real Phantom state, point
 `ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);

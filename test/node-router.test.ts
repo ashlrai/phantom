@@ -209,6 +209,25 @@ describe('phm node CLI', () => {
     expect(status.out).not.toContain('j1');
   });
 
+  it('reports unmeasured load as unknown, never a fabricated 0', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    const before = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+    expect(before.nodes).toEqual([expect.objectContaining({ nodeId: 'laptop', usage: null })]);
+    // Text mode renders the node view, not the plan's routes array.
+    expect((await cli('status', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
+    expect((await cli('list', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
+    expect((await cli('plan', '--owner', 'acme')).out).toBe('No routable jobs.');
+    expect((await cli('beat', '--node', 'laptop', '--session', s, '--usage', '250', '--json')).code).toBe(0);
+    const after = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+    expect(after.nodes[0].usage).toBe(250);
+    // A beat without --usage keeps the last reported value rather than resetting it.
+    expect((await cli('beat', '--node', 'laptop', '--session', s, '--json')).code).toBe(0);
+    expect(JSON.parse((await cli('status', '--owner', 'acme', '--json')).out).nodes[0].usage).toBe(250);
+  });
+
   it('runs the documented flow through a symlinked ASHLR_HOME (scratch homes under macOS $TMPDIR)', async () => {
     // /var -> /private/var on macOS makes every mkdtemp home "symlinked"; the
     // store must canonicalize before its private-directory checks.
@@ -256,6 +275,22 @@ describe('phm node CLI', () => {
     const stale = await cli('beat', '--node', 'ghost', '--session', '9', '--json');
     expect(stale.code).toBe(1);
     expect(JSON.parse(stale.out).error.fix).toContain('phm node join');
+  });
+
+  it('join output names the keepalive beat and discloses the private scope', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--caps', 'build,gh', '--json')).out);
+    expect(joined).toMatchObject({ nodeId: 'laptop', owners: ['acme'], caps: ['build', 'gh'] });
+    // A node advertising gh gets the auth-probing beat so gh jobs can route.
+    expect(joined.next).toBe(`phm node beat --node laptop --session ${joined.session} --probe-auth --json`);
+    const plain = JSON.parse((await cli('join', '--node', 'plain', '--owner', 'acme', '--json')).out);
+    expect(plain.next).toBe(`phm node beat --node plain --session ${plain.session} --json`);
+    const text = await cli('join', '--node', 'texty', '--owner', 'acme');
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('private to this computer');
+    expect(text.out).toContain('phm node beat --node texty --session');
+    expect(text.out).toContain('does not connect separate computers');
   });
 
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {

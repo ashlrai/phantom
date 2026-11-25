@@ -11,13 +11,25 @@ export interface NodeFleetDeps {
 
 
 function text(verb: string, out: Record<string, unknown>): string {
-  const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[] | undefined;
-  if (routes) return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+  if (verb === 'plan') {
+    const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
+    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+  }
+  if (verb === 'join') {
+    const nodeId = String(out['nodeId']), session = String(out['session']);
+    const owners = (out['owners'] as string[]).join(', ');
+    const caps = (out['caps'] as string[]).join(',') || 'none';
+    return [
+      `Joined ${nodeId} as a node (session ${session}) for owner scope ${owners}; caps: ${caps}.`,
+      `Keep it live: ${String(out['next'])} — a join starts no worker or heartbeat; the session expires about 30 seconds after the last heartbeat.`,
+      'This registry is private to this computer; joining does not connect separate computers.',
+    ].join('\n');
+  }
   if (verb === 'status' || verb === 'list') {
-    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number; auth: string; caps: string[] }[];
+    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[] }[];
     const jobs = out['jobs'] as { id: string; state: string }[];
     return [`Owner scope: ${(out['owners'] as string[]).join(',')}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
       ...jobs.map(j => `job ${j.id} ${j.state}`)].join('\n');
   }
   if (verb === 'pull') return out['pulled'] ? `Claimed ${(out['claim'] as { jobId: string }).jobId}. Renew before expiry; pass the token to every effect.` : 'No job for this node. Run: phm node plan';
@@ -39,6 +51,12 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
+    if (verb === 'join') {
+      // First-run guidance only: the pool join path (cmdNodePool) prints its own
+      // worker `next`, and the SSH endpoint never reaches this handler.
+      const probe = (out['caps'] as string[]).includes('gh') ? ' --probe-auth' : '';
+      out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --json`;
+    }
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
   } catch (error) {

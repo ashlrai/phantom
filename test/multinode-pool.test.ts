@@ -107,9 +107,12 @@ describe('multi-Mac durable fencing witness', () => {
   });
   it('keeps jobs in the configured owner scope and exposes lanes, load and heartbeat', () => {
     const f = fixture();
-    f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']);
+    const joined = f.run('primary', 'join', ['--node', 'worker', '--caps', 'codex']).result;
     expect(() => f.run('primary', 'enqueue', ['--job', 'foreign', '--owner=other'])).toThrow(/owner/);
-    expect(f.run('primary', 'status').result['nodes']).toEqual([expect.objectContaining({ lanes: ['codex'], usage: 0, heartbeatAt: 1000 })]);
+    // A node that never reported load reads null, never a fabricated 0.
+    expect(f.run('primary', 'status').result['nodes']).toEqual([expect.objectContaining({ lanes: ['codex'], usage: null, heartbeatAt: 1000 })]);
+    f.run('primary', 'beat', ['--node', 'worker', '--session', String(joined['session']), '--usage', '250']);
+    expect(f.run('primary', 'status').result['nodes']).toEqual([expect.objectContaining({ usage: 250 })]);
     expect(f.run('primary', 'list').result).toEqual(f.run('primary', 'status').result);
   });
 });

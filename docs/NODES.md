@@ -40,7 +40,8 @@ through the existing `publish.sh` path. Backup promotion grants compute admissio
 not publication authority.
 
 `phm node list --json` and `phm node status --json` on a configured Mac show the
-configured team scope, per-node lanes, load (`usage`, permille), heartbeat and
+configured team scope, per-node lanes, load (`usage`, permille; `null` until a
+heartbeat reports one, never a fabricated 0), heartbeat and
 expiry timestamps, plus the active runner and fencing epoch. Expired nodes remain
 visible. Unknown local sign-in never qualifies a provider lane.
 
