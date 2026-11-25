@@ -34,7 +34,7 @@ export interface SlackTraceRow {
   outcome: SlackTraceOutcome;
   /** `sent` receipt ts bound by exact reply key; on bus failure this does not prove execution. */
   replyTs?: string;
-  /** `unverified` when the row has no reply identity, so no answer can be proven or ruled out. */
+  /** `unverified` when identity or receive time cannot establish an eligible request. */
   evidence?: 'unverified';
 }
 
@@ -99,15 +99,15 @@ export function traceSlackRequests(input: {
     const { req, ingress } = p;
     const { requestId, ...evidence } = req;
     const row: SlackTraceRow = { ...evidence, ingress, outcome: 'unanswered' };
-    const found = requestId !== undefined && eligible(req)
+    const verified = requestId !== undefined && eligible(req);
+    const found = verified
       ? (ingress === 'failed' ? failedBinding : binding).byRequestId.get(requestId) : undefined;
     if (ingress === 'failed') {
       row.outcome = 'bus-failed';
       if (found?.replyTs !== undefined) row.replyTs = found.replyTs;
-      if (requestId === undefined) row.evidence = 'unverified';
-    } else if (requestId === undefined) {
-      // No reply identity (legacy, peer path, or not Leader-routed): neither
-      // answered nor certified unanswered.
+      if (!verified) row.evidence = 'unverified';
+    } else if (!verified) {
+      // Missing identity or invalid ingress cannot prove or rule out a reply.
       row.outcome = 'uncertain';
       row.evidence = 'unverified';
     } else if (found?.verdict === 'answered' && (ingress === 'posted' || ingress === 'duplicate')) {
