@@ -1,5 +1,5 @@
 import type { DriveNodes, JobClaim } from './index.js';
-import type { NodeAuth } from './state.js';
+import type { NodeAuth, NodeCapacitySample } from './state.js';
 import { isNodeCapacity, isHostStats, validId } from './state.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
@@ -124,15 +124,30 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         try { const raw = flags.get('--host-stats')!; hostStats = raw.length <= 128 * 1024 ? JSON.parse(raw) : null; } catch { hostStats = null; }
         if (!isHostStats(hostStats)) throw new UsageError('bad-host-stats', 'Host stats must be a numeric host observation.', 'Use the node worker to collect host stats.');
       }
-      const capacity: unknown = flags.has('--capacity') ? JSON.parse(flags.get('--capacity')!) : undefined;
-      if (capacity !== undefined && !isNodeCapacity(capacity)) throw new Error('Invalid node capacity sample');
+      // --capacity is the documented `$(phm node measure)` paste, so a bad value
+      // is a usage error naming the flag — never the masked store failure a
+      // bare JSON.parse or shape Error would surface as downstream.
+      let capacity: NodeCapacitySample | undefined;
+      if (flags.has('--capacity')) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(flags.get('--capacity')!); }
+        catch {
+          throw new UsageError('bad-capacity', '--capacity must be one JSON object.',
+            'Run: phm node measure, then pass its output unchanged: --capacity "$(phm node measure)". Omit --capacity when measure exits 1.');
+        }
+        if (!isNodeCapacity(parsed)) {
+          throw new UsageError('bad-capacity', '--capacity is not a valid node capacity sample.',
+            'Pass the object `phm node measure` prints, unchanged: --capacity "$(phm node measure)". Omit --capacity when measure exits 1.');
+        }
+        capacity = parsed;
+      }
       const auth = flags.has('--probe-auth') ? probeAuth() : flags.get('--auth');
       if (auth !== undefined && !['ok', 'missing', 'unknown'].includes(auth)) {
         throw new UsageError('bad-auth', '--auth must be ok, missing or unknown.', 'Use --probe-auth to check this machine\'s own gh login.');
       }
       const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
       const s = session();
-      const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
+      const beat = nodes.heartbeat(s, { ...(capacity === undefined ? {} : { capacity }), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
       if (!beat) throw stale(s.nodeId, s.session);
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }

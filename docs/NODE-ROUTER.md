@@ -90,7 +90,9 @@ worker samples cannot drift apart. `held` is `null` or `memory-unmeasured`,
 `memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
 `"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
 `host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
-worker does, so the node reads unknown rather than wrongly ready.
+worker does, so the node reads unknown rather than wrongly ready. A `--capacity`
+value that is not one JSON object in that shape is refused as `bad-capacity`
+(exit 2) before the beat is recorded; its fix prints the `measure` command.
 
 ## When something is refused
 
