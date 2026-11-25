@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Sixty-one sources, all of which Phantom
+ * evidence instead of a hand-kept list. Sixty-four sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -723,6 +723,28 @@
  *     bounds, and items emit only for the fleet's own repository since
  *     the ledger describes this install's comms and carries no repo
  *     column;
+ *   - the agent-invocation diagnostics journal's recurring failure and
+ *     config-recovery cells: the fixed-schema {schemaVersion, ts, runRef,
+ *     engine, ok, terminationReason?, errorClass, durationMs, attempt,
+ *     maxAttempts, configRecoveryAttempts?, tokensIn?, tokensOut?,
+ *     output, error} rows recordAgentDiagnostic
+ *     (src/core/run/agent-diagnostics.ts) appends once per engine retry
+ *     attempt to <runRef>.jsonl under the agent-logs directory of the
+ *     Ashlr home ($ASHLR_HOME-aware) — value-free metadata only, the run
+ *     id hashed to runRef — until now folded only into the reasoning
+ *     store's TurnFeatures by ingestFleetAgentLogs, a projection no
+ *     backlog source reads, so an engine whose invocations kept failing
+ *     the same way or kept needing mid-run config repair never became
+ *     work (agentDiagnosticsBacklogItems below). A cell emits only at
+ *     the recurring bars of three adverse rows across two distinct UTC
+ *     days inside the 7-day window — per (engine, signal) where the
+ *     signal is the stall monitor's termination verdict when one fired,
+ *     else the recorded errorClass, else error-exit or unclassified,
+ *     plus per (engine, config-recovery) — the directory scan is bounded
+ *     by entry, per-file and total byte caps with unread candidates
+ *     stated as lower bounds, legacy .log files and lock files are not
+ *     folded, and items emit only for the fleet's own repository since
+ *     the journal carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -815,6 +837,7 @@ import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
+import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1865,6 +1888,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the fleet's own repository inherits the items since the ledger
   // describes this install's comms and carries no repo column.
   items.push(...await leaderRepliesBacklogItems({ repo }));
+
+  // Agent-invocation diagnostics journal (<runRef>.jsonl files under the
+  // agent-logs directory of the Ashlr home): the fixed-schema rows
+  // recordAgentDiagnostic appends once per engine retry attempt —
+  // engine, ok, terminationReason, errorClass, attempt/maxAttempts,
+  // configRecoveryAttempts and value-free output/error shapes, the run
+  // id hashed to runRef. Until now the journal's only reader was
+  // ingestFleetAgentLogs folding rows into the reasoning store's
+  // TurnFeatures — a projection no backlog source reads — so an engine
+  // whose invocations kept failing the same way (auth, rate limits,
+  // stall-detector firings, unclassified exits) or kept needing
+  // mid-run config repair never became work. A cell emits only at the
+  // recurring bars of three adverse rows across two distinct UTC days
+  // inside the 7-day window — per (engine, signal) plus per (engine,
+  // config-recovery) — the directory scan is bounded with unread
+  // candidates stated as lower bounds, legacy .log files and lock
+  // files are not folded, and only the fleet's own repository inherits
+  // the items since the journal describes this install's engine
+  // invocations and carries no repo column.
+  items.push(...await agentDiagnosticsBacklogItems({ repo }));
   return { items, errors };
 }
 
