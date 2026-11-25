@@ -169,7 +169,7 @@ macOS and the login keychain.
 
 - in parallel: the root build (tsc, then `scripts/copy-assets.mjs` from `npm run build`, so
   `dist/core/web/public/` exists in a fresh worktree), the typecheck
-  (`npm run typecheck:fast` — the native compiler on both tsconfig projects), eslint
+  (`npm run typecheck:fast` — the native compiler on every tsconfig project), eslint
   (cached), the real-I/O lane guard, the Verse sync-I/O guard, the quarantine-ledger
   verifier, the docs check and the test-name check;
 - then the web build and the first-paint budget;
@@ -342,14 +342,16 @@ npx vitest run \
   test/m482.release-artifact-contract.test.ts
 ```
 
-**There are TWO typecheck gates, and the root one covers less than it looks.**
-`tsconfig.json` has `"exclude": [..., "src/web-ui"]` and no DOM lib, so
-`tsc -p tsconfig.json` typechecks none of the web UI. Anything under
-`src/web-ui` needs the second one, which is what `npm run typecheck:web` runs:
+**There is more than one typecheck gate, and the root one covers less than it
+looks.** `tsconfig.json` has `"exclude": [..., "src/web-ui"]` and no DOM lib, so
+`tsc -p tsconfig.json` typechecks neither the web UI nor `desktop/`. Anything
+under `src/web-ui` needs `npm run typecheck:web`, and anything under `desktop/`
+needs `npm run typecheck:desktop` — `npm run typecheck` runs all three:
 
 ```sh
 npx tsc --noEmit -p tsconfig.json > /tmp/a.log 2>&1; echo $?
 npx tsc --noEmit -p src/web-ui/tsconfig.json > /tmp/b.log 2>&1; echo $?
+npx tsc --noEmit -p desktop/tsconfig.json > /tmp/c.log 2>&1; echo $?
 ```
 
 **Never symlink `node_modules` into a scratch worktree to save an install.**

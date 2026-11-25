@@ -373,12 +373,16 @@ export function typecheckProjects(changed) {
   return {
     backend: shared || changed.some((path) => /^(?:tsconfig[^/]*\.json$|src\/(?!web-ui\/|raycast\/)|test\/|scripts\/)/.test(path)),
     web: shared || changed.some((path) => path.startsWith('src/web-ui/')),
+    // desktop/tsconfig.json extends src/web-ui/tsconfig.json, so the base
+    // config and shared dependency manifests select it too — the same rule
+    // scripts/typecheck-fast.mjs applies.
+    desktop: shared || changed.some((path) => path.startsWith('desktop/') || path === 'src/web-ui/tsconfig.json'),
   };
 }
 
 /** Explicit worktree-local caches stay separate even when node_modules is shared. */
 export function typecheckArgs(root, config = 'tsconfig.json') {
-  const project = config === 'tsconfig.json' ? 'backend' : 'web';
+  const project = config === 'tsconfig.json' ? 'backend' : config === 'desktop/tsconfig.json' ? 'desktop' : 'web';
   return ['--noEmit', '-p', config, '--incremental', '--tsBuildInfoFile', resolve(root, '.ashlr-gate/verify', `${project}.tsbuildinfo`)];
 }
 
@@ -1446,13 +1450,22 @@ export function runNativeTypecheck(root, timeout, spawn = spawnSync, exists = ex
   return result.status === 0;
 }
 
+/** Run one tsconfig project with the backend's native-first diagnostic policy. */
+function runProjectTypecheck(root, timeout, run, config, label, spawn, exists) {
+  const native = runNativeTypecheck(root, timeout, spawn, exists, config);
+  if (native === null) return run(`${label} typecheck`, 'node_modules/typescript/bin/tsc', typecheckArgs(root, config), timeout);
+  console.log(`${native ? 'PASS' : 'FAIL'} ${label} typecheck`);
+  return native;
+}
+
 /** Run the web compiler with the backend's native-first diagnostic policy. */
 export function runWebTypecheck(root, timeout, run, spawn = spawnSync, exists = existsSync) {
-  const config = 'src/web-ui/tsconfig.json';
-  const native = runNativeTypecheck(root, timeout, spawn, exists, config);
-  if (native === null) return run('web typecheck', 'node_modules/typescript/bin/tsc', typecheckArgs(root, config), timeout);
-  console.log(`${native ? 'PASS' : 'FAIL'} web typecheck`);
-  return native;
+  return runProjectTypecheck(root, timeout, run, 'src/web-ui/tsconfig.json', 'web', spawn, exists);
+}
+
+/** Run the desktop compiler (fleet-map components, desktop scripts) the same way. */
+export function runDesktopTypecheck(root, timeout, run, spawn = spawnSync, exists = existsSync) {
+  return runProjectTypecheck(root, timeout, run, 'desktop/tsconfig.json', 'desktop', spawn, exists);
 }
 
 /** Scope the guard's failing file lists while preserving unexpected failures. */
@@ -1660,9 +1673,12 @@ function main() {
     selection = selectChangedFiles(changed, existing);
     conflictFiles = selectConflictScanFiles(changed, existing);
     projects = typecheckProjects(changed);
-    const projectScope = projects.backend && projects.web ? 'backend and web' : projects.backend ? 'backend' : projects.web ? 'web' : null;
+    const projectNames = ['backend', 'web', 'desktop'].filter((name) => projects[name]);
+    const projectScope = projectNames.length > 1
+      ? `${projectNames.slice(0, -1).join(', ')} and ${projectNames.at(-1)}`
+      : projectNames[0] ?? null;
     const scope = [projectScope, selection.contribRouterTypecheck && 'contrib router'].filter(Boolean).join(' and ') || 'typecheck skipped';
-    console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
+    console.log(`verify: ${new Set(changed).size} changed files (${comparison?.mode ?? 'merge-base'}), ${scope}${projects.backend || projects.web || projects.desktop ? ', incremental' : changed.length ? ': no project change' : ': no changes'}`);
     const shebangScripts = selectShebangScripts(changed, existing, (path) => readFirstLine(root, path));
     pythonFiles = [...new Set([...selection.pythonFiles, ...shebangScripts.python])];
     shellFiles = [...new Set([...selection.shellFiles, ...shebangScripts.shell])];
@@ -1904,7 +1920,7 @@ function main() {
   }
   if (!runRealioCheck(root, changed)) process.exitCode = 1;
   run('verse sync-I/O lint', 'scripts/check-verse-sync-io.mjs');
-  if (projects.backend || projects.web || selection.contribRouterTypecheck) try {
+  if (projects.backend || projects.web || projects.desktop || selection.contribRouterTypecheck) try {
     const timeout = Number(process.env.PHANTOM_TSC_TIMEOUT_SECONDS ?? 900);
     if (!Number.isFinite(timeout) || !Number.isInteger(timeout * 1000) || timeout * 1000 < 1 || timeout * 1000 > 2_147_483_647) {
       throw new Error('PHANTOM_TSC_TIMEOUT_SECONDS must be a positive number of seconds within the supported timeout range');
@@ -1947,6 +1963,11 @@ function main() {
         if (!runWebTypecheck(root, timeout, run)) process.exitCode = 1;
       } else {
         console.log('PASS web typecheck skipped: no changed path under src/web-ui/');
+      }
+      if (projects.desktop) {
+        if (!runDesktopTypecheck(root, timeout, run)) process.exitCode = 1;
+      } else {
+        console.log('PASS desktop typecheck skipped: no desktop change');
       }
     });
     if (!held.acquired) {

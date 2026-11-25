@@ -1,4 +1,7 @@
 {
   "extends": "../src/web-ui/tsconfig.json",
-  "include": ["fleet-map/**/*.ts", "vitest.config.mts"]
+  "compilerOptions": {
+    "tsBuildInfoFile": "../node_modules/.cache/phantom-desktop.tsbuildinfo"
+  },
+  "include": ["fleet-map/**/*.ts", "vitest.config.mts", "*.ts"]
 }

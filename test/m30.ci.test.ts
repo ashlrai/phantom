@@ -636,8 +636,9 @@ echo pending=true; exit 2
     }
     // The no-emit gate runs the native compiler (#4600; parity is proven by
     // scripts/tsgo-parity.mjs). Emission stays on tsc in the build script.
-    expect(pkg.scripts.typecheck).toBe('tsgo --noEmit && npm run typecheck:web');
+    expect(pkg.scripts.typecheck).toBe('tsgo --noEmit && npm run typecheck:web && npm run typecheck:desktop');
     expect(pkg.scripts['typecheck:web']).toBe('tsgo --noEmit -p src/web-ui/tsconfig.json');
+    expect(pkg.scripts['typecheck:desktop']).toBe('tsgo --noEmit -p desktop/tsconfig.json');
     // The two split-out steps must not run twice: they no longer live in quick.
     for (const name of ['Check authority drift (hermetic)', 'Check generated files']) {
       expect(quick.steps.find((step: { name?: string }) => step.name === name), `${name} left in quick`).toBeUndefined();
