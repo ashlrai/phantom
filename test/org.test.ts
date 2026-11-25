@@ -87,6 +87,29 @@ describe('join', () => {
     expect(() => joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'other' })).toThrow(/not that machine/);
     expect(joinOrg(validateOrg(o), { member: 'evan-deloria', machine: 'evan-mac', optIn: [] }, { dir: tmp(), host: 'Evans-MacBook' }).member).toBe('evan-deloria');
   });
+  it('names the declared ids and the leader fix on identity refusals', () => {
+    const dir = tmp();
+    const o = org();
+    // A member id missing from org.toml lists who is declared and who adds one.
+    expect(() => joinOrg(o, { member: 'ghost', machine: 'm', optIn: [] }, { dir }))
+      .toThrow(/Unknown member ghost\. This org\.toml declares: mason-wyatt, evan-deloria, mason-scofield\. If yours is missing, ask the leader to add it to org\.toml before join\./);
+    // An undeclared machine names the member's machines and both ways forward.
+    expect(() => joinOrg(o, { member: 'evan-deloria', machine: 'evan-laptop', optIn: [] }, { dir }))
+      .toThrow(/evan-laptop is not a declared machine of evan-deloria\. Declared machines: evan-mac\. Pick a declared id, or ask the leader to add this machine to org\.toml\./);
+    // An undeclared lane names the member's lanes the same way.
+    expect(() => joinOrg(o, { member: 'evan-deloria', machine: 'evan-mac', optIn: [{ lane: 'devin' }] }, { dir }))
+      .toThrow(/does not declare lane devin\. Declared lanes: claude\. Pick a declared lane, or ask the leader to add the contribution in org\.toml\./);
+    // Members with nothing declared say "none", never an empty list.
+    const bare = example() as any;
+    bare.members.push({ id: 'newbie', name: 'New', role: 'member', machines: [{ id: 'n-mac' }], contributions: [] });
+    const o2 = validateOrg(bare);
+    expect(() => joinOrg(o2, { member: 'newbie', machine: 'n-mac', optIn: [{ lane: 'claude' }] }, { dir }))
+      .toThrow(/Declared lanes: none/);
+    bare.members[3].machines = [];
+    const o3 = validateOrg(bare);
+    expect(() => joinOrg(o3, { member: 'newbie', machine: 'n-mac', optIn: [] }, { dir }))
+      .toThrow(/Declared machines: none/);
+  });
   it('replaces the whole record and names the lanes a re-join dropped', () => {
     const dir = tmp();
     const o = org();
