@@ -219,7 +219,12 @@ describe('phm node CLI', () => {
     // next is the --watch keep-alive: a one-shot beat would expire 30 s later.
     expect(joined.next).toBe(`phm node beat --node laptop --session ${joined.session} --watch`);
     const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
-    expect(text.out).toContain('next: phm node beat --node desktop --session ');
+    // Text mode answers in plain words: the join fact, the 30 s session expiry
+    // and the keep-alive command — not the key:value dump --json uses.
+    expect(text.out).toContain('Joined desktop as session ');
+    expect(text.out).toContain('for owner acme');
+    expect(text.out).toContain('expires 30 seconds after the last beat');
+    expect(text.out).toContain('phm node beat --node desktop --session ');
     const again = await cli('join', '--node', 'laptop', '--owner', 'acme', '--json');
     expect(again.code).toBe(1);
     expect(JSON.parse(again.out).error).toMatchObject({ code: 'node-live',

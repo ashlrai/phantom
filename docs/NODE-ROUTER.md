@@ -81,10 +81,12 @@ owner, requirements, pack and secret names, the embedded task text when the
 job carries one, the lease token pair and expiry, and paste-ready `renew` and
 `complete` commands.
 
-The other verbs print plain-words outcomes too: `status`/`list` name the node
-holding each running claim (`claimed by`, or `no live claim` once the claim
-lapsed or was fenced), mark producer withdrawals, and an empty scope says so
-with the join command; `enqueue` says when the job id already exists;
+The other verbs print plain-words outcomes too: `join` answers in a sentence
+naming the node, session, owner scopes and caps, states the 30-second session
+expiry and prints the keep-alive `beat --watch` command; `status`/`list` name
+the node holding each running claim (`claimed by`, or `no live claim` once the
+claim lapsed or was fenced), mark producer withdrawals, and an empty scope says
+so with the join command; `enqueue` says when the job id already exists;
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;
 `complete` and `leave` name what happened, and a refused `leave` names the
