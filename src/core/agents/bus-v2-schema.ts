@@ -276,15 +276,16 @@ export const workPostBodySchema = z.object({
   repo: repoSlugSchema, claimKeys: z.array(claimKeySchema).max(16),
   dispatch: workDispatchSchema.optional(),
 }).strict();
+/** The outcome codes a `work.result` body reports — reported evidence a
+ * worker/peer posted, never a feed job status. */
+export const WORK_RESULT_OUTCOMES = ['reserved', 'admitted', 'complete', 'failed'] as const;
 export const workResultBodySchema = z.object({
   kind: z.literal('work.result'), jobId, claimKey: claimKeySchema,
   queueId: z.string().regex(/^peer-work-[a-f0-9]{32}$/),
   receiptId: z.string().regex(/^pw-[a-f0-9]{32}$/),
-  outcome: z.enum(['reserved', 'admitted', 'complete', 'failed']),
+  outcome: z.enum(WORK_RESULT_OUTCOMES),
   reason: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
 }).strict();
-/** The outcome codes a `work.result` body reports — reported evidence a
- * worker/peer posted, never a feed job status. */
 export type WorkResultOutcome = z.infer<typeof workResultBodySchema>['outcome'];
 export const workClaimBodySchema = z.discriminatedUnion('op', [
   z.object({ kind: z.literal('work.claim'), op: z.literal('acquire'), jobId: jobId.optional(),

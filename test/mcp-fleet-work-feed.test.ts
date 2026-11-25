@@ -93,6 +93,7 @@ describe('fleet_work_feed argument parsing', () => {
     expect(parseFleetWorkFeedArgs({ before: '1800000000000' })?.filters).toMatchObject({ before: 1800000000000 });
     expect(parseFleetWorkFeedArgs({ contains: 'parser' })?.filters).toMatchObject({ contains: 'parser' });
     expect(parseFleetWorkFeedArgs({ channel: 'release' })?.filters).toMatchObject({ channel: 'release' });
+    expect(parseFleetWorkFeedArgs({ result: 'complete' })?.filters).toMatchObject({ result: 'complete' });
   });
 
   it('rejects unknown keys, caller roots and malformed values before any read', () => {
@@ -104,6 +105,7 @@ describe('fleet_work_feed argument parsing', () => {
       { before: 'not-a-time' }, { before: '' }, { before: 5 },
       { contains: '' }, { contains: '   ' }, { contains: 'x'.repeat(513) }, { contains: 42 },
       { channel: 'Has Space' }, { channel: '' }, { channel: 5 }, { channel: 'x'.repeat(33) },
+      { result: 'bogus' }, { result: 'COMPLETE' }, { result: '' }, { result: 5 }, { result: null },
       { status: null }, { job: null },
     ]) expect(parseFleetWorkFeedArgs(bad)).toBeNull();
   });

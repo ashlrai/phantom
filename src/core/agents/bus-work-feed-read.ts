@@ -6,7 +6,7 @@ import { projectBusWorkFeed, type WorkFeedOwnerKeyFor, type WorkFeedProviderFor,
 import { agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry, resolveAgent, type AgentIdentity } from './bus-identity.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { repoSlugSchema } from './bus-v2-schema.js';
-import type { Participant, WorkDispatch, WorkJob } from './bus-v2-schema.js';
+import type { Participant, WorkDispatch, WorkJob, WorkResultOutcome } from './bus-v2-schema.js';
 
 /** One live coordination lease blocking a job's declared claim key. */
 export interface BusWorkFeedHold {
@@ -373,11 +373,21 @@ export interface BusWorkFeedViewFilters {
    * unknown state.
    */
   channel?: string;
+  /**
+   * Keep only jobs whose newest retained `work.result` citation carries this
+   * outcome — the same `WORK_RESULT_OUTCOMES` codes the result body reports
+   * (`reserved`, `admitted`, `complete`, `failed`). The citation is reported
+   * evidence only: it never moved the job's status, so a `complete` result on
+   * a still-`running` job is exactly the divergence this filter surfaces. A
+   * job with no retained result never matches — unknown stays out of a
+   * positive filter, never counted as any outcome.
+   */
+  result?: WorkResultOutcome;
 }
 
 /**
  * Client-side `--status`/`--job`/`--repo`/`--provider`/`--tier`/`--claimable`/`--since`/`--before`/
- * `--to`/`--owner`/`--contains`/`--channel` filters and newest-first ordering shared by
+ * `--to`/`--owner`/`--contains`/`--channel`/`--result` filters and newest-first ordering shared by
  * the feed CLIs;
  * the matchers are the `busWorkFeedPendingToMatcher`/`busWorkFeedOwnerMatcher`
  * predicates. `since` keeps jobs whose `updatedAt` — the newest status
@@ -418,6 +428,7 @@ export function projectBusWorkFeedView(result: BusWorkFeedReadResult, filters: B
       && (filters.toMatch === undefined || filters.toMatch(job.to, job.owner))
       && (filters.ownerMatch === undefined || filters.ownerMatch(job.owner))
       && (filters.channel === undefined || job.to.startsWith(`group:${filters.channel}:`))
+      && (filters.result === undefined || job.result?.outcome === filters.result)
       && (containsNeedle === undefined || busWorkFeedJobSearchText(job).includes(containsNeedle)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const view: Extract<BusWorkFeedReadResult, { status: 'ok' }> = { ...result, jobs };

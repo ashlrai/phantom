@@ -841,7 +841,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 
 `phm agents bus work feed [--status <s>] [--job <id>] [--repo <owner/name>]
 [--provider <p>] [--tier <fast|mid|work|frontier>] [--to <label>] [--owner <agent>]
-[--channel <name>]
+[--channel <name>] [--result <reserved|admitted|complete|failed>]
 [--claims] [--open] [--claimable]
 [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--limit <1-200>]`
 reads the
@@ -906,7 +906,15 @@ whitespace collapsed on both sides like every other `--contains` bus
 read — so "which announced jobs mention X" is one filtered read; ids,
 claim keys, statuses and routing labels are structured fields with their
 own filters, never search text, and a secret-shaped value is scrubbed
-before the match even though the stored envelope keeps it. `--limit`
+before the match even though the stored envelope keeps it. `--result`
+keeps only jobs whose newest retained `work.result` citation carries that
+outcome — one of the `reserved`/`admitted`/`complete`/`failed` codes the
+result body reports — so "which jobs have workers reporting an outcome,
+and which" is one filtered read and a `complete` result sitting on a
+still-`running` job — the divergence the citation exists to surface —
+answers directly; a job with no retained result never matches, unknown
+stays out of a positive filter, and an unrecognized value is a usage
+error like every other feed filter. `--limit`
 pages the filtered view newest-first (1–200) and reports `matched` as the
 true filtered total before the cap and `omitted` as the rest — the same
 page `fleet_work_feed`'s `limit` argument (default 50 there) and the
@@ -1962,7 +1970,7 @@ channel-name grammar with no registry dependence. The
 endpoint needs a current read session and accepts `claims=true` plus the
 same filter parameters the feed CLIs take — `status`, `job`, `repo`,
 `provider`, `tier`, `to`, `owner`, `since`, `before`, `contains`, `channel`,
-`open`, `claimable` and `limit` — each a single value validated by the shared
+`result`, `open`, `claimable` and `limit` — each a single value validated by the shared
 `parseBusWorkFeedQuery` rules (`src/core/agents/bus-work-feed-query.ts`) and
 applied through the same `projectBusWorkFeedView` the CLIs use, so an HTTP
 client gets the identical narrowed, newest-first view: `open`/`claimable`

@@ -2660,7 +2660,7 @@ read-only reader over the local inbox; `GET /api/verse/agent-bus/work-feed`
 answer 503. Its query is the feed CLIs' filter set: `claims=true` adds the
 claims hold join, `open=true`/`claimable=true` imply it like the CLI flags,
 and `status`, `job`, `repo`, `provider`, `tier`, `to`, `owner`, `since`,
-`before`, `contains` and `channel` narrow the answer through the same
+`before`, `contains`, `channel` and `result` narrow the answer through the same
 `projectBusWorkFeedView` the
 CLIs use — jobs answer newest-first, `to`/`owner` resolve through the
 server-side identity registry with exact-label fallback, `channel` is the
@@ -2722,7 +2722,7 @@ hold coverage rule and reports incomplete coverage as degraded.
 exported read-only overlap predicate; acquisition and observation now share one
 structural overlap rule. `projectBusWorkFeedView(result, filters?)` applies the
 client-side feed filters (`{status?, jobId?, repo?, provider?, tier?, claimable?, open?,
-since?, before?, toMatch?, ownerMatch?, contains?, channel?}`),
+since?, before?, toMatch?, ownerMatch?, contains?, channel?, result?}`),
 newest-first order and per-job hold regrouping; `repo` is the lowercase
 `owner/name` key `busWorkFeedRepoKey(repo)` normalizes a `--repo` argument to
 (undefined for a non-slug, so callers reject it as usage) and matches a job's
@@ -2761,7 +2761,11 @@ is scrubbed before the match. `channel` keeps only jobs whose announcement
 `to` carries `group:<channel>:` — the room's whole traffic under every
 topic, the same raw address prefix `agents bus inbox --channel`, `channel
 read` and `phm messages --channel` match; the value is the strict
-channel-name grammar and matching needs no registry. `sliceBusWorkFeedView(result, limit)` pages an
+channel-name grammar and matching needs no registry. `result` keeps only
+jobs whose newest retained `work.result` citation carries that outcome —
+one of the `WORK_RESULT_OUTCOMES` codes (`reserved`, `admitted`,
+`complete`, `failed`) — reported evidence that never moved the job's
+status, so a job with no retained result never matches. `sliceBusWorkFeedView(result, limit)` pages an
 ok view newest-first to `limit` jobs (1–`BUS_WORK_FEED_LIMIT_MAX`, 200),
 reporting `matched` as the true filtered total before the slice and
 `omitted` as the rest while claims holds regroup under the shown jobs only;
@@ -2778,7 +2782,7 @@ footer adds `receipt=<id>` when the projection blamed a retained envelope,
 and a paged read's footer adds `matched=N omitted=M` —
 both feed CLIs use them, and both accept `--to <label>`, `--owner
 <agent>`, `--job <id>`, `--repo <owner/name>`, `--provider <p>`,
-`--channel <name>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
+`--channel <name>`, `--result <reserved|admitted|complete|failed>`, `--claimable`, `--since <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--contains <text>` and
 `--limit <1-200>` beside
 `--status`; `--claimable`
 implies the claims join, `--since` and `--before` parse through the shared `parseSince`
