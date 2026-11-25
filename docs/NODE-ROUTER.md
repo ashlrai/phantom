@@ -90,8 +90,12 @@ The other verbs print plain-words outcomes too: `join` answers in a sentence
 naming the node, session, owner scopes and caps, states the 30-second session
 expiry and prints the keep-alive `beat --watch` command; `status`/`list` name
 the node holding each running claim (`claimed by`, or `no live claim` once the
-claim lapsed or was fenced), mark producer withdrawals, and an empty scope says
-so with the join command; `enqueue` says when the job id already exists;
+claim lapsed or was fenced), show each node's advertised slot bound (`slots=N`,
+or `slots=unbounded` when no bound was ever reported — an absent bound is
+legacy routing, not a measured zero) and its last measured hold as
+`held=<reason>` while one is reported, mark producer withdrawals, and an empty
+scope says so with the join command; `enqueue` says when the job id already
+exists;
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;
 `complete` and `leave` name what happened, and a refused `leave` names the

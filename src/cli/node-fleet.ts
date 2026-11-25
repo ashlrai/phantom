@@ -45,11 +45,16 @@ function text(verb: string, out: Record<string, unknown>): string {
     return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
   }
   if (verb === 'status' || verb === 'list') {
-    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[] }[];
+    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[];
+      slots?: number; capacity?: { held?: string | null } }[];
     const jobs = out['jobs'] as { id: string; state: string; claimedBy?: string; completedBy?: string; producerWithdrawn?: true }[];
     const scope = (out['owners'] as string[]).join(',');
+    // slots is the advertised admission bound: a reported number (0 holds
+    // admission), or 'unbounded' when none was reported — an absent bound is
+    // legacy unbounded routing, not a measured zero. held is the last measured
+    // capacity hold, shown only while one is reported.
     const lines = [`Owner scope: ${scope}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} slots=${n.slots ?? 'unbounded'}${n.capacity?.held ? ` held=${n.capacity.held}` : ''} caps=${n.caps.join(',') || '-'}`),
       ...jobs.map(j => `job ${j.id} ${jobStateWords(j)}`)];
     // An empty scope is the first-run case: say so and print the join command,
     // the same next step `phm node plan` prints for a job with no live node.
