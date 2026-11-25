@@ -779,16 +779,22 @@ whether the `PARKED` marker is in the first column or the lane column.
 `queued` comes from the status snapshot, so it can differ from `ready`.
 
 `launchable` compares each lane's `free` slots with ready rows whose prompt
-file exists. It also excludes parked rows, jobs marked `drop` or `defer` in
+file exists. A row counts toward the lane its market hint resolves to: the
+requirements cell's `preferred_lane` wins over the lane column, an explicit
+`null` — or an empty lane cell — is lane-open, and a row the market would
+reject is dead work, never launchable. Lane-open rows are shared supply any
+lane may take and are reported once as `openRows` (the text output names the
+count). It also excludes parked rows, jobs marked `drop` or `defer` in
 `skipped-empty.tsv`, and filler while `FILLER_HOLD` exists. Both commands use
 the launch target described below and read `~/.ashlr-runs/queue`; set
 `ASHLR_RUNS_DIR` to inspect another runs directory.
 
 `lane-starve` exits 1 when it finds a starved lane; `launchable` exits 1 when
-any lane has more free slots than launchable rows. Both exit 0 otherwise and
-2 for invalid arguments or unreadable required data. Their JSON schemas are
-`fleet.lane-starve.v1` and `fleet.launchable.v1`. Neither report launches work
-or removes a hold.
+any lane has more free slots than launchable rows plus lane-open supply — a
+lane is under-supplied only when even all open rows could not fill it. Both
+exit 0 otherwise and 2 for invalid arguments or unreadable required data.
+Their JSON schemas are `fleet.lane-starve.v1` and `fleet.launchable.v1`.
+Neither report launches work or removes a hold.
 
 ## Inspect the processes using this computer
 

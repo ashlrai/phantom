@@ -53,6 +53,49 @@ describe('fleet launchable', () => {
     expect(await cmdFleetLaunchable(['--json'])).toBe(0);
     expect(report().lanes[0].launchable).toBe(4);
   });
+  it('resolves the market lane hint and counts lane-open rows as shared supply', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 2, running: 0 }, beta: { target: 1, running: 0 } });
+    const spec = (value: string) => JSON.stringify(value);
+    writeFileSync(join(queue, 'ready.tsv'), [
+      // requirements preferred_lane beats the lane column
+      ['RQ-HINT', 'work', 'alpha', 'work', prompt, spec({ preferred_lane: 'beta' })].join('\t'),
+      // explicit null preferred_lane is lane-open even with a lane cell
+      ['RQ-OPEN1', 'work', 'alpha', 'work', prompt, spec({ preferred_lane: null })].join('\t'),
+      // empty lane cell with no requirements is lane-open
+      ['RQ-OPEN2', 'work', '', 'work', prompt].join('\t'),
+      // a hint to a lane the status does not list is neither supply nor open
+      ['RQ-GHOST', 'work', 'alpha', 'work', prompt, spec({ preferred_lane: 'ghost' })].join('\t'),
+      // specs the market rejects are dead work, never launchable
+      ['RQ-BADC', 'work', 'alpha', 'work', prompt, spec({ preferred_lane: 'CLAUDE!' })].join('\t'),
+      ['RQ-BADK', 'work', 'alpha', 'work', prompt, spec({ bogus: 1 })].join('\t'),
+      ['RQ-BADJSON', 'work', 'alpha', 'work', prompt, 'not-json'].join('\t'),
+    ].join('\n'));
+    // alpha: 2 free, 0 hinted; beta: 1 free, 1 hinted; 2 lane-open rows can
+    // fill either lane, so no lane is under-supplied.
+    expect(await cmdFleetLaunchable(['--json'])).toBe(0);
+    expect(report()).toMatchObject({ openRows: 2, lanes: [
+      { lane: 'alpha', free: 2, launchable: 0 },
+      { lane: 'beta', free: 1, launchable: 1 },
+    ] });
+  });
+  it('flags a lane only when even all lane-open supply cannot fill its free slots', async () => {
+    const prompt = join(root, 'prompt.md');
+    writeFileSync(prompt, 'task');
+    status({ alpha: { target: 4, running: 0 }, beta: { target: 1, running: 0 } });
+    writeFileSync(join(queue, 'ready.tsv'), [
+      row('RQ-OPEN', '', prompt), row('RQ-HINT', 'beta', prompt),
+    ].join('\n'));
+    // alpha has 4 free slots and only 1 lane-open row can reach it: under-supplied.
+    expect(await cmdFleetLaunchable(['--json'])).toBe(1);
+    expect(report()).toMatchObject({ openRows: 1, lanes: [
+      { lane: 'alpha', free: 4, launchable: 0 },
+      { lane: 'beta', free: 1, launchable: 1 },
+    ] });
+    expect(await cmdFleetLaunchable([])).toBe(1);
+    expect(log.mock.calls.map(call => String(call[0])).join('\n')).toContain('1 lane-open row(s) can start on any lane.');
+  });
   it('counts free slots against the shed launch target', async () => {
     status({ shed: { target: 4, running: 3, effective_target: 3 }, room: { target: 4, running: 2, effective_target: 3 } });
     expect(await cmdFleetLaunchable(['--json'])).toBe(1);
