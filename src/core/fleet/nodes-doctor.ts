@@ -1,8 +1,9 @@
 /**
  * core/fleet/nodes-doctor.ts: `phm nodes doctor`, a read-only readiness check
  * for each joined computer. It answers "what is this computer missing before it
- * can take jobs?": reachable, which lane CLIs are installed and signed in,
- * which ashlrai repo clones exist and free disk. Every gap is one plain fix line.
+ * can take jobs?": reachable, whether a Phantom session is live there, which
+ * lane CLIs are installed and signed in, which ashlrai repo clones exist and
+ * free disk. Every gap is one plain fix line.
  *
  * It extends the nodes view (reachability, registry) and adds no registry.
  * Lane facts come from a `NodeProbe` adapter that may only run each CLI's own
@@ -113,6 +114,9 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
     const probe = row.reachable === false ? null : row.isSelf ? selfProbe : await safeProbe(row);
     if (row.reachable === false) gaps.push(`${row.name}: not reachable. Wake it and check it is on Tailscale.`);
     else if (row.reachable === UNKNOWN) unknowns.push(`${row.name}: reachability unknown (${view.reasons[0] ?? 'no network read'})`);
+    // No live Phantom session means the computer cannot take jobs whatever its
+    // lanes advertise; `state` already names the rejoin command when one exists.
+    if (row.stateCode === 'not-running') gaps.push(`${row.name}: ${row.state}`);
     const lanes = DOCTOR_LANES.map(lane => laneStatus(lane, probe, row.reachable === false ? UNKNOWN : row.lanes));
     for (const c of lanes) {
       const login = LOGIN[c.lane];
