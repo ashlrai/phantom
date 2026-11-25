@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { validId } from '../core/drive/nodes/state.js';
@@ -12,6 +12,25 @@ export function hasNodePool(): boolean { return existsSync(join(ashlrHome(), 'no
 
 /** Local argument and identity refusals: fixed operator-facing strings, safe to show verbatim. */
 class PoolUsageError extends Error {}
+
+/** Missing pool config is an operational state, not bad usage: name it truthfully. */
+class PoolNotConfigured extends Error {}
+
+/** True when this Mac's standalone registry already holds node records. */
+function standaloneNodesPresent(): boolean {
+  try {
+    const state = JSON.parse(readFileSync(join(ashlrHome(), 'nodes', 'nodes.json'), 'utf8')) as { nodes?: unknown } | null;
+    const nodes = state?.nodes;
+    return Array.isArray(nodes) && nodes.length > 0;
+  } catch { return false; }
+}
+
+/** The no-config refusal names the real state instead of the generic pool mask. */
+function poolConfigMissing(): string {
+  return standaloneNodesPresent()
+    ? 'This Mac uses the standalone node registry, which has no pool witness; this command runs only inside a configured multi-Mac pool.'
+    : 'This Mac has no node pool configuration; this command runs only inside a configured multi-Mac pool.';
+}
 
 function flags(args: string[], values: string[], booleans: string[] = []): Map<string, string> {
   const out = new Map<string, string>();
@@ -74,7 +93,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       return 0;
     }
     const config = readPoolConfig();
-    if (!config) throw new Error('Configure this Mac with phm node pool or phm node join --primary first');
+    if (!config) throw new PoolNotConfigured(poolConfigMissing());
     if (verb === 'rpc') {
       flags(args, []);
       emit(serveNodeRpc(config, await readRequest()));
@@ -112,6 +131,11 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
     if (error instanceof PoolUsageError) {
       emit({ schemaVersion: 1, command: verb, error: { code: 'usage', message: error.message, fix: 'Run: phm node --help' } });
       return 2;
+    }
+    if (error instanceof PoolNotConfigured) {
+      emit({ schemaVersion: 1, command: verb, error: { code: 'error', message: error.message,
+        fix: 'Configure this Mac with phm node join --owner <scope> --primary <alias> --backup <alias>, or use the standalone verbs (phm node --help).' } });
+      return 1;
     }
     emit({ schemaVersion: 1, command: verb, error: { code: 'error',
       message: 'Node pool operation refused or unavailable. First join requires --owner <scope> --primary <alias> --backup <alias>. On configured Macs use phm node join --json. Check local sign-in and SSH approvals; primary admission requires the backup witness.',
