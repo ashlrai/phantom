@@ -20,6 +20,7 @@
  * imports and plain constants, no node: modules.
  */
 import type { RoutingDifficulty, SeatDecision } from '../routing/types.js';
+import type { LiveJobsReport } from './live-jobs.js';
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -607,7 +608,7 @@ export interface FleetLiveSummary {
 export type FleetLiveState = 'dark' | 'idle' | 'running' | 'paused' | 'stopped';
 
 export interface FleetLiveSnapshotV1 {
-  liveJobs?: import('./live-jobs.js').LiveJobsReport;
+  liveJobs?: LiveJobsReport;
   v: 1;
   generatedAt: string;
   state: FleetLiveState;
