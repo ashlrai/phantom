@@ -3893,7 +3893,8 @@ keys on; exact and case-sensitive, a kindless body never matching) —
 `result`, the `busBodyResultOutcome` own-field outcome match the
 `WORK_RESULT_OUTCOMES` vocabulary `phm messages --result`, `agents
 messages --result`, `fleet messages`, `bus recent`,
-`fleet_agent_messages`'s `result` and the work feed's `--result` share
+`fleet_agent_messages`'s `result`, `comms bus read|watch --result`,
+`fleet_bus_inbox`'s `result` and the work feed's `--result` share
 (only `work.result` bodies whose own `outcome` strictly equals the code
 emit; a `work.release` body's own `released`/`completed` outcome, every
 other body kind and a result carrying no outcome never match, and a value
