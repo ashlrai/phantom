@@ -488,6 +488,55 @@ describe('standalone join version reporting', () => {
   });
 });
 
+describe('standalone join node id default', () => {
+  it('defaults --node to the sanitized hostname so the shortest join works', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--caps', 'build', '--json'],
+        { store, hostname: () => 'My MacBook Pro' });
+      expect(code).toBe(0);
+      const out = JSON.parse(lines.at(-1)!);
+      expect(out).toMatchObject({ command: 'join', nodeId: 'My-MacBook-Pro', owners: ['acme'] });
+      expect(store.state.nodes.map(n => n.nodeId)).toEqual(['My-MacBook-Pro']);
+      // The keep-alive hint names the same default-derived id.
+      expect(out['next']).toBe(`phm node beat --node My-MacBook-Pro --session ${out['session']} --watch`);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('an explicit --node still wins over the hostname default', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--json'],
+        { store, hostname: () => 'My-MacBook-Pro' });
+      expect(code).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ nodeId: 'laptop' });
+      expect(store.state.nodes.map(n => n.nodeId)).toEqual(['laptop']);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('a hostname that cannot form a valid id keeps the missing-flag refusal', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      // '_hidden' sanitizes to itself but fails validId's leading-alphanumeric rule.
+      const code = await cmdNodeFleet('join', ['--owner', 'acme', '--json'],
+        { store, hostname: () => '_hidden' });
+      expect(code).toBe(2);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ command: 'join',
+        error: { code: 'missing-flag', message: expect.stringContaining('--node') } });
+      expect(store.state.nodes).toEqual([]);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('the SSH endpoint join still requires the worker to name its own node id', () => {
+    const f = fixture();
+    expect(() => executeNodeFleet('join', ['--owner', 'o'], f.a)).toThrowError(
+      expect.objectContaining({ code: 'missing-flag' }));
+  });
+});
+
 describe('result: read-only owner-scoped outcome', () => {
   const resultArgs = (jobId: string, owner: string) => ['--job', jobId, '--owner', owner];
   const leaseArgs = (claim: { nodeId: string; session: number; jobId: string; token: number; leaderToken: number }, result?: string) =>
@@ -616,7 +665,7 @@ describe('text output names outcomes in plain words', () => {
         'Owner scope: acme',
         'No nodes joined in this scope.',
         'No jobs queued in this scope.',
-        'Join this computer: phm node join --node <id> --owner acme',
+        'Join this computer: phm node join --owner acme',
       ].join('\n'));
       const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
       // enqueue names the id; a duplicate id is a fact, not a failure.

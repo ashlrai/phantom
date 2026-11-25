@@ -71,6 +71,17 @@ describe('node router', () => {
     f.advance(100);
     expect(f.box.plan()[0]).toMatchObject({ nodeId: null, fix: expect.stringContaining('phm node join') });
   });
+
+  it('the no-node fix prints the shortest runnable join, naming the caps the job needs', () => {
+    const f = fixture();
+    f.box.enqueue('j-caps', { owner: 'o', requires: ['build', 'gh'] });
+    f.box.enqueue('j-plain', { owner: 'o' });
+    const plan = f.box.plan();
+    expect(plan.find(r => r.jobId === 'j-caps')).toMatchObject({ nodeId: null,
+      fix: "No live node belongs to owner 'o'. Run: phm node join --owner o --caps build,gh" });
+    expect(plan.find(r => r.jobId === 'j-plain')).toMatchObject({ nodeId: null,
+      fix: "No live node belongs to owner 'o'. Run: phm node join --owner o" });
+  });
 });
 
 describe('job leases: no job runs twice', () => {

@@ -1,7 +1,8 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
+import { hostname } from 'node:os';
 import type { NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
-import type { NodeAuth } from '../core/drive/nodes/state.js';
+import { validId, type NodeAuth } from '../core/drive/nodes/state.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
@@ -9,6 +10,8 @@ export interface NodeFleetDeps {
   probeAuth?: () => NodeAuth;
   /** This build's version for the join `phm-<version>` cap; defaults to localPhmVersion. */
   phmVersion?: () => string | null;
+  /** This computer's hostname for the join `--node` default; defaults to os.hostname. */
+  hostname?: () => string;
 }
 
 
@@ -52,7 +55,7 @@ function text(verb: string, out: Record<string, unknown>): string {
     // the same next step `phm node plan` prints for a job with no live node.
     if (!nodes.length) lines.push('No nodes joined in this scope.');
     if (!jobs.length) lines.push('No jobs queued in this scope.');
-    if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --node <id> --owner ${scope}`);
+    if (!nodes.length && !jobs.length && scope) lines.push(`Join this computer: phm node join --owner ${scope}`);
     return lines.join('\n');
   }
   if (verb === 'enqueue') {
@@ -136,14 +139,24 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path'),
       import('../core/drive/nodes/phm-version.js')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
-    // A standalone join advertises this build as a `phm-<version>` cap, the same
-    // report a pool worker sends, so `phm node self-update` reads a real version
-    // instead of `unreported`. The node's own build is authoritative: any
-    // version-report cap already in --caps (say, copied from an older join hint)
-    // is dropped and replaced, never left to report a stale build. This stays in
-    // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
-    // joining worker — not this host — owns the version it reports.
     if (verb === 'join') {
+      // A standalone join defaults --node to this computer's sanitized hostname,
+      // the same default a pool join applies. Like the version cap below it stays
+      // in the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
+      // joining worker — not this host — owns the node id it reports. A hostname
+      // that cannot form a valid id leaves --node unset so the missing-flag error
+      // still asks for one explicitly.
+      if (!flags.has('--node')) {
+        const id = (deps.hostname ?? hostname)().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+        if (validId(id)) flags.set('--node', id);
+      }
+      // A standalone join advertises this build as a `phm-<version>` cap, the same
+      // report a pool worker sends, so `phm node self-update` reads a real version
+      // instead of `unreported`. The node's own build is authoritative: any
+      // version-report cap already in --caps (say, copied from an older join hint)
+      // is dropped and replaced, never left to report a stale build. This stays in
+      // the CLI layer: runNodeFleet is shared with the SSH endpoint, where the
+      // joining worker — not this host — owns the version it reports.
       const reported = versionCap((deps.phmVersion ?? localPhmVersion)());
       if (reported !== null) {
         const caps = (flags.get('--caps') ?? '').split(',').map(c => c.trim()).filter(Boolean)

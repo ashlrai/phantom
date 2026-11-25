@@ -49,7 +49,7 @@ describe('readNodesView', () => {
       nodes: [{
         name: 'node-a', isSelf: true, reachable: true, lastSeen: '2026-11-17T12:00:00.000Z', phantom: 'not-running',
         heartbeatAgeSeconds: 'unknown', freeMemoryBytes: 12 * GIB, freeMemoryPercent: 38, load: 2, cpuHeadroomPercent: 75, lanes: 'unknown', jobsRunning: 'unknown', freeSlots: 'unknown',
-        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join --node <id> --owner <scope>` here',
+        stateCode: 'not-running', state: 'reachable but Phantom not running: run `phm node join --owner <scope>` here',
         joined: true, joinCommand: null,
       }],
       reasons: ['no node pool on this computer: other computers cannot join its list (docs/NODES.md)'],

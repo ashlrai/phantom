@@ -69,6 +69,11 @@ phm node result --job fix-123 --owner acme
 phm node status --owner acme
 ```
 
+`phm node join` may omit `--node`: the node id then defaults to this
+computer's sanitized hostname — the same default a pool join applies — so
+`phm node join --owner <scope>` is the shortest first join. A job with no
+live node prints a `phm node join --owner` fix that names the caps it needs.
+
 `phm node result --job <id> --owner <scope>` is the read-only way back to a
 job's outcome: `pending`, `running` (naming the node whose live claim can act),
 `completed` with the accepted `--result` text, executor and completion time, or

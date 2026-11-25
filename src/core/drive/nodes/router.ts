@@ -141,8 +141,9 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
+    const requires = job.requires ?? [];
     const fix = !nodes.some(n => n.owners?.includes(job.owner!))
-      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --node <id> --owner ${job.owner} --caps <caps>`
+      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
       : reasons.has('capacity')
         ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
       : reasons.has('declined') && !reasons.has('caps')
