@@ -3942,7 +3942,20 @@ and
 `jobAnnotationFromFeed(feed, jobId)` maps one already-read
 `BusWorkFeedReadResult` to the `BusEnvelopeLookupJob` every citing read
 shares — the inbox page, `readBusEnvelopeById`, wake referents and the
-`agent-messages.v1` `jobState` field. `labelIdentityOf(registry)` binds one
+`agent-messages.v1` `jobState` field.
+`annotateLiveEvidence(messages, options)` is the page-level live-evidence
+pass those reads share — `readAgentInbox`, `readAgentChannel` and the
+`fleet bus-thread`/`fleet_bus_thread` `liveEvidence` read apply it to
+their message rows in place: claimable work and worker-handoff bodies get
+`held`/`holder` — the same exact-receipt message-id-claim and
+`queue:<id>` coordination coverage `readBusEnvelopeById` reports, the two
+hold stores read once per page and only when a candidate is present —
+and bodies naming a job (`work.post`/`work.status`/`work.result`/`wake`
+`jobId`, a `worker-handoff` `taskId`) get `job` through
+`jobAnnotationFromFeed` on one claims-joined feed read, again only when a
+citation is present; a store that cannot be read degrades the field to
+unknown (`held:null`, `job.feed` naming the failure), never to free or
+empty. `labelIdentityOf(registry)` binds one
 already-read `AgentRegistry` into the label→identity-key lookup every
 sender filter shares — `readAgentInbox`/`readAgentChannel` `from` and
 `excludeFrom`, `comms bus read`/`watch --from` and
