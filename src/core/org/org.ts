@@ -147,11 +147,20 @@ const sameHost = (a: string, b: string) => a.toLowerCase().replace(/\.local$/, '
  */
 export function joinOrg(org: Org, req: { member: string; machine: string; optIn: { lane: string; share?: number }[] },
   opts: { dir?: string; host?: string; now?: Date } = {}): JoinRecord {
-  const m = org.members.find((x) => x.id === req.member) ?? fail(`Unknown member ${req.member}.`);
-  const mach = m.machines.find((x) => x.id === req.machine) ?? fail(`${req.machine} is not a declared machine of ${m.id}.`);
+  // Identity refusals name the declared ids and who fixes a missing one: a first
+  // join on a new machine hits exactly these errors, and "not declared" alone
+  // cannot tell a typo from an entry the leader has not added to org.toml yet.
+  const memberIds = org.members.map((x) => x.id);
+  const m = org.members.find((x) => x.id === req.member)
+    ?? fail(`Unknown member ${req.member}. This org.toml declares: ${memberIds.join(', ')}. If yours is missing, ask the leader to add it to org.toml before join.`);
+  const machineIds = m.machines.map((x) => x.id);
+  const mach = m.machines.find((x) => x.id === req.machine)
+    ?? fail(`${req.machine} is not a declared machine of ${m.id}. Declared machines: ${machineIds.length ? machineIds.join(', ') : 'none'}. Pick a declared id, or ask the leader to add this machine to org.toml.`);
   if (mach.host && !sameHost(mach.host, opts.host ?? hostname())) fail(`Run join on ${mach.host}; this is not that machine.`);
+  const laneIds = m.contributions.map((x) => x.lane);
   const lanes = req.optIn.map((o) => {
-    const c = m.contributions.find((x) => x.lane === o.lane) ?? fail(`${m.id} does not declare lane ${o.lane}.`);
+    const c = m.contributions.find((x) => x.lane === o.lane)
+      ?? fail(`${m.id} does not declare lane ${o.lane}. Declared lanes: ${laneIds.length ? laneIds.join(', ') : 'none'}. Pick a declared lane, or ask the leader to add the contribution in org.toml.`);
     const share = o.share ?? c.share;
     if (!Number.isFinite(share) || share < 0 || share > c.share) fail(`Share for ${o.lane} must be between 0 and the declared ${c.share}.`);
     return { lane: o.lane, share };
