@@ -206,6 +206,22 @@ export interface ConversationQuery {
    * the same needs-`--agent` rule the messages read enforces. Whole threads,
    * never partial message lists. */
   with?: string;
+  /** Keep only threads where at least one member message's `to` label the
+   * addressed-to ref matches — the same `agentRefAddressMatcher` rule every
+   * bus read's `--to`/`to` filter applies (`phm messages --to`, `agents bus
+   * inbox`/`channel read`/`wakes --to`, `comms bus read|watch --to`, `fleet
+   * bus-follow --to`, `fleet_bus_inbox`'s `to`): the literal ref, any label
+   * of the identity it resolves to, an unresolvable ref keeping
+   * exact-label matching — decided on each member message's `to` name,
+   * the same projected field `channel`'s `group:` prefix reads, so
+   * "which threads carry mail addressed to X" is one filtered read of whole
+   * threads, distinct from `agent` (threads the identity merely
+   * participates in, either direction) and `channel` (room traffic under
+   * `group:<channel>:*`). The caller supplies the resolved predicate —
+   * the pure model never reads the registry — and an absent predicate with
+   * `to` set matches nothing, never a widened one. Whole threads, never
+   * partial message lists. */
+  to?: string;
   /** Keep only threads where at least one member message declared this exact
    * conversation bucket — a thread label, `threadId`, `job:<id>` or origin
    * key, the same declared-key space the projection groups on — strictly
@@ -398,7 +414,7 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  */
 export function filterConversations(list: readonly Conversation[], query: ConversationQuery,
   identityOf?: AgentIdentityKeyFor, waitingOnMatch?: (on: string, from: string) => boolean,
-  refKeyFor?: AgentIdentityKeyFor): Conversation[] {
+  refKeyFor?: AgentIdentityKeyFor, toMatch?: (value: string) => boolean): Conversation[] {
   const agent = query.agent?.toLowerCase();
   const keyFor = refKeyFor ?? identityOf;
   const key = agent !== undefined ? keyFor?.(query.agent!) : undefined;
@@ -445,6 +461,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.result === undefined || c.messages.some(m => m.result === query.result))
     && (query.kind === undefined || c.messages.some(m => m.kind === query.kind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
+    && (query.to === undefined || c.messages.some(m => toMatch?.(m.to) === true))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))
     && (fromMatch === undefined || c.messages.some(m => fromMatch(m.from)))
     && (excludeMatch === undefined || !c.messages.some(m => excludeMatch(m.from)))

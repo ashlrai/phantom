@@ -14,7 +14,7 @@
  * Every argument is optional and takes the same value rules the
  * `phm agents conversations` flags and the API params share, all validated
  * before any store read: `agent`, `job`, `waitingOn`, `with`, `inReplyTo`,
- * `id`, `from`, `excludeFrom`, `thread` and `bodyKind` printable routing
+ * `id`, `from`, `excludeFrom`, `to`, `thread` and `bodyKind` printable routing
  * labels (`agent` keeps threads that identity is in, resolved through the
  * server-owned registry; `waitingOn` keeps the waiting threads one agent
  * owes a reply on — its own labels or a `group:<channel>:<topic>` address
@@ -66,15 +66,15 @@ import {
 } from '../core/fleet/agent-conversations.js';
 import { AGENT_MESSAGE_KINDS, parseSince, type AgentMessageKind } from '../core/fleet/agent-messages.js';
 
-/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `id`, `from`, `excludeFrom` and `with` share. */
+/** The printable-label rule `agent`, `job`, `waitingOn`, `inReplyTo`, `id`, `from`, `excludeFrom`, `to`, `with`, `thread` and `bodyKind` share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CONVERSATION_KEYS = new Set([
   'agent', 'waiting', 'blocked', 'state', 'job', 'waitingOn', 'since', 'before', 'contains',
-  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind',
+  'inReplyTo', 'id', 'channel', 'priority', 'from', 'excludeFrom', 'to', 'with', 'thread', 'bodyKind',
   'result', 'kind', 'limit',
 ]);
-const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'with', 'thread', 'bodyKind'] as const;
+const LABEL_KEYS = ['agent', 'job', 'waitingOn', 'inReplyTo', 'id', 'from', 'excludeFrom', 'to', 'with', 'thread', 'bodyKind'] as const;
 /** The same page cap `phm agents conversations --limit` and the API param share. */
 const CONVERSATIONS_LIMIT_MAX = 1024;
 
@@ -109,6 +109,8 @@ export interface FleetAgentConversationsArgs {
   from?: string;
   /** Drop threads where any member message was sent under this agent's labels — the shared `--exclude-from` rule. */
   excludeFrom?: string;
+  /** Keep only threads where a member message's `to` label the addressed-to ref matches — the shared `--to` rule. */
+  to?: string;
   /** Keep only threads holding the two-way exchange `agent` and this agent name — the shared `--with` rule; needs `agent`, refused without it. */
   with?: string;
   /** Keep only threads where at least one member message declared this exact conversation bucket — a thread label, threadId, job:<id> or origin key — the shared `--thread` rule. */
@@ -251,6 +253,7 @@ export async function readFleetAgentConversations(
     ...(args.priority === undefined ? {} : { priority: args.priority }),
     ...(args.from === undefined ? {} : { from: args.from }),
     ...(args.excludeFrom === undefined ? {} : { excludeFrom: args.excludeFrom }),
+    ...(args.to === undefined ? {} : { to: args.to }),
     ...(args.with === undefined ? {} : { with: args.with }),
     ...(args.thread === undefined ? {} : { thread: args.thread }),
     ...(args.bodyKind === undefined ? {} : { bodyKind: args.bodyKind }),

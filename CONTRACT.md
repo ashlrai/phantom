@@ -3556,7 +3556,10 @@ predicate every caller-supplied agent ref shares — `inbox`/`channel read`
 `excludeFrom`, the classified-messages reads' `to` (`phm messages`,
 `phm agents messages`, `phm bus recent`, `phm fleet map messages`,
 `phm fleet messages`, their API params and the `fleet_agent_messages` MCP
-`to`), the work-feed `--owner` announcer match and request/handoff
+`to`), the conversations read's `to` (`phm agents conversations --to`,
+its `/api/verse/fleet/control/agent-conversations` `to` param and the
+`fleet_agent_conversations` MCP `to` — member-level, whole threads),
+the work-feed `--owner` announcer match and request/handoff
 correlation refs: the literal ref or any label of the identity `resolveAgent`
 proves it to be — the ref itself never case-folds, so a spelling like `Devin`
 naming no registered label keeps exact-label matching rather than inheriting
