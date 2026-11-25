@@ -608,6 +608,7 @@
 /test/improve-catalog-refresh-backlog.test.ts @masonwyatt23
 /test/improve-ci-rerun-backlog.test.ts @masonwyatt23
 /test/improve-cli-boundary.test.ts @masonwyatt23
+/test/improve-comms-requests-backlog.test.ts @masonwyatt23
 /test/improve-controller-backlog.test.ts @masonwyatt23
 /test/improve-custody-backlog.test.ts @masonwyatt23
 /test/improve-delivery-receipts-backlog.test.ts @masonwyatt23

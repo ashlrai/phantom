@@ -861,6 +861,27 @@
  *     bars, truncated tails are stated as lower bounds, and items emit
  *     only for the fleet's own repository since the journal describes
  *     this install's queue and carries no repo column;
+ *   - the comms request store's recurring expiry cells: the CommsRequest
+ *     rows (src/core/comms/requests.ts) the store keeps at
+ *     <ashlr home>/comms/requests.jsonl — postRequest appends 'pending',
+ *     dispatch promotes at most one question/approval to 'sent',
+ *     resolveRequest records the owner's reply, and the expiry paths
+ *     stamp 'expired' by rewriting the file as one snapshot — until now
+ *     with no trend reader at all, readCommsRequests feeding only the
+ *     comms API's point-in-time queue view and listRequests feeding
+ *     `phm comms`, so asks that kept expiring unanswered, pending rows
+ *     that kept starving behind the single outstanding-question slot,
+ *     or sends the transport kept rejecting never became work
+ *     (commsRequestsBacklogItems below). Only 'expired' rows are
+ *     evidence, anchored on expiredAt inside the 7-day window; a
+ *     (type, kind, expiry-class) cell emits at three expiries across
+ *     two distinct UTC days, classes being the writer's own
+ *     'send failed N times' stamp, the excluded one-time 'migration:*'
+ *     cleanup, and the sentAt split into 'unanswered' versus 'unsent';
+ *     free-text request bodies are never read or surfaced, truncated
+ *     tails are stated as lower bounds, and items emit only for the
+ *     fleet's own repository since the store describes this install's
+ *     owner channel and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -959,6 +980,7 @@ import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
+import { commsRequestsBacklogItems } from './comms-requests-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2140,6 +2162,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // queue and carries no repo column.
   items.push(...await spawnProposalsBacklogItems({ repo }));
+
+  // Comms request store (<ashlr home>/comms/requests.jsonl): the
+  // CommsRequest rows behind every question, approval and report
+  // Phantom asks its owner — postRequest appends 'pending', dispatch
+  // promotes at most one question/approval to 'sent', resolveRequest
+  // records the reply, and the expiry paths stamp 'expired' by
+  // rewriting the file as one snapshot. Until now the store had no
+  // trend reader at all: readCommsRequests feeds only the comms API's
+  // point-in-time queue view and listRequests feeds `phm comms`, so
+  // asks that kept expiring unanswered, pending rows that kept
+  // starving behind the single outstanding-question slot, or sends
+  // the transport kept rejecting never became work. Only 'expired'
+  // rows are evidence, anchored on expiredAt inside the 7-day window;
+  // a (type, kind, expiry-class) cell emits at three expiries across
+  // two distinct UTC days — classes being the writer's own 'send
+  // failed N times' stamp, the excluded one-time 'migration:*'
+  // cleanup, and the sentAt split into 'unanswered' versus 'unsent' —
+  // free-text request bodies are never read or surfaced, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the store describes this
+  // install's owner channel and carries no repo column.
+  items.push(...await commsRequestsBacklogItems({ repo }));
   return { items, errors };
 }
 
