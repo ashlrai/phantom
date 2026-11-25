@@ -1,0 +1,46 @@
+PR #5827: files=45 added(m>=8c)=1405 present_on_master=869 deleted(m>=8c)=37 still_on_master=25
+  PR_BODY.md: add none, del n/a [path absent on master]
+  artifacts/apptruth-mission.png: add none, del n/a [path absent on master]
+  docs/APP-STATE.md: add none, del n/a [path absent on master]
+  docs/FLEET-FORUM.md: add none, del n/a [path absent on master]
+  docs/MCP-TOOLS.md: add none, del n/a
+  docs/README.md: add none, del n/a
+  docs/contracts/CONTRACT-FLEET-FORUM.md: add none, del n/a [path absent on master]
+  docs/llms.txt: add none, del n/a
+  package.json: add none, del n/a
+  src/cli/app.ts: add none, del all
+  src/cli/completions.ts: add none, del all
+  src/cli/forum.ts: add none, del n/a [path absent on master]
+  src/cli/help.ts: add none, del n/a
+  src/cli/index.ts: add none, del n/a
+  src/core/fleet/channel-envelope.ts: add all, del n/a
+  src/core/fleet/forum-channel-ingest.ts: add all, del n/a
+  src/core/fleet/forum/bridge.ts: add all, del n/a
+  src/core/fleet/forum/mcp.ts: add all, del n/a
+  src/core/fleet/forum/service.ts: add 405/410, del n/a
+  src/core/fleet/mission-control-types.ts: add none, del n/a
+  src/core/fleet/mission-control.ts: add none, del 3 remain
+  src/core/mcp-native.ts: add 2/14, del 1 remain
+  src/core/verse/fleet-runs-api.ts: add 2/9, del 7 remain
+  src/core/verse/verse-api.ts: add none, del all
+  src/core/verse/verse-stream.ts: add 3/37, del n/a
+  src/core/web/read-session.ts: add none, del 1 remain
+  src/web-ui/routes/verse/fleet-mission/FleetMissionPane.test.tsx: add 2/16, del n/a
+  src/web-ui/routes/verse/fleet-mission/FleetMissionPane.tsx: add none, del 6 remain
+  src/web-ui/routes/verse/fleet-mission/mission-queries.ts: add none, del n/a
+  src/web-ui/routes/verse/mobile/ScreenHost.tsx: add none, del 1 remain
+  src/web-ui/routes/verse/mobile/mobile-model.test.ts: add none, del n/a
+  src/web-ui/routes/verse/mobile/mobile-router.ts: add none, del 2 remain
+  src/web-ui/routes/verse/mobile/screens/ForumScreen.test.tsx: add none, del n/a [path absent on master]
+  src/web-ui/routes/verse/mobile/screens/ForumScreen.tsx: add none, del n/a [path absent on master]
+  src/web-ui/routes/verse/mobile/screens/MoreScreen.tsx: add none, del n/a
+  test/__snapshots__/mcp-output-efficiency.test.ts.snap: add 118/135, del n/a
+  test/app-update-status.test.ts: add none, del n/a
+  test/fleet-forum-sim.test.ts: add all, del n/a
+  test/fleet-forum.test.ts: add 122/132, del n/a
+  test/fleet-mission-stream.test.ts: add none, del n/a [path absent on master]
+  test/fleet-mission.test.ts: add 3/18, del 2 remain
+  test/leader-reply-clean-original-238s.test.ts: add all, del all
+  test/leader-status-reply.test.ts: add 2/3, del all
+  test/mcp-output-efficiency.test.ts: add 6/17, del 2 remain
+  test/verse-api-mount-310.test.ts: add none, del all
