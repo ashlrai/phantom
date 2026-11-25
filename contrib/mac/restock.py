@@ -166,6 +166,20 @@ def single_case_group(job, attrs, text):
     files = set(re.findall(r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+(?:\.test|\.spec)\.[A-Za-z0-9]+)\b", text))
     return (repo.group(1), next(iter(files)), " ".join(attrs.split()), " ".join(text.split())) if repo and len(files) == 1 else None
 
+def request_repo(attrs):
+    parts = [p.strip() for p in attrs.split(',')]
+    repos = [re.fullmatch(r"repo=(?:ashlrai/)?([a-z0-9-]+)", p) for p in parts if p.startswith('repo=')]
+    return repos[0][1] if len(repos) == 1 and repos[0] else None
+
+def merged_request(job, attrs, text):
+    """Exact work identity; scheduling changes cannot disguise a covered request."""
+    repo = request_repo(attrs)
+    if not repo or (not re.search(r"\bAcceptance:\s*\S", text) and not single_case_group(job, attrs, text)): return None
+    parts = [p.strip() for p in attrs.split(',')]
+    # Preserve case, quoted whitespace, dependencies, scope limits and unknown attrs.
+    constraints = tuple(p for p in parts if not re.fullmatch(r"P[0-3]|pool=[a-z-]+|enq=\d+|repo=(?:ashlrai/)?[a-z0-9-]+", p))
+    return (repo, constraints, text.strip())
+
 claimed = {x.split("\t")[0] for x in rd(Q + "/claimed.tsv").splitlines() if x}
 ready_raw = [x for x in rd(Q + "/ready.tsv").splitlines() if x.strip() and not x.strip().startswith("#")]
 # RQ-QUEUE-AUTOUNPARK-1: PARKED-DEP[.lane] may lead the row (fleet parked status-first) or sit in the lane column.
@@ -225,15 +239,34 @@ for d in empty_attempts:
         if previous is None or epoch > previous[0]: recent_outcomes[job] = (epoch, empty and not success)
 # A merged outcome plus the original identical task is evidence for suppressing
 # a later copy. Missing or ambiguous history never proves completion.
-completed_groups = set(); group_outcomes = {}
+group_outcomes = {}
 for raw in lines:
     m = re.match(r"^- (?:READY|CLAIMED|DONE(?:-NOOP)?|MERGED|LANDED) ([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)$", raw)
     if m:
         group = single_case_group(*m.groups())
         if group and m.group(1) in recent_outcomes:
             group_outcomes.setdefault(group, {})[m.group(1)] = recent_outcomes[m.group(1)]
-        if group and ((group[0], m.group(1)) in completed or (None, m.group(1)) in completed):
-            completed_groups.add(group)
+# Join outcomes to an unambiguous original request, including decorated CLAIMED
+# rows. A status label alone is never merge evidence. Multiline work stays unknown.
+request_rows = {}; requests_by_job = {}; previous = None
+for index, raw in enumerate(lines):
+    m = re.fullmatch(r"- (?:READY|CLAIMED|RUNNING|DONE(?:-NOOP)?|MERGED|LANDED) (?:\S+ )*?([A-Za-z0-9._-]+)(?: r\d+)? \((.*?)\):\s*(.*)", raw)
+    if m:
+        job, attrs, text = m.groups()
+        key = merged_request(job, attrs, text)
+        request_rows[index] = (job, key, request_repo(attrs))
+        requests_by_job.setdefault(job, set()).add(key)
+        previous = job
+    elif raw.strip():
+        if previous: requests_by_job[previous].add(None)
+        previous = None
+completed_requests = {}; merged_rows = set()
+for index, (job, key, repo) in request_rows.items():
+    if repo and ((repo, job) in completed or (None, job) in completed):
+        merged_rows.add(index)
+        if key and len(requests_by_job[job]) == 1: completed_requests.setdefault(key, job)
+covered_rows = {i: completed_requests[key] for i, (job, key, _) in request_rows.items()
+                if key in completed_requests and len(requests_by_job[job]) == 1 and i not in merged_rows}
 # Two latest distinct attempts were empty: cool down only this exact request.
 # A later success or expiry of the evidence permits a fresh attempt.
 empty_groups = {group for group, outcomes in group_outcomes.items()
@@ -374,7 +407,10 @@ seclist = []
 for i, j, a2, t2, raw2 in recs:
     if SEC.search(NEGS.sub("", raw2)): seclist.append((i, j)); skip(j, "hold-security")
 parked = {i for i, j in seclist}
-duplicates, dedupe_unknown, duplicate_lines = semantic_dedupe([line if i not in parked else '' for i, line in enumerate(lines)])
+# Completed sources and their exact copies must not suppress a distinct fix via
+# the active-work similarity heuristic before the evidence check below runs.
+dedupe_excluded = parked | merged_rows | covered_rows.keys()
+duplicates, dedupe_unknown, duplicate_lines = semantic_dedupe([line if i not in dedupe_excluded else '' for i, line in enumerate(lines)])
 for duplicate in duplicates: skip(duplicate['id'], 'semantic-goal-overlap')
 recs = [r for r in recs if r[0] not in duplicate_lines]
 # Impact and priority precede bold/repository preferences at both admission boundaries.
@@ -489,7 +525,9 @@ for i, j, attrs, text, raw in sorted(ranked_records(recs), key=market_rank):
     # Local terminal evidence retires stale producer work before any network precheck.
     reason = ("already-merged" if (rm.group(1), j) in completed or (None, j) in completed
               else terminal_target(j, rm.group(1), f"{j} ({attrs}): {text}", terminal_prs))
-    if not reason and quality_group and quality_group in completed_groups: reason = "acceptance-already-merged"
+    if not reason and i in covered_rows:
+        reason = "acceptance-already-merged"
+        duplicates.append(dict(id=j, repeatOf=covered_rows[i], repo=rm.group(1), match='merged-request', reason=reason))
     if reason:
         checked.add(j); park_state.pop(j, None)
         done.append((i, j, (10, reason), rm.group(1))); skip(j, reason); continue
