@@ -15,7 +15,8 @@ import { bindSlackReplies } from '../agents/slack-reply-binding.js';
 import { readSlackSendReceipts } from '../agents/slack-send-receipts.js';
 import { loadConfigReadOnlyStrict } from '../config.js';
 import { readImessageAckEvidence } from '../comms/imessage-ack-evidence.js';
-import { commsEnabled, readLastSend } from '../integrations/imessage.js';
+import { commsEnabled } from '../integrations/imessage.js';
+import { readImessageLastSendEvidence } from '../comms/imessage-last-send-evidence.js';
 
 export type ChannelName = 'slack' | 'imessage';
 export type ChannelState = 'LIVE' | 'DEGRADED' | 'BLOCKED' | 'UNKNOWN';
@@ -220,11 +221,11 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
     journal: readSlackJournal({ ...(runsDir ? { runsDir } : {}), limit: 4096 }),
     sends: readSlackSendReceipts(),
   };
-  let sendCaptured = false;
-  let lastSend: ReturnType<typeof readLastSend>;
+  let lastSend: ReturnType<typeof readImessageLastSendEvidence> | undefined;
   const sendSnapshot = () => {
-    if (!sendCaptured) { lastSend = readLastSend(runsDir); sendCaptured = true; }
-    return lastSend;
+    const evidence = lastSend ??= readImessageLastSendEvidence(runsDir);
+    if (evidence.sourceState === 'unreadable') throw new Error('imessage-last-send-unreadable');
+    return evidence;
   };
   return {
     slack: {
@@ -267,11 +268,11 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
       },
       replies: () => {
         const last = sendSnapshot();
-        return last?.ok && last.at ? [last.at] : [];
+        return last.sourceState === 'ok' && last.ok ? [last.at] : [];
       },
       outboundFailure: () => {
         const last = sendSnapshot();
-        return last && !last.ok ? { at: last.at ?? '' } : null;
+        return last.sourceState === 'ok' && !last.ok ? { at: last.at } : null;
       },
     },
   };
