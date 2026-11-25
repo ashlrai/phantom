@@ -156,7 +156,19 @@ export function joinOrg(org: Org, req: { member: string; machine: string; optIn:
   const machineIds = m.machines.map((x) => x.id);
   const mach = m.machines.find((x) => x.id === req.machine)
     ?? fail(`${req.machine} is not a declared machine of ${m.id}. Declared machines: ${machineIds.length ? machineIds.join(', ') : 'none'}. Pick a declared id, or ask the leader to add this machine to org.toml.`);
-  if (mach.host && !sameHost(mach.host, opts.host ?? hostname())) fail(`Run join on ${mach.host}; this is not that machine.`);
+  const here = opts.host ?? hostname();
+  if (mach.host && !sameHost(mach.host, here)) {
+    // The declared host pins the machine to one computer. Name the way
+    // through like the other identity refusals do: when exactly one sibling
+    // machine's host is this computer that is almost always the id the member
+    // meant; otherwise the host likely changed or the computer was replaced,
+    // and only the leader can re-point it in org.toml.
+    const matches = m.machines.filter((x) => x.id !== mach.id && x.host !== undefined && sameHost(x.host, here));
+    const way = matches.length === 1
+      ? ` This computer matches declared machine ${matches[0]!.id}: run phm org join --member ${m.id} --machine ${matches[0]!.id}.`
+      : ' If this computer replaced it or was renamed, ask the leader to update the machine\'s host in org.toml.';
+    fail(`Run join on ${mach.host}; this is not that machine.${way}`);
+  }
   const laneIds = m.contributions.map((x) => x.lane);
   const lanes = req.optIn.map((o) => {
     const c = m.contributions.find((x) => x.lane === o.lane)
