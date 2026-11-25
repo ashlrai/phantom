@@ -4,6 +4,7 @@
  */
 import type { AgentMessageKind } from './agent-messages.js';
 import type { AgentIdentityKeyFor } from '../agents/bus-identity.js';
+import type { WorkResultOutcome } from '../agents/bus-v2-schema.js';
 import type { BusPriority } from './bus-envelope.js';
 
 export const CONVERSATION_STATES = ['waiting', 'answered', 'blocked', 'done'] as const;
@@ -56,6 +57,13 @@ export interface ConversationMessage {
    * filter — the same "unknown stays out" rule every other own-field filter
    * keeps. */
   bodyKind?: string;
+  /** The body's own `outcome` when its own `kind` is `work.result` — the
+   * same `busBodyResultOutcome` read every bus read's `--result` filter
+   * applies, verbatim and unvalidated. Absent for every other body kind and
+   * for a `work.result` carrying no outcome, so it never matches a `result`
+   * filter — the same "unknown stays out" rule every other own-field filter
+   * keeps. */
+  result?: string;
 }
 
 export interface ConversationAgent { name: string; label: string; known: boolean; node: string | null }
@@ -70,6 +78,8 @@ export interface ConversationItem {
   thread?: string;
   /** The member's body kind discriminator, verbatim — the same `busBodyKind` field the thread-level `bodyKind` filter reads; absent when the body carries none. */
   bodyKind?: string;
+  /** The member's `work.result` outcome, verbatim — the same `busBodyResultOutcome` field the thread-level `result` filter reads; absent when the body is no `work.result` receipt or carries no outcome. */
+  result?: string;
 }
 /** Two agents that exchanged messages in this thread, for the map's line. */
 export interface ConversationLink { a: string; b: string; count: number; lastAt: string }
@@ -219,6 +229,18 @@ export interface ConversationQuery {
    * whose body carries no discriminator names no provable kind and never
    * matches. Whole threads, never partial message lists. */
   bodyKind?: string;
+  /** Keep only threads where at least one member message is a `work.result`
+   * receipt reporting this exact outcome — the same `WORK_RESULT_OUTCOMES`
+   * codes the work feed's `--result` filter and `phm messages --result`
+   * validate (`reserved`, `admitted`, `complete`, `failed`), matched
+   * verbatim against the body's own `outcome` field through
+   * `busBodyResultOutcome`, the same own-field exact match every bus read's
+   * `--result` applies (`agents bus inbox`/`channel read`/`wakes
+   * --result`). Every other body kind — a `work.release` body's own
+   * outcome included — and a `work.result` carrying no outcome names no
+   * provable outcome and never matches. Whole threads, never partial
+   * message lists. */
+  result?: WorkResultOutcome;
   /** Keep only threads where at least one member message's classified kind
    * is this — the same `AgentMessageKind` vocabulary and member-level rule
    * `phm messages --kind` applies to the flat timeline (ask, reply,
@@ -283,7 +305,8 @@ export function groupConversations(messages: readonly ConversationMessage[], now
         ...(m.priority === undefined ? {} : { priority: m.priority }),
         ...(m.inReplyTo === undefined ? {} : { inReplyTo: m.inReplyTo }),
         ...(m.thread === null || m.thread === undefined ? {} : { thread: m.thread }),
-        ...(m.bodyKind === undefined ? {} : { bodyKind: m.bodyKind }) })),
+        ...(m.bodyKind === undefined ? {} : { bodyKind: m.bodyKind }),
+        ...(m.result === undefined ? {} : { result: m.result }) })),
     });
   }
   return out.sort((a, b) => (b.waiting?.ms ?? -1) - (a.waiting?.ms ?? -1) || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : a.id < b.id ? -1 : 1));
@@ -359,7 +382,13 @@ export function groupConversations(messages: readonly ConversationMessage[], now
  * member message's body carries that exact kind discriminator — the
  * same `busBodyKind` own-field exact match every bus read's body-kind
  * filter applies — so "which threads carry work.post traffic" is one
- * filtered read. `kind` keeps only the threads where at least one member
+ * filtered read. `result` keeps only the threads where at least one
+ * member message is a `work.result` receipt reporting that one outcome —
+ * the same `busBodyResultOutcome` own-field exact match every bus read's
+ * `--result` filter applies — so "which threads carry a failed result"
+ * is one filtered read, every other body kind and an outcome-less
+ * `work.result` never matching. `kind` keeps only the threads where at
+ * least one member
  * message's classified kind is the value — the same `AgentMessageKind`
  * vocabulary `phm messages --kind` filters the flat timeline on, decided
  * on each member's `kind`, so "which threads carry a blocker" is one
@@ -413,6 +442,7 @@ export function filterConversations(list: readonly Conversation[], query: Conver
     && (query.id === undefined || c.messages.some(m => m.id === query.id))
     && (query.thread === undefined || c.messages.some(m => m.thread === query.thread))
     && (query.bodyKind === undefined || c.messages.some(m => m.bodyKind === query.bodyKind))
+    && (query.result === undefined || c.messages.some(m => m.result === query.result))
     && (query.kind === undefined || c.messages.some(m => m.kind === query.kind))
     && (channelPrefix === undefined || c.messages.some(m => m.to.startsWith(channelPrefix)))
     && (query.priority === undefined || c.messages.some(m => m.priority === query.priority))

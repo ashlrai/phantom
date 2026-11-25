@@ -575,7 +575,7 @@ compute scene draws its message lines at the same thickness.
 
 #### Agent conversations
 
-`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--thread <label>] [--body-kind <kind>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
+`phm agents conversations [--agent <name>] [--with <name>] [--waiting] [--blocked] [--state <waiting|answered|blocked|done>] [--job <id>] [--waiting-on <name>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>] [--in-reply-to <id>] [--id <envelope-id>] [--channel <name>] [--priority <P0|P1|P2|P3>] [--from <name>] [--exclude-from <name>] [--thread <label>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--kind <ask|reply|handoff|status|blocker>] [--limit <1..1024>] [--json]`
 groups the same bus read into threads by reply chain and by the declared
 conversation label a body carries, longest-waiting first and then newest
 first. `--agent` matches a participant's routing label and, through
@@ -676,6 +676,15 @@ message's body carries that exact kind discriminator — the same
 `busBodyKind` own-field exact match `agents bus inbox --body-kind`,
 `channel read --body-kind`, `agents bus wakes --body-kind` and `phm
 messages --body-kind` apply — a member body with no discriminator never
+matching. `--result <reserved|admitted|complete|failed>` keeps only the
+threads where at least one member message is a `work.result` receipt
+reporting that one outcome — the same `WORK_RESULT_OUTCOMES` codes the
+work feed's `--result` filter and `phm messages --result` validate,
+matched verbatim against the body's own `outcome` field through
+`busBodyResultOutcome`, the same own-field exact match `agents bus
+inbox --result`, `channel read --result` and `agents bus wakes --result`
+apply — so "which threads carry a failed result" is one filtered read,
+every other body kind and a `work.result` carrying no outcome never
 matching. `--kind <ask|reply|handoff|status|blocker>` keeps only the
 threads where at least one member message's classified kind is the
 value — the same `AgentMessageKind` vocabulary `phm messages --kind`
@@ -699,14 +708,14 @@ conversation; only the synthesized per-pair fallback stays reply-chain
 rooted. `group.presence` heartbeats are expiring observations with their own
 read (`phm comms bus group presence`), never messages: they form no thread
 and cannot answer a waiting one. `--json` prints `agents.conversations.v1` (`version` 1), and
-`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&priority=P0&from=claude&excludeFrom=bot&thread=release-1&bodyKind=work.post&kind=blocker&limit=50]`
+`GET /api/verse/fleet/control/agent-conversations[?agent=claude&with=grok&waiting=1&blocked=1&state=waiting&job=RQ-1&waitingOn=claude&since=1h&before=2h&contains=text&inReplyTo=env-1&id=env-2&channel=dev&priority=P0&from=claude&excludeFrom=bot&thread=release-1&bodyKind=work.post&result=failed&kind=blocker&limit=50]`
 serves the same read with a current read session. The isolated fleet MCP
 server's `fleet_agent_conversations` tool serves the same projection with
 the same filters as arguments (`agent`, `with` — the other agent in a
 two-way exchange, which needs `agent` — `waiting`/`blocked` booleans,
 `state`, `job`, `waitingOn`, `since`, `before`, `contains`, `inReplyTo`,
 `id`, `channel`, `priority`, `from`, `excludeFrom`, `thread`, `bodyKind`,
-`kind`, `limit`), so an
+`result`, `kind`, `limit`), so an
 MCP-connected agent reads the fleet-wide thread view — who waits on whom,
 what is blocked, what moved lately — without shelling out to `phm`.
 
@@ -719,8 +728,9 @@ what is blocked, what moved lately — without shelling out to `phm`.
   the thread names none), `links[]` (the pairs that talked) and `messages[]`
   (`id`, `at`, `from`, `to`, `kind`, `subject`, plus `priority` — the envelope
   band — `inReplyTo` — the body's own reply citation — `thread` — the declared
-  conversation bucket — and `bodyKind` — the body's kind discriminator —
-  when the message carries them).
+  conversation bucket — `bodyKind` — the body's kind discriminator — and
+  `result` — the member's `work.result` outcome — when the message carries
+  them).
 - `matched`: every thread the filters kept before `--limit`/`limit` cut the
   page; `null` when the bus could not be read, the same unknown-stays-unknown
   rule `conversations` follows.
