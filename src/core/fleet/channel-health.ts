@@ -389,13 +389,13 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   if (invalidFailureTime) reasons.push(`${channel} outbound failure evidence time invalid`);
   if (recentFailure) reasons.push(`${channel} outbound send failed`);
   if (durableFailed) reasons.push(`${channel} durable ingress failed`);
-  // The binding-unreadable reason is reported but never changes the state the
-  // timestamp fallback would have produced on its own.
+  // An unavailable binding cannot certify an idle or recently active channel,
+  // but positive failure evidence still takes precedence.
   const reported = bindingUnreadable ? [...reasons, `${channel} reply binding unreadable`] : reasons;
   if (pending.some((t) => nowMs - t > REPLY_GRACE_MS) || durableFailed || recentFailure) {
     return { ...base, state: 'DEGRADED', missing: reported };
   }
-  if (reasons.length) return { ...base, state: 'UNKNOWN', missing: reported };
+  if (reported.length) return { ...base, state: 'UNKNOWN', missing: reported };
   return { ...base, state: 'LIVE', missing: reported };
 }
 
