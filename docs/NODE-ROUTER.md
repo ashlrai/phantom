@@ -78,6 +78,17 @@ The stdin/stdout protocols keep their own shapes: `run-once` replies and
 `rpc` requests, and `light`'s `muse.light.v1` report.
 Exit codes: 0 ok, 1 lease or session lost or store unavailable, 2 bad usage.
 
+`phm node beat --capacity '<json>'` carries one self-measured host sample —
+`{"hostId","ramBytes","slots","held","sampledAtMs"}` — which the router uses for
+slot-aware admission and host grouping. Do not hand-write it: `phm node measure`
+prints the exact object to paste (`--capacity "$(phm node measure)"`), measured
+on this machine under the same rules the pool worker applies, so manual and
+worker samples cannot drift apart. `held` is `null` or `memory-unmeasured`,
+`memory-pressure`, `disk-unmeasured` or `disk-pressure`, and a held node reports
+`"slots":0`. A node held for a reason the sample cannot express (`cpu-*`,
+`host-slots-*`) makes `measure` exit 1; omit `--capacity` on that beat, as the
+worker does, so the node reads unknown rather than wrongly ready.
+
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`

@@ -1,7 +1,7 @@
 import { validNodeTask } from './task.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
-import { homedir, hostname } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { checkDriveExecutable } from '../script-bridge.js';
 import type { JobClaim } from './index.js';
@@ -9,6 +9,7 @@ import { probeLocalModelCaps, type LocalLaneProbeDeps } from './local-model-caps
 import { callPool, type PoolConfig } from './pool-host.js';
 import { NODE_HEARTBEAT_MS, isHostStats, validId } from './state.js';
 import { nodeRamSlots, readNodeCapacity, type NodeCapacity } from './capacity.js';
+import { nodeBeatCapacity } from './capacity-sample.js';
 import { hostSlots, type HostSlotLease } from './host-slots.js';
 import { localPhmVersion, versionCap } from './phm-version.js';
 import { lightRecipe, restockLight } from './light.js';
@@ -102,9 +103,10 @@ export async function runNodeWorker(config: PoolConfig, runner: string, light = 
   const routerSlots = (observed: NodeCapacity, owned = 0) => observed.held ? 0 : Math.min(capacity.slots, active + observed.slots - owned);
   // The pool's capacity sample does not accept CPU or host-slot holds yet. Those beats omit the
   // sample, so the router shows this host as unknown instead of refusing the whole heartbeat.
-  const capacityReport = (observed: NodeCapacity, slots: number) => observed.held && /^(?:cpu|host-slots)-/.test(observed.held) ? [] :
-    ['--capacity', JSON.stringify({ ...observed, slots,
-      hostId: hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100), sampledAtMs: Date.now() })];
+  const capacityReport = (observed: NodeCapacity, slots: number) => {
+    const report = nodeBeatCapacity({ ...observed, slots });
+    return report.sample ? ['--capacity', JSON.stringify(report.sample)] : [];
+  };
   const usage = () => String(Math.min(1000, Math.round(active / capacity.slots * 1000)));
   const attempt = async (): Promise<Record<string, unknown>> => {
     const admission = capacityNow();
