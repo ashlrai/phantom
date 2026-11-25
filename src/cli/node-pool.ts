@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
-import { validId } from '../core/drive/nodes/state.js';
+import { nodeIdFromHost, validId } from '../core/drive/nodes/state.js';
 import { readNodeCapacity } from '../core/drive/nodes/capacity.js';
 import { ashlrHome } from '../core/cloud/store.js';
 import { callPool, configurePool, readPoolConfig, serveNodeRpc, type NodeRpcRequest, type PoolConfig } from '../core/drive/nodes/pool-host.js';
@@ -47,7 +47,7 @@ export async function cmdNodePool(verb: string, args: string[]): Promise<number>
       const role = verb === 'join' ? 'worker' : f.get('--role') as PoolConfig['role'];
       const existing = verb === 'join' ? readPoolConfig() : null;
       const config = existing ?? configFrom(f, role);
-      if (!existing && verb === 'join' && !f.has('--node')) config.node = hostname().replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+      if (!existing && verb === 'join' && !f.has('--node')) config.node = nodeIdFromHost(hostname());
       if (existing && ['--role', '--node', '--owner', '--primary', '--backup'].some(key => f.has(key) && f.get(key) !== existing[key.slice(2) as keyof PoolConfig])) throw new PoolUsageError('Join cannot change pool identity');
       if (!validSshHost(config.primary) || !validSshHost(config.backup)) throw new PoolUsageError('Use explicit team SSH config aliases for --primary and --backup');
       if (config.primary === config.backup || !validId(config.owner) || !validId(config.node)) throw new PoolUsageError('Invalid node pool identity');

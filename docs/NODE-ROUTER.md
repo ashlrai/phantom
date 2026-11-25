@@ -65,6 +65,11 @@ phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 
 phm node status --owner acme
 ```
 
+`--node` is optional on `join`: omit it to join as this computer's hostname,
+sanitized the same way pool enrollment derives the id. `beat`, `pull`, `renew`,
+`complete` and `leave` still name the node explicitly — use the `nodeId` join
+printed.
+
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
 `{"schemaVersion":1,"command":"pull","error":{"code","message","fix"}}` on failure.

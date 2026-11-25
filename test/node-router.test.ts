@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DriveNodes, LocalNodesStore, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { probeLocalAuth } from '../src/core/drive/nodes/auth-probe.js';
-import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { emptyState, nodeIdFromHost, parseState } from '../src/core/drive/nodes/state.js';
 import { cmdNode } from '../src/cli/node.js';
 
 class MemoryStore implements NodesStore {
@@ -303,6 +303,31 @@ describe('phm node CLI', () => {
     expect(secret.code).toBe(2);
     expect(secret.out).not.toContain('supersecret');
     expect(JSON.parse(secret.out).error.code).toBe('unknown-flag');
+  });
+
+  it('join defaults --node to this computer\'s sanitized hostname', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const id = nodeIdFromHost(hostname());
+    const joined = JSON.parse((await cli('join', '--owner', 'acme', '--json')).out);
+    expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: id, owners: ['acme'] });
+    const status = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+    expect(status.nodes.map((n: { nodeId: string }) => n.nodeId)).toEqual([id]);
+    // The default names one live node: a second bare join is refused, not duplicated.
+    const again = await cli('join', '--owner', 'acme', '--json');
+    expect(again.code).toBe(1);
+    expect(JSON.parse(again.out).error).toMatchObject({ code: 'node-live' });
+  });
+
+  it('an explicit --node still wins over the hostname default', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'scratch-pad', '--owner', 'acme', '--json')).out);
+    expect(joined.nodeId).toBe('scratch-pad');
+    // --owner stays required even though --node now has a default.
+    const bare = await cli('join', '--json');
+    expect(bare.code).toBe(2);
+    expect(JSON.parse(bare.out).error.message).toContain('--owner');
   });
 
   it('sends bare and --json-only join to the standalone registry error, not the pool', async () => {

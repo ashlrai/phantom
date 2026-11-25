@@ -6,8 +6,9 @@ On the computer to add, install Node.js 22.15.0 or newer, then install Phantom:
 npm install -g @ashlr/phantom
 ```
 
-Join with a unique node ID and the owner scope used by the jobs you want to
-run. Choose capabilities for this computer's role (see below):
+Join with the owner scope used by the jobs you want to run; the node ID
+defaults to this computer's hostname (`--node` picks another). Choose
+capabilities for this computer's role (see below):
 
 ```sh
 phm node join --node laptop --owner acme --caps build,gh --json

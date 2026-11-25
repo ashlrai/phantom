@@ -54,6 +54,13 @@ export function validId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(value);
 }
 
+/** The node id a host derives for itself when none is given: pool enrollment
+ * and standalone `phm node join` share this sanitizer so the same computer
+ * always lands on the same id. The result still needs `validId`. */
+export function nodeIdFromHost(host: string): string {
+  return host.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 100);
+}
+
 export function validCap(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9_.:-]{0,63}$/.test(value);
 }
