@@ -2027,8 +2027,8 @@ apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
 envelopes whose body carries that exact kind discriminator — the same
 `busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind` and `comms bus read|watch --body-kind` apply:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
@@ -2037,7 +2037,8 @@ printable value an honest empty stream. `--result
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
 --result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+`fleet_agent_messages`'s `result`, the work feed's `--result` and
+`comms bus read|watch --result` share —
 so the envelope-level audit trail a job-scoped follow already narrows by
 `--job` answers "stream only this job's failed result receipts" in one
 filtered read; every other body kind, including a `work.release` body's
@@ -2045,7 +2046,17 @@ own `released`/`completed` outcome, and a `work.result` carrying no
 outcome never match, and a value outside the vocabulary is an invalid
 request, never a widened stream. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
-an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+an unfiltered one would. `comms bus read|watch` narrows on the same two
+body filters — `--body-kind <kind>` keeps only envelopes whose body
+carries that exact kind discriminator and `--result
+<reserved|admitted|complete|failed>` keeps only `work.result` bodies whose
+own `outcome` strictly equals the code, the identical `busBodyKind`/
+`busBodyResultOutcome` own-field matches and closed `WORK_RESULT_OUTCOMES`
+vocabulary every bus read shares, an out-of-vocabulary `--result` or a
+non-printable `--body-kind` exiting 2; filtered rows still advance page
+cursors and checkpoints exactly like every other filter, and a
+`--checkpoint` consumer binds the raw flag values into its filter
+identity, so a changed filter fails closed. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,
