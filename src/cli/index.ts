@@ -2121,6 +2121,22 @@ async function main(): Promise<void> {
     }
   }
 
+  // Anonymous install / weekly-active ping (docs/TELEMETRY.md). Fire-and-forget:
+  // at most one request per week, opt out with ASHLR_TELEMETRY=0 or DO_NOT_TRACK=1.
+  if (cmd !== '--ashlr-handshake') {
+    void (async () => {
+      let version = process.env.ASHLR_VERSION;
+      if (!version) {
+        try {
+          const { createRequire } = await import('node:module');
+          version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+        } catch { version = 'unknown'; }
+      }
+      const { maybeSendUsagePing } = await import('../core/metrics/usage-ping.js');
+      await maybeSendUsagePing('phantom', version);
+    })().catch(() => undefined);
+  }
+
   try {
     switch (cmd) {
       case 'check': {
