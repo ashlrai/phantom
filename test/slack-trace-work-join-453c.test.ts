@@ -16,8 +16,11 @@ describe('joinSlackWork', () => {
     expect(joinSlackWork(TS, 'C0AGENTS', board([it1({ channel: 'imessage' })]))).toEqual({ kind: 'none' });
   });
   it('does not match prefix/suffix near-misses', () => {
-    expect(joinSlackWork('1731400000.0001', 'C0AGENTS', board([it1()]))).toEqual({ kind: 'none' });
-    expect(joinSlackWork(TS, 'C0AGENTS', board([it1({ channelRef: 'T0TEAM/C0AGENTS/1731400000.0001' })]))).toEqual({ kind: 'none' });
+    expect(joinSlackWork('1731400000.00011', 'C0AGENTS', board([it1()]))).toEqual({ kind: 'none' });
+    expect(joinSlackWork(TS, 'C0AGENTS', board([it1({ channelRef: 'T0TEAM/C0AGENTS/1731400000.00011' })]))).toEqual({ kind: 'none' });
+  });
+  it('matches equivalent fractional padding', () => {
+    expect(joinSlackWork('1731400000.0001', 'C0AGENTS', board([it1()])).kind).toBe('item');
   });
   it('reports ambiguous on two matches', () => {
     expect(joinSlackWork(TS, 'C0AGENTS', board([it1(), it1({ id: 'wi-2' })]))).toEqual({ kind: 'ambiguous', count: 2 });
