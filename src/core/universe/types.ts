@@ -1,3 +1,4 @@
+import type { SealedIntegrationScenarioPin } from './sealed-integration-scenario.js';
 import type { UniverseDeliveryReceipt } from './delivery.js';
 import type { UniverseFileOperationsConfig, UniverseFileOperationsReceipt } from './file-operations-types.js';
 import type { ResourceWorker } from '../resources/pool-policy.js';
@@ -15,8 +16,8 @@ export interface UniverseManifest {
   budget: { maxTrials: number; maxDurationMs: number; trialTimeoutMs: number; maxParallel: number;
     /** Explicit worker-only cap for the closed scored evaluator; omission retains the shared trial cap. */
     workerTimeoutMs?: number };
-  evaluation: { command: string[]; timeoutMs: number; builtin?: never } |
-    { builtin: 'preparation-measurement-v1' | 'preparation-process-score-v1'; timeoutMs: number; command?: never };
+  evaluation: { command: string[]; timeoutMs: number; builtin?: never; integrationScenario?: SealedIntegrationScenarioPin } |
+    { builtin: 'preparation-measurement-v1' | 'preparation-process-score-v1'; timeoutMs: number; command?: never; integrationScenario?: never };
   variants: UniverseVariant[];
 }
 
