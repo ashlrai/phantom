@@ -3,11 +3,13 @@
  *
  * `phm friction` mines the runs dir — jobs.jsonl finishes, holds and launch
  * receipts, the dispatch event log, ready.tsv rows, guardian red-main state,
- * lane slots, budget overrides, keep.txt and its own note ledger — into
- * thirteen scored dispatch→merge drag categories (empty-finishes,
+ * lane slots, budget overrides, keep.txt, the merge-events.jsonl
+ * merge-queue transition ledger and its own note ledger — into
+ * fourteen scored dispatch→merge drag categories (empty-finishes,
  * anomalous-diffs, requeues, lane-auth, quota-exhaustion, invalid-tier,
  * red-main, stale-ready, deferred-requests, manual-interventions,
- * wrong-route, holds, concurrency-throttle) over a 7-day window, each scored
+ * wrong-route, holds, concurrency-throttle, merge-queue) over a 7-day
+ * window, each scored
  * as delegation unlocked × frequency × blast radius / cost. Until now the
  * fold only ever reached `phm friction`, a report someone had to run and
  * read — and its scan rows only append on manual runs — so a recurring
@@ -124,7 +126,7 @@ function frictionItem(item: FrictionItem, report: FrictionReport, repo: string):
     'Evidence (runs-dir relative, scrubbed):',
     evidence,
     '',
-    'The fold is `phm friction --json` over the fleet runs directory (~/.ashlr-runs or $ASHLR_RUNS_DIR): metrics/jobs.jsonl, queue/dispatch-events.log, queue/ready.tsv, guardian/state.json, queue/slots.json, queue/budget-overrides.json, queue/keep.txt and friction/ledger.jsonl operator notes. Find the machinery or queue path producing this drag and fix the cause in this repository. If the pattern no longer reproduces on the default branch — or an operator note already owns it — report no-change and name the evidence.',
+    'The fold is `phm friction --json` over the fleet runs directory (~/.ashlr-runs or $ASHLR_RUNS_DIR): metrics/jobs.jsonl, metrics/merge-events.jsonl, queue/dispatch-events.log, queue/ready.tsv, guardian/state.json, queue/slots.json, queue/budget-overrides.json, queue/keep.txt and friction/ledger.jsonl operator notes. Find the machinery or queue path producing this drag and fix the cause in this repository. If the pattern no longer reproduces on the default branch — or an operator note already owns it — report no-change and name the evidence.',
   ].join('\n');
   return {
     id: `friction-${item.id}`,
