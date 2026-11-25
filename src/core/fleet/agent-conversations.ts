@@ -12,7 +12,7 @@
  */
 import { JOB_THREAD_PREFIX, agentName, projectAgentMessages } from './agent-messages.js';
 import { busBodyJobId, labelIdentityOf } from '../agents/bus-unified.js';
-import { busBodyKind } from '../agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome } from '../agents/bus-v2-schema.js';
 import { agentLabels, readAgentRegistry, resolveAgent,
   type AgentIdentity, type AgentIdentityKeyFor, type AgentRegistry } from '../agents/bus-identity.js';
 import { scanBusInbox, type BusInboxOptions, type BusInboxReceipt } from './bus-inbox.js';
@@ -58,6 +58,11 @@ export function conversationMessages(rows: readonly BusInboxReceipt[]): Conversa
       // applies, carried to the member item so the thread-level filter can
       // match it; a body with no discriminator stays absent, never guessed.
       bodyKind: busBodyKind(body) ?? undefined,
+      // The same work-result outcome read every bus read's --result filter
+      // applies, carried to the member item so the thread-level filter can
+      // match it; a body that is no work.result receipt or carries no
+      // outcome stays absent, never guessed.
+      result: busBodyResultOutcome(body) ?? undefined,
       ...(jobIds.size === 0 ? {} : { jobIds: [...jobIds].sort() }),
       // The message projection's conversation key is the declared thread bucket —
       // a v2 `thread` label, `threadId`, `job:<id>` or origin — the same key
@@ -146,7 +151,7 @@ export function readAgentConversations(query: ConversationQuery = {}, options: B
   // The registry backs `agent`, `waitingOn`, `with` and the
   // `from`/`excludeFrom` sender filters' identity matching; every other
   // filter — `channel`, `priority`, `inReplyTo`, `thread`, `bodyKind`,
-  // `kind` included — decides on member-message fields alone
+  // `result`, `kind` included — decides on member-message fields alone
   // and needs no read.
   const needsRegistry = query.agent !== undefined || query.waitingOn !== undefined ||
     query.from !== undefined || query.excludeFrom !== undefined || query.with !== undefined;

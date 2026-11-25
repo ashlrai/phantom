@@ -500,6 +500,30 @@ describe('v2 work threads', () => {
     expect(ten.messages.map(m => m.kind)).toEqual(['ask', 'reply', 'status']);
   });
 
+  it('result keeps the whole threads holding a member work.result of that outcome', () => {
+    const root = bus(WORK);
+    const read = (query: Parameters<typeof readAgentConversations>[0]) =>
+      readAgentConversations(query, { root, now: () => NOW }).conversations!.map(c => c.id);
+    // result reads each member's own work.result outcome: RQ-PEER9's receipt
+    // failed, RQ-PEER10's completed; the work.release body's own
+    // 'completed' outcome is a different body kind and never matches, and a
+    // work.post or note carries no outcome at all.
+    expect(read({ result: 'failed' })).toEqual(['job:RQ-PEER9']);
+    expect(read({ result: 'complete' })).toEqual(['job:RQ-PEER10']);
+    expect(read({ result: 'reserved' })).toEqual([]);
+    expect(read({ result: 'admitted' })).toEqual([]);
+    // It composes like every other member-level filter: each test keeps
+    // whole threads, so a thread passes when any member satisfies each.
+    expect(read({ result: 'failed', job: 'RQ-PEER10' })).toEqual([]);
+    expect(read({ result: 'complete', job: 'RQ-PEER10' })).toEqual(['job:RQ-PEER10']);
+    // The member items carry the outcome the filter reads; every other
+    // body kind and an outcome-less body stays absent.
+    const nine = readAgentConversations({ job: 'RQ-PEER9' }, { root, now: () => NOW }).conversations![0]!;
+    expect(nine.messages.map(m => m.result ?? null)).toEqual([null, null, 'failed']);
+    const ten = readAgentConversations({ job: 'RQ-PEER10' }, { root, now: () => NOW }).conversations![0]!;
+    expect(ten.messages.map(m => m.result ?? null)).toEqual([null, 'complete', null]);
+  });
+
   it('the CLI --job prints only that job\'s threads and refuses a bad id', async () => {
     const root = bus(WORK), lines: string[] = [], errors: string[] = [];
     const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
@@ -517,6 +541,24 @@ describe('v2 work threads', () => {
     expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
     expect(await run(['--kind', 'bogus'])).toBe(2);
     expect(errors.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the CLI --result filters threads and refuses a bad value', async () => {
+    const root = bus(WORK), lines: string[] = [], errors: string[] = [];
+    const run = (args: string[]) => runAgentsConversationsCli(args, text => lines.push(text), text => errors.push(text), { root, now: () => NOW });
+    expect(await run(['--result', 'failed', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER9']);
+    expect(await run(['--result', 'complete', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-PEER10']);
+    // 'completed' is no WORK_RESULT_OUTCOMES code — the work.release
+    // vocabulary, not the work.result one — so it is a usage error like
+    // every other bad value; an outcome nothing reports is an honest
+    // empty page.
+    expect(await run(['--result', 'completed', '--json'])).toBe(2);
+    expect(await run(['--result', 'reserved', '--json'])).toBe(0);
+    expect(JSON.parse(lines.pop()!).conversations).toEqual([]);
+    expect(await run(['--result', 'bogus'])).toBe(2);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -1110,6 +1152,31 @@ describe('phm agents conversations --json', () => {
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=bogus`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?kind=a&kind=b`)).status).toBe(400);
+    // result keeps threads holding a member work.result of that outcome —
+    // the same own-field match --result applies — and bad values are refused.
+    const resultRoot = bus([
+      [T0, 'r1', 'peer-a', 'peer-b', { kind: 'work.post', jobId: 'RQ-R1', title: 'Fix', repo: 'ashlrai/phantom',
+        claimKeys: ['repo:ashlrai/phantom'] }],
+      [T0 + MIN, 'r2', 'peer-b', 'peer-a', { kind: 'work.result', jobId: 'RQ-R1', claimKey: 'repo:ashlrai/phantom',
+        queueId: 'peer-work-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', receiptId: 'pw-ffffffffffffffffffffffffffffffff',
+        outcome: 'failed' }],
+      [T0 + 2 * MIN, 'r3', 'peer-c', 'peer-d', { kind: 'work.post', jobId: 'RQ-R2', title: 'Docs', repo: 'ashlrai/phantom',
+        claimKeys: ['repo:ashlrai/phantom'] }],
+      [T0 + 3 * MIN, 'r4', 'peer-d', 'peer-c', { kind: 'work.result', jobId: 'RQ-R2', claimKey: 'repo:ashlrai/phantom',
+        queueId: 'peer-work-99999999999999999999999999999999', receiptId: 'pw-88888888888888888888888888888888',
+        outcome: 'complete' }],
+    ]);
+    const resultCall = serve(createFleetLiveMapApi(undefined, undefined, undefined,
+      query => readAgentConversations(query, { root: resultRoot, now: () => NOW })));
+    const failed = await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=failed`);
+    expect(failed.status).toBe(200);
+    expect(failed.body.conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-R1']);
+    const done = await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=complete`);
+    expect(done.status).toBe(200);
+    expect(done.body.conversations.map((c: { id: string }) => c.id)).toEqual(['job:RQ-R2']);
+    expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=bogus`)).status).toBe(400);
+    expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=`)).status).toBe(400);
+    expect((await resultCall(`${AGENT_CONVERSATIONS_PATH}?result=a&result=b`)).status).toBe(400);
     expect((await call(`${AGENT_CONVERSATIONS_PATH}?extra=1`)).status).toBe(400);
     expect((await call(AGENT_CONVERSATIONS_PATH, null)).status).toBe(401);
     // blocked=1 keeps only the blocked threads, same as --blocked.
