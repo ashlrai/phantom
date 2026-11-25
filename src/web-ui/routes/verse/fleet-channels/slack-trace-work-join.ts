@@ -19,11 +19,16 @@ const CHANNEL = /^[CDG][A-Z0-9]{2,32}$/;
 const TEAM = /^[TE][A-Z0-9]{2,32}$/;
 const TS = /^\d{1,20}\.\d{1,10}$/;
 
+function decimalIdentity(ts: string): string {
+  return ts.replace(/^0+(?=\d)/, '').replace(/0+$/, '');
+}
+
 function refMatches(ref: string, channelId: string, threadTs: string): boolean {
   if (ref.length > 128) return false;
   const parts = ref.startsWith('slack:') ? ref.slice(6).split(':') : ref.split('/');
   return parts.length === 3 && TEAM.test(parts[0]!) && CHANNEL.test(parts[1]!) &&
-    TS.test(parts[2]!) && parts[1] === channelId && parts[2] === threadTs;
+    TS.test(threadTs) && TS.test(parts[2]!) && parts[1] === channelId &&
+    decimalIdentity(parts[2]!) === decimalIdentity(threadTs);
 }
 
 export function joinSlackWork(threadTs: string, channelId: string | undefined, board: unknown): SlackWorkCell {
