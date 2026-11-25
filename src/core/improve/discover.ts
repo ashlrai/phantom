@@ -896,6 +896,28 @@
  *     stated as recorded floors, and items emit only for the fleet's
  *     own repository since the journal describes this install's bridge
  *     config and carries no repo column;
+ *   - the shadow routing journal's recurring adverse decisions: the
+ *     {v:1, at, source, request, decision, actual} rows
+ *     recordShadowDecision appends to ~/.ashlr/routing/decisions.jsonl
+ *     for every seat-router shadow evaluation — the daemon's
+ *     shadowSeatRouteBeside beside each dispatch, the tick-hooks-live
+ *     shadow port, leader-seat, the router-gateway path and the budget
+ *     API — carrying the SeatDecision the router would have returned
+ *     (shadowDecisionsBacklogItems below). Until now the journal's only
+ *     readers were display and attribution surfaces (`phm telemetry`,
+ *     the Verse autonomy ladder's shadow projection, the reserve-breach
+ *     attributor), so a seat whose eligibility evidence stayed broken
+ *     in nearly every evaluation, a work class the router kept
+ *     declining with broken evidence aboard, or a capacity snapshot
+ *     that kept publishing an empty seat table never became work. A
+ *     cell emits at three contributing decision rows across two
+ *     distinct UTC days inside the 7-day window — capacity and policy
+ *     exclusion kinds never emit, no-seat cells count only declines
+ *     with an evidence-broken kind aboard, empty-evaluation cells count
+ *     only decisions that ran against a literally empty seat table,
+ *     truncated tails are stated as lower bounds, and items emit only
+ *     for the fleet's own repository since the journal describes this
+ *     install's routing and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -996,6 +1018,7 @@ import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
+import { shadowDecisionsBacklogItems } from './shadow-decisions-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2211,6 +2234,35 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // journal describes this install's bridge config and carries no repo
   // column.
   items.push(...await slackBridgeBacklogItems({ repo }));
+
+  // Shadow routing journal: the seat router's own counterfactual log —
+  // ~/.ashlr/routing/decisions.jsonl under the user home — records one
+  // {v:1, at, source, request, decision, actual} row per shadow
+  // evaluation via recordShadowDecision (budget-store.ts): the daemon's
+  // shadowSeatRouteBeside beside every dispatched work item, the
+  // tick-hooks-live shadow port, leader-seat, the router-gateway
+  // completion path and the budget API, each carrying the SeatDecision
+  // the router would have returned against the published capacity
+  // snapshot. Until now its only readers were display and attribution
+  // surfaces (`phm telemetry`, the Verse autonomy ladder's shadow
+  // projection, the reserve-breach attributor) that render or attribute
+  // rows but never fold a recurrence, so a seat whose eligibility
+  // evidence stayed broken in nearly every evaluation, a work class
+  // the router kept declining with broken evidence aboard, or a
+  // capacity snapshot that kept publishing an empty seat table never
+  // became work. Same bounded no-follow tail read at the writer's own
+  // rotation bound — DECISIONS_LOG_MAX_BYTES per file across the
+  // current and .1 predecessor — cells emit only at three contributing
+  // decision rows across two distinct UTC days inside the 7-day window,
+  // seat-exclusion cells name only the evidence-broken kinds
+  // (unknown-usage, unreachable, signed-out, other; capacity and policy
+  // kinds never emit), no-seat cells count only declines with an
+  // evidence-broken kind aboard, empty-evaluation cells count only
+  // decisions that ran against a literally empty seat table, truncated
+  // tails are stated as lower bounds, and only the fleet's own
+  // repository inherits the items since the journal describes this
+  // install's routing and carries no repo column.
+  items.push(...await shadowDecisionsBacklogItems({ repo }));
   return { items, errors };
 }
 
