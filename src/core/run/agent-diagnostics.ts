@@ -125,6 +125,11 @@ const ERROR_CLASSES = new Set<AgentDiagnosticErrorClass>([
   'execution',
 ]);
 
+/** The persisted errorClass vocabulary, exported so evidence folds validate stored rows against the writer's own contract. */
+export const AGENT_DIAGNOSTIC_ERROR_CLASSES: ReadonlySet<string> = ERROR_CLASSES;
+/** The persisted terminationReason vocabulary — 'cancelled' never reaches the store because sanitizeRecord drops it. */
+export const AGENT_DIAGNOSTIC_TERMINATION_REASONS: ReadonlySet<string> = TERMINATION_REASONS;
+
 export interface AgentDiagnosticTextShape {
   bytes: number;
   lines: number;
