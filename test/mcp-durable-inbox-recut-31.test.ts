@@ -103,6 +103,8 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
     [{ before: 'not-a-time' }], [{ before: '' }], [{ before: 1735689600000 }], [{ before: '999999d' }], [{ before: null }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
+    [{ result: 'done' }], [{ result: 'Complete' }], [{ result: 'released' }], [{ result: '' }],
+    [{ result: 5 }], [{ result: null }], [{ result: {} }],
     [{ after: 0, extra: 1 }], [{ path: '/tmp/x' }], [{ command: 'read' }], [{ file: 'x' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busInbox = vi.fn();
@@ -135,6 +137,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { channel: 'eng' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
       filters: { channel: 'eng' } });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { result: 'complete' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { result: 'complete' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -308,6 +313,27 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(narrowed.parsed).map(row => row.envelope.id)).toEqual(['eng-alerts']);
     const none = await callInbox(client, { channel: 'missing' });
     expect(none.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 6 });
+  });
+
+  it('applies the work-result outcome filter on the envelope body', async () => {
+    expect(post('resv', { body: { kind: 'work.result', outcome: 'reserved' } }).status).toBe('posted');
+    expect(post('comp', { body: { kind: 'work.result', outcome: 'complete' } }).status).toBe('posted');
+    expect(post('fail', { body: { kind: 'work.result', outcome: 'failed' } }).status).toBe('posted');
+    expect(post('nooutcome', { body: { kind: 'work.result' } }).status).toBe('posted');
+    expect(post('release', { body: { kind: 'work.release', outcome: 'released' } }).status).toBe('posted');
+    expect(post('borrowing', { body: { kind: 'note', outcome: 'complete' } }).status).toBe('posted');
+    const client = await connect();
+    const complete = await callInbox(client, { result: 'complete' });
+    expect(complete.parsed).toMatchObject({ sourceState: 'ok', filters: { result: 'complete' } });
+    expect(rows(complete.parsed).map(row => row.envelope.id)).toEqual(['comp']);
+    // Filtered rows still advance nextCursor: the page scanned all six records.
+    expect(complete.parsed['nextCursor']).toBe(6);
+    const failed = await callInbox(client, { result: 'failed' });
+    expect(rows(failed.parsed).map(row => row.envelope.id)).toEqual(['fail']);
+    // A work.result carrying no outcome, a work.release's own outcome
+    // vocabulary, every other body kind and a kindless outcome never match.
+    const admitted = await callInbox(client, { result: 'admitted' });
+    expect(admitted.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 6 });
   });
 
   it('excludes expired records while the cursor still skips them', async () => {
