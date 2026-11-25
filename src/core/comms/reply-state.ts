@@ -9,7 +9,7 @@
  * Read-only: takes no lock, writes nothing, never throws. */
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
 import type { BusInboxReceipt } from '../fleet/bus-inbox.js';
-import { deriveBusWorkItemEvidence, readBusInboxEvidence } from './work-item-bus-evidence.js';
+import { deriveBusWorkItemEvidence, readBusClaimAuthority, readBusInboxEvidence } from './work-item-bus-evidence.js';
 import { classifyWorkItem, type WorkItemState } from './work-item-state.js';
 import { isRequest } from './work-board.js';
 
@@ -39,7 +39,8 @@ export interface ReplyState {
   asOf: string;
   source: string;
   /** Where each record was read: found, missing or unavailable. */
-  records: { inbox: 'found' | 'missing' | 'unavailable'; claims: 'available' | 'missing' | 'unavailable' };
+  records: { inbox: 'found' | 'missing' | 'unavailable'; claims: 'available' | 'missing' | 'unavailable';
+    coordination: 'missing' | 'available' | 'unavailable' };
   /** The one plain line a channel adapter posts. */
   text: string;
 }
@@ -100,8 +101,9 @@ export function readReplyState(requestId: string, opts: { root: string; now: num
     claimsSource = inspection.source;
     claims = inspection.claims;
   } catch { /* unavailable */ }
+  const authority = readBusClaimAuthority(opts.root, now);
   const id = firstInThread(requestId, receipts);
-  const { evidence, inbox } = deriveBusWorkItemEvidence(id, receipts, claims, now);
+  const { evidence, inbox } = deriveBusWorkItemEvidence(id, receipts, claims, now, authority);
   const c = classifyWorkItem(evidence, new Date(now).toISOString());
   const v = c.state === 'VERIFIED' ? evidence.verified : undefined;
   const b = c.state === 'BLOCKED' ? evidence.blocker : undefined;
@@ -115,7 +117,7 @@ export function readReplyState(requestId: string, opts: { root: string; now: num
       verified: v ? { pr: v.pr ?? null, head: v.head ?? null, tests: v.tests ?? null, artifact: v.artifact ?? null } : null,
     },
     missing: c.missing, asOf: c.asOf, source: c.source,
-    records: { inbox: inboxOk ? inbox : 'unavailable', claims: claimsSource },
+    records: { inbox: inboxOk ? inbox : 'unavailable', claims: claimsSource, coordination: authority.source },
   };
   return { ...base, text: line(base) };
 }

@@ -97,7 +97,7 @@ describe('listWorkBoard claims source on inbox failure', { timeout: 60_000 }, ()
       if (state !== 'missing') writeClaims(state === 'available' ? '[]' : 'invalid');
       breakInbox();
       const board = listWorkBoard({ root, now });
-      expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: state });
+      expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: state, coordination: 'missing' });
     });
 
   it('a thrown inbox read still carries the claims source', () => {
@@ -106,7 +106,7 @@ describe('listWorkBoard claims source on inbox failure', { timeout: 60_000 }, ()
       throw new Error('fake inbox read failure');
     });
     const board = listWorkBoard({ root, now });
-    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'available' });
+    expect(board).toEqual({ items: [], inbox: 'unavailable', truncated: false, claims: 'available', coordination: 'missing' });
   });
 
   it('a healthy inbox regression: items list and claims still report', () => {

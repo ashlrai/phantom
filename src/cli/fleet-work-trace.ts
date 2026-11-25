@@ -28,10 +28,10 @@ export async function cmdFleetWorkTrace(args: string[]): Promise<number> {
   const now = Date.now();
   const { evidence, sources } = collectBusWorkItemEvidence(id, { root: root ?? join(ashlrHome(), 'fleet'), now });
   const result = { id, ...classifyWorkItem(evidence, new Date(now).toISOString()), inbox: sources.inbox, claims: sources.claims,
-    owner: evidence.owner ?? null, claimReceipt: evidence.claimReceipt ?? null };
+    coordination: sources.coordination, owner: evidence.owner ?? null, claimReceipt: evidence.claimReceipt ?? null };
   if (json) console.log(JSON.stringify(result));
   else console.log(`${result.id} ${result.state} as-of=${result.asOf} source=${result.source} `
     + `missing=${result.missing.length ? result.missing.join(',') : 'none'} inbox=${result.inbox} claims=${result.claims} `
-    + `owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}`);
+    + `coordination=${result.coordination} owner=${result.owner ?? 'null'} claimReceipt=${result.claimReceipt ?? 'null'}`);
   return 0;
 }

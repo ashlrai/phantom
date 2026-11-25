@@ -13,6 +13,7 @@
 import { listBusInboxAfter, BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ,
   type BusInboxReceipt } from '../fleet/bus-inbox.js';
 import { inspectBusWorkClaims, type BusWorkClaimView } from '../fleet/bus-work-claims.js';
+import { listCoordination } from '../agents/claim-store.js';
 import { RUNNING_FRESH_MS, type WorkItemEvidence } from './work-item-state.js';
 
 export interface BusWorkItemSources {
@@ -21,6 +22,10 @@ export interface BusWorkItemSources {
   inbox: 'found' | 'missing' | 'unavailable';
   /** Straight from inspectBusWorkClaims: table state, never evidence. */
   claims: 'available' | 'missing' | 'unavailable';
+  /** The coordination lease table's read state behind the claim veto:
+   * 'unavailable' means journal claims could not be verified against the
+   * shared lease authority and stand as the journal reports them. */
+  coordination: 'missing' | 'available' | 'unavailable';
 }
 export interface BusWorkItemEvidenceResult {
   evidence: WorkItemEvidence;
@@ -91,6 +96,54 @@ function claimEvidence(evidence: WorkItemEvidence, claims: BusWorkClaimView[], r
   }
 }
 
+/**
+ * The coordination lease table's live message-claim set — the shared
+ * authority every claim origin coordinates through. Seat handoffs,
+ * work-visibility releases and session-handoff settles mutate it
+ * directly, never the `bus-work-claims` journal, so a journal row can
+ * outlive the lease it recorded. `liveSourceIds` carries each live
+ * message-origin row's `<id>:<cursor>:<receivedAt>` sourceId — the same
+ * coordinates the journal claim and its `bus-claim:` receipt encode —
+ * and is null only when the table itself could not be read, so an
+ * unreadable authority never vetoes journal evidence it cannot check.
+ */
+export interface BusClaimAuthority {
+  source: 'missing' | 'available' | 'unavailable';
+  liveSourceIds: ReadonlySet<string> | null;
+}
+
+export function readBusClaimAuthority(root: string, now: number): BusClaimAuthority {
+  const listed = listCoordination(root, now);
+  if (listed.source === 'unavailable') return { source: 'unavailable', liveSourceIds: null };
+  const liveSourceIds = new Set<string>();
+  for (const row of listed.claims) {
+    if (row.origin === 'message' && row.live) liveSourceIds.add(row.sourceId);
+  }
+  return { source: listed.source, liveSourceIds };
+}
+
+/**
+ * The journal claims the coordination authority still backs. Only a claim
+ * asserting a currently valid lease (`completedAt` unset and `leaseUntil`
+ * in the future) can be vetoed: it stands only while a live message-origin
+ * coordination row carries its `<id>:<cursor>:<receivedAt>` sourceId —
+ * released through any bypass path it drops out and the work reads
+ * claimable again, the same verdict `claim list`, `work mine` and the
+ * unified inbox already reach through the coordination table. Completed
+ * and already-expired journal rows are durable history the settled
+ * coordination row legitimately no longer lists, so they always stand.
+ * `authority` undefined or unreadable keeps every journal claim: unknown
+ * lease state never erases recorded evidence.
+ */
+export function authoritativeBusClaims(
+  claims: readonly BusWorkClaimView[], authority: BusClaimAuthority | undefined, now: number,
+): BusWorkClaimView[] {
+  if (authority === undefined || authority.liveSourceIds === null) return [...claims];
+  const live = authority.liveSourceIds;
+  return claims.filter(claim => claim.completedAt !== null || claim.leaseUntil <= now ||
+    live.has(`${claim.id}:${claim.cursor}:${claim.receivedAt}`));
+}
+
 export interface BusInboxEvidenceRead {
   /** 'ok' only when the bounded scan settled; 'unavailable' carries no
    * receipts, so a partial scan is never mistaken for evidence. */
@@ -127,6 +180,7 @@ export interface BusWorkItemDerived {
  * blocked body, and the claim bound to the exact receipt coordinates. */
 export function deriveBusWorkItemEvidence(
   id: string, receipts: BusInboxReceipt[], claims: BusWorkClaimView[], now: number,
+  authority?: BusClaimAuthority,
 ): BusWorkItemDerived {
   const evidence: WorkItemEvidence = { id };
   const request = receipts.find(row => row.envelope.id === id);
@@ -152,13 +206,13 @@ export function deriveBusWorkItemEvidence(
   }
   if (request) {
     evidence.receivedAt = new Date(request.receivedAt).toISOString();
-    claimEvidence(evidence, claims, request, now);
+    claimEvidence(evidence, authoritativeBusClaims(claims, authority, now), request, now);
   }
   return { evidence, inbox: request ? 'found' : 'missing' };
 }
 
 export function collectBusWorkItemEvidence(id: string, opts: { root: string; now: number }): BusWorkItemEvidenceResult {
-  const sources: BusWorkItemSources = { inbox: 'unavailable', claims: 'missing' };
+  const sources: BusWorkItemSources = { inbox: 'unavailable', claims: 'missing', coordination: 'unavailable' };
   const now = Number.isSafeInteger(opts.now) && opts.now >= 0 ? opts.now : 0;
   let read: BusInboxEvidenceRead = { status: 'unavailable', receipts: [] };
   try { read = readBusInboxEvidence(opts.root); } catch { /* stays unavailable */ }
@@ -168,7 +222,9 @@ export function collectBusWorkItemEvidence(id: string, opts: { root: string; now
     sources.claims = inspection.source;
     claims = inspection.claims;
   } catch { sources.claims = 'unavailable'; }
-  const derived = deriveBusWorkItemEvidence(id, read.receipts, claims, now);
+  const authority = readBusClaimAuthority(opts.root, now);
+  sources.coordination = authority.source;
+  const derived = deriveBusWorkItemEvidence(id, read.receipts, claims, now, authority);
   sources.inbox = read.status === 'ok' ? derived.inbox : 'unavailable';
   // Blockers come only from in-reply bus replies (replyBlockedEvidence), never invented.
   return { evidence: derived.evidence, sources };
