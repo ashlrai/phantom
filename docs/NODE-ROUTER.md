@@ -161,7 +161,15 @@ never masks a dead session. A `lease-lost` error means stop work on that job
 and pull again. A flag value outside its documented range — `--usage` above
 1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage
 (exit 2, `bad-usage` or `bad-slots`) naming the flag and its range, before the
-beat or join is recorded.
+beat or join is recorded. A flag value of the wrong shape is refused the same
+way, naming the flag: ids that cannot name a node, owner, job or pack are
+`bad-node`, `bad-owner`, `bad-job` or `bad-pack`; cap lists with an invalid cap
+are `bad-caps` or `bad-requires`; a `--secrets` name outside
+`SCREAMING_SNAKE_CASE` is `bad-secrets`; and an embedded task whose digest is
+not `sha256:<64 lowercase hex>` or does not match the text is
+`bad-task-sha256`, while text the pack cannot carry is `bad-task`. These are
+usage errors (exit 2) before anything is recorded — never an operational
+failure about the registry.
 
 ## Version drift
 

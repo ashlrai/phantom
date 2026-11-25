@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import type { DriveNodes, JobClaim } from './index.js';
 import type { NodeAuth, NodeCapacitySample } from './state.js';
-import { isNodeCapacity, isHostStats, validId } from './state.js';
+import { isNodeCapacity, isHostStats, validCap, validId, validSecretName } from './state.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -40,7 +41,10 @@ export function parseNodeFleetFlags(verb: string, args: string[]): Map<string, s
       if (name === '--task-part') {
         // Task text is carried in bounded parts and reassembled here; errors never echo it.
         const text = (flags.get(name) ?? '') + value;
-        if (value.length > 4000 || Buffer.byteLength(text) > NODE_TASK_LIMIT) throw new Error('Invalid embedded node task');
+        if (value.length > 4000 || Buffer.byteLength(text) > NODE_TASK_LIMIT) {
+          throw new UsageError('bad-task', 'Invalid embedded node task: --task-part is limited to 4000 characters per part and 16 KiB in total.',
+            'Split the task into smaller --task-part values or shorten it. Run: phm node --help');
+        }
         flags.set(name, text);
       } else flags.set(name, value);
     } else throw new UsageError('unknown-flag', `That flag is not supported by 'phm node ${verb}'.`, 'Run: phm node --help for the flags each verb takes.');
@@ -71,8 +75,53 @@ const boundedNum = (flags: Map<string, string>, name: string, max: number, fix: 
 const SLOTS_FIX = 'Pass only the concurrent job slots this machine can run at once; 0 holds admission. Run: phm node --help';
 const USAGE_FIX = '--usage is self-reported load in permille: 0 idle, 1000 saturated. Run: phm node --help';
 
+/** Flag values that name registry objects must satisfy the store's own rules;
+ * a malformed one is bad usage — exit 2 naming the flag — never the masked
+ * store failure the same DriveNodes check would surface as. Owner scope is a
+ * comma list on join/status/list but a single scope on plan/enqueue/withdraw/
+ * result, so the helpers are applied per verb, not per flag name. */
+const ID_FIX = 'Ids start with a letter or digit and use only letters, digits and . _ : / - (200 characters max). Run: phm node --help';
+const CAP_FIX = 'Capabilities start with a lowercase letter or digit and use only lowercase letters, digits and . _ : - (64 characters max). Run: phm node --help';
+const SECRET_FIX = 'Secret flags take NAMES such as DEPLOY_KEY, never values. Run: phm node --help';
+const LIST_FIX = 'Separate entries with commas; at most 64 entries. Run: phm node --help';
+
+const badFlag = (name: string, message: string, fix: string): UsageError =>
+  new UsageError(`bad-${name.slice(2)}`, message, fix);
+
+const needId = (flags: Map<string, string>, name: string): string => {
+  const value = need(flags, name);
+  if (!validId(value)) throw badFlag(name, `${name} is not a valid id.`, ID_FIX);
+  return value;
+};
+const optId = (flags: Map<string, string>, name: string): string | undefined => {
+  const value = flags.get(name);
+  if (value !== undefined && !validId(value)) throw badFlag(name, `${name} is not a valid id.`, ID_FIX);
+  return value;
+};
+const needIdList = (flags: Map<string, string>, name: string): string[] => {
+  const items = csv(need(flags, name));
+  if (items.length === 0 || items.length > 64 || !items.every(validId)) {
+    throw badFlag(name, `${name} must be a comma-separated list of 1-64 ids.`, `${ID_FIX} ${LIST_FIX}`);
+  }
+  return items;
+};
+const optCapList = (flags: Map<string, string>, name: string): string[] => {
+  const items = csv(flags.get(name));
+  if (items.length > 64 || !items.every(validCap)) {
+    throw badFlag(name, `${name} must be a comma-separated list of up to 64 capabilities.`, `${CAP_FIX} ${LIST_FIX}`);
+  }
+  return items;
+};
+const optSecretList = (flags: Map<string, string>, name: string): string[] => {
+  const items = csv(flags.get(name));
+  if (items.length > 64 || !items.every(validSecretName)) {
+    throw badFlag(name, `${name} must be a comma-separated list of up to 64 secret NAMES such as DEPLOY_KEY, never values.`, SECRET_FIX);
+  }
+  return items;
+};
+
 function claimOf(flags: Map<string, string>): JobClaim {
-  return { nodeId: need(flags, '--node'), session: num(flags, '--session'), jobId: need(flags, '--job'),
+  return { nodeId: needId(flags, '--node'), session: num(flags, '--session'), jobId: needId(flags, '--job'),
     token: num(flags, '--token'), leaderToken: num(flags, '--leader-token'), expiresAt: 0 };
 }
 
@@ -105,7 +154,7 @@ function liveSession(nodes: DriveNodes, nodeId: string): number | null {
 }
 
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
-  const session = (): { nodeId: string; session: number } => ({ nodeId: need(flags, '--node'), session: num(flags, '--session') });
+  const session = (): { nodeId: string; session: number } => ({ nodeId: needId(flags, '--node'), session: num(flags, '--session') });
   const stale = (nodeId: string, attempted?: number) => {
     const live = liveSession(nodes, nodeId);
     return new UsageError('session-expired',
@@ -116,9 +165,9 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
   };
   switch (verb) {
     case 'join': {
-      const owners = csv(need(flags, '--owner'));
-      const caps = csv(flags.get('--caps'));
-      const nodeId = need(flags, '--node');
+      const owners = needIdList(flags, '--owner');
+      const caps = optCapList(flags, '--caps');
+      const nodeId = needId(flags, '--node');
       const joined = nodes.join(nodeId, { owners, caps,
         ...(flags.has('--slots') ? { slots: boundedNum(flags, '--slots', 64, SLOTS_FIX) } : {}) });
       if (!joined) {
@@ -163,20 +212,39 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
     case 'enqueue': {
-      const jobId = need(flags, '--job');
+      const jobId = needId(flags, '--job');
+      const owner = needId(flags, '--owner');
+      const requires = optCapList(flags, '--requires');
+      const pack = optId(flags, '--pack');
+      const secrets = optSecretList(flags, '--secrets');
       let task;
       if (flags.has('--task-part') || flags.has('--task-sha256')) {
         const text = need(flags, '--task-part');
         const digest = need(flags, '--task-sha256');
-        if (!/^sha256:[0-9a-f]{64}$/.test(digest)) throw new Error('Invalid embedded node task');
-        task = { text, sha256: digest.slice(7) };
-        if (!validNodeTask(task)) throw new Error('Invalid embedded node task');
+        if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
+          throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 must be sha256: followed by 64 lowercase hex characters.',
+            'Digest the exact --task-part text, for example: printf %s "$TASK" | shasum -a 256. Run: phm node --help');
+        }
+        const sha256 = digest.slice(7);
+        if (createHash('sha256').update(text, 'utf8').digest('hex') !== sha256) {
+          throw new UsageError('bad-task-sha256', 'Invalid embedded node task: --task-sha256 does not match the --task-part text.',
+            'Recompute the digest over the exact text being sent; the store refuses a mismatch. Run: phm node --help');
+        }
+        task = { text, sha256 };
+        if (!validNodeTask(task)) {
+          throw new UsageError('bad-task', 'Invalid embedded node task: the text must be non-empty UTF-8 of at most 16 KiB and carry no secret-shaped strings.',
+            'Pass plain task text within those limits. Run: phm node --help');
+        }
+        if (pack !== 'codex-file') {
+          throw new UsageError('bad-pack', 'Invalid embedded node task: an embedded task requires --pack codex-file.',
+            'Add --pack codex-file, or drop --task-part/--task-sha256. Run: phm node --help');
+        }
       }
-      const added = nodes.enqueue(jobId, { owner: need(flags, '--owner'), requires: csv(flags.get('--requires')),
-        ...(flags.has('--pack') ? { pack: flags.get('--pack')! } : {}), secrets: csv(flags.get('--secrets')), ...(task ? { task } : {}) });
+      const added = nodes.enqueue(jobId, { owner, requires,
+        ...(pack === undefined ? {} : { pack }), secrets, ...(task ? { task } : {}) });
       return { jobId, enqueued: added };
     }
-    case 'plan': return { routes: nodes.plan(flags.get('--owner')) };
+    case 'plan': return { routes: nodes.plan(optId(flags, '--owner')) };
     case 'pull': {
       const s = session();
       const pulled = nodes.pull(s);
@@ -207,15 +275,18 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
         'Nothing to hand back. Another node holds a newer token or the job finished.', 1);
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
-    case 'withdraw': return { jobId: need(flags, '--job'), ...nodes.withdraw(need(flags, '--job'), need(flags, '--owner')) };
+    case 'withdraw': {
+      const jobId = needId(flags, '--job');
+      return { jobId, ...nodes.withdraw(jobId, needId(flags, '--owner')) };
+    }
     case 'result': {
       // Read-only: the owner reads back what a completed job answered, or the
       // live state while it is still pending or running. Never a fence.
-      const jobId = need(flags, '--job');
-      return { jobId, ...nodes.jobOutcome(jobId, need(flags, '--owner')) };
+      const jobId = needId(flags, '--job');
+      return { jobId, ...nodes.jobOutcome(jobId, needId(flags, '--owner')) };
     }
     case 'list':
-    case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };
+    case 'status': return { ...nodes.view(needIdList(flags, '--owner')) };
     default: {
       const s = session();
       const left = nodes.leave(s);
