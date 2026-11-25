@@ -27,13 +27,16 @@ const usage = `Usage: phm fleet eval-report [--jobs <file>] [--prs <file>]... [-
 Read-only weekly "fleet IQ" report: scores every merged PR for post-merge
 durability (reverted / regressed / followed-up / stable / pending /
 unobserved) and rolls revert, follow-up, CI-correlation and time-to-merge
-rates up by lane, tier, lane+tier and repo.
+rates up by lane, tier, lane+tier, repo and author (the recorded gh
+author login, so fleet-app and community-agent merges compare on the
+same durability evidence; merges with no recorded author group as
+'unknown').
 
   --jobs <file>        Metrics jobs ledger. Default: ~/.ashlr-runs/metrics/jobs.jsonl
   --prs <file>         gh-shaped merged-PR export; repeatable (JSON array or
                        JSONL). Adds mergeCommit joins, statusCheckRollup CI
                        evidence, and revert/overlapping-fix detection.
-                       Produce with: gh pr list --state merged --json url,number,title,mergedAt,mergeCommit,files,statusCheckRollup,commits,body
+                       Produce with: gh pr list --state merged --json url,number,title,mergedAt,mergeCommit,files,statusCheckRollup,commits,body,author
   --days <n>           Look-back window, 1-${MAX_EVAL_DAYS} days (default ${DEFAULT_EVAL_DAYS}).
   --until <iso>        Window end (default: now).
   --no-observations    Skip the signed post-merge observation ledger.

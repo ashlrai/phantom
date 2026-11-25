@@ -67,7 +67,7 @@ deadline. The controller waits at most 250 ms for an unfinished probe. A host-su
 time is at most 15 minutes old. Use the existing eval-report export format:
 
 ```sh
-gh pr list --repo ashlrai/phantom --state merged --limit 1000 --json url,number,title,mergedAt,mergeCommit,files,statusCheckRollup,commits,body
+gh pr list --repo ashlrai/phantom --state merged --limit 1000 --json url,number,title,mergedAt,mergeCommit,files,statusCheckRollup,commits,body,author
 ```
 
 The host observation job must refresh that export atomically. No export producer or

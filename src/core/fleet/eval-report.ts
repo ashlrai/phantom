@@ -19,8 +19,9 @@
  *   - optional gh-shaped merged-PR exports (`gh pr list --state merged
  *     --json ...` / `gh search prs --json ...`, a JSON array or JSONL):
  *     mergeCommit sha (the join key to the observation ledger),
- *     statusCheckRollup conclusions, file lists and titles for revert and
- *     overlapping-fix evidence.
+ *     statusCheckRollup conclusions, file lists, titles and the recorded
+ *     PR author login for revert and overlapping-fix evidence and the
+ *     by-author durability rollup.
  *   - the signed post-merge observation ledger rows (already resolved by the
  *     caller): adverse outcomes keyed by mergeCommit.
  *
@@ -95,6 +96,16 @@ export interface EvalPullRequest {
   tier: string | null;
   jobRepo: string | null;
   model: string | null;
+  /**
+   * The PR's recorded GitHub author login from the gh export — the
+   * agent/contributor identity (`<app>[bot]` for bot accounts, a user
+   * login otherwise). Fleet-attributed merges carry the producing
+   * App's login here too, so `byAuthor` compares fleet and community
+   * producers on the same durability evidence. Null when the export
+   * recorded no usable author — unknown, never guessed from the job
+   * id, branch name or commit text.
+   */
+  authorLogin: string | null;
   mergedAt: string | null;
   /** Ledger ttm_s, or mergedAt minus the job's first dispatch timestamp. */
   ttm_s: number | null;
@@ -180,8 +191,18 @@ export interface FleetEvalReport {
   byTier: EvalGroupRow[];
   byLaneTier: EvalGroupRow[];
   byRepo: EvalGroupRow[];
+  /**
+   * Merged-cohort durability grouped by the PR's recorded GitHub author
+   * login (lowercased — GitHub logins are case-insensitive). Every merged
+   * PR lands in exactly one group: fleet-attributed and community merges
+   * alike, with merges whose export recorded no usable author under
+   * 'unknown'. Like byRepo this dimension covers the whole cohort —
+   * the jobs ledger records no author, so launch/finish/publish activity
+   * counters stay zero and only the merged-cohort fields populate.
+   */
+  byAuthor: EvalGroupRow[];
   /** Groups with resolved merges, ranked by Wilson lower bound (most durable first). */
-  ranked: { kind: 'lane' | 'tier' | 'lane+tier' | 'repo'; name: string; resolved: number; durabilityRate: number; lowerBound: number }[];
+  ranked: { kind: 'lane' | 'tier' | 'lane+tier' | 'repo' | 'author'; name: string; resolved: number; durabilityRate: number; lowerBound: number }[];
   pullRequests: EvalPullRequest[];
 }
 
@@ -423,10 +444,41 @@ export interface GhPullRequest {
   checks: { total: number; failed: number; pending: number; failedNames: string[] } | null;
   commitSubjects: string[];
   body: string | null;
+  /**
+   * The PR's recorded GitHub author login — the agent/contributor identity
+   * gh's `author` field carries (`{ login }` object or a bare login string on
+   * some export shapes; a ghost or absent author stays null). Bot accounts
+   * keep their `[bot]` suffix, so `devin-ai-integration[bot]` and
+   * `ashlr-fleet[bot]` name the producing agent while a human login names the
+   * contributor. Bounded to GitHub's login grammar; anything else is skipped,
+   * never recorded raw.
+   */
+  authorLogin: string | null;
 }
 
 const FAILED_CHECK = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const PASSED_CHECK = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
+
+/**
+ * GitHub login grammar, bounded: alphanumerics plus `-`, `_` and `.` inside,
+ * a leading alphanumeric, at most 128 characters, with an optional literal
+ * `[bot]` suffix for app/bot accounts. gh's `author` is already
+ * GitHub-constrained; the bound only refuses shapes that are not a login.
+ */
+const GITHUB_LOGIN_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}(?:\[bot\])?$/;
+
+/**
+ * The PR author's recorded login. gh nests author as `{ login }` on
+ * `pr list`/`pr view --json author` and some search shapes emit a bare
+ * string; a ghost (`null`), missing or off-grammar value stays null —
+ * unknown, never a guess.
+ */
+function parseAuthorLogin(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value : asRow(value)?.['login'];
+  if (typeof raw !== 'string') return null;
+  const login = raw.trim();
+  return GITHUB_LOGIN_RE.test(login) ? login : null;
+}
 
 function parseChecks(value: unknown, requiredValue: unknown, head: string | null, mergedAtMs: number | null): GhPullRequest['checks'] {
   // A rollup alone does not identify the required contexts or the commit it
@@ -512,6 +564,7 @@ function parsePrRow(raw: unknown): GhPullRequest | null {
     checks: state === 'MERGED' && mergedAtMs === null ? null : parseChecks(row['statusCheckRollup'] ?? row['statusCheckRollupState'] ?? row['checkSuites'], row['requiredChecks'], str(row, 'headRefOid'), mergedAtMs),
     commitSubjects,
     body: str(row, 'body'),
+    authorLogin: parseAuthorLogin(row['author']),
   };
 }
 
@@ -579,6 +632,8 @@ interface CohortEntry {
   tier: string;
   laneTier: string;
   repo: string;
+  /** Lowercased recorded author login, or 'unknown' when the export carried none. */
+  author: string;
 }
 
 const percentile = (sorted: readonly number[], p: number): number =>
@@ -778,6 +833,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
       tier: route?.tier ?? null,
       jobRepo: route?.repo ?? merged.outcomeRepo,
       model: route?.model ?? null,
+      authorLogin: merged.gh?.authorLogin ?? null,
       mergedAt: merged.mergedAtMs !== null ? new Date(merged.mergedAtMs).toISOString() : null,
       ttm_s: ttmLedger ?? derivedLead,
       ttmSource: ttmLedger !== null ? 'ledger' : derivedLead !== null ? 'derived' : null,
@@ -795,13 +851,14 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
       tier: route?.tier ?? 'unattributed',
       laneTier: `${route?.lane ?? 'unattributed'}:${route?.tier ?? 'unattributed'}`,
       repo: merged.repo,
+      author: merged.gh?.authorLogin?.toLowerCase() ?? 'unknown',
     });
   }
 
   // --- groups ---------------------------------------------------------------------
   const adverseOf = (d: MergeDurability): boolean => d === 'reverted' || d === 'regressed' || d === 'followed-up';
-  const groups: Record<'lane' | 'tier' | 'laneTier' | 'repo', Map<string, GroupAcc>> = {
-    lane: new Map(), tier: new Map(), laneTier: new Map(), repo: new Map(),
+  const groups: Record<'lane' | 'tier' | 'laneTier' | 'repo' | 'author', Map<string, GroupAcc>> = {
+    lane: new Map(), tier: new Map(), laneTier: new Map(), repo: new Map(), author: new Map(),
   };
   const bump = (dim: keyof typeof groups, name: string): GroupAcc => {
     const map = groups[dim];
@@ -837,9 +894,12 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
   for (const entry of entries) {
     const { pr } = entry;
     const attributed = pr.jobId !== null;
-    for (const dim of ['lane', 'tier', 'laneTier', 'repo'] as const) {
-      if (dim !== 'repo' && !attributed) continue;
-      const name = dim === 'lane' ? entry.lane : dim === 'tier' ? entry.tier : dim === 'laneTier' ? entry.laneTier : entry.repo;
+    for (const dim of ['lane', 'tier', 'laneTier', 'repo', 'author'] as const) {
+      // Lane-family dims describe fleet executor machinery and skip merges
+      // with no jobs-ledger job; repo and author cover the whole cohort —
+      // community PRs carry author evidence the ledger never records.
+      if (dim !== 'repo' && dim !== 'author' && !attributed) continue;
+      const name = dim === 'lane' ? entry.lane : dim === 'tier' ? entry.tier : dim === 'laneTier' ? entry.laneTier : dim === 'repo' ? entry.repo : entry.author;
       const g = bump(dim, name);
       g.merged++;
       if (pr.durability === 'stable') g.stable++;
@@ -907,11 +967,11 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     : ci.failedChecks.adverse / ci.failedChecks.merged < ci.clean.adverse / ci.clean.merged ? 'clean-more-adverse'
     : 'even';
 
-  const ranked = (['lane', 'tier', 'laneTier', 'repo'] as const).flatMap((dim) =>
+  const ranked = (['lane', 'tier', 'laneTier', 'repo', 'author'] as const).flatMap((dim) =>
     sortedGroups(dim)
       .filter((g) => g.durability.resolved > 0)
       .map((g) => ({
-        kind: (dim === 'laneTier' ? 'lane+tier' : dim) as 'lane' | 'tier' | 'lane+tier' | 'repo',
+        kind: (dim === 'laneTier' ? 'lane+tier' : dim) as 'lane' | 'tier' | 'lane+tier' | 'repo' | 'author',
         name: g.name,
         resolved: g.durability.resolved,
         durabilityRate: g.durability.rate!,
@@ -962,6 +1022,7 @@ export function buildFleetEvalReport(input: FleetEvalReportInput): FleetEvalRepo
     byTier: sortedGroups('tier'),
     byLaneTier: sortedGroups('laneTier'),
     byRepo: sortedGroups('repo'),
+    byAuthor: sortedGroups('author'),
     ranked,
     pullRequests: entries.map((e) => e.pr).sort((a, b) => a.url.localeCompare(b.url)),
   };
