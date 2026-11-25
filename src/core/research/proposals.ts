@@ -17,6 +17,8 @@ const SOURCE_REF = /^S\d+$/;
 const SOURCES_FIELD = /^sources?=([S\d,\s]+)$/i;
 const ATTR_TOKEN = /^([a-z]+)=([^\s]+)$/;
 const ACCEPTANCE_FIELD = /^Acceptance:\s*(.*)$/i;
+const OWNER_FIELD = /^(?:Baseline[- ]?owner|Owner):\s*(.*)$/i;
+const SIGNAL_FIELD = /^Signal:\s*(.*)$/i;
 const PROPOSALS_HEADING = /^##\s+Proposals\s*$/;
 const SECTION_HEADING = /^##\s/;
 const BULLET = /^- /;
@@ -46,8 +48,24 @@ export interface DraftProposal {
   confidence: ProposalConfidence;
   scope: string;
   acceptance: string;
+  baselineOwner?: string;
+  signal?: string;
   /** 1-based line number inside the digest file. */
   line: number;
+}
+
+export interface SourceAttribution {
+  id: string;
+  checkedAt: string | null;
+  /** Untrusted claim text from the digest; requires external verification. */
+  claim: string | null;
+  claimVerified: false;
+}
+
+export interface ProposalAttribution {
+  sources: SourceAttribution[];
+  baselineOwner: string | null;
+  signal: string | null;
 }
 
 export interface ScoredProposal extends DraftProposal {
@@ -55,6 +73,8 @@ export interface ScoredProposal extends DraftProposal {
   priority: 'P1' | 'P2' | 'P3';
   /** The rendered `- READY` queue line. */
   ready: string;
+  /** Review-only auditable source and baseline attribution. */
+  attribution?: ProposalAttribution;
 }
 
 export type DropStage = 'parse' | 'score' | 'dedup' | 'lint';
@@ -110,7 +130,21 @@ function parseAttrs(field: string): Record<string, string> | null {
   return attrs;
 }
 
-interface RawFields { id: string; sources: string[]; attrs: Record<string, string>; scope?: string; acceptance?: string }
+function sanitizeClaim(text: string | undefined): string | null {
+  if (!text) return null;
+  const cleaned = [...text]
+    .map(c => (c.charCodeAt(0) < 32 || c === '\u007f' || /[\u0085\u2028\u2029]/.test(c) ? ' ' : c))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_TEXT);
+  return cleaned || null;
+}
+
+interface RawFields {
+  id: string; sources: string[]; attrs: Record<string, string>;
+  scope?: string; acceptance?: string; baselineOwner?: string; signal?: string;
+}
 
 /** Split a `- ` bullet into pipe fields; classify each. */
 function fieldsOf(line: string): { ok: true; fields: RawFields } | { ok: false; reasons: string[] } {
@@ -129,6 +163,18 @@ function fieldsOf(line: string): { ok: true; fields: RawFields } | { ok: false; 
     if (acceptance) {
       if (raw.acceptance !== undefined) reasons.push('duplicate-acceptance');
       raw.acceptance = acceptance[1]!.trim();
+      continue;
+    }
+    const owner = OWNER_FIELD.exec(part);
+    if (owner) {
+      if (raw.baselineOwner !== undefined) reasons.push('duplicate-baseline-owner');
+      raw.baselineOwner = owner[1]!.trim();
+      continue;
+    }
+    const signal = SIGNAL_FIELD.exec(part);
+    if (signal) {
+      if (raw.signal !== undefined) reasons.push('duplicate-signal');
+      raw.signal = signal[1]!.trim();
       continue;
     }
     const parsed = parseAttrs(part);
@@ -169,13 +215,22 @@ function draftOf(raw: RawFields, line: number): { ok: true; draft: DraftProposal
   else if (raw.scope.length > MAX_TEXT || unsafeText(raw.scope)) reasons.push('unsafe-scope');
   if (raw.acceptance === undefined || !raw.acceptance) reasons.push('missing-acceptance');
   else if (raw.acceptance.length > MAX_TEXT || unsafeText(raw.acceptance)) reasons.push('unsafe-acceptance');
+  if (raw.baselineOwner !== undefined && (!raw.baselineOwner || raw.baselineOwner.length > MAX_TEXT || unsafeText(raw.baselineOwner))) {
+    reasons.push('unsafe-baseline-owner');
+  }
+  if (raw.signal !== undefined && (!raw.signal || raw.signal.length > MAX_TEXT || unsafeText(raw.signal))) {
+    reasons.push('unsafe-signal');
+  }
   if (reasons.length) return { ok: false, reasons };
   return {
     ok: true,
     draft: {
       id: raw.id, sources: [...new Set(raw.sources)], repo, pool, tier,
       impact, effort: effort as ProposalEffort, confidence: confidence as ProposalConfidence,
-      scope: raw.scope!, acceptance: raw.acceptance!, line,
+      scope: raw.scope!, acceptance: raw.acceptance!,
+      ...(raw.baselineOwner ? { baselineOwner: raw.baselineOwner } : {}),
+      ...(raw.signal ? { signal: raw.signal } : {}),
+      line,
     },
   };
 }
@@ -247,7 +302,9 @@ export function planResearchDigest(markdown: string, options: ResearchPlanOption
   const limit = Math.min(Math.max(Math.floor(options.limit ?? RESEARCH_DIGEST_DEFAULTS.limit), 0), RESEARCH_DIGEST_DEFAULTS.maxLimit);
   const minScore = options.minScore ?? RESEARCH_DIGEST_DEFAULTS.minScore;
   const digest = parseHarnessDigest(markdown, options.now);
-  const knownSources = new Set(digest.sources.map(source => source.id));
+  const sourceById = new Map<string, (typeof digest.sources)[number]>();
+  for (const source of digest.sources) if (!sourceById.has(source.id)) sourceById.set(source.id, source);
+  const knownSources = new Set(sourceById.keys());
   const label = options.digestLabel ?? 'digest.md';
   const { proposals: drafts, drops } = parseResearchProposals(markdown);
   const candidates = drafts.length + drops.filter(d => d.stage === 'parse').length;
@@ -282,7 +339,15 @@ export function planResearchDigest(markdown: string, options: ResearchPlanOption
 
     const score = scoreProposal(draft);
     if (score < minScore) { drop('score', ['below-min-score']); continue; }
-    const proposal: ScoredProposal = { ...draft, score, priority: priorityForScore(score), ready: '' };
+    const attribution: ProposalAttribution = {
+      sources: draft.sources.map(id => {
+        const src = sourceById.get(id);
+        return { id, checkedAt: src?.checkedAt ?? null, claim: sanitizeClaim(src?.claim ?? src?.takeaways?.[0]), claimVerified: false };
+      }),
+      baselineOwner: draft.baselineOwner ?? null,
+      signal: draft.signal ?? null,
+    };
+    const proposal: ScoredProposal = { ...draft, score, priority: priorityForScore(score), ready: '', attribution };
     proposal.ready = renderReadyLine(proposal, label);
     const verdict = lintRestockLine(proposal.ready, draft.line, options.lint ?? {});
     if (verdict !== null && 'drop' in verdict) { drop('lint', verdict.drop.reasons as string[]); continue; }
