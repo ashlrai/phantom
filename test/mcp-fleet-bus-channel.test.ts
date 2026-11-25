@@ -93,7 +93,7 @@ describe('fleet_bus_channel argument parsing', () => {
       from: 'agent:sender', excludeFrom: 'agent:bot',
       thread: 't-1', priority: 'P1', job: 'RQ-9',
       since: '1800000000000', before: '1700000000000', contains: '  Parser   Fix ',
-      inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.post',
+      inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.post', result: 'admitted',
     });
     expect(parsed).toMatchObject({
       channel: 'ops', after: 3, limit: 10, matched: true,
@@ -101,7 +101,7 @@ describe('fleet_bus_channel argument parsing', () => {
         topic: 'alerts', from: 'agent:sender', excludeFrom: 'agent:bot',
         thread: 't-1', priority: 'P1', job: 'RQ-9',
         since: 1800000000000, before: 1700000000000, contains: 'parser fix',
-        inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.post',
+        inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.post', result: 'admitted',
       },
     });
   });
@@ -117,6 +117,7 @@ describe('fleet_bus_channel argument parsing', () => {
       { channel: 'ops', inReplyTo: 'has space' }, { channel: 'ops', inReplyTo: '' }, { channel: 'ops', inReplyTo: 5 },
       { channel: 'ops', id: 'has space' }, { channel: 'ops', id: '' }, { channel: 'ops', id: 5 }, { channel: 'ops', id: 'x'.repeat(129) },
       { channel: 'ops', bodyKind: 'has space' }, { channel: 'ops', bodyKind: '' }, { channel: 'ops', bodyKind: 5 }, { channel: 'ops', bodyKind: 'x'.repeat(129) },
+      { channel: 'ops', result: 'bogus' }, { channel: 'ops', result: 'released' }, { channel: 'ops', result: '' }, { channel: 'ops', result: 5 },
       { channel: 'ops', priority: 'P9' }, { channel: 'ops', priority: 1 }, { channel: 'ops', priority: 'p0' },
       { channel: 'ops', since: 'never' }, { channel: 'ops', since: 5 }, { channel: 'ops', since: '' },
       { channel: 'ops', before: 'never' }, { channel: 'ops', before: 5 }, { channel: 'ops', before: '' },
@@ -188,12 +189,12 @@ describe('fleet_bus_channel reader', () => {
     await readFleetBusChannel(parseFleetBusChannelArgs({
       channel: 'ops', topic: 'alerts', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'note',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'note', result: 'reserved',
     })!, { read });
     expect(seenPage).toMatchObject({
       topic: 'alerts', since: 1800000000000, before: 1700000000000, contains: 'parser fix',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot',
-      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'note',
+      priority: 'P0', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'note', result: 'reserved',
     });
   });
 
@@ -233,6 +234,8 @@ describe('fleet_bus_channel MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: expect.arrayContaining(['reserved', 'admitted', 'complete', 'failed']) });
   });
 
   it.each([
@@ -240,7 +243,7 @@ describe('fleet_bus_channel MCP tool', () => {
     [{ channel: 'ops', root: '/tmp/fake-root' }], [{ channel: 'ops', path: '/tmp/x' }], [{ channel: 'ops', cwd: '/tmp' }],
     [{ channel: 'ops', limit: 0 }], [{ channel: 'ops', limit: 101 }], [{ channel: 'ops', limit: '5' }],
     [{ channel: 'ops', after: -1 }], [{ channel: 'ops', matched: 'yes' }],
-    [{ channel: 'ops', priority: 'P9' }], [{ channel: 'ops', topic: 'Bad Topic!' }],
+    [{ channel: 'ops', priority: 'P9' }], [{ channel: 'ops', topic: 'Bad Topic!' }], [{ channel: 'ops', result: 'bogus' }],
     [{ channel: 'ops', since: 'never' }], [{ channel: 'ops', before: 'never' }], [{ channel: 'ops', contains: '' }], [{ channel: 'ops', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busChannel = vi.fn();

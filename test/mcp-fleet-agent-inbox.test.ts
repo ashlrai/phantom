@@ -92,7 +92,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
       priority: 'P1', kind: 'handoff', job: 'RQ-9',
       since: '1800000000000', before: '1700000000000', channel: 'ops', contains: '  Parser   Fix ',
-      inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
+      inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
     });
     expect(parsed).toMatchObject({
       agent: 'agent:planner', after: 3, limit: 10, matched: true,
@@ -100,7 +100,7 @@ describe('fleet_agent_inbox argument parsing', () => {
         thread: 't-1', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
         priority: 'P1', kind: 'handoff', job: 'RQ-9',
         since: 1800000000000, before: 1700000000000, channel: 'ops', contains: 'parser fix',
-        inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result',
+        inReplyTo: 'm-0', id: 'm-9', bodyKind: 'work.result', result: 'failed',
       },
     });
   });
@@ -116,6 +116,7 @@ describe('fleet_agent_inbox argument parsing', () => {
       { agent: 'a', inReplyTo: 'has space' }, { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: 5 },
       { agent: 'a', id: 'has space' }, { agent: 'a', id: '' }, { agent: 'a', id: 5 }, { agent: 'a', id: 'x'.repeat(129) },
       { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 }, { agent: 'a', bodyKind: 'x'.repeat(129) },
+      { agent: 'a', result: 'bogus' }, { agent: 'a', result: 'released' }, { agent: 'a', result: '' }, { agent: 'a', result: 5 },
       { agent: 'a', priority: 'P9' }, { agent: 'a', priority: 1 }, { agent: 'a', priority: 'p0' },
       { agent: 'a', kind: 'bogus' }, { agent: 'a', kind: 'work' }, { agent: 'a', kind: 3 },
       { agent: 'a', channel: 'Bad Channel!' }, { agent: 'a', channel: 'x'.repeat(33) },
@@ -190,12 +191,12 @@ describe('fleet_agent_inbox reader', () => {
     await readFleetAgentInbox(parseFleetAgentInboxArgs({
       agent: 'a', since: '1800000000000', before: '1700000000000', contains: 'Parser Fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
-      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     })!, { read });
     expect(seenPage).toMatchObject({
       since: 1800000000000, before: 1700000000000, contains: 'parser fix', channel: 'ops',
       thread: 't-9', from: 'agent:sender', excludeFrom: 'agent:bot', with: 'agent:peer',
-      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake',
+      priority: 'P0', kind: 'channel', job: 'RQ-1', inReplyTo: 'm-0', id: 'm-9', bodyKind: 'wake', result: 'complete',
     });
   });
 
@@ -237,6 +238,8 @@ describe('fleet_agent_inbox MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['id'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: expect.arrayContaining(['reserved', 'admitted', 'complete', 'failed']) });
   });
 
   it.each([
@@ -244,7 +247,7 @@ describe('fleet_agent_inbox MCP tool', () => {
     [{ agent: 'a', root: '/tmp/fake-root' }], [{ agent: 'a', path: '/tmp/x' }], [{ agent: 'a', cwd: '/tmp' }],
     [{ agent: 'a', limit: 0 }], [{ agent: 'a', limit: 101 }], [{ agent: 'a', limit: '5' }],
     [{ agent: 'a', after: -1 }], [{ agent: 'a', matched: 'yes' }],
-    [{ agent: 'a', kind: 'bogus' }], [{ agent: 'a', priority: 'P9' }],
+    [{ agent: 'a', kind: 'bogus' }], [{ agent: 'a', priority: 'P9' }], [{ agent: 'a', result: 'bogus' }],
     [{ agent: 'a', channel: 'Bad Channel!' }], [{ agent: 'a', since: 'never' }], [{ agent: 'a', before: 'never' }],
     [{ agent: 'a', contains: '' }], [{ agent: 'a', extra: 1 }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
