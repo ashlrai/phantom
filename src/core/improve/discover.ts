@@ -701,6 +701,28 @@
  *     and items emit only for the fleet's own repository since the
  *     journal describes this install's config and carries no repo
  *     column;
+ *   - the leader-reply send ledger's recurring failed sends,
+ *     orphaned pending rows and oversize condition: the {at, hash,
+ *     status} rows sendLeaderReplies appends to
+ *     <runs>/imessage/leader-sent.jsonl on every live pass — 'pending'
+ *     before the transport call, 'sent'/'failed' behind it, 'baseline'
+ *     at ledger creation — until now read only by the writer's own
+ *     dedupe scan (last status per hash wins; anything but 'failed'
+ *     claims the reply forever) and `phm imessage replies`'s
+ *     current-pass print, so a send path that keeps failing, replies
+ *     that keep dying mid-flight into permanent dead letters, and a
+ *     ledger that outgrew its own read bound never became work
+ *     (leaderRepliesBacklogItems below). A failed-send cell emits at
+ *     three in-window rows across two distinct UTC days with digest
+ *     and sent-context counts stated honestly; an orphaned-pending
+ *     cell emits at two stale last-status 'pending' digests across two
+ *     distinct UTC days — each already a confirmed dead letter; an
+ *     oversize item emits while the tail bound (the writer's own read
+ *     bound) reports truncation. Reply digests are content hashes and
+ *     are counted, never emitted; truncated tails are stated as lower
+ *     bounds, and items emit only for the fleet's own repository since
+ *     the ledger describes this install's comms and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -792,6 +814,7 @@ import { knowledgeOutcomeBacklogItems } from './knowledge-outcome-backlog.js';
 import { landedCloseBacklogItems } from './landed-close-backlog.js';
 import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
+import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1821,6 +1844,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // config and carries no repo column.
   items.push(...await liveConfigBacklogItems({ repo }));
+
+  // Leader-reply send ledger: the {at, hash, status} rows
+  // sendLeaderReplies appends to <runs>/imessage/leader-sent.jsonl on
+  // every live pass — recurring 'failed' transport attempts that also
+  // break each pass's batch, reply digests orphaned mid-send into
+  // permanent dead letters (a stale last-status 'pending' readClaimed
+  // claims forever), and the oversize condition where the file passes
+  // the writer's own read bound and every pass errors before it can
+  // send or journal — become backlog items too. Until now the ledger's
+  // only reader was the writer's own dedupe scan plus `phm imessage
+  // replies`'s current-pass print, so a send path that kept failing or
+  // replies that kept dying mid-flight never became work. Same bounded
+  // tail read at the writer's own LEDGER_MAX_BYTES bound; a failed-send
+  // cell emits at three in-window rows across two distinct UTC days
+  // with digest and sent-context counts stated honestly, an
+  // orphaned-pending cell emits at two stale dead letters across two
+  // distinct UTC days, reply digests are content hashes counted and
+  // never emitted, truncated tails are stated as lower bounds, and only
+  // the fleet's own repository inherits the items since the ledger
+  // describes this install's comms and carries no repo column.
+  items.push(...await leaderRepliesBacklogItems({ repo }));
   return { items, errors };
 }
 
