@@ -115,6 +115,29 @@ describe('multi-Mac durable fencing witness', () => {
     expect(f.run('primary', 'status').result['nodes']).toEqual([expect.objectContaining({ usage: 250 })]);
     expect(f.run('primary', 'list').result).toEqual(f.run('primary', 'status').result);
   });
+  it('serves result as a demoted-safe read pinned to the pool owner', () => {
+    const f = fixture();
+    const joined = f.run('primary', 'join', ['--node', 'worker']).result;
+    f.run('primary', 'enqueue', ['--job', 'j1']);
+    // --owner is injected: a pool caller can never name another scope.
+    expect(f.run('primary', 'result', ['--job', 'j1']).result).toMatchObject({ jobId: 'j1', state: 'pending' });
+    expect(() => f.run('primary', 'result', ['--job', 'j1', '--owner', 'other'])).toThrow(/owner/);
+    // Pool admission needs a fresh capacity sample before the node can pull.
+    f.run('primary', 'beat', ['--node', 'worker', '--session', String(joined['session']), '--capacity', JSON.stringify({
+      hostId: 'mac', sampledAtMs: 1000, ramBytes: 8 * 1024 ** 3, slots: 1, held: null })]);
+    const pulled = f.run('primary', 'pull', ['--node', 'worker', '--session', String(joined['session'])]).result;
+    const claim = pulled['claim'] as { jobId: string; token: number; leaderToken: number };
+    f.run('primary', 'complete', ['--job', claim.jobId, '--node', 'worker', '--session', String(joined['session']),
+      '--token', String(claim.token), '--leader-token', String(claim.leaderToken), '--result', 'pool-done']);
+    expect(f.run('primary', 'result', ['--job', 'j1']).result)
+      .toMatchObject({ jobId: 'j1', state: 'completed', result: 'pool-done', completedBy: 'worker' });
+    // Promotion demotes the primary but the read still answers from the witness.
+    f.advance(PRIMARY_TIMEOUT_MS);
+    f.beat('backup');
+    const demoted = f.run('primary', 'result', ['--job', 'j1']);
+    expect(demoted.demoted).toBe(true);
+    expect(demoted.result).toMatchObject({ jobId: 'j1', state: 'completed', result: 'pool-done' });
+  });
 });
 
 describe('SSH routing and device-local provider lanes', () => {

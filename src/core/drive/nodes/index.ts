@@ -69,6 +69,23 @@ export interface WithdrawOutcome {
   result?: string;
 }
 
+/** Read-only per-job outcome inside one owner scope. `absent` covers both an
+ * unknown id and a job owned by another scope, so the read never leaks across
+ * owners. Fencing tokens and the claim record never leave the store. */
+export interface JobOutcome {
+  state: 'pending' | 'running' | 'completed' | 'absent';
+  /** Accepted completion text; present only when `state` is `completed`. */
+  result?: string;
+  /** Executor node id of an accepted completion (the withdrawal marker's id
+   * when `producerWithdrawn` is set). */
+  completedBy?: string;
+  /** Witness-clock completion time of an accepted completion. */
+  completedAt?: number;
+  /** Node whose live session can still act on a running claim. */
+  claimedBy?: string;
+  producerWithdrawn?: true;
+}
+
 export interface NodeView {
   capacity?: NodeCapacitySample;
   nodeId: string;
@@ -414,6 +431,28 @@ export class DriveNodes implements QueueV1 {
       job.result = WITHDRAWN_RESULT;
       job.producerWithdrawn = true;
       return { state: 'withdrawn' as const };
+    });
+  }
+
+  /** Read-only counterpart of `withdraw` for the job's owner: the accepted
+   * result text once completed, the live claim's node while running, or the
+   * bare state otherwise. Same owner match as `withdraw`, so a job in another
+   * scope answers `absent`. Never mutates state and never exposes tokens. */
+  jobOutcome(jobId: string, owner: string): JobOutcome {
+    if (!validId(jobId) || !validId(owner)) throw new Error('Invalid drive job ID');
+    return this.transaction((state, now) => {
+      const job = state.jobs.find(j => j.id === jobId && j.owner === owner);
+      if (!job) return { state: 'absent' };
+      if (job.state === 'completed') {
+        return { state: 'completed', result: job.result ?? '',
+          ...(job.claim ? { completedBy: job.claim.nodeId } : {}),
+          ...(job.completedAt === undefined ? {} : { completedAt: job.completedAt }),
+          ...(job.producerWithdrawn ? { producerWithdrawn: true as const } : {}) };
+      }
+      if (job.state === 'running') {
+        return { state: 'running', ...(actionableClaim(state, job, now) ? { claimedBy: job.claim!.nodeId } : {}) };
+      }
+      return { state: 'pending' };
     });
   }
 }

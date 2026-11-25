@@ -2252,6 +2252,12 @@ with a fresh token (`WITHDRAWN_RESULT`) and persists `producerWithdrawn: true`;
 that marker, not the result or node ID, distinguishes a producer withdrawal
 from an accepted completion. `JobView.producerWithdrawn` exposes the marker,
 and `JobView.claimedBy` names the node whose live session can still act on a running claim.
+`DriveNodes.jobOutcome(jobId, owner)` is the read-only counterpart `phm node
+result` serves: a `JobOutcome` (`pending | running | completed | absent`) with
+`result`, `completedBy` and `completedAt` for an accepted completion,
+`claimedBy` for a live running claim and `producerWithdrawn` for a producer
+fence. The owner match is `withdraw`'s, so another scope's job answers
+`absent`; the read never mutates state or exposes fencing tokens.
 `src/core/drive/nodes/runner-packs.ts` exports
 `probeRunnerPacks(runner, run?)`, which returns `pack:<name>` caps from
 `<runner> packs`. `runner.ts` exports `NODE_RUNNER_PACKS` and

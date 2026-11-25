@@ -61,9 +61,19 @@ phm node pull --node box --session 1 --json
 # While working, renew; when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
+# The owner reads the outcome back any time; it answers pending, running
+# (with the claiming node), or completed with the accepted result text:
+phm node result --job fix-123 --owner acme
 # What this owner scope can see:
 phm node status --owner acme
 ```
+
+`phm node result --job <id> --owner <scope>` is the read-only way back to a
+job's outcome: `pending`, `running` (naming the node whose live claim can act),
+`completed` with the accepted `--result` text, executor and completion time, or
+`absent` for an unknown id or another owner's job. It never mutates state —
+`withdraw` stays the only fence, and a producer withdrawal reads back as
+`completed` with `producerWithdrawn` set, not as node work.
 
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
