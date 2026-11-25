@@ -331,12 +331,19 @@ joins. Tokens go into Phantom Secrets under the names above; the bridge reads
 ## Team org
 
 `phm org` models co-founders joining with their own agents and pooled usage. The
-declarative file is `~/.ashlr/org.toml` (example: `docs/examples/org.toml`): members,
+declarative file is `~/.ashlr/org.toml` (create one with `phm org init`; a copy of the
+leader's file works too — the shipped `docs/examples/org.toml` is one example): members,
 their machines, agents, the lanes and the percent share of each lane they contribute,
 roles (`leader`, `implementer`, `reviewer`, `researcher`) and `reports_to` lines. It
 holds ids and numbers only, never tokens, mail or messages, and secret-shaped values
 are refused. Spending stays with each member; nothing here changes billing.
 
+- `phm org init --member <id> --machine <id> [--name <name>] [--lane <lane>[=<share>]]... --json`
+  writes a starter `org.toml` (default `~/.ashlr/org.toml`, or `--file`) declaring the
+  member as leader (founder) of a new org on that machine. A bare `--lane` declares
+  share 100; `=<share>` sets 0-100. It refuses to overwrite an existing file — add the
+  other members, their machines, agents and lanes by editing it, then share a copy with
+  each member (ids and shares only, never credentials).
 - `phm org show --json` prints the org and which lanes each member has opted into.
 - `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json` is run by
   each co-founder on their own machine. They sign in to their own provider CLIs there;
