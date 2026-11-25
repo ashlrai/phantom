@@ -3,6 +3,7 @@
 Hermetic: temp HOME, stub gh and publish.sh, a fixture git-safe helper whose sha the candidate dispatchd is patched to
 pin. Nothing touches the real ~/.ashlr-runs, the network or gh.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -95,6 +96,62 @@ class Unit(unittest.TestCase):
         Path(self.runs + '/queue/run/RQ-J.line').write_text('RQ-J\tphantom\tx\n')
         Path(self.runs + '/POSTRUN_PR_OFF').write_text('')
         self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fake()), 0)
+        self.assertEqual(self.calls, [])
+
+    def fork_run(self, metadata=None, result=None, code=0):
+        inner = self.fake(publish_result=result or 'RESULT PR %s SENS=[]' % PR)
+        def run(cmd, **kw):
+            if cmd[:3] == ['gh', 'api', 'repos/masonwyatt23/phantom']:
+                self.calls.append(cmd)
+                return completed(code, metadata if isinstance(metadata, str) else json.dumps(metadata))
+            return inner(cmd, **kw)
+        return run
+
+    def test_fork_gate_rejects_invalid_or_unknown_targets(self):
+        valid = {'full_name': 'masonwyatt23/phantom', 'fork': True, 'parent': {'full_name': 'ashlrai/phantom'}}
+        for metadata in [None, 'invalid', [], {**valid, 'full_name': 'ashlrai/phantom'},
+                         {**valid, 'fork': False}, {**valid, 'fork': 1},
+                         {**valid, 'parent': {'full_name': 'someone/phantom'}},
+                         {**valid, 'full_name': 'MasonWyatt23/phantom'}]:
+            with self.subTest(metadata=metadata):
+                self.calls.clear()
+                Path(self.runs + '/RQ-J.publish').write_text(postrun_pr.FORK_ABORT + '\n')
+                self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fork_run(metadata)), 3)
+                self.assertEqual(len(self.calls), 1)
+                self.assertFalse(Path(self.runs + '/queue/run/RQ-J.postrun.json').exists())
+        self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fork_run(valid, code=1)), 3)
+
+    def test_repaired_target_reuses_publisher_and_duplicate_is_noop(self):
+        Path(self.runs + '/RQ-J.publish').write_text(postrun_pr.FORK_ABORT + '\n')
+        self.assertTrue(postrun_pr.eligible(postrun_pr.FORK_ABORT))
+        valid = {'full_name': 'masonwyatt23/phantom', 'fork': True, 'parent': {'full_name': 'ashlrai/phantom'}}
+        run = self.fork_run(valid)
+        self.assertEqual(postrun_pr.main(['RQ-J'], self.home, run), 0)
+        self.assertEqual(self.sidecar()['failure_class'], 'abort_fork-target-invalid')
+        self.assertEqual([c for c in self.calls if c[0] != 'gh'],
+                         [['/bin/bash', self.runs + '/bin/publish.sh', 'RQ-J']])
+        self.calls.clear()
+        self.assertEqual(postrun_pr.main(['RQ-J'], self.home, run), 0)
+        self.assertEqual(self.calls, [])
+
+    def test_recovery_cannot_retry_past_a_second_publish_gate(self):
+        Path(self.runs + '/RQ-J.publish').write_text(postrun_pr.FORK_ABORT + '\n')
+        valid = {'full_name': 'masonwyatt23/phantom', 'fork': True, 'parent': {'full_name': 'ashlrai/phantom'}}
+        run = self.fork_run(valid, result='RESULT ABORT secret-shape')
+        self.assertEqual(postrun_pr.main(['RQ-J'], self.home, run), 1)
+        self.assertEqual(self.sidecar()['result'], 'RESULT ABORT secret-shape')
+        self.calls.clear()
+        self.assertEqual(postrun_pr.main(['RQ-J'], self.home, run), 0)
+        self.assertEqual(self.calls, [])
+
+    def test_concurrent_retry_is_held_and_other_gate_is_not_retried(self):
+        path = self.runs + '/queue/run/RQ-J.postrun.lock'
+        with open(path, 'w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fake()), 3)
+        for result in ['RESULT ABORT secret-shape', postrun_pr.FORK_ABORT + '-extra']:
+            Path(self.runs + '/RQ-J.publish').write_text(result + '\n')
+            self.assertEqual(postrun_pr.main(['RQ-J'], self.home, self.fake()), 1)
         self.assertEqual(self.calls, [])
 
     def test_child_env_forwards_only_publish_policy(self):
@@ -214,6 +271,42 @@ class Tick(unittest.TestCase):
         home, r, job, cand = self.fixture(res='RESULT PR https://github.com/ashlrai/phantom/pull/1 SENS=[]')
         self.run_tick(home, cand); time.sleep(0.5)
         self.assertFalse((r / f'queue/run/{job}.postrun').exists())
+
+    def test_fork_recovery_respects_publish_hold(self):
+        home, r, job, cand = self.fixture(res=postrun_pr.FORK_ABORT)
+        (r / 'PUBLISH_HOLD').write_text('fixture hold')
+        (r / 'PUBLISH_HOLD.checked').touch()
+        self.run_tick(home, cand)
+        self.assertFalse((r / f'queue/run/{job}.postrun').exists())
+        self.assertFalse((r / 'publish-calls').exists())
+        self.assertTrue((home / 'Projects/ashlrai/wt' / job).exists())
+
+    def test_fork_recovery_preserves_diff_and_only_publishes_once(self):
+        home, r, job, cand = self.fixture(res=postrun_pr.FORK_ABORT)
+        wt = home / 'Projects/ashlrai/wt' / job
+        before = self.git(wt, 'rev-parse', 'HEAD')
+        (wt / 'pending').write_text('finished untracked work\n')
+        gh = home / 'stubbin/gh'
+        # First tick: wrong fork. A later tick retries after the permitted target is restored.
+        gh.write_text("#!/bin/sh\necho '{}'\n")
+        self.run_tick(home, cand)
+        self.assertTrue(self.wait_for(r / 'dispatchd.log'))
+        end = time.monotonic() + 10
+        while 'target-unverified' not in (r / 'dispatchd.log').read_text() and time.monotonic() < end:
+            time.sleep(0.05)
+        self.assertIn('target-unverified', (r / 'dispatchd.log').read_text())
+        self.assertFalse((r / 'publish-calls').exists())
+        self.assertTrue(wt.exists())
+        metadata = json.dumps({'full_name': 'masonwyatt23/phantom', 'fork': True,
+                               'parent': {'full_name': 'ashlrai/phantom'}})
+        gh.write_text("#!/bin/sh\ncase \"$*\" in *'repos/masonwyatt23/phantom'*) echo '" + metadata + "';; esac\n")
+        os.utime(r / f'queue/run/{job}.postrun', (time.time() - 2000,) * 2)
+        self.run_tick(home, cand)
+        self.assertTrue(self.wait_for(r / f'queue/run/{job}.postrun.json'))
+        self.assertEqual(self.git(wt, 'rev-parse', 'HEAD'), before)
+        self.assertEqual((wt / 'pending').read_text(), 'finished untracked work\n')
+        self.run_tick(home, cand)
+        self.assertEqual((r / 'publish-calls').read_text().split(), [job])
 
     def test_off_switch(self):
         home, r, job, cand = self.fixture(switch_off=True)

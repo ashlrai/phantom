@@ -1491,6 +1491,13 @@ def reap_worktrees():
             if not retire_bundle_worktree(j, wt): open(RUN + "/" + j + ".keptlogged", "w").close()
             log("REAP %s (%s) bundle" % (j, pool)); continue
         res = result(j)
+        if (j not in keep and res == postrun_pr.FORK_ABORT and not publish_busy
+                and not os.path.exists(R + "/PUBLISH_HOLD") and not os.path.exists(R + "/PUBLISH_LANDONLY")
+                and not over_budget() and not _ph_drip_hold(j) and (not DRIP or drip_budget > 0)
+                and postrun_pr_start(j, wt, b, res)):
+            publish_busy = True
+            if DRIP:
+                drip_budget -= 1; open(DRIPLOG, "a").write("%f\n" % NOW)
         if j in keep or (res and not res.startswith(("RESULT PR", "RESULT EMPTY"))):
             kept.append(j)
             mk = RUN + "/" + j + ".keptlogged"
