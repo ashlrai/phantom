@@ -166,6 +166,7 @@ boundaries are `launch`, `checkout_complete`, `finish`, `ci_start`,
 `MERGED`) outranks the event name, so an eventless reconciler row still
 counts and a publish row swapped to `MERGED` is never a second publish.
 `phm pulse merge-latency` adds the `open_to_merge` publish→merged total.
+An unreadable ledger still prints the report with `known:false` and exits 1.
 IDs must identify individual attempts. Missing, reversed or ambiguous
 repeated boundaries are reported as unmeasured, not estimated; phase totals
 need not cover the whole wall time. Existing ledgers may not yet contain all
