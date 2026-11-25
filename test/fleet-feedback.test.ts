@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { triageFeedback, type FeedbackSignal } from '../src/core/fleet/feedback-triage.js';
 import { feedbackIngestDeps, ingestFeedback, type FeedbackSnapshot } from '../src/core/fleet/feedback-ingest.js';
-import { feedbackDigest, runFeedback } from '../src/core/fleet/feedback-cycle.js';
+import { feedbackDigest, lastFeedbackScanAt, runFeedback } from '../src/core/fleet/feedback-cycle.js';
 import { cmdFleetFeedback } from '../src/cli/fleet-feedback.js';
 
 const signal = (text = 'Bug: export crashes', refs: string[] = []): FeedbackSignal => ({ source: 'self-report', text, refs });
@@ -122,6 +122,16 @@ describe('feedback scan and digest', () => {
     expect((await runFeedback({ ...options(), apply: true }, deps())).queued).toEqual([]);
     const unavailable = { ...deps(), read: async () => { throw new Error('private failure'); } };
     expect((await runFeedback({ ...options(), apply: true }, unavailable)).errors).toContain('coverage-incomplete');
+  });
+  it('reports the last applied scan time from the cycle marker', async () => {
+    expect(await lastFeedbackScanAt(root)).toBeNull();
+    await runFeedback({ ...options(), apply: true }, deps());
+    const at = await lastFeedbackScanAt(root);
+    expect(at).not.toBeNull();
+    expect(Math.abs(Date.now() - (at as number))).toBeLessThan(60_000);
+    // A dry scan reserves no cycle: the marker still reports the applied one.
+    await runFeedback(options(), deps());
+    expect(await lastFeedbackScanAt(root)).toBe(at);
   });
   it('refuses a symlinked feedback store and preserves its target', async () => {
     const target = join(root, 'target'); await mkdir(target); await symlink(target, join(root, 'feedback'));

@@ -125,6 +125,8 @@ interface Dependencies {
   strandedRequeue?: typeof import('../core/fleet/stranded-requeue.js').planStrandedRequeue;
   /** Publish-resume sweep seam for tests; production sweeps the real runs dir. */
   publishResume?: typeof import('../core/fleet/publish-resume-sweep.js').sweepPublishResumes;
+  /** Feedback-scan seam for tests; production runs the real cycle on the canonical root. */
+  feedbackScan?: typeof import('../core/fleet/feedback-cycle.js').runFeedback;
   /** Ready ordering seam; called once inside the planner stage. */
   orderReady?: typeof orderReadyFile;
   /** Asks sync seam for tests; production syncs the real needs-you ledger. */
@@ -345,6 +347,33 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return await (deps.publishResume ?? sweepPublishResumes)({ runsDir: root, apply, now: () => now() });
     } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
   };
+  // Community feedback intake — the feedback-loop contract's "existing routine"
+  // is this tick. One bounded gh ingest per hour: the scan's own apply marker
+  // (feedback/cycle) is the cadence record, refreshed by every applied scan,
+  // manual or scheduled, so intake latency stays under an hour while the
+  // seven-read ingest stays off the other three-quarters of passes. A dry tick
+  // honors the same gate — the ingest is the cost, not the write. The report is
+  // projected to counts and ids: candidates carry promptSeed text that would
+  // bloat the self-tick journal. Never fails the tick.
+  const FEEDBACK_SCAN_MIN_GAP_MS = 60 * 60_000;
+  const runFeedbackScanStage = async (): Promise<unknown> => {
+    if (!deps.feedbackScan && root !== join(home, '.ashlr-runs')) return { state: 'skipped', reason: 'custom-runs-dir-no-feedback-scan' };
+    try {
+      const { runFeedback, lastFeedbackScanAt } = await import('../core/fleet/feedback-cycle.js');
+      const last = await lastFeedbackScanAt(root);
+      if (last !== null && now() - last < FEEDBACK_SCAN_MIN_GAP_MS) {
+        return { state: 'skipped', reason: 'feedback scan ran less than 60 minutes ago' };
+      }
+      const report = await (deps.feedbackScan ?? runFeedback)({ command: 'scan', apply, days: 7, runsDir: root, now: now() });
+      return {
+        schema: report.schema, applied: report.applied, sources: report.sources,
+        candidates: report.candidates.length, queued: report.queued,
+        deferred: report.deferred.length, errors: report.errors,
+      };
+    } catch (error) {
+      return { state: 'failed', reason: `feedback scan failed: ${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}` };
+    }
+  };
   const runMasonDigestStage = async (): Promise<unknown> => {
     // The owner thread lives on the real account root; a sandbox runs dir never posts unless a test injects the seams.
     if (!deps.masonDigest && root !== join(homedir(), '.ashlr-runs')) return { reason: 'custom-runs-dir-no-owner-thread' };
@@ -428,13 +457,14 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const asksSync = await runAsksSyncStage();
       const strandedRequeue = await runStrandedRequeueStage();
       const publishResume = await runPublishResumeStage();
+      const feedbackScan = await runFeedbackScanStage();
       const order = await (deps.orderReady ?? orderReadyFile)(root, apply, now())
         .catch(() => ({ line: 'order: unknown (queue unavailable or busy)' }));
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, publishResume, order }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, publishResume, feedbackScan, order }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;

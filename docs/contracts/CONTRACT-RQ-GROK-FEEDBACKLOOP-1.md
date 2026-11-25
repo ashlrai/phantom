@@ -35,7 +35,11 @@ withholds injection. Apply alone creates state: a shared lock, one-minute cycle
 reservation (including crashed cycles), at most five staged jobs, and existing queue
 backpressure. Regressions take priority; questions and excess jobs are deferred.
 The existing atomic no-clobber drop writer feeds the normal READY sweep; staging
-is not proof of launch. Invoke scan from an existing overnight routine for automation.
+is not proof of launch. The fleet self-tick's planner-tick stage is the automation:
+on the canonical runs root it runs `scan` at most once per hour — the apply cycle
+marker is the cadence record — so applied ticks stage deduplicated jobs without a
+human invoking the verb; a dry tick reports candidates only when no applied scan
+is fresh, and a custom runs dir never scans.
 
 `digest` covers twelve hours. `shipped` means merged PRs, not deployments; latest
 job events distinguish review, failures and last recorded launches (not live probes).

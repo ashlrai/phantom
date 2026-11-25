@@ -9,6 +9,21 @@ import { feedbackJobId, triageFeedback, type FeedbackCoverage } from './feedback
 
 export const FEEDBACK_CYCLE_LIMIT = 5;
 /**
+ * When the last applied scan reserved its cycle — the `feedback/cycle`
+ * marker's mtime, written by runFeedback before it stages jobs (manual or
+ * scheduled, partial or crashed cycles included). Null when no applied scan
+ * has run under this runs dir. The fleet self-tick reads it as the scan
+ * cadence record so the bounded gh ingest stays off every 15-minute pass.
+ */
+export async function lastFeedbackScanAt(runsDir: string | undefined): Promise<number | null> {
+  try {
+    return (await lstat(join(resolveDropJobRoot(runsDir), 'feedback', 'cycle'))).mtimeMs;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+/**
  * jobs.jsonl field dialects: job|job_id|jobId|id, url|prUrl|pr_url|pr|html_url,
  * ts|timestamp|at|time|mergedAt|closedAt|recordedAt|updatedAt,
  * event|type|kind and phase|state|outcome|status|result|conclusion —
