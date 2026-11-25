@@ -922,6 +922,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install this commit and run phm --version
         run: node .github/scripts/ci-install-smoke.mjs commit
+        env:
+          NODE_OPTIONS: --max-old-space-size=5120
       - name: Install the published release and run phm --version
         run: node .github/scripts/ci-install-smoke.mjs release
 
