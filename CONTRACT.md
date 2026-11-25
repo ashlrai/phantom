@@ -2907,10 +2907,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `bodyKind?`, `result?: WorkResultOutcome`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, bodyKind?, result?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -2920,10 +2920,12 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 (`invalid-priority`), a `channel` outside the strict channel-name
 grammar every bus `--channel` read validates (`invalid-channel`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
-sender filter shares (`invalid-from`/`invalid-exclude-from`), or an
+sender filter shares (`invalid-from`/`invalid-exclude-from`), an
 `id`/`inReplyTo`/`bodyKind` outside the same printable-label bound every bus
-`--id`/`--in-reply-to`/`--body-kind` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo` and `bodyKind` echo the applied
+`--id`/`--in-reply-to`/`--body-kind` read validates (`invalid-id`/`invalid-in-reply-to`/`invalid-body-kind`),
+or a `result` outside the `WORK_RESULT_OUTCOMES` vocabulary every bus
+`--result` read validates (`invalid-result`).
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id`, `inReplyTo`, `bodyKind` and `result` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -3511,6 +3513,35 @@ post bodies are `{threadId, text}` records and seat handoff records keep
 no per-record body — and stay unfiltered, like they do under `priority`.
 Every count stays the filtered total, the result echoes `bodyKind`, and
 a kind nothing on the bus carries is an honest empty match, never an
+error and never a widened one.
+
+`options.result` narrows the whole digest to pending items tied to a
+`work.result` receipt reporting that one outcome — the same
+`WORK_RESULT_OUTCOMES` vocabulary (`reserved`, `admitted`, `complete`,
+`failed`) and kind-scoped `busBodyResultOutcome` own-field match every
+bus read's `--result` applies, validated by that vocabulary rather than
+the printable-label bound: `jobs`/`announced` keep the feed jobs whose
+newest retained `work.result` citation carries that outcome — the feed's
+own `--result` rule, where a job with no result receipt never matches —
+`next`/`handoffs`/`mailbox` keep envelopes whose body is a `work.result`
+reporting it inside the same shared pending-work walk and
+`BusMailbox.pendingFor` `match` predicate (claimable `work`/`task`
+receipts, `worker-handoff` assignments and every other body kind never
+match, so those sections are provably empty under the filter),
+`claims` keep only message claims whose resolved leased envelope's body
+reports it (the resolved message's verbatim `resultOutcome`, absent when
+the body is not a `work.result` or reports no outcome — a claim naming
+no resolved message, a scope-key claim or an unresolvable/unreadable
+lease names no provable outcome and never lists, the same "unknown stays
+out" rule `priority` applies) — `inbox` passes it to `readAgentInbox`'s
+`result` and `wakes` to `readAgentWakes`' `filter.result`, and the
+`threads`/`awaiting`/`blocked` sections, `board`, `channels` and `seats`
+carry no per-item result evidence the digest can prove — the shared
+conversations read's query contract has no outcome field, board post
+bodies are `{threadId, text}` records and seat handoff records keep no
+per-record body — and stay unfiltered, like they do under `priority`.
+Every count stays the filtered total, the result echoes `result`, and an
+outcome nothing on the bus reports is an honest empty match, never an
 error and never a widened one.
 
 ### Unified agent bus (RQ-BUS-UNIFY-1)
