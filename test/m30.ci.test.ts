@@ -304,6 +304,16 @@ describe('M30 CI workflow', () => {
     expect(ciYml).toMatch(/^ {2}merge_group:$/m);
   });
 
+  it('gives the macOS install-smoke build the larger Node heap', () => {
+    const { jobs } = parse(ciYml) as {
+      jobs: Record<string, { steps: Array<{ name?: string; env?: Record<string, string> }> }>;
+    };
+    const step = jobs['install-smoke-macos']!.steps.find(
+      ({ name }) => name === 'Install this commit and run phm --version',
+    );
+    expect(step?.env?.NODE_OPTIONS).toBe('--max-old-space-size=5120');
+  });
+
   it('never holds a macOS or Windows runner on pull_request or merge_group (RQ-CI-FANOUT)', () => {
     // Successor to the per-PR platform-diff gate reworked in #971: rather than
     // classifying platform code, no pull request or merge-queue commit may
