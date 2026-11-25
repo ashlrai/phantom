@@ -9,7 +9,7 @@ const commands = [...new Set(buildCommandCatalog(HELP_ENTRIES).map(command => co
 // Exact parsers refuse --help with usage and exit 2. The existing
 // cli-help-no-side-effects suite pins the first five; owner-live also
 // requires one of its documented verbs before it accepts any flags.
-const strictUsage = new Set(['team', 'improve', 'skills', 'signals', 'route', 'owner-live']);
+const strictUsage = new Set(['improve', 'skills', 'signals', 'route', 'owner-live']);
 const fixture = createHelpFixture();
 afterAll(() => removeHelpFixture(fixture));
 

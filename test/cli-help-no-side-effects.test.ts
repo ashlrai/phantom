@@ -95,7 +95,6 @@ const STRICT_VERB_PARSER = 'its option parser turns every unrecognized flag, --h
 
 /** Intentionally strict: exit 2 with usage, no side effects (still asserted). */
 const HELP_STRICT_REFUSALS: Record<string, string> = {
-  team: 'the team dispatcher prints its Usage for anything that is not one of its verbs (src/cli/team.ts) and exits 2',
   improve: '`improve` only has the `propose` verb; anything else prints its Usage line and exits 2 (src/cli/improve.ts)',
   'desktop install': 'release installer with an exact grammar; an unrecognized token is a usage error before any download or stage',
   'desktop-update inspect': 'release updater with an exact grammar; an unrecognized token is a usage error before any stage is read',
