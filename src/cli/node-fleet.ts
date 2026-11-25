@@ -83,6 +83,14 @@ function text(verb: string, out: Record<string, unknown>): string {
     return `Renewed ${String(out['jobId'])}; the lease expires ${expires}.`;
   }
   if (verb === 'complete') return `Completed ${String(out['jobId'])}.`;
+  if (verb === 'release') {
+    // The claim is already fenced dead by the time this prints; declined means
+    // this session is barred from the job, not that the job is gone.
+    const jobId = String(out['jobId']);
+    return out['declined'] === true
+      ? `Released ${jobId}; it is pending again and this session will not be offered it.`
+      : `Released ${jobId}; it is pending again.`;
+  }
   if (verb === 'leave') {
     const nodeId = String(out['nodeId']);
     if (out['left'] === true) return `Node ${nodeId} left the registry.`;

@@ -738,6 +738,66 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toContain('slots=0 held=memory-pressure');
     } finally { vi.restoreAllMocks(); }
   });
+  it('release hands a claim back in plain words, and --decline bars this session', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      const pullLease = () => {
+        const claim = (executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes())['claim'] as
+          { jobId: string; token: number; leaderToken: number });
+        return ['--job', claim.jobId, '--node', 'box', '--session', session,
+          '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+      };
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes());
+      const first = pullLease();
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j1 running (claimed by box)');
+      // A plain release returns the job to pending at once — no 30 s lease wait —
+      // and this session may pull it again.
+      expect(await cmdNodeFleet('release', first, deps)).toBe(0);
+      expect(last(lines)).toBe('Released j1; it is pending again.');
+      expect(await cmdNodeFleet('status', ['--owner', 'acme'], deps)).toBe(0);
+      expect(last(lines)).toContain('job j1 pending');
+      const second = pullLease();
+      expect(second[1]).toBe('j1');
+      // --decline keeps the job pending but bars this session from it again.
+      expect(await cmdNodeFleet('release', [...second, '--decline'], deps)).toBe(0);
+      expect(last(lines)).toBe('Released j1; it is pending again and this session will not be offered it.');
+      expect(await cmdNodeFleet('plan', ['--owner', 'acme', '--json'], deps)).toBe(0);
+      const routes = (JSON.parse(last(lines)) as { routes: { jobId: string; nodeId: string | null; fix?: string }[] }).routes;
+      expect(routes.find(r => r.jobId === 'j1')).toMatchObject({ nodeId: null });
+      expect(routes.find(r => r.jobId === 'j1')!.fix).toContain('released');
+      // The dead claim cannot be released a second time: lease-lost, exit 1.
+      expect(await cmdNodeFleet('release', [...second, '--json'], deps)).toBe(1);
+      expect(JSON.parse(last(lines))).toMatchObject({ command: 'release',
+        error: { code: 'lease-lost' } });
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('release keeps the --json envelope and reaches the verb through cmdNode', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const nodes = new DriveNodes(store);
+      const joined = executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes);
+      const session = String(joined['session']);
+      executeNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme'], nodes);
+      const claim = (executeNodeFleet('pull', ['--node', 'box', '--session', session], nodes)['claim'] as
+        { jobId: string; token: number; leaderToken: number });
+      const lease = ['--job', claim.jobId, '--node', 'box', '--session', session,
+        '--token', String(claim.token), '--leader-token', String(claim.leaderToken)];
+      const code = await cmdNodeFleet('release', [...lease, '--decline', '--json'], { store });
+      expect(code).toBe(0);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'release',
+        jobId: 'j1', released: true, declined: true });
+      // The dispatcher lists release as a fleet verb: a bare call reaches the
+      // verb's own flag check instead of the unknown-command refusal.
+      const { cmdNode } = await import('../src/cli/node.js');
+      expect(await cmdNode(['release', '--json'])).toBe(2);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'release',
+        error: { code: 'missing-flag' } });
+    } finally { vi.restoreAllMocks(); }
+  });
 });
 
 describe('beat --capacity sample honesty', () => {

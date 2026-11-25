@@ -28,16 +28,17 @@ runs on two nodes.
   still act on consumes capacity: a lapsed claim is re-routable, and a claim
   fenced by a rejoin or departure frees the node's slot and host budget at
   once even though the job itself stays fenced until the claim expires.
-- **Handing a claim back.** A pool worker (`phm node worker`) that pulls a job
-  it will not run releases the claim at once through the pool's `release`
-  operation, so the job returns to pending instead of showing as running until
-  the lease lapses. A temporary refusal (the node is stopping, short on
-  capacity or lost the lease) stays retryable. Only a permanent one (the job
-  needs a lane or cap the node lacks, carries secrets, or has an invalid task)
-  declines the job, and that session is not offered it again. A primary too old
-  to know `release` lets the claim expire instead. `release` is not a
-  standalone `phm node` verb: a manual holder stops renewing and lets the
-  lease lapse.
+- **Handing a claim back.** A node that pulls a job it will not run releases
+  the claim at once with `phm node release`, so the job returns to pending
+  instead of showing as running until the lease lapses. A pool worker
+  (`phm node worker`) does the same through the pool's `release` operation; a
+  primary too old to know `release` lets the claim expire instead. A temporary
+  refusal (the node is stopping, short on capacity or lost the lease) stays
+  retryable — omit `--decline`. Only a permanent one (the job needs a lane or
+  cap the node lacks, carries secrets the node cannot resolve, or has an
+  invalid task) passes `--decline`, and that session is not offered the job
+  again. A manual holder that simply stops renewing still lets the lease lapse;
+  `release` is the fast path, not a requirement.
 - **Local auth only.** Jobs needing `gh` go only to nodes whose own heartbeat
   reports a working GitHub CLI login (`phm node beat --probe-auth` runs
   `gh auth status` locally and reads only its exit code). Phantom never copies,
@@ -62,6 +63,9 @@ phm node pull --node box --session 1 --json
 # when done, complete (values come from the pull output):
 phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3 --watch
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
+# Cannot run it after all? Hand the claim back with the same lease flags —
+# add --decline when this session can never run it (missing secret, no pack):
+phm node release --job fix-123 --node box --session 1 --token 5 --leader-token 3
 # The owner reads the outcome back any time; it answers pending, running
 # (with the claiming node), or completed with the accepted result text:
 phm node result --job fix-123 --owner acme
@@ -98,8 +102,9 @@ scope says so with the join command; `enqueue` says when the job id already
 exists;
 `withdraw` names `held` (a live claim still owns it — retry after it lapses),
 `completed` and `absent`; `renew` prints the lease expiry as a time;
-`complete` and `leave` name what happened, and a refused `leave` names the
-live session and its command.
+`complete` and `leave` name what happened, a refused `leave` names the
+live session and its command, and `release` says the job is pending again —
+with `--decline`, that this session is barred from being offered it.
 
 Add `--json` to any verb for deterministic output:
 `{"schemaVersion":1,"command":"pull",...}` on success, or
