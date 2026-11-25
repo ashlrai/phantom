@@ -6,7 +6,7 @@
  * and a hold a person placed is never released.
  */
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -300,6 +300,41 @@ describe('fleet self-tick', () => {
     expect(asksSync).toHaveBeenCalledOnce();
     await run(['--json', '--runs-dir', runsDir], { asksSync, ...quietSweep });
     expect(asksSync).toHaveBeenLastCalledWith(expect.objectContaining({ dryRun: true }));
+  });
+
+  it('planner-tick runs the feedback scan sub-stage, projecting counts and ids', async () => {
+    const feedbackScan = vi.fn(async (o: { apply?: boolean }) => ({
+      schema: 'fleet.feedback.v1', applied: o.apply === true, sources: { issues: 'ok' },
+      candidates: [{ kind: 'bug' }, { kind: 'ignore' }], queued: ['RQ-PHX-FB1'], deferred: ['RQ-PHX-FB2'], errors: [],
+    }));
+    const applied = await run(['--apply', '--json', '--runs-dir', runsDir], { feedbackScan, ...quietSweep });
+    const planner = applied.report!.steps.find(step => step.step === 'planner-tick')!.report as { feedbackScan: Record<string, unknown> };
+    expect(planner.feedbackScan).toEqual({ schema: 'fleet.feedback.v1', applied: true, sources: { issues: 'ok' }, candidates: 2, queued: ['RQ-PHX-FB1'], deferred: 1, errors: [] });
+    expect(feedbackScan).toHaveBeenCalledWith(expect.objectContaining({ command: 'scan', apply: true, days: 7, runsDir, now: NOW_MS }));
+    await run(['--json', '--runs-dir', runsDir], { feedbackScan, ...quietSweep });
+    expect(feedbackScan).toHaveBeenLastCalledWith(expect.objectContaining({ apply: false }));
+  });
+
+  it('planner-tick skips the feedback scan inside its hourly cadence', async () => {
+    const feedbackScan = vi.fn(async () => ({ schema: 'fleet.feedback.v1', applied: false, sources: {}, candidates: [], queued: [], deferred: [], errors: [] }));
+    const marker = join(runsDir, 'feedback', 'cycle');
+    await mkdir(join(runsDir, 'feedback'), { recursive: true });
+    await writeFile(marker, '');
+    const fresh = new Date(NOW_MS - 30 * 60_000);
+    await utimes(marker, fresh, fresh);
+    const skipped = await run(['--apply', '--json', '--runs-dir', runsDir], { feedbackScan, ...quietSweep });
+    expect(feedbackScan).not.toHaveBeenCalled();
+    expect((skipped.report!.steps.find(step => step.step === 'planner-tick')!.report as { feedbackScan: { reason: string } }).feedbackScan.reason).toContain('60 minutes');
+    const stale = new Date(NOW_MS - 2 * 60 * 60_000);
+    await utimes(marker, stale, stale);
+    await run(['--apply', '--json', '--runs-dir', runsDir], { feedbackScan, ...quietSweep });
+    expect(feedbackScan).toHaveBeenCalledOnce();
+  });
+
+  it('planner-tick skips the feedback scan on a custom runs dir without the seam', async () => {
+    const { report } = await run(['--apply', '--json', '--runs-dir', runsDir], quietSweep);
+    const planner = report!.steps.find(step => step.step === 'planner-tick')!.report as { feedbackScan: { state: string; reason: string } };
+    expect(planner.feedbackScan).toMatchObject({ state: 'skipped', reason: 'custom-runs-dir-no-feedback-scan' });
   });
 
   it('a held lock reports busy, exits 0 and runs no step', async () => {

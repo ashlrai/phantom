@@ -54,11 +54,14 @@ it('runs the composed tick twice, preserves recovery evidence, and continues aft
   // The network-facing final step uses its existing step seam. The early
   // failure below must still reach this final stage and persist its outcome.
   const sweep = vi.fn(async () => ({ exitCode: 0, output: JSON.stringify({ reason: 'fake-gh-no-open-prs' }) }));
+  // The planner-tick feedback-scan sub-stage reaches GitHub through gh; like
+  // landed-sweep it gets a seam so the composed tick stays hermetic.
+  const feedbackScan = vi.fn(async () => ({ schema: 'fleet.feedback.v1', applied: true, sources: { issues: 'ok' }, candidates: [], queued: [], deferred: [], errors: [] }));
   const run = async (failEarly = false) => {
     let output = '';
     const code = await cmdFleetSelfTick(['--json', '--apply', '--runs-dir', root], {
       home, now: () => NOW, output: text => { output = text; }, error: () => {}, spawn,
-      senders: { page: send }, noticeSenders: { page: noticeSend },
+      senders: { page: send }, noticeSenders: { page: noticeSend }, feedbackScan,
       meterReaders: {
         lanes: async () => [{ lane: 'codex-personal', target: 2, running: 1, queued: 2, held: false }],
         meters: async () => [NOW - 7_200_000, NOW].map(at => ({ provider: 'codex-personal', window: 'secondary:10080', usedPercent: 20, resetAt: new Date(NOW + 86400000).toISOString(), sampledAt: new Date(at).toISOString() })),
