@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LOAD_DOMINANT_MIN_SHARE,
   LOAD_MIN_DAYS,
@@ -197,21 +197,27 @@ describe('loadBacklogItems', () => {
   });
 
   it('appends load items through discovery and dedupes on refresh', async () => {
-    const runs = join(home, '.ashlr-runs');
-    await mkdir(join(runs, 'queue'), { recursive: true });
-    await writeFile(join(runs, JOURNAL), jsonl(recurringRows(fleet(80))).join('\n') + '\n');
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const loadItems = first.items.filter((i) => i.id.startsWith('host-load-'));
-    expect(loadItems.map((i) => i.id)).toEqual(['host-load-blocked-hours', 'host-load-dominant-fleet-jobs']);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(loadItems)).toBe(2);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('host-load-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('host-load-'))).toHaveLength(2);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW_MS);
+    try {
+      const runs = join(home, '.ashlr-runs');
+      await mkdir(join(runs, 'queue'), { recursive: true });
+      await writeFile(join(runs, JOURNAL), jsonl(recurringRows(fleet(80))).join('\n') + '\n');
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const loadItems = first.items.filter((i) => i.id.startsWith('host-load-'));
+      expect(loadItems.map((i) => i.id)).toEqual(['host-load-blocked-hours', 'host-load-dominant-fleet-jobs']);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(loadItems)).toBe(2);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('host-load-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('host-load-'))).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

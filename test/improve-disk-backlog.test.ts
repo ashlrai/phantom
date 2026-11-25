@@ -299,22 +299,28 @@ describe('diskBacklogItems', () => {
   });
 
   it('appends disk items through discovery and dedupes on refresh', async () => {
-    const runs = join(home, '.ashlr-runs');
-    await mkdir(join(runs, 'queue'), { recursive: true });
-    const rows = recurringBelow().map(([at, freeGb]) => ({ at, free_gb: freeGb }));
-    await writeFile(join(runs, 'queue', 'host-disk-samples.json'), JSON.stringify(rows));
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    const diskItems = first.items.filter((i) => i.id.startsWith('disk-'));
-    expect(diskItems).toHaveLength(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(diskItems)).toBe(1);
-    const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('disk-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('disk-'))).toHaveLength(1);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW_MS);
+    try {
+      const runs = join(home, '.ashlr-runs');
+      await mkdir(join(runs, 'queue'), { recursive: true });
+      const rows = recurringBelow().map(([at, freeGb]) => ({ at, free_gb: freeGb }));
+      await writeFile(join(runs, 'queue', 'host-disk-samples.json'), JSON.stringify(rows));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      const diskItems = first.items.filter((i) => i.id.startsWith('disk-'));
+      expect(diskItems).toHaveLength(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(diskItems)).toBe(1);
+      const second = await discoverBacklog('ashlrai/phantom', { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('disk-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('disk-'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

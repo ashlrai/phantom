@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverBacklog } from '../src/core/improve/discover.js';
 import { incidentGateBacklogItems } from '../src/core/improve/incident-gate-backlog.js';
 import { appendUserBacklogItems, readUserBacklogItems, validBacklogItem } from '../src/core/cloud/backlog.js';
@@ -294,22 +294,28 @@ describe('incidentGateBacklogItems', () => {
   });
 
   it('appends incident-gate items through discovery and dedupes on refresh', async () => {
-    const dir = path.join(home, '.ashlr', 'fleet');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'incident-gates.jsonl'), ledger(recurringLaneRows()));
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const gate = first.items.filter((i) => i.id.startsWith('incident-gate-'));
-    expect(gate).toHaveLength(1);
-    expect(gate[0]!.id).toMatch(/^incident-gate-recurring-/);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(gate)).toBe(gate.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('incident-gate-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('incident-gate-'))).toHaveLength(gate.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      const dir = path.join(home, '.ashlr', 'fleet');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'incident-gates.jsonl'), ledger(recurringLaneRows()));
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const gate = first.items.filter((i) => i.id.startsWith('incident-gate-'));
+      expect(gate).toHaveLength(1);
+      expect(gate[0]!.id).toMatch(/^incident-gate-recurring-/);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(gate)).toBe(gate.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('incident-gate-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('incident-gate-'))).toHaveLength(gate.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

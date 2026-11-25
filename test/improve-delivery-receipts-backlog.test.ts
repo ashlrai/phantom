@@ -2,7 +2,7 @@ import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DELIVERY_RECEIPTS_MAX_LINES,
   DELIVERY_RECEIPTS_MIN_DAYS,
@@ -322,26 +322,32 @@ describe('deliveryReceiptsBacklogItems', () => {
   });
 
   it('appends delivery-receipts items through discovery and dedupes on refresh', async () => {
-    // discoverBacklog calls the feed with no path overrides, so the feed
-    // resolves <realHome()>/.ashlr-runs — under vitest the process-home
-    // fixture makes realHome() follow process.env.HOME, so relocate HOME
-    // to this test's temp dir and place the ledger at .ashlr-runs/leader.
-    process.env['HOME'] = home;
-    const dir = join(home, '.ashlr-runs', 'leader');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'delivery-receipts.jsonl'), recurringFailed().join('\n') + '\n');
-    const greenGh = async (args: string[]) => {
-      const p = args[4] ?? '';
-      if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
-      return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
-    };
-    const first = await discoverBacklog(REPO, { gh: greenGh });
-    const landed = first.items.filter((i) => i.id.startsWith('delivery-receipts-'));
-    expect(landed.length).toBeGreaterThanOrEqual(1);
-    expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
-    expect(appendUserBacklogItems(landed)).toBe(landed.length);
-    const second = await discoverBacklog(REPO, { gh: greenGh });
-    expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('delivery-receipts-')))).toBe(0);
-    expect(readUserBacklogItems().filter((i) => i.id.startsWith('delivery-receipts-'))).toHaveLength(landed.length);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    try {
+      // discoverBacklog calls the feed with no path overrides, so the feed
+      // resolves <realHome()>/.ashlr-runs — under vitest the process-home
+      // fixture makes realHome() follow process.env.HOME, so relocate HOME
+      // to this test's temp dir and place the ledger at .ashlr-runs/leader.
+      process.env['HOME'] = home;
+      const dir = join(home, '.ashlr-runs', 'leader');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'delivery-receipts.jsonl'), recurringFailed().join('\n') + '\n');
+      const greenGh = async (args: string[]) => {
+        const p = args[4] ?? '';
+        if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
+        return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n[]', stderr: '' };
+      };
+      const first = await discoverBacklog(REPO, { gh: greenGh });
+      const landed = first.items.filter((i) => i.id.startsWith('delivery-receipts-'));
+      expect(landed.length).toBeGreaterThanOrEqual(1);
+      expect(first.items.every((i) => validBacklogItem(i) !== null)).toBe(true);
+      expect(appendUserBacklogItems(landed)).toBe(landed.length);
+      const second = await discoverBacklog(REPO, { gh: greenGh });
+      expect(appendUserBacklogItems(second.items.filter((i) => i.id.startsWith('delivery-receipts-')))).toBe(0);
+      expect(readUserBacklogItems().filter((i) => i.id.startsWith('delivery-receipts-'))).toHaveLength(landed.length);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
