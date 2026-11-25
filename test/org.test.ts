@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'smol-toml';
-import { joinOrg, loadOrg, parseQueue, planOrg, readJoins, validateOrg, type JoinRecord } from '../src/core/org/org.js';
+import { initOrg, joinOrg, loadOrg, parseQueue, planOrg, readJoins, validateOrg, type JoinRecord } from '../src/core/org/org.js';
 import { cmdOrg } from '../src/cli/org.js';
 import { buildResourceView } from '../src/core/fabric/resource-view.js';
 
@@ -39,6 +39,35 @@ describe('org.toml validation', () => {
   it('loads from a file and reports a missing one plainly', () => {
     expect(() => loadOrg(join(tmp(), 'org.toml'))).toThrow(/No org file/);
     expect(loadOrg('docs/examples/org.toml').leader).toBe('mason-wyatt');
+  });
+});
+
+describe('init', () => {
+  it('writes a starter org.toml that loadOrg accepts, and refuses to overwrite', () => {
+    const file = join(tmp(), 'org.toml');
+    const r = initOrg({ member: 'ada', machine: 'ada-mac', name: 'Ada', lanes: [{ lane: 'claude', share: 100 }, { lane: 'devin', share: 20 }] }, file);
+    expect(r.org.leader).toBe('ada');
+    const text = readFileSync(file, 'utf8');
+    expect(text).toContain('# org.toml');
+    const loaded = loadOrg(file);
+    expect(loaded.leader).toBe('ada');
+    expect(loaded.members[0]).toMatchObject({ id: 'ada', name: 'Ada', role: 'founder' });
+    expect(loaded.members[0]!.machines.map((m) => m.id)).toEqual(['ada-mac']);
+    expect(loaded.members[0]!.contributions).toEqual([{ lane: 'claude', share: 100 }, { lane: 'devin', share: 20 }]);
+    expect(() => initOrg({ member: 'grace', machine: 'g-mac', lanes: [] }, file)).toThrow(/already exists/);
+    // The refused second init left the first file untouched.
+    expect(loadOrg(file).leader).toBe('ada');
+  });
+  it('validates ids, lanes and names before writing anything', () => {
+    const dir = tmp();
+    expect(() => initOrg({ member: 'Bad_ID', machine: 'm', lanes: [] }, join(dir, 'a.toml'))).toThrow(/Invalid org/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 101 }] }, join(dir, 'b.toml'))).toThrow(/Invalid org/);
+    expect(() => initOrg({ member: 'ok', machine: 'm', lanes: [{ lane: 'claude', share: 100 }, { lane: 'claude', share: 50 }] }, join(dir, 'c.toml'))).toThrow(/Duplicate lane/);
+    const secret = 'sk-ant-' + 'a'.repeat(30);
+    try { initOrg({ member: 'ok', machine: 'm', name: secret, lanes: [] }, join(dir, 'd.toml')); throw new Error('no throw'); }
+    catch (e) { expect(String(e)).not.toContain(secret); }
+    // Every refused init left nothing behind.
+    for (const f of ['a.toml', 'b.toml', 'c.toml', 'd.toml']) expect(existsSync(join(dir, f))).toBe(false);
   });
 });
 
@@ -178,6 +207,62 @@ describe('cmdOrg', () => {
     expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac', '--lane', 'claude=10'])).toBe(0);
     const text = logs.pop()!;
     expect(text).toContain(`Record: ${join(home, 'org', 'joins', 'mason-wyatt.mason-mac.json')}`);
+    vi.unstubAllEnvs();
+  });
+
+  it('init writes org.toml, feeds show/join, refuses overwrite and bad flags', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [], errs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    vi.spyOn(console, 'error').mockImplementation((s) => { errs.push(String(s)); });
+    const file = join(home, 'org.toml');
+    expect(await cmdOrg(['init', '--member', 'ada', '--machine', 'ada-mac', '--name', 'Ada', '--lane', 'claude', '--lane', 'devin=20', '--json'])).toBe(0);
+    const init = JSON.parse(logs.pop()!);
+    expect(init).toMatchObject({ schema: 'org.init.v1', file, leader: 'ada', member: 'ada', machine: 'ada-mac' });
+    expect(init.lanes).toEqual([{ lane: 'claude', share: 100 }, { lane: 'devin', share: 20 }]);
+    // The written file is a valid org the other verbs accept.
+    expect(await cmdOrg(['show', '--file', file, '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).org.leader).toBe('ada');
+    expect(await cmdOrg(['join', '--file', file, '--member', 'ada', '--machine', 'ada-mac', '--lane', 'claude', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).record.lanes).toEqual([{ lane: 'claude', share: 100 }]);
+    // init never overwrites; --file targets another path and text mode names next steps.
+    expect(await cmdOrg(['init', '--member', 'grace', '--machine', 'g-mac', '--json'])).toBe(1);
+    expect(JSON.parse(logs.pop()!).error.message).toContain('already exists');
+    const other = join(home, 'other.toml');
+    expect(await cmdOrg(['init', '--file', other, '--member', 'grace', '--machine', 'g-mac'])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain(`Wrote ${other}`);
+    expect(text).toContain('phm org join --member grace --machine g-mac --json');
+    expect(text).toContain('phm org plan --json');
+    expect(errs).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses malformed init arguments with the org envelope', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    const malformed: [string[], string][] = [
+      [['init', '--json'], 'init needs --member and --machine'],
+      [['init', '--member', 'ada', '--json'], 'init needs --member and --machine'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', 'claude=20=30', '--json'], '--lane takes <lane> or <lane>=<share>'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', '=20', '--json'], '--lane needs a lane name'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', 'claude=', '--json'], '--lane share must be a number'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', 'claude=abc', '--json'], '--lane share must be a number'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', 'claude=101', '--json'], '--lane share must be a number'],
+      [['init', '--member', 'ada', '--machine', 'm', '--lane', 'claude', '--lane', 'claude=20', '--json'], 'more than once'],
+      [['init', '--member', 'ada', '--machine', 'm', 'stray', '--json'], 'Unexpected argument'],
+      [['init', '--member', '--machine', 'm', '--json'], '--member needs a value'],
+      [['init', '--member', 'Bad_ID', '--machine', 'm', '--json'], 'Invalid org'],
+    ];
+    for (const [args, said] of malformed) {
+      expect(await cmdOrg(args), args.join(' ')).toBe(1);
+      const failure = JSON.parse(logs.pop()!);
+      expect(failure).toMatchObject({ schema: 'org.error.v1', command: 'init', error: { code: 'rejected' } });
+      expect(failure.error.message).toContain(said);
+    }
+    // Nothing was written by any refused init.
+    expect(existsSync(join(home, 'org.toml'))).toBe(false);
     vi.unstubAllEnvs();
   });
 

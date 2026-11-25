@@ -3,10 +3,10 @@
  * they contribute. Metadata only: no credential, mail or message content lives here or in the
  * join record, and nothing in this module sends anything or reads provider auth.
  */
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
-import { parse } from 'smol-toml';
+import { dirname, join } from 'node:path';
+import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
 import { ashlrHome } from '../cloud/store.js';
 import { assertMetadata } from '../connectors/profile.js';
@@ -86,11 +86,41 @@ export function validateOrg(value: unknown): Org {
 
 export function loadOrg(file = orgFile()): Org {
   let text: string;
-  try { text = readFileSync(file, 'utf8'); } catch { return fail(`No org file at ${file}. Copy docs/examples/org.toml there.`); }
+  try { text = readFileSync(file, 'utf8'); } catch { return fail(`No org file at ${file}. org.toml holds org ids and lane shares only, never credentials: get a copy from your org leader, or start a new org with phm org init --member <id> --machine <id>.`); }
   if (text.length > 256 * 1024) fail('org.toml is too large.');
   let doc: unknown;
   try { doc = parse(text); } catch { return fail('org.toml is not valid TOML.'); }
   return validateOrg(doc);
+}
+
+const INIT_HEADER = '# org.toml — declarative org model: member and machine ids, lane shares; never credentials or auth.\n'
+  + '# Created by `phm org init`. Edit members, agents and contributions freely; each machine opts\n'
+  + '# into lanes with `phm org join --member <id> --machine <id> --lane <lane>[=<share>] --json`.\n'
+  + '# Format guide: docs/AGENT-NETWORK.md#team-org\n\n';
+
+/**
+ * `phm org init`: write a starter org.toml declaring `member` as leader (founder) of a new org
+ * on one machine, with the given lane contributions. The document is validated before anything
+ * is written, and an existing file is never overwritten.
+ */
+export function initOrg(req: { member: string; machine: string; name?: string; lanes: { lane: string; share: number }[] },
+  file = orgFile()): { file: string; org: Org } {
+  // Empty arrays stay out of the file: the schema defaults fill them on read.
+  const doc = {
+    version: 1 as const,
+    leader: req.member,
+    members: [{
+      id: req.member, name: req.name ?? req.member, role: 'founder' as const,
+      machines: [{ id: req.machine }],
+      ...(req.lanes.length ? { contributions: req.lanes.map((l) => ({ lane: l.lane, share: l.share })) } : {}),
+    }],
+  };
+  const org = validateOrg(doc);
+  if (existsSync(file)) fail(`org.toml already exists at ${file}. Edit it or remove it first.`);
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(`${file}.tmp`, INIT_HEADER + stringify(doc), { mode: 0o600 });
+  renameSync(`${file}.tmp`, file);
+  return { file, org };
 }
 
 /** One member's opt-in on one machine. Never contains credentials; usage and auth stay on that machine. */
