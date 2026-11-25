@@ -5,7 +5,12 @@
  *   resolveAutoNeedsYou(opts) → each auto item takes its default forward action
  *                               (an approval's first option, else "go ahead") and
  *                               one audit record {item, action, at, reason} is
- *                               appended to <runs>/needs-you-auto.jsonl
+ *                               appended to <runs>/needs-you-auto.jsonl; an
+ *                               attempt that fails to resolve appends the same
+ *                               record marked result:'failed' with a bounded
+ *                               error, so recurring auto-resolve failures stay
+ *                               durable evidence instead of living only in the
+ *                               returned report
  *   readNeedsYouAudit()       → those audit records, newest last
  *
  * Resolving goes through resolveNeedsMason with source 'leader', the same path
@@ -31,6 +36,8 @@ export const NEEDS_YOU_BATCH_SCHEMA = 'phantom.needs-you.batch.v1';
 export const NEEDS_YOU_AUDIT_FILE = 'needs-you-auto.jsonl';
 const TITLE_MAX = 80;
 const AUDIT_READ_MAX = 256 * 1024;
+/** Failed-attempt error text is journaled bounded, like every other audit field. */
+const AUDIT_ERROR_MAX = 200;
 
 export interface NeedsYouItem {
   /** Ledger id, `nm-` + 12 hex. */
@@ -66,6 +73,10 @@ export interface NeedsYouAuditRecord {
   action: string;
   at: string;
   reason: string;
+  /** 'failed' marks an auto-resolve attempt that did not resolve; absent on every resolved attempt — including all records written before failures were journaled. */
+  result?: 'resolved' | 'failed';
+  /** Why a 'failed' attempt did not resolve; bounded and secret-scrubbed. Absent on successes. */
+  error?: string;
 }
 
 export interface NeedsYouResolveReport {
@@ -159,7 +170,16 @@ export function resolveAutoNeedsYou(options: NeedsYouOptions & { dryRun?: boolea
         { runsDir, bus: options.bus, now, source: 'leader' },
       );
     } catch { outcome = { ok: false, code: 'unavailable', error: 'The resolve step threw.' }; }
-    if (!outcome.ok && outcome.code !== 'already-resolved') { failed.push({ id: item.id, error: outcome.error }); continue; }
+    if (!outcome.ok && outcome.code !== 'already-resolved') {
+      // Journal the failed attempt too: a resolve that keeps failing is
+      // durable evidence (the audit file is the only record of auto
+      // attempts), where the report's failed list evaporates with it.
+      const failure: NeedsYouAuditRecord = { ...record, result: 'failed', error: scrubSecrets(outcome.error).slice(0, AUDIT_ERROR_MAX) };
+      try { appendFileSync(join(runsDir, NEEDS_YOU_AUDIT_FILE), `${JSON.stringify(failure)}\n`, { mode: 0o600 }); }
+      catch { /* the report's failed list still carries it; a lost row is a lost signal, never a lost item */ }
+      failed.push({ id: item.id, error: outcome.error });
+      continue;
+    }
     try { appendFileSync(join(runsDir, NEEDS_YOU_AUDIT_FILE), `${JSON.stringify(record)}\n`, { mode: 0o600 }); }
     catch { failed.push({ id: item.id, error: 'Resolved, but the audit record could not be written.' }); continue; }
     resolved.push(record);
@@ -170,10 +190,12 @@ export function resolveAutoNeedsYou(options: NeedsYouOptions & { dryRun?: boolea
 const isRecord = (value: unknown): value is NeedsYouAuditRecord => {
   const r = value as NeedsYouAuditRecord | null;
   return !!r && typeof r === 'object' && typeof r.action === 'string' && typeof r.at === 'string'
-    && typeof r.reason === 'string' && !!r.item && typeof r.item.id === 'string' && typeof r.item.title === 'string';
+    && typeof r.reason === 'string' && !!r.item && typeof r.item.id === 'string' && typeof r.item.title === 'string'
+    && (r.result === undefined || r.result === 'resolved' || r.result === 'failed')
+    && (r.error === undefined || typeof r.error === 'string');
 };
 
-/** Audit records of auto-resolved items, oldest first; malformed lines are skipped. */
+/** Audit records of auto-resolve attempts — resolved and failed — oldest first; malformed lines are skipped. */
 export function readNeedsYouAudit(options: Pick<NeedsYouOptions, 'runsDir'> = {}): NeedsYouAuditRecord[] {
   let text: string;
   try { text = readFileSync(join(runsDirOf(options), NEEDS_YOU_AUDIT_FILE), 'utf8'); } catch { return []; }

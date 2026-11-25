@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cmdNeedsYou } from '../src/cli/needs-you.js';
+import { resolveNeedsMason } from '../src/core/fleet/needs-mason-resolve.js';
 import type { WebServerHandle } from '../src/core/types.js';
 import { makeCfg } from './helpers/h1-fixture.js';
 import { readAuthHeaders, startServer } from './helpers/authenticated-web-server.js';
@@ -116,6 +117,45 @@ describe('needs-you list and auto resolve', () => {
     // A second run has nothing left to do and writes nothing new.
     expect(resolveAutoNeedsYou(opts).resolved).toEqual([]);
     expect(readNeedsYouAudit(opts)).toHaveLength(2);
+  });
+
+  it('journals a failed auto-resolve as a marked audit record', () => {
+    const auto = listNeedsYou(opts).auto;
+    const failId = auto[1]!.id;
+    const report = resolveAutoNeedsYou({
+      ...opts,
+      resolve: (req, o) => req.itemId === failId
+        ? { ok: false, code: 'unavailable', error: `store locked ${'x'.repeat(400)}` }
+        : resolveNeedsMason(req, o),
+    });
+    expect(report.resolved).toHaveLength(1);
+    expect(report.failed).toEqual([{ id: failId, error: `store locked ${'x'.repeat(400)}` }]);
+    const audit = readNeedsYouAudit(opts);
+    expect(audit).toHaveLength(2);
+    // The resolved attempt keeps the original four-key record; the failed
+    // attempt carries result:'failed' and a bounded, scrubbed error.
+    expect(audit[0]!.result).toBeUndefined();
+    expect(audit[1]!.item.id).toBe(failId);
+    expect(audit[1]!.result).toBe('failed');
+    expect(audit[1]!.error).toBe(`store locked ${'x'.repeat(400)}`.slice(0, 200));
+    // The failed item stays open for the next pass; the resolved one does not.
+    const after = listNeedsYou(opts);
+    expect(after.auto.map(i => i.id)).toEqual([failId]);
+    // A rerun retries only the still-open item and appends another failure row.
+    const again = resolveAutoNeedsYou({ ...opts, resolve: () => ({ ok: false, code: 'unavailable', error: 'still locked' }) });
+    expect(again.failed).toHaveLength(1);
+    expect(readNeedsYouAudit(opts)).toHaveLength(3);
+    expect(readNeedsYouAudit(opts)[2]!.result).toBe('failed');
+  });
+
+  it('skips audit lines whose result marker is not a known value', () => {
+    resolveAutoNeedsYou(opts);
+    const file = join(opts.runsDir, NEEDS_YOU_AUDIT_FILE);
+    const good = JSON.parse(readFileSync(file, 'utf8').split('\n')[0]!);
+    writeFileSync(file, `${JSON.stringify(good)}\n${JSON.stringify({ ...good, result: 'bogus' })}\n${JSON.stringify({ ...good, result: 'failed', error: 42 })}\n`, { flag: 'a' });
+    const audit = readNeedsYouAudit(opts);
+    expect(audit).toHaveLength(3);
+    expect(audit.every(r => r.result === undefined)).toBe(true);
   });
 
   it('an unreadable ledger is unknown, not empty', () => {

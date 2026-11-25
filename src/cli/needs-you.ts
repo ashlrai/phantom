@@ -63,7 +63,9 @@ export async function cmdNeedsYou(args: string[], deps: NeedsYouCliDeps = {}): P
   if (verb === 'log') {
     const records = readNeedsYouAudit(options);
     if (json) output(JSON.stringify({ schema: 'phantom.needs-you.log.v1', count: records.length, records }));
-    else output(records.length ? records.map(r => `${r.at}  ${r.action} — ${r.item.title}`).join('\n') : 'Nothing resolved automatically yet.');
+    else output(records.length ? records.map(r => r.result === 'failed'
+      ? `${r.at}  FAILED ${r.action} — ${r.item.title}${r.error ? ` (${r.error})` : ''}`
+      : `${r.at}  ${r.action} — ${r.item.title}`).join('\n') : 'Nothing resolved automatically yet.');
     return 0;
   }
 
