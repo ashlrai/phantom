@@ -1644,7 +1644,7 @@ To move an agent onto the unified bus:
    read takes the same filter grammar every other bus read shares —
    `--from`/`--exclude-from` through the identity registry, `--priority`,
    `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`,
-   `--thread`, `--id` and `--body-kind` — so a large leftover mailbox filters
+   `--thread`, `--id`, `--body-kind` and `--result` — so a large leftover mailbox filters
    to one job's or one sender's mail instead of paging raw. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
@@ -2016,25 +2016,34 @@ apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
 envelopes whose body carries that exact kind discriminator — the same
 `busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
-read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
-and `phm messages --body-kind` apply:
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`,
+`phm messages --body-kind`, `bus recent --body-kind` and `phm bus
+inbox --body-kind` apply, shared by `comms bus read|watch`'s `--body-kind`
+and `fleet_bus_inbox`'s `bodyKind` alongside `fleet bus-follow
+--body-kind`:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
-printable value an honest empty stream. `--result
+printable value an honest empty read. It is distinct from `--kind`, which
+narrows only the protocol-v1 body kind. `--result
 <reserved|admitted|complete|failed>` keeps only `work.result` bodies whose
 own `outcome` strictly equals the code — the same `busBodyResultOutcome`
 own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
 --result`, `agents messages --result`, `fleet messages`, `bus recent`,
-`fleet_agent_messages`'s `result` and the work feed's `--result` share —
-so the envelope-level audit trail a job-scoped follow already narrows by
-`--job` answers "stream only this job's failed result receipts" in one
+`fleet_agent_messages`'s `result`, `phm bus inbox --result` and the work
+feed's `--result` share, likewise carried by `comms bus read|watch`'s
+`--result` and `fleet_bus_inbox`'s `result` alongside `fleet bus-follow
+--result` —
+so the envelope-level audit trail a job-scoped read already narrows by
+`--job` answers "read only this job's failed result receipts" in one
 filtered read; every other body kind, including a `work.release` body's
 own `released`/`completed` outcome, and a `work.result` carrying no
 outcome never match, and a value outside the vocabulary is an invalid
-request, never a widened stream. As with `--to` and `--job`, filtered rows
+request, never a widened read. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
-an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+an unfiltered one would, and a `comms bus --checkpoint` consumer binds the
+raw `--body-kind`/`--result` values into its filter identity, so a changed
+discriminator or outcome fails closed. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,

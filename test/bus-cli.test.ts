@@ -300,6 +300,22 @@ describe('phm bus inbox read filters', () => {
     expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'missing'])).value)).toEqual([]);
   });
 
+  it('keeps only work.result mail reporting the requested outcome', async () => {
+    bus.send(envelope({ id: 'res-ok', body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'complete' } }));
+    bus.send(envelope({ id: 'res-bad', body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'failed' } }));
+    bus.send(envelope({ id: 'res-none', body: { kind: 'work.result', jobId: 'RQ-2' } }));
+    bus.send(envelope({ id: 'rel', body: { kind: 'work.release', claimKey: 'queue:RQ-1', outcome: 'completed' } }));
+    bus.send(envelope({ id: 'note', body: { kind: 'note', text: 'done', outcome: 'failed' } }));
+    bus.send(envelope({ id: 'kindless', body: { outcome: 'failed', text: 'no kind' } }));
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'complete'])).value)).toEqual(['res-ok']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'failed'])).value)).toEqual(['res-bad']);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'reserved'])).value)).toEqual([]);
+    expect(ids((await json(['inbox', '--to', 'fleet', '--result', 'admitted'])).value)).toEqual([]);
+    // The match is scoped to kind === 'work.result' with a string outcome: a
+    // work.release outcome is a different vocabulary and never matches.
+    expect(ids((await json(['inbox', '--to', 'fleet', '--body-kind', 'work.result', '--result', 'failed'])).value)).toEqual(['res-bad']);
+  });
+
   it('ANDs every supplied filter and keeps hasMore honest about the filtered set', async () => {
     bus.send(envelope({ id: 'hit', from: 'alice', priority: 'P0', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
     bus.send(envelope({ id: 'miss-priority', from: 'alice', priority: 'P2', body: { kind: 'note', thread: 'job:RQ-9', text: 'needle here' } }));
@@ -325,8 +341,12 @@ describe('phm bus inbox read filters', () => {
       ['inbox', '--to', 'fleet', '--id', 'has space'],
       ['inbox', '--to', 'fleet', '--id='],
       ['inbox', '--to', 'fleet', '--body-kind', 'two words'],
+      ['inbox', '--to', 'fleet', '--result', 'bogus'],
+      ['inbox', '--to', 'fleet', '--result', 'P0'],
+      ['inbox', '--to', 'fleet', '--result', 'completed'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--priority', 'P0', '--contains', 'x'],
       ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--body-kind', 'note'],
+      ['send', '--from', 'a', '--to', 'b', '--body', '{}', '--result', 'complete'],
       ['ack', 'a', '--to', 'fleet', '--since', '1h'],
       ['ack', 'a', '--to', 'fleet', '--id', 'x'],
     ]) {

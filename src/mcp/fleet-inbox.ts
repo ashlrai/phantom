@@ -10,7 +10,7 @@ import {
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
-import { busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
@@ -36,6 +36,14 @@ export interface FleetBusInboxFilters {
   kind?: BusProtocolKind;
   /** Topic name or namespace prefix the body's protocol topic must match. */
   topic?: string;
+  /** Exact body kind discriminator the `busBodyKind` own-field match reads —
+   * the same filter `phm comms bus read --body-kind` and
+   * `fleet bus-follow --body-kind` apply. */
+  bodyKind?: string;
+  /** `work.result` outcome code the `busBodyResultOutcome` own-field match
+   * reads — the same `WORK_RESULT_OUTCOMES` vocabulary every bus read's
+   * result filter validates. */
+  result?: WorkResultOutcome;
   /** v2 thread label — matches `note`/`context` bodies only. */
   thread?: string;
   /** Room filter: keeps only envelopes addressed to `group:<channel>:*` —
@@ -78,7 +86,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'before', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'bodyKind', 'result', 'thread', 'job', 'channel', 'since', 'before', 'contains']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -132,11 +140,16 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
     if (!isTopicPattern(topic)) return null;
     filters.topic = topic;
   }
-  for (const key of ['thread', 'job'] as const) {
+  for (const key of ['thread', 'job', 'bodyKind'] as const) {
     const value = args[key];
     if (value === undefined) continue;
     if (typeof value !== 'string' || !BUS_LABEL.test(value)) return null;
     filters[key] = value;
+  }
+  const result = args['result'];
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as WorkResultOutcome;
   }
   const channel = args['channel'];
   if (channel !== undefined) {
@@ -215,6 +228,8 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.priority === undefined || envelope.priority === filters.priority) &&
     (filters?.kind === undefined || protocolOf(envelope.body)?.kind === filters.kind) &&
     (filters?.topic === undefined || topicMatches(filters.topic, protocolOf(envelope.body)?.topic ?? '')) &&
+    (filters?.bodyKind === undefined || busBodyKind(envelope.body) === filters.bodyKind) &&
+    (filters?.result === undefined || busBodyResultOutcome(envelope.body) === filters.result) &&
     (filters?.thread === undefined || busBodyThread(envelope.body) === filters.thread) &&
     (filters?.job === undefined || busBodyJobMatch(envelope.body, filters.job)) &&
     (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&

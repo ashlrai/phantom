@@ -46,6 +46,15 @@ status.
 - `--thread <label>` matches the v2 `thread` field on `note`/`context`
   bodies only; every other body kind never matches. The label is printable
   ASCII, 1 to 128 characters; anything else exits 2.
+- `--body-kind <kind>` matches the `busBodyKind` own-field discriminator —
+  the v2 `kind`, else `protocol.kind`, else the `type`/`schema` a kindless
+  notice keys on — the same match every bus read's `--body-kind` applies,
+  distinct from `--kind`'s protocol-v1 narrowing. The value is printable
+  ASCII, 1 to 128 characters; anything else exits 2.
+- `--result <reserved|admitted|complete|failed>` matches only `work.result`
+  bodies whose own `outcome` strictly equals the code — the same
+  `busBodyResultOutcome` match and `WORK_RESULT_OUTCOMES` vocabulary every
+  bus read's result filter shares. Any other value exits 2.
 - `--to`, `--from` and `--exclude-from` match the literal routing label or
   any other label of the same registered agent identity (handle, `agent:`
   address, stable id or alias), resolved once when the read starts; an

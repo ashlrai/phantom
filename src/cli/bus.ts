@@ -5,7 +5,7 @@ import { BusMailboxError, createBusMailbox, validateBusAddress, type BusMailbox,
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch, BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
-import { busBodyKind, busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES } from '../core/agents/bus-v2-schema.js';
 
 export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
   send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>]
@@ -13,6 +13,7 @@ export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
         [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
         [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
+        [--result <reserved|admitted|complete|failed>]
   ack <id> --to <label>
 
 Local durable mailboxes under $ASHLR_HOME/bus-mailbox (default ~/.ashlr/bus-mailbox).
@@ -40,7 +41,11 @@ inReplyTo field cites that envelope id; --thread keeps only note/context
 bodies carrying that conversation label; --id keeps only the envelope whose
 own id is strictly equal; --body-kind keeps only mail whose retained body
 carries that kind discriminator — the same busBodyKind read agents bus
-inbox --body-kind applies, so a kindless body never matches.
+inbox --body-kind applies, so a kindless body never matches; --result keeps
+only work.result bodies whose own outcome strictly equals the code — the
+same busBodyResultOutcome match and WORK_RESULT_OUTCOMES vocabulary every
+other bus read's --result shares, so a work.release outcome, every other
+body kind and a result carrying no outcome never match.
 Use --name=value for flag-shaped values, and ack --to <label> [--json] -- <id>
 for a flag-shaped message ID.
 No remote dispatch or agent execution. Use Phantom Secrets phm_<name> references.
@@ -53,7 +58,7 @@ class UsageError extends Error {}
 const OPTIONS: Record<string, readonly string[]> = {
   send: ['--from', '--to', '--body', '--id', '--priority', '--ttl'],
   inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel',
-    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind'],
+    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind', '--result'],
   ack: ['--to'],
 };
 
@@ -100,6 +105,11 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
     throw new UsageError('--priority takes P0, P1, P2 or P3.');
   }
   const priority = priorityRaw as BusPriority | undefined;
+  const resultRaw = values.get('--result');
+  if (resultRaw !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(resultRaw)) {
+    throw new UsageError('--result takes reserved, admitted, complete or failed.');
+  }
+  const result = resultRaw;
   const channelRaw = values.get('--channel');
   if (channelRaw !== undefined && !agentChannelNameSchema.safeParse(channelRaw).success) {
     throw new UsageError('--channel takes a bus channel name (a-z, 0-9, _ -; 1-32 chars).');
@@ -119,7 +129,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
     throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_READ_CONTAINS_MAX} characters.`);
   }
   if (from === undefined && excludeFrom === undefined && job === undefined && thread === undefined &&
-    inReplyTo === undefined && id === undefined && bodyKind === undefined && priority === undefined &&
+    inReplyTo === undefined && id === undefined && bodyKind === undefined && result === undefined &&
+    priority === undefined &&
     channelPrefix === undefined && sinceMs === undefined && beforeMs === undefined && containsNeedle === undefined) return undefined;
   // The registry read runs only when a sender filter needs it; an unreadable
   // or missing registry resolves nothing, so both matchers keep exact-label
@@ -144,7 +155,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
       (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
       (thread === undefined || busBodyThread(envelope.body) === thread) &&
       (id === undefined || envelope.id === id) &&
-      (bodyKind === undefined || busBodyKind(envelope.body) === bodyKind);
+      (bodyKind === undefined || busBodyKind(envelope.body) === bodyKind) &&
+      (result === undefined || busBodyResultOutcome(envelope.body) === result);
   };
 }
 
