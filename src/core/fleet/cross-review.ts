@@ -32,6 +32,7 @@ import { basename } from 'node:path';
 import { diffAddedLinesByPath, globMatches, normalizeRepoPath, protectedPathHits } from '../authority/protected-paths.js';
 import { isHubRepositoryLabel } from '../authority/repository-binding.js';
 import { CLAUDE_RESTRICTED_ARGS, isRestrictedClaudeCommand } from '../run/engine-registry.js';
+import { scrubSecrets } from '../util/scrub-secrets.js';
 import { evaluateReviewerIndependence, producerModelFamily, reviewModelFamily, type ReviewModelFamily } from './reviewer-independence.js';
 import { fullCheckSatisfied, tier1FixJobLine, type Tier1Assessment, type Tier1FailureCode, type Tier1FloorCode } from './tier1-verify.js';
 
@@ -260,6 +261,17 @@ export interface CrossReviewRequest {
   codeownersFile: string | null;
   /** The PR head branch, when known; named in a tier1-verify fix job. */
   headRef?: string | null;
+  /** Optional bridge-supplied reference, not a check or an approval. */
+  preview?: { headSha: string; url: string };
+}
+
+function previewForHead(value: unknown, headSha: string): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const { headSha: boundHead, url } = value as Record<string, unknown>;
+  if (boundHead !== headSha || !isCommitSha(boundHead) || typeof url !== 'string' ||
+    url.length > 512 || !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[a-z0-9._~/-]*)?$/i.test(url) ||
+    scrubSecrets(url) !== url) return null;
+  return url;
 }
 
 const MAX_TITLE_CHARS = 512;
@@ -295,10 +307,12 @@ export function parseCrossReviewRequest(raw: unknown): { ok: true; request: Cros
     errors.push('headRef must be a branch name or null');
   }
   if (errors.length > 0) return { ok: false, errors };
+  const preview = previewForHead(obj['preview'], obj['headSha'] as string);
   return {
     ok: true,
     request: {
       ...(headRef !== null ? { headRef: headRef as string } : {}),
+      ...(preview !== null ? { preview: { headSha: obj['headSha'] as string, url: preview } } : {}),
       repo: (repo as string).toLowerCase(),
       pr: pr as number,
       headSha: obj['headSha'] as string,
@@ -725,6 +739,23 @@ export interface CrossReviewDecision {
   tier1?: Tier1Assessment;
   /** On a tier1-verify reject: the router-queue fix-job line (tier1-verify.ts tier1FixJobLine). */
   fixJob?: string;
+  evidence: {
+    /** Independent review of this exact change, not merge approval. */
+    state: 'verified' | 'unverified';
+    receipt: {
+      at: string;
+      headSha: string;
+      diffSha256: string;
+      reviewerPool: string;
+      reviewerFamily: ReviewModelFamily;
+      verdict: 'approve' | 'reject';
+      reasons: ReviewReasonCode[];
+    } | null;
+    semanticVerdict: 'approve' | 'reject' | null;
+    checks: { headSha: string; runIds: number[]; statusContexts: string[] } | null;
+    previewUrl: string | null;
+    gaps: DecisionCode[];
+  };
 }
 
 /**
@@ -735,7 +766,7 @@ export interface CrossReviewDecision {
  * escalation, and only then the verdict.
  */
 export function decideCrossReview(input: {
-  request: Pick<CrossReviewRequest, 'repo' | 'pr' | 'producer'> & Partial<Pick<CrossReviewRequest, 'headRef'>>;
+  request: Pick<CrossReviewRequest, 'repo' | 'pr' | 'producer'> & Partial<Pick<CrossReviewRequest, 'headRef' | 'preview'>>;
   policy: Pick<CrossReviewPolicy, 'allowedRepos'> & Partial<Pick<CrossReviewPolicy, 'tier1'>>;
   review: CrossReviewRecord | null;
   currentHeadSha: string;
@@ -752,10 +783,15 @@ export function decideCrossReview(input: {
     detail?: string;
     /** Names of check runs that completed with success at headSha (tier1-verify's full-CI evidence). */
     succeeded?: string[];
+    references?: { runIds: number[]; statusContexts: string[] };
   };
   now?: Date;
 }): CrossReviewDecision {
   const { request, review, scan } = input;
+  let receipt: CrossReviewDecision['evidence']['receipt'] = null;
+  let semanticVerdict: CrossReviewDecision['evidence']['semanticVerdict'] = null;
+  const headCurrent = isCommitSha(input.currentHeadSha) &&
+    (!input.checks || (input.checks.headSha === input.currentHeadSha && input.checks.code !== 'checks-stale'));
   const decision = (action: MergeAction, codes: DecisionCode[]): CrossReviewDecision => ({
     schemaVersion: CROSS_REVIEW_SCHEMA_VERSION,
     kind: 'decision',
@@ -772,6 +808,14 @@ export function decideCrossReview(input: {
     matchHeadCommit: action === 'enable-auto-merge' ? input.currentHeadSha : null,
     ...(input.checks?.status ? { checkStatus: input.checks.status } : {}),
     ...(input.checks?.detail ? { checkDetail: input.checks.detail } : {}),
+    evidence: {
+      state: headCurrent && receipt ? 'verified' : 'unverified',
+      receipt: headCurrent ? receipt : null,
+      semanticVerdict: headCurrent ? semanticVerdict : null,
+      checks: headCurrent && input.checks?.references ? { headSha: input.currentHeadSha, ...input.checks.references } : null,
+      previewUrl: headCurrent ? previewForHead(request.preview, input.currentHeadSha) : null,
+      gaps: codes.filter((code) => code !== 'verdict-approve' && code !== 'tier1-verified'),
+    },
   });
 
   if (input.killSwitch) return decision('hold', ['kill-switch']);
@@ -822,6 +866,16 @@ export function decideCrossReview(input: {
     return decision('escalate', ['reviewer-not-independent']);
   }
   if (t1 !== null && review.outcome !== 'approve' && review.outcome !== 'reject') return tier1Decision('re-review', ['tier1-review-missing']);
+  const reviewerPool = review.reviewerPool;
+  const acceptReceipt = () => {
+    if ((review.outcome === 'approve' || review.outcome === 'reject') && POOL_RE.test(reviewerPool) &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(review.at)) {
+      receipt = { at: review.at, headSha: review.reviewedHeadSha, diffSha256: review.diffSha256,
+        reviewerPool, reviewerFamily: independence.reviewerFamily,
+        verdict: review.outcome, reasons: review.reasons.filter((reason) => REVIEW_REASON_CODES.includes(reason)) };
+    }
+  };
+  if (t1 === null || review.outcome === 'reject') acceptReceipt();
   if (review.outcome === 'reject') return t1 ? tier1Decision('reject', ['verdict-reject', ...review.reasons.map((r) => `review:${r}` as const)]) : decision('reject', ['verdict-reject']);
   if (t1 !== null) {
     const semantic = review.semantic;
@@ -841,6 +895,8 @@ export function decideCrossReview(input: {
       (semantic.reviewerPool.toLowerCase() === review.reviewerPool.toLowerCase() && semantic.reviewerFamily === review.reviewerFamily)) {
       return decision('escalate', ['reviewer-not-independent']);
     }
+    semanticVerdict = semantic.outcome;
+    acceptReceipt();
     if (semantic.outcome === 'reject') {
       return tier1Decision('reject', ['tier1-semantic-reject', ...semantic.reasons.map((r) => `semantic:${r}` as const)]);
     }

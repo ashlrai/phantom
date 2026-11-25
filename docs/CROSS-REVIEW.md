@@ -201,3 +201,15 @@ and the audit log. It holds structured fields only: repo, PR number and URL,
 SHAs, the diff's sha256, pools, families, verdict, reason codes, decision
 codes, bounded scrubbed check diagnostics and protected-path rule ids. It never holds diff text, job text, model
 output, env values or file paths.
+
+For a job already in cross-review, read `decision.evidence` in the existing
+`run --json` or `decide --json` output or in its recorded decision. It identifies
+the applicable receipt and verdict, the SHA and IDs/contexts of observed
+GitHub checks, and remaining gaps (see also `checkDetail` and `fixJob`).
+For example, `head-moved` means review the new head; `reviewer-not-independent`
+means use a different pool and model family; `checks-not-successful` means
+inspect the listed checks at that commit. A bridge can supply a reference to
+an existing immutable preview as `preview: { headSha, url }` in the request.
+If the reference is absent or not for the observed head, `previewUrl` is null;
+the handoff neither opens nor verifies the preview. Evidence is not a new
+merge gate or approval.

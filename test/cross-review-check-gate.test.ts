@@ -69,6 +69,20 @@ describe('fleet cross-review head check gate', () => {
       .toMatchObject({ action: 'enable-auto-merge', checkStatus: 'ready', matchHeadCommit: HEAD });
   });
 
+  it('records check references on their exact commit and drops them when the head moves', async () => {
+    reads.checks.mockResolvedValue({
+      runs: [run(), run('Quick typecheck', 'success', 'completed', '15368', 2)],
+      statuses: [{ context: 'Preview build', state: 'success' }],
+    });
+    expect((await decide()).evidence).toMatchObject({
+      state: 'verified', checks: { headSha: HEAD, runIds: [1, 2], statusContexts: ['Preview build'] }, gaps: [],
+    });
+    reads.pr.mockResolvedValueOnce(pr).mockResolvedValueOnce({ ...pr, headSha: 'b'.repeat(40) });
+    expect((await decideCrossReviewAtHead(request, policy, HEAD)).evidence).toMatchObject({
+      state: 'unverified', receipt: null, checks: null, gaps: ['checks-stale'],
+    });
+  });
+
   it('arms an all-green head, allowing skipped and neutral non-required checks', async () => {
     reads.checks.mockResolvedValue({ runs: [run(), run('Quick typecheck'), run('Daily CI', 'skipped'), run('Review', 'neutral')], statuses: [] });
     expect(await decide()).toMatchObject({ action: 'enable-auto-merge', checkStatus: 'ready', matchHeadCommit: HEAD });
