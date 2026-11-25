@@ -103,6 +103,8 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ since: 'not-a-time' }], [{ since: '' }], [{ since: 1735689600000 }], [{ since: '999999d' }], [{ since: null }],
     [{ before: 'not-a-time' }], [{ before: '' }], [{ before: 1735689600000 }], [{ before: '999999d' }], [{ before: null }],
     [{ contains: '' }], [{ contains: '   ' }], [{ contains: 'x'.repeat(513) }], [{ contains: 42 }],
+    [{ result: 'bogus' }], [{ result: 'FAILED' }], [{ result: 'released' }], [{ result: 'completed' }],
+    [{ result: '' }], [{ result: 5 }], [{ result: null }], [{ result: true }],
     [{ after: 0, extra: 1 }], [{ path: '/tmp/x' }], [{ command: 'read' }], [{ file: 'x' }],
   ])('rejects invalid arguments before invoking the reader: %j', async args => {
     const busInbox = vi.fn();
@@ -135,6 +137,9 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     await client.callTool({ name: 'fleet_bus_inbox', arguments: { channel: 'eng' } });
     expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
       filters: { channel: 'eng' } });
+    await client.callTool({ name: 'fleet_bus_inbox', arguments: { result: 'failed' } });
+    expect(busInbox).toHaveBeenLastCalledWith({ after: 0, limit: 50, to: undefined, from: undefined,
+      filters: { result: 'failed' } });
   });
 
   it('reads durable envelopes with bodies by cursor and resumes without replay', async () => {
@@ -273,6 +278,28 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the work-result outcome filter to work.result bodies only', async () => {
+    expect(post('res-fail', { body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'failed' } }).status).toBe('posted');
+    expect(post('res-done', { body: { kind: 'work.result', jobId: 'RQ-1', outcome: 'complete' } }).status).toBe('posted');
+    expect(post('res-bare', { body: { kind: 'work.result', jobId: 'RQ-2' } }).status).toBe('posted');
+    // A work.release body's own released/completed vocabulary never matches.
+    expect(post('rel', { body: { kind: 'work.release', outcome: 'released' } }).status).toBe('posted');
+    // Every other body kind never matches, even one carrying an outcome field.
+    expect(post('note', { body: { kind: 'note', text: 'failed deploy', outcome: 'failed' } }).status).toBe('posted');
+    expect(post('proto', { body: { protocol: { version: 1, kind: 'result' }, outcome: 'failed' } }).status).toBe('posted');
+    const client = await connect();
+    const failed = await callInbox(client, { result: 'failed' });
+    expect(rows(failed.parsed).map(row => row.envelope.id)).toEqual(['res-fail']);
+    expect(failed.parsed['filters']).toEqual({ result: 'failed' });
+    const done = await callInbox(client, { result: 'complete' });
+    expect(rows(done.parsed).map(row => row.envelope.id)).toEqual(['res-done']);
+    // The outcome filter composes conjunctively with the other read filters.
+    const narrowed = await callInbox(client, { result: 'complete', job: 'RQ-1' });
+    expect(rows(narrowed.parsed).map(row => row.envelope.id)).toEqual(['res-done']);
+    const none = await callInbox(client, { result: 'reserved' });
+    expect(none.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 6 });
   });
 
   it('applies the before upper bound exclusive of its edge and composes with since', async () => {

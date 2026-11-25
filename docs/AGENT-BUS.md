@@ -2011,7 +2011,21 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--result <reserved|admitted|complete|failed>` narrows
+`comms bus read|watch` and `fleet_bus_inbox`'s `result` to `work.result`
+bodies whose own `outcome` strictly equals the code — the same
+`busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+vocabulary `phm messages --result`, `agents messages --result`,
+`fleet messages`, `bus recent`, `fleet bus-follow --result`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+so the raw label reads answer "every failed result receipt" in one
+filtered page, the envelope-level audit trail the feed's per-job
+newest-result `--result` cannot show; every other body kind, including a
+`work.release` body's own `released`/`completed` outcome, and a
+`work.result` carrying no outcome never match, a value outside the
+vocabulary is a usage error, filtered rows still advance page cursors
+exactly like every other filter, and a `comms bus --checkpoint` consumer
+binds the raw `--result` value into its filter identity.
 
 ### 4. Work feed
 

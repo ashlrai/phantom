@@ -140,9 +140,13 @@ label), `job` (one job id), `channel` (envelopes addressed to
 `to`-prefix the `phm comms bus read --channel` and `fleet bus-follow
 --channel` flags apply), `since` (a `15m`/`2h`/`1d`, epoch-ms or ISO cutoff),
 `before` (the exclusive upper bound on the same grammar, composing with
-`since` into one `[since, before)` window) and `contains` (a
+`since` into one `[since, before)` window), `contains` (a
 case-insensitive substring over each envelope's scrubbed
-one-line summary — secret-shaped values stay unfindable). Filtered rows still
+one-line summary — secret-shaped values stay unfindable) and `result` (one
+`reserved`/`admitted`/`complete`/`failed` code keeping only `work.result`
+bodies whose own `outcome` strictly equals it — the same
+`busBodyResultOutcome` own-field match `phm comms bus read --result` and
+the other bus reads' `--result` filters share). Filtered rows still
 advance `nextCursor`, so a narrowed page resumes on the same cursor an
 unfiltered one would.
 
