@@ -11,13 +11,15 @@ export interface NodeFleetDeps {
 
 
 function text(verb: string, out: Record<string, unknown>): string {
-  const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[] | undefined;
-  if (routes) return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+  if (verb === 'plan') {
+    const routes = out['routes'] as { jobId: string; nodeId: string | null; fix?: string }[];
+    return routes.length ? routes.map(r => `${r.jobId} -> ${r.nodeId ?? `nobody. ${r.fix}`}`).join('\n') : 'No routable jobs.';
+  }
   if (verb === 'status' || verb === 'list') {
-    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number; auth: string; caps: string[] }[];
+    const nodes = out['nodes'] as { nodeId: string; live: boolean; usage: number | null; auth: string; caps: string[] }[];
     const jobs = out['jobs'] as { id: string; state: string }[];
     return [`Owner scope: ${(out['owners'] as string[]).join(',')}`,
-      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
+      ...nodes.map(n => `node ${n.nodeId} ${n.live ? 'live' : 'expired'} usage=${n.usage ?? 'unknown'} auth=${n.auth} caps=${n.caps.join(',') || '-'}`),
       ...jobs.map(j => `job ${j.id} ${j.state}`)].join('\n');
   }
   if (verb === 'pull') return out['pulled'] ? `Claimed ${(out['claim'] as { jobId: string }).jobId}. Renew before expiry; pass the token to every effect.` : 'No job for this node. Run: phm node plan';

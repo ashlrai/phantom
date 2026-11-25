@@ -12,7 +12,9 @@ runs on two nodes.
 - **Live usage.** Each node reports load with every heartbeat (`--usage 0-1000`,
   permille). The router sends the job to the least-loaded eligible live node,
   counting jobs the node already holds, and breaks ties by node ID. The same
-  state always produces the same plan.
+  state always produces the same plan. A node that has not reported load reads
+  `usage:null` in `--json` and `usage=unknown` in text — never a fabricated 0.
+  Placement is unchanged: an unreported node still counts as no observed load.
 - **Owner scope.** Every job carries an owner. A node declares the owners it
   belongs to (`--owner acme`) and only ever sees, routes or pulls jobs of those
   owners. Another owner's jobs, packs, secret names and nodes never appear in
