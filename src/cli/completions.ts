@@ -181,7 +181,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
     'login-health', 'machine', 'main-health', 'main-red-age', 'map', 'mason-digest', 'memory',
     'merge-identity', 'merge-latency', 'merge-queue-age', 'merge-retry', 'message-graph', 'metrics',
     'mission', 'needs', 'needs-resolve', 'orchestrate', 'order-state', 'orders', 'org',
-    'output-eval', 'owner-history', 'owner-pull', 'peer-ledger', 'pool-reach', 'pools', 'proof',
+    'output-eval', 'owner-history', 'owner-pull', 'peer-ledger', 'pool-reach', 'pools', 'profile', 'proof',
     'publication-evidence', 'pulse', 'queue-age', 'queue-counts', 'queue-latency', 'queue-repeats',
     'ready-supply', 'rebase-status', 'recheck', 'recheck-record', 'red-merges', 'release-chain',
     'republish', 'resources', 'restock', 'returns-check', 'review-pick', 'roster', 'router-weights',

@@ -1,0 +1,4 @@
+@ashlr/phantom
+@openai/codex
+ccusage
+vercel
