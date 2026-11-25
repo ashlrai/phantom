@@ -861,6 +861,16 @@
  *     bars, truncated tails are stated as lower bounds, and items emit
  *     only for the fleet's own repository since the journal describes
  *     this install's queue and carries no repo column;
+ *   - the bet-audit report's recurring lost orders: the leader's BET
+ *     and FIXUP order lines in supervisor/out.*.txt files, cross-checked
+ *     against - READY/- CLAIMED lines in queue/router-queue.md and RQ-
+ *     job rows in metrics/jobs.jsonl by `phm fleet bet-audit`, folded
+ *     into the orders that were issued but never became work
+ *     (betAuditBacklogItems below), so an order stream that keeps
+ *     dropping work between issue and queue becomes work instead of
+ *     sitting in a report someone had to run — a lost order produces
+ *     no job, so outcome learning and every job-level fold never see
+ *     it;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -959,6 +969,7 @@ import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
+import { betAuditBacklogItems } from './bet-audit-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2140,6 +2151,19 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // queue and carries no repo column.
   items.push(...await spawnProposalsBacklogItems({ repo }));
+
+  // Bet-audit lost orders: the leader's BET/FIXUP order lines in
+  // supervisor/out.*.txt that never appear as - READY/- CLAIMED lines
+  // in queue/router-queue.md or as RQ- rows in metrics/jobs.jsonl —
+  // orders the leader counted as written and nothing noticed vanished.
+  // Until now they only ever reached `phm fleet bet-audit`, a report
+  // someone had to run and read, and a lost order produces no job for
+  // outcome learning or leader-batches to ever score. The feed refuses
+  // to emit when the jobs ledger is not healthy (every launched order
+  // would read lost) or the queue read is degraded (hidden READY lines
+  // fabricate losses); a repo cell emits only at the recurring bar
+  // inside the window and only for the fleet's own repository.
+  items.push(...await betAuditBacklogItems({ repo }));
   return { items, errors };
 }
 

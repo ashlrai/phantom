@@ -603,6 +603,7 @@
 /test/improve-automation-backlog.test.ts @masonwyatt23
 /test/improve-autopilot-backlog.test.ts @masonwyatt23
 /test/improve-backlog-leverage.test.ts @masonwyatt23
+/test/improve-bet-audit-backlog.test.ts @masonwyatt23
 /test/improve-boundary.test.ts @masonwyatt23
 /test/improve-branch-gardener-backlog.test.ts @masonwyatt23
 /test/improve-catalog-refresh-backlog.test.ts @masonwyatt23
