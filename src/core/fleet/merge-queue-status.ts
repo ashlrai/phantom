@@ -1,3 +1,40 @@
+import type { PreparationResult } from './merge-queue-prep.js';
+
+export interface QueuePredecessor { number: number; headSha: string }
+export interface QueueRevision {
+  repo?: string;
+  headSha?: string;
+  baseSha?: string;
+  predecessors?: readonly QueuePredecessor[];
+  mergeGroupSha?: string;
+}
+
+export const fullQueueSha = (sha: unknown): sha is string =>
+  typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha);
+
+function samePredecessors(a: QueueRevision['predecessors'], b: QueueRevision['predecessors']) {
+  if (a === undefined && b === undefined) return true;
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((p, i) =>
+    p && Number.isSafeInteger(p.number) && p.number > 0 && fullQueueSha(p.headSha)
+    && p.number === b[i]?.number && p.headSha === b[i]?.headSha);
+}
+
+export function currentQueueChecks(current: QueueRevision, checked: QueueRevision | undefined) {
+  return fullQueueSha(current.mergeGroupSha) && current.mergeGroupSha === checked?.mergeGroupSha
+    && current.repo === checked.repo && current.headSha === checked.headSha && current.baseSha === checked.baseSha
+    && samePredecessors(current.predecessors, checked.predecessors);
+}
+
+export function preparationStall(current: QueueRevision, prep: PreparationResult | undefined):
+'base_movement' | 'content_conflict' | 'stack_wait' | 'unknown' {
+  if (!fullQueueSha(prep?.baseSha) || prep.repo !== current.repo || prep.headSha !== current.headSha
+    || !prep.predecessors || !samePredecessors(current.predecessors, prep.predecessors)
+    || !['ready', 'conflict', 'deferred'].includes(prep.state)) return 'unknown';
+  if (current.baseSha !== prep.baseSha) return 'base_movement';
+  if (prep.state === 'conflict') return 'content_conflict';
+  return prep.state === 'deferred' && prep.predecessors.length ? 'stack_wait' : 'unknown';
+}
+
 export type MergeQueueBlocker = 'queue' | 'required_checks' | 'conflict' | 'review' | 'other';
 export interface MergeQueueObservation {
   type: string; at?: string; reason?: MergeQueueBlocker;

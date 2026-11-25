@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetMergeQueueAge, mergeQueueAge, type MergeQueueAgeInput } from '../src/cli/fleet-merge-queue-age.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
+import type { PreparationResult } from '../src/core/fleet/merge-queue-prep.js';
 
 const now = Date.parse('2026-11-03T12:00:00Z');
 const sha = 'a'.repeat(40);
@@ -15,6 +16,35 @@ const snapshot: MergeQueueAgeInput = {
     requiredChecks: [{ name: 'Merge Gate', status: number === 2 ? 'failure' : 'success' }] })),
 };
 afterEach(() => vi.restoreAllMocks());
+
+it('uses revision-pinned prep and merge-group checks in queue-age triage', () => {
+  const repo = 'ashlrai/phantom', baseSha = 'b'.repeat(40), mergeGroupSha = 'c'.repeat(40);
+  const revision = { repo, headSha: sha, baseSha, mergeGroupSha, predecessors: [] };
+  const prep = { ...revision, number: 1, state: 'conflict' as const };
+  const predecessor = { number: 2, headSha: 'd'.repeat(40) };
+  const checks = [{ name: 'Merge Gate', status: 'failure' as const }];
+  const observe = (preparations: PreparationResult[] = [prep], current: MergeQueueAgeInput['queue'][number]['revision'] = revision,
+    checked = revision, requiredChecks: NonNullable<MergeQueueAgeInput['queue'][number]['requiredChecks']> = checks) =>
+    mergeQueueAge({ repo, prs: [{ number: 1, headSha: sha }], preparations,
+      queue: [{ number: 1, enteredAt: at(8), revision: current, checksRevision: checked, requiredChecks }] }, now);
+  expect(observe().entries[0]).toMatchObject({ stall: 'content_conflict', requiredChecks: checks });
+  expect(observe([]).oldestActionable).toMatchObject({ stall: 'check_failure', causes: [{ code: 'check_failure' }] });
+  const moved = { ...revision, baseSha: 'e'.repeat(40) };
+  expect(observe([prep], moved).oldestActionable).toMatchObject({ stall: 'base_movement', requiredChecks: null,
+    causes: [{ code: 'base_movement' }], stallEvidence: { baseSha: moved.baseSha, preparedBaseSha: baseSha } });
+  const stacked = { ...revision, predecessors: [predecessor, { number: 3, headSha: 'f'.repeat(40) }] };
+  const deferred = { ...prep, state: 'deferred' as const, predecessors: stacked.predecessors };
+  expect(observe([deferred], stacked).oldestActionable).toMatchObject({ stall: 'stack_wait', requiredChecks: null });
+  expect(observe([deferred], { ...stacked, predecessors: [...stacked.predecessors].reverse() })
+    .entries[0]).toMatchObject({ stall: 'unknown', requiredChecks: null });
+  for (const current of [{ ...revision, repo: 'elsewhere/phantom' }, { ...revision, headSha: baseSha },
+    { ...revision, baseSha: undefined }, { ...revision, mergeGroupSha: undefined }]) {
+    expect(observe([], current).entries[0]).toMatchObject({ stall: 'unknown', requiredChecks: null });
+  }
+  expect(observe([{ ...prep, headSha: baseSha }], revision, { ...revision, mergeGroupSha: baseSha },
+    [{ name: 'Merge Gate', status: 'success' }])
+    .entries[0]).toMatchObject({ stall: 'unknown', requiredChecks: null });
+});
 
 it('ranks active queued PRs oldest first and preserves required checks without changing input', () => {
   const before = structuredClone(snapshot);

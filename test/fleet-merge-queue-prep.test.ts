@@ -29,10 +29,12 @@ describe('merge queue lookahead', () => {
   });
   it('prefetches successors but only rebases independent heads and cleans up', async () => {
     const calls: string[][] = [];
-    const result = await prepareMergeQueue({ cwd: '/repo', baseSha: base,
+    const result = await prepareMergeQueue({ cwd: '/repo', baseSha: base, repo: 'ashlrai/phantom',
       preparations: [{ number: 1, headSha: head, after: [] }, { number: 2, headSha: head, after: [1] }],
       git: async args => { calls.push(args); return args[0] === 'rev-parse' ? head : ''; } });
     expect(result.map(r => r.state)).toEqual(['ready', 'deferred']);
+    expect(result[1]).toMatchObject({ repo: 'ashlrai/phantom', baseSha: base, headSha: head,
+      predecessors: [{ number: 1, headSha: head }] });
     expect(calls.filter(a => a.includes('rebase'))).toHaveLength(1);
     expect(calls.filter(a => a[0] === 'fetch')).toHaveLength(2);
     expect(calls.some(a => a[0] === 'worktree' && a[1] === 'remove')).toBe(true);
