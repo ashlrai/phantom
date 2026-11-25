@@ -87,12 +87,18 @@ function orgFailure(json: boolean, command: string, err: unknown): number {
 /** Bare `phm org`: the live tree the Fleet map draws. Reads only; the builder is src/core/fleet/org-tree.ts. */
 async function liveOrg(args: string[]): Promise<number> {
   const asText = args.includes('--text'), asJson = args.includes('--json'), at = args.indexOf('--minutes');
+  const minutesArg = at < 0 ? undefined : args[at + 1];
   const rest = args.filter((arg, i) => arg !== '--text' && arg !== '--json' && i !== at && (at < 0 || i !== at + 1));
-  if (rest.length || (at >= 0 && args[at + 1] === undefined)) return orgUsage(asJson, 'org');
-  const [{ readFleetOrgMap }, { mapWindowMinutes }, { renderOrgTreeText }, { sanitizePublicJson }] = await Promise.all([
+  if (rest.length || (at >= 0 && minutesArg === undefined)) return orgUsage(asJson, 'org');
+  const [{ readFleetOrgMap }, { mapWindowMinutesOrNull }, { renderOrgTreeText }, { sanitizePublicJson }] = await Promise.all([
     import('../core/verse/fleet-org-map-api.js'), import('../core/fleet/org-map.js'), import('../core/fleet/org-tree.js'), import('../core/util/public-json.js')]);
+  // A window that is not a whole number of minutes in range is bad usage (exit 2),
+  // the same refusal --window and --minutes give on the fleet verbs — never the
+  // operational 'error' a thrown mapWindowMinutes would surface as.
+  const minutes = mapWindowMinutesOrNull(minutesArg);
+  if (minutes === null) return orgUsage(asJson, 'org', '--minutes must be a whole number from 1 to 1440');
   // Sanitizing keeps the shape; it only rewrites home paths and secret-shaped strings.
-  const tree = sanitizePublicJson((await readFleetOrgMap(mapWindowMinutes(at < 0 ? undefined : args[at + 1]))).tree) as FleetOrgTree;
+  const tree = sanitizePublicJson((await readFleetOrgMap(minutes)).tree) as FleetOrgTree;
   if (asText) { console.log(renderOrgTreeText(tree)); return 0; }
   // `groups` is the tree the Map's "By org" view draws (fleet.org-groups.v1: leader, lanes, jobs, guardian, loops, unassigned).
   // An unreadable live map is null, not an empty tree, and does not fail the rest.
