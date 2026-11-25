@@ -96,6 +96,7 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     [{ kind: 'bogus' }], [{ kind: 'TASK' }], [{ kind: 5 }],
     [{ topic: 'not a topic' }], [{ topic: 'fleetx.*' }], [{ topic: 'fleet..deploy' }], [{ topic: 5 }],
     [{ thread: 'has space' }], [{ thread: 'x'.repeat(129) }], [{ thread: '' }],
+    [{ bodyKind: 'has space' }], [{ bodyKind: 'x'.repeat(129) }], [{ bodyKind: '' }], [{ bodyKind: 5 }],
     [{ job: 'has space' }], [{ job: '' }], [{ job: 'x'.repeat(129) }],
     [{ channel: 'Eng' }], [{ channel: 'has space' }], [{ channel: 'x'.repeat(33) }],
     [{ channel: '-lead' }], [{ channel: 'group:eng' }], [{ channel: 'eng:general' }],
@@ -273,6 +274,41 @@ describe('RQ-PHX-MCPDURABLEINBOXRECUT31 fleet_bus_inbox MCP tool', () => {
     expect(rows(found.parsed).map(row => row.envelope.id)).toEqual(['note1']);
     const combined = await callInbox(client, { kind: 'task', contains: 'fleet.deploy' });
     expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+  });
+
+  it('applies the bodyKind read filter across every discriminator shape', async () => {
+    expect(post('note1', { priority: 'P0', body: { kind: 'note', text: 'n' } }).status).toBe('posted');
+    expect(post('ctx1', { body: { kind: 'context', text: 'c' } }).status).toBe('posted');
+    // The v2 kind field wins over a wrapped protocol.kind on the same body.
+    expect(post('ctxw', { body: { kind: 'context', protocol: { version: 1, kind: 'task' } } }).status).toBe('posted');
+    expect(post('st1', { body: { kind: 'work.status', jobId: 'RQ-9', status: 'running' } }).status).toBe('posted');
+    expect(post('task1', { to: 'fleet.deploy',
+      body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } }).status).toBe('posted');
+    expect(post('type1', { body: { type: 'approval.request', detail: 'd' } }).status).toBe('posted');
+    expect(post('plain', { body: { fake: 'nothing here' } }).status).toBe('posted');
+    const client = await connect();
+    const notes = await callInbox(client, { bodyKind: 'note' });
+    expect(rows(notes.parsed).map(row => row.envelope.id)).toEqual(['note1']);
+    expect(notes.parsed['filters']).toEqual({ bodyKind: 'note' });
+    const contexts = await callInbox(client, { bodyKind: 'context' });
+    expect(rows(contexts.parsed).map(row => row.envelope.id)).toEqual(['ctx1', 'ctxw']);
+    const statuses = await callInbox(client, { bodyKind: 'work.status' });
+    expect(rows(statuses.parsed).map(row => row.envelope.id)).toEqual(['st1']);
+    const tasks = await callInbox(client, { bodyKind: 'task' });
+    expect(rows(tasks.parsed).map(row => row.envelope.id)).toEqual(['task1']);
+    const notices = await callInbox(client, { bodyKind: 'approval.request' });
+    expect(rows(notices.parsed).map(row => row.envelope.id)).toEqual(['type1']);
+    // Exact and case-sensitive: an unrecognized but printable value and a
+    // case variant are honest empty matches, never errors.
+    const upper = await callInbox(client, { bodyKind: 'NOTE' });
+    expect(upper.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 7 });
+    const absent = await callInbox(client, { bodyKind: 'work.post' });
+    expect(absent.parsed).toMatchObject({ sourceState: 'ok', returnedMessages: 0, nextCursor: 7 });
+    // Composes conjunctively with the other read filters.
+    const combined = await callInbox(client, { bodyKind: 'note', priority: 'P0' });
+    expect(rows(combined.parsed).map(row => row.envelope.id)).toEqual(['note1']);
+    const none = await callInbox(client, { bodyKind: 'note', priority: 'P2' });
+    expect(none.parsed).toMatchObject({ returnedMessages: 0, nextCursor: 7 });
   });
 
   it('applies the before upper bound exclusive of its edge and composes with since', async () => {
