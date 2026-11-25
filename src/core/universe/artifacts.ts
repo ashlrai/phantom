@@ -50,6 +50,27 @@ export function canonical(value: unknown): string {
 
 export function defaultUniverseRoot(): string { return join(homedir(), '.ashlr', 'universe'); }
 
+/**
+ * Canonical spelling of a path that may not exist yet: symlinks on the deepest
+ * existing ancestor are resolved and the missing tail re-appended, so callers
+ * that require real paths (`privateDirectory`, private storage) accept a home
+ * spelled through links — a scratch `$ASHLR_HOME` under macOS `$TMPDIR` lives
+ * under `/var -> /private/var`. The leaf resolves too when it exists; callers
+ * that must refuse a symlinked leaf keep their own lstat checks downstream.
+ */
+export function canonicalPath(path: string): string {
+  const absolute = resolve(path);
+  let probe = absolute;
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const tail = relative(probe, absolute);
+  const real = realpathSync(probe);
+  return tail ? join(real, tail) : real;
+}
+
 /** Create only private, real directories; never follow a caller's symlink. */
 export function privateDirectory(path: string): string {
   const absolute = resolve(path);

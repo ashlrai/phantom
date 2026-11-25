@@ -16,6 +16,10 @@ phm node join --node laptop --owner acme --caps build,gh --json
 Replace `laptop` and `acme` with your own node ID and owner scope. Save the
 `session` number from the output; use that number in the commands below.
 
+To keep the exercise fully separate from real Phantom state, point
+`ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);
+every command then uses that home, and symlinks in the path are fine.
+
 ## Pick a role
 
 Roles are expressed as capabilities, not a `--role` flag. Advertise only what

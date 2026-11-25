@@ -34,16 +34,19 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       if (hasNodePool()) return cmdNodePool(verb, args);
     }
     // Parsing happens first and the store modules load after it, so a usage error never touches (or creates) state.
-    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { privateDirectory }, { join }] = await Promise.all([
+    const [{ DriveNodes, LocalNodesStore }, { probeLocalAuth }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }] = await Promise.all([
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
-    const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(ashlrHome(), 'nodes'))).transaction(fn) };
+    const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
   } catch (error) {
     const known = error instanceof UsageError;
-    const message = known ? error.message : error instanceof Error && /^Invalid drive/.test(error.message) ? error.message : 'Node store unavailable or invalid.';
+    // Validation, privacy and lock messages in this stack are fixed operator-facing
+    // strings (no values echoed), so they are shown; anything else stays masked.
+    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const message = error instanceof Error && (known || operatorMessage.test(error.message)) ? error.message : 'Node store unavailable or invalid.';
     const fix = known ? error.fix : /^Invalid drive/.test(message) ? 'Check ids (letters, digits, . _ : / -), caps (lowercase) and secret NAMES (UPPER_SNAKE). Run: phm node --help'
       : 'Check that ~/.ashlr/nodes is a private (0700) directory you own, and that no other process holds its lock.';
     const code = known ? error.code : 'rejected';

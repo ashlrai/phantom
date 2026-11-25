@@ -267,7 +267,11 @@ ledger state, truncation and provider count under `outcomes_ledger`.
 
 State is a private local directory (`~/.ashlr/nodes`, or `$ASHLR_HOME/nodes`)
 shared by processes on one host; see [the store notes](../src/core/drive/nodes/README.md)
-for the single-host guarantee and failover rules. Fencing guarantees one
+for the single-host guarantee and failover rules. The path may be spelled
+through symlinks — a scratch `$ASHLR_HOME` under macOS `$TMPDIR` resolves
+`/var` to `/private/var` — and the store canonicalizes it before the
+private-directory checks; the resolved directory must still be owned and
+private (0700). Fencing guarantees one
 accepted completion, not exactly-once external effects, so effect sinks must
 reject stale tokens. Owner scope filters what nodes and operators read through
 these commands; it is not an access-control boundary against someone who can

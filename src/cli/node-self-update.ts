@@ -18,9 +18,9 @@ async function defaultNodes(owner: string | null): Promise<NodeView[]> {
   const scope = owner ?? pool?.owner;
   if (!scope) throw new Error('--owner is required without a configured node pool');
   if (pool) return (callPool(pool, 'status', ['--owner', scope]).result['nodes'] as NodeView[] | undefined) ?? [];
-  const [{ DriveNodes, LocalNodesStore }, { ashlrHome }, { privateDirectory }, { join }] = await Promise.all([
+  const [{ DriveNodes, LocalNodesStore }, { ashlrHome }, { canonicalPath, privateDirectory }, { join }] = await Promise.all([
     import('../core/drive/nodes/index.js'), import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
-  return new DriveNodes({ transaction: fn => new LocalNodesStore(privateDirectory(join(ashlrHome(), 'nodes'))).transaction(fn) }).view([scope]).nodes;
+  return new DriveNodes({ transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) }).view([scope]).nodes;
 }
 
 export async function cmdNodeSelfUpdate(args: string[], deps: SelfUpdateDeps = {}): Promise<number> {
