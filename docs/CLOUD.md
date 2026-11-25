@@ -1326,7 +1326,34 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   mirrors the writer's own bounded tail and line cap with truncation
   stated as lower bounds, and items emit only for the fleet's own
   repository since the ledger describes this install's comms and
-  carries no repo column.
+  carries no repo column,
+  and the post-run publish journal's recurring adverse cells, the
+  `POSTRUN_PR <action> <job>` outcome lines contrib/mac/postrun_pr.py
+  appends to <runs>/dispatchd.log per spawned publish — dispatchd's
+  reap step spawns it once per finished RESULT EMPTY job whose
+  worktree is ahead of origin/master, counting spawns in
+  queue/run/<job>.postrun up to three ever — plus dispatchd's own
+  `postrun_pr err` spawn failures (postrunBacklogItems). Until now the
+  lines had no reader at all: the tick reports that scan dispatchd.log
+  never fold POSTRUN_PR outcomes, and the only other surfaces (`phm
+  fleet republish`, `phm fleet stranded`) are point-in-time reports
+  someone had to run, so a publish path that kept failing across jobs,
+  a gh PR-lookup that kept refusing, or jobs whose three-attempt budget
+  burned on pre-publish skips and spawn failures with the work still
+  unpublished never became work. Because the child writes
+  queue/run/<job>.postrun.json on every outcome past the PR lookup —
+  making any publish-step result final per job — publish failures
+  aggregate globally by exception type and RESULT-prefix class while a
+  job with three consumed non-terminal attempts and no terminal outcome
+  emits an 'exhausted' item on its own bar; the global skip and spawn
+  cells emit at the recurring bars of three adverse rows across two
+  distinct UTC days inside the 7-day window, designed outcomes
+  (off-switch, repo-not-allowlisted, exists, published, in-flight
+  publish markers) count as context only, truncated tails are stated as
+  lower bounds, recorded exception/result text is scrubbed and capped,
+  and items emit only for the fleet's own repository since the journal
+  describes this install's dispatch machinery and carries no repo
+  column.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1337,7 +1364,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config and delivery-receipts items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts and postrun items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name
