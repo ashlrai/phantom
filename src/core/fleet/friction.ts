@@ -3,7 +3,8 @@
  * `phm friction` mines ~/.ashlr-runs read-only — jobs.jsonl finishes,
  * launch-failure receipts, backoff holds and adaptive-concurrency cap sheds,
  * the dispatch event log, ready.tsv
- * rows, guardian red-main state, lane slots and the manual-override files —
+ * rows, guardian red-main state, lane slots, the manual-override files and
+ * the merge-events.jsonl merge-queue transition ledger —
  * folds operator annotations kept in friction/ledger.jsonl, and scores each
  * recurring drag as delegation unlocked × 7d frequency × blast radius / cost.
  * An unread source leaves its signals unknown (null), never zero. Evidence
@@ -31,6 +32,7 @@ export type SourceState = 'read' | 'missing' | 'unreadable';
 export interface FrictionInput {
   jobs?: string | null;
   events?: string | null;
+  mergeEvents?: string | null;
   ready?: string | null;
   guardian?: string | null;
   slots?: string | null;
@@ -76,6 +78,7 @@ const CATALOG: Record<string, { title: string; openOn?: readonly string[] } & Kn
   'wrong-route': { title: 'Jobs routed to the wrong account or tool and moved back', owner: 'router', unlock: 2, blast: 2, cost: 2, primary: 'route_moves' },
   'holds': { title: 'Lane holds and parked rows blocking the queue', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'hold_events' },
   'concurrency-throttle': { title: 'Fleet concurrency cap shedding sessions under host pressure', owner: 'fleet', unlock: 2, blast: 3, cost: 2, primary: 'backoffs' },
+  'merge-queue': { title: 'PRs stalled in the merge queue: conflicts, dropped auto-merges, retries and check failures', owner: 'fleet', unlock: 3, blast: 3, cost: 2, primary: 'merge_drag' },
 };
 
 /** dispatchd.concurrency.v1 zone names; only 'danger' zones shed the cap. */
@@ -143,6 +146,95 @@ function eventLines(text: string): EventLine[] {
     lines.push({ at: localTimestamp(m[1]!).ms, text: m[2]! });
   }
   return lines;
+}
+
+// ── merge-events.jsonl row dialect ─────────────────────────────────────────
+// The merge-queue transition ledger `phm fleet merge-latency` reads
+// (metrics/merge-events.jsonl under the runs dir). The closed vocabularies
+// mirror the fleet merge-latency reader's parseEvent contract — kept as a
+// local copy for the same reason the router outcome fold keeps its own:
+// a producer-side rename can never leak an unbounded event name into the
+// friction report.
+const MERGE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'opened', 'queued', 'checks_passed', 'conflict', 'recut_requested',
+  'retry_requested', 'retry_failed', 'merged', 'closed',
+  'auto_merge_enabled', 'auto_merge_disabled', 'eligible', 'blocked',
+  'check_observed',
+]);
+const MERGE_BLOCKER_REASONS: ReadonlySet<string> = new Set([
+  'queue', 'required_checks', 'conflict', 'review', 'other',
+]);
+const MERGE_CHECK_CONCLUSIONS: ReadonlySet<string> = new Set(['success', 'failure', 'pending']);
+/** Event types that are themselves merge-pipeline drag; check_observed joins on its failure conclusion. */
+const MERGE_DRAG_TYPES: ReadonlySet<string> = new Set([
+  'conflict', 'recut_requested', 'retry_requested', 'retry_failed', 'auto_merge_disabled',
+]);
+
+interface MergeQueueRow {
+  /** `<repo>#<pr>` with the repo lowercased — the same prKey shape the outcome folds use. */
+  key: string;
+  repo: string;
+  pr: number;
+  type: string;
+  at: number;
+  /** Recorded `blocked` reason (in-vocabulary only). */
+  reason: string | null;
+  /** Recorded `check_observed` conclusion. */
+  conclusion: string | null;
+  /** Recorded `check_observed` required flag; null when the row left it unknown. */
+  required: boolean | null;
+}
+
+/**
+ * Validate merge-events.jsonl lines into windowable rows. Only rows carrying
+ * a parseable `at` survive: the contract lets the auto-merge toggles and the
+ * merged/closed terminals omit it, but an undated row cannot join the 7-day
+ * window — it is skipped like an undated jobs.jsonl row, never guessed into
+ * one. Malformed lines, off-vocabulary types or reasons, and check
+ * observations without a recorded conclusion are skipped, never counted.
+ */
+function mergeQueueRows(text: string): MergeQueueRow[] {
+  const rows: MergeQueueRow[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const r = raw as Record<string, unknown>;
+    const repo = r['repo'];
+    const pr = r['pr'];
+    const type = r['type'];
+    if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
+        typeof pr !== 'number' || !Number.isSafeInteger(pr) || pr < 1 ||
+        typeof type !== 'string' || !MERGE_EVENT_TYPES.has(type)) continue;
+    let reason: string | null = null;
+    if (type === 'blocked') {
+      const v = r['reason'];
+      if (typeof v !== 'string' || !MERGE_BLOCKER_REASONS.has(v)) continue;
+      reason = v;
+    }
+    let conclusion: string | null = null;
+    let required: boolean | null = null;
+    if (type === 'check_observed') {
+      const c = r['conclusion'];
+      if (typeof c !== 'string' || !MERGE_CHECK_CONCLUSIONS.has(c)) continue;
+      conclusion = c;
+      const req = r['required'];
+      if (req !== undefined && typeof req !== 'boolean') continue;
+      required = req === true ? true : req === false ? false : null;
+    }
+    const at = tsMs(r['at']);
+    if (!Number.isFinite(at)) continue;
+    rows.push({
+      key: `${repo.toLowerCase()}#${pr}`, repo: repo.toLowerCase(), pr,
+      type, at, reason, conclusion, required,
+    });
+  }
+  return rows;
 }
 
 export interface LedgerFold {
@@ -318,6 +410,60 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   let relogins: number | null = jobs === null ? null : 0;
   for (const [lane, heldAt] of laneAuthHold) if ((laneFinish.get(lane) ?? -1) > heldAt) relogins!++;
 
+  // ── merge-events.jsonl: merge-queue transition drag ─────────────────────
+  // The merge-queue loop's sampled transition ledger — conflicts, recut
+  // requests, auto-merge retries and failed submissions, dropped
+  // auto-merges and failing check observations are the merge pipeline's own
+  // friction, which the dispatch-side categories never see. `merge_drag`
+  // counts distinct PRs carrying at least one drag row (a check_observed
+  // row joins only on a failure conclusion); `blocked` rows stay context —
+  // a required_checks block is the normal queued state, so they tally per
+  // reason without opening the item.
+  const zm = z(input.mergeEvents);
+  const mqRows = input.mergeEvents == null ? null : mergeQueueRows(input.mergeEvents);
+  let mqEvents = zm, mqBlocked = zm;
+  let mqConflicts = zm, mqRecuts = zm, mqRetries = zm, mqRetryFailures = zm;
+  let mqDropped = zm, mqCheckFailures = zm, mqRequiredCheckFailures = zm;
+  const mqBlockedReasons: Record<string, number | null> = {
+    required_checks: zm, conflict: zm, review: zm, queue: zm, other: zm,
+  };
+  const observedPrs = new Set<string>(), dragPrs = new Set<string>();
+  const conflictedPrs = new Set<string>(), droppedPrs = new Set<string>();
+  for (const e of mqRows ?? []) {
+    if (!in7d(e.at)) continue;
+    observedPrs.add(e.key);
+    mqEvents = (mqEvents ?? 0) + 1;
+    if (MERGE_DRAG_TYPES.has(e.type) || (e.type === 'check_observed' && e.conclusion === 'failure')) {
+      dragPrs.add(e.key);
+    }
+    if (e.type === 'conflict') {
+      mqConflicts = (mqConflicts ?? 0) + 1;
+      conflictedPrs.add(e.key);
+      ev('merge-queue', `merge-events.jsonl conflict ${e.repo}#${e.pr}`);
+    } else if (e.type === 'recut_requested') {
+      mqRecuts = (mqRecuts ?? 0) + 1;
+      ev('merge-queue', `merge-events.jsonl recut_requested ${e.repo}#${e.pr}`);
+    } else if (e.type === 'retry_requested') {
+      mqRetries = (mqRetries ?? 0) + 1;
+      ev('merge-queue', `merge-events.jsonl retry_requested ${e.repo}#${e.pr}`);
+    } else if (e.type === 'retry_failed') {
+      mqRetryFailures = (mqRetryFailures ?? 0) + 1;
+      ev('merge-queue', `merge-events.jsonl retry_failed ${e.repo}#${e.pr}`);
+    } else if (e.type === 'auto_merge_disabled') {
+      mqDropped = (mqDropped ?? 0) + 1;
+      droppedPrs.add(e.key);
+      ev('merge-queue', `merge-events.jsonl auto_merge_disabled ${e.repo}#${e.pr}`);
+    } else if (e.type === 'check_observed' && e.conclusion === 'failure') {
+      mqCheckFailures = (mqCheckFailures ?? 0) + 1;
+      if (e.required === true) mqRequiredCheckFailures = (mqRequiredCheckFailures ?? 0) + 1;
+      ev('merge-queue', `merge-events.jsonl check_observed failure${e.required === true ? ' required' : ''} ${e.repo}#${e.pr}`);
+    } else if (e.type === 'blocked') {
+      mqBlocked = (mqBlocked ?? 0) + 1;
+      if (e.reason !== null) mqBlockedReasons[e.reason] = (mqBlockedReasons[e.reason] ?? 0) + 1;
+    }
+  }
+  const mqSet = (n: number): number | null => zm === null ? null : n;
+
   // ── dispatch-events.log ──────────────────────────────────────────────────
   const zero2 = z(input.events);
   const counts = { requeued: zero2, usage: zero2, capacity: zero2, auth: zero2, holds: zero2, unholds: zero2,
@@ -457,6 +603,26 @@ export function mineFriction(input: FrictionInput): FrictionReport {
       backoffs: concBackoffs, raises: concRaises,
       ...Object.fromEntries(CONC_DANGER_ZONES.map(zone => [`danger_${zone}`, concDanger[zone]])),
     },
+    'merge-queue': {
+      merge_drag: mqSet(dragPrs.size),
+      merge_events: mqEvents,
+      observed_prs: mqSet(observedPrs.size),
+      conflicts: mqConflicts,
+      conflicted_prs: mqSet(conflictedPrs.size),
+      recuts: mqRecuts,
+      retries: mqRetries,
+      retry_failures: mqRetryFailures,
+      auto_merge_dropped: mqDropped,
+      auto_merge_dropped_prs: mqSet(droppedPrs.size),
+      check_failures: mqCheckFailures,
+      required_check_failures: mqRequiredCheckFailures,
+      blocked: mqBlocked,
+      blocked_required_checks: mqBlockedReasons['required_checks'],
+      blocked_conflict: mqBlockedReasons['conflict'],
+      blocked_review: mqBlockedReasons['review'],
+      blocked_queue: mqBlockedReasons['queue'],
+      blocked_other: mqBlockedReasons['other'],
+    },
   };
   const items: FrictionItem[] = Object.entries(CATALOG).map(([id, spec]) => {
     const primary = signals[id]![spec.primary];
@@ -478,6 +644,7 @@ export function mineFriction(input: FrictionInput): FrictionReport {
   return { schema: 'phm.friction.v1', generatedAt: new Date(now).toISOString(), windowDays: 7,
     sources: input.sourceStates ?? {
       'metrics/jobs.jsonl': presence(input.jobs),
+      'metrics/merge-events.jsonl': presence(input.mergeEvents),
       'queue/dispatch-events.log': presence(input.events),
       'queue/ready.tsv': presence(input.ready),
       'guardian/state.json': presence(input.guardian),
@@ -512,8 +679,9 @@ export async function readFrictionInput(runsDir: string): Promise<FrictionInput>
       state: r.state === 'healthy' ? 'read' : r.state === 'missing' ? 'missing' : 'unreadable' };
   };
   const q = join(runsDir, 'queue');
-  const [jobs, ready, guardian, slots, overrides, keep, ledger, queuedEvents] = await Promise.all([
+  const [jobs, mergeEvents, ready, guardian, slots, overrides, keep, ledger, queuedEvents] = await Promise.all([
     read(join(runsDir, 'metrics', 'jobs.jsonl'), TAIL, true),
+    read(join(runsDir, 'metrics', 'merge-events.jsonl'), TAIL, true),
     read(join(q, 'ready.tsv'), 2 * 1024 * 1024, false),
     read(join(runsDir, 'guardian', 'state.json'), SMALL, false),
     read(join(q, 'slots.json'), SMALL, false),
@@ -524,12 +692,13 @@ export async function readFrictionInput(runsDir: string): Promise<FrictionInput>
   ]);
   const events = queuedEvents.text !== null ? queuedEvents : await read(join(runsDir, 'dispatch-events.log'), TAIL, true);
   const sourceStates = Object.fromEntries([
-    ['metrics/jobs.jsonl', jobs.state], ['queue/dispatch-events.log', events.state],
+    ['metrics/jobs.jsonl', jobs.state], ['metrics/merge-events.jsonl', mergeEvents.state],
+    ['queue/dispatch-events.log', events.state],
     ['queue/ready.tsv', ready.state], ['guardian/state.json', guardian.state],
     ['queue/slots.json', slots.state], ['queue/budget-overrides.json', overrides.state],
     ['queue/keep.txt', keep.state], ['friction/ledger.jsonl', ledger.state],
   ]) as Record<string, SourceState>;
-  return { jobs: jobs.text, events: events.text, ready: ready.text, guardian: guardian.text, slots: slots.text,
+  return { jobs: jobs.text, mergeEvents: mergeEvents.text, events: events.text, ready: ready.text, guardian: guardian.text, slots: slots.text,
     overrides: overrides.text, keep: keep.text, ledger: ledger.text, sourceStates };
 }
 

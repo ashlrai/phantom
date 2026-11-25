@@ -974,7 +974,7 @@ describe('fleet friction items', () => {
   it('turns firing friction categories into valid priority-3 backlog items in score order', async () => {
     const runsDir = frictionDir('runs-rich', richFiles());
     const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
-    // The catalog is thirteen categories; the default limit emits the top eight.
+    // The catalog is fourteen categories; the default limit emits the top eight.
     expect(items).toHaveLength(8);
     expect(items[0]!.id).toBe('friction-empty-finishes');
     expect(items.map((i) => i.id)).toEqual([
@@ -1040,6 +1040,26 @@ describe('fleet friction items', () => {
     expect(items.map((i) => i.id)).toEqual(['friction-invalid-tier']);
     expect(items[0]!.prompt).toContain('ready_rows=1');
     expect(items[0]!.prompt).toContain('enqueued=unknown');
+  });
+
+  it('emits merge-queue friction from the merge-events ledger alone', async () => {
+    // Only metrics/merge-events.jsonl is present: the merge-queue category
+    // fires on its own drag rows while every dispatch-side category stays
+    // quiet — its sources were never read, so unknown is never a zero.
+    const runsDir = frictionDir('runs-mq', {
+      'metrics/merge-events.jsonl': [
+        J({ repo: 'ashlrai/phantom', pr: 11, type: 'conflict', at: at(30) }),
+        J({ repo: 'ashlrai/phantom', pr: 11, type: 'recut_requested', at: at(29) }),
+        J({ repo: 'ashlrai/phantom', pr: 12, type: 'auto_merge_disabled', at: at(20) }),
+        J({ repo: 'ashlrai/phantom', pr: 13, type: 'queued', at: at(10) }),
+      ].join('\n'),
+    });
+    const items = await frictionBacklogItems({ repo: 'ashlrai/phantom', runsDir, now: NOW });
+    expect(items.map((i) => i.id)).toEqual(['friction-merge-queue']);
+    expect(items[0]!.prompt).toContain('merge_drag=2');
+    expect(items[0]!.prompt).toContain('auto_merge_dropped=1');
+    expect(items[0]!.prompt).toContain('metrics/merge-events.jsonl');
+    expect(validBacklogItem(items[0]!)).not.toBeNull();
   });
 
   it('respects operator notes: in-progress and wontfix suppress, fixed-but-firing regresses', async () => {

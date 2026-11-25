@@ -172,6 +172,80 @@ describe('phm friction miners', () => {
     const empty = item(fixture({ jobs: '' }), 'requeues');
     expect(empty.signals).toMatchObject({ launch_failures: 0, launch_giveups: 0 });
   });
+  it('counts merge-queue drag from merge-events.jsonl per distinct PR', () => {
+    const mergeEvents = [
+      // #101: the full drag arc — conflict, recut, retries, a dropped
+      // auto-merge, failing check observations and blocked transitions.
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'opened', at: iso(50) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'queued', at: iso(49) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'conflict', at: iso(48), head_sha: 'a'.repeat(40) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'recut_requested', at: iso(47), head_sha: 'a'.repeat(40) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'retry_requested', at: iso(46), head_sha: 'a'.repeat(40) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'retry_failed', at: iso(45), head_sha: 'a'.repeat(40) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'auto_merge_disabled', at: iso(44) }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'check_observed', at: iso(43), conclusion: 'failure', required: true }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'check_observed', at: iso(42), conclusion: 'failure' }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'check_observed', at: iso(41), conclusion: 'success', required: true }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'blocked', at: iso(40), reason: 'required_checks' }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'blocked', at: iso(39), reason: 'conflict' }),
+      J({ repo: 'ashlrai/phantom', pr: 101, type: 'blocked', at: iso(38), reason: 'review' }),
+      // #102: one unrelated check failure and a queue block — drag through
+      // the failure conclusion only; the block stays context.
+      J({ repo: 'ashlrai/phantom', pr: 102, type: 'check_observed', at: iso(30), conclusion: 'failure', required: false }),
+      J({ repo: 'ashlrai/phantom', pr: 102, type: 'blocked', at: iso(29), reason: 'queue' }),
+      // #103: clean lifecycle — observed coverage, never drag.
+      J({ repo: 'ashlrai/phantom', pr: 103, type: 'opened', at: iso(20) }),
+      J({ repo: 'ashlrai/phantom', pr: 103, type: 'queued', at: iso(19) }),
+      J({ repo: 'ashlrai/phantom', pr: 103, type: 'checks_passed', at: iso(18) }),
+      J({ repo: 'ashlrai/phantom', pr: 103, type: 'merged', at: iso(17) }),
+      // Outside the 7d window, undated (unwindowable), malformed and
+      // off-contract rows never count.
+      J({ repo: 'ashlrai/phantom', pr: 104, type: 'conflict', at: iso(200) }),
+      J({ repo: 'ashlrai/phantom', pr: 105, type: 'auto_merge_disabled' }),
+      'not json',
+      J({ repo: 'ashlrai/phantom', pr: 106, type: 'bogus', at: iso(5) }),
+      J({ repo: 'ashlrai/phantom', pr: 107, type: 'blocked', at: iso(5) }),
+      J({ repo: 'ashlrai/phantom', pr: 108, type: 'check_observed', at: iso(5) }),
+      J({ repo: 'bad repo', pr: 109, type: 'conflict', at: iso(5) }),
+    ].join('\n');
+    const r = mineFriction({ mergeEvents, now: NOW });
+    const mq = item(r, 'merge-queue');
+    expect(mq.status).toBe('open');
+    expect(mq.signals).toMatchObject({
+      merge_drag: 2, merge_events: 19, observed_prs: 3,
+      conflicts: 1, conflicted_prs: 1, recuts: 1, retries: 1, retry_failures: 1,
+      auto_merge_dropped: 1, auto_merge_dropped_prs: 1,
+      check_failures: 3, required_check_failures: 1,
+      blocked: 4, blocked_required_checks: 1, blocked_conflict: 1,
+      blocked_review: 1, blocked_queue: 1, blocked_other: 0,
+    });
+    expect(mq.score).toBe(9); // 3 unlock x 2 drag prs x 3 blast / 2 cost
+    expect(mq.metric).toMatchObject({ unit: 'merge_drag', after: 2 });
+    expect(mq.evidence.slice(0, 3)).toEqual([
+      'merge-events.jsonl conflict ashlrai/phantom#101',
+      'merge-events.jsonl recut_requested ashlrai/phantom#101',
+      'merge-events.jsonl retry_requested ashlrai/phantom#101',
+    ]);
+    expect(mq.evidence.join(' ')).not.toContain('#104');
+  });
+  it('keeps merge-queue signals unknown without the ledger and zero on an empty or quiet one', () => {
+    const missing = item(mineFriction({ now: NOW }), 'merge-queue');
+    expect(missing.signals.merge_drag).toBeNull();
+    expect(missing.signals.blocked_required_checks).toBeNull();
+    expect(missing.score).toBeNull();
+    expect(missing.status).toBe('quiet');
+    const empty = item(mineFriction({ mergeEvents: '', now: NOW }), 'merge-queue');
+    expect(empty.signals).toMatchObject({ merge_drag: 0, merge_events: 0, observed_prs: 0, conflicts: 0 });
+    expect(empty.status).toBe('quiet');
+    // Lifecycle and blocked rows alone are observed coverage, never drag.
+    const quiet = item(mineFriction({ mergeEvents: [
+      J({ repo: 'ashlrai/phantom', pr: 1, type: 'opened', at: iso(5) }),
+      J({ repo: 'ashlrai/phantom', pr: 1, type: 'merged', at: iso(4) }),
+      J({ repo: 'ashlrai/phantom', pr: 2, type: 'blocked', at: iso(3), reason: 'review' }),
+    ].join('\n'), now: NOW }), 'merge-queue');
+    expect(quiet.signals).toMatchObject({ merge_drag: 0, merge_events: 3, observed_prs: 2, blocked: 1, blocked_review: 1 });
+    expect(quiet.status).toBe('quiet');
+  });
   it('scrubs secret-shaped text out of evidence', () => {
     const token = 'sk-ant-' + 'a1'.repeat(30);
     const r = fixture({ events: `${local(1)} AUTH_FAILURE_SEEN claude RQ-3 ${token}: refused` });
@@ -216,12 +290,16 @@ describe('phm friction command', () => {
     await mkdir(join(dir, 'queue'), { recursive: true });
     await mkdir(join(dir, 'guardian'), { recursive: true });
     await writeFile(join(dir, 'metrics', 'jobs.jsonl'), jobs);
+    await writeFile(join(dir, 'metrics', 'merge-events.jsonl'),
+      J({ repo: 'ashlrai/phantom', pr: 55, type: 'conflict', at: iso(2) }));
     await writeFile(join(dir, 'queue', 'dispatch-events.log'), events);
     await writeFile(join(dir, 'queue', 'ready.tsv'), ready);
     await writeFile(join(dir, 'guardian', 'state.json'), guardian);
     const input = await readFrictionInput(dir);
     const report = mineFriction({ ...input, now: NOW });
     expect(item(report, 'invalid-tier').signals.ready_rows).toBe(1);
+    expect(item(report, 'merge-queue').signals).toMatchObject({ merge_drag: 1, conflicts: 1 });
+    expect(input.sourceStates?.['metrics/merge-events.jsonl']).toBe('read');
     const row = frictionScanRow(report, foldFrictionLedger(input.ledger ?? ''), NOW);
     await appendFrictionLedger(dir, [row!]);
     const ledger = await readFile(join(dir, 'friction', 'ledger.jsonl'), 'utf8');

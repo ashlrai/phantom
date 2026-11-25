@@ -40,7 +40,7 @@
  *     `phm friction` scores over a 7-day window — empty finishes,
  *     anomalous diffs, requeues, lane auth, quota, invalid tiers, red
  *     mains, stale ready rows, deferred requests, manual interventions,
- *     wrong routes, holds and concurrency throttles
+ *     wrong routes, holds, concurrency throttles and merge-queue stalls
  *     (frictionBacklogItems below), so recurring
  *     operational drag becomes work instead of sitting in a report whose
  *     note ledger only updates on manual runs;

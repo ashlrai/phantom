@@ -248,8 +248,9 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   newest persisted eval report still shows the regression or the journal
   shows it recurring across eval reports — and the fleet friction fold's
   firing categories, the dispatch→merge drags `phm friction` scores over
-  a 7-day window across jobs.jsonl, the dispatch event log, ready.tsv,
-  guardian state, lane slots, overrides and its own note ledger
+  a 7-day window across jobs.jsonl, the merge-events ledger, the dispatch
+  event log, ready.tsv, guardian state, lane slots, overrides and its own
+  note ledger
   (otherwise only visible in that report). A friction category becomes an
   item while its own open condition holds — the primary signal or a
   declared open-on signal counted something in the window — and no
