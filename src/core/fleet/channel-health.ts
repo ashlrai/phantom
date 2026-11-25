@@ -196,6 +196,8 @@ function slackReplyBinding({ journal, sends }: SlackSnapshot, now: Date): ReplyB
   // A missing send store means nothing was sent (every request unanswered);
   // a degraded one could hide receipts, so it never certifies coverage.
   if (sends.state === 'degraded') return { store: 'unreadable', ...empty };
+  // An attempt without a sent receipt leaves outbound delivery unresolved.
+  if (sends.receipts.some((receipt) => receipt.state === 'attempted')) return { store: 'unreadable', ...empty };
   const requests = slackInboundRequests(journal.entries);
   const binding = bindSlackReplies({ requests, receipts: sends.receipts, now });
   // A row is answered only when its own Leader request id has a consistent
