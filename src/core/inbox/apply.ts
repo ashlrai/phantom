@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync, realpathSync } from '
 import { homedir } from 'node:os';
 import { join, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { observeGitSync } from '../fleet/git-observations.js';
 import type { ApplyResult, McpRegistry } from '../types.js';
 import { loadProposal, setStatus } from './store.js';
 import {
@@ -67,12 +68,12 @@ const GIT_TIMEOUT = 30_000;
 
 /** Run a git command in `cwd`. Throws on failure. */
 function gitRun(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
+  return observeGitSync('inbox-apply', args, () => execFileSync('git', args, {
     cwd,
     timeout: GIT_TIMEOUT,
     stdio: 'pipe',
     encoding: 'utf8',
-  }).trim();
+  })).trim();
 }
 
 /** Run a git command, returning null on any error (never throws). */

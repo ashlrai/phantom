@@ -1,13 +1,48 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cmdFleetJobLatency, jobLatency } from '../src/cli/fleet-job-latency.js';
 import { FLEET_SUBCOMMAND_LOADERS } from '../src/cli/fleet-subcommand-registry.js';
 import { cmdPulse } from '../src/cli/pulse.js';
 import { mergeQueueLatency } from '../src/core/fleet/job-latency.js';
+import { defaultGitRunner } from '../src/core/verse/git-ops.js';
 
 const fixture = 'test/fixtures/job-latency/jobs.jsonl';
 const gitFixture = 'test/fixtures/job-latency/git-observations.jsonl';
 afterEach(() => vi.restoreAllMocks());
+
+it('reads observations from real local Git calls and reports a held index lock', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'phantom-git-observations-'));
+  const wt = join(cwd, 'wt');
+  const git = async (...args: string[]) => (await defaultGitRunner('git', args, { cwd })).code;
+  const home = await mkdtemp(join(tmpdir(), 'phantom-git-observations-home-'));
+  vi.stubEnv('HOME', home);
+  try {
+    expect(await git('init', '-q')).toBe(0);
+    expect(await git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'initial')).toBe(0);
+    expect(await git('worktree', 'add', '--detach', wt)).toBe(0);
+    expect(await git('worktree', 'remove', wt)).toBe(0);
+    expect(await git('fetch', '.', 'HEAD')).toBe(0);
+    expect(await git('push', '.', 'HEAD:refs/heads/observed')).toBe(0);
+    await writeFile(join(cwd, '.git', 'index.lock'), '');
+    expect(await git('add', '.')).not.toBe(0);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await cmdFleetJobLatency(['--json'])).toBe(0);
+    const report: ReturnType<typeof jobLatency> = JSON.parse(log.mock.calls[0]![0] as string);
+    expect(report.git_contention?.machines?.[0]?.lanes[0]?.operations).toMatchObject([
+      { operation: 'index.lock', failures: { samples: 1, total: 1 } },
+      { operation: 'worktree_add', timed_samples: 1, p90_ms: expect.any(Number) },
+      { operation: 'worktree_remove', timed_samples: 1, p90_ms: expect.any(Number) },
+      { operation: 'fetch', timed_samples: 1, retries: { samples: 1, total: 0 } },
+      { operation: 'push', timed_samples: 1, retries: { samples: 1, total: 0 } },
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 it('ranks measured phases and excludes ambiguous and missing boundaries', async () => {
   const report = jobLatency(await readFile(fixture, 'utf8'));

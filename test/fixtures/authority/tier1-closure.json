@@ -737,6 +737,7 @@
     "src/core/fleet/generated-repair-lifecycle.ts",
     "src/core/fleet/ghosts.ts",
     "src/core/fleet/git-merge-latency.ts",
+    "src/core/fleet/git-observations.ts",
     "src/core/fleet/graph-seed.ts",
     "src/core/fleet/grok-ultra-runway.ts",
     "src/core/fleet/grok-ultra-store.ts",
