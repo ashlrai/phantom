@@ -132,7 +132,8 @@ export function bindSlackReplies(input: {
       const id = `${row.channel}:${canonicalTs(row.ts)}`;
       const kept = physical.get(id);
       if (kept) {
-        if (kept.thread !== row.thread) kept.conflicted = true;
+        if (kept.thread === undefined ? row.thread !== undefined :
+            row.thread === undefined || canonicalTs(kept.thread) !== canonicalTs(row.thread)) kept.conflicted = true;
         if (compareText(row.ts, kept.ts) < 0) kept.ts = row.ts;
         if (typeof row.key === 'string') kept.keys.add(row.key);
       } else {
@@ -151,7 +152,7 @@ export function bindSlackReplies(input: {
   // Rows sharing a requestId must describe the same message. If they disagree
   // (different channel, thread or message ts) the evidence is inconsistent: fail
   // closed as uncertain for every such row instead of letting the first row win.
-  const location = (r: InboundRequest): string => `${r.channelId}:${r.threadTs}:${r.messageTs}`;
+  const location = (r: InboundRequest): string => `${r.channelId}:${canonicalTs(r.threadTs)}:${canonicalTs(r.messageTs)}`;
   const seenLocation = new Map<string, string>();
   const inconsistentIds = new Set<string>();
   for (const request of ordered) {
@@ -180,7 +181,7 @@ export function bindSlackReplies(input: {
       // Exactly one consistent physical message in this request's own thread,
       // after the request message on the same Slack clock.
       const ok = sent.length === 1 && !sent[0]!.conflicted && sent[0]!.keys.size === 1 && sent[0]!.channel === request.channelId &&
-        sent[0]!.thread === request.threadTs && compareTs(sent[0]!.ts, request.messageTs) > 0;
+        sent[0]!.thread !== undefined && canonicalTs(sent[0]!.thread) === canonicalTs(request.threadTs) && compareTs(sent[0]!.ts, request.messageTs) > 0;
       if (ok) { verdict = 'answered'; replyTs = sent[0]!.ts; } else verdict = 'uncertain';
     } else if (attemptedKeys.has(key)) {
       verdict = 'uncertain';
