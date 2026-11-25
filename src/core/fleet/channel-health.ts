@@ -69,6 +69,8 @@ export interface InboundObservation {
 
 export interface InboundEvidence {
   rows: InboundObservation[];
+  /** Valid observations omitted by a bounded projection; rows remain usable. */
+  projectionOmitted?: boolean;
   /**
    * Observation-store coverage. 'missing' and 'unreadable' are evidence gaps:
    * they can never certify an idle healthy request path.
@@ -176,6 +178,7 @@ function slackInboundEvidence(journal: SlackSnapshot['journal']): InboundEvidenc
   if (journal.state === 'missing') return { store: 'missing', rows: [] };
   return {
     store: 'ok',
+    projectionOmitted: journal.projectionOmitted ?? false,
     rows: journal.entries
       .filter((e) => e.decision === 'ingested')
       .map((e) => ({ at: e.at, ...(e.bus ? { admission: e.bus } : {}) })),
@@ -363,7 +366,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   const futureDated = inbound.filter((t) => t > nowMs).length + replies.filter((t) => t > nowMs).length;
   base.unansweredCount = pending.length;
   const proof: ChannelProof = {
-    requestCoverage: pending.length ? 'unproven'
+    requestCoverage: evidence?.projectionOmitted || pending.length ? 'unproven'
       : binding && answeredCount > 0 ? 'verified'
         : windowInbound.length ? 'unproven' : 'idle',
     futureDatedCount: futureDated,
@@ -400,6 +403,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
     return { ...base, state: 'UNKNOWN', missing: [`${channel} bridge process liveness unverifiable`] };
   }
   const reasons: string[] = [];
+  if (evidence?.projectionOmitted) reasons.push(`${channel} inbound journal projection incomplete`);
   if (!binding && pending.length && observedReplies) reasons.push(`${channel} reply correlation unavailable`);
   if (futureDated) reasons.push(`${channel} future-dated receipt ignored`);
   if (invalidReplyTime) reasons.push(`${channel} reply evidence time invalid`);

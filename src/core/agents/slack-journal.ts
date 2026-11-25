@@ -60,6 +60,8 @@ export interface SlackObservation {
 export interface SlackJournalRead {
   state: 'ok' | 'missing' | 'degraded';
   entries: SlackObservation[];
+  /** Valid stored observations omitted solely by the projection limit. */
+  projectionOmitted?: boolean;
 }
 
 function runsRoot(runsDir?: string): string {
@@ -211,6 +213,7 @@ export function readSlackJournal(
 
 function parseJournal(text: string, limit: number): SlackJournalRead {
   const entries: SlackObservation[] = [];
+  let projectionOmitted = false;
   let degraded = text.length > 0 && !text.endsWith('\n');
   const lines = text.split('\n').filter((line) => line.length > 0);
   // Validate all bounded evidence even when the projection limit is reached.
@@ -227,9 +230,10 @@ function parseJournal(text: string, limit: number): SlackJournalRead {
         continue;
       }
       if (entries.length < limit) entries.push(obs);
+      else projectionOmitted = true;
     } catch {
       degraded = true;
     }
   }
-  return { state: degraded ? 'degraded' : 'ok', entries };
+  return { state: degraded ? 'degraded' : 'ok', entries, projectionOmitted };
 }
