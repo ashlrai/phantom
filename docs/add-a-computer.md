@@ -46,13 +46,26 @@ the node is held; omit `--capacity` on that beat. See the
 [node router guide](NODE-ROUTER.md).
 
 Check that `laptop` appears live with the intended caps and, for GitHub jobs,
-that its auth is `ok`. A join does not start a worker or recurring heartbeat.
-Repeat the heartbeat comfortably within 30 seconds to keep the session live;
-if it expires, join again and use the new session number — `beat` and `pull`
-both answer `session-expired` once it lapses, and the error's `fix` prints the
-rejoin command with this node's last advertised owner and caps. If the node
-already rejoined under a newer session, the fix names that session and the
-exact `leave` command instead, so you can resume without hunting for the
+that its auth is `ok`. A join does not start a worker or recurring heartbeat,
+so keep one running in the foreground:
+
+```sh
+phm node beat --node laptop --session 1 --probe-auth --watch
+```
+
+`--watch` repeats the ordinary beat every 10 seconds (or `--every <seconds>`,
+at most 25) and re-measures capacity and host stats on this computer each pass,
+so do not also pass `--capacity` or `--host-stats` — an explicit flag wins and
+would freeze a stale sample. Keep any other flags (`--probe-auth`, `--usage`,
+`--json`) on the same command; they apply to every beat. Press Ctrl-C to stop;
+the session then expires on its own within 30 seconds. If a beat fails — for
+example the session expired — the watch stops and prints the beat's error.
+
+If the session lapses anyway, join again and use the new session number — `beat`
+and `pull` both answer `session-expired` once it lapses, and the error's `fix`
+prints the rejoin command with this node's last advertised owner and caps. If
+the node already rejoined under a newer session, the fix names that session and
+the exact `leave` command instead, so you can resume without hunting for the
 number. Omit `--probe-auth` if this node does not need GitHub authentication.
 
 ## Leave

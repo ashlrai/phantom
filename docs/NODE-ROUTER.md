@@ -94,6 +94,17 @@ worker does, so the node reads unknown rather than wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
 
+A standalone session expires 30 seconds after its last beat, so
+`phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
+each pass is the ordinary `beat` through the same dispatch (a pooled Mac still
+delegates to the primary), re-measuring the `--capacity` sample and host stats
+on this machine unless the caller passed those flags explicitly. The interval
+defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
+SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
+a lapsed session, a refused flag — stops it at once with that beat's error. The
+watch flags are consumed by the dispatcher and never reach the beat parser, so
+older stores and pool primaries see only the usual beat arguments.
+
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
