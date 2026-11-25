@@ -358,11 +358,10 @@ describe('routineBacklogItems', () => {
   it('appends routine items through discovery and dedupes on refresh', async () => {
     const dir = path.join(home, '.ashlr', 'routines');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'runs.jsonl'), journal([
-      row({ routine: 'nightly-audit', outcome: 'failed', at: at(1) }),
-      row({ routine: 'nightly-audit', outcome: 'failed', at: at(3) }),
-      row({ routine: 'nightly-audit', outcome: 'failed', at: at(5) }),
-    ]));
+    const now = Date.now();
+    fs.writeFileSync(path.join(dir, 'runs.jsonl'), journal([1, 3, 5].map((days) => row({
+      routine: 'nightly-audit', outcome: 'failed', at: new Date(now - days * 86400_000).toISOString(),
+    }))));
     const greenGh = async (args: string[]) => {
       const p = args[4] ?? '';
       if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
