@@ -11,7 +11,7 @@ const master = 'a'.repeat(40), head = 'b'.repeat(40), merged = 'c'.repeat(40);
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })));
 
-function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
+function github(options: { count?: number; touched?: string; pass?: boolean; stale?: boolean; unknown?: boolean; unreadable?: boolean; imports?: string; merged?: boolean; web?: boolean; suite?: boolean; tsc?: boolean; tap?: boolean; docs?: boolean; generated?: boolean; digest?: boolean; version?: boolean; perf?: boolean; audit?: boolean; auditOsv?: boolean; pack?: boolean; trust?: boolean; trustGate?: boolean; script?: boolean; fastSelect?: boolean; install?: boolean; installSmoke?: boolean; membench?: boolean; lint?: boolean; lintTestFile?: boolean; realio?: boolean; verse?: boolean; flaky?: boolean; gate?: boolean; gateEvidence?: 'fail' | 'pass'; bound?: boolean; boundHead?: string; checkoutRef?: 'self' | 'other' | 'branch' | 'mixed' | 'twice' | 'envonly'; filePass?: boolean; firstPaint?: boolean; firstPaintGate?: boolean; runner?: boolean; build?: boolean; buildHelper?: boolean; tree?: { path: string; type?: string; mode?: string }[]; treeError?: boolean; treeTruncated?: boolean; contents?: Record<string, string>; contentsMiss?: 'error'; contentsError?: string[]; masterJobConclusion?: string; prJobConclusion?: string; extraMasterJob?: string; extraPrJob?: string; runConclusion?: string; noJobs?: boolean } = {}) {
   const calls: string[][] = [];
   const gh: CloudGh = async args => {
     calls.push(args);
@@ -63,7 +63,7 @@ function github(options: { count?: number; touched?: string; pass?: boolean; sta
         return success(gateLog);
       }
       const isMaster = endpoint.includes('/jobs/10/') || endpoint.includes('/jobs/30/');
-      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
+      const name = options.unknown && !isMaster ? 'unknown' : isMaster && options.pass ? (options.filePass ? 'pass-file' : options.web ? 'web-pass' : 'pass') : options.suite ? 'suite-shared' : options.tsc ? 'tsc-shared' : options.tap ? 'tap-shared' : options.docs ? 'docs-shared' : options.generated ? 'generated-shared' : options.digest ? 'digest-shared' : options.version ? 'version-shared' : options.perf ? 'perf-shared' : options.audit ? 'audit-shared' : options.auditOsv ? 'audit-osv' : options.pack ? 'pack-shared' : options.trust ? 'trust-shared' : options.trustGate ? 'trust-gate-shared' : options.fastSelect ? 'script-fast-select' : options.install ? 'install-shared' : options.installSmoke ? 'installsmoke-shared' : options.script ? 'script-shared' : options.membench ? 'membench-shared' : options.lint ? 'lint-shared' : options.lintTestFile ? 'lint-test-file' : options.realio ? 'realio-shared' : options.verse ? 'verse-shared' : options.flaky ? 'flaky-shared' : options.firstPaint ? 'firstpaint-shared' : options.firstPaintGate ? 'firstpaint-gate' : options.runner ? 'runner-shared' : options.buildHelper ? 'build-helper-shared' : options.build ? 'build-shared' : options.web ? 'web-shared' : 'shared';
       const sha = isMaster ? master : head;
       let prefix: string;
       if (options.checkoutRef !== undefined) {
@@ -1392,6 +1392,120 @@ describe('CI baseline evidence', () => {
     // A singleton unaffected failure can never prove a master pass.
     const singleton = await analyzeCiBaseline('owner/repo', github({ install: true, count: 1, pass: true }).gh);
     expect(singleton.groups[0]).toMatchObject({ classification: 'unknown', action: 'unknown' });
+  });
+  it('parses install-smoke failures per target and suppresses build-owned shapes', () => {
+    const failures = parseBaselineFailures(fixture('installsmoke-shared'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual([
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke) commit',
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke) release',
+    ]);
+    expect(failures[0]).toMatchObject({ file: '.github/scripts/ci-install-smoke.mjs', names: '(install-smoke) commit' });
+    expect(failures[0]?.excerpt).toContain('npm install -g --prefix');
+    expect(failures[0]?.excerpt).toContain('exited 1');
+    expect(failures[1]?.excerpt).toContain('installed phm version 3.30.72, expected 3.30.73');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('installsmoke-shared').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    const step = (script: string[], output: string[], error = '##[error]Process completed with exit code 1.') =>
+      ['##[group]Run ' + script[0], ...script.slice(1), 'shell: /usr/bin/bash -e {0}', '##[endgroup]', ...output, error].join('\n');
+    const commit = 'node .github/scripts/ci-install-smoke.mjs commit';
+    const release = 'node .github/scripts/ci-install-smoke.mjs release';
+    // Smoke-domain diagnoses emit under their step's target.
+    for (const [script, output, id] of [
+      [commit, ['npm error code ENOENT', 'npm install -g --prefix /tmp/p /tmp/x.tgz exited 1'], '(install-smoke) commit'],
+      [commit, ['npm pack produced no tarball'], '(install-smoke) commit'],
+      [commit, ['installed phm not found under /tmp/p'], '(install-smoke) commit'],
+      [commit, ['package.json version is missing'], '(install-smoke) commit'],
+      [commit, ['::error file=.github/scripts/ci-install-smoke.mjs,line=73::installed phm version (none), expected 3.30.73'], '(install-smoke) commit'],
+      [release, ['npm view @ashlr/phantom version dist.integrity dist.tarball --json exited 1'], '(install-smoke) release'],
+      [release, ['published release checksum mismatch'], '(install-smoke) release'],
+      [release, ['published release download failed (503)'], '(install-smoke) release'],
+      [release, ['unexpected published version: '], '(install-smoke) release'],
+      // A script crash with no diagnosis line still groups: the step only
+      // runs the smoke, so its failure is the smoke's.
+      [commit, ['file:///home/runner/work/phantom/phantom/.github/scripts/ci-install-smoke.mjs:90', 'SyntaxError: Unexpected token'], '(install-smoke) commit'],
+    ] as const) {
+      const found = parseBaselineFailures(step([script], [...output]), 'owner/repo');
+      expect(found.map(f => f.testId), `${script} :: ${output[0]}`).toEqual([`.github/scripts/ci-install-smoke.mjs > ${id}`]);
+    }
+    // A passing smoke, a cancelled step and unattributed step shapes emit
+    // nothing.
+    for (const bad of [
+      step([commit], ['phm --version 3.30.73'], ''),
+      step([commit], ['npm install -g --prefix /tmp/p /tmp/x.tgz exited 1'], '##[error]The operation was canceled.'),
+      // Mixed bash, companions, arg-less and unknown-target invocations.
+      step([commit, 'npm run build'], ['installed phm not found under /tmp/p']),
+      step([commit, 'node --test .github/tests/x.test.mjs'], ['installed phm not found under /tmp/p']),
+      step(['node .github/scripts/ci-install-smoke.mjs'], ['usage: ci-install-smoke.mjs commit|release']),
+      step(['node .github/scripts/ci-install-smoke.mjs bogus'], ['usage: ci-install-smoke.mjs commit|release']),
+    ]) {
+      expect(parseBaselineFailures(bad, 'owner/repo'), bad.slice(0, 60)).toEqual([]);
+    }
+    // A bare npm ci step in the same job still groups under the install
+    // identity -- the smoke parser never claims it.
+    expect(parseBaselineFailures(step(['npm ci'], ['npm error code ERESOLVE']), 'owner/repo').map(f => f.testId)).toEqual(['package-lock.json > (install)']);
+    // A diagnosis naming the inner build or pack belongs to the build
+    // parsers -- or stays unknown when the build dies without a parsed
+    // shape, exactly as the main Build step reads.
+    expect(parseBaselineFailures(step([commit], ['npm run build exited 1']), 'owner/repo')).toEqual([]);
+    expect(parseBaselineFailures(step([commit], ['npm pack --pack-destination /tmp/x exited 1']), 'owner/repo')).toEqual([]);
+    expect(parseBaselineFailures(step([commit], ['npm run build exited signal']), 'owner/repo')).toEqual([]);
+    // Companion failure shapes in the step's own output mean the inner
+    // build failed first: the dedicated parsers own those failures.
+    const tsc = parseBaselineFailures(step([commit], ['src/core/foo.ts(41,9): error TS2322: bad', 'npm run build exited 1']), 'owner/repo');
+    expect(tsc.map(f => f.testId)).toEqual(['src/core/foo.ts > (typecheck)']);
+    const vite = parseBaselineFailures(step([commit], ['[UNRESOLVED_IMPORT] Could not resolve \'./x\' in src/main.ts', 'npm pack --pack-destination /tmp/x exited 1']), 'owner/repo');
+    expect(vite.map(f => f.testId)).toEqual(['src/main.ts > (build)']);
+    const versionSync = parseBaselineFailures(step([commit], ['{"version":"1.2.3","changed":["package.json"],"matches":false,"check":true}', 'npm run build exited 1']), 'owner/repo');
+    expect(versionSync.map(f => f.testId)).toEqual(['scripts/sync-candidate-version.mjs > (version-sync)']);
+    // A passing version-sync report inside a failing smoke does not
+    // suppress the group.
+    const pass = parseBaselineFailures(step([commit], ['{"version":"3.30.73","changed":[],"matches":true,"check":true}', 'installed phm not found under /tmp/p']), 'owner/repo');
+    expect(pass.map(f => f.testId)).toEqual(['.github/scripts/ci-install-smoke.mjs > (install-smoke) commit']);
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = step([commit], [`npm error token ${secret} rejected`, 'installed phm not found under /tmp/p']);
+    expect(parseBaselineFailures(leaky)[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups install-smoke failures and attributes pack/install inputs per target', async () => {
+    const report = await analyzeCiBaseline('owner/repo', github({ installSmoke: true }).gh);
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(2);
+    expect(report.groups.map(g => g.testId)).toEqual([
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke) commit',
+      '.github/scripts/ci-install-smoke.mjs > (install-smoke) release',
+    ]);
+    for (const group of report.groups) {
+      expect(group).toMatchObject({ classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2] });
+      expect(group.brief).toContain(group.testId);
+    }
+    const byId = (r: typeof report) => new Map(r.groups.map(g => [g.testId, g.classification]));
+    const COMMIT = '.github/scripts/ci-install-smoke.mjs > (install-smoke) commit';
+    const RELEASE = '.github/scripts/ci-install-smoke.mjs > (install-smoke) release';
+    // The script, the workflow step definition and the commit arm's
+    // pack/install inputs are pr-caused for that arm; the release arm
+    // reads only the already-published artifact, so manifest changes
+    // cannot have caused its failure.
+    for (const touched of ['.github/scripts/ci-install-smoke.mjs', '.github/workflows/ci.yml']) {
+      const caused = byId(await analyzeCiBaseline('owner/repo', github({ installSmoke: true, touched }).gh));
+      expect(caused.get(COMMIT), touched).toBe('pr-caused');
+      expect(caused.get(RELEASE), touched).toBe('pr-caused');
+    }
+    for (const touched of ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', '.npmrc', 'bin/ashlr']) {
+      const caused = byId(await analyzeCiBaseline('owner/repo', github({ installSmoke: true, touched }).gh));
+      expect(caused.get(COMMIT), touched).toBe('pr-caused');
+      expect(caused.get(RELEASE), touched).toBe('shared-baseline');
+    }
+    // The vitest harness ambient set cannot reach these gates, and
+    // unrelated changes -- including deeper source the measured dist/
+    // graph cannot enumerate -- share the baseline.
+    for (const touched of ['tsconfig.json', 'vitest.config.ts', 'src/core/status.ts', 'docs/README.md']) {
+      const shared = byId(await analyzeCiBaseline('owner/repo', github({ installSmoke: true, touched }).gh));
+      expect(shared.get(COMMIT), `${touched} -> commit`).toBe('shared-baseline');
+      expect(shared.get(RELEASE), `${touched} -> release`).toBe('shared-baseline');
+    }
+    // A singleton unaffected failure can never prove a master pass.
+    const singleton = await analyzeCiBaseline('owner/repo', github({ installSmoke: true, count: 1, pass: true }).gh);
+    for (const group of singleton.groups) expect(group).toMatchObject({ classification: 'unknown', action: 'unknown' });
   });
   it('parses memory benchmark floor violations as gate failures', () => {
     const failures = parseBaselineFailures(fixture('membench-shared'));

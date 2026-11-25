@@ -475,6 +475,42 @@ vitest harness ambient set, so a PR touching any of them is
 `pr-caused` and the rest classify `shared-baseline`, `pr-caused` or
 `unknown` -- never `probable-flake`.
 
+The install-smoke jobs (`install-smoke-linux`/`windows`/`macos` in
+ci.yml) run two single-purpose steps each:
+`ci-install-smoke.mjs commit` builds, packs and globally installs this
+commit's tarball under a scratch prefix, then asserts `phm --version`;
+`... release` downloads the published tarball, verifies its
+`dist.integrity` checksum, installs it and asserts the published `phm
+--version`. Every refusal funnels through the script's one catch --
+`console.error(error.message)` then exit 1 -- so the step's only
+failure output is one diagnosis line (a child exit like `npm run build
+exited 1`, `npm install -g ... exited 1` or `npm view ... exited 1`; a
+smoke verdict like `npm pack produced no tarball`, `installed phm not
+found under <prefix>`, the `::error file=...::installed phm version`
+annotation, the `published release ...` checks or `package.json
+version is missing`) plus the runner's step marker. The analyzer
+tracks the same `##[group]Run` step boundaries, but a step qualifies
+only when every script line is the smoke invocation with a
+`commit`/`release` target; mixed bash, `uses:` actions, companions and
+arg-less or unknown-target invocations stay unattributed. Two
+suppressions keep the group honest: a diagnosis naming `npm run build`
+or `npm pack` (whose prepack lifecycle is the build) belongs to the
+build parsers -- or stays unknown when the build dies without a parsed
+shape, exactly as the main Build step reads -- and a companion failure
+shape in the step's own output (a tsc diagnostic, vitest or TAP line,
+version-sync report or build-helper prefix) means the inner build
+failed before the script could name it. Everything else groups per
+target as `.github/scripts/ci-install-smoke.mjs > (install-smoke)
+commit|release`. The commit arm's dependency set is the closed input
+list -- the script, `package.json`, `package-lock.json`,
+`npm-shrinkwrap.json`, `.npmrc`, `bin/ashlr` and
+`.github/workflows/ci.yml` -- since the measured dist/ graph has no
+enumerable closure and the vitest harness ambient set does not apply;
+the release arm reads only the already-published artifact, so its
+inputs are the script and workflow alone. Like the other non-test
+identities these groups can never resolve through a vitest pass line:
+`shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
+
 The test runners' own watchdog verdicts get the same treatment.
 `scripts/test-ci.mjs` wraps every `npm run test:ci` invocation -- the
 fast-gate affected-test shards (through `ci-fast-run.mjs`), the quick
