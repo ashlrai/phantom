@@ -1867,7 +1867,20 @@ apply — and `--kind`/`--topic` keep only protocol-v1 bodies whose
 `protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
 namespace prefix like `fleet.*`. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
-an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
+an unfiltered one would. `--body-kind <kind>` narrows `comms bus
+read|watch`, `fleet bus-follow` and `fleet_bus_inbox`'s `bodyKind` to
+envelopes whose body carries that exact kind discriminator — the same
+`busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
+read --body-kind`, `wakes --body-kind`, `phm messages --body-kind`,
+`agents conversations --body-kind` and `fleet_agent_inbox`'s `bodyKind`
+apply: the v2 `kind` field, a `worker-handoff` assignment or notice kind,
+a bus-transport v1 `protocol.kind`, or a `type`/`schema` notice
+discriminator, matched exactly and case-sensitively so a body carrying no
+discriminator never matches and an unrecognized but printable value is an
+honest empty match; on `bus-follow` filtered rows still advance
+checkpoints, and a `comms bus --checkpoint` consumer binds the raw
+`--body-kind` value into its filter identity, so a kind change fails
+closed. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
 inclusive `receivedAt >= since` match `agents bus inbox --since`,
 `channel read --since`, `wakes --since` and `phm messages --since` apply,

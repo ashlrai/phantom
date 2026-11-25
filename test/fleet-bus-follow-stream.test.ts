@@ -320,6 +320,10 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--exclude-from', 'worker-a', '--exclude-from', 'worker-b', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--priority', 'P9', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--thread', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'bad label', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'x'.repeat(129), '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'note', '--body-kind', 'context', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--before', 'not-a-time', '--root', root, '--json'],
@@ -723,6 +727,52 @@ it('delivers only protocol bodies whose topic matches --topic exactly or by name
   }
 });
 
+it('delivers only bodies carrying --body-kind while checkpoints advance past the rest', async () => {
+  post('plain', 'worker-a', { body: { text: 'no kind' } });
+  post('note', 'worker-a', { body: { kind: 'note', text: 'n' } });
+  post('context', 'worker-a', { body: { kind: 'context', text: 'c' } });
+  // The v2 kind field wins over a wrapped protocol.kind on the same body.
+  post('kind-wins', 'worker-a', { body: { kind: 'context', protocol: { version: 1, kind: 'task' } } });
+  post('work', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-BK', status: 'running' } });
+  post('wake', 'worker-a', { body: { kind: 'wake', target: 'worker-a', reason: 'r' } });
+  post('handoff', 'worker-a', { body: { kind: 'worker-handoff', taskId: 'RQ-BK', prompt: 'p' } });
+  post('proto-task', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  post('type-notice', 'worker-a', { body: { type: 'approval.request', detail: 'd' } });
+  post('string-body', 'worker-a', { body: 'just text' });
+  for (const [bodyKind, expected] of [
+    ['note', ['note']],
+    ['context', ['context', 'kind-wins']],
+    ['work.status', ['work']],
+    ['wake', ['wake']],
+    ['worker-handoff', ['handoff']],
+    ['task', ['proto-task']],
+    ['approval.request', ['type-notice']],
+    // Exact and case-sensitive: a case variant or an unrecognized but
+    // printable value is an honest empty match, never an error.
+    ['NOTE', []],
+    ['work.post', []],
+  ] as const) {
+    const { records, pending, expire } = follow({ bodyKind });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual([...expected]);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 10 });
+  }
+});
+
+it('composes --body-kind with --to matching', async () => {
+  post('mine-note', 'worker-a', { body: { kind: 'note', text: 'n' } });
+  post('mine-work', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-BK', status: 'running' } });
+  post('theirs-note', 'worker-b', { body: { kind: 'note', text: 'n' } });
+  const { records, pending, expire } = follow({ to: 'worker-a', bodyKind: 'note' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['mine-note']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
 it('composes --id, --in-reply-to, --kind and --topic with the other filters', async () => {
   post('noise', 'worker-a', { body: { kind: 'note' } });
   post('hit', 'fleet.deploy', { body: {
@@ -779,6 +829,20 @@ it('filters the CLI stream by --kind and --topic', async () => {
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --body-kind', async () => {
+  post('noise', 'worker-a', { body: { text: 'no kind' } });
+  post('hit', 'worker-a', { body: { kind: 'note', text: 'n' } });
+  post('miss', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-BK', status: 'running' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--body-kind', 'note', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('filters the CLI stream by --id and --in-reply-to', async () => {
