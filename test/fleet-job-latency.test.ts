@@ -6,6 +6,7 @@ import { cmdPulse } from '../src/cli/pulse.js';
 import { mergeQueueLatency } from '../src/core/fleet/job-latency.js';
 
 const fixture = 'test/fixtures/job-latency/jobs.jsonl';
+const gitFixture = 'test/fixtures/job-latency/git-observations.jsonl';
 afterEach(() => vi.restoreAllMocks());
 
 it('ranks measured phases and excludes ambiguous and missing boundaries', async () => {
@@ -75,8 +76,32 @@ it('supports JSON, reports read errors, and is registered', async () => {
   const jsonReport = JSON.parse(log.mock.calls.at(-1)![0] as string);
   expect(jsonReport).toMatchObject({ schema: 'fleet.job-latency.v1', known: false, jobs: null, ignored_events: null });
   expect(jsonReport.phases.every((p: { total_seconds: unknown }) => p.total_seconds === null)).toBe(true);
+  expect(jsonReport.git_contention).toEqual({
+    checkout_p90_ms: null, checkout_measured_jobs: null, recovery_measured_jobs: null,
+    manual_recoveries_per_100_observed_jobs: null, machines: null,
+  });
   expect(await cmdFleetJobLatency(['--json', '--json'])).toBe(2);
   expect(typeof (await FLEET_SUBCOMMAND_LOADERS['job-latency']!()).cmdFleetJobLatency).toBe('function');
+});
+
+it('reports measured local Git operations and exact cross-lane overlaps only', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  expect(await cmdFleetJobLatency(['--jobs', gitFixture, '--json'])).toBe(0);
+  const report: ReturnType<typeof jobLatency> = JSON.parse(log.mock.calls[0]![0] as string);
+  expect(report).toMatchObject({ jobs: 3, ignored_events: 0, git_contention: {
+    checkout_p90_ms: 4000, checkout_measured_jobs: 3, recovery_measured_jobs: 2, manual_recoveries_per_100_observed_jobs: 50,
+  } });
+  const op = (machine: string, lane: string, operation: string) => report.git_contention?.machines
+    ?.find(m => m.machine === machine)?.lanes.find(l => l.lane === lane)?.operations.find(o => o.operation === operation);
+  expect(op('mac-a', 'work', 'index.lock')).toMatchObject({ timed_samples: 2, p90_ms: 110, failures: { samples: 2, total: 1 } });
+  expect(op('mac-a', 'work', 'worktree_add')).toMatchObject({ timed_samples: 1, p90_ms: 325 });
+  expect(op('mac-a', 'work', 'worktree_remove')).toMatchObject({ timed_samples: 1, p90_ms: 100 });
+  expect(op('mac-a', 'work', 'fetch')).toMatchObject({ p90_ms: 1000, retries: { samples: 2, total: 2 }, concurrent_retries: { samples: 2, total: 2 } });
+  expect(op('mac-a', 'fast', 'push')).toMatchObject({ retries: { samples: 2, total: 5 }, concurrent_retries: { samples: 1, total: 1 } });
+  expect(op('mac-b', 'mid', 'fetch')).toMatchObject({ retries: { samples: 1, total: 0 }, concurrent_retries: { samples: null, total: null } });
+  expect(op('mac-b', 'mid', 'worktree_remove')).toMatchObject({ timed_samples: null, p90_ms: null });
+  expect(jobLatency(await readFile(fixture, 'utf8')).git_contention).toMatchObject({ machines: null, recovery_measured_jobs: null });
+  expect(mergeQueueLatency(await readFile(gitFixture, 'utf8'))).not.toHaveProperty('git_contention');
 });
 
 const event = (event: string, ts: string | null) => ({ job: 'attempt-1', event, ts });

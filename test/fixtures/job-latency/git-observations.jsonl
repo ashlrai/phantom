@@ -1,0 +1,16 @@
+{"job":"a","event":"launch","ts":"2026-01-01T00:00:00Z"}
+{"job":"a","event":"checkout_complete","ts":"2026-01-01T00:00:02Z","manual_checkout_recovery":true}
+{"job":"b","event":"launch","ts":"2026-01-01T00:00:00Z"}
+{"job":"b","event":"checkout_complete","ts":"2026-01-01T00:00:04Z","manual_checkout_recovery":false}
+{"job":"c","event":"launch","ts":"2026-01-01T00:00:00Z"}
+{"job":"c","event":"checkout_complete","ts":"2026-01-01T00:00:01Z"}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"fetch","elapsed_ms":900,"ts":"2026-01-01T00:00:01Z","retries":2}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"fetch","elapsed_ms":1000,"ts":"2026-01-01T00:00:01Z","retries":0}
+{"event":"git_operation","machine":"mac-a","lane":"fast","operation":"push","elapsed_ms":200,"ts":"2026-01-01T00:00:00.500Z","retries":1}
+{"event":"git_operation","machine":"mac-a","lane":"fast","operation":"push","elapsed_ms":1000,"ts":"2026-01-01T00:00:02Z","retries":4}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"worktree_add","elapsed_ms":325}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"worktree_remove","elapsed_ms":100}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"index.lock","elapsed_ms":110,"failed":true}
+{"event":"git_operation","machine":"mac-a","lane":"work","operation":"index.lock","elapsed_ms":0,"failed":false}
+{"event":"git_operation","machine":"mac-b","lane":"mid","operation":"fetch","elapsed_ms":900,"ts":"2026-01-01T00:00:01Z","retries":0}
+{"event":"git_operation","machine":"mac-b","lane":"mid","operation":"worktree_remove","elapsed_ms":-1}
