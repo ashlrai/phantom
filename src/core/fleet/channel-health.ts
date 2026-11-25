@@ -242,6 +242,7 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
           if (config.slack.botTokenRef === undefined) missing.push('slack bot token reference');
           if (config.slack.appTokenRef === undefined) missing.push('slack app token reference');
           if (config.slack.map.length === 0) missing.push('slack channel mapping');
+          if (!config.teamIdentities.some((identity) => identity.channel === 'slack')) missing.push('slack team identity');
         }
         return missing;
       },
