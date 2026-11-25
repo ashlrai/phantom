@@ -110,6 +110,32 @@ describe('readNodesView', () => {
     expect(nodesThatCanTake(view, 'claude').map(row => row.name)).toEqual(['node-a']);
   });
 
+  it('standalone registry: records are this computer whatever id they joined under', () => {
+    const local = (nodes: NodeRecord[]): NodesRegistry => ({ source: 'local', selfNode: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } });
+    // The documented join (`phm node join --node laptop --owner acme --caps
+    // build,gh`) leaves a record whose id is not this computer's tailnet name.
+    // The standalone store is single-host, so the record is this computer:
+    // the self row reports Phantom running and the peer named laptop stays
+    // not joined instead of inheriting the local heartbeat.
+    const view = readNodesView(deps(tailnet([peer('laptop', true)]), local([node('laptop', { caps: ['build', 'gh'], slots: undefined })])));
+    expect(view.nodes.map(row => [row.name, row.isSelf, row.phantom, row.state])).toEqual([
+      ['node-a', true, 'running', 'Phantom running; free slots unknown'],
+      ['laptop', false, 'not-running', 'reachable but Phantom not running: run `phm node join` there'],
+    ]);
+    expect(view.nodes[0]).toMatchObject({ joined: true, joinCommand: null, lanes: ['build', 'gh'], jobsRunning: [], freeSlots: 'unknown' });
+    expect(view.nodes[1]).toMatchObject({ joined: false, joinCommand: 'phm node join', reachable: true, lanes: 'unknown' });
+  });
+
+  it('standalone registry: an expired local session puts this computer back to not running', () => {
+    const view = readNodesView(deps(tailnet([]), { source: 'local', selfNode: null, state: {
+      version: 'drive.nodes.v1', sequence: 3, observedAt: NOW - 1_000,
+      nodes: [node('laptop', { expiresAt: NOW - 1 })], leader: null, jobs: [] } }));
+    expect(view.nodes).toHaveLength(1);
+    expect(view.nodes[0]).toMatchObject({ isSelf: true, phantom: 'not-running', stateCode: 'not-running',
+      state: 'reachable but Phantom not running: run `phm node join` here' });
+  });
+
   it('missing tailscale: reachability is unknown with the reason, registry facts still shown', () => {
     const view = readNodesView(deps(null, registry([node('node-a'), node('node-b')])));
     expect(view.reasons).toEqual(['tailscale unavailable or status unreadable']);

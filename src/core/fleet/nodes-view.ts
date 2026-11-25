@@ -136,9 +136,16 @@ export function buildNodesView(
     if (peer.name === UNKNOWN || MOBILE_OS.test(peer.os) || machines.some(m => m.name.toLowerCase() === peer.name.toLowerCase())) continue;
     machines.push({ name: peer.name, isSelf: false, reachable: peer.online, lastSeen: peer.online === true ? asOf : peer.lastSeen, records: [] });
   }
+  // The standalone registry (~/.ashlr/nodes) is single-host authority: every
+  // record in it is a node session on this computer, whatever id it joined
+  // under. Those records attach to this machine before any tailnet name is
+  // consulted, so a local id matching a peer's name cannot mark that peer
+  // as running Phantom — and this computer stops claiming it never joined.
+  const localRegistry = registry?.source === 'local';
   for (const record of state?.nodes ?? []) {
     const ids = [record.nodeId, record.capacity?.hostId].filter((id): id is string => typeof id === 'string');
-    let machine = machines.find(m => (m.isSelf && record.nodeId === registry?.selfNode) || ids.some(id => aliasMatches(id, m.name)));
+    let machine = localRegistry ? machines.find(m => m.isSelf)
+      : machines.find(m => (m.isSelf && record.nodeId === registry?.selfNode) || ids.some(id => aliasMatches(id, m.name)));
     if (!machine) {
       // Registered but not on the tailnet read: the heartbeat is the only sighting.
       machine = { name: safe(record.nodeId), isSelf: false, reachable: UNKNOWN, lastSeen: iso(record.heartbeatAt), records: [] };

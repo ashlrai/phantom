@@ -90,8 +90,12 @@ function diskFreeByName(view: NodesView, registry: NodesRegistry | null, localDi
   for (const row of view.nodes) {
     if (row.isSelf) { out.set(row.name, localDisk); continue; }
     if (row.reachable === false) continue;
-    const record = registry?.state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
-      .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
+    // The standalone registry is single-host: its records are this computer's
+    // sessions, so a peer whose name matches a local node id must not inherit
+    // this machine's disk measurement.
+    const record = registry?.source === 'local' ? undefined
+      : registry?.state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
+        .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     out.set(row.name, record?.hostStats?.diskFree ?? null);
   }
   return out;

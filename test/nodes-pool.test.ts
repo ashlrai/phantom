@@ -22,6 +22,10 @@ const registry = (nodes: NodeRecord[]): NodesRegistry => ({
   source: 'pool-witness', selfNode: 'node-a',
   state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } satisfies NodesState,
 });
+const localRegistry = (nodes: NodeRecord[]): NodesRegistry => ({
+  source: 'local', selfNode: null,
+  state: { version: 'drive.nodes.v1', sequence: 9, observedAt: NOW - 1_000, nodes, leader: null, jobs: [] } satisfies NodesState,
+});
 const peer = (name: string, online: boolean, lastSeen = '2026-11-17T11:00:00Z') => ({ HostName: name, OS: 'macOS', Online: online, LastSeen: lastSeen });
 const tailnet = (peers: Record<string, unknown>[]) => JSON.stringify({
   BackendState: 'Running', Self: { HostName: 'node-a' }, Peer: Object.fromEntries(peers.map((p, i) => [`peer-${i}`, p])),
@@ -70,6 +74,16 @@ describe('readNodesPool', () => {
     expect(b).toMatchObject({ status: 'online', freeSlots: 'unknown', load: 'unknown', freeMemoryBytes: 'unknown', freeDiskGb: 'unknown', offload: 'unknown' });
     expect(pool.total).toMatchObject({ macs: 2, freeSlots: 2, slotsUnknown: 1, line: '2 Macs, 2 free slots (1 not measured)' });
     expect(poolText(pool)).toContain('● node-b: online | free slots unknown | running nothing | load unknown | memory free unknown | disk free unknown | offload unknown');
+  });
+
+  it('standalone registry: a peer named like a local node id never inherits this disk', () => {
+    // `phm node join --node laptop` on this Mac writes the standalone store;
+    // a tailnet peer also named laptop is a different computer and must not
+    // show this machine's host-stats disk as its own.
+    const pool = readNodesPool({ view: deps([peer('laptop', true)],
+      localRegistry([node('laptop', { hostStats: stats(8, 1, 55) })])), readOffload: () => false });
+    expect(pool.nodes.find(n => n.isSelf)).toMatchObject({ freeDiskGb: 214.7 });
+    expect(pool.nodes.find(n => n.name === 'laptop')).toMatchObject({ isSelf: false, freeDiskGb: 'unknown' });
   });
 
   it('a failing reader never throws: no registry and no setting read as unknown', () => {
