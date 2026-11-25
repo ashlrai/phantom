@@ -10,9 +10,11 @@
  * landing, whether conflicting PRs are piling up, and what is blocked on
  * Mason.
  *
- * RECOVERY STATUS. This restores the #4070 writer path only — the protected
- * leader.ts tick hook and CLI dialect were not recovered, so nothing calls
- * this at runtime yet; wiring the tick is an explicit owner follow-up.
+ * WIRED. leaderTick (core/vision/leader.ts) records one board per tick —
+ * through the deps.board.record seam when a test injects one, else a dynamic
+ * import of this module — and `phm fleet board --leader`, the fleet-board API
+ * reader (leader-journal.ts) and the console pane all serve the same file.
+ * test/fleet-board.test.ts locks both the injected and the real-writer paths.
  *
  * LOOPBACK-SAFE AND BOUNDED. Every input is a local file under the runs dir
  * (queue/ready.tsv, queue/jobs.jsonl, NEEDS-MASON.md) through the same
