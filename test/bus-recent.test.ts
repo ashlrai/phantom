@@ -107,6 +107,30 @@ describe('phm bus recent', () => {
       .toEqual({ ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' });
   });
 
+  it('the result filter keeps only work.result receipts reporting that outcome', () => {
+    const root = store();
+    const post = (id: string, at: number, body: Record<string, unknown>) =>
+      expect(appendBusInbox({ id, from: 'claude', to: 'leader', priority: 'P2', ttl: 86_400_000, body },
+        { root, now: () => at }).status).toBe('posted');
+    const receipt = (id: string, at: number, outcome: string) => post(id, at,
+      { kind: 'work.result', jobId: 'RQ-RES1', claimKey: 'job:RQ-RES1',
+        queueId: 'peer-work-0123456789abcdef0123456789abcdef',
+        receiptId: 'pw-0123456789abcdef0123456789abcdef', outcome });
+    receipt('w1', T0, 'failed');
+    receipt('w2', T0 + 1_000, 'complete');
+    post('rel1', T0 + 2_000, { kind: 'work.release', claimKey: 'job:RQ-RES1', token: 'tok-1', outcome: 'released' });
+    const failed = readBusRecent({ result: 'failed' }, { root, now: () => NOW });
+    expect(failed.ok && failed.result.messages!.map(m => m.summary)).toEqual(['failed']);
+    const complete = readBusRecent({ result: 'complete' }, { root, now: () => NOW });
+    expect(complete.ok && complete.result.messages!.map(m => m.summary)).toEqual(['complete']);
+    const none = readBusRecent({ result: 'admitted' }, { root, now: () => NOW });
+    expect(none.ok && none.result.messages).toEqual([]);
+    // An outcome outside the work-result vocabulary is a usage error, never
+    // a silent empty page — the same refusal the work feed's --result gives.
+    expect(readBusRecent({ result: 'released' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--result takes one of reserved, admitted, complete, failed.' });
+  });
+
   it('the CLI: help exits 0, a bad flag exits 2', async () => {
     const lines: string[] = [];
     expect(await cmdBusRecent(['--help'], t => lines.push(t))).toBe(0);

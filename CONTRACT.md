@@ -2614,7 +2614,10 @@ paths, GATES files) are refused by the writer and ignored by the resolver. See
 claim and work-feed schemas described in [Agent Bus v2](docs/AGENT-BUS.md#v2),
 plus `busBodyThread(body)`, the read-side predicate that returns the `thread`
 label a `note`/`context` body carries (null for every other kind and shape),
-and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
+`busBodyResultOutcome(body)`, the read-side predicate that returns the
+`outcome` a `work.result` body reports (null for every other kind and
+shape — a `work.release` body's own `released`/`completed` vocabulary stays
+out), and the exported `repoSlugSchema` — the `owner/name` slug `work.post` and
 `workJob` enforce and `busWorkFeedRepoKey` validates `--repo` feed filters
 against. `note`/`context` bodies may also carry `inReplyTo`, the printable
 envelope-id citation naming the message they answer — the same field
@@ -4182,7 +4185,9 @@ keeps only rows received strictly before its cutoff, composing with `--since`
 into one `[since, before)` window. `phm fleet map messages`, `phm fleet
 messages` and GET `/api/fleet/map/messages` share the `phm messages` filter
 vocabulary — agent/with, kind, priority, job, thread, channel, contains,
-from/exclude-from, in-reply-to, id, body-kind and to — applied by the same
+from/exclude-from, in-reply-to, id, body-kind, to and result (the
+kind-scoped `work.result` outcome match `busBodyResultOutcome` applies,
+validated against `WORK_RESULT_OUTCOMES`) — applied by the same
 `matchAgentMessages` pipeline every bus read uses, so a filtered question
 gets the same answer on each. The existing
 `fleet.map-messages.v1` adds optional scrubbed `text` (8192 characters); receipts

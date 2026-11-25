@@ -2,7 +2,7 @@
 import { formatMapMessagesText, MAP_MESSAGES_MAX_LIMIT, readMapMessages,
   type MapMessagesFlags } from '../core/fleet/map-messages.js';
 
-export const MAP_MESSAGES_USAGE = `Usage: phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit <1-${MAP_MESSAGES_MAX_LIMIT}>]
+export const MAP_MESSAGES_USAGE = `Usage: phm fleet map messages [--json] [--since <10m|2h|1d|ISO|epoch>] [--before <10m|2h|1d|ISO|epoch>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <1-${MAP_MESSAGES_MAX_LIMIT}>]
 
 The last agent-to-agent messages (default: the last 15 minutes, newest 20),
 one line each: who to whom, what kind, and a short redacted summary. Never the
@@ -14,7 +14,10 @@ thread label; --channel keeps posts addressed to group:<name>:*; --contains
 keeps summaries carrying that text; --from/--exclude-from keep or drop one
 sender's mail; --in-reply-to keeps only envelopes citing that id, --id
 keeps only the envelope whose own wire id equals it and --body-kind keeps
-only bodies carrying that exact kind discriminator — with the same matching
+only bodies carrying that exact kind discriminator; --result keeps only
+work.result receipts whose own outcome strictly equals reserved, admitted,
+complete or failed — the same outcome vocabulary the work feed's --result
+filter validates — with the same matching
 rules and identity resolution \`phm messages --help\` describes. --before
 keeps only messages received strictly before its cutoff, so --since and
 --before read one closed [since, before) window. The map can also open
@@ -27,7 +30,7 @@ const FLAG_KEYS: Record<string, keyof MapMessagesFlags> = {
   '--kind': 'kind', '--priority': 'priority', '--job': 'job', '--thread': 'thread',
   '--channel': 'channel', '--contains': 'contains', '--from': 'from',
   '--exclude-from': 'excludeFrom', '--to': 'to', '--in-reply-to': 'inReplyTo', '--id': 'id',
-  '--body-kind': 'bodyKind', '--limit': 'limit',
+  '--body-kind': 'bodyKind', '--result': 'result', '--limit': 'limit',
 };
 
 export function cmdFleetMapMessages(args: string[], rowsOnly = false): number {

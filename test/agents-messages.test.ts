@@ -138,6 +138,28 @@ describe('phm agents messages', () => {
       .toEqual({ ok: false, error: '--kind takes one of ask, reply, handoff, status, blocker.' });
     expect(readAgentsMessages({ bodyKind: 'has space' }, { root, now: () => NOW }))
       .toEqual({ ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' });
+    expect(readAgentsMessages({ result: 'released' }, { root, now: () => NOW }))
+      .toEqual({ ok: false, error: '--result takes one of reserved, admitted, complete, failed.' });
+  });
+
+  it('the --result filter keeps only work.result receipts reporting that outcome', () => {
+    const receipt = (at: number, outcome: string): Said => [at, 'worker', 'leader',
+      { kind: 'work.result', jobId: 'RQ-RES1', claimKey: 'job:RQ-RES1',
+        queueId: 'peer-work-0123456789abcdef0123456789abcdef',
+        receiptId: 'pw-0123456789abcdef0123456789abcdef', outcome }];
+    const root = store([
+      receipt(T0, 'failed'), receipt(T0 + 1_000, 'complete'),
+      // A work.release's own released/completed vocabulary and a kindless
+      // note's outcome field never satisfy the kind-scoped match.
+      [T0 + 2_000, 'worker', 'leader', { kind: 'work.release', claimKey: 'job:RQ-RES1', token: 'tok-1', outcome: 'released' }],
+      [T0 + 3_000, 'worker', 'leader', { text: 'all done', outcome: 'failed' }],
+    ]);
+    const summaries = (input: AgentsMessagesFlags) => read(root, input).messages!.map(m => m.summary);
+    expect(summaries({ result: 'failed' })).toEqual(['failed']);
+    expect(summaries({ result: 'complete' })).toEqual(['complete']);
+    expect(summaries({ result: 'admitted' })).toEqual([]);
+    expect(summaries({ result: 'failed', agent: 'worker' })).toEqual(['failed']);
+    expect(read(root, { result: 'failed' }).matched).toBe(1);
   });
 
   it('aggregates edge weights per node pair over the whole window, keeping the last 5 summaries', () => {
@@ -209,10 +231,13 @@ describe('phm agents messages', () => {
     expect(byId.body!.messages!.map(m => m.summary)).toEqual(['on it?']);
     const byBodyKind = await call(`${AGENT_MESSAGES_PATH}?bodyKind=note`);
     expect(byBodyKind).toMatchObject({ handled: true, status: 200, body: { matched: 0 } });
+    const byResult = await call(`${AGENT_MESSAGES_PATH}?result=failed`);
+    expect(byResult).toMatchObject({ handled: true, status: 200, body: { matched: 0 } });
     expect((await call(`${AGENT_MESSAGES_PATH}?bogus=1`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?to=has%20space`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?bodyKind=has%20space`)).status).toBe(400);
+    expect((await call(`${AGENT_MESSAGES_PATH}?result=released`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?id=a&id=b`)).status).toBe(400);
     expect((await call(`${AGENT_MESSAGES_PATH}?since=never`)).body!.error).toContain('--since');
     expect((await call(`${AGENT_MESSAGES_PATH}?before=never`)).body!.error).toContain('--before');

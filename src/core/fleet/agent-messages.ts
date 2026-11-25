@@ -6,7 +6,8 @@
  * identities, and every emitted string passes the shared secret scrub.
  */
 import { scrubSecrets } from '../util/scrub.js';
-import { busBodyKind, busBodyThread, PROVIDERS } from '../agents/bus-v2-schema.js';
+import { busBodyKind, busBodyResultOutcome, busBodyThread, PROVIDERS, WORK_RESULT_OUTCOMES,
+  type WorkResultOutcome } from '../agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobId, busBodySummary, busInboxJobMarker, jobAnnotationFromFeed, labelIdentityOf,
   type BusEnvelopeLookupJob } from '../agents/bus-unified.js';
 import { readBusWorkFeed, type BusWorkFeedReadResult } from '../agents/bus-work-feed-read.js';
@@ -52,8 +53,8 @@ export interface AgentMessages {
   /** Damaged bus rows skipped while reading. */
   skipped: number;
 }
-/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `from` keeps only the messages one sender wrote — the same sender-inclusion match `comms bus read|watch --from`, `agents bus inbox --from`, `agents bus channel read --from`, `agents bus wakes --from`, `fleet bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each row's `from` only so rows merely addressed to that agent never pass; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does; `inReplyTo` keeps only envelopes whose object body cites that envelope id through its own `inReplyTo` field — a row-level filter applied before projection on the raw body, the shared `busBodyInReplyToMatch` own-property exact-match rule `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`, `agents bus inbox --in-reply-to` and `agents bus channel read --in-reply-to` apply, never the `replyTo` alias or a substring, so "who answered envelope X" is one filtered read of the whole fleet timeline — replies addressed to anyone, not only the reader's own inbox; `channel` keeps only the envelopes addressed to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `agents bus inbox --channel` and `channel read` match — a row-level filter `readAgentMessages` applies before projection on the raw `to` label, so mail to agents and other rooms never reaches the page while every post in the named room still does; the value is the strict channel-name grammar, never a guessed match; `to` keeps only the envelopes addressed to that routing label — a handle, `agent:` address, stable id or alias of one registered identity matches every label of that identity, an unresolvable ref keeps exact-label matching — the same addressed-to rule `comms bus read|watch --to` and `fleet_bus_inbox`'s `to` apply through `agentRefAddressMatcher`, decided on each row's raw `to` label so "everything addressed to leaders" or "everything addressed to agent X" is one filtered read of the whole fleet timeline; `before` keeps only messages received strictly before its cutoff — the exclusive upper bound every bus read's `--before` applies, composing with `since` into one `[since, before)` window on the receipt time; `id` keeps only the envelope whose own wire id is strictly equal to the value — the same exact-envelope match `comms bus read|watch --id`, `fleet bus-follow --id`, `fleet_bus_inbox`'s `id`, `agents bus inbox --id` and `agents bus channel read --id` apply, never a substring — so "where did envelope X go" is one filtered read of the whole fleet timeline; `bodyKind` keeps only messages whose body carries that exact kind discriminator — the same `busBodyKind` own-field exact match `agents bus inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus wakes --body-kind` and `agents conversations --body-kind` apply, decided on the raw body before projection so a body carrying no discriminator never matches — an unrecognized but printable value is an honest empty page, never an error and never a widened one. */
-export interface AgentMessagesQuery { since?: number; before?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; to?: string; id?: string; bodyKind?: string; limit?: number }
+/** `with` narrows `agent` to the two-way talk between that agent and one other; `kind` keeps one classified kind; `priority` keeps one envelope band; `job` keeps the traffic that names one job; `thread` keeps only note/context bodies carrying that v2 thread label — a row-level filter `readAgentMessages` applies before projection, the same `busBodyThread` match every other bus read's `--thread` applies; `contains` keeps only messages whose scrubbed one-line summary carries the needle as a case-insensitive substring — the fleet-wide text search no other bus read offers; `from` keeps only the messages one sender wrote — the same sender-inclusion match `comms bus read|watch --from`, `agents bus inbox --from`, `agents bus channel read --from`, `agents bus wakes --from`, `fleet bus-follow --from` and `fleet_agent_inbox`'s `from` apply, deciding on each row's `from` only so rows merely addressed to that agent never pass; `excludeFrom` drops mail sent under every registered spelling of one identity — the same sender-exclusion rule `comms bus read|watch --exclude-from`, `fleet bus-follow --exclude-from`, `fleet_bus_inbox`'s `excludeFrom` and `agents bus inbox`/`channel read`'s `excludeFrom` apply, deciding on each row's `from` only, so a flooding sender never reaches the page while every other sender's traffic still does; `inReplyTo` keeps only envelopes whose object body cites that envelope id through its own `inReplyTo` field — a row-level filter applied before projection on the raw body, the shared `busBodyInReplyToMatch` own-property exact-match rule `comms bus read|watch --in-reply-to`, `fleet bus-follow --in-reply-to`, `fleet_bus_inbox`'s `inReplyTo`, `agents bus inbox --in-reply-to` and `agents bus channel read --in-reply-to` apply, never the `replyTo` alias or a substring, so "who answered envelope X" is one filtered read of the whole fleet timeline — replies addressed to anyone, not only the reader's own inbox; `channel` keeps only the envelopes addressed to `group:<channel>:*` — the room's whole traffic under every topic, the same address prefix `agents bus inbox --channel` and `channel read` match — a row-level filter `readAgentMessages` applies before projection on the raw `to` label, so mail to agents and other rooms never reaches the page while every post in the named room still does; the value is the strict channel-name grammar, never a guessed match; `to` keeps only the envelopes addressed to that routing label — a handle, `agent:` address, stable id or alias of one registered identity matches every label of that identity, an unresolvable ref keeps exact-label matching — the same addressed-to rule `comms bus read|watch --to` and `fleet_bus_inbox`'s `to` apply through `agentRefAddressMatcher`, decided on each row's raw `to` label so "everything addressed to leaders" or "everything addressed to agent X" is one filtered read of the whole fleet timeline; `before` keeps only messages received strictly before its cutoff — the exclusive upper bound every bus read's `--before` applies, composing with `since` into one `[since, before)` window on the receipt time; `id` keeps only the envelope whose own wire id is strictly equal to the value — the same exact-envelope match `comms bus read|watch --id`, `fleet bus-follow --id`, `fleet_bus_inbox`'s `id`, `agents bus inbox --id` and `agents bus channel read --id` apply, never a substring — so "where did envelope X go" is one filtered read of the whole fleet timeline; `bodyKind` keeps only messages whose body carries that exact kind discriminator — the same `busBodyKind` own-field exact match `agents bus inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus wakes --body-kind` and `agents conversations --body-kind` apply, decided on the raw body before projection so a body carrying no discriminator never matches — an unrecognized but printable value is an honest empty page, never an error and never a widened one; `result` keeps only the `work.result` receipts reporting that one outcome — the same `WORK_RESULT_OUTCOMES` codes the work feed's `--result` filter and the retained `work.result` citation match (`reserved`, `admitted`, `complete`, `failed`) — decided on the raw body's own `kind`/`outcome` fields before projection through `busBodyResultOutcome`, so every other body kind (a `work.release` body's own `released`/`completed` outcome included) and a `work.result` carrying no outcome never matches — the envelope-level audit trail the feed's per-job newest-result `--result` cannot show, since a job that failed then recovered still lists its earlier `failed` receipt here. */
+export interface AgentMessagesQuery { since?: number; before?: number; agent?: string; with?: string; kind?: AgentMessageKind; priority?: BusPriority; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; to?: string; id?: string; bodyKind?: string; result?: WorkResultOutcome; limit?: number }
 
 type Body = Record<string, unknown>;
 const record = (value: unknown): Body | null =>
@@ -291,9 +292,10 @@ export function filterAgentMessages(messages: readonly AgentMessage[], query: Ag
  */
 export function matchAgentMessages(rows: readonly BusInboxReceipt[], query: AgentMessagesQuery,
   options: BusInboxOptions = {}, annotateJobs = true): AgentMessage[] {
-  // --thread, --in-reply-to, --channel, --body-kind and --to are row-level
-  // filters applied before projection: the first keeps only note/context
-  // bodies carrying that v2 thread label — the same `busBodyThread` match
+  // --thread, --in-reply-to, --channel, --body-kind, --result and --to are
+  // row-level filters applied before projection: the first keeps only
+  // note/context bodies carrying that v2 thread label — the same
+  // `busBodyThread` match
   // `agents bus inbox --thread`, `channel read --thread`, `comms bus
   // read|watch --thread` and `fleet bus-follow --thread` apply — the
   // second keeps only object bodies whose own `inReplyTo` cites the
@@ -309,7 +311,12 @@ export function matchAgentMessages(rows: readonly BusInboxReceipt[], query: Agen
   // `busBodyKind` match `agents bus inbox --body-kind`, `channel read
   // --body-kind`, `agents bus wakes --body-kind` and `agents
   // conversations --body-kind` apply, so a body carrying no discriminator
-  // never matches, and the fifth keeps only envelopes whose raw `to`
+  // never matches. `result` keeps only `work.result` bodies whose own
+  // `outcome` field strictly equals the value — the `busBodyResultOutcome`
+  // own-field match the work feed's `--result` codes share, so every
+  // other body kind (a `work.release` outcome included) and a result
+  // carrying no outcome never matches — and the fifth keeps only
+  // envelopes whose raw `to`
   // routing label the addressed-to predicate accepts — the shared
   // `agentRefAddressMatcher` rule `comms bus read|watch --to` and
   // `fleet_bus_inbox`'s `to` apply, resolving the ref through the registry
@@ -328,6 +335,7 @@ export function matchAgentMessages(rows: readonly BusInboxReceipt[], query: Agen
     (query.thread === undefined || busBodyThread(row.envelope.body) === query.thread) &&
     (query.inReplyTo === undefined || busBodyInReplyToMatch(row.envelope.body, query.inReplyTo)) &&
     (query.bodyKind === undefined || busBodyKind(row.envelope.body) === query.bodyKind) &&
+    (query.result === undefined || busBodyResultOutcome(row.envelope.body) === query.result) &&
     (channelPrefix === undefined || row.envelope.to.startsWith(channelPrefix)));
   const registryRead = query.agent === undefined && query.with === undefined && query.from === undefined && query.excludeFrom === undefined && query.to === undefined
     ? undefined : readAgentRegistry({ root: options.root });
@@ -390,7 +398,14 @@ export function matchAgentMessages(rows: readonly BusInboxReceipt[], query: Agen
  * the body-discriminator filter those same reads share — only a body whose
  * `busBodyKind` strictly equals the value keeps the row, decided on the raw
  * body before projection so "every work.post on the bus" or "every wake
- * hint" is one filtered read of the whole timeline.
+ * hint" is one filtered read of the whole timeline. `result` is the
+ * work-result outcome filter the feed's `--result` shares at envelope
+ * granularity — only a `work.result` body whose own `outcome` strictly
+ * equals the value keeps the row, decided on the raw body before
+ * projection through `busBodyResultOutcome`, so every other body kind and
+ * a result carrying no outcome never matches, and "every `failed` result
+ * receipt the fleet reported" — including ones a job's newer status has
+ * since superseded — is one filtered read of the whole timeline.
  */
 export function readAgentMessages(query: AgentMessagesQuery = {}, options: BusInboxOptions = {}): AgentMessages {
   const scan = scanBusInbox(options);
@@ -409,7 +424,7 @@ export function parseSince(value: string, now = Date.now()): number | null {
 }
 
 /** Shared validation for CLI flags and API query params. */
-export function parseAgentMessagesQuery(input: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; to?: string; id?: string; bodyKind?: string; limit?: string }, now = Date.now()):
+export function parseAgentMessagesQuery(input: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; inReplyTo?: string; channel?: string; to?: string; id?: string; bodyKind?: string; result?: string; limit?: string }, now = Date.now()):
   { ok: true; query: AgentMessagesQuery } | { ok: false; error: string } {
   const query: AgentMessagesQuery = {};
   if (input.kind !== undefined) {
@@ -508,6 +523,16 @@ export function parseAgentMessagesQuery(input: { since?: string; before?: string
       return { ok: false, error: '--body-kind takes a body kind (printable, 1-128 chars).' };
     }
     query.bodyKind = input.bodyKind;
+  }
+  if (input.result !== undefined) {
+    // The same WORK_RESULT_OUTCOMES enum the work feed's --result filter
+    // validates — an unknown outcome is a usage error, never a silent
+    // empty page, so the flag can never disagree with the feed about
+    // which codes a work.result body can report.
+    if (!(WORK_RESULT_OUTCOMES as readonly string[]).includes(input.result)) {
+      return { ok: false, error: `--result takes one of ${WORK_RESULT_OUTCOMES.join(', ')}.` };
+    }
+    query.result = input.result as WorkResultOutcome;
   }
   if (input.limit !== undefined) {
     const limit = Number(input.limit);

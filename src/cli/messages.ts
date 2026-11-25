@@ -1,5 +1,5 @@
 /** `phm messages`: thin argv layer over core/fleet/agent-messages.ts. */
-export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--limit <n>] [--text]
+export const MESSAGES_USAGE = `Usage: phm messages [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--agent <name|lane>] [--with <name|lane>] [--kind <ask|reply|handoff|status|blocker>] [--priority <P0|P1|P2|P3>] [--job <id>] [--thread <label>] [--channel <name>] [--contains <text>] [--from <name|lane>] [--exclude-from <name|lane>] [--to <name|lane|label>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <reserved|admitted|complete|failed>] [--limit <n>] [--text]
 Agent-to-agent messages on the local agent bus, newest first: id, ts, priority,
 from, to, kind (ask, reply, handoff, status, blocker), a one-line scrubbed
 summary, and the related job or PR when known. --before keeps only messages
@@ -56,14 +56,19 @@ kind discriminator — the same busBodyKind own-field exact match agents
 bus inbox --body-kind, agents bus channel read --body-kind, agents bus
 wakes --body-kind and agents conversations --body-kind apply, so "every
 work.post on the bus" or "every wake hint" is one filtered read of the
-whole fleet timeline; JSON by default; --text for
+whole fleet timeline; --result keeps only work.result receipts whose own
+outcome strictly equals reserved, admitted, complete or failed — the same
+outcome vocabulary the work feed's --result filter validates, so every
+result receipt the fleet reported, including ones a job's newer status
+has since superseded, is one filtered read of the whole fleet timeline;
+JSON by default; --text for
 people. Read-only.
 Damaged bus records are skipped and counted. Exit 0 read, 1 bus unreadable, 2 bad usage.`;
 
 export async function cmdMessages(args: string[]): Promise<number> {
   if (args.some(a => a === '--help' || a === '-h' || a === 'help')) { console.log(MESSAGES_USAGE); return 0; }
   let text = false;
-  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; channel?: string; bodyKind?: string; limit?: string } = {};
+  const values: { since?: string; before?: string; agent?: string; with?: string; kind?: string; priority?: string; job?: string; thread?: string; contains?: string; from?: string; excludeFrom?: string; to?: string; inReplyTo?: string; id?: string; channel?: string; bodyKind?: string; result?: string; limit?: string } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--text') { text = true; continue; }
@@ -72,7 +77,7 @@ export async function cmdMessages(args: string[]): Promise<number> {
       : arg === '--kind' ? 'kind' : arg === '--priority' ? 'priority' : arg === '--job' ? 'job'
       : arg === '--thread' ? 'thread' : arg === '--channel' ? 'channel' : arg === '--contains' ? 'contains'
       : arg === '--from' ? 'from' : arg === '--exclude-from' ? 'excludeFrom' : arg === '--to' ? 'to' : arg === '--in-reply-to' ? 'inReplyTo'
-      : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind' : arg === '--limit' ? 'limit' : null;
+      : arg === '--id' ? 'id' : arg === '--body-kind' ? 'bodyKind' : arg === '--result' ? 'result' : arg === '--limit' ? 'limit' : null;
     const value = args[i + 1];
     if (!key || values[key] !== undefined || value === undefined || value.startsWith('--')) { console.error(MESSAGES_USAGE); return 2; }
     values[key] = value; i++;
