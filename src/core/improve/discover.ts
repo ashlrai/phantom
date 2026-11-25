@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Seventy-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-five sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -962,6 +962,41 @@
  *     inherits the items since the journal describes this install's
  *     land path — the row's repo names the publish target, quoted
  *     inside the cells;
+ *   - the seat-routing decision journal's recurring adverse routing
+ *     evidence: the ShadowDecisionRecord rows recordShadowDecision
+ *     appends to routing/decisions.jsonl (and its decisions.1.jsonl
+ *     predecessor after the 2 MB rotation) for every seat routing
+ *     evaluation the fleet records — the daemon's live routeWorkItem
+ *     seatDecisions beside dispatches, the beside-dispatch shadow
+ *     comparisons (`actual: {engine, seatId: null}` — what the legacy
+ *     path ACTUALLY ran while the seat router's capacity-snapshot view
+ *     decided), and the non-dispatch routing surfaces — the router
+ *     gateway's API completions and the leader's seat choice — which
+ *     carry `actual: null` (seatDecisionBacklogItems below). Until now
+ *     the journal's only readers were display and attribution
+ *     surfaces — the budget decisions route, the Fleet router
+ *     decision timeline, `phm telemetry` and reserve-breach
+ *     attribution, reports someone had to run — so recurring adverse
+ *     routing evidence never became work. The dispatch path's own
+ *     per-item evidence stays with runtime-journal-backlog
+ *     (fleet/runtime/runs.jsonl); this feed covers only what that
+ *     journal cannot see: a 'shadow-blind' cell while the seat
+ *     router's snapshot view kept finding no eligible seat on
+ *     evaluations whose work ran anyway on the recorded legacy engine
+ *     — the shadow stream measuring a router that sees a different
+ *     fleet than the one dispatching — and, on the non-dispatch
+ *     surfaces, a 'no-seat' cell per source while evaluations keep
+ *     returning seatId null, plus a 'seat-excluded' cell per
+ *     (seat, reason kind) while a surface keeps excluding one seat
+ *     for evidence-broken kinds (the shared adverse vocabulary:
+ *     unknown-usage, unreachable, signed-out, other; capacity-truth
+ *     and policy kinds never emit). Each cell emits only at the
+ *     recurring bars of evidence rows across distinct UTC days inside
+ *     the 7-day window, daemon-source non-comparison rows and
+ *     dispatched decisions stay with the runtime journal, 'test'
+ *     rows never fold, truncated tails read as lower bounds, and only
+ *     the fleet's own repository inherits the items since the journal
+ *     describes this install's routing layer;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -1065,6 +1100,7 @@ import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { efficiencyBacklogItems } from './efficiency-backlog.js';
 import { landingsBacklogItems } from './landings-backlog.js';
+import { seatDecisionBacklogItems } from './seat-decision-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2327,6 +2363,36 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // land path — the row's repo names the publish target, quoted
   // inside the cells.
   items.push(...await landingsBacklogItems({ repo }));
+
+  // Seat-routing decision journal: the ShadowDecisionRecord rows
+  // recordShadowDecision appends to routing/decisions.jsonl (and its
+  // decisions.1.jsonl predecessor after the 2 MB rotation) for every
+  // seat routing evaluation — the daemon's live routeWorkItem
+  // seatDecisions beside dispatches, the beside-dispatch shadow
+  // comparisons (`actual: {engine, seatId: null}` — what the legacy
+  // path ACTUALLY ran while the seat router's capacity-snapshot view
+  // decided), and the non-dispatch routing surfaces — the router
+  // gateway's API completions and the leader's seat choice — which
+  // carry `actual: null`. Until now the journal's only readers were
+  // display and attribution surfaces — the budget decisions route,
+  // the Fleet router decision timeline, `phm telemetry` and
+  // reserve-breach attribution, reports someone had to run — so
+  // recurring adverse routing evidence never became work. The
+  // dispatch path's own per-item evidence stays with
+  // runtime-journal-backlog (fleet/runtime/runs.jsonl); this feed
+  // covers only what that journal cannot see: a 'shadow-blind' cell
+  // while the seat router's snapshot view kept finding no eligible
+  // seat on evaluations whose work ran anyway on the recorded legacy
+  // engine, and on the non-dispatch surfaces a 'no-seat' cell per
+  // source plus 'seat-excluded' cells per (seat, evidence-broken
+  // reason kind). Each cell emits only at the recurring bars of
+  // evidence rows across distinct UTC days inside the window,
+  // daemon-source non-comparison rows and dispatched decisions stay
+  // with the runtime journal, 'test' rows never fold, truncated tails
+  // read as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // routing layer.
+  items.push(...await seatDecisionBacklogItems({ repo }));
   return { items, errors };
 }
 
