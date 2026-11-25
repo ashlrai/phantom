@@ -5,7 +5,7 @@ import {
 } from '../src/core/drive/merge-queue-loop.js';
 import { foldMergeEvents } from '../src/core/router/outcomes.js';
 import { drainKey } from '../src/core/drive/refix-loop.js';
-import { dequeueMergeQueuePr, enqueueMergeQueuePr, readSnapshot } from '../scripts/merge-queue-loop.mjs';
+import { dequeueMergeQueuePr, enqueueMergeQueuePr, mergeRetrySweep, readSnapshot } from '../scripts/merge-queue-loop.mjs';
 
 const NOW = 1_700_000_000_000;
 const MIN = 60_000;
@@ -912,5 +912,91 @@ describe('merge-events observation', () => {
       signalAutoMerge: false }).events).toEqual([]);
     // Invalid clocks emit nothing but still return tracking values.
     expect(planMergeQueueEvents({ ...base, observedAt: NaN, action: 'queued', blockers: [], checks: 'SUCCESS', autoMerge: false }).events).toEqual([]);
+  });
+});
+
+describe('mergeRetrySweep', () => {
+  const report = (over: Record<string, unknown> = {}) => JSON.stringify({
+    schema: 'fleet.merge-retry.v1', dryRun: false, ok: true, known: true,
+    max_retries_per_pr: 3,
+    queue_wait: { waiting: 2, oldest_s: 90, total_s: 100, finished: 1, conflicts: 0 },
+    rows: [
+      { repo: 'ashlrai/phantom', pr: 1, action: 'auto-merge-requested' },
+      { repo: 'ashlrai/phantom', pr: 2, action: 'already-armed' },
+      { repo: 'ashlrai/phantom', pr: 3, action: 'needs-person', reason: 'too-many-retries' },
+    ],
+    ...over,
+  });
+  type SweepRun = (args: string[], deps: { gh?: unknown; now?: number; output: (text: string) => void }) => Promise<number>;
+
+  it('invokes the merge-retry command against the cycle ledger with --apply', async () => {
+    const calls: Array<{ args: string[]; deps: { gh?: unknown; now?: number; output: (text: string) => void } }> = [];
+    const gh = async () => ({ ok: true, stdout: '', stderr: '' });
+    const result = await mergeRetrySweep({
+      gh, eventsPath: '/tmp/events.jsonl', apply: true, now: 1234,
+      run: (async (args: string[], deps: { gh?: unknown; now?: number; output: (text: string) => void }) => {
+        calls.push({ args, deps });
+        deps.output(report());
+        return 0;
+      }) as SweepRun,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args).toEqual(['--events', '/tmp/events.jsonl', '--json', '--apply']);
+    expect(calls[0]!.deps.gh).toBe(gh);
+    expect(calls[0]!.deps.now).toBe(1234);
+    expect(result).toEqual({
+      ok: true, known: true, dryRun: false,
+      queue_wait: { waiting: 2, oldest_s: 90, total_s: 100, finished: 1, conflicts: 0 },
+      actions: { 'auto-merge-requested': 1, 'already-armed': 1, 'needs-person': 1 },
+    });
+  });
+
+  it('previews without --apply on a dry-run cycle', async () => {
+    const calls: string[][] = [];
+    const result = await mergeRetrySweep({
+      eventsPath: '/tmp/events.jsonl', apply: false,
+      run: (async (args: string[], deps: { output: (text: string) => void }) => {
+        calls.push(args);
+        deps.output(report({ dryRun: true }));
+        return 0;
+      }) as SweepRun,
+    });
+    expect(calls[0]).toEqual(['--events', '/tmp/events.jsonl', '--json']);
+    expect(result).toMatchObject({ ok: true, known: true, dryRun: true });
+  });
+
+  it('skips without a ledger path and never invokes the command', async () => {
+    let invoked = 0;
+    for (const eventsPath of [undefined, '', null]) {
+      const result = await mergeRetrySweep({ eventsPath, run: (async () => { invoked++; return 0; }) as SweepRun });
+      expect(result).toEqual({ ok: false, known: false, dryRun: false, queue_wait: null, actions: {} });
+    }
+    expect(invoked).toBe(0);
+  });
+
+  it('reports failure without throwing when the command fails or answers garbage', async () => {
+    const failedExit = await mergeRetrySweep({ eventsPath: '/tmp/e', run: (async () => 1) as SweepRun });
+    expect(failedExit).toEqual({ ok: false, known: false, dryRun: false, queue_wait: null, actions: {} });
+    const garbage = await mergeRetrySweep({
+      eventsPath: '/tmp/e',
+      run: (async (_args: string[], deps: { output: (text: string) => void }) => { deps.output('not json'); return 0; }) as SweepRun,
+    });
+    expect(garbage.ok).toBe(false);
+    const threw = await mergeRetrySweep({
+      eventsPath: '/tmp/e',
+      run: (async () => { throw new Error('dist missing'); }) as SweepRun,
+    });
+    expect(threw).toEqual({ ok: false, known: false, dryRun: false, queue_wait: null, actions: {} });
+  });
+
+  it('keeps an unreadable ledger honest: known false, ok false, actions still counted', async () => {
+    const result = await mergeRetrySweep({
+      eventsPath: '/tmp/e',
+      run: (async (_args: string[], deps: { output: (text: string) => void }) => {
+        deps.output(report({ known: false, ok: false, rows: [{ repo: 'ashlrai/phantom', pr: 9, action: 'capped' }] }));
+        return 1;
+      }) as SweepRun,
+    });
+    expect(result).toMatchObject({ ok: false, known: false, actions: { capped: 1 } });
   });
 });
