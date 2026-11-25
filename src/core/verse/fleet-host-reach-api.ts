@@ -53,7 +53,7 @@ export function createFleetHostReachApi(deps: FleetHostReachApiDeps = {}): ApiMo
       try {
         plan = await readNodesPlan({ view: deps.nodesDeps ?? defaultNodesViewDeps(), readQueue: () => (deps.readQueue ?? readQueueOrder)() });
       } catch {
-        plan = { schema: 'phantom.nodes-plan.v1', as_of: generatedAt, nodes: [], assignable: [], unassigned: UNKNOWN, reasons: ['plan: reader failed; all fields unknown'] };
+        plan = { schema: 'phantom.nodes-plan.v1', as_of: generatedAt, nodes: [], assignable: [], unassigned: UNKNOWN, unassigned_reasons: [], reasons: ['plan: reader failed; all fields unknown'] };
       }
       sendJson(res, 200, plan);
       return true;
