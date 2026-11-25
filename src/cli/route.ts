@@ -91,12 +91,15 @@ async function routeFit(args: string[]): Promise<number> {
   }
 }
 
+const ROUTE_USAGE = 'Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json';
+
 export async function cmdRoute(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) { console.log(ROUTE_USAGE); return 0; }
   if (args[0] === 'failover') return routeFailover(args.slice(1));
   if (args[0] === 'decide') return routeDecide(args.slice(1));
   if (args[0] === 'fit') return routeFit(args.slice(1));
   if (args[0] !== 'explain' || args.slice(1).some(a => a !== '--json') || args.length > 2) {
-    console.error('Usage: phm route explain [--json] | phm route decide --input <file|-> [--root <directory>] --json | phm route failover --input <file|-> --failed-lane <lane> --failure <quota|5xx|timeout|near_reset> [--attempted a,b] [--root <directory>] [--record] --json | phm route fit --input <file|-> [--worktree <directory>] --json');
+    console.error(ROUTE_USAGE);
     return 2;
   }
   const report = await explainRoutes();
