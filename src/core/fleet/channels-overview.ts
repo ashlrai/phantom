@@ -277,7 +277,7 @@ export function createDefaultChannelsReader(opts: DefaultChannelsReaderOptions =
           inboundEvidence: async () => {
             try {
               const ev = await inboundEvidence();
-              mark.inbound = ev.store === 'ok' ? ev.rows.map((r) => r.at) : ev.store === 'missing' ? [] : 'unknown';
+              mark.inbound = ev.store === 'ok' ? ev.rows.map((r) => r.at) : 'unknown';
               return ev;
             } catch (e) { mark.inbound = 'unknown'; throw e; }
           },
