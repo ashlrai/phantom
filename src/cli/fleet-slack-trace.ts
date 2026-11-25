@@ -30,7 +30,7 @@ export function readSlackTraceClaims(deps: {
   readBindings?: () => ReturnType<typeof readClaimThreadBindings>;
 } = {}): SlackTraceClaim[] {
   const board = (deps.readBoard ?? readFleetBoard)({ reap: false });
-  if (board.state !== 'known') return [];
+  if (board.state !== 'known') throw new Error('claim board unavailable');
   const bindings = deps.readBindings?.() ?? readClaimThreadBindings(claimNoticePaths(claimNoticeDir()).bindings);
   return board.claims.flatMap((claim) => {
     return bindings.filter((b) => b.claimId === claim.id && b.repo === claim.repo)
@@ -125,29 +125,35 @@ export async function cmdFleetSlackTrace(
     else if (row.outcome === 'bus-failed') counts.busFailed++;
     else counts.unanswered++;
   }
-  let outRows: Array<(typeof rows)[number] & { state?: string; stateAsOf?: string; stateMissing?: string[] }> = rows;
+  let outRows: Array<(typeof rows)[number] & { state?: string; stateAsOf?: string; stateMissing?: string[]; owner?: string; stateSource?: string; claimReceipt?: string }> = rows;
+  let claimSourceHealth: 'ok' | 'unavailable' | undefined;
   if (workState) {
     let claims: readonly SlackTraceClaim[] = [];
     // An unreadable claim store means no claim evidence: rows stay RECEIVED, never ASSIGNED.
-    try { claims = readClaims(); } catch { claims = []; }
+    try { claims = readClaims(); claimSourceHealth = 'ok'; } catch { claimSourceHealth = 'unavailable'; }
     const items = slackTraceRowsToWorkItems(rows, claims);
     outRows = rows.map((row, i) => {
-      const c = classifyWorkItem(items[i]!, collected.asOf);
-      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: c.missing };
+      const item = items[i]!;
+      const c = classifyWorkItem(item, collected.asOf);
+      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: c.missing, stateSource: c.source,
+        ...(c.state === 'ASSIGNED' ? { owner: c.owner ?? item.owner, claimReceipt: item.claimReceipt } : {}) };
     });
   }
-  const trace = { ...collected, rows: outRows, counts, scope, collectionScope };
+  const trace = { ...collected, rows: outRows, counts, scope, collectionScope,
+    ...(workState ? { claimSourceHealth } : {}) };
   if (json) {
     console.log(JSON.stringify(trace));
   } else {
     console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends}) ` +
       `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}` +
-      `${message !== undefined ? ` message=${message}` : ''}; ${scope}`);
+      `${message !== undefined ? ` message=${message}` : ''}; ${scope}` +
+      `${workState ? ` claimSourceHealth=${claimSourceHealth}` : ''}`);
     if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
         `${row.outcome.toUpperCase()}${row.evidence === 'unverified' ? ' (reply identity unverified)' : ''}${row.replyTs !== undefined ? ` reply=${row.replyTs}` : ''}` +
-        `${row.state !== undefined ? ` state=${row.state} missing=${row.stateMissing?.length ? row.stateMissing.join(',') : 'none'}` : ''}`);
+        `${row.state !== undefined ? ` state=${row.state} missing=${row.stateMissing?.length ? row.stateMissing.join(',') : 'none'} asOf=${row.stateAsOf} source=${row.stateSource}` +
+          `${row.owner !== undefined ? ` owner=${row.owner}` : ''}${row.claimReceipt !== undefined ? ` claimReceipt=${row.claimReceipt}` : ''}` : ''}`);
     }
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
