@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi, type Mock } from 'vitest';
+import { BUS_INBOX_MAX_MESSAGES } from '../src/core/fleet/bus-inbox.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -98,7 +99,7 @@ it('resumes a saved cursor in a fresh invocation and reads only the live remaind
   expect(Array.isArray(stored) ? stored : stored.rows).toEqual(envelopes.map((envelope, index) => receipt(index + 1, envelope)));
   expect(await after(['status'], RESUMED_AT)).toEqual({
     source: 'available', retainedCount: 5, retainedBytes: statSync(file).size,
-    maxMessages: 1024, maxBytes: 1024 * 1024, liveCount: 4, expiredCount: 1,
+    maxMessages: BUS_INBOX_MAX_MESSAGES, maxBytes: 1024 * 1024, liveCount: 4, expiredCount: 1,
   });
 }, 60_000);
 
