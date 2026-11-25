@@ -348,7 +348,11 @@ describe('autopilotBacklogItems', () => {
   });
 
   it('appends autopilot items through discovery and dedupes on refresh', async () => {
-    writeJournal([stop(1234, PUSH_LIMIT, 1), stop(1234, PUSH_LIMIT, 3), stop(1234, PUSH_LIMIT, 5)]);
+    const now = Date.now();
+    writeJournal([1, 3, 5].map((days) => ({
+      ...stop(1234, PUSH_LIMIT, days),
+      at: new Date(now - days * 86400_000).toISOString(),
+    })));
     const greenGh = async (args: string[]) => {
       const p = args[4] ?? '';
       if (p === 'repos/ashlrai/phantom') return { ok: true, stdout: 'HTTP/2.0 200 OK\n\n{"default_branch":"master"}', stderr: '' };
