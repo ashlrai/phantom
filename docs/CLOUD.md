@@ -1621,7 +1621,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   only for the fleet's own repository since the journal records this
   install's gateway and carries no repository column — and the desktop
   friction-flag journal's reported surfaces, the per-flag rows the
-  console's Flag UI friction action appends to
+  console's Improve this screen action's Just flag it choice appends to
   `~/.ashlr/router/feedback.jsonl` through `enqueueFrictionFlag` in
   `src/core/verse/feedback-queue.ts` (otherwise write-only evidence:
   `contrib/router/queue-writer.mjs` only re-exports the writer and

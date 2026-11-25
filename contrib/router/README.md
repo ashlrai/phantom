@@ -173,8 +173,9 @@ The model flag is omitted when the probe rejected the configured model. Codex pr
 
 ## Desktop friction queue
 
-The console's **Flag UI friction** action appends a UTF-8 JSON object followed
-by a newline to `~/.ashlr/router/feedback.jsonl`. The authenticated POST at
+The **Just flag it** choice in the console's **Improve this screen** action
+appends a UTF-8 JSON object followed by a newline to
+`~/.ashlr/router/feedback.jsonl`. The authenticated POST at
 `/api/verse/feedback` requires the console mutation token and dispatch-enabled
 server, like other console writes. It never starts a job or runs a shell.
 
