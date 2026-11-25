@@ -40,7 +40,7 @@ ashlr agents bus channel read <name> [--topic <t>] [--from <agent>] [--exclude-f
 ashlr agents bus handoff --to <agent> --task <job id> --prompt <text> [--from <agent>] [--priority ..] [--id <id>] [--ttl <ms>] [--wake|--no-wake]
 ashlr agents bus wake --to <agent> --reason <text> [--job <id>] [--from <agent>] [--priority P0..P3] [--id <id>] [--ttl <ms>]
 ashlr agents bus inbox [<agent>] [--after <cursor>] [--limit <1..100>] [--thread <t>] [--from <agent>] [--exclude-from <agent>] [--with <agent>] [--priority P0..P3] [--kind dm|channel|handoff|legacy] [--job <id>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--channel <name>] [--contains <text>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>] [--matched] [--frame <cli>]
-ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+ashlr agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>] [--from <agent>] [--exclude-from <agent>] [--priority P0..P3] [--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>] [--result <${WORK_RESULT_OUTCOMES.join('|')}>]
 ashlr agents bus show <id>
 ashlr agents bus adapters
 ashlr agents bus claim acquire --key <claimKey> --lease-ms <1..3600000> [--owner <label>] [--id <opId>]
@@ -211,17 +211,22 @@ channels and seats carry no per-item body and stay whole — a body
 carrying no discriminator never matches, and an unrecognized but
 printable value is an honest empty match, never an error. It composes
 with every other filter and counts in matched like the rest.
---result on inbox and channel read keeps only rows whose body is a
+--result on inbox, channel read and wakes keeps only rows whose body is a
 work.result receipt reporting that one outcome — reserved, admitted,
 complete or failed, the same WORK_RESULT_OUTCOMES vocabulary the work
 feed's --result filter validates — read through the kind-scoped
 busBodyResultOutcome own-field match, so every other body kind (a
 work.release body's own released/completed outcome included) and a
 work.result carrying no outcome never matches: "which of my pending
-result receipts failed" or "which room posts are failed result
-receipts" is one filtered read, the envelope-level audit trail the
-feed's per-job newest-result --result cannot show. It composes with
-every other filter and counts in matched like the rest.
+result receipts failed", "which room posts are failed result
+receipts" or "which wakes were triggered by a failed result" is one
+filtered read, the envelope-level audit trail the feed's per-job
+newest-result --result cannot show. On wakes the verdict is the
+resolved referent's own outcome — a claim-holder wh-… hint's citing
+receipt is a work.status body, which provably reports no result
+outcome, so those hints never match, and an unresolved or unknown
+referent names no provable outcome and never matches either. It
+composes with every other filter and counts in matched like the rest.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit
@@ -950,7 +955,7 @@ export async function runAgentsBusUnified(argv: string[], out: (text: string) =>
       noExtra(2);
       const filter = { job: one('--job'), from: one('--from'), excludeFrom: one('--exclude-from'),
         channel: one('--channel'), contains: one('--contains'), priority: priorityArg(), before: beforeArg(), id: one('--id'),
-        thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind') };
+        thread: one('--thread'), inReplyTo: one('--in-reply-to'), bodyKind: one('--body-kind'), result: resultArg() };
       const since = sinceArg();
       let page: WakePage | AllWakesPage;
       if (p.bools.has('--all')) {

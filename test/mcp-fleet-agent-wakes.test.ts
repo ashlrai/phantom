@@ -83,11 +83,13 @@ describe('fleet_agent_wakes argument parsing', () => {
       agent: 'agent:planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: '  Parser   Fix ', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
+      result: 'failed',
     });
     expect(parsed).toEqual({
       agent: 'agent:planner', since: 1800000000000, before: 1700000000000, job: 'RQ-9',
       from: 'agent:sender', excludeFrom: 'agent:bot', channel: 'ops', priority: 'P0',
       contains: 'parser fix', id: 'm-9', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status',
+      result: 'failed',
     });
   });
 
@@ -130,6 +132,8 @@ describe('fleet_agent_wakes argument parsing', () => {
       { agent: 'a', inReplyTo: '' }, { agent: 'a', inReplyTo: null }, { agent: 'a', inReplyTo: 'x'.repeat(129) },
       { agent: 'a', bodyKind: 'has space' }, { agent: 'a', bodyKind: '' }, { agent: 'a', bodyKind: 5 },
       { agent: 'a', bodyKind: null }, { agent: 'a', bodyKind: 'x'.repeat(129) },
+      { agent: 'a', result: 'bogus' }, { agent: 'a', result: 'released' }, { agent: 'a', result: 'completed' },
+      { agent: 'a', result: '' }, { agent: 'a', result: 'FAILED' }, { agent: 'a', result: 5 }, { agent: 'a', result: null },
     ]) expect(parseFleetAgentWakesArgs(bad)).toBeNull();
   });
 });
@@ -142,9 +146,9 @@ describe('fleet_agent_wakes reader', () => {
       return okPage({ matched: 3 });
     };
     const result = await readFleetAgentWakes(
-      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status' })!,
+      parseFleetAgentWakesArgs({ agent: 'planner', since: '1800000000000', before: '1700000000000', job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' })!,
       { read });
-    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status' }]]);
+    expect(seen).toEqual([['planner', 1800000000000, {}, { job: 'RQ-9', from: 'agent:sender', channel: 'ops', priority: 'P1', before: 1700000000000, thread: 'release-plan', inReplyTo: 'env-1', bodyKind: 'work.status', result: 'complete' }]]);
     expect(result).toMatchObject({
       schemaVersion: 1, snapshotKind: 'local-persisted', authority: 'none',
       status: 'ok', agent: 'planner', scope: 'identity', matched: 3, truncated: false,
@@ -244,6 +248,8 @@ describe('fleet_agent_wakes MCP tool', () => {
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
     expect(tool?.inputSchema.properties?.['bodyKind'])
       .toMatchObject({ type: 'string', pattern: '^[\\x21-\\x7e]{1,128}$' });
+    expect(tool?.inputSchema.properties?.['result'])
+      .toMatchObject({ type: 'string', enum: ['reserved', 'admitted', 'complete', 'failed'] });
   });
 
   it.each([
@@ -273,10 +279,10 @@ describe('fleet_agent_wakes MCP tool', () => {
     const agentWakes = vi.fn(async () => payload);
     const client = await connect({ status: async () => ({}), loop: async () => ({}), agentWakes });
     const { parsed } = await callWakes(client, {
-      agent: 'planner', since: '1800000000000', job: 'RQ-9', priority: 'P2', contains: 'Parser Fix',
+      agent: 'planner', since: '1800000000000', job: 'RQ-9', priority: 'P2', contains: 'Parser Fix', result: 'failed',
     });
     expect(agentWakes).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'planner', since: 1800000000000, job: 'RQ-9', priority: 'P2', contains: 'parser fix',
+      agent: 'planner', since: 1800000000000, job: 'RQ-9', priority: 'P2', contains: 'parser fix', result: 'failed',
     }));
     const args = agentWakes.mock.calls[0]![0] as FleetAgentWakesArgs;
     expect(args.from).toBeUndefined();
