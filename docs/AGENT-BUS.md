@@ -651,7 +651,8 @@ the human line the same way `held` does, and `work mine`'s inbox section
 carries the same field.
 `phm agents bus wakes [<agent>] [--all] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--job <id>]
 [--from <agent>] [--exclude-from <agent>] [--priority P0..P3]
-[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]` lists wake
+[--channel <name>] [--contains <text>] [--thread <t>] [--in-reply-to <id>] [--id <id>] [--body-kind <kind>]
+[--result <reserved|admitted|complete|failed>]` lists wake
 hints for the agent — addressed under any spelling that resolves to its
 identity, exact first then lowercase, the same fold the inbox read
 applies — and its
@@ -753,7 +754,23 @@ cite `work.post` announcements" or "which wakes were caused by
 hint's citing receipt provably carries `work.status`, so those hints
 match only that kind, an `unresolved`/`unknown` referent names no
 provable kind and never matches, the unreadable-store and `matched`
-rules are `--thread`'s, and a malformed value answers `invalid`. `--id`
+rules are `--thread`'s, and a malformed value answers `invalid`. `--result`
+keeps only the hints whose resolved referent is a `work.result` body
+reporting that one outcome — reserved, admitted, complete or failed,
+the same `WORK_RESULT_OUTCOMES` vocabulary the work feed's `--result`
+filter validates — read through the kind-scoped `busBodyResultOutcome`
+own-field match `inbox --result` and `channel read --result` apply,
+so every other body kind (a `work.release` body's own
+`released`/`completed` outcome included) and a `work.result` carrying
+no outcome never matches: "which wakes were triggered by a failed
+result receipt" is one filtered read, the wake-level audit trail the
+feed's per-job newest-result `--result` cannot show. A claim-holder
+`wh-…` hint's citing receipt is a `work.status` body, which provably
+reports no result outcome, so those hints never match; an
+`unresolved`/`unknown` referent names no provable outcome and never
+matches either, the unreadable-store and `matched` rules are
+`--thread`'s, and an outcome outside `WORK_RESULT_OUTCOMES` answers
+`invalid`. `--id`
 keeps only the hint whose own id is strictly equal to the value — the
 triggering envelope's wire id on a `bus.send` hint, the `wh-…`
 claim-holder id on those — the same exact-id match `inbox --id` and
@@ -777,7 +794,7 @@ cannot be read. Triage no longer costs one `agents bus show` per hint.
 `fleet_agent_wakes` (the isolated fleet MCP tool) serves the same read with
 the same dimensions as arguments — `agent` optional (omitted, the
 fleet-wide `--all` read under `scope: 'fleet'`), `since`/`job`/`from`/
-`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`id` the same filters — under the identical
+`excludeFrom`/`channel`/`priority`/`contains`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` the same filters — under the identical
 `readAgentWakes`/`readAllWakes` validation, so an MCP-connected agent reads its wake
 hints, claim-holder citations and resolved referents — or the whole
 fleet's pending hints in one call — without shelling out

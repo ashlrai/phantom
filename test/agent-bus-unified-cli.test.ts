@@ -6,6 +6,7 @@ import { runAgentsCli } from '../src/cli/agents-bus-contract.js';
 import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import * as seats from '../src/core/bots/seats.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
+import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
 
 let base: string;
@@ -543,6 +544,38 @@ describe('phm agents bus (unified)', () => {
     // A body kind must be a printable label; anything else fails closed.
     expect(await run(['wakes', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['wakes', 'nova', '--body-kind='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters wakes by --result', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, { root }).status).toBe('posted');
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    post('wr-complete', result('complete'));
+    post('wr-failed', result('failed'));
+    // A work.release outcome is a different vocabulary and never matches.
+    post('wr-rel', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' });
+    post('wr-note', { kind: 'note', text: 'plain' });
+    // Each bus.send hint's id is its referent envelope's wire id.
+    for (const id of ['wr-complete', 'wr-failed', 'wr-rel', 'wr-note']) {
+      enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' }, { root: join(base, 'runs') });
+    }
+    const ids = (json: { wakes: { id: string }[] }) => json.wakes.map(w => w.id);
+    expect((await run(['wakes', 'nova', '--result', 'failed'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', 'nova', '--result', 'failed'])).json)).toEqual(['wr-failed']);
+    expect(ids((await run(['wakes', 'nova', '--result', 'complete'])).json)).toEqual(['wr-complete']);
+    expect(ids((await run(['wakes', 'nova', '--result', 'reserved'])).json)).toEqual([]);
+    // The outcome filter composes with the other wakes filters.
+    expect((await run(['wakes', 'nova', '--result', 'failed', '--from', 'ghost'])).json)
+      .toMatchObject({ matched: 0, wakes: [] });
+    // The fleet-wide read resolves the same referent outcomes.
+    expect((await run(['wakes', '--all', '--result', 'failed'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', '--all', '--result', 'failed'])).json)).toEqual(['wr-failed']);
+    // The outcome vocabulary is closed: anything outside it is a usage error.
+    expect(await run(['wakes', 'nova', '--result', 'bogus'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['wakes', '--all', '--result', 'released'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
   it('filters inbox and channel reads by --priority', async () => {
