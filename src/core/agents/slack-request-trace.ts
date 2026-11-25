@@ -138,5 +138,14 @@ export function readSlackRequestTrace(options: SlackRequestTraceOptions = {}): S
     entries: journal.entries, receipts: sends.receipts, now: now(),
     ...(options.thread !== undefined ? { thread: options.thread } : {}),
   });
+  if (sends.state !== 'ok') {
+    for (const row of trace.rows) {
+      if (row.outcome === 'unanswered') {
+        row.outcome = 'uncertain';
+        trace.counts.unanswered--;
+        trace.counts.uncertain++;
+      }
+    }
+  }
   return { ...trace, sources: { journal: journal.state, sends: sends.state } };
 }
