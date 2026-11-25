@@ -365,10 +365,12 @@ describe('session-expired rejoin hint', () => {
     const err = failure(() => executeNodeFleet('pull', args('laptop', worker.session), f.a));
     expect(err.fix).toBe('Rejoin with: phm node join --node laptop --owner <scope>; then use the new session.');
   });
-  it('never inlines an id-invalid node id into the suggested command', () => {
+  it('refuses an id-invalid node id as usage before any session lookup', () => {
     const f = fixture();
+    // An id-invalid --node can never name a session (join refuses it), so the
+    // verb fails as bad usage and the rejoin hint is never reached with it.
     const err = failure(() => executeNodeFleet('pull', args('bad;id', 1), f.a));
-    expect(err.fix).toBe('Rejoin with: phm node join --node <id> --owner <scope>; then use the new session.');
+    expect(err).toMatchObject({ code: 'bad-node', exit: 2 });
     expect(err.fix).not.toContain('bad;id');
   });
   it('beat reports the same rejoin hint', () => {
@@ -706,5 +708,103 @@ describe('beat --capacity sample honesty', () => {
     const node = f.a.snapshot().nodes.find(n => n.nodeId === 'laptop')!;
     expect(node.capacity).toEqual(sample);
     expect(node.slots).toBe(4);
+  });
+});
+
+describe('fleet flag value validation', () => {
+  function failure(fn: () => unknown): { code?: string; message?: string; fix?: string; exit?: number } {
+    try { fn(); } catch (e) { return e as { code?: string; message?: string; fix?: string; exit?: number }; }
+    throw new Error('expected the verb to refuse');
+  }
+  const run = (verb: string, args: string[], f = fixture()) =>
+    failure(() => executeNodeFleet(verb, args, f.a));
+  it('refuses malformed ids on every verb that takes one, as usage', () => {
+    const f = fixture();
+    const worker = f.a.join('laptop', { owners: ['acme'] })!;
+    const lease = ['--job', 'j1', '--node', 'laptop', '--session', String(worker.session), '--token', '1', '--leader-token', '1'];
+    for (const [verb, args] of [
+      ['join', ['--node', 'bad id', '--owner', 'acme']],
+      ['beat', ['--node', 'bad id', '--session', '1']],
+      ['pull', ['--node', 'bad id', '--session', '1']],
+      ['leave', ['--node', 'bad id', '--session', '1']],
+      ['enqueue', ['--job', 'bad id', '--owner', 'acme']],
+      ['withdraw', ['--job', 'j1', '--owner', 'bad id']],
+      ['result', ['--job', 'j1', '--owner', 'bad id']],
+      ['renew', [...lease.slice(0, 3), 'bad id', ...lease.slice(4)]],
+      ['complete', [...lease.slice(0, 3), 'bad id', ...lease.slice(4), '--result', 'x']],
+      ['release', [...lease.slice(0, 3), 'bad id', ...lease.slice(4)]],
+    ] as const) {
+      const err = run(verb, [...args], f);
+      expect(err, `${verb} ${args.join(' ')}`).toMatchObject({ code: expect.stringMatching(/^bad-(node|job|owner)$/), exit: 2 });
+      expect(err.fix).toContain('phm node --help');
+    }
+  });
+  it('keeps owner scope a list on join/status but a single scope on plan/enqueue', () => {
+    const f = fixture();
+    // join and status accept a comma list of scopes.
+    expect(executeNodeFleet('join', ['--node', 'multi', '--owner', 'acme,ops', '--caps', 'build,gh'], f.a))
+      .toMatchObject({ owners: ['acme', 'ops'] });
+    expect(executeNodeFleet('status', ['--owner', 'acme,ops'], f.a)).toHaveProperty('owners');
+    // plan, enqueue, withdraw and result take exactly one scope: a comma list
+    // is a malformed value there, never a silent empty plan or scope.
+    for (const [verb, args] of [
+      ['plan', ['--owner', 'acme,ops']],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme,ops']],
+      ['withdraw', ['--job', 'j1', '--owner', 'acme,ops']],
+      ['result', ['--job', 'j1', '--owner', 'acme,ops']],
+    ] as const) {
+      expect(run(verb, args, f), verb).toMatchObject({ code: 'bad-owner', exit: 2 });
+    }
+    // An empty or all-invalid list is refused on the list verbs too.
+    for (const args of [['--owner', ''], ['--owner', ' , '], ['--owner', 'acme,,bad id']]) {
+      expect(run('status', args, f), args.join(' ')).toMatchObject({ code: 'bad-owner', exit: 2 });
+      expect(run('join', ['--node', 'n2', ...args], f), args.join(' ')).toMatchObject({ code: 'bad-owner', exit: 2 });
+    }
+  });
+  it('refuses malformed caps, packs and secret names on enqueue and join', () => {
+    const f = fixture();
+    for (const [verb, args, code] of [
+      ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'Build'], 'bad-caps'],
+      ['join', ['--node', 'n1', '--owner', 'acme', '--caps', 'ok,bad cap'], 'bad-caps'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--requires', 'GH'], 'bad-requires'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--pack', 'Bad Pack'], 'bad-pack'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'deploy_key'], 'bad-secrets'],
+      ['enqueue', ['--job', 'j1', '--owner', 'acme', '--secrets', 'DEPLOY_KEY,sk-live-value'], 'bad-secrets'],
+    ] as const) {
+      expect(run(verb, args, f), `${verb} ${args.join(' ')}`).toMatchObject({ code, exit: 2 });
+    }
+    // Nothing was recorded by the refused calls.
+    expect(f.a.snapshot().nodes.map(n => n.nodeId)).not.toContain('n1');
+    expect(f.a.snapshot().jobs).toEqual([]);
+  });
+  it('names the embedded-task failure instead of the store fix', () => {
+    const f = fixture();
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    const taskArgs = (pack: string, digest: string, text = 'do the thing') =>
+      ['--job', 'j1', '--owner', 'acme', '--pack', pack, '--task-part', text, '--task-sha256', digest];
+    expect(run('enqueue', taskArgs('codex-file', 'sha256:xyz'), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('other')}`), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    expect(run('enqueue', taskArgs('codex-file', `sha256:${sha('   ')}`, '   '), f)).toMatchObject({ code: 'bad-task', exit: 2 });
+    // A task without the codex-file pack is a usage error naming --pack, not a
+    // masked store refusal.
+    expect(run('enqueue', taskArgs('shell-check', `sha256:${sha('do the thing')}`), f)).toMatchObject({ code: 'bad-pack', exit: 2 });
+    expect(run('enqueue', taskArgs('codex-file', sha('do the thing')), f)).toMatchObject({ code: 'bad-task-sha256', exit: 2 });
+    // The valid form still enqueues.
+    expect(executeNodeFleet('enqueue', taskArgs('codex-file', `sha256:${sha('do the thing')}`), f.a))
+      .toEqual({ jobId: 'j1', enqueued: true });
+  });
+  it('keeps the --json envelope on the new usage refusals', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'bad id', '--owner', 'acme', '--json'], { store });
+      expect(code).toBe(2);
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ schemaVersion: 1, command: 'join',
+        error: { code: 'bad-node', fix: expect.stringContaining('phm node --help') } });
+      const enqueue = await cmdNodeFleet('enqueue', ['--job', 'j1', '--owner', 'acme,ops', '--json'], { store });
+      expect(enqueue).toBe(2);
+      expect(JSON.parse(lines.at(-1)!).error).toMatchObject({ code: 'bad-owner' });
+    } finally { vi.restoreAllMocks(); }
   });
 });
