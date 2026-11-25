@@ -1,6 +1,6 @@
 import type { DriveNodes, JobClaim } from './index.js';
 import type { NodeAuth } from './state.js';
-import { isNodeCapacity, isHostStats } from './state.js';
+import { isNodeCapacity, isHostStats, validId } from './state.js';
 import { NODE_TASK_LIMIT, validNodeTask } from './task.js';
 
 export class UsageError extends Error {
@@ -52,6 +52,7 @@ const need = (flags: Map<string, string>, name: string): string => {
   if (value === undefined) throw new UsageError('missing-flag', `${name} is required.`, `Add ${name} <value>. Run: phm node --help`);
   return value;
 };
+
 const csv = (value: string | undefined): string[] => (value ? value.split(',').map(v => v.trim()).filter(Boolean) : []);
 const num = (flags: Map<string, string>, name: string): number => {
   const raw = need(flags, name);
@@ -64,10 +65,25 @@ function claimOf(flags: Map<string, string>): JobClaim {
     token: num(flags, '--token'), leaderToken: num(flags, '--leader-token'), expiresAt: 0 };
 }
 
+/** Rejoin command for a dead session's fix text: a concrete `--node` whenever the
+ * id is valid, the last advertised `--owner`/`--caps`/`--slots` while the registry
+ * still holds the record, placeholders when it does not. Only id-valid node ids
+ * are inlined, so the hint can never carry shell metacharacters into a paste. */
+function joinHint(nodes: DriveNodes, nodeId: string): string {
+  if (!validId(nodeId)) return 'phm node join --node <id> --owner <scope>';
+  const profile = nodes.nodeProfile(nodeId);
+  if (!profile) return `phm node join --node ${nodeId} --owner <scope>`;
+  return ['phm node join', `--node ${nodeId}`,
+    profile.owners.length ? `--owner ${profile.owners.join(',')}` : '--owner <scope>',
+    ...(profile.caps?.length ? [`--caps ${profile.caps.join(',')}`] : []),
+    ...(profile.slots === undefined ? [] : [`--slots ${profile.slots}`])].join(' ');
+}
+
 export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: DriveNodes, probeAuth: () => NodeAuth): Record<string, unknown> {
   const session = (): { nodeId: string; session: number } => ({ nodeId: need(flags, '--node'), session: num(flags, '--session') });
-  const stale = new UsageError('session-expired', 'That node session is not live (it expired, left, or was replaced).',
-    'Rejoin with: phm node join --node <id> --owner <scope>; then use the new session.', 1);
+  const stale = (nodeId: string) => new UsageError('session-expired',
+    `Node '${nodeId}' has no live session (it expired, left, or was replaced).`,
+    `Rejoin with: ${joinHint(nodes, nodeId)}; then use the new session.`, 1);
   switch (verb) {
     case 'join': {
       const owners = csv(need(flags, '--owner'));
@@ -93,7 +109,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const usage = flags.has('--usage') ? num(flags, '--usage') : undefined;
       const s = session();
       const beat = nodes.heartbeat(s, { ...(isNodeCapacity(capacity) ? { capacity } : {}), ...(isHostStats(hostStats) ? { hostStats } : {}), ...(flags.has('--slots') ? { slots: num(flags, '--slots') } : {}), ...(usage === undefined ? {} : { usage }), ...(auth === undefined ? {} : { auth: auth as NodeAuth }) });
-      if (!beat) throw stale;
+      if (!beat) throw stale(s.nodeId);
       return { nodeId: s.nodeId, leader: beat.leader?.nodeId === s.nodeId, ...(auth === undefined ? {} : { auth }) };
     }
     case 'enqueue': {
@@ -117,7 +133,7 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       if (!pulled) {
         // A dead session and an empty route both answer null; only a live
         // session may hear "no job" — a stale one must rejoin first.
-        if (!nodes.sessionLive(s)) throw stale;
+        if (!nodes.sessionLive(s)) throw stale(s.nodeId);
         return { pulled: false };
       }
       const { claim, job } = pulled;

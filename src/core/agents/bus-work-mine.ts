@@ -37,7 +37,7 @@ import { plainAge } from '../fleet/agent-conversation-model.js';
 import { BUS_FEED_OPEN_STATUSES, busWorkFeedHoldIndex, busWorkFeedJobHold, busWorkFeedJobSearchText, busWorkFeedOwnerMatcher, busWorkFeedPendingToMatcher,
   busWorkJobDispatch, busWorkJobResultSuffix, readBusWorkFeed, type BusWorkFeedHold, type BusWorkFeedHoldCoverage, type BusWorkFeedJob,
   type BusWorkFeedReadResult } from './bus-work-feed-read.js';
-import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyJobIds, busBodyJobId, busBodyJobMatch,
+import { agentWakeClaimHolderSuffix, agentWakeMessageSuffix, busBodyFallbackSummary, busBodyInReplyToMatch, busBodyJobIds, busBodyJobId, busBodyJobMatch,
   busBodySummary, busInboxJobMarker, busReadContains, busReadContainsMatch, jobAnnotationFromFeed, readAgentInbox, readAgentWakes,
   type AgentWakeRow, type BusEnvelopeLookupJob, type InboxKind } from './bus-unified.js';
 import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type BusInboxReceipt } from '../fleet/bus-inbox.js';
@@ -236,6 +236,60 @@ export interface BusWorkMineOptions {
    * included and excluded matches nothing. Every section's count stays
    * the filtered total, never the unfiltered one. */
   excludeFrom?: string;
+  /** Keep only pending items that ARE the retained envelope `id` names —
+   * the same own-wire-id match every bus read's `--id` applies, decided on
+   * each section's own id evidence: `next`/`handoffs`/`mailbox` keep
+   * envelopes whose `id` equals the value, `claims` keep only message
+   * claims whose resolved leased envelope's `id` equals it — a claim
+   * naming no resolved message (a scope-key claim, an unresolvable or
+   * unreadable lease) names no provable envelope and never lists, the
+   * same "unknown stays out" rule `priority`/`channel`/`from` apply —
+   * feed jobs and announced jobs keep the jobs whose cited wire ids the
+   * value equals (`postId`, `statusId` or the newest `work.result`
+   * receipt's id — the same envelope citations the job lines print, so
+   * "which pending job envelope X belongs to" is one filtered digest),
+   * `inbox`, `wakes` and the three thread sections pass the value to
+   * their own reads' id filters (the inbox and conversations reads keep
+   * the item envelope `id` belongs to, the wakes read the hint id — the
+   * triggering envelope's wire id on a bus.send hint), while `board`
+   * reports the shared `phm bus board pending` digest whole — that
+   * projection's own filter grammar (job, contains, since, before,
+   * sender) takes no envelope citation, so the section stays unfiltered,
+   * the same rule `priority`/`channel` apply to it. `channels` and
+   * `seats` carry no per-item
+   * envelope and stay unfiltered, like they do under `priority`. The
+   * value takes the same printable-label bound every bus `--id` read
+   * validates; an id nothing on the bus carries is an honest empty
+   * match, never an error and never a widened one. Every section's count
+   * stays the filtered total, never the unfiltered one. */
+  id?: string;
+  /** Keep only pending items whose body cites the retained envelope
+   * `inReplyTo` names through its own `inReplyTo` field — the same
+   * own-property exact match every bus read's `--in-reply-to` applies,
+   * never the `replyTo` alias or a substring, decided on each section's
+   * own citation evidence: `next`/`handoffs`/`mailbox` keep envelopes
+   * whose body the `busBodyInReplyToMatch` rule accepts, `claims` keep
+   * only message claims whose resolved leased envelope's own `inReplyTo`
+   * equals the value — a claim naming no resolved message names no
+   * provable citation and never lists, the same "unknown stays out" rule
+   * `id`/`priority`/`channel`/`from` apply — `inbox`, `wakes` and the
+   * three thread sections pass the value to their own reads' in-reply-to
+   * filters (the inbox read matches the envelope body, the wakes read
+   * the resolved referent body, the conversations read any member
+   * message's citation), while feed jobs, announced jobs, `board` rows,
+   * `channels` and `seats` carry no retained body citation in their
+   * projections — feed jobs are projections of `work.post`/`work.status`/
+   * `work.result` receipts whose strict v2 bodies keep no `inReplyTo`
+   * field, board post bodies are `{threadId, text}` records, and seat
+   * handoff records keep no per-record body — so those sections stay
+   * unfiltered, the same rule `priority`/`channel` apply to sections
+   * with no per-item band or room (the board digest reports its own
+   * filtered set under its own grammar, never re-filtered here). The value takes the same
+   * printable-label bound every bus `--in-reply-to` read validates; a
+   * citation nothing on the bus carries is an honest empty match, never
+   * an error and never a widened one. Every section's count stays the
+   * filtered total, never the unfiltered one. */
+  inReplyTo?: string;
   /** Injectable clock, frozen once so every section reads the same instant. */
   now?: () => number;
 }
@@ -309,6 +363,8 @@ export type BusWorkMineClaimMessage =
       fromAgent: string | null;
       /** Protocol body kind verbatim (`task`, `work`, `note`, ...); null when the body carries none. */
       bodyKind: string | null;
+      /** The leased body's own `inReplyTo` citation verbatim — the same own-property field every bus read's `--in-reply-to` matches, never the `replyTo` alias; absent when the body cites nothing through that field. */
+      inReplyTo?: string;
       /** Scrubbed, single-line body summary, clipped to the digest bound. */
       summary: string;
       /** Same live feed citation the inbox section resolves, present only on job-citing bodies. */
@@ -721,6 +777,10 @@ export type BusWorkMineResult =
       from?: string;
       /** The sender-exclusion filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
       excludeFrom?: string;
+      /** The envelope-id filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      id?: string;
+      /** The reply-citation filter the read applied, echoed for JSON consumers; absent on an unfiltered read. */
+      inReplyTo?: string;
       claims: BusWorkMineClaims; jobs: BusWorkMineJobs; announced: BusWorkMineAnnounced;
       next: BusWorkMineNext;
       handoffs: BusWorkMineHandoffs; threads: BusWorkMineThreads; awaiting: BusWorkMineAwaiting;
@@ -827,9 +887,19 @@ function feedHoldIndex(feed: Extract<BusWorkFeedReadResult, { status: 'ok' }>): 
   return busWorkFeedHoldIndex(feed.claims);
 }
 
+/** True when the feed job's retained envelope citations include the wire
+ * id — the `work.post` announcement, newest `work.status` receipt or newest
+ * `work.result` receipt the job's state cites, the same ids the job lines
+ * print as `post=`/`status=`/`result=`. An `--id` read keeps a job only
+ * when one of those citations equals the value, so "which pending job
+ * envelope X belongs to" is one filtered digest. */
+function busWorkFeedJobCitesEnvelope(job: BusWorkFeedJob, id: string): boolean {
+  return job.postId === id || job.statusId === id || job.result?.id === id;
+}
+
 function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
-  from?: string, excludeFrom?: string): BusWorkMineJobs {
+  from?: string, excludeFrom?: string, envelopeId?: string): BusWorkMineJobs {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -849,7 +919,8 @@ function jobsSection(feed: BusWorkFeedReadResult, agent: string, root: string | 
       (beforeMs === undefined || job.updatedAt < beforeMs) &&
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
-      (excludeOwner === undefined || !excludeOwner(job.owner)))
+      (excludeOwner === undefined || !excludeOwner(job.owner)) &&
+      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   // `addressed` is the pending-work rule the feed `--to` filter and the
   // next/handoffs sections share: identity labels plus member `group:`
@@ -890,7 +961,7 @@ const ANNOUNCED_DONE: ReadonlySet<BusWorkFeedJob['status']> = new Set(['done', '
  */
 function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: string | undefined,
   jobId?: string, contains?: string, sinceMs?: number, beforeMs?: number, channelPrefix?: string,
-  from?: string, excludeFrom?: string): BusWorkMineAnnounced {
+  from?: string, excludeFrom?: string, envelopeId?: string): BusWorkMineAnnounced {
   if (feed.status === 'refused') return { status: 'refused', reason: feed.reason, receipts: feed.receipts,
     ...(feed.receipt === undefined ? {} : { receipt: feed.receipt }) };
   if (feed.status !== 'ok') return { status: feed.status };
@@ -910,7 +981,8 @@ function announcedSection(feed: BusWorkFeedReadResult, agent: string, root: stri
       (beforeMs === undefined || job.updatedAt < beforeMs) &&
       (channelPrefix === undefined || job.to.startsWith(channelPrefix)) &&
       (fromOwner === undefined || fromOwner(job.owner)) &&
-      (excludeOwner === undefined || !excludeOwner(job.owner)))
+      (excludeOwner === undefined || !excludeOwner(job.owner)) &&
+      (envelopeId === undefined || busWorkFeedJobCitesEnvelope(job, envelopeId)))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   return { status: 'ok', matched: live.length,
     items: live.slice(0, WORK_MINE_ANNOUNCED_MAX)
@@ -941,6 +1013,8 @@ function inboxSection(agent: string, options: BusWorkMineOptions, nowMs: number,
     ...(options.channel === undefined ? {} : { channel: options.channel }),
     ...(options.from === undefined ? {} : { from: options.from }),
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
     ...(contains === undefined ? {} : { contains }) },
     { root: options.root, now: () => nowMs });
   if (page.status !== 'ok') return { status: page.status, reason: page.reason };
@@ -998,7 +1072,8 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
   const fromMatch = options.from === undefined ? undefined : agentRefAddressMatcher(options.from, registry);
   const excludeFromMatch = options.excludeFrom === undefined ? undefined : agentRefAddressMatcher(options.excludeFrom, registry);
   const match = job === undefined && contains === undefined && since === undefined && before === undefined &&
-      priority === undefined && channelPrefix === undefined && fromMatch === undefined && excludeFromMatch === undefined ? undefined
+      priority === undefined && channelPrefix === undefined && fromMatch === undefined && excludeFromMatch === undefined &&
+      options.id === undefined && options.inReplyTo === undefined ? undefined
     : (message: BusMailboxPendingMessage) =>
       (job === undefined || busBodyJobMatch(message.envelope.body, job)) &&
       (since === undefined || message.acceptedAt >= since) &&
@@ -1007,6 +1082,8 @@ function mailboxSection(agent: string, identity: AgentIdentity | undefined,
       (channelPrefix === undefined || message.envelope.to.startsWith(channelPrefix)) &&
       (fromMatch === undefined || fromMatch(message.envelope.from)) &&
       (excludeFromMatch === undefined || !excludeFromMatch(message.envelope.from)) &&
+      (options.id === undefined || message.envelope.id === options.id) &&
+      (options.inReplyTo === undefined || busBodyInReplyToMatch(message.envelope.body, options.inReplyTo)) &&
       (contains === undefined || busReadContainsMatch(message.envelope.body, contains));
   let read: ReturnType<ReturnType<typeof createBusMailbox>['pendingFor']>;
   try {
@@ -1239,6 +1316,14 @@ function pendingWorkSections(agent: string, options: BusWorkMineOptions, nowMs: 
       if (channelPrefix !== undefined && !envelope.to.startsWith(channelPrefix)) continue;
       if (fromMatch !== undefined && !fromMatch(envelope.from)) continue;
       if (excludeFromMatch !== undefined && excludeFromMatch(envelope.from)) continue;
+      // An id filter keeps only the envelope whose own wire id equals the
+      // value — the same exact-envelope match `agents bus inbox --id`
+      // applies — and an in-reply-to filter keeps only envelopes whose
+      // body cites that id through its own `inReplyTo` field, the same
+      // own-property exact match `busBodyInReplyToMatch` gives every bus
+      // read, for both kinds alike.
+      if (options.id !== undefined && envelope.id !== options.id) continue;
+      if (options.inReplyTo !== undefined && !busBodyInReplyToMatch(envelope.body, options.inReplyTo)) continue;
       const kind = claimableKind(envelope.body);
       if (kind !== null) {
         nextCandidates.push({
@@ -1434,6 +1519,12 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
   // the feed `jobId`/`taskId` citation plus the `job:<id>` thread bucket —
   // so a `--job` claims filter keys on the same set the inbox filter does.
   const jobIds = busBodyJobIds(body);
+  // The body's own `inReplyTo` citation, read verbatim like every other
+  // bus read's `--in-reply-to` match — own property only, never the
+  // `replyTo` alias.
+  const inReplyTo = body !== null && typeof body === 'object' && !Array.isArray(body) &&
+    Object.hasOwn(body, 'inReplyTo') && typeof (body as Record<string, unknown>)['inReplyTo'] === 'string'
+    ? (body as Record<string, unknown>)['inReplyTo'] as string : undefined;
   // The page receipt's ttl is elapsed-adjusted; the original envelope keeps
   // the wire ttl, so expiry is receipt time plus the ttl the sender set.
   const ttl = receipt.originalEnvelope?.ttl ?? receipt.envelope.ttl;
@@ -1443,6 +1534,7 @@ function resolveClaimMessage(id: string, owner: string, journal: BusWorkClaimVie
     priority: receipt.envelope.priority, to: receipt.envelope.to, from: receipt.envelope.from,
     fromAgent: registry === undefined ? null : resolveAgent(registry, receipt.envelope.from)?.handle ?? null,
     bodyKind: claimMessageBodyKind(body),
+    ...(inReplyTo === undefined ? {} : { inReplyTo }),
     summary: mineField(busBodySummary(body) ?? busBodyFallbackSummary(body), WORK_MINE_SUMMARY_MAX),
     ...(jobId === undefined ? {} : { job: jobAnnotationFromFeed(feed, jobId) }),
     ...(jobIds.length === 0 ? {} : { jobIds }),
@@ -1753,6 +1845,14 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
   if (options.excludeFrom !== undefined && (typeof options.excludeFrom !== 'string' || !AGENT_REF.test(options.excludeFrom))) {
     return { status: 'invalid', reason: 'invalid-exclude-from' };
   }
+  // The same printable-label bound every bus `--id`/`--in-reply-to` read
+  // validates: a wire id or citation is 1-128 visible ASCII characters.
+  if (options.id !== undefined && (typeof options.id !== 'string' || !AGENT_REF.test(options.id))) {
+    return { status: 'invalid', reason: 'invalid-id' };
+  }
+  if (options.inReplyTo !== undefined && (typeof options.inReplyTo !== 'string' || !AGENT_REF.test(options.inReplyTo))) {
+    return { status: 'invalid', reason: 'invalid-in-reply-to' };
+  }
   const sinceMs = options.since;
   const beforeMs = options.before;
   const channelPrefix = options.channel === undefined ? undefined : `group:${options.channel}:`;
@@ -1772,9 +1872,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
 
   const feed = readBusWorkFeed({ root: options.root, now: () => nowMs, claims: true });
   const jobs = jobsSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom);
+    options.from, options.excludeFrom, options.id);
   const announced = announcedSection(feed, agent, options.root, options.job, contains, sinceMs, beforeMs, channelPrefix,
-    options.from, options.excludeFrom);
+    options.from, options.excludeFrom, options.id);
   const { next, handoffs } = pendingWorkSections(agent, options, nowMs, registry, contains);
   // One conversations read backs all three thread views: waits the agent
   // owes, its own unanswered asks and blocked threads it is a party to.
@@ -1792,7 +1892,9 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(sinceMs === undefined ? {} : { since: sinceMs }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }),
       ...(options.from === undefined ? {} : { from: options.from }),
-      ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }) },
+      ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
+      ...(options.id === undefined ? {} : { id: options.id }),
+      ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }) },
     { root: options.root, now: () => nowMs });
   const scope = conversationScope(agent, registry, identity);
   const threads = threadsSection(conversations, scope, channelPrefix);
@@ -1889,6 +1991,26 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
         (fromMatch === undefined || fromMatch(claim.message.from)) &&
         (excludeFromMatch === undefined || !excludeFromMatch(claim.message.from)));
     }
+    if (options.id !== undefined) {
+      // A claim lists under an envelope-id filter only when its leased
+      // envelope IS that id — the resolved message's own wire id, the same
+      // exact match every bus `--id` read applies. A claim naming no
+      // resolved message — a scope-key claim, an unresolvable or unreadable
+      // lease — names no provable envelope and never lists, the same
+      // "unknown stays out" rule the band and room filters apply.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.id === options.id);
+    }
+    if (options.inReplyTo !== undefined) {
+      // A claim lists under a reply-citation filter only when its leased
+      // envelope's body cites that id through its own `inReplyTo` field —
+      // the resolved message's verbatim citation, the same own-property
+      // exact match `busBodyInReplyToMatch` gives every bus read. A claim
+      // naming no resolved message, or one whose body cites nothing
+      // through that field, names no provable citation and never lists.
+      claims.claims = claims.claims.filter(claim =>
+        claim.message?.status === 'resolved' && claim.message.inReplyTo === options.inReplyTo);
+    }
   }
 
   const page = readAgentWakes(agent, sinceMs,
@@ -1899,6 +2021,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
       ...(options.channel === undefined ? {} : { channel: options.channel }),
       ...(options.from === undefined ? {} : { from: options.from }),
       ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
+      ...(options.id === undefined ? {} : { id: options.id }),
+      ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
       ...(beforeMs === undefined ? {} : { before: beforeMs }) });
   const wakes: BusWorkMineWakes = page.status === 'ok'
     ? { status: 'ok', agent: page.agent, scope: page.scope, matched: page.matched,
@@ -1930,6 +2054,8 @@ export function readBusWorkMine(agent: string, options: BusWorkMineOptions = {})
     ...(options.channel === undefined ? {} : { channel: options.channel }),
     ...(options.from === undefined ? {} : { from: options.from }),
     ...(options.excludeFrom === undefined ? {} : { excludeFrom: options.excludeFrom }),
+    ...(options.id === undefined ? {} : { id: options.id }),
+    ...(options.inReplyTo === undefined ? {} : { inReplyTo: options.inReplyTo }),
     claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board,
     channels };
 }
@@ -1975,7 +2101,9 @@ export function formatBusWorkMine(result: BusWorkMineResult): string[] {
     (result.priority === undefined ? '' : ` priority=${result.priority}`) +
     (result.channel === undefined ? '' : ` channel=${result.channel}`) +
     (result.from === undefined ? '' : ` from=${result.from}`) +
-    (result.excludeFrom === undefined ? '' : ` exclude-from=${result.excludeFrom}`));
+    (result.excludeFrom === undefined ? '' : ` exclude-from=${result.excludeFrom}`) +
+    (result.id === undefined ? '' : ` id=${result.id}`) +
+    (result.inReplyTo === undefined ? '' : ` in-reply-to=${result.inReplyTo}`));
 
   const claims = result.claims;
   if (claims.status !== 'ok') {

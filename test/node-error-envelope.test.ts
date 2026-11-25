@@ -2,10 +2,14 @@
  * `phm node` --json error contract: every verb answers a failure with
  * {"schemaVersion":1,"command","error":{"code","message","fix"}} — usage
  * problems exit 2 with code "usage", operational failures exit 1 with code
- * "error" and a masked message. docs/NODE-ROUTER.md documents this shape for
- * "any verb"; these tests pin it across the dispatcher's subcommands.
+ * "error" and a masked message — except a missing pool configuration, which
+ * is an authored local state named truthfully. docs/NODE-ROUTER.md documents
+ * this shape for "any verb"; these tests pin it across the dispatcher's
+ * subcommands.
  */
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const deps = vi.hoisted(() => ({
   read: vi.fn(), configure: vi.fn(), call: vi.fn(), capacity: vi.fn(), worker: vi.fn(), bridge: vi.fn(),
@@ -23,6 +27,7 @@ import { cmdNodePool } from '../src/cli/node-pool.js';
 import { cmdNodeSelfUpdate } from '../src/cli/node-self-update.js';
 import { cmdNodeCapacity, cmdNodeRoute } from '../src/cli/node-capacity.js';
 import { cmdNodeBridge } from '../src/cli/node-bridge.js';
+import { ashlrHome } from '../src/core/cloud/store.js';
 
 const config = { role: 'worker', node: 'air', owner: 'mason', primary: 'primary-mac', backup: 'backup-mac' };
 
@@ -73,11 +78,28 @@ describe('phm node pool verbs', () => {
     expect(out.error.message).not.toContain('secret detail');
   });
 
-  it('reports an unconfigured pool as an operational refusal', async () => {
+  it('reports an unconfigured pool as an operational refusal naming the missing config', async () => {
     deps.read.mockReturnValue(null);
     const lines = capture();
+    expect(await cmdNodePool('worker', ['--json'])).toBe(1);
+    const out = lastJson(lines);
+    expect(out).toMatchObject({ schemaVersion: 1, command: 'worker', error: { code: 'error' } });
+    expect(out.error.message).toContain('no node pool configuration');
+    expect(out.error.message).not.toContain('Node pool operation refused');
+    expect(out.error.fix).toContain('phm node join');
+  });
+
+  it('names a standalone registry instead of claiming no configuration', async () => {
+    deps.read.mockReturnValue(null);
+    const dir = join(ashlrHome(), 'nodes');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'nodes.json'), JSON.stringify({ nodes: [{ nodeId: 'box' }], jobs: [] }));
+    const lines = capture();
     expect(await cmdNodePool('status', ['--json'])).toBe(1);
-    expect(lastJson(lines)).toMatchObject({ command: 'status', error: { code: 'error' } });
+    const out = lastJson(lines);
+    expect(out.error).toMatchObject({ code: 'error' });
+    expect(out.error.message).toContain('standalone node registry');
+    expect(out.error.message).not.toContain('no node pool configuration');
   });
 });
 

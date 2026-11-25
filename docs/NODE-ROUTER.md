@@ -73,7 +73,10 @@ Every `phm node` verb keeps that envelope — the fleet verbs, `pool`, `watch`,
 verbs or bad arguments at the dispatcher. `error.code` names the refusal
 (`usage` or a verb-specific code such as `missing-flag`, `session-expired` or
 `lease-lost`); exit 2 is bad usage, exit 1 a lost session/lease or operational
-failure, and pool or store failures never echo remote or secret detail.
+failure, and pool or store failures never echo remote or secret detail. A Mac
+with no `node-pool/config.json` gets `code:"error"` naming the missing
+configuration — and whether a standalone registry is present — with the
+configure-a-pool-or-use-standalone-verbs fix.
 The stdin/stdout protocols keep their own shapes: `run-once` replies and
 `rpc` requests, and `light`'s `muse.light.v1` report.
 Exit codes: 0 ok, 1 lease or session lost or store unavailable, 2 bad usage.
@@ -95,7 +98,10 @@ Every error ends with a fix. A job with no taker is shown by `phm node plan`
 with the reason: no live node in that owner (join one), no node advertising the
 caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
 then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
-`pull` — means the node's heartbeat lapsed: rejoin and use the new session.
+`pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
+carrying the node's last advertised owner scopes, caps and slots while the
+registry still holds the record (placeholders when it does not). Rejoin and use
+the new session.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
 never masks a dead session. A `lease-lost` error means stop work on that job
 and pull again.

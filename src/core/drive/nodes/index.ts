@@ -276,6 +276,19 @@ export class DriveNodes implements QueueV1 {
     return this.transaction((state, now) => this.liveNode(state, session, now));
   }
 
+  /** The last advertised join profile for a node id, live or expired; null when the
+   * id never joined or its record was removed by leave. Read-only: session and
+   * fencing tokens never leave the store through it. */
+  nodeProfile(nodeId: string): NodeProfile | null {
+    if (!validId(nodeId)) return null;
+    return this.transaction(state => {
+      const node = state.nodes.find(n => n.nodeId === nodeId);
+      if (!node) return null;
+      return { owners: [...(node.owners ?? [])], caps: [...(node.caps ?? [])],
+        ...(node.slots === undefined ? {} : { slots: node.slots }) };
+    });
+  }
+
   private jobView(job: NonNullable<NodesState['jobs'][number]>): JobView {
     return { id: job.id, owner: job.owner!, state: job.state, requires: [...(job.requires ?? [])],
       ...(job.pack === undefined ? {} : { pack: job.pack }), secrets: [...(job.secrets ?? [])],

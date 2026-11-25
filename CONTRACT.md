@@ -2901,10 +2901,10 @@ while reuse on another key cannot relocate it. Claims coordinate only and grant
 no execution authority; the token returns only to its acquirer.
 
 `src/core/agents/bus-work-mine.ts` is the read-side per-agent digest behind
-`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>]`. `readBusWorkMine(agent, options?)`
-(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `now?: () => number` frozen once
+`phm agents bus work mine [<agent>] [--job <id>] [--contains <text>] [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel <name>] [--from <agent>] [--exclude-from <agent>] [--id <id>] [--in-reply-to <id>]`. `readBusWorkMine(agent, options?)`
+(`BusWorkMineOptions`: `root?`, `runsRoot?`, `mailboxHome?`, `board?`, `seats?`, `job?`, `contains?`, `since?`, `before?`, `priority?`, `channel?`, `from?`, `excludeFrom?`, `id?`, `inReplyTo?`, `now?: () => number` frozen once
 across all reads) returns `BusWorkMineResult`: `{status:'ok', agent,
-asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
+asOf, job?, contains?, since?, before?, priority?, channel?, from?, excludeFrom?, id?, inReplyTo?, claims, jobs, announced, next, handoffs, threads, awaiting, blocked, wakes, inbox, mailbox, board, channels, seats?}` or `{status:'invalid',
 reason}` for a
 ref outside the printable-label rule, a `job` outside the same rule
 (`invalid-job`), a `contains` outside the shared bounded free-text
@@ -2912,10 +2912,12 @@ rule every bus `--contains` read applies (`invalid-contains`), a
 `since` or `before` that is not a safe non-negative epoch-ms integer
 (`invalid-since`/`invalid-before`), a `priority` outside the P0..P3 band
 (`invalid-priority`), a `channel` outside the strict channel-name
-grammar every bus `--channel` read validates (`invalid-channel`), or a
+grammar every bus `--channel` read validates (`invalid-channel`), a
 `from`/`excludeFrom` outside the same printable-label bound every bus
-sender filter shares (`invalid-from`/`invalid-exclude-from`).
-`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from` and `excludeFrom` echo the applied
+sender filter shares (`invalid-from`/`invalid-exclude-from`), or an
+`id`/`inReplyTo` outside the same printable-label bound every bus
+`--id`/`--in-reply-to` read validates (`invalid-id`/`invalid-in-reply-to`).
+`job`, `contains`, `since`/`before` (as ISO), `priority`, `channel`, `from`, `excludeFrom`, `id` and `inReplyTo` echo the applied
 filters and are absent on an
 unfiltered read. `agent` echoes `ref`, resolved
 `handle`/`identity` (null when unregistered) and the `registry` state.
@@ -2931,7 +2933,9 @@ resolved across all message claims in one bounded inbox walk plus one
 `inspectBusWorkClaims` journal read, never one scan per claim. `resolved`
 carries `id`, `cursor`, ISO `ts`/`expiresAt`, `priority`, raw `to`/`from`
 labels, resolved `fromAgent` (null unregistered), `bodyKind` (top-level
-`kind`, else `protocol.kind`), a scrubbed clipped `summary`, optional live
+`kind`, else `protocol.kind`), the body's own `inReplyTo` citation verbatim
+(absent when the body cites nothing through that field — never the
+`replyTo` alias), a scrubbed clipped `summary`, optional live
 `job` feed citation on `jobId` bodies and `pinned` — `true` when a journal
 row's `(id, cursor, receivedAt)` triple matches the live receipt, `false`
 when the journal reads clean but holds no row for the claim (bare-id
@@ -3885,7 +3889,15 @@ the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules —
 `bodyKind`, the `busBodyKind` own-field discriminator match the addressed
 inbox/channel/wakes/conversations reads and `phm messages` share (the v2
 `kind`, else `protocol.kind`, else the `type`/`schema` a kindless notice
-keys on; exact and case-sensitive, a kindless body never matching) — and
+keys on; exact and case-sensitive, a kindless body never matching) —
+`result`, the `busBodyResultOutcome` own-field outcome match the
+`WORK_RESULT_OUTCOMES` vocabulary `phm messages --result`, `agents
+messages --result`, `fleet messages`, `bus recent`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share
+(only `work.result` bodies whose own `outcome` strictly equals the code
+emit; a `work.release` body's own `released`/`completed` outcome, every
+other body kind and a result carrying no outcome never match, and a value
+outside the vocabulary is an invalid request) — and
 `channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads
 share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,

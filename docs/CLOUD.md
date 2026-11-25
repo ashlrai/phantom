@@ -1353,7 +1353,32 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   lower bounds, recorded exception/result text is scrubbed and capped,
   and items emit only for the fleet's own repository since the journal
   describes this install's dispatch machinery and carries no repo
-  column.
+  column,
+  and the selector picks journal's recurring adverse cells, the
+  {at, rank, id, repo, jobType, score, predictedValue, mergeRate,
+  minutes, usage, basis} rows `phm select` appends to
+  <runs>/selector/picks.jsonl per funded pick
+  (selectorPicksBacklogItems). Until now the journal's only reader was
+  the writer's own fundedIds dedupe scan — picks are announced only by
+  a selector.picks bus envelope with a one-hour TTL, and the contract's
+  "a planner appends the lines to the queue" is a manual agent act with
+  no verification — so a funded pick whose READY line never landed was
+  permanently unfundable and invisible, and picks whose jobs ran but
+  never merged or finished empty never scored the selector's predicted
+  mergeRate. Settled picks (48h or older, inside the 7-day window) are
+  joined against every place the append could have left evidence —
+  queue.v1.json market rows, router-queue.md proposal lines, ready.tsv
+  live and parked rows, the dropped.tsv archive and the jobs ledger's
+  launch/finish/publish/outcome rows — into merged, in-flight, marketed,
+  proposed, queued, parked (all context only), dropped, unmerged,
+  empty and never-proposed states; a degraded evidence source yields
+  'unknown', never a false absence claim. Adverse cells emit at the
+  recurring bars of three picks across two distinct UTC days —
+  never-proposed and dropped keyed by recorded repo, unmerged and
+  empty by repo and jobType since the outcome miss is per-cell —
+  truncated tails are stated as lower bounds, and items emit only for
+  the fleet's own repository since the journals describe this
+  install's selector and queues.
   Fleet, nightly, policy, local-gate, pass^k, friction, tick-health,
   cross-review, empty-tag, post-merge, ci-rerun, lost-launch,
   memory-pressure, fleet-controller, skill-outcome, precheck-skip,
@@ -1364,7 +1389,7 @@ Phantom keeps a backlog of work on itself and can hand items to cloud sessions.
   recut-loop, judge-verdicts, disk-pressure, devin-autoland, host-load,
   audit-trail, desktop-console, fleet-self-tick, repair-handoff,
   catalog-refresh, mcp-gateway, routines, rate-limit, queue-visit,
-  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts and postrun items carry priority 3;
+  devin-review, custody, launch-cost, knowledge-outcome, landed-close, live-config, delivery-receipts, postrun and selector-picks items carry priority 3;
   fleet items name the fleet repo label in the prompt, nightly items keep the
   proposal's advisory framing and name the evidence record ids to
   inspect, policy items keep the suggestion's advisory framing and name

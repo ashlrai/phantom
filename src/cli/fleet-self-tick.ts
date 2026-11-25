@@ -123,6 +123,8 @@ interface Dependencies {
   worktreeReap?: import('../core/fleet/worktrees.js').WorktreesDeps;
   /** Stranded-requeue seam for tests; production plans over the real runs dir. */
   strandedRequeue?: typeof import('../core/fleet/stranded-requeue.js').planStrandedRequeue;
+  /** Publish-resume sweep seam for tests; production sweeps the real runs dir. */
+  publishResume?: typeof import('../core/fleet/publish-resume-sweep.js').sweepPublishResumes;
   /** Ready ordering seam; called once inside the planner stage. */
   orderReady?: typeof orderReadyFile;
   /** Asks sync seam for tests; production syncs the real needs-you ledger. */
@@ -334,6 +336,15 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       return await (deps.strandedRequeue ?? planStrandedRequeue)(root, { apply, limit: 3, now: now(), ghSlots: readGhLaneSlots, landed: () => readLandedFromGit({ sinceHours: 168, repos: landedReposFromEnv() }) });
     } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
   };
+  // Publishes that pushed a branch but aborted before the PR get a bounded resume pass
+  // (opens the PR, never arms auto-merge; the merge queue's gated path decides). Never fails the tick.
+  const runPublishResumeStage = async (): Promise<unknown> => {
+    if (!deps.publishResume && root !== join(home, '.ashlr-runs')) return { reason: 'custom-runs-dir-no-publish-resume' };
+    try {
+      const { sweepPublishResumes } = await import('../core/fleet/publish-resume-sweep.js');
+      return await (deps.publishResume ?? sweepPublishResumes)({ runsDir: root, apply, now: () => now() });
+    } catch (error) { return { error: error instanceof Error ? error.message.slice(0, 120) : 'unknown error' }; }
+  };
   const runMasonDigestStage = async (): Promise<unknown> => {
     // The owner thread lives on the real account root; a sandbox runs dir never posts unless a test injects the seams.
     if (!deps.masonDigest && root !== join(homedir(), '.ashlr-runs')) return { reason: 'custom-runs-dir-no-owner-thread' };
@@ -416,13 +427,14 @@ export async function cmdFleetSelfTick(args: string[], deps: Dependencies = {}):
       const worktreeReap = await runWorktreeReapStage();
       const asksSync = await runAsksSyncStage();
       const strandedRequeue = await runStrandedRequeueStage();
+      const publishResume = await runPublishResumeStage();
       const order = await (deps.orderReady ?? orderReadyFile)(root, apply, now())
         .catch(() => ({ line: 'order: unknown (queue unavailable or busy)' }));
       const run = await bind(cmdFleetPlannerTick, { now, spawn: deps.spawn })(argv);
       try {
         const parsed: unknown = JSON.parse(run.output);
         if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, order }) };
+          return { ...run, output: JSON.stringify({ ...parsed, autofill, emptyStop, familyStops: (emptyStop as { familyStops?: unknown }).familyStops ?? null, worktreeReap, asksSync, strandedRequeue, publishResume, order }) };
         }
       } catch { /* the verb's own output stands untouched */ }
       return run;

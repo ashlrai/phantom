@@ -792,6 +792,50 @@
  *     emit only for the fleet's own repository since the journal
  *     describes this install's dispatch machinery and carries no repo
  *     column;
+ *   - the usage-live alert journal's recurring saturation, waste and
+ *     session-loss cells: the {ts, level, subject, message, pct,
+ *     resetAt} UsageAlert rows runLiveUsageTick
+ *     (src/core/usage/live/engine.ts) appends to
+ *     <runs>/bus/usage-live-alerts.jsonl on every `phm usage live`
+ *     pass — 'cap-80'/'cap-95' once per (subject, resetAt, level) for
+ *     eight days, 'expire-unspent' on the same key, 'needs-signin'
+ *     once per (site, UTC day) — until now with no reader at all, the
+ *     command's console print and usage-live-first-readings.md being
+ *     point-in-time outputs of the pass that wrote them, so a
+ *     subscription that kept saturating window after window, a paid
+ *     allowance that kept expiring unspent, or a usage site that kept
+ *     losing its browser session never became work
+ *     (usageLiveAlertsBacklogItems below). A cell emits only at the
+ *     recurring bars — cap and expire levels need rows across distinct
+ *     UTC days AND distinct resetAt instants (the writer's own dedupe
+ *     key, so one saturated window re-alerted cannot mint a pattern),
+ *     needs-signin rows and days alone since its resetAt is always
+ *     null — inside the 7-day window, the writer's closed level
+ *     vocabulary and level pairing are enforced, truncated tails are
+ *     stated as lower bounds, message text (which embeds sign-in URLs)
+ *     is never surfaced, and items emit only for the fleet's own
+ *     repository since the journal describes this install's usage
+ *     subscriptions and carries no repo column;
+ *   - the selector picks journal's recurring adverse cells:
+ *     <runs>/selector/picks.jsonl's {at, id, repo, jobType, ...} rows —
+ *     one per pick `phm select` funds (hourly via its launchd schedule) —
+ *     joined against every place the contract's "a planner appends the
+ *     lines to the queue" step would leave a trace: queue/router-queue.md,
+ *     queue/ready.tsv (+ PARKED-* rows), queue/dropped.tsv,
+ *     queue/queue.v1.json and metrics/jobs.jsonl. Until now the journal's
+ *     only reader was fundedIds' permanent dedupe, so a funded pick whose
+ *     READY line never reached any queue was unfundable forever and
+ *     invisible — and picks whose jobs ran but never merged, or finished
+ *     empty, never scored the selector's predicted mergeRate
+ *     (selectorPicksBacklogItems below). Settled picks (48h+, inside the
+ *     7-day window) resolve to merged/in-flight/unmerged/empty/dropped/
+ *     never-proposed/marketed/proposed/queued/parked/unknown; cells emit
+ *     at three adverse picks across two distinct UTC days keyed by the
+ *     pick's recorded repo (repo+jobType for the outcome cells), degraded
+ *     evidence sources force 'unknown' rather than a false absence claim,
+ *     truncated tails are stated as lower bounds, and items emit only for
+ *     the fleet's own repository since the journals describe this
+ *     install's selector and queues;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -887,6 +931,8 @@ import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
 import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
 import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { postrunBacklogItems } from './postrun-backlog.js';
+import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
+import { selectorPicksBacklogItems } from './selector-picks-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2006,6 +2052,45 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // inherits the items since the journal describes this install's
   // dispatch machinery and carries no repo column.
   items.push(...await postrunBacklogItems({ repo }));
+
+  // Usage-live alert journal (<runs>/bus/usage-live-alerts.jsonl):
+  // runLiveUsageTick appends one UsageAlert row per fired alert on
+  // every `phm usage live` pass — cap-80/cap-95 and expire-unspent
+  // deduped per (subject, resetAt, level) for eight days,
+  // needs-signin per (site, UTC day). Until now the journal had no
+  // reader at all: the command's console print and
+  // usage-live-first-readings.md are point-in-time outputs of the pass
+  // that wrote them, so a subscription that kept saturating, a paid
+  // allowance that kept expiring unspent, or a usage site that kept
+  // losing its session never became work. Cells key (level, subject)
+  // on the writer's closed vocabulary; cap and expire cells emit only
+  // at rows across distinct UTC days AND distinct resetAt instants —
+  // the writer's own dedupe key — inside the 7-day window, needs-signin
+  // at rows and days alone since its resetAt is always null, truncated
+  // tails are stated as lower bounds, message text is never surfaced,
+  // and only the fleet's own repository inherits the items since the
+  // journal describes this install's usage subscriptions and carries
+  // no repo column.
+  items.push(...await usageLiveAlertsBacklogItems({ repo }));
+
+  // Selector picks journal (<runs>/selector/picks.jsonl) joined against
+  // the queue-side evidence a planner append would leave — router-queue.md,
+  // ready.tsv (+ parked rows), dropped.tsv, queue.v1.json and the jobs
+  // ledger. `phm select` funds picks and prints READY lines but never
+  // enqueues them itself: "a planner appends the lines to the queue" is a
+  // manual agent act announced only by a one-hour-TTL bus envelope, and
+  // fundedIds refuses a second funding of the same id forever — so a pick
+  // whose append never happened is permanently lost and invisible, while
+  // picks whose jobs finished unmerged or empty never score the selector's
+  // predicted mergeRate. The journal's only other reader was that same
+  // dedupe scan. Settled picks (48h+, 7-day window) classify against every
+  // evidence source — degraded sources yield 'unknown', never a false
+  // 'never-proposed'; adverse cells emit at three picks across two
+  // distinct UTC days, keyed by recorded repo (repo+jobType for outcome
+  // cells), truncated tails stated as lower bounds, and only the fleet's
+  // own repository inherits the items since the journals describe this
+  // install's selector and queues.
+  items.push(...await selectorPicksBacklogItems({ repo }));
   return { items, errors };
 }
 
