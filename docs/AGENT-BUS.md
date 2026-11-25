@@ -2084,7 +2084,29 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` and `--result
+<reserved|admitted|complete|failed>` narrow `comms bus read|watch` on the
+body discriminators every other bus read already filters by: `--body-kind`
+keeps only envelopes whose body carries that exact kind discriminator —
+the same `busBodyKind` own-field exact match `agents bus inbox
+--body-kind`, `channel read --body-kind`, `wakes --body-kind`, `agents
+conversations --body-kind`, `phm messages --body-kind` and `fleet
+bus-follow --body-kind` apply (the v2 `kind` field, else a bus-transport
+v1 `protocol.kind`, else the `type`/`schema` a kindless notice keys on,
+exact and case-sensitive, a body carrying no discriminator never
+matching and an unrecognized but printable value an honest empty page) —
+and `--result` keeps only `work.result` bodies whose own `outcome`
+strictly equals the code, the same `busBodyResultOutcome` own-field match
+and `WORK_RESULT_OUTCOMES` vocabulary `phm messages --result`, `agents
+messages --result`, `fleet messages`, `bus recent`, `fleet bus-follow
+--result`, `fleet_bus_inbox`'s `result` and the work feed's `--result`
+share, so every other body kind — a `work.release` body's own
+`released`/`completed` outcome included — and a `work.result` carrying
+no outcome never match, and a value outside the vocabulary is invalid,
+never a widened page. Both compose conjunctively with every other filter,
+filtered rows still advance the page cursor exactly like every other
+filter, and a `comms bus --checkpoint` consumer binds both raw values
+into its filter identity, so a changed discriminator fails closed.
 
 ### 4. Work feed
 
