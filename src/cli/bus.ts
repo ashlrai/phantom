@@ -5,14 +5,14 @@ import { BusMailboxError, createBusMailbox, validateBusAddress, type BusMailbox,
 import { parseSince } from '../core/fleet/agent-messages.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry, type AgentRegistry } from '../core/agents/bus-identity.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch, BUS_READ_CONTAINS_MAX } from '../core/agents/bus-unified.js';
-import { busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyKind, busBodyThread } from '../core/agents/bus-v2-schema.js';
 
 export const BUS_USAGE = `Usage: phm bus <send|inbox|ack> [--json]
   send --from <label> --to <label> --body <json> [--id <id>] [--priority P0|P1|P2|P3] [--ttl <ms>]
   inbox --to <label> [--limit <1..1000>] [--from <label>] [--exclude-from <label>]
         [--priority P0|P1|P2|P3] [--job <id>] [--channel <name>]
         [--since <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--contains <text>]
-        [--in-reply-to <id>] [--thread <t>]
+        [--in-reply-to <id>] [--thread <t>] [--id <id>] [--body-kind <kind>]
   ack <id> --to <label>
 
 Local durable mailboxes under $ASHLR_HOME/bus-mailbox (default ~/.ashlr/bus-mailbox).
@@ -37,7 +37,10 @@ envelopes whose scrubbed one-line summary carries the needle as a
 case-insensitive substring — the same text agents bus inbox --contains
 matches, never the raw body; --in-reply-to keeps only bodies whose own
 inReplyTo field cites that envelope id; --thread keeps only note/context
-bodies carrying that conversation label.
+bodies carrying that conversation label; --id keeps only the envelope whose
+own id is strictly equal; --body-kind keeps only mail whose retained body
+carries that kind discriminator — the same busBodyKind read agents bus
+inbox --body-kind applies, so a kindless body never matches.
 Use --name=value for flag-shaped values, and ack --to <label> [--json] -- <id>
 for a flag-shaped message ID.
 No remote dispatch or agent execution. Use Phantom Secrets phm_<name> references.
@@ -50,7 +53,7 @@ class UsageError extends Error {}
 const OPTIONS: Record<string, readonly string[]> = {
   send: ['--from', '--to', '--body', '--id', '--priority', '--ttl'],
   inbox: ['--to', '--limit', '--from', '--exclude-from', '--priority', '--job', '--channel',
-    '--since', '--before', '--contains', '--in-reply-to', '--thread'],
+    '--since', '--before', '--contains', '--in-reply-to', '--thread', '--id', '--body-kind'],
   ack: ['--to'],
 };
 
@@ -76,8 +79,9 @@ function filterLabel(values: Map<string, string>, flag: string): string | undefi
  * The `phm bus inbox` read filters as one `BusMailbox.inbox` match predicate —
  * undefined when no filter flag was supplied, so an unfiltered read keeps its
  * exact prior behavior. Every rule is the one the other bus reads share:
- * `busBodyJobMatch`/`busBodyInReplyToMatch`/`busReadContainsMatch`/`busBodyThread`
- * body citations, the `group:<channel>:` `to` prefix, the P0..P3 band, the
+ * `busBodyJobMatch`/`busBodyInReplyToMatch`/`busReadContainsMatch`/`busBodyThread`/`busBodyKind`
+ * body citations plus the strict `envelope.id` equality `--id` applies, the
+ * `group:<channel>:` `to` prefix, the P0..P3 band, the
  * `[since, before)` acceptance-time window, and `agentRefAddressMatcher`
  * sender matching that resolves each ref through the agent identity registry
  * (exact-label fallback on an unresolvable ref or unreadable registry, so
@@ -89,6 +93,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
   const job = filterLabel(values, '--job');
   const thread = filterLabel(values, '--thread');
   const inReplyTo = filterLabel(values, '--in-reply-to');
+  const id = filterLabel(values, '--id');
+  const bodyKind = filterLabel(values, '--body-kind');
   const priorityRaw = values.get('--priority');
   if (priorityRaw !== undefined && !(BUS_PRIORITIES as readonly string[]).includes(priorityRaw)) {
     throw new UsageError('--priority takes P0, P1, P2 or P3.');
@@ -113,8 +119,8 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
     throw new UsageError(`--contains takes a non-empty search text of at most ${BUS_READ_CONTAINS_MAX} characters.`);
   }
   if (from === undefined && excludeFrom === undefined && job === undefined && thread === undefined &&
-    inReplyTo === undefined && priority === undefined && channelPrefix === undefined &&
-    sinceMs === undefined && beforeMs === undefined && containsNeedle === undefined) return undefined;
+    inReplyTo === undefined && id === undefined && bodyKind === undefined && priority === undefined &&
+    channelPrefix === undefined && sinceMs === undefined && beforeMs === undefined && containsNeedle === undefined) return undefined;
   // The registry read runs only when a sender filter needs it; an unreadable
   // or missing registry resolves nothing, so both matchers keep exact-label
   // matching — the same unknown-stays-unknown rule every bus read applies.
@@ -136,7 +142,9 @@ function inboxMatch(values: Map<string, string>): ((message: BusMailboxPendingMe
       (beforeMs === undefined || acceptedAt < beforeMs) &&
       (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) &&
       (inReplyTo === undefined || busBodyInReplyToMatch(envelope.body, inReplyTo)) &&
-      (thread === undefined || busBodyThread(envelope.body) === thread);
+      (thread === undefined || busBodyThread(envelope.body) === thread) &&
+      (id === undefined || envelope.id === id) &&
+      (bodyKind === undefined || busBodyKind(envelope.body) === bodyKind);
   };
 }
 

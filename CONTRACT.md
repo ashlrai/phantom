@@ -3129,8 +3129,9 @@ shown with `matched` the true total and `truncated` definitive. The store's
 count it — and `phm bus inbox` composes the shared bus read filters
 (`--from`/`--exclude-from` sender matching, `--priority`, `--job`,
 `--channel`, the `[since, before)` acceptance-time window, `--contains`,
-`--in-reply-to`, `--thread`) into that one predicate, so the legacy mailbox
-read answers the same filter grammar every other bus read shares. Labels are the
+`--in-reply-to`, `--thread`, `--id` and `--body-kind`) into that one
+predicate, so the legacy mailbox read answers the same filter grammar every
+other bus read shares. Labels are the
 resolved identity's `agentLabels` set, or the literal ref alone when no
 identity resolves — an unreadable registry or unregistered ref never widens
 the match. Each `BusWorkMineMailboxMessage` carries the envelope `id` (the
