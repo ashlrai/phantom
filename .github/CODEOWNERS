@@ -639,6 +639,7 @@
 /test/improve-lost-launch-backlog.test.ts @masonwyatt23
 /test/improve-market-posture-backlog.test.ts @masonwyatt23
 /test/improve-memory-backlog.test.ts @masonwyatt23
+/test/improve-observe-sync.test.ts @masonwyatt23
 /test/improve-observe.test.ts @masonwyatt23
 /test/improve-outcomes.test.ts @masonwyatt23
 /test/improve-postmerge-backlog.test.ts @masonwyatt23
@@ -660,6 +661,7 @@
 /test/improve-self-tick-backlog.test.ts @masonwyatt23
 /test/improve-skill-outcome-backlog.test.ts @masonwyatt23
 /test/improve-source-yield-backlog.test.ts @masonwyatt23
+/test/improve-spawn-proposals-backlog.test.ts @masonwyatt23
 /test/improve-stray-stop-backlog.test.ts @masonwyatt23
 /test/improve-stuck-job-backlog.test.ts @masonwyatt23
 /test/improve-tick-health-backlog.test.ts @masonwyatt23

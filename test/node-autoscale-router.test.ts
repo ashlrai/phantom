@@ -129,6 +129,32 @@ describe('autoscale router scoring', () => {
     expect(a).toEqual(b);
   });
 
+  it('names job-filter and empty-input rejections instead of an empty map', () => {
+    const plan = planAutoscaleRoutes({ nodes: [node(mbp())], costs: COSTS, outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'p', providers: ['claude'] }, { id: 'm', models: ['no-such-model'] }, { id: 'ok' }] });
+    // 'p' keeps only the claude cost row; 'm' excludes every model; 'ok' places.
+    expect(plan[0]).toMatchObject({ jobId: 'p', nodeId: 'main-mbp', provider: 'claude' });
+    expect(plan[1]).toMatchObject({ jobId: 'm', nodeId: null, rejected: { 'model-not-in-job': 3 } });
+    expect(plan[2]).toMatchObject({ jobId: 'ok', nodeId: 'main-mbp' });
+    const typo = planAutoscaleRoutes({ nodes: [node(mbp())], costs: COSTS, outcomes: {}, nowMs: T0,
+      jobs: [{ id: 'j', providers: ['typo-provider'] }] })[0]!;
+    expect(typo.nodeId).toBeNull();
+    expect(typo.rejected).toEqual({ 'provider-not-in-job': 3 });
+    // Degenerate inputs: no usable cost rows or no node documents at all.
+    for (const input of [
+      { nodes: [node(mbp())], costs: [], jobs: [{ id: 'j' }] },
+      { nodes: [], costs: COSTS, jobs: [{ id: 'j' }] },
+    ]) {
+      const p = planAutoscaleRoutes({ ...input, outcomes: {}, nowMs: T0 })[0]!;
+      expect(p.nodeId).toBeNull();
+      expect(Object.keys(p.rejected!).length).toBeGreaterThan(0);
+    }
+    expect(planAutoscaleRoutes({ nodes: [], costs: COSTS, outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] })[0]!.rejected)
+      .toEqual({ 'no-nodes': 1 });
+    expect(planAutoscaleRoutes({ nodes: [node(mbp())], costs: [], outcomes: {}, nowMs: T0, jobs: [{ id: 'j' }] })[0]!.rejected)
+      .toEqual({ 'no-costs': 1 });
+  });
+
   it('sums fresh fleet runnable per harness and keeps unknown as null', () => {
     const docs = [computeNodeCapacity(mbp()), computeNodeCapacity(mbp8())];
     const fleet = fleetRunnable(docs, T0);

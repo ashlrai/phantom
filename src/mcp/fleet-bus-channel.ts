@@ -28,6 +28,7 @@ import {
   type ChannelReadMessage, type ChannelReadPage,
 } from '../core/agents/bus-unified.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { BUS_INBOX_MAX_READ } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -41,7 +42,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const CHANNEL_KEYS = new Set([
   'channel', 'topic', 'after', 'limit', 'matched',
-  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains', 'inReplyTo', 'id', 'bodyKind',
+  'from', 'excludeFrom', 'thread', 'priority', 'job', 'since', 'before', 'contains', 'inReplyTo', 'id', 'bodyKind', 'result',
 ]);
 const LABEL_KEYS = ['from', 'excludeFrom', 'thread', 'job', 'inReplyTo', 'id', 'bodyKind'] as const;
 
@@ -59,6 +60,7 @@ export interface FleetBusChannelFilters {
   inReplyTo?: string;
   id?: string;
   bodyKind?: string;
+  result?: WorkResultOutcome;
 }
 
 export interface FleetBusChannelArgs {
@@ -113,6 +115,11 @@ export function parseFleetBusChannelArgs(args: Record<string, unknown>): FleetBu
   if (priority !== undefined) {
     if (typeof priority !== 'string' || !(BUS_PRIORITIES as readonly string[]).includes(priority)) return null;
     filters.priority = priority as BusPriority;
+  }
+  const result = args.result;
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as WorkResultOutcome;
   }
   const since = args.since;
   if (since !== undefined) {

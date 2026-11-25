@@ -31,6 +31,12 @@ const outcomes = vi.hoisted(() => ({
   syncCloudBacklogOutcomes: vi.fn(() => ({ intact: true, reasons: [] as string[], registered: 0, appended: 0 })),
 }));
 vi.mock('../src/core/improve/backlog-sync.js', () => ({ syncCloudBacklogOutcomes: outcomes.syncCloudBacklogOutcomes }));
+const observations = vi.hoisted(() => ({
+  syncCloudOutcomeObservations: vi.fn(() => ({
+    intact: true, reasons: [] as string[], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing' as const,
+  })),
+}));
+vi.mock('../src/core/improve/observe-sync.js', () => ({ syncCloudOutcomeObservations: observations.syncCloudOutcomeObservations }));
 const stop = vi.hoisted(() => ({ kill: false, paused: false }));
 vi.mock('../src/core/sandbox/policy.js', () => ({ killSwitchOn: () => stop.kill }));
 vi.mock('../src/core/comms/pause.js', () => ({ isPaused: () => stop.paused }));
@@ -56,6 +62,10 @@ beforeEach(() => {
   core.runSelfImprove.mockReset();
   outcomes.syncCloudBacklogOutcomes.mockReset();
   outcomes.syncCloudBacklogOutcomes.mockReturnValue({ intact: true, reasons: [], registered: 0, appended: 0 });
+  observations.syncCloudOutcomeObservations.mockReset();
+  observations.syncCloudOutcomeObservations.mockReturnValue({
+    intact: true, reasons: [], proposals: 0, matched: 0, appended: 0, merged: 0, reverted: 0, revertLedger: 'missing',
+  });
   vi.useFakeTimers();
 });
 
@@ -138,8 +148,11 @@ describe('cadence', () => {
     startCloudScheduler({}, { log });
     await vi.advanceTimersByTimeAsync(CLOUD_IMPROVE_FIRST_DELAY_MS);
     expect(outcomes.syncCloudBacklogOutcomes).toHaveBeenCalledTimes(1);
+    expect(observations.syncCloudOutcomeObservations).toHaveBeenCalledTimes(1);
     expect(core.runSelfImprove).toHaveBeenCalledWith({ count: 1, auto: true });
     expect(outcomes.syncCloudBacklogOutcomes.mock.invocationCallOrder[0])
+      .toBeLessThan(core.runSelfImprove.mock.invocationCallOrder[0]);
+    expect(observations.syncCloudOutcomeObservations.mock.invocationCallOrder[0])
       .toBeLessThan(core.runSelfImprove.mock.invocationCallOrder[0]);
     expect(log).toHaveBeenCalledWith('cloud improve: registered 2 backlog PR(s) into the outcome ledger');
   });

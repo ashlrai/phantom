@@ -25,6 +25,7 @@ import {
   type InboxKind, type InboxMessage, type InboxPage,
 } from '../core/agents/bus-unified.js';
 import { agentChannelNameSchema } from '../core/agents/bus-identity.js';
+import { WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { BUS_INBOX_MAX_READ } from '../core/fleet/bus-inbox.js';
 import { BUS_PRIORITIES, type BusPriority } from '../core/fleet/bus-envelope.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
@@ -38,7 +39,7 @@ const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
 const INBOX_KEYS = new Set([
   'agent', 'after', 'limit', 'matched',
-  'thread', 'from', 'excludeFrom', 'with', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id', 'bodyKind',
+  'thread', 'from', 'excludeFrom', 'with', 'priority', 'kind', 'job', 'since', 'before', 'channel', 'contains', 'inReplyTo', 'id', 'bodyKind', 'result',
 ]);
 const LABEL_KEYS = ['thread', 'from', 'excludeFrom', 'with', 'job', 'inReplyTo', 'id', 'bodyKind'] as const;
 
@@ -58,6 +59,7 @@ export interface FleetAgentInboxFilters {
   inReplyTo?: string;
   id?: string;
   bodyKind?: string;
+  result?: WorkResultOutcome;
 }
 
 export interface FleetAgentInboxArgs {
@@ -111,6 +113,11 @@ export function parseFleetAgentInboxArgs(args: Record<string, unknown>): FleetAg
   if (kind !== undefined) {
     if (typeof kind !== 'string' || !(INBOX_KINDS as readonly string[]).includes(kind)) return null;
     filters.kind = kind as InboxKind;
+  }
+  const result = args.result;
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as WorkResultOutcome;
   }
   const channel = args.channel;
   if (channel !== undefined) {

@@ -247,8 +247,15 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
       processAlive: () => pgrep('imessage (poll|watch|run)|ashlr-imessage|imsg|textbot'),
       inbound: async () => {
         const ev = await readImessageAckEvidence(4096, runsDir);
-        if (ev.sourceState === 'unreadable') throw new Error('imessage-acks-unreadable');
+        if (ev.sourceState !== 'ok' || ev.malformedRows) throw new Error('imessage-acks-unreadable');
         return ev.rows.filter((r) => r.status === 'accepted').map((r) => r.timestamp);
+      },
+      inboundEvidence: async () => {
+        const ev = await readImessageAckEvidence(4096, runsDir);
+        return {
+          store: ev.malformedRows ? 'unreadable' : ev.sourceState,
+          rows: ev.rows.filter((r) => r.status === 'accepted').map((r) => ({ at: r.timestamp })),
+        };
       },
       replies: () => {
         const last = readLastSend(runsDir);
@@ -334,7 +341,7 @@ async function readOne(channel: ChannelName, src: ChannelSource, now: Date, host
   // successful durable enqueue nor convict one. A 'failed' row is positive
   // evidence the running socket could not durably enqueue the request.
   let durableFailed = false;
-  if (evidence !== null && evidence.store === 'ok') {
+  if (evidence !== null && evidence.store === 'ok' && channel !== 'imessage') {
     const counts: DurableIngressCounts = { posted: 0, duplicate: 0, failed: 0, unverified: 0 };
     for (const row of evidence.rows) {
       const t = ms(row.at);

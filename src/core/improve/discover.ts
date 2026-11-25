@@ -838,6 +838,29 @@
  *     days inside the 7-day window, actor values are counted never
  *     emitted, reason text is never folded, and items emit only for
  *     the fleet's own repository since the rows carry no repo column;
+ *   - the spawn-proposal journal's recurring all-duplicate cells: the
+ *     {v, at, parent, owner, proposed, applied, duplicates} rows
+ *     QueueStore.propose (src/core/queue/store.ts) appends to
+ *     <runs>/queue/spawn-proposals.jsonl for every ACCEPTED spawn.v1
+ *     self-decomposition proposal — applied through `phm queue spawn`
+ *     or the POST /v1/spawn ingest after planSpawn
+ *     (src/core/queue/decompose.ts) dedups child ids against the queue
+ *     document, proposal siblings and the merged-job ids folded from
+ *     <runs>/metrics/jobs.jsonl — until now with no reader at all, the
+ *     journal's only consumer being the rate cap's own fresh-window
+ *     filter, so a parent spending its four-proposals-a-day budget on
+ *     children the fleet already had queued or already landed never
+ *     became work (spawnProposalsBacklogItems below). A parent cell
+ *     emits at three all-duplicate rows (applied === 0 with duplicates
+ *     positive — every proposed child already known) inside the
+ *     evidence window, the fleet cell at four such rows across two
+ *     distinct parents; the writer truncates the file to the 24-hour
+ *     rate window on every append so the retained window IS the
+ *     recurrence horizon and no day bar applies, partially-duplicate
+ *     and clean proposals count toward quoted totals but never the
+ *     bars, truncated tails are stated as lower bounds, and items emit
+ *     only for the fleet's own repository since the journal describes
+ *     this install's queue and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -935,6 +958,7 @@ import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { postrunBacklogItems } from './postrun-backlog.js';
 import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
+import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2094,6 +2118,28 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // emitted, reason text is never folded, and only the fleet's own
   // repository inherits the items since the rows carry no repo column.
   items.push(...await harnessBacklogItems({ repo }));
+
+  // Spawn-proposal journal: the {v, at, parent, owner, proposed,
+  // applied, duplicates} rows QueueStore.propose appends to
+  // <runs>/queue/spawn-proposals.jsonl for every ACCEPTED spawn.v1
+  // self-decomposition proposal — `phm queue spawn` and the POST
+  // /v1/spawn ingest both land here after planSpawn dedups child ids
+  // against the queue document, proposal siblings and the merged-job
+  // ids folded from <runs>/metrics/jobs.jsonl. Until now the journal
+  // had no reader at all: its only consumer was the rate cap's own
+  // fresh-window filter, so a parent spending its four-per-day budget
+  // on children the fleet already had queued or already landed never
+  // became work. A parent cell emits at three all-duplicate rows
+  // (applied === 0 with duplicates positive) inside the evidence
+  // window, the fleet cell at four across two distinct parents; the
+  // writer truncates the file to the 24-hour rate window on every
+  // append so the retained window IS the recurrence horizon and no
+  // day bar applies, partially-duplicate and clean proposals count
+  // toward quoted totals but never the bars, truncated tails are
+  // stated as lower bounds, and only the fleet's own repository
+  // inherits the items since the journal describes this install's
+  // queue and carries no repo column.
+  items.push(...await spawnProposalsBacklogItems({ repo }));
   return { items, errors };
 }
 

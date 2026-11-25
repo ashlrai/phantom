@@ -637,6 +637,17 @@ export function startCloudScheduler(env: NodeJS.ProcessEnv = process.env, deps: 
       const synced = syncCloudBacklogOutcomes();
       if (synced.registered > 0) try { log(`cloud improve: registered ${synced.registered} backlog PR(s) into the outcome ledger`); } catch { /* never throws */ }
     } catch { /* never throws */ }
+    // Record post-merge observations (merged/reverted) into the same ledger
+    // from evidence that needs no checkout — merged task outcomes and the
+    // revert-outcomes journal — so standing reverts discount the proposals
+    // that caused them without anyone running `phm improve observe` by hand.
+    // Best-effort like the registration pass above; a second run appends
+    // nothing on unchanged evidence.
+    try {
+      const { syncCloudOutcomeObservations } = await import('../improve/observe-sync.js');
+      const observed = syncCloudOutcomeObservations();
+      if (observed.appended > 0) try { log(`cloud improve: recorded ${observed.appended} outcome observation(s)`) } catch { /* never throws */ }
+    } catch { /* never throws */ }
     return improveGuarded({ count: 1, auto: true });
   });
   const state: SchedulerState = { timers: [], running: {}, lastError: {} };

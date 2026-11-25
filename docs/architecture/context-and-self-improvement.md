@@ -128,6 +128,15 @@ with a randomized holdout, not with hit counts:
   never green.
 * `phm improve observe --repo <dir>` also checks merged cloud tasks for a
   later default-branch revert and records it (`outcome.revertedBy`).
+* Post-merge observation does not only wait for that verb:
+  `syncCloudOutcomeObservations` (the cloud scheduler's improve tick and
+  `phm improve sync-backlog`) appends `observed` events to the outcome
+  ledger from checkout-free evidence — a merged task's recorded
+  `outcome.mergeSha`/`revertedBy` and the newest record per PR in
+  `improve/revert-outcomes.jsonl` (the git-verified `phm fleet reverts
+  --record` journal, whose `relandedBy` is positive re-land evidence). A
+  standing revert clears only on re-land evidence; an unreadable revert
+  journal contributes nothing rather than a stale prefix.
 * Cloud retros cite that evidence: a PR closed with failing checks becomes a
   lesson candidate naming the checks and `owner/repo#n @sha`; a review that
   asked for changes or a revert is cited as the cause. Candidates still need

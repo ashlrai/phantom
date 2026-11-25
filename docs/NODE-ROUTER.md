@@ -94,6 +94,17 @@ worker does, so the node reads unknown rather than wrongly ready. A `--capacity`
 value that is not one JSON object in that shape is refused as `bad-capacity`
 (exit 2) before the beat is recorded; its fix prints the `measure` command.
 
+A standalone session expires 30 seconds after its last beat, so
+`phm node beat --watch [--every <seconds>]` keeps one alive in the foreground:
+each pass is the ordinary `beat` through the same dispatch (a pooled Mac still
+delegates to the primary), re-measuring the `--capacity` sample and host stats
+on this machine unless the caller passed those flags explicitly. The interval
+defaults to 10 seconds and is capped at 25, inside the expiry window. Ctrl-C or
+SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
+a lapsed session, a refused flag — stops it at once with that beat's error. The
+watch flags are consumed by the dispatcher and never reach the beat parser, so
+older stores and pool primaries see only the usual beat arguments.
+
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
@@ -286,7 +297,12 @@ learned in the last 7 days.
 rate per token and per minute, using one or more capacity documents, a
 cost/latency file (`[{provider, model, harness, tokensPerJob, minutesPerJob}]`)
 and lane outcomes (`{provider: {attempts, merged}}`). It prints a plan only; it
-never launches work. Providers passed with `--exhausted` are never routed.
+never launches work. Providers passed with `--exhausted` are never routed. An
+unplaced job's `rejected` counts name why: `provider-not-in-job` and
+`model-not-in-job` count cost rows the job's own provider/model lists excluded,
+`no-costs`/`no-nodes` mean the inputs held no usable cost rows or node
+documents, and the remaining keys (`node-stale`, `node-pressure`, `memory`,
+`cpu`, `provider-not-on-node`, ...) count per-node or per-candidate failures.
 
 The outcomes file is optional to maintain by hand: `--outcomes-ledger` derives
 the same `{provider: {attempts, merged}}` tallies from
