@@ -741,6 +741,62 @@ it('composes --id, --in-reply-to, --kind and --topic with the other filters', as
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 5 });
 });
 
+it('delivers only envelopes whose body carries the exact --body-kind discriminator', async () => {
+  post('note', 'worker-a', { body: { kind: 'note', text: 'hi' } });
+  post('post', 'worker-a', { body: { kind: 'work.post', jobId: 'RQ-K', title: 'x', repo: 'o/r', claimKeys: ['queue:RQ-K'] } });
+  post('status', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-K', status: 'running' } });
+  post('task', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy' } } });
+  post('handoff', 'worker-a', { body: { kind: 'worker-handoff', taskId: 'RQ-K', prompt: 'go' } });
+  post('kindless', 'worker-a', { body: { inReplyTo: 'note', text: 'ack' } });
+  post('plain', 'worker-a', { body: { text: 'no kind' } });
+  for (const [bodyKind, expected] of [
+    ['note', ['note']],
+    ['work.post', ['post']],
+    ['work.status', ['status']],
+    ['task', ['task']],
+    ['worker-handoff', ['handoff']],
+    // The match is exact and case-sensitive; a body with no discriminator
+    // never matches and an unrecognized printable value is an honest empty
+    // stream, never an error.
+    ['Note', []],
+    ['no-such-kind', []],
+  ] as const) {
+    const { records, pending, expire } = follow({ bodyKind });
+    expire();
+    const result = await pending;
+    expect(result.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual([...expected]);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 7 });
+  }
+});
+
+it('composes --body-kind with the other bus-follow filters', async () => {
+  post('hit', 'worker-a', { from: 'agent:worker-a', body: { kind: 'work.status', jobId: 'RQ-C', status: 'running' } });
+  post('wrong-kind', 'worker-a', { from: 'agent:worker-a', body: { kind: 'note', text: 'x' } });
+  post('wrong-from', 'worker-a', { from: 'worker-b', body: { kind: 'work.status', jobId: 'RQ-C', status: 'running' } });
+  const { records, pending, expire } = follow({ from: 'agent:worker-a', bodyKind: 'work.status' });
+  expire();
+  const result = await pending;
+  expect(result.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('rejects invalid --body-kind before touching the store', async () => {
+  const emitted: string[] = [], list = vi.fn(listBusInboxAfter);
+  const emit = (json: string) => { emitted.push(json); };
+  for (const args of [
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'bad kind', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'x'.repeat(129), '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--body-kind', 'note', '--body-kind', 'task', '--root', root, '--json'],
+  ]) {
+    expect(await cmdFleetBusFollow(args, { emit, list })).toBe(2);
+    expect(JSON.parse(emitted.at(-1)!)).toEqual({ status: 'invalid' });
+  }
+  expect(list).not.toHaveBeenCalled();
+});
+
 it('rejects invalid --id, --in-reply-to, --kind and --topic before touching the store', async () => {
   const emitted: string[] = [], list = vi.fn(listBusInboxAfter);
   const emit = (json: string) => { emitted.push(json); };
@@ -793,6 +849,21 @@ it('filters the CLI stream by --id and --in-reply-to', async () => {
   const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
   expect(messages(rows).map(row => row.envelope.id)).toEqual(['reply']);
   expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('filters the CLI stream by --body-kind', async () => {
+  post('noise');
+  post('hit', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-D', status: 'running' } });
+  post('other', 'worker-a', { body: { kind: 'note', text: 'x' } });
+  post('kindless', 'worker-a', { body: { inReplyTo: 'hit', text: 'ack' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--body-kind', 'work.status', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
 });
 
 it('owns its help and dispatches through the fleet verb convention', async () => {

@@ -193,7 +193,11 @@ wh-… hint's citing work.status receipt provably carries work.status,
 so those hints match only that kind — a body carrying no discriminator
 never matches, and an unrecognized but printable value is an honest
 empty match, never an error. It composes with every other filter and
-counts in matched like the rest.
+counts in matched like the rest; the same busBodyKind own-field exact
+match is the filter comms bus read|watch --body-kind, fleet
+bus-follow --body-kind and fleet_bus_inbox's bodyKind apply to the raw
+store reads, so a kind-scoped read can never disagree about what counts
+as a body kind.
 --matched
 on inbox and channel read reports matched, the true pending total across the
 whole retained store the same filters accept; messages still caps at --limit

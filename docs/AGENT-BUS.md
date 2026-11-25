@@ -1906,7 +1906,24 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--body-kind <kind>` (and `fleet_bus_inbox`'s `bodyKind`)
+narrows `comms bus read|watch`, `fleet bus-follow` and `fleet_bus_inbox`
+to envelopes whose body carries that exact kind discriminator — the same
+`busBodyKind` own-field exact match `agents bus inbox --body-kind`,
+`channel read --body-kind`, `wakes --body-kind`, `agents conversations
+--body-kind`, `phm messages --body-kind` and `fleet_agent_inbox`'s
+`bodyKind` apply, decided on the raw body before any projection: the v2
+`kind` field (`note`, `context`, `work.post`, `work.claim`, `work.status`,
+`work.result`, `work.release`, `wake`), a `worker-handoff` assignment or a
+notice kind, a bus-transport v1 `protocol.kind`, or a `type`/`schema`
+notice discriminator. Matched exactly and case-sensitively, so a body
+carrying no discriminator never matches and an unrecognized but printable
+value is an honest empty match, never an error; the value takes the same
+printable-label bound every other body-kind filter applies. On
+`bus-follow` and `comms bus` filtered rows still advance checkpoints and
+page cursors exactly like every other filter, and a `comms bus
+--checkpoint` consumer binds the raw `--body-kind` value into its filter
+identity, so a changed kind fails closed.
 
 ### 4. Work feed
 

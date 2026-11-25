@@ -3864,7 +3864,12 @@ window and contains dimensions above — `before` the exclusive
 `[since, before)` window, the same match `comms bus read|watch --before`
 and `fleet_bus_inbox`'s `before` apply — it also takes `id`/`inReplyTo` — the exact
 envelope-id and own-property reply-correlation matches — `kind`/`topic` —
-the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules — and
+the protocol-v1 `protocolOf(body)?.kind` and `topicMatches` rules —
+`bodyKind`, the shared `busBodyKind` own-field exact match every other
+bus read's body-kind filter applies (the v2 `kind`, a `worker-handoff`
+assignment, a notice kind, a v1 `protocol.kind` or a `type`/`schema`
+discriminator; a body carrying none never matches and an unrecognized
+but printable value is an honest empty stream) — and
 `channel`, the raw `group:<channel>:` `to`-prefix the unaddressed bus reads
 share (`comms bus read|watch --channel`, `fleet bus-follow --channel`,
 `fleet_bus_inbox`'s `channel`, `wakes --channel`, `phm messages --channel`,
