@@ -161,9 +161,15 @@ before the lease lapses.
 ## When something is refused
 
 Every error ends with a fix. A job with no taker is shown by `phm node plan`
-with the reason: no live node in that owner (join one), no node advertising the
-caps (rejoin with them), or no node with a local `gh` login (`gh auth login`,
-then `phm node beat --probe-auth`). A `session-expired` error — from `beat` or
+with the reason and a way through it. No live node in that owner prints the
+`phm node join --owner` fix naming the caps the job needs. Missing caps or a
+missing `gh` login name the live node closest to taking the job: on a
+standalone registry the fix prints runnable commands — the node's `leave` and
+a rejoin advertising the merged caps, owners and slots, or `gh auth login` on
+that node then `phm node beat --node <id> --session <n> --probe-auth`. A pool
+witness prints the same diagnosis but points at the machine, because a member
+cannot run a worker's session commands: fix the caps or run `gh auth login`
+there and restart its worker so join or the heartbeat re-advertises it. A `session-expired` error — from `beat` or
 `pull` — means the node's heartbeat lapsed: its `fix` prints the rejoin command,
 carrying the node's last advertised owner scopes, caps and slots while the
 registry still holds the record (placeholders when it does not). If the node

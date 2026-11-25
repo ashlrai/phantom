@@ -101,6 +101,65 @@ export function nodeCapacityView(state: NodesState | null, now: number) {
   return hosts;
 }
 
+/** The live in-scope node a caps fix names: the one missing the fewest required
+ * caps, with a caps-only blocker ranked ahead of a node that would still refuse
+ * on auth after rejoin. `nodes` arrives id-sorted and the comparison is strict,
+ * so equal candidates keep the lowest id and the plan stays deterministic. */
+function capsFixNode(nodes: NodeRecord[], job: QueueJobV1): { node: NodeRecord; missing: string[] } | null {
+  let best: { node: NodeRecord; missing: string[]; score: number } | null = null;
+  for (const node of nodes) {
+    const missing = (job.requires ?? []).filter(c => !(node.caps ?? []).includes(c));
+    if (missing.length === 0) continue;
+    const score = (jobBlockers(node, job).includes('auth') ? 1000 : 0) + missing.length;
+    if (best === null || score < best.score) best = { node, missing, score };
+  }
+  return best;
+}
+
+/** The node an auth fix names: in scope with every cap present and the gh login
+ * its only blocker — exactly the node one `beat --probe-auth` unblocks. */
+function authFixNode(nodes: NodeRecord[], job: QueueJobV1): NodeRecord | null {
+  return nodes.find(n => {
+    const blockers = jobBlockers(n, job);
+    return blockers.length === 1 && blockers[0] === 'auth';
+  }) ?? null;
+}
+
+/** Why a job has no taker, with the shortest honest way to one. A standalone
+ * registry gets paste-ready commands naming the live node and its session; a
+ * pool witness gets the machine to fix instead, because a member cannot rejoin
+ * a worker's session or probe its gh login from the witness. */
+function unroutableFix(state: NodesState, job: QueueJobV1, scoped: NodeRecord[], reasons: Map<string, number>): string {
+  const requires = job.requires ?? [];
+  if (scoped.length === 0) {
+    return `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`;
+  }
+  if (reasons.has('capacity')) {
+    return `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`;
+  }
+  if (reasons.has('declined') && !reasons.has('caps')) {
+    return `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`;
+  }
+  if (reasons.has('caps')) {
+    const head = `No node owned by '${job.owner}' advertises ${requires.join(',')}.`;
+    const pick = capsFixNode(scoped, job);
+    if (pick === null) return `${head} Rejoin a node with --caps including them.`;
+    if (state.pool) {
+      return `${head} Node '${pick.node.nodeId}' is live without ${pick.missing.join(',')}; fix its caps on that machine and restart its worker so join re-advertises them.`;
+    }
+    const merged = [...new Set([...(pick.node.caps ?? []), ...requires])].sort().join(',');
+    const owners = (pick.node.owners ?? []).join(',');
+    const slots = pick.node.slots === undefined ? '' : ` --slots ${pick.node.slots}`;
+    return `${head} Node '${pick.node.nodeId}' is live without ${pick.missing.join(',')}; rejoin it with them: phm node leave --node ${pick.node.nodeId} --session ${pick.node.session} && phm node join --node ${pick.node.nodeId} --owner ${owners} --caps ${merged}${slots}`;
+  }
+  const head = `Nodes owned by '${job.owner}' lack local gh auth.`;
+  const pick = authFixNode(scoped, job);
+  if (pick === null) return `${head} Run 'gh auth login' on an eligible node, then report the login with a heartbeat (--probe-auth on a standalone beat).`;
+  return state.pool
+    ? `${head} Run 'gh auth login' on ${pick.nodeId}, then restart its worker so the heartbeat reports auth ok.`
+    : `${head} Run 'gh auth login' on ${pick.nodeId}, then report it: phm node beat --node ${pick.nodeId} --session ${pick.session} --probe-auth`;
+}
+
 /** Deterministic plan: pools rank measured free host slots per observed execution millisecond;
  * standalone legacy queues retain their load policy. Ties break by node ID.
  * Pure: the same state and clock always produce the same plan. Jobs without an
@@ -141,16 +200,7 @@ export function planRoutes(state: NodesState, now: number, owner?: string): Rout
       plan.push({ jobId: job.id, owner: job.owner, nodeId: best.nodeId });
       continue;
     }
-    const requires = job.requires ?? [];
-    const fix = !nodes.some(n => n.owners?.includes(job.owner!))
-      ? `No live node belongs to owner '${job.owner}'. Run: phm node join --owner ${job.owner}${requires.length ? ` --caps ${requires.join(',')}` : ''}`
-      : reasons.has('capacity')
-        ? `Nodes owned by '${job.owner}' have no free job slots. Wait for work to finish or memory headroom to recover.`
-      : reasons.has('declined') && !reasons.has('caps')
-        ? `Every eligible node released '${job.id}' unrun (it cannot execute the job). Re-enqueue it with --requires naming a lane a node advertises.`
-      : reasons.has('caps')
-        ? `No node owned by '${job.owner}' advertises ${(job.requires ?? []).join(',')}. Rejoin a node with --caps including them.`
-        : `Nodes owned by '${job.owner}' lack local gh auth. Run 'gh auth login' on one, then: phm node beat --probe-auth`;
+    const fix = unroutableFix(state, job, nodes.filter(n => n.owners?.includes(job.owner!)), reasons);
     plan.push({ jobId: job.id, owner: job.owner, nodeId: null, fix });
   }
   return plan;
