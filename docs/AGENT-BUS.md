@@ -848,8 +848,15 @@ cursor order, including the kindless `{inReplyTo, text}` replies the
 classified projections never group — under the identical printable
 `id` rule, with `rootFound`/`complete`/`sourceFailure` keeping a proven
 miss distinct from an unreadable walk and no caller root or path
-accepted. Both surfaces read with live evidence: every message carries
-the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
+accepted. `phm agents bus thread <id>` serves the same reply-chain read
+on the unified surface itself — the identical `readBusThread` projection,
+printable `id` rule, `rootFound`/`complete`/`sourceFailure` honesty and
+live evidence — so an agent already working `agents bus` reconstructs one
+exchange's raw chain without dropping to the fleet command family; like
+`fleet bus-thread` it takes a wire id only, so a `wh-…` claim-holder hint
+id reports `not-found` here rather than resolving through `show`'s
+wake-hint path. All three surfaces read with live evidence: every message
+carries the same `held`/`holder`/`job`/`fromAgent` annotations `agents bus
 inbox`, `agents bus channel read` and `agents bus show` report — whether
 a claimable work or worker-handoff body in the chain is already taken,
 the live feed state of any job a body cites, and the registered handle
