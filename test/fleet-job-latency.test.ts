@@ -66,7 +66,15 @@ it('supports JSON, reports read errors, and is registered', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   expect(await cmdFleetJobLatency(['--jobs', fixture, '--json'])).toBe(0);
   expect(JSON.parse(log.mock.calls[0]![0] as string).schema).toBe('fleet.job-latency.v1');
+  // An unreadable ledger still prints the honest known:false report — the same
+  // contract pulse merge-latency keeps — in text and --json mode, exit 1.
   expect(await cmdFleetJobLatency(['--jobs', '/missing'])).toBe(1);
+  const textReport = JSON.parse(log.mock.calls.at(-1)![0] as string);
+  expect(textReport).toMatchObject({ schema: 'fleet.job-latency.v1', known: false, jobs: null });
+  expect(await cmdFleetJobLatency(['--jobs', '/missing', '--json'])).toBe(1);
+  const jsonReport = JSON.parse(log.mock.calls.at(-1)![0] as string);
+  expect(jsonReport).toMatchObject({ schema: 'fleet.job-latency.v1', known: false, jobs: null, ignored_events: null });
+  expect(jsonReport.phases.every((p: { total_seconds: unknown }) => p.total_seconds === null)).toBe(true);
   expect(await cmdFleetJobLatency(['--json', '--json'])).toBe(2);
   expect(typeof (await FLEET_SUBCOMMAND_LOADERS['job-latency']!()).cmdFleetJobLatency).toBe('function');
 });

@@ -32,7 +32,11 @@ Outcome MERGED uses mergedAt when supplied, otherwise its event time. Line order
     console.log(json ? JSON.stringify(report) : report.schema === 'pulse.merge-latency.v1' ? mergeQueueLatencyText(report) : JSON.stringify(report, null, 2));
     return 0;
   } catch {
+    // jobLatency(null) is the honest unreadable-ledger report (known:false,
+    // every boundary unknown); print it like merge-latency does so --json
+    // consumers always get the schema on failure, never empty stdout.
     if (mergeOnly) console.log(json ? JSON.stringify(mergeQueueLatency(null)) : 'Merge queue stages: unknown (jobs ledger unreadable).');
+    else console.log(JSON.stringify(jobLatency(null), null, 2));
     console.error('error: unable to read jobs ledger'); return 1;
   }
 }
