@@ -41,11 +41,14 @@ export interface SlackTraceRow {
 export interface SlackRequestTrace {
   asOf: string;
   rows: SlackTraceRow[];
+  /** Counts cover returned rows only, never observations omitted by the journal projection. */
   counts: { total: number; answered: number; uncertain: number; busFailed: number; unanswered: number };
 }
 
 export interface SlackRequestTraceRead extends SlackRequestTrace {
   sources: { journal: SlackJournalRead['state']; sends: SlackSendReceiptRead['state'] };
+  /** True when valid observations were omitted; absent when none are reported or in legacy fixtures. Independent of source state. */
+  projectionOmitted?: boolean;
 }
 
 export interface SlackRequestTraceOptions {
@@ -138,5 +141,6 @@ export function readSlackRequestTrace(options: SlackRequestTraceOptions = {}): S
     entries: journal.entries, receipts: sends.receipts, now: now(),
     ...(options.thread !== undefined ? { thread: options.thread } : {}),
   });
-  return { ...trace, sources: { journal: journal.state, sends: sends.state } };
+  return { ...trace, sources: { journal: journal.state, sends: sends.state },
+    ...(journal.projectionOmitted === true ? { projectionOmitted: true } : {}) };
 }
