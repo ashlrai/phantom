@@ -213,7 +213,8 @@ describe('phm node CLI', () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
     vi.stubEnv('ASHLR_HOME', dir);
     const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
-    expect(joined.next).toBe(`phm node beat --node laptop --session ${joined.session}`);
+    // next is the --watch keep-alive: a one-shot beat would expire 30 s later.
+    expect(joined.next).toBe(`phm node beat --node laptop --session ${joined.session} --watch`);
     const text = await cli('join', '--node', 'desktop', '--owner', 'acme');
     expect(text.out).toContain('next: phm node beat --node desktop --session ');
     const again = await cli('join', '--node', 'laptop', '--owner', 'acme', '--json');
@@ -229,6 +230,18 @@ describe('phm node CLI', () => {
     expect(left.code).toBe(0);
     expect(JSON.parse(left.out)).toMatchObject({ left: false, liveSession: joined.session,
       next: `phm node leave --node laptop --session ${joined.session}` });
+  });
+
+  it('join next probes gh auth only when the node advertised the gh cap', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    // Routing refuses gh jobs until a heartbeat reports auth ok, so a node that
+    // advertised gh gets --probe-auth in its keep-alive; other caps do not.
+    const gh = JSON.parse((await cli('join', '--node', 'ghbox', '--owner', 'acme', '--caps', 'build,gh', '--json')).out);
+    expect(gh.next).toBe(`phm node beat --node ghbox --session ${gh.session} --probe-auth --watch`);
+    const build = JSON.parse((await cli('join', '--node', 'buildbox', '--owner', 'acme', '--caps', 'build', '--json')).out);
+    expect(build.next).toBe(`phm node beat --node buildbox --session ${build.session} --watch`);
+    expect(build.next).not.toContain('--probe-auth');
   });
 
   it('reports unmeasured load as unknown, never a fabricated 0', async () => {

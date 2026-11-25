@@ -19,6 +19,7 @@ const FLAGS: Record<string, { value: string[]; boolean?: string[] }> = {
   complete: { value: [...LEASE, '--result'] },
   release: { value: LEASE, boolean: ['--decline'] },
   withdraw: { value: ['--job', '--owner'] },
+  result: { value: ['--job', '--owner'] },
   status: { value: ['--owner'] },
   list: { value: ['--owner'] },
   leave: { value: ['--node', '--session'] },
@@ -197,6 +198,12 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       return { jobId: need(flags, '--job'), released: true, declined: flags.has('--decline') };
     }
     case 'withdraw': return { jobId: need(flags, '--job'), ...nodes.withdraw(need(flags, '--job'), need(flags, '--owner')) };
+    case 'result': {
+      // Read-only: the owner reads back what a completed job answered, or the
+      // live state while it is still pending or running. Never a fence.
+      const jobId = need(flags, '--job');
+      return { jobId, ...nodes.jobOutcome(jobId, need(flags, '--owner')) };
+    }
     case 'list':
     case 'status': return { ...nodes.view(csv(need(flags, '--owner'))) };
     default: {

@@ -23,6 +23,17 @@ function text(verb: string, out: Record<string, unknown>): string {
       ...jobs.map(j => `job ${j.id} ${j.state}`)].join('\n');
   }
   if (verb === 'pull') return out['pulled'] ? `Claimed ${(out['claim'] as { jobId: string }).jobId}. Renew before expiry; pass the token to every effect.` : 'No job for this node. Run: phm node plan';
+  if (verb === 'result') {
+    const jobId = String(out['jobId']), state = out['state'];
+    if (state === 'absent') return `job ${jobId}: absent (no such job in this owner scope)`;
+    if (state === 'pending') return `job ${jobId}: pending`;
+    if (state === 'running') return `job ${jobId}: running${out['claimedBy'] ? ` (claimed by ${out['claimedBy']})` : ''}`;
+    const head = out['producerWithdrawn'] === true ? 'withdrawn by the producer'
+      : `completed by ${String(out['completedBy'] ?? 'unknown')}`;
+    const when = typeof out['completedAt'] === 'number' ? ` at ${new Date(out['completedAt']).toISOString()}` : '';
+    const body = typeof out['result'] === 'string' && out['result'].length ? `\n${out['result']}` : '';
+    return `job ${jobId}: ${head}${when}${body}`;
+  }
   return Object.entries(out).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(',') : String(v)}`).join('\n');
 }
 
@@ -45,8 +56,16 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
     // Standalone join names its keep-alive beat. This stays out of runNodeFleet:
     // pool replies already carry their own `next` (the worker command) and a
-    // `next` inside result.result would override it in the spread below.
-    if (verb === 'join') out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}`;
+    // `next` inside result.result would override it in the spread below. The
+    // hint is the --watch loop, the only beat form that keeps the session
+    // live past the 30 s expiry; a node that advertised `gh` also gets
+    // --probe-auth, because routing refuses gh jobs until a heartbeat reports
+    // a working local gh login.
+    if (verb === 'join') {
+      const caps = out['caps'];
+      const probe = Array.isArray(caps) && caps.includes('gh') ? ' --probe-auth' : '';
+      out['next'] = `phm node beat --node ${String(out['nodeId'])} --session ${String(out['session'])}${probe} --watch`;
+    }
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
   } catch (error) {

@@ -4,7 +4,7 @@
  *   register <proposal.json>                                 record a proposal's hypothesis and deterministic metric
  *   measure  <id> --repo <dir> [--repeat N]                  measure the metric at the PR's exact merge base and head
  *   outcomes [--json]                                        measured outcomes and proposer comparison vs the deterministic baseline
- *   sync-backlog                                             register cloud backlog PRs whose item declares a metric
+ *   sync-backlog                                             register cloud backlog PRs whose item declares a metric and record checkout-free merge/revert observations
  *   observe  --repo <dir>                                    record merges of registered PRs and reverts that undo them
  *   discover [--repo owner/name] [--dry-run] [--json]        add backlog items from member issues, a red default branch and proposals
  *   promote  <id> --repo <dir> [--queue-merge] [--json]      evaluate the promotion gate; --queue-merge queues auto-merge when admitted
@@ -147,7 +147,13 @@ async function syncBacklog(): Promise<number> {
     if (!res.intact) { console.error(`! outcome ledger is not intact: ${res.reasons.join(', ')}`); return 1; }
     if (res.reason === 'append-failed') { console.error('! could not append to the outcome ledger'); return 1; }
     if (res.reason === 'source-unavailable') { console.error('! could not read the cloud task store, backlog or outcome ledger'); return 1; }
+    const { syncCloudOutcomeObservations } = await import('../core/improve/observe-sync.js');
+    const obs = syncCloudOutcomeObservations();
+    if (!obs.intact) { console.error(`! outcome ledger is not intact: ${obs.reasons.join(', ')}`); return 1; }
+    if (obs.reason === 'append-failed') { console.error('! could not append to the outcome ledger'); return 1; }
+    if (obs.reason === 'source-unavailable') { console.error('! could not read the cloud task store or outcome ledger'); return 1; }
     console.log(res.registered ? `ok registered ${res.registered} cloud backlog PR(s); measure them with phm improve measure <id> --repo <dir>` : 'No new cloud backlog PRs with a declared metric.');
+    if (obs.appended > 0) console.log(`ok recorded ${obs.appended} post-merge observation(s) (${obs.merged} merged, ${obs.reverted} reverted)`);
     return 0;
   } catch (err) { console.error(`! ${err instanceof Error ? err.message : String(err)}`); return 1; }
 }
