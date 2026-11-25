@@ -218,7 +218,33 @@ describe('getActiveClient — cloud provider, allowCloud=true, key absent', () =
 // ---------------------------------------------------------------------------
 
 describe('getActiveClient — cloud provider, allowCloud=true, key present', () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it('uses Gemini API only with cloud permission and its own key', async () => {
+    stubRegistry('gemini');
+    vi.stubEnv('GEMINI_API_KEY', '');
+    vi.stubEnv('GOOGLE_API_KEY', 'fixture-other-google-key');
+    const fetchSpy = vi.fn().mockResolvedValue(mockJsonResponse(openAIResponse()));
+    vi.stubGlobal('fetch', fetchSpy);
+    const cfg = makeConfig(['gemini']);
+    await expect(getActiveClient(cfg, { allowCloud: true })).rejects.toThrow(/GEMINI_API_KEY/);
+    vi.stubEnv('GEMINI_API_KEY', 'fixture-gemini-key');
+    await expect(getActiveClient(cfg, { allowCloud: false })).rejects.toThrow(/--allow-cloud/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const client = await getActiveClient(cfg, { allowCloud: true });
+    expect(client).toMatchObject({ id: 'gemini', model: 'gemini-4-neon' });
+    expect(await client.getContextWindowTokens?.()).toBe(1_048_576);
+    await client.chat([{ role: 'user', content: 'hi' }]);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+    expect(init).toMatchObject({
+      redirect: 'error', headers: { Authorization: 'Bearer fixture-gemini-key' },
+    });
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'gemini-4-neon', max_tokens: 65_536 });
+    const carbon = await getActiveClient(cfg, { allowCloud: true, provider: 'gemini', model: 'gemini-4-carbon' });
+    expect(carbon.model).toBe('gemini-4-carbon');
+  });
 
   it('returns a ProviderClient for nvidia_nim when key and allowCloud are set', async () => {
     stubRegistry('nvidia_nim');

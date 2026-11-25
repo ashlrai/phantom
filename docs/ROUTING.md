@@ -127,6 +127,46 @@ an explicit mode. Classify a custom connected model in `models.json`, for
 example `"mode.my-loopback-model":"normal"`. Eligibility still requires
 quota, admission and a free slot. Model identifiers can contain `:` and `/`.
 
+### Gemini 4 and Antigravity
+
+[Gemini 4 Neon](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/)
+(released Nov 18, 2026; [model card](https://deepmind.google/models/model-cards/gemini-4-neon/))
+is adapted from Carbon. Neon is fast enough for everyday frontier-quality work
+and is the balanced work choice; choose Carbon for the hardest, long-horizon
+tasks and Hydrogen for fast, routine work. These are model recommendations,
+not fleet engine admission or merge authority.
+
+| Gemini API ID | Router mode | Use | USD / 1M tokens (input / cached input / output) |
+| --- | --- | --- | --- |
+| [`gemini-4-carbon`](https://ai.google.dev/gemini-api/docs/models/gemini-4-carbon) | ultra | Hardest frontier | $4 / $0.20 / $20 standard; $2 / $0.10 / $10 through Nov 30, 2026 |
+| [`gemini-4-neon`](https://aistudio.google.com/docs/models/gemini-4-neon) | normal | Fast frontier/work quality | $3 / $0.15 / $15 |
+| [`gemini-4-hydrogen`](https://ai.google.dev/gemini-api/docs/models/gemini-4-hydrogen) | lite | Fast everyday | $1.50 / $0.075 / $7.50 |
+
+Each has a 1,048,576-token API context and a 65,536-token synchronous
+output limit. These limits and token prices are for the API/AI Studio,
+not Antigravity seat capacity.
+
+The local-first router never adds Gemini API to the default provider chain.
+To permit a metered escalation, the owner must add `gemini` to
+`models.providerChain`, supply `GEMINI_API_KEY` and explicitly allow cloud
+use. Cloud escalation still requires a non-empty escalation reason (other
+than `none`), respects local-only mode and tries configured cloud providers in
+order, skipping those without keys. If Gemini is selected, it defaults to
+Neon; an explicit API model selection can choose Carbon or Hydrogen. A
+request failure does not silently buy a retry from another Gemini model.
+
+[`agy` (Antigravity CLI)](https://antigravity.google/blog/gemini-4-neon-in-google-antigravity/)
+is a separate Google AI Pro/Ultra subscription seat, never a Gemini API fallback.
+Neon is rolling out to paid seats, but the observed `agy` 1.5.3 model listing
+did not offer it. Use only IDs returned by the specific seat's `agy models`.
+For a seat that does not list Neon, the Gemini-family fallback is a listed
+`gemini-4-hydrogen-high` (work) or `gemini-4-hydrogen-medium` (fast), then
+a listed `gemini-3.8-flash-*` variant. The checked-in Mac launcher keeps
+its pinned choices: `claude-opus-4-6-thinking` for frontier,
+`gemini-3.8-flash-high` for work and `gemini-3.8-flash-medium` for fast.
+It runs with `useG1Credits=false` and does not inherit API keys; the catalog
+refresh does not change those choices or install a launcher.
+
 Optional `queue/route-capacity.json` maps lane IDs to readings, for example:
 
 ```json

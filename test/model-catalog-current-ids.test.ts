@@ -54,4 +54,20 @@ describe('model catalog current ids', () => {
       expect(canonicalModelTag('claude', spelling)).toBe('sonnet-5');
     }
   });
+
+  it.each([
+    ['gemini-4-carbon', 'ultra', 4, 0.2, 20, 4, false],
+    ['gemini-4-neon', 'normal', 3, 0.15, 15, 2, true],
+    ['gemini-4-hydrogen', 'lite', 1.5, 0.075, 7.5, 1, true],
+  ])('registers %s without making it an implicit API choice', (model, modeTier, input, cached, output, effort, fast) => {
+    const entry = KNOWN_MODELS.find(m => m.id === `gemini:${model}`);
+    expect(entry).toMatchObject({
+      engine: 'gemini', apiModelId: model, modeTier, minEffort: effort,
+      costPerMTokIn: input, costPerMTokCachedIn: cached, costPerMTokOut: output,
+      apiContextWindow: 1_048_576, apiMaxOutputTokens: 65_536, explicitOnly: true,
+    });
+    expect(entry?.capabilities.includes('fast')).toBe(fast);
+    expect(pickModel({ engine: 'gemini' })).toBeNull();
+    expect(catalogFor('gemini')).toEqual([]);
+  });
 });
