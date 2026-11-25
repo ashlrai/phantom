@@ -12,6 +12,7 @@
  * The second row does the same for the release card: a "Later" or Escape on
  * day one of a release otherwise loses the only summary of what changed.
  */
+import { lazy, Suspense } from 'react';
 import { Button } from '../../../components/primitives/index.js';
 import { Panel, SettingRow } from '../sections/SettingRow.js';
 import { relativePhrase } from '../context/context-model.js';
@@ -22,6 +23,8 @@ import { FirstResultGuide } from './FirstResultGuide.js';
 import styles from './onboarding.module.css';
 import { TeamPanel } from './TeamPanel.js';
 import { EcosystemWizard } from './EcosystemWizard.js';
+
+const FullPermissionsSetup = lazy(() => import('./FullPermissionsSetup.js'));
 
 /**
  * What the stored answer says, in the app's one relative wording ("5m ago",
@@ -44,6 +47,7 @@ export function OnboardingPanel() {
 
   return (
     <>
+    <Suspense fallback={null}><FullPermissionsSetup /></Suspense>
     <EcosystemWizard />
     <Panel title="Onboarding">
       <SettingRow
