@@ -323,6 +323,10 @@ it('bus-follow rejects invalid arguments before touching the store', async () =>
     ['--after', '0', '--duration-ms', '100', '--body-kind', 'bad label', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--body-kind=', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--body-kind', 'note', '--body-kind', 'task', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--result', 'bogus', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--result', 'FAILED', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--result=', '--root', root, '--json'],
+    ['--after', '0', '--duration-ms', '100', '--result', 'failed', '--result', 'complete', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', 'not-a-time', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--since', '-5', '--root', root, '--json'],
     ['--after', '0', '--duration-ms', '100', '--before', 'not-a-time', '--root', root, '--json'],
@@ -769,6 +773,70 @@ it('composes --body-kind with the other bus-follow filters', async () => {
   expect(result.status).toBe('expired');
   expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
   expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
+});
+
+it('delivers only work.result envelopes whose own outcome matches --result', async () => {
+  const result = (id: string, outcome: string) =>
+    post(id, 'worker-a', { body: { kind: 'work.result', jobId: 'RQ-R', claimKey: 'queue:q1', queueId: 'q1', receiptId: `rc-${id}`, outcome } });
+  result('res-reserved', 'reserved');
+  result('res-admitted', 'admitted');
+  result('res-complete', 'complete');
+  result('res-failed', 'failed');
+  // A work.result whose outcome is absent or outside the vocabulary reports
+  // no provable outcome and never matches a valid filter value.
+  post('res-no-outcome', 'worker-a', { body: { kind: 'work.result', jobId: 'RQ-R' } });
+  result('res-bogus', 'bogus');
+  // work.release carries its own released/completed outcome — a different
+  // vocabulary the kind-scoped match never reads.
+  post('release-done', 'worker-a', { body: { kind: 'work.release', claimKey: 'queue:q1', token: 't', outcome: 'completed' } });
+  post('release-rel', 'worker-a', { body: { kind: 'work.release', claimKey: 'queue:q1', token: 't', outcome: 'released' } });
+  post('status', 'worker-a', { body: { kind: 'work.status', jobId: 'RQ-R', status: 'running' } });
+  post('note', 'worker-a', { body: { kind: 'note', text: 'x' } });
+  // A protocol-v1 result kind is not a v2 work.result body.
+  post('proto-result', 'fleet.deploy', { body: { protocol: { version: 1, kind: 'result', topic: 'fleet.deploy' } } });
+  post('kindless', 'worker-a', { body: { inReplyTo: 'req', text: 'ack' } });
+  for (const [outcome, expected] of [
+    ['reserved', ['res-reserved']],
+    ['admitted', ['res-admitted']],
+    ['complete', ['res-complete']],
+    ['failed', ['res-failed']],
+  ] as const) {
+    const { records, pending, expire } = follow({ result: outcome });
+    expire();
+    const stream = await pending;
+    expect(stream.status).toBe('expired');
+    expect(messages(records).map(row => row.envelope.id)).toEqual([...expected]);
+    expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 12 });
+  }
+});
+
+it('composes --result with the other bus-follow filters', async () => {
+  const result = (id: string, outcome: string, jobId = 'RQ-R2') =>
+    post(id, 'worker-a', { body: { kind: 'work.result', jobId, outcome } });
+  result('hit', 'failed');
+  result('wrong-outcome', 'complete');
+  result('other-job', 'failed', 'RQ-OTHER');
+  post('hit-note', 'worker-a', { body: { kind: 'note', thread: 'job:RQ-R2', text: 'x' } });
+  const { records, pending, expire } = follow({ result: 'failed', job: 'RQ-R2' });
+  expire();
+  const stream = await pending;
+  expect(stream.status).toBe('expired');
+  expect(messages(records).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(records.at(-1)).toEqual({ type: 'checkpoint', cursor: 4 });
+});
+
+it('filters the CLI stream by --result', async () => {
+  post('noise');
+  post('hit', 'worker-a', { body: { kind: 'work.result', jobId: 'RQ-R-CLI', outcome: 'failed' } });
+  post('miss', 'worker-a', { body: { kind: 'work.result', jobId: 'RQ-R-CLI', outcome: 'complete' } });
+  const emitted: string[] = [];
+  const code = await cmdFleetBusFollow(['--after', '0', '--duration-ms', '250', '--interval-ms', '100',
+    '--result', 'failed', '--root', root, '--json'],
+    { emit: (json: string) => { emitted.push(json); } });
+  expect(code).toBe(0);
+  const rows = emitted.map(line => JSON.parse(line) as BusFollowRecord);
+  expect(messages(rows).map(row => row.envelope.id)).toEqual(['hit']);
+  expect(rows.at(-1)).toEqual({ type: 'checkpoint', cursor: 3 });
 });
 
 it('composes --id, --in-reply-to, --kind and --topic with the other filters', async () => {

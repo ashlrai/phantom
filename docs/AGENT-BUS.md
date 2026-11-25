@@ -1892,7 +1892,18 @@ and `phm messages --body-kind` apply:
 the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
 `type`/`schema` a kindless notice keys on, exact and case-sensitive, a
 body carrying no discriminator never matching and an unrecognized but
-printable value an honest empty stream. As with `--to` and `--job`, filtered rows
+printable value an honest empty stream. `--result
+<reserved|admitted|complete|failed>` keeps only `work.result` bodies whose
+own `outcome` strictly equals the code — the same `busBodyResultOutcome`
+own-field match and `WORK_RESULT_OUTCOMES` vocabulary `phm messages
+--result`, `agents messages --result`, `fleet messages`, `bus recent`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+so the envelope-level audit trail a job-scoped follow already narrows by
+`--job` answers "stream only this job's failed result receipts" in one
+filtered read; every other body kind, including a `work.release` body's
+own `released`/`completed` outcome, and a `work.result` carrying no
+outcome never match, and a value outside the vocabulary is an invalid
+request, never a widened stream. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
 an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same
