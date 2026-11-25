@@ -173,7 +173,11 @@ resume without re-joining again. A `node-live` error from `join` names the live
 session the same way. `leave` under a stale session answers `"left":false` with
 `liveSession` and a ready `next` command; use the current session number.
 `pull` answers `{"pulled":false}` only while the session is live, so "no job"
-never masks a dead session. A `lease-lost` error means stop work on that job
+never masks a dead session. The same answer carries this node's own admission
+facts when it has them — `slots` (the advertised bound, absent when unbounded)
+and `held` (the last measured capacity hold) — so an idle node can tell an
+empty queue from held capacity; text mode says so in plain words. A
+`lease-lost` error means stop work on that job
 and pull again. A flag value outside its documented range — `--usage` above
 1000 permille or `--slots` above 64 on `join` or `beat` — is refused as usage
 (exit 2, `bad-usage` or `bad-slots`) naming the flag and its range, before the

@@ -327,8 +327,10 @@ describe('pull session honesty', () => {
   it('answers no-job only to a live session; a dead one gets session-expired', () => {
     const f = fixture();
     const worker = f.a.join('worker', { owners: ['o'], slots: 1 })!;
-    // Live session, empty route: the honest "nothing for you" answer.
-    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toEqual({ pulled: false });
+    // Live session, empty route: the honest "nothing for you" answer, with
+    // this node's advertised slot bound so held capacity is never silent.
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 1 });
     // Past the node TTL the same pull must not read as "no job": the session
     // is gone and the node has to rejoin before it can hear about work.
     f.advance(100);
@@ -339,7 +341,22 @@ describe('pull session honesty', () => {
     expect(again.session).not.toBe(worker.session);
     expect(() => executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toThrowError(
       expect.objectContaining({ code: 'session-expired' }));
-    expect(executeNodeFleet('pull', pullArgs('worker', again.session), f.a)).toEqual({ pulled: false });
+    expect(executeNodeFleet('pull', pullArgs('worker', again.session), f.a))
+      .toEqual({ pulled: false, slots: 1 });
+  });
+  it('names this node\'s own admission hold on an empty pull', () => {
+    const f = fixture();
+    const worker = f.a.join('worker', { owners: ['o'] })!;
+    // No slots and no capacity sample: the bare "nothing for you" answer.
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toEqual({ pulled: false });
+    // An advertised zero bound is reported even without a capacity sample.
+    f.a.heartbeat(worker, { slots: 0 });
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a)).toEqual({ pulled: false, slots: 0 });
+    // A measured hold reports both the bound and the reason, exactly as status does.
+    f.a.heartbeat(worker, { capacity: { hostId: 'worker-host', ramBytes: 8 * 1024 ** 3,
+      slots: 0, held: 'memory-pressure', sampledAtMs: 1_000 } });
+    expect(executeNodeFleet('pull', pullArgs('worker', worker.session), f.a))
+      .toEqual({ pulled: false, slots: 0, held: 'memory-pressure' });
   });
 });
 
@@ -736,6 +753,23 @@ describe('text output names outcomes in plain words', () => {
       expect(last(lines)).toContain('slots=0 held=memory-pressure');
       expect(await cmdNodeFleet('list', ['--owner', 'acme'], deps)).toBe(0);
       expect(last(lines)).toContain('slots=0 held=memory-pressure');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('an empty pull names this node\'s own hold in plain words', async () => {
+    const { deps, nodes, lines } = harness();
+    try {
+      const session = String(executeNodeFleet('join', ['--node', 'box', '--owner', 'acme'], nodes())['session']);
+      // No bound and no hold: the plain no-job line is unchanged.
+      expect(await cmdNodeFleet('pull', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe('No job for this node. Run: phm node plan');
+      // An advertised zero bound says so; a measured hold names its reason.
+      executeNodeFleet('beat', ['--node', 'box', '--session', session, '--slots', '0'], nodes());
+      expect(await cmdNodeFleet('pull', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe('No job for this node; this node advertises zero job slots. Run: phm node plan');
+      const held = { hostId: 'box.local', ramBytes: 17_179_869_184, slots: 0, held: 'memory-pressure', sampledAtMs: 1_000 };
+      executeNodeFleet('beat', ['--node', 'box', '--session', session, '--capacity', JSON.stringify(held)], nodes());
+      expect(await cmdNodeFleet('pull', ['--node', 'box', '--session', session], deps)).toBe(0);
+      expect(last(lines)).toBe('No job for this node; this node is held (memory pressure). Run: phm node plan');
     } finally { vi.restoreAllMocks(); }
   });
   it('release hands a claim back in plain words, and --decline bars this session', async () => {

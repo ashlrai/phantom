@@ -250,9 +250,17 @@ export function runNodeFleet(verb: string, flags: Map<string, string>, nodes: Dr
       const pulled = nodes.pull(s);
       if (!pulled) {
         // A dead session and an empty route both answer null; only a live
-        // session may hear "no job" — a stale one must rejoin first.
-        if (!nodes.sessionLive(s)) throw stale(s.nodeId, s.session);
-        return { pulled: false };
+        // session may hear "no job" — a stale one must rejoin first. One
+        // snapshot proves liveness and names this node's own admission hold
+        // (advertised slots, measured capacity hold), so an empty pull can say
+        // "held" instead of leaving the operator to guess between an empty
+        // queue and held capacity. Same single read sessionLive already cost.
+        const state = nodes.snapshot();
+        const rec = state.nodes.find(n => n.nodeId === s.nodeId && n.session === s.session);
+        if (rec === undefined || rec.expiresAt <= state.observedAt) throw stale(s.nodeId, s.session);
+        return { pulled: false,
+          ...(rec.slots === undefined ? {} : { slots: rec.slots }),
+          ...(rec.capacity?.held ? { held: rec.capacity.held } : {}) };
       }
       const { claim, job } = pulled;
       return { pulled: true, job, claim: { jobId: claim.jobId, nodeId: claim.nodeId, session: claim.session,
