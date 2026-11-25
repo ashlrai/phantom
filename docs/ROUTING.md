@@ -1149,12 +1149,12 @@ than marking merges reverted or withholding on corrupt evidence, and
 
 ## Shadow policy comparison
 
-`phm route shadow eval --input <file|-> [--policy task-class-failure-avoidance] [--root <directory>] [--record] --json`
+`phm route shadow eval --input <file|-> [--policy class-failure-avoidance] [--root <directory>] [--record] --json`
 evaluates a candidate adaptation policy next to the live `decideRoute` decision
 on the same request and eligible candidates. The live decision is unchanged;
 `--record` appends an advisory `route.shadow.v1` record (`dispatched: false`)
 to `metrics/route.shadow.jsonl` without dispatching or altering routing. The
-default policy (`task-class-failure-avoidance`) groups prior resolved outcomes
+default policy (`class-failure-avoidance`) groups prior resolved outcomes
 strictly by `(repo, task_class, lane)` without crossing repo boundaries or
 escalating cost/speed tier, and marks sparse cells `insufficient_support`.
 

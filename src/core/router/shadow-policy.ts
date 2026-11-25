@@ -11,7 +11,7 @@ export const SHADOW_POLICY_LEDGER_RELATIVE = join('metrics', 'route.shadow.jsonl
 export const SHADOW_POLICY_RECORD_SCHEMA = 'route.shadow.v1' as const;
 export const SHADOW_POLICY_REPORT_SCHEMA = 'route.shadow-report.v1' as const;
 export const SHADOW_POLICY_LEDGER_LIMIT = 8 * 1024 * 1024;
-export const DEFAULT_SHADOW_POLICY = 'task-class-failure-avoidance' as const;
+export const DEFAULT_SHADOW_POLICY = 'class-failure-avoidance' as const;
 export const DEFAULT_MIN_SUPPORT = 3;
 export const FAILURE_RATE_DEADBAND = 0.1;
 
