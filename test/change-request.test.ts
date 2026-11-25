@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { changeRequestStatusPath, submitChangeRequest } from '../src/core/verse/change-request.js';
+import { changeRequestStatusPath, listChangeRequests, submitChangeRequest } from '../src/core/verse/change-request.js';
 const NOW = Date.parse('2026-11-25T11:00:00.000Z');
 const DESCRIPTION = 'Please add a compact activity summary card.';
 let tempRoot: string, runsRoot: string, statusRoot: string;
@@ -59,4 +59,51 @@ it('fences the description, strips user fence tokens, and omits it from the stat
   });
   expect(Object.keys(row).sort()).toEqual(['createdAt', 'id', 'jobId', 'status', 'surface', 'v']);
   expect(journal).not.toContain('preferences panel');
+});
+
+it('uses the job receipt and only an explicit outcome for the same PR', async () => {
+  const queued = await submit();
+  if (queued.status !== 'queued') throw new Error('expected queued result');
+  const { jobId } = queued;
+  const url = 'https://github.com/ashlrai/phantom/pull/42';
+  const oldUrl = 'https://github.com/ashlrai/phantom/pull/41';
+  const list = () => listChangeRequests({ runsRoot, statusRoot, now: () => NOW });
+  expect(await list()).toMatchObject([{ jobId, pr: null }]);
+  await mkdir(join(runsRoot, 'metrics'));
+  const ledger = join(runsRoot, 'metrics', 'jobs.jsonl');
+  const otherRows = [
+    { job: 'RQ-PHX-OTHER', event: 'publish', url, state: 'OPEN' },
+    { job: jobId, event: 'outcome', state: 'MERGED', url: oldUrl },
+  ];
+  await writeFile(join(runsRoot, `${jobId}.publish`), `RESULT PR ${url} SENS=[]\nAUTO_MERGE on\n`);
+  await writeFile(ledger, otherRows.map((row) => JSON.stringify(row)).join('\n'));
+  expect(await list()).toMatchObject([{ jobId, pr: { url, state: null } }]);
+  await writeFile(ledger, [...otherRows, { event: 'outcome', url, state: 'OPEN' }]
+    .map((row) => JSON.stringify(row)).join('\n'));
+  expect(await list()).toMatchObject([{ jobId, pr: { url, state: 'open' } }]);
+});
+
+it('reads ledger-only publications and matches terminal outcomes by URL', async () => {
+  const queued = await submit();
+  if (queued.status !== 'queued') throw new Error('expected queued result');
+  const { jobId } = queued;
+  const url = 'https://github.com/ashlrai/phantom/pull/42';
+  const oldUrl = 'https://github.com/ashlrai/phantom/pull/41';
+  const ledger = join(runsRoot, 'metrics', 'jobs.jsonl');
+  const list = () => listChangeRequests({ runsRoot, statusRoot, now: () => NOW });
+  const published = { event: 'publish', jobId, prUrl: `${url}/`, outcome: 'PUBLISHED' };
+  const rows = [
+    { event: 'publish', job: 'RQ-PHX-OTHER', url: oldUrl },
+    { event: 'publish', job: jobId, url: 'https://example.com/unsafe' },
+  ];
+  await mkdir(join(runsRoot, 'metrics'));
+  const writeRows = (...extra: object[]) => writeFile(ledger, ['{malformed', ...[...rows, ...extra].map((row) => JSON.stringify(row))].join('\n'));
+  await writeRows();
+  expect(await list()).toMatchObject([{ jobId, pr: null }]);
+  await writeRows(published, { event: 'outcome', job: jobId, url: oldUrl, state: 'MERGED' });
+  expect(await list()).toMatchObject([{ jobId, pr: { url, state: null } }]);
+  for (const outcome of ['CLOSED', 'MERGED']) {
+    await writeRows(published, { ...published, outcome, source: 'metrics-outcomes-reconciler' });
+    expect(await list()).toMatchObject([{ jobId, pr: { url, state: outcome.toLowerCase() } }]);
+  }
 });

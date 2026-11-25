@@ -88,7 +88,8 @@ it('renders and opens a known pull-request link', async () => {
   vi.mocked(apiGetWithMutationToken).mockResolvedValue({
     requests: [{
       jobId: 'RQ-PHX-UIREQABCDEF123456', surface: 'chat', createdAt: '2026-11-25T10:59:00.000Z',
-      ageSeconds: 60, status: 'queued', fate: null, prUrl: 'https://github.com/ashlrai/phantom/pull/42',
+      ageSeconds: 60, status: 'queued', fate: null,
+      pr: { url: 'https://github.com/ashlrai/phantom/pull/42', state: 'merged' },
     }],
   });
   const open = vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -99,5 +100,23 @@ it('renders and opens a known pull-request link', async () => {
   await userEvent.setup().click(link);
   expect(open).toHaveBeenCalledWith('https://github.com/ashlrai/phantom/pull/42', '_blank', 'noopener,noreferrer');
   expect(screen.getByText('1m ago')).toBeInTheDocument();
+  expect(screen.getByText('merged')).toBeInTheDocument();
   open.mockRestore();
+});
+
+it('keeps a link with unknown state and hides unsafe links', async () => {
+  vi.mocked(apiGetWithMutationToken).mockResolvedValue({
+    requests: [
+      { jobId: 'RQ-PHX-UIREQABCDEF123456', surface: 'chat', ageSeconds: 60, status: 'queued',
+        fate: null, pr: { url: 'https://github.com/ashlrai/phantom/pull/42', state: null } },
+      { jobId: 'RQ-PHX-UIREQABCDEF123457', surface: 'fleet', ageSeconds: 0, status: 'queued',
+        fate: null, pr: { url: 'https://example.com/unsafe', state: 'open' } },
+    ],
+  });
+  render(<FrictionFeedback surface="chat" />);
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Improve this screen' }));
+  const links = await screen.findAllByRole('link', { name: 'Open pull request' });
+  expect(links).toHaveLength(1);
+  expect(links[0]).toHaveAttribute('href', 'https://github.com/ashlrai/phantom/pull/42');
+  expect(screen.queryByText(/^(open|closed|merged)$/)).not.toBeInTheDocument();
 });
