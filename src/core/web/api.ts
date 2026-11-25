@@ -51,6 +51,7 @@ import { passesMutationGate, readBody, sendJson } from './api-http-helpers.js';
 
 import { handleTeamInvites } from '../../api/team-invites.js';
 import { handleFrictionFeedback } from '../verse/feedback-api.js';
+import { CHANGE_REQUEST_PATH, CHANGE_REQUESTS_PATH, handleChangeRequestApi } from '../verse/change-request-api.js';
 import { COMMS_CONFIRM_PATH, handleCommsConfirmRoute } from './comms-confirm-route.js';
 import { watchLeaderThread } from './leader-thread-watch.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -2954,6 +2955,10 @@ export async function handleApi(
 
     if (path === '/api/verse/feedback') {
       return handleFrictionFeedback(ctx, req, res);
+    }
+
+    if (path === CHANGE_REQUEST_PATH || path === CHANGE_REQUESTS_PATH) {
+      return handleChangeRequestApi(ctx, req, res, path);
     }
 
     // Before the V1 catch-all, which 404s every /api/verse/* path it does not know.

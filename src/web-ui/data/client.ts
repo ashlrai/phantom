@@ -120,6 +120,31 @@ async function readApiJson<T>(path: string, signal: AbortSignal): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Local GET for a read surface that also requires the console mutation token. */
+export async function apiGetWithMutationToken<T>(path: string, mutationToken: string, signal?: AbortSignal): Promise<T> {
+  if (isRemoteMobileMode()) throw new ApiError('Not available on the phone gateway.', 405, path);
+  const res = await fetch(path, {
+    method: 'GET',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-ashlr-token': mutationToken,
+      'x-ashlr-read-client': getReadClientProof(),
+    },
+    signal,
+  });
+  if (res.status === 401) {
+    reportSessionExpired();
+    throw new ApiError('Mutation token was rejected.', 401, path);
+  }
+  if (!res.ok) {
+    const { detail, code, body } = await readRefusal(res);
+    if (res.status === 404 && code === null) throw new DispatchDisabledError(path);
+    throw new ApiError(`GET ${path} failed (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`, res.status, path, detail || null, code, body);
+  }
+  return (await res.json()) as T;
+}
+
 /** POST uses the caller's mutation token; read authority never supplies it. */
 export function apiPost<T>(path: string, body: unknown, mutationToken: string, signal?: AbortSignal): Promise<T> {
   return mutateJson<T>('POST', path, body, mutationToken, signal);

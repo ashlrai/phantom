@@ -510,7 +510,7 @@
  *     records never became work;
  *   - the desktop friction-flag journal's reported surfaces: the
  *     per-flag {v, id, createdAt, repo, tier, lead, flag, source,
- *     surface, description} rows the console's Flag UI friction action
+ *     surface, description} rows the console's Improve this screen action
  *     appends to ~/.ashlr/router/feedback.jsonl through
  *     enqueueFrictionFlag — one deliberate authenticated user report
  *     per row, folded per surface over every retained row inside the
@@ -1872,7 +1872,7 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // install's gateway and carries no repository column.
   items.push(...await gatewayActivityBacklogItems({ repo }));
 
-  // Desktop friction-flag journal: the console's Flag UI friction action
+  // Desktop friction-flag journal: the console's Improve this screen / Just flag it action
   // appends one row per deliberate authenticated user report to
   // ~/.ashlr/router/feedback.jsonl through enqueueFrictionFlag — until
   // now the journal had no reader at all, so every report a user filed
