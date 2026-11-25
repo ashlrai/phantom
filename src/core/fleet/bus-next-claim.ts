@@ -3,7 +3,8 @@ import { BUS_INBOX_MAX_MESSAGES, BUS_INBOX_MAX_READ, listBusInboxAfter, type Bus
 import { BUS_PRIORITIES, isClaimableWork, type BusPriority } from './bus-envelope.js';
 import { mutateBusWorkClaim, validBusClaimRequest } from './bus-work-claims.js';
 import { agentChannelNameSchema, agentPendingAddressMatcher, agentRefAddressMatcher, readAgentRegistry } from '../agents/bus-identity.js';
-import { busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { busBodyInReplyToMatch, busReadContains, busReadContainsMatch } from '../agents/bus-unified.js';
+import { busBodyKind } from '../agents/bus-v2-schema.js';
 
 /** Printable routing labels — the same 1-128 char grammar every bus address and read filter carries. */
 const label = (value: string): boolean => /^[\x21-\x7e]{1,128}(?![\s\S])/.test(value);
@@ -45,12 +46,29 @@ export interface BusNextRequest {
    * applies; it composes with `from` (a sender both included and excluded
    * matches nothing). */
   excludeFrom?: string;
+  /** Keep only receipts whose object body cites this envelope id through its
+   * own `inReplyTo` field — the same own-property exact match every bus
+   * read's `--in-reply-to` applies. The citation is an application
+   * convention on the body, not an envelope field, and claimable
+   * `kind:'work'`/protocol `task` bodies carry it like any other object
+   * body, so "claim the work answering envelope X" is one atomic step
+   * instead of a filtered inbox page followed by a claim-by-id. */
+  inReplyTo?: string;
+  /** Keep only receipts whose body carries this exact kind discriminator —
+   * the same `busBodyKind` match every bus read's `--body-kind` applies.
+   * On the claimable set it separates the two real shapes: `work` for the
+   * legacy `{kind:'work'}` convention and `task` for a bus-transport v1
+   * protocol task, so an agent that only executes one shape never claims
+   * the other. An unrecognized but printable value is an honest empty
+   * match, never an error. */
+  bodyKind?: string;
 }
 /** `empty` still means no receipt could be claimed, but now carries the honest
  * scan totals so a caller can tell a dry well from held work without a second
  * read: `candidates` is every live claimable envelope addressed to `--to` the
  * bounded scan found that also satisfies the request's `contains`/`since`/
- * `before`/`priority`/`channel`/`from`/`excludeFrom` filters, and `held` is how many of those answered `conflict` — a
+ * `before`/`priority`/`channel`/`from`/`excludeFrom`/`inReplyTo`/`bodyKind`
+ * filters, and `held` is how many of those answered `conflict` — a
  * live claim on the message id or an overlapping coordination key, which may
  * be the requester's own prior claim. `candidates - held` failed acquire for
  * other reasons (completed, expired, lost, missing, or a receipt that changed
@@ -101,6 +119,8 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
   if (request.channel !== undefined && !agentChannelNameSchema.safeParse(request.channel).success) return { status: 'invalid' };
   if (request.from !== undefined && !label(request.from)) return { status: 'invalid' };
   if (request.excludeFrom !== undefined && !label(request.excludeFrom)) return { status: 'invalid' };
+  if (request.inReplyTo !== undefined && !label(request.inReplyTo)) return { status: 'invalid' };
+  if (request.bodyKind !== undefined && !label(request.bodyKind)) return { status: 'invalid' };
   const matchers = claimAddressMatchers(request);
   const channelPrefix = request.channel === undefined ? undefined : `group:${request.channel}:`;
   const candidates: BusInboxReceipt[] = [];
@@ -119,9 +139,15 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
       // to-prefix, `from`/`excludeFrom` the sender identity-label match, and
       // `contains` the scrubbed one-line summary — so a filtered claim can
       // never pick work the matching read would hide, including work newer
-      // than its window. Body-citation filters (job, thread, in-reply-to,
+      // than its window. `inReplyTo` and `bodyKind` are the two remaining
+      // shared read filters a claimable body can actually carry: the
+      // own-property `inReplyTo` citation any object body may hold, and the
+      // `busBodyKind` discriminator that separates the legacy `work` shape
+      // from a protocol `task`. The other citation filters (job, thread,
       // protocol kind/topic) stay off: claimable bodies carry none of those
-      // citations, so they could only ever narrow to nothing.
+      // citations — a `kind:'work'` body is no feed-citing kind and no
+      // note/context, and a protocol task's topic must equal its `to` — so
+      // they could only ever narrow to nothing.
       if (matchers.addressedTo(receipt.envelope.to, receipt.envelope.from) && isClaimableWork(receipt.envelope.body) &&
           (request.since === undefined || receipt.receivedAt >= request.since) &&
           (request.before === undefined || receipt.receivedAt < request.before) &&
@@ -129,6 +155,8 @@ export function claimNextBusWork(request: BusNextRequest): BusNextResult {
           (channelPrefix === undefined || receipt.envelope.to.startsWith(channelPrefix)) &&
           (matchers.from === undefined || matchers.from(receipt.envelope.from)) &&
           (matchers.excludeFrom === undefined || !matchers.excludeFrom(receipt.envelope.from)) &&
+          (request.inReplyTo === undefined || busBodyInReplyToMatch(receipt.envelope.body, request.inReplyTo)) &&
+          (request.bodyKind === undefined || busBodyKind(receipt.envelope.body) === request.bodyKind) &&
           (containsNeedle === undefined || busReadContainsMatch(receipt.envelope.body, containsNeedle))) {
         candidates.push(receipt);
       }

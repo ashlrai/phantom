@@ -64,7 +64,8 @@ substring or a body citation, so "where did envelope X go" is one filtered
 read — `--body-kind <kind>` for only the bodies carrying that exact kind
 discriminator — the same `busBodyKind` own-field exact match `agents bus
 inbox --body-kind`, `agents bus channel read --body-kind`, `agents bus
-wakes --body-kind` and `agents conversations --body-kind` apply, decided
+wakes --body-kind`, `agents conversations --body-kind` and `fleet
+bus-follow --body-kind` apply, decided
 on the raw body before projection so a body carrying no discriminator
 never matches and an unrecognized but printable value is an honest empty
 page — `--limit <n>`)
@@ -1355,21 +1356,24 @@ passes a refused or degraded section through untouched.
 **Pending-work claim.** `phm agents bus work next [<agent>] --lease-ms
 <1..3600000> [--owner <label>] [--contains <text>] [--since
 <15m|2h|1d|ISO>] [--before <15m|2h|1d|ISO>] [--priority P0..P3] [--channel
-<name>] [--from <agent>] [--exclude-from <agent>]` is the claim half of the loop `work
+<name>] [--from <agent>] [--exclude-from <agent>] [--in-reply-to <id>]
+[--body-kind <kind>]` is the claim half of the loop `work
 mine`
 opens: it takes the next claimable work envelope addressed to the agent —
 the same live `kind:'work'`/protocol-`task` receipts the digest's `next`
 section lists — and leases it through the same message-id claim path
 `fleet bus-next`/`comms bus next` run, so the find → claim step never
 leaves this surface. `--contains`, `--since`, `--before`, `--priority`,
-`--channel`, `--from` and `--exclude-from`
+`--channel`, `--from`, `--exclude-from`, `--in-reply-to` and `--body-kind`
 narrow the
 claimable set under the same rules every bus read applies — the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the
-exact P0..P3 band, the `group:<name>:*` room prefix, and the sender
-identity-label match —
+exact P0..P3 band, the `group:<name>:*` room prefix, the sender
+identity-label match, the own-property `inReplyTo` citation any object
+body may carry, and the `busBodyKind` discriminator that separates the
+legacy `work` shape from a protocol `task` —
 so "claim the next work about X" or "claim the next
 urgent one" is one atomic step rather than a filtered list followed by a
 claim-by-id, a claim can never pick work newer than the window the
@@ -1806,17 +1810,21 @@ keeps exact-label matching and never widens. All four claim surfaces —
 `agents bus work next`, `fleet bus-next`, `fleet bus-wait-claim` and
 `comms bus next` — take the same `--contains <text>`, `--since
 <15m|2h|1d|ISO>`, `--before <15m|2h|1d|ISO>`, `--priority <P0|P1|P2|P3>`,
-`--channel <name>`, `--from <agent>` and `--exclude-from <agent>`
+`--channel <name>`, `--from <agent>`, `--exclude-from <agent>`,
+`--in-reply-to <id>` and `--body-kind <kind>`
 read filters, applied inside
 the claim scan under the identical rules the reads use (the scrubbed
 one-line summary substring, the inclusive `receivedAt` cutoff, the
 exclusive `receivedAt` ceiling composing with `--since` into one
 `[since, before)` window, the exact
 priority band, the `group:<name>:*` room prefix decided on the raw `to`
-label, and the sender identity-label match `agentRefAddressMatcher`
+label, the sender identity-label match `agentRefAddressMatcher`
 shares — a sender ref resolving through the registry matches every label
 of that identity while an unresolvable ref or unreadable registry keeps
-exact-label matching, so unknown identity state never widens a claim),
+exact-label matching, so unknown identity state never widens a claim —,
+the own-property `inReplyTo` citation `busBodyInReplyToMatch` applies to
+every object body, and the `busBodyKind` discriminator that tells the
+legacy `work` shape from a protocol `task`),
 so the claimable set is exactly what the matching read
 would list and a filtered claim can never pick work the read would hide —
 including work newer than the window it reviewed.
@@ -1873,9 +1881,17 @@ into one `[since, before)` window. The stream also narrows on the remaining fiel
 bus page reads share: `--id` keeps only the envelope carrying that exact id,
 `--in-reply-to` keeps only object bodies whose own `inReplyTo` equals it —
 the same application convention `comms bus read|watch` and `fleet_bus_inbox`
-apply — and `--kind`/`--topic` keep only protocol-v1 bodies whose
+apply — `--kind`/`--topic` keep only protocol-v1 bodies whose
 `protocol.kind`/`protocol.topic` match, `topic` accepting an exact name or a
-namespace prefix like `fleet.*`. As with `--to` and `--job`, filtered rows
+namespace prefix like `fleet.*`, and `--body-kind <kind>` keeps only
+envelopes whose body carries that exact kind discriminator — the same
+`busBodyKind` own-field match `agents bus inbox --body-kind`, `channel
+read --body-kind`, `wakes --body-kind`, `agents conversations --body-kind`
+and `phm messages --body-kind` apply:
+the v2 `kind` field, else a bus-transport v1 `protocol.kind`, else the
+`type`/`schema` a kindless notice keys on, exact and case-sensitive, a
+body carrying no discriminator never matching and an unrecognized but
+printable value an honest empty stream. As with `--to` and `--job`, filtered rows
 still advance checkpoints, so a narrowed stream resumes on the same cursor
 an unfiltered one would. `--since <15m|2h|1d|ISO>` narrows
 `comms bus read|watch` to rows received at or after the cutoff — the same

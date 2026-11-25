@@ -69,6 +69,20 @@ it('applies the read filters to each poll of the wait', async () => {
   // posts' arrival waits honestly to timeout rather than claiming newer work.
   expect(await waitClaimBusWork({ ...request(), before: Date.now() - 60_000, waitMs: 30 }))
     .toEqual({ status: 'timeout' });
+  // --in-reply-to and --body-kind narrow every poll the same way: only the
+  // citing legacy-work receipt qualifies, never the uncited protocol task.
+  expect(appendBusInbox({ id: 'cite-reply', from: 'sender', to: 'worker-a', priority: 'P2', ttl: 60000,
+    body: { kind: 'work', inReplyTo: 'req-1' } }, { root }).status).toBe('posted');
+  expect(appendBusInbox({ id: 'cite-task', from: 'sender', to: 'worker-a', priority: 'P0', ttl: 60000,
+    body: { protocol: { version: 1, kind: 'task' } } }, { root }).status).toBe('posted');
+  const cited = await waitClaimBusWork({ ...request(), inReplyTo: 'req-1', bodyKind: 'work', waitMs: 5000 });
+  expect(cited.status).toBe('acquired');
+  if (!('token' in cited)) throw new Error('missing claim');
+  expect(cited.receipt.envelope.id).toBe('cite-reply');
+  expect(mutateBusWorkClaim({ action: 'complete', id: 'cite-reply', token: cited.token, root }).status).toBe('completed');
+  // Nothing else cites req-1 under the work kind, so the wait times out.
+  expect(await waitClaimBusWork({ ...request(), inReplyTo: 'req-1', bodyKind: 'work', waitMs: 30 }))
+    .toEqual({ status: 'timeout' });
 });
 
 it('rejects malformed arguments before creating storage', async () => {
@@ -77,7 +91,8 @@ it('rejects malformed arguments before creating storage', async () => {
     args().slice(0, -1), args().map(x => x === '12000' ? '0' : x), args().map(x => x === '12000' ? '300001' : x),
     args().map(x => x === '12000' ? '1e2' : x), args().map(x => x === '60000' ? '3600001' : x),
     args().map(x => x === root ? 'relative' : x), args().slice(0, -2),
-    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   ']]) {
+    [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'], [...args(), '--contains', '   '],
+    [...args(), '--in-reply-to', 'has space'], [...args(), '--body-kind', 'has space']]) {
     expect(await cmdFleetBusWaitClaim(bad)).toBe(2);
     expect(JSON.parse(String(output.mock.calls.at(-1)![0]))).toEqual({ status: 'invalid' });
   }

@@ -745,6 +745,27 @@
  *     stated as lower bounds, legacy .log files and lock files are not
  *     folded, and items emit only for the fleet's own repository since
  *     the journal carries no repo column;
+ *   - the owner-thread delivery ledger's recurring failed deliveries:
+ *     the {messageId, channel, state, reason?, at} rows recordDelivery
+ *     (src/core/leader/delivery-receipts.ts) appends per fanout
+ *     destination on every sendOwnerReply — `phm comms send-owner`,
+ *     the MCP send tool, the leader-live notices — until now read only
+ *     by readReceipts' point-in-time latest-receipt-per-channel join
+ *     behind `phm comms thread`'s marks and the undelivered-replies
+ *     read, so a channel whose deliveries kept failing never became
+ *     work (deliveryReceiptsBacklogItems below). A (channel, signal)
+ *     cell emits at the recurring bars of three in-window 'failed'
+ *     rows across two distinct UTC days AND two distinct message ids —
+ *     a retried reply re-records the same send — where the signal is
+ *     the fixed reason vocabulary (transport refusal, no transport
+ *     attached, owner-policy, or unclassified with the recorded reason
+ *     quoted bounded); the designed holds (KILL, comms pause,
+ *     unconfigured adapters) never emit. Rows written before the `at`
+ *     stamp existed stay undated context; the read mirrors the writer's
+ *     own bounded tail and line cap with truncation stated as lower
+ *     bounds, and items emit only for the fleet's own repository since
+ *     the ledger describes this install's comms and carries no repo
+ *     column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -838,6 +859,7 @@ import { marketPostureBacklogItems } from './market-posture-backlog.js';
 import { liveConfigBacklogItems } from './live-config-backlog.js';
 import { leaderRepliesBacklogItems } from './leader-replies-backlog.js';
 import { agentDiagnosticsBacklogItems } from './agent-diagnostics-backlog.js';
+import { deliveryReceiptsBacklogItems } from './delivery-receipts-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -1908,6 +1930,26 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // the items since the journal describes this install's engine
   // invocations and carries no repo column.
   items.push(...await agentDiagnosticsBacklogItems({ repo }));
+
+  // Owner-thread delivery ledger (<runs>/leader/delivery-receipts.jsonl):
+  // the {messageId, channel, state, reason?, at} rows recordDelivery
+  // appends per fanout destination on every sendOwnerReply — recurring
+  // 'failed' deliveries become backlog items too. Until now the
+  // ledger's only reader was readReceipts' point-in-time
+  // latest-receipt-per-channel join behind `phm comms thread`'s marks
+  // and the undelivered-replies read, so a channel whose deliveries
+  // kept failing never became work. The read mirrors the writer's own
+  // bounded tail (newest 256 KiB, newest 500 non-blank lines) with
+  // truncation stated as lower bounds; a (channel, signal) cell emits
+  // at three in-window 'failed' rows across two distinct UTC days AND
+  // two distinct message ids — one retried send is one send — where
+  // the signal is the fixed reason vocabulary (transport refusal, no
+  // transport attached, owner-policy, or unclassified quoted bounded);
+  // the designed holds (KILL, comms pause, unconfigured adapters) never
+  // emit, undated legacy rows stay context, and only the fleet's own
+  // repository inherits the items since the ledger describes this
+  // install's comms and carries no repo column.
+  items.push(...await deliveryReceiptsBacklogItems({ repo }));
   return { items, errors };
 }
 

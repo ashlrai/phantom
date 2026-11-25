@@ -65,13 +65,40 @@ it('applies contains, since and priority filters to the claimable scan', async (
     .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
 });
 
+it('applies the in-reply-to and body-kind filters to the claimable scan', async () => {
+  for (const [id, priority, body] of [
+    ['cit-plain', 'P0', { kind: 'work', text: 'fake plain' }],
+    ['cit-reply', 'P1', { kind: 'work', text: 'fake reply', inReplyTo: 'req-1' }],
+    ['cit-other', 'P2', { kind: 'work', text: 'fake other', inReplyTo: 'req-2' }],
+  ] as const) {
+    expect(appendBusInbox({ id, from: 'fake', to: 'worker-a', priority, ttl: 120_000, body }, { root }).status).toBe('posted');
+  }
+  // --in-reply-to keeps only the body citing that envelope id, ahead of the
+  // higher-priority uncited work.
+  const byReply = await run([...args(), '--in-reply-to', 'req-1']);
+  expect(byReply).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'cit-reply' } } });
+  // --body-kind work still sees the legacy receipts; the completed reply
+  // counts as a filtered candidate, so the P0 plain claims next.
+  const byKind = await run([...args(), '--body-kind', 'work']);
+  expect(byKind).toMatchObject({ code: 0, status: 'acquired',
+    receipt: { envelope: { id: 'cit-plain' } } });
+  // A kind no claimable body carries and a citation nobody wrote are honest
+  // empty scans, not widened claims.
+  expect(await run([...args(), '--body-kind', 'note']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+  expect(await run([...args(), '--in-reply-to', 'req-9']))
+    .toEqual({ code: 0, status: 'empty', candidates: 0, held: 0 });
+});
+
 it('validates all flags without returning bodies or tokens', async () => {
   for (const bad of [[], ['--help', '--json'], args().slice(0, -1), [...args(), '--json'],
     [...args(), '--owner', 'duplicate'], args().map(x => x === '60000' ? '0' : x),
     args().map(x => x === '60000' ? '3e3' : x), args().map(x => x === root ? 'relative' : x),
     args().map(x => x === 'worker-a' ? 'bad label' : x), [...args(), '--unknown'],
     [...args(), '--priority', 'P9'], [...args(), '--since', 'bogus'], [...args(), '--before', 'bogus'],
-    [...args(), '--contains', '   ']]) {
+    [...args(), '--contains', '   '], [...args(), '--in-reply-to', 'has space'],
+    [...args(), '--body-kind', 'has space'], [...args(), '--body-kind', '']]) {
     expect(await run(bad)).toEqual({ code: 2, status: 'invalid' });
   }
 });

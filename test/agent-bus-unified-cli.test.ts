@@ -1562,6 +1562,54 @@ describe('phm agents bus (unified)', () => {
       .toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
+  it('filters the next-work claim by in-reply-to and body-kind', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, priority: BusEnvelope['priority'], body: unknown): void => {
+      expect(appendBusInbox({ id, from: 'agent:nova', to: 'agent:atlas', priority, ttl: 3_600_000,
+        body: body as BusEnvelope['body'] }, { root }).status).toBe('posted');
+    };
+    post('wn-cite-plain', 'P0', { kind: 'work', text: 'fake plain' });
+    post('wn-cite-reply', 'P1', { kind: 'work', text: 'fake reply', inReplyTo: 'req-1' });
+    post('wn-cite-other', 'P2', { kind: 'work', text: 'fake other', inReplyTo: 'req-2' });
+    post('wn-cite-task', 'P3', { protocol: { version: 1, kind: 'task' }, note: 'fake task' });
+    const env = { PHM_AGENT_ID: 'atlas' };
+    const complete = async (id: string, token: string): Promise<void> => {
+      expect(await run(['claim', 'message', 'complete', '--id', id, '--token', token], env))
+        .toMatchObject({ code: 0, json: { status: 'completed' } });
+    };
+
+    // --in-reply-to keeps only the body citing that envelope id: the P1 reply
+    // claims ahead of the uncited P0 work and the other-thread reply.
+    const byReply = await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'req-1'], env);
+    expect(byReply.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-cite-reply' } } });
+    await complete('wn-cite-reply', byReply.json.token);
+
+    // --body-kind separates the claimable shapes: 'work' sees only the legacy
+    // receipts — the completed reply still counts — so the P0 plain claims.
+    const byKind = await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'work'], env);
+    expect(byKind.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-cite-plain' } } });
+    await complete('wn-cite-plain', byKind.json.token);
+
+    // 'task' matches only the protocol body; a kind no claimable carries and
+    // a citation nobody wrote are honest empty scans.
+    const byTask = await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'task'], env);
+    expect(byTask.json).toMatchObject({ status: 'acquired',
+      receipt: { envelope: { id: 'wn-cite-task' } } });
+    await complete('wn-cite-task', byTask.json.token);
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'note'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'req-9'], env))
+      .toMatchObject({ code: 0, json: { status: 'empty', candidates: 0, held: 0 } });
+
+    // Malformed citation filters are invalid results, never a widened claim.
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--in-reply-to', 'has space'], env))
+      .toMatchObject({ code: 2, json: { status: 'invalid' } });
+    expect(await run(['work', 'next', '--lease-ms', '60000', '--body-kind', 'has space'], env))
+      .toMatchObject({ code: 2, json: { status: 'invalid' } });
+  });
+
   it('claims one envelope id and renews, releases and completes its message claim', async () => {
     expect(appendBusInbox({ id: 'mc-work', from: 'agent:nova', to: 'agent:atlas', priority: 'P2',
       ttl: 3_600_000, body: { kind: 'work', text: 'named work' } }, { root }).status).toBe('posted');

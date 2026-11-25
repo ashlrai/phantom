@@ -622,11 +622,26 @@ identify required checks), and `auto_merge_enabled`/`auto_merge_disabled` on
 observed auto-merge toggles tracked across heads — including drops caused by
 a pushed head. The toggles feed `phm fleet merge-latency`'s
 `pending_auto_merge` and `queue_retries` verdicts; drops the loop can fix are
-re-armed by the normal gated enqueue path, and `phm fleet merge-retry` still
-owns bounded retries of queue-attributed failures. Every row's `at`
+re-armed by the normal gated enqueue path. Every row's `at`
 is the sample instant, never an exact GitHub transition time; dry runs and
 `--no-events` record nothing, and `--events PATH` retargets the sink. A sink
 failure logs `MERGEQ_EVENTS_ERROR` and never fails the cycle.
+
+A cycle with event recording also runs the bounded merge-retry sweep
+(`mergeRetrySweep` in `scripts/merge-queue-loop.mjs`): the same
+`phm fleet merge-retry` pass over the same ledger, so a queue-attributed
+auto-merge drop the enqueue path cannot re-arm — a `blocked` merge state is
+not enqueueable — is re-armed on the pipeline's own cadence instead of
+waiting for an operator to run the command. The command's bounds apply
+unchanged (at most three requests per sweep, three distinct retries per PR
+ever, live state/hold/conflict re-reads, the predicted-conflict skip), the
+sweep targets the cycle's `--events` ledger because `retry_requested` /
+`retry_failed` rows are the dedupe that makes the bound honest, a
+`--dry-run` cycle previews without `--apply`, and `--no-events` skips the
+sweep entirely. The compact result lands in the summary's `mergeRetry`
+field (`ok`, `known`, `dryRun`, `queue_wait`, per-action counts) and a
+constant `MERGEQ_RETRY` line; a sweep failure reports `ok:false` and never
+fails the cycle.
 
 Within each repository, ready PRs enter the queue before branch updates and
 conflict resolution. Each group keeps PR-number order; already queued PRs

@@ -101,6 +101,44 @@ it('filters next by contains, since and priority', async () => {
   }
 });
 
+it('filters next by in-reply-to and body-kind', async () => {
+  const { root, last } = setup();
+  const options = { root };
+  const task = (id: string, priority: string, body: Record<string, unknown>): string => postTask(root, {
+    id, from: 'fake-sender', to: 'worker-a', priority, ttl: 600_000, body,
+  });
+  expect(await cmdCommsBus(['post', '--file', task('cit-plain', 'P0', { kind: 'work', text: 'fake plain' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-reply', 'P1', { kind: 'work', text: 'fake reply', inReplyTo: 'req-1' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-other', 'P2', { kind: 'work', text: 'fake other', inReplyTo: 'req-2' })], options)).toBe(0);
+  expect(await cmdCommsBus(['post', '--file', task('cit-task', 'P3', { protocol: { version: 1, kind: 'task' }, note: 'fake task' })], options)).toBe(0);
+
+  // --in-reply-to keeps only the body citing that envelope id, ahead of the
+  // higher-priority uncited work.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--in-reply-to', 'req-1'], options)).toBe(0);
+  expect(last().receipt.envelope.id).toBe('cit-reply');
+
+  // --body-kind separates the claimable shapes: 'work' sees only the legacy
+  // receipts, 'task' only the protocol body.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--body-kind', 'work'], options)).toBe(0);
+  expect(last().receipt.envelope.id).toBe('cit-plain');
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--body-kind', 'task'], options)).toBe(0);
+  expect(last().receipt.envelope.id).toBe('cit-task');
+
+  // A kind no claimable body carries and a citation nobody wrote are honest
+  // empty scans, never widened claims; malformed values are invalid.
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--body-kind', 'note'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(await cmdCommsBus(['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--in-reply-to', 'req-9'], options)).toBe(0);
+  expect(last()).toEqual({ status: 'empty', candidates: 0, held: 0 });
+  for (const args of [
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--in-reply-to', 'has space'],
+    ['next', '--to', 'worker-a', '--owner', 'worker-a', '--lease-ms', '60000', '--body-kind', 'has space'],
+  ]) {
+    expect(await cmdCommsBus(args, options), args.join(' ')).toBe(2);
+    expect(last(), args.join(' ')).toEqual({ status: 'invalid' });
+  }
+});
+
 it('claims a protocol task envelope addressed to a topic', async () => {
   const { root, last } = setup();
   const options = { root };

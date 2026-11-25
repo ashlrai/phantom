@@ -389,6 +389,45 @@ it('applies the channel and sender filters to the claimable scan and its empty t
     .toEqual({ status: 'empty', candidates: 2, held: 0 });
 });
 
+it('applies the in-reply-to and body-kind citation filters to the claimable scan', () => {
+  post('plain-work', { priority: 'P0' });
+  post('reply-work', { priority: 'P1', body: { kind: 'work', text: 'fake work', inReplyTo: 'request-1' } });
+  post('reply-other', { priority: 'P2', body: { kind: 'work', text: 'fake work', inReplyTo: 'request-2' } });
+  post('protocol-task', { to: 'fleet.deploy', priority: 'P3',
+    body: { protocol: { version: 1, kind: 'task', topic: 'fleet.deploy', payload_ref: 'fake-ref' }, note: 'fake task' } });
+  const take = (filters: Partial<BusNextRequest>, to = 'worker-a') => {
+    const result = claimNextBusWork({ ...request(), to, ...filters });
+    if (result.status !== 'acquired' || !('token' in result)) throw new Error(`expected a claim, got ${result.status}`);
+    expect(mutateBusWorkClaim({ action: 'complete', id: result.receipt.envelope.id, token: result.token, root }).status).toBe('completed');
+    return result.receipt.envelope.id;
+  };
+
+  // --in-reply-to keeps only bodies citing that envelope id through their own
+  // inReplyTo field: the P1 reply claims ahead of the uncited P0 work and
+  // the other-thread reply, exactly the rows inbox --in-reply-to would list.
+  expect(take({ inReplyTo: 'request-1' })).toBe('reply-work');
+  // --body-kind separates the two claimable shapes: 'work' sees only the
+  // legacy receipts — the completed reply-work still counts as a candidate —
+  // while the P0 plain-work claims first.
+  expect(take({ bodyKind: 'work' })).toBe('plain-work');
+  // 'task' matches only the protocol body, addressed to its own topic label.
+  expect(take({ bodyKind: 'task' }, 'fleet.deploy')).toBe('protocol-task');
+  // A kind no claimable body carries, and a citation nobody wrote, are both
+  // honest empty scans — never a widened claim.
+  expect(claimNextBusWork({ ...request(), bodyKind: 'note' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'request-9' }))
+    .toEqual({ status: 'empty', candidates: 0, held: 0 });
+  // The completed reply-work remains the only live candidate citing
+  // request-1; the citation is an exact own-property match, never a
+  // substring or a replyTo alias.
+  expect(claimNextBusWork({ ...request(), inReplyTo: 'request-1' }))
+    .toEqual({ status: 'empty', candidates: 1, held: 0 });
+  // The filters compose with the existing ones: bodyKind 'work' plus the
+  // request-2 citation leaves only the still-live reply-other.
+  expect(take({ bodyKind: 'work', inReplyTo: 'request-2' })).toBe('reply-other');
+});
+
 it('keeps sender filters on exact-label matching when the registry is unreadable', () => {
   post('alias-sent', { from: 'coordinator', priority: 'P0' });
   post('literal-sent', { from: 'coord', priority: 'P1' });
@@ -418,6 +457,12 @@ it('rejects malformed channel, from and exclude-from filters before scanning', (
     { from: 'x'.repeat(129) },
     { excludeFrom: 'has space' },
     { excludeFrom: '' },
+    { inReplyTo: 'has space' },
+    { inReplyTo: '' },
+    { inReplyTo: 'x'.repeat(129) },
+    { bodyKind: 'has space' },
+    { bodyKind: '' },
+    { bodyKind: 'x'.repeat(129) },
   ];
   for (const filters of bad) {
     expect(claimNextBusWork({ ...request(), ...filters })).toEqual({ status: 'invalid' });
