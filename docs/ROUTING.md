@@ -136,6 +136,9 @@ and is the balanced work choice; choose Carbon for the hardest, long-horizon
 tasks and Hydrogen for fast, routine work. These are model recommendations,
 not fleet engine admission or merge authority.
 
+Which Google seats reach Neon on included capacity, and the Workspace
+`starter-quota` rule, are in [subscription capacity](SUBSCRIPTION-CAPACITY.md).
+
 | Gemini API ID | Router mode | Use | USD / 1M tokens (input / cached input / output) |
 | --- | --- | --- | --- |
 | [`gemini-4-carbon`](https://ai.google.dev/gemini-api/docs/models/gemini-4-carbon) | ultra | Hardest frontier | $4 / $0.20 / $20 standard; $2 / $0.10 / $10 through Nov 30, 2026 |
