@@ -122,3 +122,14 @@ failed submissions mark the drop `request-failed` and stop automatic retries
 for good. A failed state read records nothing: it was never a submission
 attempt and retries for free. `retry_failed` lines dedupe like retries — a
 replayed line counts once — and `retry_failed` is a `--record` type too.
+
+The merge-queue throughput loop runs this same bounded pass automatically:
+each `node scripts/merge-queue-loop.mjs cycle` with event recording invokes
+the command against the cycle's ledger after the pass (`mergeRetrySweep`),
+so a queue-attributed drop is re-armed on the pipeline's cadence rather than
+waiting for an operator — including drops whose PR sits `blocked`, which the
+cycle's own gated enqueue path never re-arms. `--dry-run` cycles preview the
+sweep without `--apply`; `--no-events` cycles skip it because the ledger
+dedupe is what makes the retry bound honest. The summary's `mergeRetry`
+field carries the compact result; running `phm fleet merge-retry` by hand
+remains valid — the ledger dedupes whichever writer requests first.
