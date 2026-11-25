@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  classifyMergeQueuePr, normalizeMergeQueueState, runMergeQueueCycle, MERGEQ_REPOS,
-  type MergeQueueIo, type MergeQueuePr, type MergeQueueRepoSnapshot, type MergeQueueState,
+  classifyMergeQueuePr, normalizeMergeQueueState, planMergeQueueEvents, runMergeQueueCycle, MERGEQ_REPOS,
+  type MergeQueueEvent, type MergeQueueIo, type MergeQueuePr, type MergeQueueRepoSnapshot, type MergeQueueState,
 } from '../src/core/drive/merge-queue-loop.js';
+import { foldMergeEvents } from '../src/core/router/outcomes.js';
 import { drainKey } from '../src/core/drive/refix-loop.js';
 import { dequeueMergeQueuePr, enqueueMergeQueuePr, readSnapshot } from '../scripts/merge-queue-loop.mjs';
 
@@ -704,5 +705,212 @@ describe('runMergeQueueCycle', () => {
     const fake = makeIo({ state: { v: 1, attempts: { old: { pr: 'phantom#1', action: 'enqueue', at: 0 } }, drained: { gone: 0 } } });
     runMergeQueueCycle(fake.io, { repos: [REPO] });
     expect(fake.state()).toEqual({ v: 1, attempts: {}, drained: {} });
+  });
+});
+
+describe('merge-events observation', () => {
+  const record = (fake: ReturnType<typeof makeIo>) => {
+    const batches: MergeQueueEvent[][] = [];
+    fake.io.recordEvents = (events) => { batches.push([...events]); };
+    return batches;
+  };
+  const types = (batches: MergeQueueEvent[][]) => batches.flat().map((e) => `${e.type}${e.reason ? `:${e.reason}` : ''}${e.conclusion ? `:${e.conclusion}` : ''}`);
+
+  it('records first-sight state once, then stays silent while nothing changes', () => {
+    let at = NOW;
+    const fake = makeIo({ snapshots: only([pr()]), now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['eligible', 'check_observed:success', 'checks_passed']);
+    const [event] = batches[0]!;
+    expect(event).toMatchObject({ repo: REPO, pr: 1, head_sha: sha('a'), at: new Date(NOW).toISOString() });
+    at += MIN;
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(batches).toHaveLength(1); // steady state: no new rows, no empty flush
+  });
+
+  it('emits queue admission once per PR, even across a dequeue and requeue', () => {
+    let at = NOW;
+    const snapshots = only([pr({ inMergeQueue: true })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['queued', 'check_observed:success', 'checks_passed']);
+    // Stalled entry is dequeued and re-enrolled, then observed queued again.
+    fake.io.dequeue = () => {};
+    at += 61 * MIN;
+    runMergeQueueCycle(fake.io, { repos: [REPO] }); // dequeue + re-enqueue cycle
+    snapshots.set(REPO, snap([pr({ inMergeQueue: true })]));
+    at += MIN;
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    const queued = batches.flat().filter((e) => e.type === 'queued');
+    expect(queued).toHaveLength(1); // consumers need a unique queue boundary
+  });
+
+  it('does not repeat once-per-PR boundaries on a new head but re-observes per-head signals', () => {
+    let at = NOW;
+    const snapshots = only([pr({ checks: 'PENDING' })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['blocked:required_checks', 'check_observed:pending']);
+    at += MIN;
+    snapshots.set(REPO, snap([pr({ headSha: sha('b') })]));
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    // New head: fresh epoch re-observes checks and eligibility; the
+    // once-per-PR checks_passed boundary still fires only once.
+    expect(types(batches).slice(2)).toEqual(['eligible', 'check_observed:success', 'checks_passed']);
+    expect(types(batches).filter((t) => t === 'checks_passed')).toHaveLength(1);
+  });
+
+  it('records auto-merge arm and drop across head changes', () => {
+    let at = NOW;
+    const snapshots = only([pr({ autoMerge: true })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toContain('auto_merge_enabled');
+    at += MIN;
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), autoMerge: false })]));
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    const toggles = batches.flat().filter((e) => e.type.startsWith('auto_merge'));
+    expect(toggles.map((e) => e.type)).toEqual(['auto_merge_enabled', 'auto_merge_disabled']);
+    expect(toggles[1]!.head_sha).toBe(sha('b'));
+  });
+
+  it('emits the dominant blocked reason on change and clears when gates pass', () => {
+    let at = NOW;
+    const snapshots = only([pr({ reviewDecision: 'REVIEW_REQUIRED', checks: 'PENDING' })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['blocked:review', 'check_observed:pending']);
+    at += MIN;
+    snapshots.set(REPO, snap([pr({ mergeState: 'BLOCKED', checks: 'PENDING' })]));
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches).slice(2)).toEqual(['blocked:required_checks']);
+    at += MIN;
+    snapshots.set(REPO, snap([pr()]));
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches).slice(3)).toEqual(['eligible', 'check_observed:success', 'checks_passed']);
+  });
+
+  it('records a conflict once per head epoch alongside its blocked reason', () => {
+    let at = NOW;
+    const snapshots = only([pr({ mergeable: 'CONFLICTING', mergeState: 'DIRTY' })]);
+    const fake = makeIo({ snapshots, now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['conflict', 'blocked:conflict', 'check_observed:success', 'checks_passed']);
+    at += MIN;
+    snapshots.set(REPO, snap([pr({ headSha: sha('b'), mergeable: 'CONFLICTING', mergeState: 'DIRTY' })]));
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches).slice(4)).toEqual(['conflict', 'blocked:conflict', 'check_observed:success']);
+    expect(types(batches).filter((t) => t === 'checks_passed')).toHaveLength(1);
+  });
+
+  it('emits nothing for out-of-scope PRs and nothing on dry runs', () => {
+    const outsider = makeIo({ snapshots: only([pr({ author: 'someone' }), pr({ number: 2, isDraft: true })]) });
+    const dryBatches = record(outsider);
+    runMergeQueueCycle(outsider.io, { repos: [REPO] });
+    expect(dryBatches).toEqual([]);
+    expect(outsider.state()?.signals).toBeUndefined();
+    const fake = makeIo({ snapshots: only([pr()]) });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO], dryRun: true });
+    expect(batches).toEqual([]);
+    expect(fake.saves()).toBe(0);
+  });
+
+  it('a failing event sink is logged and never fails the cycle', () => {
+    const fake = makeIo({ snapshots: only([pr()]) });
+    fake.io.recordEvents = () => { throw new Error('disk full token=secret'); };
+    const summary = runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(summary.enqueued).toBe(1);
+    expect(fake.logs).toContain('MERGEQ_EVENTS_ERROR');
+    expect(fake.logs.join('\n')).not.toContain('secret');
+  });
+
+  it('flushes one batch covering every repo after the pass', () => {
+    const other = 'ashlrai/locus';
+    const snapshots = new Map([
+      [REPO, snap([pr()])],
+      [other, snap([pr({ number: 7, baseRef: 'main' })], { repo: other, defaultBranch: 'main' })],
+    ]);
+    const fake = makeIo({ snapshots });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO, other] });
+    expect(batches).toHaveLength(1);
+    expect(new Set(batches[0]!.map((e) => e.repo))).toEqual(new Set([REPO, other]));
+  });
+
+  it('emitted rows parse through the real merge-events consumers', () => {
+    const fake = makeIo({ snapshots: only([
+      pr(), pr({ number: 2, inMergeQueue: true, checks: 'PENDING', reviewDecision: 'REVIEW_REQUIRED' }),
+      pr({ number: 3, mergeable: 'CONFLICTING', mergeState: 'DIRTY', autoMerge: true }),
+    ]) });
+    const batches: MergeQueueEvent[][] = [];
+    fake.io.recordEvents = (events) => { batches.push([...events]); };
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    const ledger = batches.flat().map((e) => JSON.stringify(e)).join('\n');
+    const evidence = foldMergeEvents(ledger);
+    expect(evidence.get(`${REPO}#1`)?.checks_passed).toBe(1);
+    expect(evidence.get(`${REPO}#2`)?.blocked_reasons).toContain('review');
+    expect(evidence.get(`${REPO}#3`)?.conflicts).toBe(1);
+    expect(evidence.get(`${REPO}#3`)?.auto_merge).toBe('enabled');
+  });
+
+  it('keeps event memory across restarts via normalized state', () => {
+    let at = NOW;
+    const fake = makeIo({ snapshots: only([pr()]), now: () => at });
+    const batches = record(fake);
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(types(batches)).toEqual(['eligible', 'check_observed:success', 'checks_passed']);
+    const saved = fake.state();
+    expect(saved?.signals?.[`${REPO}#1`]?.once).toEqual(['eligible', 'checks_passed']);
+    expect(saved?.latency?.[`${REPO}#1`]?.checks).toBe('SUCCESS');
+    at += MIN;
+    const restart = makeIo({ state: normalizeMergeQueueState(JSON.parse(JSON.stringify(saved))), snapshots: only([pr()]), now: () => at });
+    const restartBatches = record(restart);
+    runMergeQueueCycle(restart.io, { repos: [REPO] });
+    expect(restartBatches).toEqual([]);
+  });
+
+  it('prunes signal memory with the PR and validates persisted fields', () => {
+    const state = normalizeMergeQueueState({
+      latency: { [`${REPO}#1`]: { headSha: sha('a'), state: 'queued', since: 0, observedAt: 1, stateMs: { queued: 1 },
+        checks: 'SUCCESS', blockedReason: 'review', conflictRecorded: true } },
+      signals: { [`${REPO}#1`]: { autoMerge: true, once: ['eligible', 'queued', 'checks_passed', 'bogus'] },
+        [`${REPO}#2`]: { autoMerge: 'yes' }, [`${REPO}#3`]: 'junk' },
+    });
+    expect(state.latency?.[`${REPO}#1`]).toMatchObject({ checks: 'SUCCESS', blockedReason: 'review', conflictRecorded: true });
+    expect(state.signals?.[`${REPO}#1`]).toEqual({ autoMerge: true, once: ['eligible', 'queued', 'checks_passed'] });
+    expect(state.signals?.[`${REPO}#2`]).toBeUndefined();
+    expect(state.signals?.[`${REPO}#3`]).toBeUndefined();
+    for (const patch of [{ checks: 'BOGUS' }, { blockedReason: 'queue' }, { conflictRecorded: 'yes' }]) {
+      expect(normalizeMergeQueueState({ latency: { bad: { headSha: sha('a'), state: 'wait', since: 0, observedAt: 1,
+        stateMs: {}, ...patch } } }).latency).toBeUndefined();
+    }
+    // Absent PRs lose both latency and signal rows on a successful read.
+    const fake = makeIo({ state, snapshots: only([]) });
+    runMergeQueueCycle(fake.io, { repos: [REPO] });
+    expect(fake.state()?.latency).toEqual({});
+    expect(fake.state()?.signals).toEqual({});
+  });
+
+  it('planMergeQueueEvents maps observations without inventing transitions', () => {
+    const base = { repo: REPO, number: 9, headSha: sha('a'), observedAt: NOW };
+    // No blockers and a non-blocked action record nothing.
+    expect(planMergeQueueEvents({ ...base, action: 'wait', blockers: [], checks: 'NONE', autoMerge: false }).events).toEqual([]);
+    // 'stale'-only waits are not merge-events blockers.
+    expect(planMergeQueueEvents({ ...base, action: 'wait', blockers: ['stale'], checks: 'NONE', autoMerge: false }).events).toEqual([]);
+    // NONE checks carry no conclusion; a first-sight armed PR emits enabled only.
+    const none = planMergeQueueEvents({ ...base, action: 'wait', blockers: [], checks: 'NONE', autoMerge: true });
+    expect(none.events).toEqual([{ repo: REPO, pr: 9, type: 'auto_merge_enabled', at: new Date(NOW).toISOString(), head_sha: sha('a') }]);
+    // Unarmed first sight emits nothing for auto-merge.
+    expect(planMergeQueueEvents({ ...base, action: 'wait', blockers: [], checks: 'NONE', autoMerge: false,
+      signalAutoMerge: false }).events).toEqual([]);
+    // Invalid clocks emit nothing but still return tracking values.
+    expect(planMergeQueueEvents({ ...base, observedAt: NaN, action: 'queued', blockers: [], checks: 'SUCCESS', autoMerge: false }).events).toEqual([]);
   });
 });
