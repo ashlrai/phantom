@@ -87,7 +87,7 @@ describe('readNodesPlan', () => {
     expect(plan.reasons).toEqual([TAILSCALE_MISSING_WORDS]);
     expect(TAILSCALE_MISSING_WORDS).toBe('Tailscale is not installed here.');
     expect(plan.nodes.map(n => n.name)).toEqual(['node-a']);
-    expect(plan.assignable).toEqual([{ job: 'j1', node: 'node-a', why: expect.stringContaining('claude lane') }]);
+    expect(plan.assignable).toEqual([{ job: 'j1', node: 'node-a', lane: 'claude', why: expect.stringContaining('claude lane') }]);
   });
 
   it('a Tailscale that fails for another reason is not called missing', async () => {

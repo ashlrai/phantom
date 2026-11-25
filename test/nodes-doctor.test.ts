@@ -80,6 +80,23 @@ describe('readNodesDoctor', () => {
     expect(studio.ready).toBe(false);
   });
 
+  it('standalone registry: a peer named like a local node id never inherits this disk', async () => {
+    // The standalone store is single-host, so the laptop record is this
+    // computer's session; the tailnet peer named laptop is not probed and
+    // must report unknown disk, not this machine's 5 GB host stat.
+    const local: NodesRegistry = { source: 'local', selfNode: null, state: {
+      version: 'drive.nodes.v1', sequence: 1, observedAt: NOW - 1_000,
+      nodes: [{ nodeId: 'laptop', session: 1, heartbeatAt: NOW - 2_000, expiresAt: NOW + 30_000,
+        hostStats: { sampledAtMs: NOW, uptimeSeconds: 1, load: [1, 1, 1], ramTotal: 8, ramUsed: 4, diskFree: 5 * GB, cores: [{ total: 1, idle: 1 }] } }],
+      leader: null, jobs: [] } };
+    const viewDeps: NodesViewDeps = { ...deps([['laptop', true]]), readRegistry: () => local };
+    const report = await readNodesDoctor({ view: viewDeps, probe: fake({ 'home-mac': healthy() }) });
+    const peer = report.nodes.find(n => n.name === 'laptop')!;
+    expect(peer.diskFreeGb).toBe('unknown');
+    expect(peer.gaps.some(g => g.includes('GB free'))).toBe(false);
+    expect(peer.unknowns.some(u => u.includes('free disk unknown'))).toBe(true);
+  });
+
   it('a throwing adapter is unknown, not a crash', async () => {
     const report = await readNodesDoctor({ view: deps([]), probe: async () => { throw new Error('boom'); } });
     expect(report.nodes[0]!.repos).toBe('unknown');

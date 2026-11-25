@@ -100,8 +100,9 @@ function laneStatus(lane: DoctorLane, probe: NodeProbeReply | null, caps: string
 
 export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Promise<NodesDoctor> {
   const view = readNodesView(deps.view);
-  let state: ReturnType<typeof readNodesRegistry>['state'] = null;
-  try { state = deps.view.readRegistry().state; } catch { /* disk stays unknown */ }
+  let registry: ReturnType<typeof readNodesRegistry> | null = null;
+  try { registry = deps.view.readRegistry(); } catch { /* disk stays unknown */ }
+  const state = registry?.state ?? null;
   const safeProbe = async (row: NodeRow) => { try { return await deps.probe(row.name, row.isSelf); } catch { return null; } };
   const rows = view.nodes.filter(n => only === undefined || n.name === only);
   const selfProbe = await safeProbe(view.nodes.find(n => n.isSelf) ?? { name: view.self, isSelf: true } as NodeRow);
@@ -120,8 +121,14 @@ export async function readNodesDoctor(deps: NodesDoctorDeps, only?: string): Pro
       else if (c.status === 'signed-out') gaps.push(`${row.name}: ${c.lane} is not signed in. ${login ? `Run \`${login}\`` : `Sign in to ${c.lane}`} on that Mac.`);
       else if (c.status === 'unknown' && c.reason) unknowns.push(`${row.name}: ${c.reason}`);
     }
-    const record = state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
-      .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
+    // The standalone registry is single-host: under it every record is this
+    // computer's, so only the self row reads host stats from it (newest
+    // session first) — a peer sharing a local node id's name must not
+    // inherit this machine's disk measurement.
+    const record = registry?.source === 'local'
+      ? (row.isSelf ? [...(state?.nodes ?? [])].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0] : undefined)
+      : state?.nodes.filter(r => [r.nodeId, r.capacity?.hostId].some(id => typeof id === 'string' && aliasMatches(id, row.name)))
+        .sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
     const diskBytes = probe?.diskFreeBytes ?? (row.reachable === false ? null : record?.hostStats?.diskFree ?? null);
     const diskFreeGb = diskBytes === null ? UNKNOWN : gb(diskBytes);
     if (diskFreeGb === UNKNOWN) unknowns.push(`${row.name}: free disk unknown (no measurement from that computer)`);
