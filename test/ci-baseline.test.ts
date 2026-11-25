@@ -896,6 +896,101 @@ describe('CI baseline evidence', () => {
     const broken = await analyzeCiBaseline('owner/repo', github({ auditOsv: true, contents: { '.github/dependency-audit-exceptions.json': 'not json' } }).gh);
     expect(broken.groups.map(g => g.testId)).toEqual(report.groups.map(g => g.testId));
   });
+  it('parses cargo-audit vulnerability verdicts per audit run', () => {
+    const failures = parseBaselineFailures(fixture('cargo-audit'), 'owner/repo');
+    expect(failures.map(f => f.testId)).toEqual(['desktop/src-tauri/Cargo.lock > (dependency-audit) cargo-audit']);
+    expect(failures[0]).toMatchObject({ file: 'desktop/src-tauri/Cargo.lock', names: '(dependency-audit) cargo-audit' });
+    expect(failures[0]?.excerpt).toContain('error: 2 vulnerabilities found!');
+    expect(failures[0]?.excerpt).toContain('ID: RUSTSEC-2020-0071');
+    expect(failures[0]?.excerpt).toContain('ID: RUSTSEC-2023-0071');
+    // Timestamped job-log lines parse identically.
+    const stamped = fixture('cargo-audit').split('\n').map(l => `2026-01-01T00:00:00.0000000Z ${l}`).join('\n');
+    expect(parseBaselineFailures(stamped, 'owner/repo').map(f => f.testId)).toEqual(failures.map(f => f.testId));
+    // The singular verdict, the `cargo audit` spelling and a bare script
+    // echo (no ##[group]Run header) parse the same way.
+    for (const log of [
+      'cargo audit --file desktop/src-tauri/Cargo.lock\nID:        RUSTSEC-2020-0071\nerror: 1 vulnerability found!',
+      'cargo-audit audit --file desktop/src-tauri/Cargo.lock --ignore RUSTSEC-2024-0429\nerror: 9 vulnerabilities found!',
+    ]) {
+      expect(parseBaselineFailures(log, 'owner/repo').map(f => f.testId), log.slice(0, 40)).toEqual(['desktop/src-tauri/Cargo.lock > (dependency-audit) cargo-audit']);
+    }
+    // A verdict with no advisory ids still groups: the count line is the
+    // failure identity.
+    expect(parseBaselineFailures('cargo-audit audit --file desktop/src-tauri/Cargo.lock\nerror: 1 vulnerability found!', 'owner/repo')).toHaveLength(1);
+    // Warning summaries, advisory-fetch and other `error:` diagnostics,
+    // a verdict with no preceding audit invocation, unsafe --file values
+    // and the pinned-archive download checks stay unparsed.
+    for (const bad of [
+      'cargo-audit audit --file desktop/src-tauri/Cargo.lock\nwarning: 12 allowed warnings found',
+      'cargo-audit audit --file desktop/src-tauri/Cargo.lock\nerror: failed to fetch advisory database',
+      'error: 1 vulnerability found!',
+      'cargo-audit audit --file ../outside/Cargo.lock\nerror: 1 vulnerability found!',
+      'cargo-audit audit --file /abs/Cargo.lock\nerror: 1 vulnerability found!',
+      'cargo-audit audit --file -\nerror: 1 vulnerability found!',
+      'cargo-audit.tgz: FAILED',
+      'cargo-audit audit --file desktop/src-tauri/Cargo.lock\nerror: 1 vulnerability found',
+    ]) {
+      expect(parseBaselineFailures(bad, 'owner/repo'), bad.slice(0, 60)).toEqual([]);
+    }
+    // A second audit step's group boundary ends the first run's window:
+    // a verdict echoed after a new ##[group] without its own invocation
+    // stays unattributed.
+    const twoRuns = [
+      'cargo-audit audit --file desktop/src-tauri/Cargo.lock',
+      'warning: 3 allowed warnings found',
+      '##[group]Run echo done',
+      'error: 1 vulnerability found!',
+    ].join('\n');
+    expect(parseBaselineFailures(twoRuns, 'owner/repo')).toEqual([]);
+    const secret = 'ghp_' + 'a'.repeat(36);
+    const leaky = parseBaselineFailures(`cargo-audit audit --file desktop/src-tauri/Cargo.lock\nID:        RUSTSEC-2020-0071 ${secret}\nerror: 1 vulnerability found!`, 'owner/repo');
+    expect(leaky[0]?.excerpt).not.toContain(secret);
+  });
+  it('groups cargo-audit failures and attributes the lockfile input set', async () => {
+    // Minimal gh double: one open PR pair plus a failing master run, the
+    // cargo-audit job log on both. The audit leg needs no exception file
+    // or harness discovery, so contents calls only see the exceptions
+    // lookup (absent -> no exceptions).
+    const masterSha = 'a'.repeat(40), headSha = 'b'.repeat(40);
+    const auditLog = (sha: string) => `/usr/bin/git log -1 --format=%H\n${sha}\n${fixture('cargo-audit')}`;
+    const cargoGithub = (touched: string) => {
+      const gh: CloudGh = async args => {
+        const endpoint = args[1] ?? '';
+        const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: '' });
+        const text = (stdout: string) => ({ ok: true, stdout, stderr: '' });
+        if (args[0] === 'pr') return json([{ number: 1, headRefOid: headSha, headRefName: 'feature', files: [{ path: touched }] }, { number: 2, headRefOid: headSha, headRefName: 'feature', files: [{ path: touched }] }]);
+        if (endpoint.includes('/branches/')) return json({ commit: { sha: masterSha } });
+        if (endpoint.includes('/actions/runs?head_sha=')) return json({ total_count: 1, workflow_runs: [{ id: 1, workflow_id: 1, status: 'completed', head_sha: masterSha, conclusion: 'failure' }] });
+        if (endpoint.includes('/actions/runs?branch=')) return json({ total_count: 1, workflow_runs: [{ id: 2, workflow_id: 1, status: 'completed', head_sha: headSha, conclusion: 'failure' }] });
+        if (endpoint.includes('/jobs?')) return json({ total_count: 1, jobs: [{ id: endpoint.includes('/runs/1/') ? 10 : 20, conclusion: 'failure', head_sha: endpoint.includes('/runs/1/') ? masterSha : headSha }] });
+        if (endpoint.includes('/jobs/10/logs')) return text(auditLog(masterSha));
+        if (endpoint.includes('/jobs/20/logs')) return text(auditLog(headSha));
+        if (endpoint.includes('/contents/')) return { ok: false, stdout: '', stderr: 'HTTP 404: Not Found' };
+        throw new Error(`unexpected call ${args.join(' ')}`);
+      };
+      return gh;
+    };
+    const report = await analyzeCiBaseline('owner/repo', cargoGithub('docs/README.md'));
+    expect(report.freshness.map(p => p.state)).toEqual(['fresh', 'fresh']);
+    expect(report.groups).toHaveLength(1);
+    expect(report.groups[0]).toMatchObject({
+      testId: 'desktop/src-tauri/Cargo.lock > (dependency-audit) cargo-audit',
+      classification: 'shared-baseline', action: 'queue-master-fix', master: 'fail', prs: [1, 2],
+    });
+    expect(report.groups[0]?.brief).toContain('desktop/src-tauri/Cargo.lock > (dependency-audit) cargo-audit');
+    // The lockfile, its manifest and the audit workflow are pr-caused;
+    // unrelated manifest and test-infra changes stay shared-baseline.
+    for (const [touched, action] of [
+      ['desktop/src-tauri/Cargo.lock', 'pr-caused'],
+      ['desktop/src-tauri/Cargo.toml', 'pr-caused'],
+      ['.github/workflows/dependency-audit.yml', 'pr-caused'],
+      ['package.json', 'queue-master-fix'],
+      ['test/example.test.ts', 'queue-master-fix'],
+    ] as const) {
+      const caused = await analyzeCiBaseline('owner/repo', cargoGithub(touched));
+      expect(caused.groups[0]?.action, touched).toBe(action);
+    }
+  });
   it('parses pack-smoke and hosted-artifact refusals as gate failures', () => {
     const failures = parseBaselineFailures(fixture('pack-shared'));
     expect(failures.map(f => f.testId)).toEqual([

@@ -532,10 +532,15 @@ const STATIC_FAILURE_INPUTS: Record<string, readonly string[]> = {
   // The dependency-audit gate reads each lockfile's installed graph plus
   // the manifests, shrinkwraps and .npmrc files that shape it, the
   // exception file its verdicts are filtered by, and the audit script
-  // itself. The desktop Cargo.lock is audited by cargo-audit, whose
-  // output this analyzer does not parse.
+  // itself. The desktop Cargo.lock is audited by the cargo-audit leg
+  // below, whose closed inputs sit on its own key.
   'package-lock.json': ['package.json', 'npm-shrinkwrap.json', '.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
   'src/raycast/package-lock.json': ['src/raycast/package.json', 'src/raycast/npm-shrinkwrap.json', 'src/raycast/.npmrc', '.github/dependency-audit-exceptions.json', 'scripts/npm-audit-with-osv-fallback.sh'],
+  // The cargo-audit leg of the same job reads the desktop lockfile plus
+  // the manifest a version bump edits and the workflow pinning the
+  // auditor version and --ignore list; the crate graph has no
+  // enumerable closure, so deeper changes stay unattributed.
+  'desktop/src-tauri/Cargo.lock': ['desktop/src-tauri/Cargo.toml', '.github/workflows/dependency-audit.yml'],
   // The pack-smoke gate verifies the packed name/version against
   // package.json and the measured dist/ graph has no enumerable closure,
   // so only the manifest is a direct repo input; the artifact gate also
@@ -833,8 +838,9 @@ function parsePerfBudgetFailures(log: string): Failure[] {
 // below, per printed row, because osv-scanner itself already applied the
 // step's IgnoredVulns config -- every row it prints is an unexcepted
 // advisory, so these groups do not need the exception list and still emit
-// when it is unreadable. Cargo-audit output carries no audit v2 document
-// and stays unparsed. Invalid reports (non-v2 schema, malformed severity
+// when it is unreadable. Cargo-audit output carries no audit v2 document;
+// its own `error: N vulnerability found!` verdict parses separately below.
+// Invalid reports (non-v2 schema, malformed severity
 // counts), reports with no preceding step echo, unrelated JSON and clean
 // reports (`total: 0`) stay unparsed. Like the other non-test identities
 // these groups can never resolve through a vitest pass line:
@@ -847,6 +853,28 @@ const DEPENDENCY_AUDIT_INVOKE = /(?:^|[\s"'`(=])(\.\.\/\.\.\/)?scripts\/npm-audi
 const DEPENDENCY_AUDIT_GHSA = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i;
 const DEPENDENCY_AUDIT_GHSA_ALL = /GHSA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/gi;
 const DEPENDENCY_AUDIT_PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
+// The same job's last step audits desktop/src-tauri/Cargo.lock with the
+// pinned cargo-audit binary (`cargo-audit audit --file <lockfile>
+// --ignore <id>`, also spelled `cargo audit`). There is no machine
+// report: the tool prints human advisory blocks and ends with its own
+// verdict lines -- `error: N vulnerability found!` or `error: N
+// vulnerabilities found!` on exit 1, `warning: N allowed warnings
+// found` for non-denied advisories on exit 0. The --ignore list is
+// applied inside the tool, so every counted vulnerability is
+// unexcepted and needs no exception fixpoint -- the OSV leg's
+// convention. Advisory-fetch, lockfile and other `error:` diagnostics
+// carry no vulnerability verdict and stay unparsed, as do the
+// pinned-archive `: FAILED` download checks, warning summaries and a
+// verdict with no preceding audit invocation. The failure groups once
+// per audit run as `<lockfile> > (dependency-audit) cargo-audit`: the
+// lockfile plus its manifest and the workflow carrying the pinned
+// auditor version and ignore list are the closed input set a master
+// fix restores (STATIC_FAILURE_INPUTS).
+const CARGO_AUDIT_NAMES = '(dependency-audit) cargo-audit';
+const CARGO_AUDIT_INVOKE = /\b(?:cargo-audit|cargo)\s+audit(?=\s|$)[^\n]*--file\s+(\S+)/;
+const CARGO_AUDIT_VERDICT = /^error: \d+ vulnerabilit(?:y|ies) found!\s*$/;
+const CARGO_AUDIT_ID = /^ID:\s+(RUSTSEC-\d{4}-\d{4})\s*$/;
+const CARGO_AUDIT_IDS_MAX = 16;
 
 // Master's exception file is small and hand-reviewed; any malformed entry
 // makes the whole file untrusted (the gate script itself fails closed on
@@ -1002,6 +1030,7 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
   const raw = stripVTControlCharacters(log).split('\n')
     .map(l => l.replace(/^\d{4}-\d\d-\d\dT\S+ /, '').replace(/\r$/, ''));
   let context: AuditStep | null = null;
+  let cargoAudit: { file: string; ids: string[] } | null = null;
   for (let i = 0; i < raw.length && out.length < DEPENDENCY_AUDIT_MAX; i++) {
     const line = raw[i]!;
     const invoke = DEPENDENCY_AUDIT_INVOKE.exec(line);
@@ -1011,8 +1040,20 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       context = arg !== '' && !posix.isAbsolute(arg) && posix.normalize(arg) === arg && !arg.includes('..')
         ? { file: raycast ? `src/raycast/${arg}` : arg, graph: invoke[3] === undefined ? 'full' : raycast ? 'raycast-production' : null }
         : null;
+      cargoAudit = null;
       continue;
     }
+    const cargoInvoke = CARGO_AUDIT_INVOKE.exec(line);
+    if (cargoInvoke !== null) {
+      const arg = cargoInvoke[1]!;
+      cargoAudit = arg !== '' && arg !== '-' && !posix.isAbsolute(arg) && posix.normalize(arg) === arg && !arg.includes('..')
+        ? { file: arg, ids: [] }
+        : null;
+      continue;
+    }
+    // A new log group ends the audit step's output window: advisory ids
+    // and the verdict only count inside the run that printed them.
+    if (line.startsWith('##[group]')) cargoAudit = null;
     // The OSV fallback table needs no exception list -- the scanner applied
     // the step's IgnoredVulns config itself -- so it parses even when the
     // npm fixpoint below cannot run.
@@ -1020,6 +1061,22 @@ function parseAuditFailures(log: string, auditExceptions: readonly DependencyAud
       const cells = auditTableCells(line);
       if (cells !== null && isOsvAuditHeader(cells)) {
         i = collectOsvAuditTable(raw, i + 1, context, osvPackages) - 1;
+        continue;
+      }
+    }
+    if (cargoAudit !== null) {
+      const rustsec = CARGO_AUDIT_ID.exec(line);
+      if (rustsec !== null) {
+        pushUnique(cargoAudit.ids, rustsec[1]!, CARGO_AUDIT_IDS_MAX);
+        continue;
+      }
+      if (CARGO_AUDIT_VERDICT.test(line)) {
+        const testId = `${cargoAudit.file} > ${CARGO_AUDIT_NAMES}`;
+        if (!seen.has(testId) && out.length < DEPENDENCY_AUDIT_MAX) {
+          seen.add(testId);
+          out.push({ file: cargoAudit.file, names: CARGO_AUDIT_NAMES, testId, excerpt: clean([line, ...cargoAudit.ids.map(id => `ID: ${id}`)].join('\n')) });
+        }
+        cargoAudit = null;
         continue;
       }
     }

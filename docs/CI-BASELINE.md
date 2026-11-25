@@ -267,7 +267,7 @@ these groups can never resolve through a vitest pass line and classify
 `shared-baseline`, `pr-caused` or `unknown` -- never `probable-flake`.
 Invalid reports (non-v2 schema, malformed severity counts), reports with
 no preceding step echo, clean reports (`total: 0`) and unrelated JSON
-stay unparsed, as does cargo-audit output.
+stay unparsed.
 
 When npm's transport fails all three bounded attempts the gate script
 falls back to the pinned OSV-Scanner (`scan source --lockfile
@@ -291,6 +291,26 @@ Near-miss headers, other table shapes (license, deprecated, OS-package
 summaries), wrong-arity rows, invalid package names and sources naming
 another file stay unparsed, as do clean scans (the table only renders
 when vulnerabilities exist).
+
+The same job's last step audits `desktop/src-tauri/Cargo.lock` with the
+pinned cargo-audit binary (`cargo-audit audit --file <lockfile>
+--ignore <id>`, also spelled `cargo audit`). There is no machine report:
+the tool prints human advisory blocks and ends with its own verdict
+lines -- `error: N vulnerability found!` or `error: N vulnerabilities
+found!` on exit 1, `warning: N allowed warnings found` for non-denied
+advisories on exit 0. The `--ignore` list is applied inside the tool, so
+every counted vulnerability is unexcepted and needs no exception
+fixpoint -- the OSV leg's convention. Each failing run groups once as
+`<lockfile> > (dependency-audit) cargo-audit`, with the verdict line and
+the printed `ID: RUSTSEC-...` advisories as the excerpt. The lockfile,
+its `Cargo.toml` manifest and the workflow carrying the pinned auditor
+version and ignore list are the closed input set a master fix restores,
+and the vitest harness ambient set does not apply. Advisory-fetch,
+lockfile-parse and other `error:` diagnostics carry no vulnerability
+verdict and stay unparsed, as do the pinned-archive `: FAILED` download
+checks, warning summaries, verdicts with no preceding audit invocation,
+unsafe `--file` values and verdicts echoed after the step's group
+boundary.
 
 The `ci` job's "Memory benchmark regression gate" step on the ubuntu
 authority 3/3 shard runs `npm run --silent bench:memory -- --check >
