@@ -75,7 +75,8 @@ export interface NodeView {
   live: boolean;
   owners: string[];
   caps: string[];
-  usage: number;
+  /** Self-reported permille load; null until a heartbeat reports one — never a fabricated 0. */
+  usage: number | null;
   slots?: number;
   auth: NodeAuth;
   heartbeatAt: number;
@@ -286,7 +287,7 @@ export class DriveNodes implements QueueV1 {
       nodes: state.nodes.filter(n => n.owners?.some(o => scope.has(o)))
         .map(n => ({ nodeId: n.nodeId, live: n.expiresAt > now, owners: (n.owners ?? []).filter(o => scope.has(o)),
           caps: n.caps ?? [], lanes: (n.caps ?? []).filter(c => ['codex', 'claude'].includes(c) || isLocalModelCap(c)),
-          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? 0, auth: n.auth ?? 'unknown',
+          heartbeatAt: n.heartbeatAt, expiresAt: n.expiresAt, usage: n.usage ?? null, auth: n.auth ?? 'unknown',
           ...(n.capacity ? { capacity: n.capacity } : {}),
           ...(n.slots === undefined ? {} : { slots: n.slots }) }))
         .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1)),

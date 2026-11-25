@@ -209,6 +209,25 @@ describe('phm node CLI', () => {
     expect(status.out).not.toContain('j1');
   });
 
+  it('reports unmeasured load as unknown, never a fabricated 0', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-')));
+    vi.stubEnv('ASHLR_HOME', dir);
+    const joined = JSON.parse((await cli('join', '--node', 'laptop', '--owner', 'acme', '--json')).out);
+    const s = String(joined.session);
+    const before = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+    expect(before.nodes).toEqual([expect.objectContaining({ nodeId: 'laptop', usage: null })]);
+    // Text mode renders the node view, not the plan's routes array.
+    expect((await cli('status', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
+    expect((await cli('list', '--owner', 'acme')).out).toContain('node laptop live usage=unknown');
+    expect((await cli('plan', '--owner', 'acme')).out).toBe('No routable jobs.');
+    expect((await cli('beat', '--node', 'laptop', '--session', s, '--usage', '250', '--json')).code).toBe(0);
+    const after = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+    expect(after.nodes[0].usage).toBe(250);
+    // A beat without --usage keeps the last reported value rather than resetting it.
+    expect((await cli('beat', '--node', 'laptop', '--session', s, '--json')).code).toBe(0);
+    expect(JSON.parse((await cli('status', '--owner', 'acme', '--json')).out).nodes[0].usage).toBe(250);
+  });
+
   it('runs the documented flow through a symlinked ASHLR_HOME (scratch homes under macOS $TMPDIR)', async () => {
     // /var -> /private/var on macOS makes every mkdtemp home "symlinked"; the
     // store must canonicalize before its private-directory checks.
