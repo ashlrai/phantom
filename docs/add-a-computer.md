@@ -6,19 +6,21 @@ On the computer to add, install Node.js 22.15.0 or newer, then install Phantom:
 npm install -g @ashlr/phantom
 ```
 
-Join with a unique node ID and the owner scope used by the jobs you want to
-run. Choose capabilities for this computer's role (see below):
+Join with the owner scope used by the jobs you want to run; the node ID
+defaults to this computer's hostname, so the shortest join is:
 
 ```sh
-phm node join --node laptop --owner acme --caps build,gh --json
+phm node join --owner acme --caps build,gh --json
 ```
 
-Replace `laptop` and `acme` with your own node ID and owner scope. Save the
-`session` number from the output; use that number in the commands below. The
-output's `next` field prints the keep-alive `beat --watch` command — the only
-beat form that keeps this session live — and adds `--probe-auth` when `gh` was
-advertised, so GitHub jobs can actually route to this node once `gh auth login`
-has run here.
+Replace `acme` with your own owner scope, and pass `--node <id>` before
+`--owner` if you want a different node ID than the hostname. Choose
+capabilities for this computer's role (see below). Save the `nodeId` and
+`session` numbers from the output; use them in the commands below (shown as
+`<nodeId>` and `1`). The output's `next` field prints the keep-alive
+`beat --watch` command — the only beat form that keeps this session live —
+and adds `--probe-auth` when `gh` was advertised, so GitHub jobs can actually
+route to this node once `gh auth login` has run here.
 
 To keep the exercise fully separate from real Phantom state, point
 `ASHLR_HOME` at a scratch directory first (`export ASHLR_HOME=$(mktemp -d)`);
@@ -35,10 +37,10 @@ credentials stay on this computer.
 
 ## Verify and stay live
 
-Replace `1` with the session returned by join:
+Replace `<nodeId>` with the `nodeId` join returned and `1` with its `session`:
 
 ```sh
-phm node beat --node laptop --session 1 --probe-auth --json
+phm node beat --node <nodeId> --session 1 --probe-auth --json
 phm node status --owner acme --json
 ```
 
@@ -47,12 +49,12 @@ each beat: `--capacity "$(phm node measure)"`. When `phm node measure` exits 1
 the node is held; omit `--capacity` on that beat. See the
 [node router guide](NODE-ROUTER.md).
 
-Check that `laptop` appears live with the intended caps and, for GitHub jobs,
+Check that `<nodeId>` appears live with the intended caps and, for GitHub jobs,
 that its auth is `ok`. A join does not start a worker or recurring heartbeat,
 so keep one running in the foreground:
 
 ```sh
-phm node beat --node laptop --session 1 --probe-auth --watch
+phm node beat --node <nodeId> --session 1 --probe-auth --watch
 ```
 
 `--watch` repeats the ordinary beat every 10 seconds (or `--every <seconds>`,
@@ -73,7 +75,7 @@ number. Omit `--probe-auth` if this node does not need GitHub authentication.
 ## Leave
 
 ```sh
-phm node leave --node laptop --session 1 --json
+phm node leave --node <nodeId> --session 1 --json
 ```
 
 Use the current session number and check for `"left":true`. An expired or

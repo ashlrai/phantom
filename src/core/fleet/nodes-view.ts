@@ -127,10 +127,11 @@ function headroom(stats: HostStats | undefined): Pick<NodeRow, 'freeMemoryBytes'
 
 interface Machine { name: string; isSelf: boolean; reachable: boolean | Unknown; lastSeen: string | Unknown; records: NodeRecord[] }
 
-/** The standalone rejoin for this computer's own expired session, from its newest record. */
+/** The standalone rejoin for this computer's own expired session, from its newest record.
+ * With no record it is a first join, which needs no --node: join defaults the id to the hostname. */
 function standaloneRejoin(records: NodeRecord[]): string {
   const rec = [...records].sort((a, b) => b.heartbeatAt - a.heartbeatAt)[0];
-  return rec ? `phm node join --node ${rec.nodeId} --owner ${rec.owners?.length ? rec.owners.join(',') : '<scope>'}` : 'phm node join --node <id> --owner <scope>';
+  return rec ? `phm node join --node ${rec.nodeId} --owner ${rec.owners?.length ? rec.owners.join(',') : '<scope>'}` : 'phm node join --owner <scope>';
 }
 
 /** Pure join of the tailnet read, the registry snapshot and this computer's sample. */
