@@ -6,7 +6,8 @@ export const NODE_FLEET_USAGE = `Usage: phm node join --node <id> --owner <scope
        phm node enqueue --job <id> --owner <scope> [--requires <cap[,cap]>] [--pack <id>] [--secrets <NAME[,NAME]>] [--json]
        phm node plan [--owner <scope>] [--json]
        phm node pull --node <id> --session <n> [--json]
-       phm node renew|complete --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--result <text>] [--json]
+       phm node renew --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--watch [--every <seconds>]] [--json]
+       phm node complete --job <id> --node <id> --session <n> --token <n> --leader-token <n> [--result <text>] [--json]
        phm node withdraw --job <id> --owner <scope> [--json]
        phm node result --job <id> --owner <scope> [--json]
        phm node list|status --owner <scope[,scope]> [--json]
@@ -24,4 +25,6 @@ never copied or sent, and jobs carry secret NAMES, never values.
 
 \`beat --watch\` repeats the beat every --every seconds (default 10, at most 25 — sessions
 expire 30 s after the last beat) until Ctrl-C, re-measuring capacity and host stats on this
-machine each pass unless those flags were given explicitly.`;
+machine each pass unless those flags were given explicitly. \`renew --watch\` repeats the
+renew on the same interval so a pulled job's 30-second claim lease survives real work;
+the watch flags never reach either verb's parser.`;

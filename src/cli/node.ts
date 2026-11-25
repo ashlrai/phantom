@@ -96,10 +96,14 @@ phm node self-update [--owner <scope>] [--target <x.y.z>] [--json] (plan only: p
 phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would offload to nodes and why; dry run by default)`);
     return 0;
   }
-  // `beat --watch` is a dispatcher-level keep-alive, not a fleet flag: it loops
-  // the ordinary beat (pool-aware through the same dispatch) until stopped.
+  // `beat --watch` / `renew --watch` are dispatcher-level keep-alives, not
+  // fleet flags: each loops the ordinary verb (pool-aware through the same
+  // dispatch) until stopped.
   if (fleetVerb === 'beat' && args.slice(1).includes('--watch')) {
     return (await import('./node-beat-watch.js')).cmdNodeBeatWatch(args.slice(1));
+  }
+  if (fleetVerb === 'renew' && args.slice(1).includes('--watch')) {
+    return (await import('./node-renew-watch.js')).cmdNodeRenewWatch(args.slice(1));
   }
   if (args[0] === 'bridge') return (await import('./node-bridge.js')).cmdNodeBridge(args.slice(1));
   if (fleetVerb) return (await import('./node-fleet.js')).cmdNodeFleet(fleetVerb, args.slice(1));
