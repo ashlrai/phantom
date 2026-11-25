@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DriveNodes, type NodesState, type NodesStore } from '../src/core/drive/nodes/index.js';
 import { executeNodeFleet } from '../src/core/drive/nodes/commands.js';
 import { emptyState, parseState } from '../src/core/drive/nodes/state.js';
+import { versionFromCaps } from '../src/core/drive/nodes/phm-version.js';
 import { cmdNodeFleet } from '../src/cli/node-fleet.js';
 
 class MemoryStore implements NodesStore {
@@ -434,6 +435,54 @@ describe('live-session recovery hints', () => {
   it('leave of an unknown node stays a bare false', () => {
     const f = fixture();
     expect(executeNodeFleet('leave', args('ghost', 1), f.a)).toEqual({ nodeId: 'ghost', left: false });
+  });
+});
+
+describe('standalone join version reporting', () => {
+  it('advertises the running build as a phm-<version> cap so self-update reads it', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build', '--json'],
+        { store, phmVersion: () => '9.9.9' });
+      expect(code).toBe(0);
+      const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
+      expect(node.caps).toEqual(['build', 'phm-9.9.9']);
+      // The scoped view self-update reads reports the advertised build, not 'unreported'.
+      expect(versionFromCaps(new DriveNodes(store).view(['acme']).nodes[0]!.caps)).toBe('9.9.9');
+      expect(JSON.parse(lines.at(-1)!)).toMatchObject({ command: 'join',
+        caps: expect.arrayContaining(['build', 'phm-9.9.9']) });
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('replaces a stale version cap copied into --caps with the build actually joining', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,phm-0.0.1-stale'],
+        { store, phmVersion: () => '9.9.9' });
+      expect(code).toBe(0);
+      const node = store.state.nodes.find(n => n.nodeId === 'laptop')!;
+      expect(node.caps).toEqual(['build', 'phm-9.9.9']);
+      expect(versionFromCaps(node.caps)).toBe('9.9.9');
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('leaves --caps untouched when this build version cannot be determined', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      const store = new MemoryStore();
+      const code = await cmdNodeFleet('join', ['--node', 'laptop', '--owner', 'acme', '--caps', 'build,phm-custom'],
+        { store, phmVersion: () => null });
+      expect(code).toBe(0);
+      expect(store.state.nodes.find(n => n.nodeId === 'laptop')!.caps).toEqual(['build', 'phm-custom']);
+    } finally { vi.restoreAllMocks(); }
+  });
+  it('the SSH endpoint join does not stamp this host version onto a worker', () => {
+    const f = fixture();
+    const joined = executeNodeFleet('join', ['--node', 'worker', '--owner', 'o', '--caps', 'build'], f.a);
+    expect(joined['caps']).toEqual(['build']);
   });
 });
 
