@@ -1,7 +1,8 @@
 /** `phm node join|beat|enqueue|plan|pull|renew|complete|status|leave`: thin handlers over DriveNodes. */
+import { hostname } from 'node:os';
 import type { NodesStore } from '../core/drive/nodes/index.js';
 import { UsageError, parseNodeFleetFlags, runNodeFleet } from '../core/drive/nodes/commands.js';
-import type { NodeAuth } from '../core/drive/nodes/state.js';
+import { nodeIdFromHost, validId, type NodeAuth } from '../core/drive/nodes/state.js';
 
 export interface NodeFleetDeps {
   store?: NodesStore;
@@ -42,6 +43,14 @@ export async function cmdNodeFleet(verb: string, args: string[], deps: NodeFleet
       import('../core/drive/nodes/index.js'), import('../core/drive/nodes/auth-probe.js'),
       import('../core/cloud/store.js'), import('../core/universe/artifacts.js'), import('node:path')]);
     const store: NodesStore = deps.store ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(ashlrHome(), 'nodes')))).transaction(fn) };
+    // A standalone join may omit --node: it then takes this computer's
+    // hostname, sanitized exactly as pool enrollment derives it. An explicit
+    // --node always wins, and an id that cannot sanitize stays required. The
+    // pool path returned above and the witness endpoint never sees this.
+    if (verb === 'join' && !flags.has('--node')) {
+      const id = nodeIdFromHost(hostname());
+      if (validId(id)) flags.set('--node', id);
+    }
     const out = runNodeFleet(verb, flags, new DriveNodes(store, deps.now ? { now: deps.now } : {}), deps.probeAuth ?? probeLocalAuth);
     console.log(json ? JSON.stringify({ schemaVersion: 1, command: verb, ...out }) : text(verb, out));
     return 0;
