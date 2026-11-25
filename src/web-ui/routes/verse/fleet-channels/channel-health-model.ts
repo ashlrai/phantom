@@ -13,7 +13,7 @@ export interface ChannelHealthRow {
   runtimeHost: string | null;
   lastInboundAt: string | null;
   lastReplyAt: string | null;
-  unansweredCount: number;
+  unansweredCount: number | null;
   state: ChannelHealthState;
   missing: string[];
   // Request-coverage proof. Optional so hand-built rows (older callers) still type-check;
@@ -48,7 +48,14 @@ function narrowProof(raw: unknown): Pick<ChannelHealthRow, 'coverage' | 'answere
 
 function narrowRow(raw: unknown): ChannelHealthRow | null {
   if (!isRecord(raw) || (raw.channel !== 'slack' && raw.channel !== 'imessage')) return null;
-  const count = typeof raw.unansweredCount === 'number' && Number.isFinite(raw.unansweredCount) ? Math.max(0, Math.floor(raw.unansweredCount)) : 0;
+  const missing = Array.isArray(raw.missing) ? raw.missing.filter((m): m is string => typeof m === 'string' && m !== '') : [];
+  // Match the CLI's unavailable inbound cases, without discarding observations
+  // just because another part of channel health is UNKNOWN.
+  const inboundUnavailable = raw.configured !== true || raw.processAlive === false || missing.some(m =>
+    m === `${raw.channel} receipt source unreadable` || m === `${raw.channel} inbound journal missing`);
+  const count = count0(raw.unansweredCount);
+  const proof = narrowProof(raw.proof);
+  if ((inboundUnavailable || count === null) && proof.coverage === 'idle') proof.coverage = 'unknown';
   return {
     channel: raw.channel,
     configured: typeof raw.configured === 'boolean' ? raw.configured : null,
@@ -56,10 +63,10 @@ function narrowRow(raw: unknown): ChannelHealthRow | null {
     runtimeHost: str(raw.runtimeHost),
     lastInboundAt: str(raw.lastInboundAt),
     lastReplyAt: str(raw.lastReplyAt),
-    unansweredCount: count,
+    unansweredCount: inboundUnavailable && count === 0 ? null : count,
     state: STATES.find(s => s === raw.state) ?? 'UNKNOWN',
-    missing: Array.isArray(raw.missing) ? raw.missing.filter((m): m is string => typeof m === 'string' && m !== '') : [],
-    ...narrowProof(raw.proof),
+    missing,
+    ...proof,
   };
 }
 
@@ -84,7 +91,7 @@ export function channelCoverageLine(ch: ChannelHealthRow): string | null {
   let line: string;
   switch (ch.coverage) {
     case 'verified': line = `requests answered in thread${ch.answeredCount != null ? ` (${ch.answeredCount})` : ''}`; break;
-    case 'unproven': line = `${ch.unansweredCount} ${ch.unansweredCount === 1 ? 'request' : 'requests'} waiting, no reply receipt bound`; break;
+    case 'unproven': line = ch.unansweredCount === null ? 'request count unknown, no reply receipt bound' : `${ch.unansweredCount} ${ch.unansweredCount === 1 ? 'request' : 'requests'} waiting, no reply receipt bound`; break;
     case 'idle': line = 'no request in the last hour, LIVE shows process and config only'; break;
     default: return null;
   }
