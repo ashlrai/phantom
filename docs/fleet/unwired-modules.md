@@ -27,6 +27,5 @@ deleting it, and keep its tests green either way.
 | `merge-bisect.ts` | Pure, probe-injected bisect planners for the merge pipeline: decides which revisions or subsets to probe; the caller runs the probes. |
 | `merge-plan-rework.ts` | Rework edges and superseded-PR proposals for the merge plan: reads `RQ-FIX-`, `RQ-RECUT-`, `RQ-REBASE-BATCH-` titles and body markers across open PRs, with bounded secret-scrubbed text. |
 | `nodes-dispatch.ts` | The `phm nodes dispatch` decision: probe gates (reachable, CLI installed, signed in) then one adapter start. The default adapter is plan-only, so every answer is a dry run with the reason until a remote runner is connected. |
-| `pick-grader.ts` | Grades each ranker pick 24h and 7d after it was made against the signals it realized (merged, used, stars, installs), nudges the ranker's feature weights toward what happened, and renders pick accuracy for the daily line. |
 | `process-vitals.ts` | Process-vitals IO seam: ps-based owner and process sampling behind an injectable interface (home, uid, clock, run, read, signal). |
 | `status-grade.ts` | Pure grader for the status-reply contract: a reply may say RECEIVED, ASSIGNED, RUNNING, BLOCKED or VERIFIED only when structured evidence proves it; every grade carries an as-of timestamp and the evidence source. |
