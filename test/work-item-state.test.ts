@@ -22,7 +22,7 @@ it('owner without receipt stays RECEIVED', () => {
 
 it('RUNNING with fresh evidence; 31-minute-old evidence falls back to ASSIGNED', () => {
   const e = { ...base, owner: 'owner-a', claimReceipt: 'claim-1' };
-  expect(classifyWorkItem({ ...e, runningEvidence: { source: 'heartbeat', at: ago(5) } }, NOW)).toEqual({ state: 'RUNNING', asOf: ago(5), source: 'heartbeat', missing: [] });
+  expect(classifyWorkItem({ ...e, runningEvidence: { source: 'heartbeat', at: ago(5) } }, NOW)).toEqual({ owner: 'owner-a', state: 'RUNNING', asOf: ago(5), source: 'heartbeat', missing: [] });
   const stale = classifyWorkItem({ ...e, runningEvidence: { source: 'heartbeat', at: ago(31) } }, NOW);
   expect(stale.state).toBe('ASSIGNED');
   expect(stale.missing).toEqual(['fresh running evidence']);
