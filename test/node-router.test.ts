@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -207,6 +207,36 @@ describe('phm node CLI', () => {
     const status = await cli('status', '--owner', 'other', '--json');
     expect(JSON.parse(status.out)).toMatchObject({ nodes: [], jobs: [], routes: [] });
     expect(status.out).not.toContain('j1');
+  });
+
+  it('runs the documented flow through a symlinked ASHLR_HOME (scratch homes under macOS $TMPDIR)', async () => {
+    // /var -> /private/var on macOS makes every mkdtemp home "symlinked"; the
+    // store must canonicalize before its private-directory checks.
+    if (process.platform === 'win32') return;
+    const real = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-real-')));
+    const link = join(realpathSync(tmpdir()), `node-cli-link-${process.pid}-${Date.now()}`);
+    symlinkSync(real, link, 'dir');
+    dir = real;
+    vi.stubEnv('ASHLR_HOME', join(link, '.ashlr'));
+    try {
+      const joined = JSON.parse((await cli('join', '--node', 'scratch', '--owner', 'acme', '--caps', 'build', '--json')).out);
+      expect(joined).toMatchObject({ schemaVersion: 1, command: 'join', nodeId: 'scratch', owners: ['acme'], caps: ['build'] });
+      const s = String(joined.session);
+      expect((await cli('beat', '--node', 'scratch', '--session', s, '--json')).code).toBe(0);
+      const status = JSON.parse((await cli('status', '--owner', 'acme', '--json')).out);
+      expect(status.nodes.map((n: { nodeId: string }) => n.nodeId)).toEqual(['scratch']);
+      expect(JSON.parse((await cli('leave', '--node', 'scratch', '--session', s, '--json')).out)).toMatchObject({ left: true });
+    } finally { rmSync(link, { recursive: true, force: true }); }
+  });
+
+  it('surfaces the real store error instead of a generic store failure', async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'node-cli-err-')));
+    mkdirSync(join(dir, '.ashlr'), { recursive: true });
+    writeFileSync(join(dir, '.ashlr', 'nodes'), 'not a directory');
+    vi.stubEnv('ASHLR_HOME', join(dir, '.ashlr'));
+    const res = await cli('join', '--node', 'x', '--owner', 'o', '--json');
+    expect(res.code).toBe(1);
+    expect(JSON.parse(res.out).error).toMatchObject({ code: 'rejected', message: expect.stringContaining('private directory') });
   });
 
   it('errors say how to fix themselves and never echo argument values', async () => {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ashlrHome } from '../../cloud/store.js';
-import { privateDirectory } from '../../universe/artifacts.js';
+import { canonicalPath, privateDirectory } from '../../universe/artifacts.js';
 import { readStableRegularFile } from '../../util/stable-file-read.js';
 import { writePrivateFileAtomically } from '../../util/private-file-write.js';
 import { LocalNodesStore } from './local-store.js';
@@ -17,7 +17,7 @@ export interface PoolConfig {
   owner: string;
   node: string;
 }
-export function poolDirectory(): string { return privateDirectory(join(ashlrHome(), 'node-pool')); }
+export function poolDirectory(): string { return privateDirectory(canonicalPath(join(ashlrHome(), 'node-pool'))); }
 function writePrivate(name: string, value: unknown): void {
   const root = poolDirectory();
   writePrivateFileAtomically(join(root, `${name}.${randomUUID()}.tmp`), join(root, name), JSON.stringify(value) + '\n',

@@ -15,7 +15,7 @@ import { budgetEntryQuota } from '../fabric/lane-usage-self.js';
 import { DriveNodes, LocalNodesStore, type NodesStore } from '../drive/nodes/index.js';
 import type { QueueJobV1 } from '../drive/nodes/queue-v1.js';
 import { ashlrHome } from '../cloud/store.js';
-import { privateDirectory } from '../universe/artifacts.js';
+import { canonicalPath, privateDirectory } from '../universe/artifacts.js';
 import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { appendBusInbox } from '../fleet/bus-inbox.js';
 import { CHANNEL_BUS_TTL_MS } from '../fleet/channel-bus-publish.js';
@@ -142,7 +142,7 @@ export function advisorySeatAdapter(s: BotSeat, usage: () => Promise<QuotaEviden
     async message(text) { assertMetadata(text); return { status: 'advisory', reason: s.kind === 'local' ? 'loopback-only-no-execution' : 'no-documented-bot-messaging-api' }; } };
 }
 function nodes(o: SeatOptions): NodesStore {
-  return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes'))).transaction(fn) };
+  return o.nodesStore ?? { transaction: fn => new LocalNodesStore(privateDirectory(canonicalPath(join(o.home ? join(o.home, '.ashlr') : ashlrHome(), 'nodes')))).transaction(fn) };
 }
 interface SeatClaimOwners {
   identityOf: AgentIdentityKeyFor | undefined;
