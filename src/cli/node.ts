@@ -52,7 +52,10 @@ export async function cmdNode(args: string[]): Promise<number> {
   if (args[0] === 'lanes' && !args.includes('--help') && !args.includes('-h')) {
     const extra = args.slice(1).filter(a => a !== '--json');
     if (extra.length || args.slice(1).filter(a => a === '--json').length > 1) {
-      console.error('Usage: phm node lanes [--json]');
+      const lanesUsage = 'Usage: phm node lanes [--json]';
+      if (args.includes('--json')) console.log(JSON.stringify({ schemaVersion: 1, command: 'lanes',
+        error: { code: 'usage', message: lanesUsage, fix: 'Run: phm node --help' } }));
+      else console.error(lanesUsage);
       return 2;
     }
     const { localLanePlan, localLaneConfigPath } = await import('../core/drive/nodes/local-model-caps.js');
@@ -112,7 +115,9 @@ phm node bridge [--owner <scope>] [--apply] [--json] (ready.tsv rows that would 
   const error = bootstrap ? `Node bootstrap is dry-run only. ${USAGE}`
     : args.length === 0 || args[0]!.startsWith('-') ? 'Usage: phm node <command> [arguments] [--json]. Run: phm node --help for the command list.'
     : `Unknown node command '${args[0]}'. Run: phm node --help`;
-  if (json) console.log(JSON.stringify(bootstrap ? { error, executable: false } : { error }));
+  if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'node',
+    error: { code: 'usage', message: error, fix: 'Run: phm node --help' },
+    ...(bootstrap ? { executable: false } : {}) }));
   else console.error(error);
   return 2;
 }

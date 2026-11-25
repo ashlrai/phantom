@@ -23,7 +23,20 @@ export async function cmdNodeBridge(args: string[]): Promise<number> {
     return 2;
   }
   const { runConfiguredNodeBridge } = await import('../core/drive/nodes/ready-bridge-run.js');
-  const report = await runConfiguredNodeBridge({ apply: args.includes('--apply'), ...(owner ? { owner } : {}) });
+  let report: NodeBridgeReport;
+  try {
+    report = await runConfiguredNodeBridge({ apply: args.includes('--apply'), ...(owner ? { owner } : {}) });
+  } catch (error) {
+    // Store and privacy messages in this stack are fixed operator-facing
+    // strings; anything else stays masked, as in the node fleet verbs.
+    const operatorMessage = /^(?:Invalid |Drive |Universe storage|Unsafe drive|Cannot create filesystem root)/;
+    const message = error instanceof Error && operatorMessage.test(error.message)
+      ? error.message : 'Node bridge unavailable or misconfigured.';
+    if (json) console.log(JSON.stringify({ schemaVersion: 1, command: 'bridge',
+      error: { code: 'error', message, fix: 'Check ~/.ashlr/node-bridge.json and the node pool config.' } }));
+    else console.error(message);
+    return 1;
+  }
   console.log(json ? JSON.stringify({ schemaVersion: 1, command: 'bridge', ...report }) : text(report));
   return 0;
 }
