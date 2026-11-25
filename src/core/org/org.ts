@@ -265,11 +265,23 @@ export function planOrg(org: Org, joins: readonly JoinRecord[], view: ResourceVi
   const assignments: OrgPlan['assignments'] = [], unassigned: OrgPlan['unassigned'] = [];
   const load = new Map<string, number>();
   const cost = (j: QueueJob) => j.costPct ?? DEFAULT_COST_PCT;
+  const staffed = (b: LaneBudget) => (implementers.get(`${b.member}/${b.lane}`)?.length ?? 0) > 0;
   const ordered = [...queue].sort((a, b) => (b.priority ?? 1) / cost(b) - (a.priority ?? 1) / cost(a) || a.id.localeCompare(b.id));
   for (const job of ordered) {
-    const fits = budgets.filter((b) => (!job.lane || b.lane === job.lane) && (implementers.get(`${b.member}/${b.lane}`)?.length ?? 0) > 0 &&
-      remaining.get(`${b.member}/${b.lane}`)! >= cost(job));
-    if (fits.length === 0) { unassigned.push({ job: job.id, reason: job.lane && !budgets.some((b) => b.lane === job.lane) ? `no opted-in contribution on ${job.lane}` : 'no contributed budget left' }); continue; }
+    const covers = (b: LaneBudget) => !job.lane || b.lane === job.lane;
+    const fits = budgets.filter((b) => covers(b) && staffed(b) && remaining.get(`${b.member}/${b.lane}`)! >= cost(job));
+    if (fits.length === 0) {
+      // The reason names the real blocker: a pinned lane nobody opted into,
+      // opted-in lanes with no declared implementer (`phm org init` writes
+      // none), or staffed lanes whose contributed budget is already spent.
+      const covering = budgets.filter(covers);
+      unassigned.push({ job: job.id, reason: covering.length === 0
+        ? (job.lane ? `no opted-in contribution on ${job.lane}` : 'no contributed budget left')
+        : covering.every((b) => !staffed(b))
+          ? `no implementer agent declared on ${[...new Set(covering.map((b) => `${b.member}/${b.lane}`))].join(', ')}`
+          : 'no contributed budget left' });
+      continue;
+    }
     const best = fits.reduce((p, c) => c.urgency * remaining.get(`${c.member}/${c.lane}`)! > p.urgency * remaining.get(`${p.member}/${p.lane}`)! ? c : p);
     const key = `${best.member}/${best.lane}`;
     const agentId = implementers.get(key)!.reduce((p, c) => (load.get(c) ?? 0) < (load.get(p) ?? 0) ? c : p);

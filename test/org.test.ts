@@ -202,6 +202,37 @@ describe('plan', () => {
     expect(() => parseQueue(JSON.stringify([{ id: 'x', title: 'ghp_' + 'a'.repeat(36) }]))).toThrow(/Secret-shaped/);
     expect(() => parseQueue('[{"id":"x","extra":1}]')).toThrow(/Queue entries/);
   });
+  it('names the missing implementer agent on a fresh org instead of blaming budget', () => {
+    // `phm org init` declares lanes but no agents; an opted-in machine then has
+    // budget left and still cannot take work. The unassigned reason must name
+    // the real blocker — the first-run case this plan exists to explain.
+    const { org: fresh } = initOrg({ member: 'ada', machine: 'ada-mac', lanes: [{ lane: 'claude', share: 100 }] }, join(tmp(), 'org.toml'));
+    const p = planOrg(fresh, [joined('ada', [['claude', 100]])], null, jobs(2, { lane: 'claude' }), now);
+    expect(p.assignments).toEqual([]);
+    expect(p.budgets[0]).toMatchObject({ member: 'ada', lane: 'claude', budgetPct: 25 });
+    expect(p.unassigned).toHaveLength(2);
+    for (const u of p.unassigned) {
+      expect(u.reason).toBe('no implementer agent declared on ada/claude');
+      expect(u.reason).not.toMatch(/budget/);
+    }
+  });
+  it('a lane-less job names every opted-in member/lane that lacks an implementer', () => {
+    const { org: fresh } = initOrg({ member: 'ada', machine: 'ada-mac',
+      lanes: [{ lane: 'claude', share: 100 }, { lane: 'codex', share: 50 }] }, join(tmp(), 'org.toml'));
+    const p = planOrg(fresh, [joined('ada', [['claude', 100], ['codex', 50]])], null, [{ id: 'any' }], now);
+    expect(p.unassigned[0]!.reason).toBe('no implementer agent declared on ada/claude, ada/codex');
+  });
+  it('still reports spent budget when a staffed lane exists but cannot afford the job', () => {
+    // mason-wyatt has implementer agents on claude; a 1% share leaves 0.25
+    // budget points against a 2-point job — the honest 'budget' reason stays.
+    const p = planOrg(org, [joined('mason-wyatt', [['claude', 1]])], null, jobs(1, { costPct: 2 }), now);
+    expect(p.unassigned[0]!.reason).toBe('no contributed budget left');
+  });
+  it('a pinned lane nobody opted into still names the missing contribution', () => {
+    const p = planOrg(org, [joined('mason-wyatt', [['claude', 100]])], null,
+      [{ id: 'pinned', lane: 'codex-personal' }], now);
+    expect(p.unassigned[0]!.reason).toBe('no opted-in contribution on codex-personal');
+  });
 });
 
 describe('cmdOrg', () => {
