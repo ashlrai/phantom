@@ -7,7 +7,10 @@ the generated `src/core/run/model-catalog-data.ts` in the installed package;
 it does not update any routing logic or other source files.
 
 Sources are Claude and Codex help, Devin's model listing, Cursor Agent's model
-listing, Grok's model listing, and Ollama's loopback tags endpoint. Missing CLIs,
+listing, Grok's model listing, Antigravity's `agy models`, and Ollama's loopback
+tags endpoint. The Antigravity probe does not inherit metered API credentials
+and reflects only the IDs the CLI lists, not API or desktop availability.
+Missing CLIs,
 timeouts, nonzero exits, empty/unparseable responses and HTTP errors are unknown,
 not evidence that a model disappeared. `--include-seats` also uses the existing
 account-bound gateway discovery without introducing credentials.

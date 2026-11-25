@@ -202,9 +202,14 @@
     "tool": "SEC-PIN-STAGE-TOOL-2"
   },
   "registrySchema": "caps.registry.v1",
-  "registrySha256": "03c63065d9689cb2bfb4c73de515a865402b5e631b6172e31810b1067b92ecff",
+  "registrySha256": "701974b3e7dfb909ba135adf1dc9adb8a8da25ea5e9c07d4fd090ac9e604e695",
   "schema": "caps.adapters.v1",
   "surfaces": {
+    "agy": {
+      "adapter": "none",
+      "capabilities": {},
+      "hosts": []
+    },
     "claude-code": {
       "adapter": "claude-code",
       "capabilities": {
@@ -375,6 +380,11 @@
           "stack"
         ]
       },
+      "hosts": []
+    },
+    "gemini-api": {
+      "adapter": "none",
+      "capabilities": {},
       "hosts": []
     },
     "gemini-cli": {
