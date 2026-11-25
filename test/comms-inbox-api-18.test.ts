@@ -103,10 +103,10 @@ describe('GET /api/verse/comms/inbox', () => {
         // The real readUnifiedInbox echoes the normalized filter on its report.
         return { ...inbox(2), ...(options.filter === undefined ? {} : { filter: options.filter }) };
       },
-    }, 'GET', '?source=bus&kind=bus-work&severity=warn&blocking=true&job=RQ-1&since=1h&before=30m&contains=parser');
+    }, 'GET', '?source=bus&kind=bus-work&severity=warn&priority=now&blocking=true&job=RQ-1&since=1h&before=30m&contains=parser');
     expect(r.status).toBe(200);
     expect(seen?.filter).toEqual({
-      source: 'bus', kind: 'bus-work', severity: 'warn', blocking: true,
+      source: 'bus', kind: 'bus-work', severity: 'warn', priority: 'now', blocking: true,
       job: 'RQ-1', since: NOW - 3_600_000, before: NOW - 1_800_000, contains: 'parser',
     });
     expect(r.body.filter).toEqual(seen?.filter);
@@ -156,7 +156,7 @@ describe('GET /api/verse/comms/inbox', () => {
   });
 
   it.each([
-    '?source=bogus', '?kind=bogus', '?severity=critical', '?blocking=yes', '?blocking=',
+    '?source=bogus', '?kind=bogus', '?severity=critical', '?priority=urgent', '?priority=P0', '?priority=', '?blocking=yes', '?blocking=',
     '?job=a%20b', '?since=not-a-time', '?before=not-a-time', '?before=',
     '?contains=', '?contains=%20%20',
     `?contains=${'x'.repeat(513)}`, '?unknown=1', '?source=bus&source=imessage',
