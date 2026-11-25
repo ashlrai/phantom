@@ -2,7 +2,7 @@ import { isSlackChannelId, isSlackTs } from '../core/agents/slack-network.js';
 import { readSlackRequestTrace, type SlackRequestTraceOptions } from '../core/agents/slack-request-trace.js';
 import { slackTraceRowsToWorkItems, type SlackTraceClaim } from '../core/comms/slack-trace-work-items.js';
 import { classifyWorkItem } from '../core/comms/work-item-state.js';
-import { claimNoticeDir, claimNoticePaths, readClaimThreadBindings } from '../core/fleet/claim-notice-send.js';
+import { claimNoticeDir, claimNoticePaths, readClaimThreadBindings, readClaimThreadBindingsState } from '../core/fleet/claim-notice-send.js';
 import { readFleetBoard } from '../core/fleet/coordination.js';
 
 const sameMessageTs = (a: unknown, b: unknown): boolean => {
@@ -38,11 +38,31 @@ export function readSlackTraceClaims(deps: {
   });
 }
 
+type ClaimHealth = { board: 'ok' | 'unavailable'; bindings: 'ok' | 'unavailable' };
+
+/** Read both ownership sources independently; failures never become empty evidence. */
+export function readSlackTraceClaimsState(deps: {
+  readBoard?: typeof readFleetBoard;
+  readBindings?: () => ReturnType<typeof readClaimThreadBindingsState>;
+} = {}): { claims: SlackTraceClaim[]; sources: ClaimHealth } {
+  let board: ReturnType<typeof readFleetBoard> | undefined;
+  let bindings: ReturnType<typeof readClaimThreadBindingsState> = null;
+  try { board = (deps.readBoard ?? readFleetBoard)({ reap: false }); } catch { /* unavailable */ }
+  try { bindings = (deps.readBindings ?? (() => readClaimThreadBindingsState(claimNoticePaths(claimNoticeDir()).bindings)))(); } catch { /* unavailable */ }
+  const sources: ClaimHealth = { board: board?.state === 'known' ? 'ok' : 'unavailable', bindings: bindings === null ? 'unavailable' : 'ok' };
+  const claims = board?.state === 'known' && bindings !== null
+    ? board.claims.flatMap(claim => bindings!.filter(b => b.claimId === claim.id && b.repo === claim.repo)
+      .map(bound => ({ claimId: claim.id, repo: claim.repo, agent: claim.agent, threadKey: bound.threadKey })))
+    : [];
+  return { claims, sources };
+}
+
 export async function cmdFleetSlackTrace(
   args: string[],
   deps: SlackRequestTraceOptions & {
     readTrace?: typeof readSlackRequestTrace;
     readClaims?: () => readonly SlackTraceClaim[];
+    readClaimsState?: typeof readSlackTraceClaimsState;
   } = {},
 ): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -90,7 +110,7 @@ export async function cmdFleetSlackTrace(
     console.error(usage);
     return 2;
   }
-  const { readTrace = readSlackRequestTrace, readClaims = readSlackTraceClaims, ...readOptions } = deps;
+  const { readTrace = readSlackRequestTrace, readClaims, readClaimsState = readSlackTraceClaimsState, ...readOptions } = deps;
   const selectedThread = thread ?? deps.thread;
   const scope = 'Bounded local persisted journal and send evidence only; does not prove current runtime reachability.';
   const collectionScope = {
@@ -108,11 +128,13 @@ export async function cmdFleetSlackTrace(
     catch { asOf = new Date(0).toISOString(); }
     const counts = { total: 0, answered: 0, uncertain: 0, busFailed: 0, unanswered: 0 };
     const sources = { journal: 'degraded', sends: 'degraded' } as const;
+    const claimSources = { board: 'unavailable', bindings: 'unavailable' } as const;
     if (json) {
-      console.log(JSON.stringify({ asOf, rows: [], counts, sources, sourceState: 'unavailable', scope, collectionScope }));
+      console.log(JSON.stringify({ asOf, rows: [], counts, sources, sourceState: 'unavailable', scope, collectionScope, ...(workState ? { claimSources } : {}) }));
     } else {
       console.log(`slack trace evidence unavailable: persisted trace collection failed (journal=degraded sends=degraded) ` +
-        `as of ${asOf} (collection time, not a runtime probe); ${scope} This is not a healthy no-match.`);
+        `as of ${asOf} (collection time, not a runtime probe); ${scope} This is not a healthy no-match.` +
+        (workState ? ' ownership sources: board=unavailable bindings=unavailable' : ''));
     }
     return 1;
   }
@@ -126,23 +148,34 @@ export async function cmdFleetSlackTrace(
     else counts.unanswered++;
   }
   let outRows: Array<(typeof rows)[number] & { state?: string; stateAsOf?: string; stateMissing?: string[] }> = rows;
+  let claimSources: ClaimHealth | undefined;
   if (workState) {
     let claims: readonly SlackTraceClaim[] = [];
-    // An unreadable claim store means no claim evidence: rows stay RECEIVED, never ASSIGNED.
-    try { claims = readClaims(); } catch { claims = []; }
+    try {
+      if (readClaims) {
+        claims = readClaims();
+        claimSources = { board: 'ok', bindings: 'ok' };
+      } else {
+        const result = readClaimsState();
+        claims = result.claims;
+        claimSources = result.sources;
+      }
+    } catch { claimSources = { board: 'unavailable', bindings: 'unavailable' }; }
+    const unavailable = Object.entries(claimSources).filter(([, state]) => state !== 'ok').map(([source]) => `ownership source unavailable: ${source}`);
     const items = slackTraceRowsToWorkItems(rows, claims);
     outRows = rows.map((row, i) => {
       const c = classifyWorkItem(items[i]!, collected.asOf);
-      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: c.missing };
+      return { ...row, state: c.state, stateAsOf: c.asOf, stateMissing: [...c.missing, ...unavailable] };
     });
   }
-  const trace = { ...collected, rows: outRows, counts, scope, collectionScope };
+  const trace = { ...collected, rows: outRows, counts, scope, collectionScope, ...(claimSources ? { claimSources } : {}) };
   if (json) {
     console.log(JSON.stringify(trace));
   } else {
     console.log(`slack trace as of ${trace.asOf} (journal=${trace.sources.journal} sends=${trace.sources.sends}) ` +
       `scope: channel=${channelId ?? 'all'} thread=${selectedThread ?? 'all'}` +
       `${message !== undefined ? ` message=${message}` : ''}; ${scope}`);
+    if (claimSources) console.log(`ownership sources: board=${claimSources.board} bindings=${claimSources.bindings}`);
     if (trace.rows.length === 0) console.log('No matching request evidence; verification unsuccessful.');
     for (const row of trace.rows) {
       console.log(`${row.at} ${row.channelId} thread=${row.threadTs} msg=${row.messageTs} ingress=${row.ingress} -> ` +
@@ -152,6 +185,6 @@ export async function cmdFleetSlackTrace(
   }
   const clean = trace.sources.journal === 'ok' && trace.sources.sends === 'ok';
   // An answered row whose ingress is unknown has reply evidence but no bus receipt for the request itself; refuse it.
-  return clean && trace.rows.length > 0 &&
+  return clean && (!workState || (claimSources?.board === 'ok' && claimSources.bindings === 'ok')) && trace.rows.length > 0 &&
     trace.rows.every((row) => row.outcome === 'answered' && row.ingress !== 'unknown') ? 0 : 1;
 }
