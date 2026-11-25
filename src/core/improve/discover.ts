@@ -1,6 +1,6 @@
 /**
  * Backlog discovery: the self-improvement loop's input queue, generated from
- * evidence instead of a hand-kept list. Sixty-four sources, all of which Phantom
+ * evidence instead of a hand-kept list. Seventy-two sources, all of which Phantom
  * already reads elsewhere:
  *
  *   - open issues in the target repo, each done when the issue closes. By
@@ -871,6 +871,31 @@
  *     sitting in a report someone had to run — a lost order produces
  *     no job, so outcome learning and every job-level fold never see
  *     it;
+ *   - the Slack bridge observation journal's recurring adverse cells:
+ *     the {at, decision, reason?, bus?, channelId?, ...} rows
+ *     recordSlackObservation (src/core/agents/slack-journal.ts) appends
+ *     to <runs>/slack-bridge/journal.jsonl for every Socket Mode delivery
+ *     the bridge sees — 'ingested' rows whose bus append failed (an
+ *     accepted, allowlisted, mapped-channel message that never reached
+ *     the bus), 'ignored' rows under the untrusted-sender,
+ *     oversize-text and secret-shaped-text reasons (mapped channels
+ *     hearing dropped senders, oversized drops and refused
+ *     secret-shaped content), and 'ignored' rows whose reason sits
+ *     outside the writer's twelve-code SlackIgnoreReason vocabulary
+ *     (slackBridgeBacklogItems below). Until now the journal's only
+ *     readers were display surfaces — unified-inbox items,
+ *     slack-request-trace and slack-status — which render rows but
+ *     never fold a recurrence, so a team-message path that kept
+ *     dropping traffic never became work. A cell emits at three
+ *     adverse rows across two distinct UTC days AND two distinct
+ *     message identities inside the 7-day window — Socket Mode
+ *     redelivery re-records the same message, so messageTs, not row
+ *     count, is the real event count — the nine designed ignore
+ *     reasons and healthy posted/duplicate outcomes count as context
+ *     only, a degraded read folds the retained valid rows with counts
+ *     stated as recorded floors, and items emit only for the fleet's
+ *     own repository since the journal describes this install's bridge
+ *     config and carries no repo column;
  *
  * Items land in the operator backlog (`appendUserBacklogItems`), which dedupes
  * by id and title, so running discovery again adds only what is new. The
@@ -970,6 +995,7 @@ import { usageLiveAlertsBacklogItems } from './usage-live-alerts-backlog.js';
 import { harnessBacklogItems } from './harness-backlog.js';
 import { spawnProposalsBacklogItems } from './spawn-proposals-backlog.js';
 import { betAuditBacklogItems } from './bet-audit-backlog.js';
+import { slackBridgeBacklogItems } from './slack-bridge-backlog.js';
 import { readStandingRevertKeys } from './revert-ledger.js';
 
 export interface DiscoverDeps {
@@ -2164,6 +2190,27 @@ export async function discoverBacklog(repo: string, deps: DiscoverDeps = {}): Pr
   // fabricate losses); a repo cell emits only at the recurring bar
   // inside the window and only for the fleet's own repository.
   items.push(...await betAuditBacklogItems({ repo }));
+
+  // Slack bridge observation journal: the {at, decision, reason?, bus?,
+  // channelId?, ...} rows recordSlackObservation appends to
+  // <runs>/slack-bridge/journal.jsonl for every Socket Mode delivery the
+  // bridge sees — 'ingested' rows carry the local bus append outcome and
+  // 'ignored' rows the static SlackIgnoreReason code. Until now the
+  // journal's only readers were display surfaces (unified-inbox items,
+  // slack-request-trace, slack-status) that render rows but never fold a
+  // recurrence, so accepted-then-lost bus appends, mapped channels
+  // hearing non-allowlisted senders, oversized drops, secret-shaped
+  // refusals and unknown reason codes never became work. A cell emits
+  // at three adverse rows across two distinct UTC days AND two distinct
+  // message identities inside the 7-day window (Socket Mode redelivery
+  // re-records the same message, so messageTs — not row count — is the
+  // real event count); the nine designed ignore reasons and healthy
+  // posted/duplicate outcomes count as context only, a degraded read
+  // folds the retained valid rows with counts stated as recorded floors,
+  // and only the fleet's own repository inherits the items since the
+  // journal describes this install's bridge config and carries no repo
+  // column.
+  items.push(...await slackBridgeBacklogItems({ repo }));
   return { items, errors };
 }
 
