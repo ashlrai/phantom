@@ -17,6 +17,8 @@ export interface AckEvidence {
   rows: AckRow[];
   malformedRows: number;
   deliveryProof: false;
+  /** Present when the byte tail or matching-row limit omits source coverage. */
+  projectionOmitted?: true;
   rowid?: number;
   match?: 'matched' | 'no-match' | 'unknown';
 }
@@ -48,6 +50,7 @@ export async function readImessageAckEvidence(limit: number, runsDir?: string, r
       text = newline < 0 ? '' : text.slice(newline + 1);
     }
     const report = empty('ok');
+    if (start > 0) report.projectionOmitted = true;
     const lines = text.split('\n');
     const final = lines.pop()!;
     if (final.length) report.malformedRows++;
@@ -68,7 +71,9 @@ export async function readImessageAckEvidence(limit: number, runsDir?: string, r
         }
       } catch { report.malformedRows++; }
     }
-    report.rows = report.rows.slice(-limit);
+    const retained = report.rows.slice(-limit);
+    if (retained.length < report.rows.length) report.projectionOmitted = true;
+    report.rows = retained;
     if (rowid !== undefined && report.rows.length) report.match = 'matched';
     return report;
   } catch { return empty('unreadable'); } finally { await file.close().catch(() => {}); }

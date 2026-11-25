@@ -270,6 +270,7 @@ export function defaultChannelSources(runsDir?: string): Record<ChannelName, Cha
         const ev = await inboundSnapshot();
         return {
           store: ev.malformedRows ? 'unreadable' : ev.sourceState,
+          ...(ev.projectionOmitted ? { projectionOmitted: true } : {}),
           rows: ev.rows.filter((r) => r.status === 'accepted').map((r) => ({ at: r.timestamp })),
         };
       },
