@@ -124,4 +124,50 @@ describe('cmdOrg', () => {
     expect(await cmdOrg(['--help'])).toBe(0);
     vi.unstubAllEnvs();
   });
+
+  it('refuses malformed arguments instead of silently ignoring them', async () => {
+    const home = tmp(); vi.stubEnv('ASHLR_HOME', home); vi.stubEnv('HOME', home);
+    const logs: string[] = [], errs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((s) => { logs.push(String(s)); });
+    vi.spyOn(console, 'error').mockImplementation((s) => { errs.push(String(s)); });
+    const file = 'docs/examples/org.toml';
+    const base = ['join', '--file', file, '--member', 'evan-deloria', '--machine', 'evan-mac'];
+    // A valid join lands its record; every refused invocation must leave it untouched.
+    expect(await cmdOrg([...base, '--lane', 'claude=20', '--json'])).toBe(0);
+    const joined = readJoins();
+    expect(joined).toHaveLength(1);
+    expect(JSON.parse(logs.pop()!).recordFile).toBe(join(home, 'org', 'joins', 'evan-deloria.evan-mac.json'));
+    const malformed = [
+      [...base, 'claude', '--json'],                  // stray positional reads as "no lanes" otherwise
+      [...base, '--bogus', '--json'],                 // unknown flag
+      [...base, '--member', 'mason-wyatt', '--json'], // repeated single-value flag
+      [...base, '--lane', '--json'],                  // --lane with no value
+      [...base, '--lane', 'claude=20=30', '--json'],  // second '='
+      [...base, '--lane', 'claude=', '--json'],       // empty share is not share 0
+      [...base, '--lane', '=20', '--json'],           // empty lane name
+      [...base, '--lane', 'claude=abc', '--json'],    // non-numeric share
+      [...base, '--lane', 'claude=10', '--lane', 'claude=20', '--json'], // same lane twice
+      ['join', '--file', file, '--member', '--machine', 'evan-mac', '--json'], // flag as value
+      ['show', '--file', file, '--file', file, '--json'],
+      ['show', '--file', file, 'stray', '--json'],
+      ['plan', '--file', file, 'stray', '--json'],
+      ['plan', '--file', file, '--queue', 'a', '--queue', 'b', '--json'],
+    ];
+    for (const args of malformed) expect(await cmdOrg(args), args.join(' ')).toBe(1);
+    expect(readJoins()).toEqual(joined);
+    const said = errs.join('\n');
+    expect(said).toContain('Unexpected argument');
+    expect(said).toContain('more than once');
+    expect(said).toContain('--lane share must be a number');
+    expect(said).toContain('--lane needs a value');
+    // Distinct lanes in one join still work; --lane without '=' keeps the declared share.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac',
+      '--lane', 'claude', '--lane', 'codex-personal=50', '--json'])).toBe(0);
+    expect(JSON.parse(logs.pop()!).record.lanes).toEqual([{ lane: 'claude', share: 100 }, { lane: 'codex-personal', share: 50 }]);
+    // Text mode names the record file the member sends to the leader.
+    expect(await cmdOrg(['join', '--file', file, '--member', 'mason-wyatt', '--machine', 'mason-mac', '--lane', 'claude=10'])).toBe(0);
+    const text = logs.pop()!;
+    expect(text).toContain(`Record: ${join(home, 'org', 'joins', 'mason-wyatt.mason-mac.json')}`);
+    vi.unstubAllEnvs();
+  });
 });

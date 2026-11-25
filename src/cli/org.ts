@@ -1,5 +1,6 @@
 /** `phm org` - declarative co-founder org model. Thin: logic lives in src/core/org/org.ts. */
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FleetOrgTree } from '../core/fleet/org-tree.js';
 import { joinOrg, joinsDir, loadOrg, orgFile, parseQueue, planOrg, readJoins, OrgError } from '../core/org/org.js';
 
@@ -24,8 +25,27 @@ Default file: ~/.ashlr/org.toml (example: docs/examples/org.toml). Guide: docs/A
 
 function take(args: string[], name: string): string[] {
   const out: string[] = [];
-  for (let i = args.indexOf(name); i >= 0; i = args.indexOf(name)) { const v = args[i + 1]; args.splice(i, 2); if (v === undefined) throw new OrgError(`${name} needs a value.`); out.push(v); }
+  for (let i = args.indexOf(name); i >= 0; i = args.indexOf(name)) {
+    const v = args[i + 1];
+    args.splice(i, 2);
+    // A flag where the value belongs is a missing value, never a value.
+    if (v === undefined || v.startsWith('--')) throw new OrgError(`${name} needs a value.`);
+    out.push(v);
+  }
   return out;
+}
+
+/** Flags that take exactly one value refuse a repeat instead of silently keeping the first. */
+function one(args: string[], name: string): string | undefined {
+  const values = take(args, name);
+  if (values.length > 1) throw new OrgError(`${name} was given more than once.`);
+  return values[0];
+}
+
+/** Once every known flag is taken nothing may remain: a stray word or an unknown
+ * flag is refused, never ignored — a typo must not read as "no lanes" or "no queue". */
+function noLeftovers(args: string[]): void {
+  if (args.length) throw new OrgError(`Unexpected argument${args.length === 1 ? '' : 's'} ${args.map((a) => `'${a}'`).join(' ')}. Run: phm org --help`);
 }
 
 /** Bare `phm org`: the live tree the Fleet map draws. Reads only; the builder is src/core/fleet/org-tree.ts. */
@@ -55,11 +75,12 @@ export async function cmdOrg(argv: string[]): Promise<number> {
   const json = args.includes('--json'); if (json) args.splice(args.indexOf('--json'), 1);
   const print = (v: unknown, text: string) => { console.log(json ? JSON.stringify(v, null, 2) : text); return 0; };
   try {
-    const file = take(args, '--file')[0] ?? orgFile();
+    const file = one(args, '--file') ?? orgFile();
     const [sub, ...rest] = args;
     if (sub !== 'show' && sub !== 'join' && sub !== 'plan') { console.error(ORG_USAGE); return 2; }
     const org = loadOrg(file);
     if (sub === 'show') {
+      noLeftovers(rest);
       const joins = readJoins();
       const lines = [`Org (leader ${org.leader})`];
       for (const m of org.members) {
@@ -70,13 +91,34 @@ export async function cmdOrg(argv: string[]): Promise<number> {
       return print({ schema: 'org.show.v1', file, org, joins }, lines.join('\n'));
     }
     if (sub === 'join') {
-      const member = take(rest, '--member')[0], machine = take(rest, '--machine')[0];
+      const member = one(rest, '--member'), machine = one(rest, '--machine');
+      const laneArgs = take(rest, '--lane');
+      noLeftovers(rest);
       if (!member || !machine) throw new OrgError('join needs --member and --machine.');
-      const optIn = take(rest, '--lane').map((s) => { const [lane = '', share] = s.split('='); return { lane, share: share === undefined ? undefined : Number(share) }; });
+      // --lane takes <lane> or <lane>=<share>; a second '=', an empty name or a
+      // non-numeric share is a usage error, and the same lane is never repeated.
+      const optIn = laneArgs.map((s) => {
+        const eq = s.indexOf('=');
+        if (eq >= 0 && s.indexOf('=', eq + 1) >= 0) throw new OrgError(`--lane takes <lane> or <lane>=<share>: '${s}'`);
+        const name = eq < 0 ? s : s.slice(0, eq);
+        const shareText = eq < 0 ? undefined : s.slice(eq + 1);
+        if (name === '') throw new OrgError(`--lane needs a lane name: '${s}'`);
+        if (shareText !== undefined && (shareText.trim() === '' || !Number.isFinite(Number(shareText)))) {
+          throw new OrgError(`--lane share must be a number: '${s}'`);
+        }
+        return { lane: name, share: shareText === undefined ? undefined : Number(shareText) };
+      });
+      const seen = new Set<string>();
+      for (const o of optIn) {
+        if (seen.has(o.lane)) throw new OrgError(`--lane ${o.lane} was given more than once.`);
+        seen.add(o.lane);
+      }
       const r = joinOrg(org, { member, machine, optIn });
-      return print({ schema: 'org.join.v1', record: r, dir: joinsDir() }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read.`);
+      const recordFile = join(joinsDir(), `${r.member}.${r.machine}.json`);
+      return print({ schema: 'org.join.v1', record: r, dir: joinsDir(), recordFile }, `${r.member} joined on ${r.machine} with ${r.lanes.length ? r.lanes.map((l) => `${l.lane} ${l.share}%`).join(', ') : 'no lanes (nothing contributed)'}.\nRecord: ${recordFile}\nSign in to your own provider CLIs on this machine; nothing was sent and no auth was read. Copy the record file into the leader's joins directory to count this machine.`);
     }
-    const queueFile = take(rest, '--queue')[0];
+    const queueFile = one(rest, '--queue');
+    noLeftovers(rest);
     const queue = queueFile ? parseQueue(readFileSync(queueFile, 'utf8')) : [];
     let view = null;
     try { view = await (await import('../core/fabric/resource-view-store.js')).readResourceView(); } catch { /* unknown usage is planned conservatively */ }
