@@ -58,8 +58,9 @@ phm node enqueue --job fix-123 --owner acme --requires gh --pack pack-fix-123 --
 phm node plan --owner acme
 phm node pull --node box --session 1 --json
 
-# While working, renew; when done, complete (values come from the pull output):
-phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3
+# While working, keep the claim alive — `renew --watch` repeats renew for you;
+# when done, complete (values come from the pull output):
+phm node renew --job fix-123 --node box --session 1 --token 5 --leader-token 3 --watch
 phm node complete --job fix-123 --node box --session 1 --token 5 --leader-token 3 --result done
 # The owner reads the outcome back any time; it answers pending, running
 # (with the claiming node), or completed with the accepted result text:
@@ -119,6 +120,18 @@ SIGTERM stops the loop and prints a confirmation; a beat that exits non-zero —
 a lapsed session, a refused flag — stops it at once with that beat's error. The
 watch flags are consumed by the dispatcher and never reach the beat parser, so
 older stores and pool primaries see only the usual beat arguments.
+
+`phm node renew --watch [--every <seconds>]` is the claim-side counterpart: a
+pull's lease expires 30 seconds after the last renew, so a job that takes
+minutes loses its claim mid-run unless something keeps renewing. While a pulled
+job is being worked, the watch repeats the ordinary `renew` — the same job,
+node, session, token and leader token from the pull output — on the same
+interval bounds, through the same dispatch (a pooled member still delegates to
+the primary). The watch flags never reach the renew parser either. A refused
+renew — a lost lease or dead session — stops the watch at once with that error;
+Ctrl-C stops it cleanly and the claim then expires on its own, after which the
+job can be pulled again. Without `--watch`, a manual holder renews by hand
+before the lease lapses.
 
 ## When something is refused
 
