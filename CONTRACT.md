@@ -3713,6 +3713,18 @@ carries that kind) and `unresolved`/`unknown` referents never matching,
 `matched` counting the proven matches on the resolved page, an
 unreadable bus store answering `unavailable`, and a malformed value
 answering `invalid`;
+`filter.result` keeps only hints whose resolved referent is a
+`work.result` body reporting that one outcome — the same kind-scoped
+`busBodyResultOutcome` match the inbox/channel `result` filters apply,
+decided on the resolved referent and read through the
+`WORK_RESULT_OUTCOMES` vocabulary (`reserved`/`admitted`/`complete`/
+`failed`) the work feed's `result` filter validates, with a
+`work.release` outcome and an outcome-less `work.result` never
+matching, claim-holder `wh-…` hints never matching (a `work.status`
+receipt carries no result outcome) and `unresolved`/`unknown` referents
+never matching, `matched` counting the proven matches on the resolved
+page, an unreadable bus store answering `unavailable`, and a value
+outside the vocabulary answering `invalid`;
 `filter.before` keeps only hints recorded strictly before that
 epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
 applies on the hint's own queue time, composing with `sinceAt`'s
@@ -3733,7 +3745,7 @@ claim-holder fan-out writes appear beside registered identities' hints,
 each row's own `to` naming its addressee; the ok page carries
 `scope:'fleet'`, `wakes`, `matched` and `truncated` under the same
 queue-tail semantics `readAgentWakes` documents, and the same
-`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`id` filter set validates
+`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/`thread`/`inReplyTo`/`bodyKind`/`result`/`id` filter set validates
 and resolves referents identically — sender matchers resolve through
 the registry with exact-label fallback, `channel` keeps only hints whose
 own `to` label sits under `group:<name>:*` inside the queue-tail match,

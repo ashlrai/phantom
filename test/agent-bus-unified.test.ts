@@ -532,6 +532,76 @@ describe('body-kind-filtered reads', () => {
   });
 });
 
+describe('result-outcome-filtered reads', () => {
+  it('narrows inbox and channel pages to work.result bodies reporting one outcome', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    createAgentChannel({ name: 'release', createdBy: 'atlas', members: ['nova'] }, options);
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-DVL-BUS-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    // One receipt per WORK_RESULT_OUTCOMES code, plus the shapes that must never match.
+    post('res-complete', 'agent:nova', result('complete'));
+    post('res-failed', 'agent:nova', result('failed'));
+    post('res-reserved', 'agent:nova', result('reserved'));
+    post('res-admitted', 'agent:nova', result('admitted'));
+    // A work.result carrying no outcome and one carrying an outcome outside
+    // the enum both report no provable outcome for the filter.
+    post('res-nooutcome', 'agent:nova', { kind: 'work.result', jobId: 'RQ-DVL-BUS-1', claimKey: 'repo:o/n' });
+    post('res-bogus', 'agent:nova', result('bogus'));
+    // A work.release body's own released/completed outcome is a different
+    // vocabulary — the kind-scoped match keeps it out of every result page.
+    post('rel-released', 'agent:nova', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' });
+    post('res-note', 'agent:nova', { kind: 'note', text: 'plain note' });
+    // Channel posts: two result receipts and one note in the room.
+    post('ch-res-complete', 'group:release:general', result('complete'));
+    post('ch-res-failed', 'group:release:general', result('failed'));
+    post('ch-note', 'group:release:general', { kind: 'note', text: 'room note' });
+
+    const inbox = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') => {
+      const page = readAgentInbox('nova', { result: outcome }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    // The inbox covers the room's posts too: a member channel's result
+    // receipts arrive as 'channel' mail alongside the 'dm' ones.
+    expect(inbox('complete')).toEqual(['ch-res-complete', 'res-complete']);
+    expect(inbox('failed')).toEqual(['ch-res-failed', 'res-failed']);
+    expect(inbox('reserved')).toEqual(['res-reserved']);
+    expect(inbox('admitted')).toEqual(['res-admitted']);
+    // The outcome filter composes with the other envelope filters.
+    expect(readAgentInbox('nova', { result: 'failed', kind: 'dm' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'res-failed' } }] });
+    expect(readAgentInbox('nova', { result: 'failed', kind: 'channel' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'ch-res-failed' } }] });
+    expect(readAgentInbox('nova', { result: 'complete', bodyKind: 'work.result' }, options))
+      .toMatchObject({ status: 'ok', messages: [{ envelope: { id: 'res-complete' } }, { envelope: { id: 'ch-res-complete' } }] });
+    // The matched total counts only rows the outcome filter kept.
+    const counted = readAgentInbox('nova', { result: 'failed', matched: true }, options);
+    if (counted.status !== 'ok') throw new Error(`unexpected ${counted.status}`);
+    expect(counted.matched).toBe(2);
+
+    // The same outcome narrows a channel transcript to its result receipts.
+    const channel = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') => {
+      const page = readAgentChannel('release', { result: outcome }, options);
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.messages.map(m => m.envelope.id).sort();
+    };
+    expect(channel('complete')).toEqual(['ch-res-complete']);
+    expect(channel('failed')).toEqual(['ch-res-failed']);
+    expect(channel('reserved')).toEqual([]);
+    expect(channel('admitted')).toEqual([]);
+
+    // The outcome vocabulary is closed: anything outside WORK_RESULT_OUTCOMES
+    // refuses closed like the priority and delivery-kind enums.
+    for (const bad of ['bogus', 'released', 'completed', '', 'FAILED'] as const) {
+      expect(readAgentInbox('nova', { result: bad as never }, options)).toMatchObject({ status: 'invalid' });
+      expect(readAgentChannel('release', { result: bad as never }, options)).toMatchObject({ status: 'invalid' });
+    }
+  });
+});
+
 describe('sender-filtered inbox reads', () => {
   it('narrows an inbox page to one sender under every label of its identity', async () => {
     const options = setup();
@@ -3298,6 +3368,111 @@ describe('wake hint body-kind filter', () => {
     expect(readAgentWakes('nova', undefined, options, { bodyKind: 'note' }))
       .toMatchObject({ status: 'unavailable' });
     expect(readAllWakes(undefined, options, { bodyKind: 'work.post' }))
+      .toMatchObject({ status: 'unavailable' });
+    // The unfiltered read still answers with per-row unknown referents.
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('wake hint result-outcome filter', () => {
+  it('keeps only hints whose resolved referent is a work.result reporting that outcome', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    const hint = (id: string) =>
+      enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' }, { root: options.runsRoot });
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-RES-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    // One receipt per WORK_RESULT_OUTCOMES code, plus the shapes that must
+    // never match, plus a hand-enqueued hint with no live envelope.
+    post('res-wk-complete', result('complete')); hint('res-wk-complete');
+    post('res-wk-failed', result('failed')); hint('res-wk-failed');
+    post('res-wk-reserved', result('reserved')); hint('res-wk-reserved');
+    post('res-wk-admitted', result('admitted')); hint('res-wk-admitted');
+    // A work.result carrying no outcome and one carrying an outcome outside
+    // the enum both report no provable outcome for the filter.
+    post('res-wk-nooutcome', { kind: 'work.result', jobId: 'RQ-RES-1', claimKey: 'repo:o/n' }); hint('res-wk-nooutcome');
+    post('res-wk-bogus', result('bogus')); hint('res-wk-bogus');
+    // A work.release body's own released/completed outcome is a different
+    // vocabulary — the kind-scoped match keeps it out of every result page.
+    post('rel-wk-released', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' }); hint('rel-wk-released');
+    post('note-wk', { kind: 'note', text: 'plain note' }); hint('note-wk');
+    enqueueBusWake({ kind: 'bus.send', id: 'res-wk-ghost', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    const ids = (outcome: 'reserved' | 'admitted' | 'complete' | 'failed') => {
+      const page = readAgentWakes('nova', undefined, options, { result: outcome });
+      if (page.status !== 'ok') throw new Error(`unexpected ${page.status}`);
+      return page.wakes.map(row => row.id);
+    };
+    expect(ids('complete')).toEqual(['res-wk-complete']);
+    expect(ids('failed')).toEqual(['res-wk-failed']);
+    expect(ids('reserved')).toEqual(['res-wk-reserved']);
+    expect(ids('admitted')).toEqual(['res-wk-admitted']);
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 9 });
+    // matched counts the proven matches on the resolved page.
+    expect(readAgentWakes('nova', undefined, options, { result: 'complete' }))
+      .toMatchObject({ status: 'ok', matched: 1 });
+    // The verdict composes with the queue-tail filters like every other
+    // referent-body filter.
+    expect(readAgentWakes('nova', undefined, options, { result: 'failed', from: 'ghost' }))
+      .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    const fleet = readAllWakes(undefined, options, { result: 'complete' });
+    expect(fleet).toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+    if (fleet.status !== 'ok') throw new Error('unreachable');
+    expect(fleet.wakes.map(row => row.id)).toEqual(['res-wk-complete']);
+    // The outcome vocabulary is closed: anything outside WORK_RESULT_OUTCOMES
+    // refuses closed.
+    for (const bad of ['bogus', 'released', 'completed', '', 'FAILED'] as const) {
+      expect(readAgentWakes('nova', undefined, options, { result: bad as never }))
+        .toMatchObject({ status: 'invalid' });
+      expect(readAllWakes(undefined, options, { result: bad as never }))
+        .toMatchObject({ status: 'invalid' });
+    }
+  });
+
+  it('never matches claim-holder hints and fails closed on an unreadable store', async () => {
+    const options = setup();
+    register(options, 'atlas', 'nova');
+    registerAgentIdentity({ handle: 'atlas', runtime: { cli: 'claude', provider: 'claude', model: null } }, options);
+    expect(await announceWork({ from: 'atlas', jobId: 'RQ-RES-HO', title: 'ho', repo: 'ashlrai/phantom',
+      claimKeys: ['queue:RQ-RES-HO'] }, options)).toMatchObject({ status: 'posted' });
+    expect(acquireCoordination({ root: options.root, origin: 'resource', key: 'queue:RQ-RES-HO',
+      owner: 'agent:nova', leaseMs: 60_000, leaseUntil: options.clock.now + 60_000, sourceId: 'ho-src',
+      now: options.clock.now, started: new Date(options.clock.now).toISOString() }).status).toBe('acquired');
+    // A terminal work.status wakes the claim holder — its citing receipt
+    // carries no work.result outcome, so it can never match --result.
+    expect(await updateWorkStatus({ from: 'atlas', jobId: 'RQ-RES-HO', status: 'done', id: 'w-res-ho' }, options))
+      .toMatchObject({ status: 'posted', claimHoldersWoken: 1 });
+    // An ordinary hint citing a failed result receipt shares the page.
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, options).status).toBe('posted');
+    post('res-wk2-failed', { kind: 'work.result', jobId: 'RQ-RES-HO', claimKey: 'queue:RQ-RES-HO',
+      queueId: 'q', receiptId: 'r', outcome: 'failed' });
+    enqueueBusWake({ kind: 'bus.send', id: 'res-wk2-failed', from: 'agent:atlas', to: 'agent:nova' },
+      { root: options.runsRoot });
+
+    expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok', matched: 2 });
+    const failed = readAgentWakes('nova', undefined, options, { result: 'failed' });
+    expect(failed).toMatchObject({ status: 'ok', matched: 1 });
+    if (failed.status !== 'ok') throw new Error('unreachable');
+    expect(failed.wakes.map(row => row.id)).toEqual(['res-wk2-failed']);
+    for (const outcome of ['complete', 'reserved', 'admitted'] as const) {
+      expect(readAgentWakes('nova', undefined, options, { result: outcome }))
+        .toMatchObject({ status: 'ok', matched: 0, wakes: [] });
+    }
+    expect(readAllWakes(undefined, options, { result: 'failed' }))
+      .toMatchObject({ status: 'ok', scope: 'fleet', matched: 1 });
+
+    // An unreadable bus store makes every referent's outcome unknown, so
+    // the filtered reads are unavailable — never an empty page passed off
+    // as "no wakes reporting this outcome".
+    mkdirSync(join(options.root!, 'bus-inbox'), { recursive: true });
+    writeFileSync(join(options.root!, 'bus-inbox', 'messages.json'), 'not json', { mode: 0o600 });
+    expect(readAgentWakes('nova', undefined, options, { result: 'failed' }))
+      .toMatchObject({ status: 'unavailable' });
+    expect(readAllWakes(undefined, options, { result: 'complete' }))
       .toMatchObject({ status: 'unavailable' });
     // The unfiltered read still answers with per-row unknown referents.
     expect(readAgentWakes('nova', undefined, options)).toMatchObject({ status: 'ok' });

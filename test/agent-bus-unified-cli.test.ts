@@ -7,6 +7,7 @@ import { runAgentsBusUnified } from '../src/cli/agents-bus-unified.js';
 import * as seats from '../src/core/bots/seats.js';
 import { appendBusInbox } from '../src/core/fleet/bus-inbox.js';
 import type { BusEnvelope } from '../src/core/fleet/bus-envelope.js';
+import { enqueueBusWake } from '../src/core/fleet/bus-wake-queue.js';
 
 let base: string;
 let root: string;
@@ -481,6 +482,46 @@ describe('phm agents bus (unified)', () => {
     expect(await run(['channel', 'read', 'release', '--body-kind', ''])).toMatchObject({ code: 1, json: { status: 'invalid' } });
   });
 
+  it('filters inbox and channel reads by --result', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['channel', 'create', 'release', '--from', 'atlas', '--member', 'nova'])).json)
+      .toMatchObject({ status: 'created' });
+    const post = (id: string, to: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to, priority: 'P3', ttl: 60_000, body }, { root }).status).toBe('posted');
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    post('r-complete', 'agent:nova', result('complete'));
+    post('r-failed', 'agent:nova', result('failed'));
+    post('r-nooutcome', 'agent:nova', { kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n' });
+    // A work.release outcome is a different vocabulary and never matches.
+    post('r-rel', 'agent:nova', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' });
+    post('r-note', 'agent:nova', { kind: 'note', text: 'plain' });
+    post('r-ch-failed', 'group:release:general', result('failed'));
+    post('r-ch-note', 'group:release:general', { kind: 'note', text: 'room' });
+
+    const ids = (json: { messages: { envelope: { id: string } }[] }) =>
+      json.messages.map(m => m.envelope.id).sort();
+    // The inbox sees the room's receipts as channel mail beside the DMs.
+    expect(ids((await run(['inbox', 'nova', '--result', 'failed'])).json)).toEqual(['r-ch-failed', 'r-failed']);
+    expect(ids((await run(['inbox', 'nova', '--result', 'complete'])).json)).toEqual(['r-complete']);
+    expect(ids((await run(['inbox', 'nova', '--result', 'reserved'])).json)).toEqual([]);
+    expect(ids((await run(['inbox', 'nova', '--result', 'failed', '--kind', 'dm'])).json)).toEqual(['r-failed']);
+    expect(ids((await run(['inbox', 'nova', '--result', 'failed', '--kind', 'channel'])).json)).toEqual(['r-ch-failed']);
+    const channel = await run(['channel', 'read', 'release', '--result', 'failed']);
+    expect(ids(channel.json)).toEqual(['r-ch-failed']);
+    expect(ids((await run(['channel', 'read', 'release', '--result', 'complete'])).json)).toEqual([]);
+    expect(ids((await run(['channel', 'read', 'release', '--result', 'failed', '--body-kind', 'work.result'])).json))
+      .toEqual(['r-ch-failed']);
+    // The outcome vocabulary is closed: anything outside it is a usage error.
+    expect(await run(['inbox', 'nova', '--result', 'bogus'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['inbox', 'nova', '--result', 'released'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['channel', 'read', 'release', '--result', ''])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    // work feed keeps its own per-job newest-result --result on the same helper.
+    expect((await run(['work', 'feed', '--result', 'failed'])).code).toBe(0);
+    expect(await run(['work', 'feed', '--result', 'bogus'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+  });
+
   it('filters wakes by --body-kind', async () => {
     expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
     expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
@@ -503,6 +544,38 @@ describe('phm agents bus (unified)', () => {
     // A body kind must be a printable label; anything else fails closed.
     expect(await run(['wakes', 'nova', '--body-kind', 'has space'])).toMatchObject({ code: 1, json: { status: 'invalid' } });
     expect(await run(['wakes', 'nova', '--body-kind='])).toMatchObject({ code: 1, json: { status: 'invalid' } });
+  });
+
+  it('filters wakes by --result', async () => {
+    expect((await run(['id', 'register', 'atlas'])).json).toMatchObject({ status: 'created' });
+    expect((await run(['id', 'register', 'nova'])).json).toMatchObject({ status: 'created' });
+    const post = (id: string, body: unknown) =>
+      expect(appendBusInbox({ id, from: 'atlas', to: 'agent:nova', priority: 'P3', ttl: 60_000, body }, { root }).status).toBe('posted');
+    const hint = (id: string) =>
+      expect(enqueueBusWake({ kind: 'bus.send', id, from: 'agent:atlas', to: 'agent:nova' },
+        { root: join(base, 'runs') })).toBe('queued');
+    const result = (outcome: string) =>
+      ({ kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n', queueId: 'q', receiptId: 'r', outcome });
+    // One hint per referent shape: each outcome, an outcome-less result, a
+    // work.release outcome (a different vocabulary) and a plain note.
+    post('wr-complete', result('complete')); hint('wr-complete');
+    post('wr-failed', result('failed')); hint('wr-failed');
+    post('wr-nooutcome', { kind: 'work.result', jobId: 'RQ-1', claimKey: 'repo:o/n' }); hint('wr-nooutcome');
+    post('wr-rel', { kind: 'work.release', claimKey: 'repo:o/n', token: 't', outcome: 'released' }); hint('wr-rel');
+    post('wr-note', { kind: 'note', text: 'plain' }); hint('wr-note');
+
+    const ids = (json: { wakes: { id: string }[] }) => json.wakes.map(w => w.id);
+    expect(ids((await run(['wakes', 'nova', '--result', 'failed'])).json)).toEqual(['wr-failed']);
+    expect(ids((await run(['wakes', 'nova', '--result', 'complete'])).json)).toEqual(['wr-complete']);
+    expect((await run(['wakes', 'nova', '--result', 'reserved'])).json).toMatchObject({ matched: 0, wakes: [] });
+    expect(ids((await run(['wakes', 'nova', '--result', 'failed', '--body-kind', 'work.result'])).json)).toEqual(['wr-failed']);
+    // The fleet-wide read resolves the same referent outcomes.
+    expect((await run(['wakes', '--all', '--result', 'complete'])).json).toMatchObject({ matched: 1 });
+    expect(ids((await run(['wakes', '--all', '--result', 'complete'])).json)).toEqual(['wr-complete']);
+    // The outcome vocabulary is closed: anything outside it is a usage error.
+    expect(await run(['wakes', 'nova', '--result', 'bogus'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['wakes', 'nova', '--result', 'released'])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
+    expect(await run(['wakes', '--all', '--result='])).toMatchObject({ code: 2, json: { error: 'invalid-argument' } });
   });
 
   it('filters inbox and channel reads by --priority', async () => {

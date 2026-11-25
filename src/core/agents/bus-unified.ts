@@ -31,8 +31,9 @@ import { LEADERS_ADDRESS } from '../fleet/bus-leader-inbox.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { localWriteGate } from './send-gate.js';
 import { coordinationRowBlocks, listCoordination } from './claim-store.js';
-import { BUS_V2_TEXT_MAX, busBodyKind, busBodyThread, contextBodySchema, noteBodySchema, wakeBodySchema, workPostBodySchema,
-  workStatusBodySchema, type Participant, type WorkJob } from './bus-v2-schema.js';
+import { BUS_V2_TEXT_MAX, WORK_RESULT_OUTCOMES, busBodyKind, busBodyResultOutcome, busBodyThread, contextBodySchema,
+  noteBodySchema, wakeBodySchema, workPostBodySchema, workStatusBodySchema,
+  type Participant, type WorkJob, type WorkResultOutcome } from './bus-v2-schema.js';
 import { readBusWorkFeed, runtimeProvider, type BusWorkFeedJob, type BusWorkFeedReadResult } from './bus-work-feed-read.js';
 import {
   AGENT_ADDRESS_PREFIX, agentChannelNameSchema, agentLabels, agentRefAddressMatcher, findAgentChannel, readAgentRegistry,
@@ -1201,7 +1202,16 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  * discriminator `busBodySummary` switches on — matched exactly and
  * case-sensitively, so "which of my pending mail are work results" or
  * "which are wake requests" is one filtered read; a body carrying no
- * discriminator never matches.
+ * discriminator never matches. `result` keeps only mail whose body is a
+ * `work.result` receipt reporting that one outcome — the same
+ * `WORK_RESULT_OUTCOMES` codes the work feed's `--result` filter and
+ * `phm messages --result` validate, read through the kind-scoped
+ * `busBodyResultOutcome` own-field match — so every other body kind (a
+ * `work.release` body's own `released`/`completed` outcome included) and
+ * a `work.result` carrying no outcome never matches: "which of my
+ * pending result receipts failed" is one filtered read, the
+ * envelope-level audit trail the feed's per-job newest-result `--result`
+ * cannot show.
  * `with` narrows the page to the two-way exchange the addressed agent and
  * one peer name — the same pairwise rule `phm messages --with` and
  * `agents conversations --with` apply. Every inbox row is already
@@ -1232,12 +1242,13 @@ export function busBodyInReplyToMatch(body: unknown, inReplyTo: string): boolean
  */
 export function readAgentInbox(ref: string, page: { after?: number; limit?: number; thread?: string; from?: string;
     excludeFrom?: string; with?: string; matched?: boolean; priority?: BusPriority; kind?: InboxKind; job?: string; since?: number;
-    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string } = {},
+    before?: number; channel?: string; contains?: string; inReplyTo?: string; id?: string; bodyKind?: string;
+    result?: WorkResultOutcome } = {},
   options: UnifiedBusOptions = {}): InboxPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority;
   const countMatched = page.matched === true;
   const kindFilter = page.kind, jobFilter = page.job, since = page.since, before = page.before, channelFilter = page.channel;
-  const inReplyTo = page.inReplyTo, idFilter = page.id, bodyKindFilter = page.bodyKind;
+  const inReplyTo = page.inReplyTo, idFilter = page.id, bodyKindFilter = page.bodyKind, resultOutcome = page.result;
   if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > BUS_INBOX_MAX_READ) {
     return { status: 'invalid', reason: 'after must be >= 0 and limit 1-100.' };
   }
@@ -1272,6 +1283,9 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
   }
   if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
     return { status: 'invalid', reason: 'Invalid body kind.' };
+  }
+  if (resultOutcome !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(resultOutcome)) {
+    return { status: 'invalid', reason: 'Invalid result outcome.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -1354,6 +1368,7 @@ export function readAgentInbox(ref: string, page: { after?: number; limit?: numb
         (before === undefined || row.receivedAt < before) &&
         (channelFilter === undefined || channel === channelFilter) &&
         (bodyKindFilter === undefined || busBodyKind(envelope.body) === bodyKindFilter) &&
+        (resultOutcome === undefined || busBodyResultOutcome(envelope.body) === resultOutcome) &&
         (containsNeedle === undefined || busReadContainsMatch(envelope.body, containsNeedle)) ? kind : null;
       if (matchedKind !== null && envelope.origin_bridge === 'agent-chat-owner') {
         try { ownerReceipts ??= readOwnerChatReceipts(ownerChatRoot(options.root)); }
@@ -1481,26 +1496,29 @@ export function agentWakeClaimHolderSuffix(wake: AgentWakeRow): string {
  * read per page, never per hint. `wh-…` ids are claim-holder hints, not
  * envelope ids, and pass through untouched. `match` names the referent-body
  * verdicts the page's filters need — the `job` citation rule plus the
- * `thread` label, `inReplyTo` citation and `bodyKind` discriminator the
+ * `thread` label, `inReplyTo` citation, `bodyKind` discriminator and
+ * `result` outcome the
  * inbox/channel reads apply —
  * each decided on the live body here, where it is still in hand, and
  * reported as the hint ids that provably match.
  */
 function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | undefined,
   registry: AgentRegistry, options: UnifiedBusOptions,
-  match?: { job?: string; thread?: string; inReplyTo?: string; bodyKind?: string }):
+  match?: { job?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }):
   { contexts: Map<string, AgentWakeMessage>; jobMatches: Set<string>;
-    threadMatches: Set<string>; inReplyToMatches: Set<string>; bodyKindMatches: Set<string> } {
+    threadMatches: Set<string>; inReplyToMatches: Set<string>; bodyKindMatches: Set<string>;
+    resultMatches: Set<string> } {
   const contexts = new Map<string, AgentWakeMessage>();
   const jobMatches = new Set<string>();
   const threadMatches = new Set<string>();
   const inReplyToMatches = new Set<string>();
   const bodyKindMatches = new Set<string>();
+  const resultMatches = new Set<string>();
   const ordinary = rows.filter(row => row.kind === 'bus.send' && !CLAIM_HOLDER_WAKE_ID.test(row.id));
-  if (ordinary.length === 0) return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
+  if (ordinary.length === 0) return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches, resultMatches };
   if (scan === undefined || scan.source === 'unavailable') {
     for (const row of ordinary) contexts.set(row.id, { status: 'unknown' });
-    return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
+    return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches, resultMatches };
   }
   const byId = new Map<string, BusInboxReceipt>();
   for (const receipt of scan.rows) byId.set(receipt.envelope.id, receipt);
@@ -1549,8 +1567,9 @@ function wakeMessageContexts(rows: readonly BusWakeRow[], scan: BusInboxScan | u
     if (match?.thread !== undefined && busBodyThread(body) === match.thread) threadMatches.add(row.id);
     if (match?.inReplyTo !== undefined && busBodyInReplyToMatch(body, match.inReplyTo)) inReplyToMatches.add(row.id);
     if (match?.bodyKind !== undefined && busBodyKind(body) === match.bodyKind) bodyKindMatches.add(row.id);
+    if (match?.result !== undefined && busBodyResultOutcome(body) === match.result) resultMatches.add(row.id);
   }
-  return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches };
+  return { contexts, jobMatches, threadMatches, inReplyToMatches, bodyKindMatches, resultMatches };
 }
 
 /** Human suffix naming the message an ordinary wake hint refers to; '' on claim-holder hints. */
@@ -1620,10 +1639,10 @@ export type AllWakesPage =
   | { status: 'ok'; scope: 'fleet'; wakes: AgentWakeRow[]; matched: number; truncated: boolean }
   | { status: 'unavailable' | 'invalid'; reason: string };
 
-/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, the exclusive upper time bound and one exact hint id. */
-interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string }
+/** The filter set every wake read shares: one job id, sender include/exclude, one channel, one priority band, contains text, one v2 thread label, one reply citation, one body-kind discriminator, one work-result outcome, the exclusive upper time bound and one exact hint id. */
+interface WakeFilter { job?: string; from?: string; excludeFrom?: string; channel?: string; contains?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
 
-type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string }
+type ParsedWakeFilter = { ok: true; job?: string; from?: string; excludeFrom?: string; channel?: string; containsNeedle?: string; priority?: BusPriority; before?: number; id?: string; thread?: string; inReplyTo?: string; bodyKind?: string; result?: WorkResultOutcome }
   | { ok: false; reason: string };
 
 /** Validate the shared wakes filter set before any store is touched. */
@@ -1647,6 +1666,10 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
   const bodyKind = filter.bodyKind;
   if (bodyKind !== undefined && (typeof bodyKind !== 'string' || !THREAD.test(bodyKind))) {
     return { ok: false, reason: 'Invalid body kind.' };
+  }
+  const result = filter.result;
+  if (result !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) {
+    return { ok: false, reason: 'Invalid result outcome.' };
   }
   const priority = filter.priority;
   if (priority !== undefined && !BUS_PRIORITIES.includes(priority)) {
@@ -1680,6 +1703,7 @@ function parseWakeFilter(filter: WakeFilter): ParsedWakeFilter {
     ...(thread === undefined ? {} : { thread }),
     ...(inReplyTo === undefined ? {} : { inReplyTo }),
     ...(bodyKind === undefined ? {} : { bodyKind }),
+    ...(result === undefined ? {} : { result }),
     ...(containsNeedle === undefined ? {} : { containsNeedle }) };
 }
 
@@ -1692,9 +1716,11 @@ type WakeRowsPage = { status: 'ok'; wakes: AgentWakeRow[]; matched: number; trun
  * `match` decides addressee scope inside `readBusWakes`, so `matched`
  * counts only rows the whole filter set accepts; one bounded store scan
  * then resolves each row's `claimHolder`/`message` evidence and the
- * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` verdicts
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * verdicts
  * filter on that resolved text — an unreadable queue is `unavailable`,
- * and a `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` read
+ * and a `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * read
  * whose bus store cannot be read fails closed the same way, never an
  * empty page passed off as "no wakes".
  */
@@ -1708,20 +1734,24 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
     : scanBusInbox({ root: options.root, now: options.now });
   const job = filter.job, containsNeedle = filter.containsNeedle, priority = filter.priority;
   const thread = filter.thread, inReplyTo = filter.inReplyTo, bodyKind = filter.bodyKind;
-  // A job, contains, priority, thread, reply-citation or body-kind verdict
+  const result = filter.result;
+  // A job, contains, priority, thread, reply-citation, body-kind or
+  // result-outcome verdict
   // needs the resolved referent; when the store cannot be read every hint's
-  // citation, summary, band and body fields are unknown, so the filtered
+  // citation, summary, band, body fields and result outcome are unknown, so
+  // the filtered
   // read fails closed instead of reporting an empty page as "no wakes for
   // this job", "no wakes mentioning this", "no urgent wakes", "no wakes in
-  // this thread", "no wakes answering that message" or "no wakes about
-  // this body kind".
+  // this thread", "no wakes answering that message", "no wakes about
+  // this body kind" or "no wakes reporting this result outcome".
   if ((job !== undefined || containsNeedle !== undefined || priority !== undefined ||
-       thread !== undefined || inReplyTo !== undefined || bodyKind !== undefined) &&
+       thread !== undefined || inReplyTo !== undefined || bodyKind !== undefined ||
+       result !== undefined) &&
       scan !== undefined && scan.source === 'unavailable') {
     return { status: 'unavailable', reason: 'Bus store is not readable.' };
   }
   const contexts = claimHolderWakeContexts(wakes.wakes, options, scan);
-  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, { job, thread, inReplyTo, bodyKind });
+  const resolved = wakeMessageContexts(wakes.wakes, scan, registry, options, { job, thread, inReplyTo, bodyKind, result });
   const shown = wakes.wakes.filter(row => {
     if (job !== undefined) {
       const holder = contexts.get(row.id);
@@ -1741,6 +1771,9 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
         : resolved.bodyKindMatches.has(row.id);
       if (!kindMatch) return false;
     }
+    // A claim-holder hint's referent is a work.status receipt, which
+    // carries no work.result outcome, so wh-… ids never enter this set.
+    if (result !== undefined && !resolved.resultMatches.has(row.id)) return false;
     if (containsNeedle !== undefined &&
         !wakeHintContainsMatch(contexts.get(row.id), resolved.contexts.get(row.id), containsNeedle)) {
       return false;
@@ -1767,7 +1800,8 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
         ...(message === undefined ? {} : { message }) };
     }),
     matched: job === undefined && containsNeedle === undefined && priority === undefined &&
-      thread === undefined && inReplyTo === undefined && bodyKind === undefined ? wakes.matched ?? 0 : shown.length,
+      thread === undefined && inReplyTo === undefined && bodyKind === undefined &&
+      result === undefined ? wakes.matched ?? 0 : shown.length,
     truncated: wakes.truncated ?? false };
 }
 
@@ -1878,6 +1912,18 @@ function readWakeRows(sinceAt: number | undefined, options: UnifiedBusOptions, r
  * unreadable bus store answers `unavailable`, `matched` counts the
  * proven matches on the resolved page, and a malformed value answering
  * `invalid`.
+ * `filter.result` keeps only hints whose resolved referent is a
+ * `work.result` body carrying that exact outcome — the same
+ * `busBodyResultOutcome` match `inbox --result`, `channel read --result`
+ * and `comms bus read|watch --result` apply to the message a hint refers
+ * to: the v2 `result.outcome` receipt vocabulary
+ * (`reserved`/`admitted`/`complete`/`failed`), matched exactly so "which
+ * wakes were about completed or failed work receipts" is one filtered
+ * read; a `work.release` outcome and an outcome-less result never match,
+ * a claim-holder `wh-…` hint's citing `work.status` receipt carries no
+ * result outcome so those hints never match, `unresolved`/`unknown`
+ * referents never match, the unreadable-store and `matched` rules are
+ * `bodyKind`'s, and a malformed value answering `invalid`.
  * `filter.before` keeps only hints recorded strictly before that
  * epoch-ms cutoff — the exclusive upper bound every bus read's `--before`
  * applies on the hint's own queue time, composing with `sinceAt`'s
@@ -1929,7 +1975,7 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * carry the same `claimHolder`/`message` resolution `readAgentWakes`
  * annotates, so fleet triage costs the same zero extra reads; the
  * `since`/`job`/`from`/`excludeFrom`/`channel`/`contains`/`priority`/`before`/
- * `thread`/`inReplyTo`/`bodyKind`
+ * `thread`/`inReplyTo`/`bodyKind`/`result`
  * filters behave identically — `channel` keeps only hints whose own `to`
  * label sits under `group:<name>:*`, the room prefix every other bus read's
  * channel filter matches, decided on the address alone inside the
@@ -1938,7 +1984,8 @@ export function readAgentWakes(ref: string, sinceAt: number | undefined, options
  * exclusive upper bound `readAgentWakes`' `filter.before` applies on the
  * hint's queue time — including the fail-closed
  * `unavailable` when a
- * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind` verdict
+ * `job`/`contains`/`priority`/`thread`/`inReplyTo`/`bodyKind`/`result`
+ * verdict
  * needs a bus store that cannot be read. An unreadable registry or queue is
  * `unavailable`, never an
  * empty page passed off as "no wakes". `filter.id` keeps only the hint
@@ -2150,6 +2197,15 @@ export interface ChannelReadOptions {
    * filtered read of the transcript, composing with every other filter.
    */
   bodyKind?: string;
+  /**
+   * Result-outcome filter: only posts whose body is a `work.result`
+   * receipt reporting this outcome — the same `WORK_RESULT_OUTCOMES`
+   * vocabulary the work feed's `--result` filter and `phm messages
+   * --result` validate, read through the kind-scoped
+   * `busBodyResultOutcome` own-field match, so every other body kind and
+   * a result carrying no outcome never matches.
+   */
+  result?: WorkResultOutcome;
   after?: number;
   limit?: number;
 }
@@ -2200,7 +2256,15 @@ export type ChannelReadPage =
  * discriminator `busBodySummary` switches on — matched exactly and
  * case-sensitively, so "which room posts are work results" or "which are
  * wake requests" is one filtered read of the transcript; a body carrying
- * no discriminator never matches. `nextCursor`
+ * no discriminator never matches. `result` keeps only posts whose body
+ * is a `work.result` receipt reporting that one outcome — the same
+ * `WORK_RESULT_OUTCOMES` codes the work feed's `--result` filter and
+ * `phm messages --result` validate, read through the kind-scoped
+ * `busBodyResultOutcome` own-field match — so every other body kind (a
+ * `work.release` body's own `released`/`completed` outcome included) and
+ * a `work.result` carrying no outcome never matches: "which room posts
+ * are failed result receipts" is one filtered read of the transcript.
+ * `nextCursor`
  * covers every scanned row, so callers persist it only after handling the
  * page; `page.matched` asks for the true pending total the way
  * `readAgentInbox` does — the scan then covers the whole retained store,
@@ -2216,7 +2280,7 @@ export type ChannelReadPage =
 export function readAgentChannel(name: string, page: ChannelReadOptions = {}, options: UnifiedBusOptions = {}): ChannelReadPage {
   const after = page.after ?? 0, limit = page.limit ?? 50, thread = page.thread, priority = page.priority, job = page.job;
   const countMatched = page.matched === true, since = page.since, before = page.before, inReplyTo = page.inReplyTo;
-  const idFilter = page.id, bodyKindFilter = page.bodyKind;
+  const idFilter = page.id, bodyKindFilter = page.bodyKind, resultOutcome = page.result;
   if (typeof name !== 'string' || !agentChannelNameSchema.safeParse(name).success) {
     return { status: 'invalid', reason: 'Invalid channel name.' };
   }
@@ -2240,6 +2304,9 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
   }
   if (bodyKindFilter !== undefined && (typeof bodyKindFilter !== 'string' || !THREAD.test(bodyKindFilter))) {
     return { status: 'invalid', reason: 'Invalid body kind.' };
+  }
+  if (resultOutcome !== undefined && !(WORK_RESULT_OUTCOMES as readonly string[]).includes(resultOutcome)) {
+    return { status: 'invalid', reason: 'Invalid result outcome.' };
   }
   if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
     return { status: 'invalid', reason: 'Invalid since.' };
@@ -2298,6 +2365,7 @@ export function readAgentChannel(name: string, page: ChannelReadOptions = {}, op
         (since === undefined || row.receivedAt >= since) &&
         (before === undefined || row.receivedAt < before) &&
         (bodyKindFilter === undefined || busBodyKind(body) === bodyKindFilter) &&
+        (resultOutcome === undefined || busBodyResultOutcome(body) === resultOutcome) &&
         (containsNeedle === undefined || busReadContainsMatch(body, containsNeedle));
       if (accepted) {
         matched += 1;
