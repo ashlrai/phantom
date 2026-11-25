@@ -10,7 +10,7 @@ import {
 import { BUS_PRIORITIES, validateBusEnvelope, type BusPriority, type BusProtocolKind } from '../core/fleet/bus-envelope.js';
 import { BUS_PROTOCOL_KINDS, isTopicPattern, protocolOf, topicMatches } from '../core/fleet/bus-protocol.js';
 import { agentChannelNameSchema, agentRefAddressMatcher, readAgentRegistry } from '../core/agents/bus-identity.js';
-import { busBodyThread } from '../core/agents/bus-v2-schema.js';
+import { busBodyResultOutcome, busBodyThread, WORK_RESULT_OUTCOMES, type WorkResultOutcome } from '../core/agents/bus-v2-schema.js';
 import { busBodyInReplyToMatch, busBodyJobMatch, busReadContains, busReadContainsMatch } from '../core/agents/bus-unified.js';
 import { parseSince } from '../core/fleet/agent-messages.js';
 
@@ -57,6 +57,15 @@ export interface FleetBusInboxFilters {
   before?: number;
   /** Normalized `--contains` needle over the scrubbed one-line summary. */
   contains?: string;
+  /** Work-result outcome code — keeps only `work.result` bodies whose own
+   * `outcome` strictly equals it, the same `busBodyResultOutcome` own-field
+   * match and `WORK_RESULT_OUTCOMES` vocabulary `phm comms bus read|watch
+   * --result`, `fleet bus-follow --result`, `phm messages --result`,
+   * `agents messages --result`, `fleet messages`, `bus recent`,
+   * `fleet_agent_messages`'s `result` and the work feed's `--result` share:
+   * a `work.release` body's own `released`/`completed` outcome, every other
+   * body kind and a `work.result` carrying no outcome never match. */
+  result?: WorkResultOutcome;
 }
 
 export interface FleetBusInboxArgs {
@@ -78,7 +87,7 @@ export interface FleetBusInboxDeps {
 }
 
 const INBOX_KEYS = new Set(['after', 'limit', 'to', 'from',
-  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'before', 'contains']);
+  'id', 'inReplyTo', 'excludeFrom', 'priority', 'kind', 'topic', 'thread', 'job', 'channel', 'since', 'before', 'contains', 'result']);
 /** The printable-label rule `--thread`, `--job` and the address fields share. */
 const BUS_LABEL = /^[\x21-\x7e]{1,128}$/;
 
@@ -160,6 +169,11 @@ export function parseFleetBusInboxArgs(args: Record<string, unknown>): FleetBusI
   const contains = busReadContains(args['contains']);
   if (contains === null) return null;
   if (contains !== undefined) filters.contains = contains;
+  const result = args['result'];
+  if (result !== undefined) {
+    if (typeof result !== 'string' || !(WORK_RESULT_OUTCOMES as readonly string[]).includes(result)) return null;
+    filters.result = result as WorkResultOutcome;
+  }
 
   return { after, limit, to: to as string | undefined, from: from as string | undefined,
     ...(Object.keys(filters).length === 0 ? {} : { filters }) };
@@ -220,7 +234,8 @@ export async function readFleetBusInbox(input: FleetBusInboxArgs, deps: FleetBus
     (filters?.channel === undefined || envelope.to.startsWith(`group:${filters.channel}:`)) &&
     (filters?.since === undefined || receivedAt >= filters.since) &&
     (filters?.before === undefined || receivedAt < filters.before) &&
-    (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)));
+    (filters?.contains === undefined || busReadContainsMatch(envelope.body, filters.contains)) &&
+    (filters?.result === undefined || busBodyResultOutcome(envelope.body) === filters.result));
   return {
     ...base, sourceState: 'ok' as const, messages,
     returnedMessages: messages.length, nextCursor: page.nextCursor,

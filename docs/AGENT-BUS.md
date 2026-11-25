@@ -1602,7 +1602,8 @@ To move an agent onto the unified bus:
    read takes the same filter grammar every other bus read shares —
    `--from`/`--exclude-from` through the identity registry, `--priority`,
    `--job`, `--channel`, `--since`/`--before`, `--contains`, `--in-reply-to`,
-   `--thread`, `--id` and `--body-kind` — so a large leftover mailbox filters
+   `--thread`, `--id`, `--body-kind` and `--result` — so a large leftover
+   mailbox filters
    to one job's or one sender's mail instead of paging raw. `work
    mine`'s `mailbox` section lists the pending rows for every label of the
    agent's identity (or the literal ref when none resolves) with the `--to`
@@ -2031,7 +2032,19 @@ opaque to it. The value is bounded free text, up to 512 characters. On
 `bus-follow` filtered rows still advance checkpoints exactly like every
 other filter, and a `comms bus --checkpoint` consumer binds the raw
 `--contains` spelling into its filter identity, so a changed needle fails
-closed.
+closed. `--result <reserved|admitted|complete|failed>` narrows
+`comms bus read|watch` and `fleet_bus_inbox`'s `result` to `work.result`
+bodies whose own `outcome` strictly equals the code — the same
+`busBodyResultOutcome` own-field match and `WORK_RESULT_OUTCOMES`
+vocabulary `phm messages --result`, `agents messages --result`,
+`fleet messages`, `bus recent`, `fleet bus-follow --result`,
+`fleet_agent_messages`'s `result` and the work feed's `--result` share —
+so every other body kind, a `work.release` body's own
+`released`/`completed` outcome and a `work.result` carrying no outcome
+never match; a value outside the vocabulary is invalid, never a widened
+read. Filtered rows still advance page cursors exactly like every other
+filter, and a `comms bus --checkpoint` consumer binds the raw `--result`
+value into its filter identity, so an outcome change fails closed.
 
 ### 4. Work feed
 
